@@ -75,6 +75,30 @@ afterEach(() => {
 });
 
 describe("anthropic providerDiagnostic from HTTP errors", () => {
+	it("keeps the latest spent Claude window reset in the structured rate-limit diagnostic", async () => {
+		const reset = Math.ceil(Date.now() / 1000) + 7200;
+		stubHttp(429, errorBody("rate_limit_error"), "application/json", {
+			"anthropic-ratelimit-unified-5h-utilization": "1",
+			"anthropic-ratelimit-unified-5h-reset": String(reset - 3600),
+			"anthropic-ratelimit-unified-7d-utilization": "1",
+			"anthropic-ratelimit-unified-7d-reset": String(reset),
+		});
+
+		const result = await run();
+
+		expect(result.providerDiagnostic?.resetsAt).toBe(reset * 1000);
+	});
+
+	it("does not wait for an unspent Claude window", async () => {
+		const reset = Math.ceil(Date.now() / 1000) + 7200;
+		stubHttp(429, errorBody("rate_limit_error"), "application/json", {
+			"anthropic-ratelimit-unified-5h-utilization": "0.5",
+			"anthropic-ratelimit-unified-5h-reset": String(reset),
+		});
+
+		expect((await run()).providerDiagnostic?.resetsAt).toBeUndefined();
+	});
+
 	it.each([
 		[401, "authentication_error", "auth"],
 		[429, "rate_limit_error", "rate_limit"],

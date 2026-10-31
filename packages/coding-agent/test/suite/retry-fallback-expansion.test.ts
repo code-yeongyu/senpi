@@ -222,8 +222,6 @@ describe("bare-key opt-out tombstones", () => {
 		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([
 			`anthropic-subscription/${OPUS5}:max`,
 			`anthropic/${OPUS5}:max`,
-			`anthropic-subscription/${OPUS48}:max`,
-			`anthropic/${OPUS48}:max`,
 		]);
 	});
 });

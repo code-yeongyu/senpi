@@ -226,6 +226,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 */
 	streamStartTimeoutMs?: number;
 
+	/**
+	 * Bytes the provider reports through `onTransportActivity` (SSE pings, keep-alive comments) keep the start and
+	 * idle bounds from firing while they keep arriving within one bound. This caps how long keep-alives alone may
+	 * hold a request without any assistant event. Unset or non-positive values leave keep-alives unbounded.
+	 */
+	streamKeepAliveTimeoutMs?: number;
+
 	/** Provider/SDK timeout override for only the first request in this loop invocation. */
 	initialRequestTimeoutMs?: number;
 
@@ -354,6 +361,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	restorePendingMessages?: (queue: "steering" | "followUp", messages: AgentMessage[]) => Promise<void> | void;
 
 	/**
+	 * Called with the queued messages the loop is about to put into the context, after they were drained and
+	 * before any of them is inserted or sent. A rejection keeps them out of this turn (they are restored), so a
+	 * message is never seen by a provider without its consumption committed first (senpi#3549).
+	 */
+	commitQueuedConsumption?: (queue: "steering" | "followUp", messages: AgentMessage[]) => Promise<void>;
+
+	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one
 	 * - "parallel": preflight tool calls sequentially, then execute allowed tools in concurrent waves;
@@ -452,6 +466,11 @@ export interface AgentState {
 	 * `content` or `sections` still apply on top of it.
 	 */
 	systemPrompt: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions; see
+	 * {@link AgentContext.systemPromptStablePrefix} (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
@@ -584,6 +603,13 @@ export interface AgentContext {
 	 * `normalizeContext()`. Upstream-built contexts carry the prompt in transcript system messages.
 	 */
 	systemPrompt?: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions, followed by content that is not
+	 * (memory, MCP instructions). Providers with block-level prompt caching put the system breakpoint at
+	 * its end so another session can read it from cache. Ignored unless `systemPrompt` starts with it
+	 * (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for execution in this run. */
@@ -611,7 +637,7 @@ export type AgentEvent =
 	| { type: "turn_start" }
 	| { type: "turn_end"; message: AgentMessage; toolResults: ToolResultMessage[] }
 	// Message lifecycle - emitted for system, user, assistant, and toolResult messages
-	| { type: "message_start"; message: AgentMessage }
+	| { type: "message_start"; message: AgentMessage; streaming?: true }
 	// Only emitted for assistant messages during streaming
 	| { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
 	| { type: "message_end"; message: AgentMessage }

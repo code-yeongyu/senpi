@@ -146,7 +146,6 @@ export function spawnCursorCli(input: CursorCliTransportInput): CursorCliTranspo
 		windowsHide: true,
 	});
 	if (child.pid === undefined) {
-		child.kill("SIGKILL");
 		throw new Error("cursor-agent spawned without a process id");
 	}
 

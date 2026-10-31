@@ -83,6 +83,7 @@ describe("vendored websearch keenable provider", () => {
 				},
 				{ title: "Described", url: "https://desc.example.com", description: "Description text" },
 				{ url: "https://untitled.example.com" },
+				// oxlint-disable-next-line eslint/no-script-url -- a javascript: URL literal the code checks for, never navigated to
 				{ title: "Bad scheme", url: "javascript:alert(1)" },
 				{ title: "No url" },
 			],

@@ -13,6 +13,18 @@ import { nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
 
 const unprivileged = process.platform !== "win32" && process.getuid?.() !== 0;
 
+function deliveryCopiesOnDisk(sessionPath: string, marker: string): number {
+	const transcript = readFileSync(sessionPath, "utf8")
+		.split("\n")
+		.filter(Boolean)
+		.filter((line) => {
+			const entry = JSON.parse(line) as { type: string; customType?: string };
+			return entry.type !== "custom" || entry.customType !== "work-custody";
+		})
+		.join("\n");
+	return transcript.split(marker).length - 1;
+}
+
 describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses", () => {
 	it("is settled as failed, does not hold later deliveries, and is redelivered once the file takes writes", async () => {
 		// Given: a quiet session whose file refuses writes.
@@ -56,8 +68,7 @@ describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses"
 		// Then: it is admitted, written once, and emitted.
 		expect(redelivered).toMatchObject({ data: { admitted: [{ delivery_id: "refused-1", kind: "started" }] } });
 		await settled;
-		const text = readFileSync(sessionPath, "utf8");
-		expect(text.split("DELIVERY refused-1").length - 1).toBe(1);
+		expect(deliveryCopiesOnDisk(sessionPath, "DELIVERY refused-1")).toBe(1);
 		expect(session.externalAdmission.list()).toEqual({ pending: [], emitted: ["ok-1", "refused-1"] });
 	});
 
@@ -125,7 +136,7 @@ describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses"
 			midRun: kindOf(midRunWake),
 			afterSettle: kindOf(afterSettle),
 			mostCopiesInContext: Math.max(...contextCopies),
-			onDisk: readFileSync(sessionPath, "utf8").split("DELIVERY refused-1").length - 1,
+			onDisk: deliveryCopiesOnDisk(sessionPath, "DELIVERY refused-1"),
 			ledger: session.externalAdmission.list(),
 		}).toEqual({
 			midRun: "already_admitted",

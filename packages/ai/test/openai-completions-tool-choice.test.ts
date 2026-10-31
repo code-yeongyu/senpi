@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
-import { getModel, normalizeContext, stream, streamSimple } from "../src/compat.ts";
+import { getModel, getModels, normalizeContext, stream, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
 import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
@@ -1608,7 +1608,7 @@ describe("openai-completions tool_choice", () => {
 		const providers = ["xiaomi", "xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp"] as const;
 
 		for (const provider of providers) {
-			const model = getModel(provider, "mimo-v2.5-pro")!;
+			const model = getModel(provider, "mimo-v2.6-pro")!;
 			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
 			expect(model.compat?.thinkingFormat).toBe("deepseek");
 			expect(model.compat?.supportsDisabledThinking).toBe(false);
@@ -1630,12 +1630,12 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("replays Xiaomi MiMo assistant tool calls with empty reasoning_content when thinking is missing", async () => {
-		const model = getModel("xiaomi", "mimo-v2.5-pro")!;
+		const model = getModel("xiaomi", "mimo-v2.6-pro")!;
 		const assistantMessage: AssistantMessage = {
 			role: "assistant",
 			api: "openai-completions",
 			provider: "xiaomi",
-			model: "mimo-v2.5-pro",
+			model: "mimo-v2.6-pro",
 			content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } }],
 			usage: {
 				input: 0,
@@ -2144,7 +2144,19 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
-		const model = getModel("openrouter", "deepseek/deepseek-r1")!;
+		// Any OpenRouter chat model with the OpenRouter reasoning format: a pinned live id leaves the catalog on regeneration.
+		const model = getModels("openrouter").find(
+			(candidate) =>
+				candidate.api === "openai-completions" &&
+				candidate.reasoning &&
+				candidate.compat !== undefined &&
+				"thinkingFormat" in candidate.compat &&
+				candidate.compat.thinkingFormat === "openrouter",
+		);
+		if (!model)
+			throw new Error(
+				"the OpenRouter catalog has no openai-completions reasoning model with the openrouter thinking format",
+			);
 		let payload: unknown;
 
 		await streamSimple(

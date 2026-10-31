@@ -30,6 +30,11 @@ export class AgentSettledDelivery {
 	#actions: DeferredAgentSettledAction[] = [];
 	#turnClaims: DeferredTurnClaim[] = [];
 
+	/** True while `agent_settled` handlers run: a turn they trigger is deferred until the window closes. */
+	get active(): boolean {
+		return this.#generation !== undefined;
+	}
+
 	begin(userAbortGeneration: number): void {
 		this.#generation = userAbortGeneration;
 		this.#actions = [];

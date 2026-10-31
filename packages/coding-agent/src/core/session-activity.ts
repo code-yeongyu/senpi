@@ -17,9 +17,14 @@
  * added later cannot be silently missed by one call site.
  */
 
+import { normalizeWaitItems, type WaitSourceItems, wakeSourceItems } from "./lifecycle-wait-items.ts";
+
 /** Live counts of extension-published wake sources, keyed by source name. */
 export class WakeSourceTracker {
-	private readonly counts = new Map<string, number>();
+	private readonly counts = new Map<
+		string,
+		WaitSourceItems & { readonly activeCount: number; readonly kind: "children" | "background" }
+	>();
 
 	/**
 	 * Folds one `wake_source_state` payload in. Unknown shapes are ignored: a
@@ -27,10 +32,16 @@ export class WakeSourceTracker {
 	 */
 	observe(data: unknown): void {
 		if (typeof data !== "object" || data === null) return;
-		const { source, activeCount } = data as { source?: unknown; activeCount?: unknown };
+		if (!("source" in data) || !("activeCount" in data)) return;
+		const { source, activeCount } = data;
 		if (typeof source !== "string" || source.length === 0) return;
 		if (typeof activeCount !== "number" || !Number.isFinite(activeCount)) return;
-		if (activeCount > 0) this.counts.set(source, activeCount);
+		if (activeCount > 0)
+			this.counts.set(source, {
+				activeCount,
+				kind: "kind" in data && data.kind === "children" ? "children" : "background",
+				...normalizeWaitItems(wakeSourceItems(data)),
+			});
 		else this.counts.delete(source);
 	}
 
@@ -42,6 +53,25 @@ export class WakeSourceTracker {
 	/** Sources reporting live work, for diagnostics. */
 	get activeSources(): readonly string[] {
 		return [...this.counts.keys()];
+	}
+
+	/** Live obligation counts; publishers without a kind remain background work. */
+	get activeCounts(): { readonly children: number; readonly background: number } {
+		let children = 0;
+		let background = 0;
+		for (const record of this.counts.values()) {
+			switch (record.kind) {
+				case "children":
+					children += record.activeCount;
+					break;
+				case "background":
+					background += record.activeCount;
+					break;
+				default:
+					record.kind satisfies never;
+			}
+		}
+		return { children, background };
 	}
 }
 

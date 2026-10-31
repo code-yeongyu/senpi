@@ -96,7 +96,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-responses",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		expectedTools: ["read", "bash", "apply_patch", "grep"],
+		expectedTools: ["apply_patch", "bash", "grep", "read"],
 		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
 			"custom_tool_call:apply_patch",
@@ -111,7 +111,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-responses",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		expectedTools: ["read", "bash", "apply_patch", "grep"],
+		expectedTools: ["apply_patch", "bash", "grep", "read"],
 		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
 			"custom_tool_call:apply_patch",
@@ -146,7 +146,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-responses",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		expectedTools: ["read", "bash", "apply_patch", "grep"],
+		expectedTools: ["apply_patch", "bash", "grep", "read"],
 		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
 			"custom_tool_call:apply_patch",

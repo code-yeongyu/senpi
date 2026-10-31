@@ -1,3 +1,696 @@
+## 2026-10-27 - MCP instructions are a volatile system-prompt addition (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the `before_agent_start` result sets `systemPromptCache: "volatile"`.
+
+### Why
+
+- MCP instructions follow the connected server set, so they belong behind the cross-session cache boundary.
+
+### Why an extension could not handle it
+
+- This is the MCP builtin's own handler.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` return in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+
+## 2026-10-29 - An unanchored discovery record never steers OAuth traffic (senpi#4924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: `discoveryState()` returns nothing for a stored record that does not show where its authorization server came from: it has neither that server's metadata, nor protected-resource metadata naming it, nor the MCP server's own origin (`discoveryNamesItsServer`). The SDK's `auth()` (transport 401, modern HTTP fetch, sign-in start and code exchange) and senpi's own `discover()` (sign-in preflight, client_credentials) then discover from the MCP server, and `saveDiscoveryState` applies the senpi#2940 binding before any request to an authorization server.
+- `packages/coding-agent/test/mcp/2940-oauth-issuer-binding.test.ts`: every case fails on any fetch or name resolution outside its fixture, and a table runs each OAuth entry point against a grant that belongs to another authorization server.
+
+### Why
+
+- Given only a stored URL, the SDK fetched that server's metadata and posted the saved refresh token (or an authorization code, or a client_credentials request) to it, before anything checked that the MCP server still names it. The 2940 test passed only because the `.invalid` lookup failed fast, and it timed out on a slow resolver.
+
+### Why an extension could not handle it
+
+- The record is handed to the SDK by the builtin MCP OAuth provider; no hook runs between `discoveryState()` and the SDK's first request.
+
+### Expected merge conflict zones
+
+- LOW: the top of `McpOAuthProvider.discoveryState()` in `oauth-provider.ts`.
+
+## 2026-10-29 - One startup inventory announcement per RPC MCP attach (senpi#4850, fixes #4828)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-window.ts`: new `McpStartupWindows`, a per-session window that holds inventory notifications from an RPC attach until every connect that attach backgrounded has settled, then releases them once.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSession` opens the window for RPC sessions and collects the attach's deferred connects (`#syncFromConfig` `startupConnects`); `#captureWireStatus` holds changed snapshots while the window is open and announces the release with `startupSettled`; `dispose` clears the windows.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts` and `control-inventory.ts`: forward `startupSettled: true` on `senpi.rpc.mcp_inventory.changed`.
+
+### Why
+
+- With parallel eager servers, every connection state change, tool registration and inventory read could announce an intermediate inventory, so the startup event count depended on connect timing and client polling (#4828).
+
+### Why an extension could not handle it
+
+- The capture points and the attach's connect set are private to the builtin MCP service.
+
+### Expected merge conflict zones
+
+- LOW: `attachSession`, the `onDeferred` callback in `#syncFromConfig`, and `#captureWireStatus` in `service.ts`.
+
+## 2026-10-28 - Registered-server ownership handoff to extensions that handle mcp_servers_change (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: on attach, extension-registered servers are merged into the config only when `ctx.extensionConnectsMcpServers?.()` is not `true`; `mcp.json` servers are merged as before.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: `McpSessionContext` gains the optional `extensionConnectsMcpServers` getter.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-types.ts`: upstream's rule is that the extension handling `mcp_servers_change` connects registered servers; if the built-in gateway also connected them, every registered server would get two connections.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-types.ts`: the built-in gateway decides what it connects; another extension cannot stop it from merging registered servers.
+
+### Expected merge conflict zones
+
+- LOW: the `mergeExtensionMcpServers` call in `attachSession` and the `McpSessionContext` type.
+
+## 2026-10-27 - Negotiate advertised legacy MCP versions (senpi#4402)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts`: use the SDK's supported legacy versions when discovery rejects the modern version, select the existing legacy handshake when appropriate, and name server versions when neither era is supported.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: retain the actionable version-negotiation diagnostic in stdio connection errors.
+
+### Why
+
+- Servers advertising implemented legacy versions in a `-32022` error failed to connect because the probe considered only modern versions. Modern selection and its single retry remain unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts` own transport negotiation before extension requests can run.
+
+### Expected merge conflict zones
+
+- LOW: version selection in `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts` and discovery errors in `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`.
+
+## 2026-10-25 - Follow negotiated modern MCP tasks (senpi#4195, #4238)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: negotiate `io.modelcontextprotocol/tasks` only with advertising modern servers and follow `tools/call` task handles before SDK output validation; reuse the originating MRTR presenter and authority checks for task input.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts`: own polling, terminal results, deduplicated task input, and `tasks/cancel` on abort or the separate 30-minute cap (`SENPI_MCP_TASK_TIMEOUT_MS`).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/errors.ts`: name the task and lifetime setting on cap expiry and retain numeric task failure codes.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: route task requests with `Mcp-Name = taskId`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: centralize abortable polling timers and close observers, and remove interrupted-promise listeners immediately on abort.
+- `packages/coding-agent/docs/mcp.md`: document the lifetime setting beside request timeout settings.
+- `packages/coding-agent/test/mcp/modern-tasks.test.ts`, `modern-tasks-http.test.ts`, and `fixtures/mrtr-lifecycle.ts`: cover task settlement, cancellation, polling, consent, disconnect cleanup, routing headers, and tool-row status through real modern SDK requests.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: the adapter rejected every task handle. The lead selected Option 2: task lifetime is separate from RPC timeouts, while ordinary calls retain `min(maxTotalTimeout, 9 * requestTimeout + 300000)`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts`: per-poll deadlines must not prematurely end a valid long-running task; the independent cap and abort path explicitly request task cancellation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: negotiation, request origins, MRTR presenters, and final SDK result validation are owned by the builtin client.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: modern dispatch and consent collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: routing-header method selection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: safe lifecycle helpers.
+
+## 2026-10-25 - MRTR review cleanup and startup diagnostics (#4226)
+
+### What changed
+
+- `modern/consent-queue.ts` pumps after removing an aborted queued job. This is structural cleanup: active jobs already pump on settlement and initially aborted jobs pump before returning.
+- `modern/request.ts` reads `DEFAULT_REQUEST_TIMEOUT_MSEC` through `sdk.lazy.ts` instead of duplicating the SDK default.
+- `transport-sdk.ts` releases complete and trailing buffered stderr before forwarding an unclassified child's close event, including project transports whose aggregate stderr stream does not end.
+
+### Why
+
+- Request budgets must follow SDK defaults, and a child that fails before negotiation must retain startup diagnostics. Classified modern diagnostics stay suppressed and enforced private forms retain redaction.
+
+### Why an extension could not handle it
+
+- These paths own consent scheduling, SDK request budgets, and transport diagnostics before extension delivery.
+
+### Expected merge conflict zones
+
+- `modern/consent-queue.ts`, `modern/request.ts`, `sdk.lazy.ts`, and `transport-sdk.ts`: abort cleanup, lazy SDK loading, and stdio close handling.
+
+## 2026-10-25 - Parameter-header validation diagnostics (senpi#4246)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/parameter-headers.ts`: return fixed rejection reasons, warn once per rejected tool, traverse unknown keyword objects and arrays while skipping instance-data keywords, and reject present values that do not match annotated primitive types.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/transport.ts`: send rejection warnings to the connection logger and preserve local validation errors without treating them as transport failures.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/dispatch.ts`: pass the existing connection logger into the modern HTTP transport.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: preserve the typed local validation error across the request adapter's diagnostic boundary.
+
+### Why
+
+- SEP-2243 requires properties-only annotation paths and recommends warnings naming rejected tools and their reasons. Silently omitting a present, mistyped argument's header sends a misleading request to the server.
+- Regression coverage now asserts a projected header before catalog refresh, so removing parameter projection cannot pass an absence-only assertion.
+
+### Why an extension could not handle it
+
+- The builtin owns catalog filtering, per-connection annotation paths, HTTP header projection, and transport error classification.
+
+### Expected merge conflict zones
+
+- Annotation traversal and value extraction in `modern/parameter-headers.ts`, catalog delivery and local errors in `modern/transport.ts`, transport construction in `modern/dispatch.ts`, and error classification in `modern/request.ts`.
+
+## 2026-10-24 - Validate OAuth discovery issuers before credential use (senpi#4194)
+
+### What changed
+
+- `auth/oauth-issuer.ts` validates metadata against the discovered authorization server, preserving exact PRM identifiers and the SDK's origin fallback for path-served resources without PRM.
+- `auth/oauth-provider.ts` validates both cached and new discovery, deletes credentials bound to another issuer before re-registration, stamps newly stored credentials with the validated issuer, and declares native registration for loopback redirects.
+- `auth/oauth.ts` checks the issuer of pasted error responses before exposing their contents and persists injected discovery through the same validation boundary.
+- `auth/oauth-refresh.ts` checks the client registration's issuer as well as the token's issuer before sending a refresh request.
+- Credential stamps use one canonical form that removes only an origin-only URL's final slash. Existing root-fallback sign-ins refresh without registering again, and grants without AS metadata are stamped from the validated discovery issuer.
+- Invalid cached metadata is rediscovered rather than requiring logout. A callback without trusted discovery is rejected before exchange, and redirect-less clients omit `application_type`.
+
+### Why
+
+- SDK discovery parsed metadata without comparing its issuer. Direct client-credentials grants and refresh could retain or use registrations belonging to a different issuer.
+
+### Why an extension could not handle it
+
+- Discovery persistence and credential use are owned by the builtin's SDK OAuth provider.
+
+### Expected merge conflict zones
+
+- LOW: discovery persistence in `auth/oauth-provider.ts`, pasted redirect parsing in `auth/oauth.ts`, and grant validation in `auth/oauth-refresh.ts`.
+
+## 2026-10-25 - Listen for modern MCP catalog and resource changes (#4234)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: own the long-lived listen request, capability-derived filters, acknowledgment subsets, subscription ID correlation, complete paginated resource URI sets, cancellation, and bounded reconnect backoff. Matching response IDs end streams even without subscription metadata. Accepted resource URIs gate delivery; an acknowledged replacement takes over before canceling its predecessor. Missing acknowledgment filters fail with backoff, which resets only after an accepted notification. Each resource sweep owns its URI buffer, with only the latest sweep allowed to publish.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: route HTTP subscription messages separately from finite SDK requests and dispose streams with the bridge.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: reestablish subscriptions on each negotiated stdio connection and correlate their notifications alongside ordinary in-flight request IDs.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: modern resource lists supply the listen filter instead of sending the removed resources/subscribe method; legacy subscriptions are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: keep subscription retry scheduling and cancellation on the shared clock, resolving the current runtime timers so deterministic fake-timer coverage exercises the same lifecycle.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: modern servers cannot push catalog or resource changes without an explicit listen request. Graceful completion must not reconnect, filter replacement must not create a delivery gap, unsupported resource updates must not refresh the catalog, and concurrent listings must not mix or republish stale resource sets.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: a listen stream must not expire with the SDK's ordinary request timeout or block tool calls.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: notifications on a shared stdio channel must match an acknowledged subscription ID.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: the modern subscription filter replaces the legacy per-resource RPC.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: raw subscription retry timers bypassed the MCP async-source guard.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: the builtin transport owns negotiation, wire request IDs, stream lifetime, and disconnect.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: the builtin resource helper chooses the protocol-specific subscription mechanism.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: the builtin owns the shared scheduler used by transport lifecycles.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: subscription state and filter updates.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: message delivery and close hooks.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: modern send and receive wrappers.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: resource subscription helper.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: shared clock scheduling and cancellation.
+
+## 2026-10-25 - Preserve modern MCP tool schemas and JSON results (senpi#4191)
+
+### What changed
+
+- Introduced explicit modern tool/result contracts and era-specific operations over the existing connection and MRTR request owner. Modern lists and calls bypass the SDK's legacy tool helpers.
+- Catalogs and persistent caches retain raw input/output schemas and the negotiated era. Modern exposure retains additional properties constraints and reference siblings.
+- Draft 2020-12 validates schemas, arguments, and structured output without coercion, network reference fetching, or shared schema identifiers. Schema depth and node counts are bounded.
+- Discovery and cache loading reject only tools with invalid or unsupported input/output schemas, warning with the tool name and a fixed reason, never argument values. Cached registration uses the connected client's era, including caches written before the era flag existed; an invalid current schema returns a structured refusal.
+- Modern tool operations use static imports and the service uses a top-level tool-contract type import. SDK schemas still load through the existing documented `sdk.lazy.ts` boundary, preserving the startup import budget.
+- Legacy cache entries retain the absent modern flag after connection, so unchanged metadata does not invalidate an existing once-only permission approval.
+- Legacy SDK helpers and legacy exposure conversion remain unchanged.
+
+### Why
+
+- The SDK's object-root schemas and draft-07 validator rejected valid modern definitions and falsy/non-object structured results before model exposure.
+- MCP 2026-07-28 `basic/index.mdx:255-258,291-293` requires 2020-12 and graceful unsupported-dialect errors, not draft-07 support. The explicit draft-07 example is rejected per tool rather than removing the server's valid tools.
+
+### Why an extension could not handle it
+
+- The builtin owns discovery, catalog persistence, request dispatch, and model-tool registration before third-party extensions can repair the rejected results.
+
+### Expected merge conflict zones
+
+- Catalog/cache tool types, exposure registration and invocation validation, and the shared service's wire-tool type alias.
+
+## 2026-10-25 - Fixed processing error for ambiguous legacy origins (#4248)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/elicitation.ts`: reuse the private processing-error helper for ambiguous legacy origins, returning code `-32603`, message `Elicitation processing unavailable`, and no `data`.
+
+### Why
+
+- The approved presenter contract requires ambiguity and presenter unavailability to expose the same body-free error. The previous branch exposed an explanatory message and reason field.
+- This supersedes #4210's explanatory-error and `data.reason: "ambiguous_legacy_origin"` descriptions in the private legacy routing entry. No form is displayed or human answer admitted; enforcement-off behavior is unchanged.
+
+### Why an extension could not handle it
+
+- The builtin MCP request handler owns the JSON-RPC error response before any form is displayed.
+
+### Expected merge conflict zones
+
+- LOW: the ambiguous-origin branch in `packages/coding-agent/src/core/extensions/builtin/mcp/elicitation.ts`. Enforcement-off behavior is unchanged.
+
+## 2026-10-25 - Modern HTTP parameter headers (#4229)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/parameter-headers.ts`: validate schema annotations, retain exact property paths per connection, encode primitive values, and omit absent or invalid values.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/transport.ts`: filter invalid tool definitions on JSON and SSE catalog responses and derive parameter headers from the matching call arguments.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: use standard UTF-8 Base64 with the exact sentinel for unsafe or ambiguous routing names.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/http-fetch.ts`: discard configured parameter headers before merging body-derived metadata.
+
+### Why
+
+- Modern HTTP peers require annotated parameters in routing headers and reject names encoded with the former nonstandard sentinel.
+- Configured headers and unrelated arguments must not become tool parameter metadata. Legacy HTTP and stdio behavior remains unchanged.
+
+### Why an extension could not handle it
+
+- The builtin transport owns HTTP headers and must reject invalid catalog definitions before the SDK exposes them.
+
+### Expected merge conflict zones
+
+- Request header derivation and catalog delivery in `modern/transport.ts`, configured-header merging in `modern/http-fetch.ts`, and routing-name encoding in `modern/wire.ts`.
+
+## 2026-10-25 - Private legacy and modern MCP form routing (#4197)
+
+### What changed
+
+- `elicitation.ts`: route enforced legacy requests through private validation and settlement, with body-free processing failures when no presenter is available.
+- `elicitation.ts` and `request-origin.ts`: explicitly report `-32603` with `data.reason: "ambiguous_legacy_origin"` when concurrent legacy tools/call requests have no safely attributable parent; recommend sequential calls or MRTR without displaying or admitting a form.
+- `modern/request.ts` and `request-origin.ts`: retain exact operation origins, recheck private presenter readiness at attempts, and distinguish operation termination from presenter cancellation.
+- `modern/consent-queue.ts`: share the existing abort-aware FIFO with the opt-in local authority while preserving the default MRTR queue.
+- `modern/form-schema.ts` and `modern/elicitation.ts`: share whole-form validation and actual-presentation acknowledgement with RPC and local presenters.
+- `service.ts`, `shared-connection.ts`, and `host-registry.ts`: propagate live readiness subscriptions and private origins. Enforced shared pools observe any ready owner instead of freezing eligibility in their creation-time key; per-operation authority still selects the presenter.
+- `service.ts`: capture the declaring session's binding and UI references while its extension context is live. Readiness checks keep observing the binding's presenter without dereferencing a stale context after release or degrading the connection still used by a peer.
+- `connection.ts` and `modern/client.ts`: record the negotiated legacy capability and reconnect when a grant or revocation makes it stale, rechecking readiness before publishing an initialization. Modern MRTR connections keep per-attempt capabilities without reconnecting.
+- `modern/request.ts`: leave the SDK request method untouched for default legacy clients, preserving their origin and concurrent-call behavior.
+- `transport-sdk.ts`: retain private stderr diagnostic records and allowlisted system error codes while redacting arbitrary server text that may echo forms; preserve ordinary legacy stderr.
+
+### Why
+
+- A session's ordinary UI provider cannot authenticate a human or safely select an owner for an unsolicited legacy form.
+- A shared connection can outlive its original declarer. Re-reading that released session's `ctx.ui` during an ordinary connect check threw `StaleExtensionContextError` and made the peer's tools unavailable despite unchanged legacy-form eligibility.
+
+### Key decisions
+
+- Modern capability metadata remains request-scoped. Legacy capability advertisement is fixed within each connection and renegotiated when live readiness changes; every elicitation still checks its origin and presenter.
+- The SDK's received legacy handler metadata has no reliable parent tool-call ID. Ambiguous concurrent legacy operations fail with a clear coded processing error under enforcement; they are not assigned to a guessed owner.
+- A no-human request is a processing failure, explicit refusal is decline, and dismissal after actual presentation is cancel.
+- Private schemas and submitted content are validated before the terminal latch; rejected submissions never admit human input.
+
+### Why an extension could not handle it
+
+- The MCP service owns transport initialization, request origins, shared leases, and continuation dispatch.
+
+### Expected merge conflict zones
+
+- MEDIUM: the stacked MRTR request executor and shared elicitation validator.
+- LOW: service connection creation and stderr classification.
+
+## 2026-10-25 - Private terminal consent for modern MCP continuations (#4207)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: interpret intermediate results before method-result validation, replace continuation state, issue fresh request IDs, and bound rounds, bytes, consent, and operation lifetime.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/client.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/consent-queue.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/inputs.ts`: separate negotiated client construction, binding-owned consent scheduling, and bounded batch parsing from operation execution.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/elicitation.ts`: collect flat primitive forms with explicit defaults, unset choices, review, editing, submission, and cancellation.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/form-schema.ts`: keep schema validation and typed value checks separate from private consent collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/consent-queue.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/errors.ts`: reject unpresented aborted jobs with a local processing error and retain numeric remote error codes without server messages.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/request-origin.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/prompts.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: carry host-issued session and authority ownership through tool, prompt, resource, and shared-client paths.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/shared-lease.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/health.ts`: terminate pending consent on observed lifecycle invalidation and prevent automatic replay of logical MRTR errors.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/dispatch.ts`: activate the adapter only after positive modern negotiation while preserving the legacy SDK request method and legacy stderr diagnostics.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/transport.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/http-fetch.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/diagnostics.ts`: cancel by request ID, fence dispatch, suppress raw modern diagnostics, and avoid authenticated continuation replay.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: an intermediate `input_required` result is not a completed tool, resource, or prompt result and must not reach the model.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/elicitation.ts`: form acceptance requires the originating terminal human; unpresented requests terminate, explicit refusal declines, and presented dismissal cancels.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/request-origin.ts`: a pooled physical connection must not lend one session another session's human capability, consent, credentials, or continuation state.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts`: modern diagnostic privacy must not discard legacy startup and reconnect diagnostics.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: ordinary extensions receive SDK-validated method results after the point where intermediate control results must be intercepted.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/request-origin.ts`: only the host can issue nonserializable session ownership and recheck the existing observed authority boundary.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts`: transport dispatch, request cancellation, protocol negotiation, and raw diagnostic delivery precede extension callbacks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-sdk.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/dispatch.ts`: reconcile independent legacy/headless capability changes without restoring a connection-global modern human capability.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: method-result interception, operation budgets, and dispatch authority checks.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/request-origin.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/prompts.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: request-local origin propagation.
+
+## 2026-10-24 - Error on unavailable elicitation and omit print/json capability (senpi#4185, PR #4196)
+
+### What changed
+
+- `index.ts` binds an elicitation UI only when the session context has human UI.
+- Connection options carry the declaring mode's elicitation support through reconnect and transport materialization. Legacy initialization, modern HTTP discovery/requests, and modern stdio metadata use the same capability selection.
+- Clients without elicitation support reject unsolicited requests with the SDK's `McpError` processing error through its public fallback handler, which does not require advertising a capability. The shared pool's single in-flight lessee routing is unchanged; an unavailable or ambiguous owner UI reaches the same error path.
+- Boolean collection uses `select` instead of `confirm`: the latter collapses cancellation into `false` in RPC, while the existing selection protocol preserves it as `undefined`. This also covers automated clients that do not declare a connection role.
+- An undefined input cancels even for an optional field; an empty answer may still skip that field. Empty submissions require an explicit Submit selection.
+
+No human at request time -> processing error (`-32603`, fixed message, no form content); dismissed or automatically cancelled dialog -> cancel with no content; decline only from an explicit Decline control, which this PR does not add (tracked in #4188/#4189). Distinguishing automated cancellation from human dismissal requires a cancellation-origin contract, tracked in #4197. Explicit Yes/No choices retain their boolean meaning.
+
+### Why
+
+The extension runner's no-op UI returns `false` for confirmation. Treating that object as human UI accepted boolean-only forms without a human response.
+RPC confirmation also maps cancellation to `false`, so changing an automated client's reply alone cannot distinguish cancellation from a human's explicit No.
+
+### Why an extension could not handle it
+
+The builtin owns capability advertisement, transport construction, and the UI provider used by server requests.
+
+### Expected merge conflict zones
+
+- Elicitation UI binding in `index.ts`, connection option propagation, and capability construction in `transport-sdk.ts` and `modern/dispatch.ts`.
+
+## 2026-10-24 - Unreferenced servers keep their identity; catalog caches are read before generations (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-generation.ts`: `resolveWantedMcpGenerations` keeps the declared `configHash` as the generation identity of a server that declares no reference, instead of re-hashing its snapshot under the resolving session's agent dir.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `#syncFromConfig` reads the catalog caches before it resolves the generations, so the cache read stays the sync's first await.
+
+### Why
+
+- A credential re-sync while a session was between release and re-attach resolved that session's unreferenced server under the peer's agent dir. The new hash re-keyed the server, which was stopped and re-spawned, and the re-spawned process outlived the test worker.
+- Resolving the generations before the cache read let a release land first, so the attach of a session that quit never reached its cache read.
+
+### Why an extension could not handle it
+
+- Connection identity and the sync order are internal to the builtin MCP service.
+
+### Expected merge conflict zones
+
+- LOW: `resolveWantedMcpGenerations` in `config-generation.ts` and the cache-read block of `#syncFromConfig` in `service.ts`.
+
+## 2026-10-24 - Project skill servers refuse reference objects under the env policy (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: a project-provenance skill server that declares a reference object is skipped with the existing named refusal before the project environment policy runs.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-references.ts`: `plainMcpDeclaration` and `plainMcpServerConfig` refuse the first reference and narrow a declaration to plain strings; `project-env.ts` and `project-skill-policy.ts` take only that narrowed form.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-connection.ts`: the project authority is looked up on the declared config, because the connection generation is a new snapshot object.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-spec.ts`: the stdio spec carries the project policy's `projectPolicy` and `resolveBeforeStart`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: a connection's key, catalog-cache identity and shared pool key combine the declaration hash (which carries a project server's policy identity) with the resolved generation hash, so an env-only edit of a project skill server re-keys and reconnects. A reference that appears in the skill file between the refusal check and the policy's re-read is reported as the same named skip.
+
+### Why
+
+- The project environment policy (senpi#3796) expands only `${VAR}` strings and its materialized config spawns the child, so a reference object would reach the spawn unresolved or read ambient values outside the grants. Failing closed keeps the grant policy whole; resolving references inside the policy is a follow-up.
+
+### Why an extension could not handle it
+
+- The policy and the MCP service are the builtin MCP extension itself.
+
+### Expected merge conflict zones
+
+- `attachSkillMcpServers` in `service.ts`, `createMcpSessionConnection`, and the stdio spec builder.
+
+## 2026-10-23 - Close reference output and startup diagnostic gaps (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/guard/output-guard.ts`: sanitizes a separate content projection before returning inline text or writing spill files. Model-facing results are sanitized by default: provider requests leave the process, so a server echo must not forward a resolved credential to the provider. No documented pass-through contract was found; the MCP documentation already promises tool-output redaction. Wire replies and resource identifiers remain raw in memory.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/call.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts`: sanitize progress notifications, result details and user-facing tool errors, including structured results mapped to text.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: sanitizes resource listings, read previews, error messages and expanded mentions without changing the URI sent to the server.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-generation.ts`: logs each typed reference failure and clears obsolete failures on the next sync; failed servers still open no transport and do not prevent sibling connections.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: expose failed reference resolution as `degraded` with the sanitized named `lastError` in status and RPC inventory. The `needs_auth` snapshot override also redacts its error before status and RPC projection, without modifying the connection's original error.
+
+### Why
+
+- Real CLI QA found resolved values in RPC tool results despite redacted logs, and missing-reference servers silently remained `enabled` in RPC inventory. The existing failure map preserved containment but was not projected to all user-facing surfaces.
+
+### Why an extension could not handle it
+
+- Tool-result projection, spill persistence and pre-transport failure capture belong to the MCP builtin. A downstream extension cannot reliably intercept every sink.
+
+### Expected merge conflict zones
+
+- LOW: content projection in `packages/coding-agent/src/core/extensions/builtin/mcp/guard/output-guard.ts`, `expose/call.ts`, `expose/register.ts` and `resources.ts`.
+- MEDIUM: `#serverSnapshot` and `#captureWireStatusServer` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; failure capture in `config-generation.ts`.
+- LOW: optional `lastError` on `McpWireStatusServer` in `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`.
+
+## 2026-10-22 - Key MCP identities with a per-installation secret and adopt legacy caches by credential (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity-key.ts`: the installation key `config-identity.key` in the agent directory is 32 random bytes written to a private temporary file and published with `link()`, so it is complete or absent and never replaced. An existing key is used only as a regular file owned by the user, mode `0600`, exactly 32 bytes. Without a valid key, identities are `ephemeral:` HMACs under a per-process key. An invalid file produces one warning per path naming the problem and repair, explaining that persistent catalog caching is disabled and a restart is required after repair; the file stays untouched and key bytes are never logged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity.ts` and `auth/catalog-identity.ts`: `hashConfig` and the catalog credential identity are HMAC-SHA-256 under that key; the unkeyed forms remain only to read entries earlier builds wrote.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`: literal-header and log redaction fingerprints are keyed too.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: an `ephemeral:` identity is never persisted.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache-adoption.ts` and `service.ts`: a cache entry written under the unkeyed identities is adopted, and rewritten under the keyed ones, only when both its config hash and its credential identity match, so offline lazy catalogs keep working and a changed account never inherits another's catalog.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts` and `config-generation.ts`: identities are keyed with the session's agent directory.
+
+### Why
+
+- A plain SHA-256 of a config or a bearer token is an offline-guessable fingerprint of the secret it covers, and it is persisted in the catalog cache and exposed in status.
+
+### Why an extension could not handle it
+
+- Catalog identity, cache persistence and connection admission are private to the MCP builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: the cache lookup in `#syncFromConfig` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+- LOW: `hashConfig` in `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity.ts` and `mcpCredentialIdentity` in `auth/catalog-identity.ts`.
+
+## 2026-10-22 - Sanitize MCP sinks through the resolved-reference registry (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`: every log line, in the ring buffer and the log file, is scrubbed of registered values after the existing pattern redaction.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: the catalog cache persists a redacted copy; the in-memory catalog, whose resource URIs are sent back on subscribe, keeps the server's exact strings.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-snapshot.ts`, `diagnose.ts` and `service.ts`: server snapshots, connect diagnostics and the RPC wire status carry redacted text; the original errors are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts`: `/mcp` error notifications are redacted.
+
+### Why
+
+- These are the MCP outputs that leave the process or are persisted for display; a reflected value must not reach any of them.
+
+### Why an extension could not handle it
+
+- The MCP logger, catalog cache, status snapshots and commands are private to the builtin.
+
+### Expected merge conflict zones
+
+- LOW: `#formatLine` in `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`.
+- LOW: `writeMcpCachedServer` in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`.
+- LOW: `#captureWireStatus` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+
+## 2026-10-22 - Admit MCP references by source and resolve them per connection generation (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-schema.ts`: `headers.*`, `env.*` and `args[]` accept exact `$file`, `$env` and `$concat` objects; `url`, `command`, `cwd` and OAuth fields keep refusing them. `McpServerDeclaredConfig` is the declared server; `McpServerConfig` stays the resolved snapshot every connection, transport and diagnostic uses.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-references.ts`: lists a server's reference positions, records the declaring file as each reference's trusted origin when a trusted file is read, and refuses references from sources that do not expand legacy `${NAME}`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`, `config-extension.ts` and `skill-server.ts`: trusted global, project and Claude files and trusted stdio skills record origins; extension declarations, remote skills and untrusted skills are refused before any I/O, each as its own diagnostic or warning.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-generation.ts`: resolves one connection generation into an immutable snapshot, keys it, and for a declaring server re-reads every transport's references, re-keying when the snapshot changed. A server whose reference fails is reported and never connects; the others continue.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-connection.ts`, `service-snapshot.ts`, `service-types.ts`, `startup-race.ts` and `service-tools-changed.ts`: connection keys, shared-connection identity and catalog identity follow the admitted generation; `reconnectServer` re-reads first and re-keys a changed snapshot; a reference failure is the server's `lastError`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`, `connection-types.ts`, `transport.ts` and `shared-connection.ts`: every transport of a declaring server builds its spec from a fresh snapshot; a shared renewal whose snapshot changed re-keys every lease.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/context.ts`, `auth/catalog-identity.ts`, `auth/commands-auth.ts`, `catalog.ts`, `catalog-cache.ts`, `config-identity.ts`, `config-normalize.ts`, `expose/policy.ts`, `expose/status.ts`, `manager.ts` and `sharing-policy.ts`: accept the declared type where they read only non-reference fields; literal-secret and session-value scans skip reference objects.
+
+### Why
+
+- A secret file or variable referenced from `mcp.json` must be read where legacy `${NAME}` would be expanded and nowhere else, on every connection generation so a rotated file is picked up, and one broken reference must not take down the other servers.
+
+### Why an extension could not handle it
+
+- MCP config loading, trust, connection admission and transport construction are private to the builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: `#syncFromConfig` and `reconnectServer` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+- MEDIUM: `createMcpSessionConnection` in `packages/coding-agent/src/core/extensions/builtin/mcp/service-connection.ts`.
+- LOW: the server schema and types in `packages/coding-agent/src/core/extensions/builtin/mcp/config-schema.ts`.
+- LOW: `materialize` in `packages/coding-agent/src/core/extensions/builtin/mcp/transport.ts`.
+
+## 2026-10-22 - Extract extension server resolution and transport spec building without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-extension.ts`: holds the unchanged `resolveExtensionMcpServer` and `mergeExtensionMcpServers`, moved from `config.ts`, which re-exports them.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-spec.ts`: holds the unchanged stdio and HTTP spec builders, bearer header assembly and `errorMessage`, moved from `transport.ts`; `mcpTransportSpec` selects the builder by transport type exactly as `createMcpTransport` did.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/transport.ts`: import the moved units.
+
+### Why
+
+- Isolates extension admission and transport spec building, which reference support changes, so those edits land in focused modules within the size boundary.
+
+### Why an extension could not handle it
+
+- MCP config loading and transport construction are private to the builtin.
+
+### Expected merge conflict zones
+
+- LOW: the re-export block in `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`.
+- LOW: `createMcpTransport` and the import block in `packages/coding-agent/src/core/extensions/builtin/mcp/transport.ts`.
+
+## 2026-10-21 - Keep typed references opaque during legacy interpolation (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-interpolation.ts`: the legacy walker returns an entire valid reference object unchanged, preserving concat literals and file paths. Environment values retain existing nullish/fallback semantics and receive the shared name-only warnings.
+
+### Why
+
+- Walking inside a reference before its use-time resolution would alter its path and interpret literal concat text.
+
+### Why an extension could not handle it
+
+- Core configuration loading runs this walker before extension merging.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/mcp/config-interpolation.ts`.
+
+## 2026-10-21 - Extract MCP config helpers without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-error.ts`: the existing validation error moved to its own module.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity.ts`: the existing hash implementation moved unchanged to its own module.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-interpolation.ts`: the existing legacy interpolation walker moved unchanged to its own module.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-normalize.ts`: server defaults moved unchanged to their own module.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: imports and re-exports these helpers so existing callers keep the same API.
+
+### Why
+
+- Isolates the interpolation walker and the configuration identity that reference support changes, so those edits land in focused modules.
+
+### Why an extension could not handle it
+
+- Core configuration loading runs these helpers before extension merging.
+
+### Expected merge conflict zones
+
+- MEDIUM: helper imports and exports in `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`.
+- LOW: the four extracted modules.
+
+## 2026-10-18 - Skip MCP attach during size inspection (senpi#3483)
+
+### What changed
+
+- `index.ts`: `session_start.sizesOnly` returns before starting either HTTP or stdio attachment. Normal startup and preview composition retain their existing attach promise.
+
+### Why
+
+Size inspection must not connect to configured MCP servers. The report inventories configured names/count without sizes and explicitly excludes their tools. A real HTTP recording fixture asserts zero connections for diagnostic startup and successful attachment for normal startup.
+
+### Why an extension could not handle it
+
+The built-in starts the attach; another extension cannot undo its network work.
+
+### Expected merge conflict zones
+
+- `index.ts`: `session_start` immediately before `onSessionStart`.
+
+## 2026-10-20 - Retain same-session skill servers during MCP administrative reattach (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` retains skill-resolved servers when the same live session reattaches with the same agent directory, explicit environment and trust decision. Newly loaded system or extension declarations still win name collisions. The effective trust decision is captured in the binding's options.
+
+### Why
+
+The reconnect command reattaches after renewing its server. Rebuilding config without the session's skill declarations disposed every skill transport, including a peer project's pending policy resolution, which then reported that its materialization was invalidated. Skill registrations last for their declaring session; an administrative reattach is not an unload.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` owns the session binding and config reconciliation that dispose unwanted connections. Grant observers and generation invalidation remain authoritative, and changed session identity, trust, environment or agent directory do not inherit these registrations.
+
+### Expected merge conflict zones
+
+Session option capture and config reconciliation in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, especially the load/merge/bind sequence in `attachSession`.
+
+## 2026-10-20 - Scope project skill MCP environment grants to declarations (senpi#3796)
+
+### What changed
+
+Project skill servers use a finite inherited environment, explicit session overrides and declared values, with selective expansion after a names-only grant decision. User skill servers retain their existing resolver. `skills.ts` reauthorizes cached sidecars and frontmatter with provenance plus the allowed-set digest. `index.ts` feeds blocked declarations into retained session notices.
+
+The self-contained `env-grants-store.ts` supplies the shared version-1 schema, canonical declaration digest, atomic locked writer and state-reconciliation observer. Native callers pass the configured agent directory to its exported path resolver. `project-skill-policy.ts` rechecks declaration identity before grant writes and every transport materialization.
+
+`packages/coding-agent/src/core/extensions/builtin/mcp/env-grants-store.ts` retries only Windows `EPERM`, `EACCES` and `EBUSY` atomic replacements while holding the existing lock, with five backoffs totaling 1,550 ms.
+
+The store stays self-contained (no senpi-internal imports; oh-my-openagent vendors it byte-for-byte), so it does not use `core/file-lock.ts`. Instead its proper-lockfile lock passes its own `onCompromised`, which never throws (the default throws from a heartbeat timer and crashes the process) and only records the loss. Before every rename attempt, including each Windows retry, a lost lock refuses the write with `GrantsLockLostError` (code `ELOCKLOST`), leaving the old file and no temporary file. A lost lock is not released, so the new owner's lock is never removed. `test/proper-lockfile-reference-guard.test.ts` allow-lists this one vendored file and checks that it has no relative imports and an `onCompromised` on every lock call. `test/file-lock-lost-writes.test.ts` and `3796-grants-store.test.ts` (a loss during a Windows backoff) cover the refusal.
+
+`connection-types.ts`, `connection.ts`, `service-connection.ts`, `service.ts`, `transport.ts`, `transport-sdk.ts` and `project-stdio-transport.ts` carry policy through initial connect, renew and SDK restart. Project-only pool keys in `sharing-policy.ts` include declaration, policy and provenance digests. `host-registry.ts` observes grants and invalidates all matching underlying connections through `shared-connection.ts`, without waiting for leases to become idle.
+
+### Why
+
+Project declarations must not inherit unrelated ambient secrets or reuse another declaration's grant. Revocation must close an already shared child and prevent stale in-flight materialization.
+
+Concurrent readers, watcher reconciliation and antivirus can briefly hold the destination open on Windows, denying an otherwise valid atomic rename.
+
+### Why an extension could not handle it
+
+This builtin owns declaration resolution, transport construction, the shared connection pool and reconnect lifecycle.
+
+### Expected merge conflict zones
+
+Skill declaration cache keys, service attachment, transport materialization, shared pool identity and connection generation transitions.
+
+## 2026-10-14 - Negotiate modern MCP behind an SDK lifecycle bridge (senpi#3304)
+
+### What changed
+
+- HTTP connections discover the protocol era before constructing the selected transport. Modern HTTP uses stateless POST requests; legacy connections retain the existing SDK materializer and wire behavior after discovery.
+- `modern/sdk-bridge.ts` answers the SDK's `initialize` locally from validated discovery and consumes `notifications/initialized` locally. Connection diagnostics distinguish the real negotiated wire version from the SDK compatibility version.
+- `modern/era.ts` uses the shared request builder, headers and strict code-only classifier in `wire.ts`. Era tests now use -32020 (HeaderMismatch), -32021 (MissingRequiredClientCapabilityError), and -32022 (UnsupportedProtocolVersionError). Named -32000-class forms in the compatibility prose do not establish the modern era; generic error text cannot safely select a different protocol.
+- Stdio probes discovery on the actual spawned transport before initialization and retains that same process for legacy fallback. A modern stdio child keeps that same process: `stdio-probe.ts` answers the SDK's `initialize` locally from discovery (the HTTP bridge's `modernInitializeResult`), drops `notifications/initialized`, and rewrites every later request and notification with the per-request `_meta` at the negotiated version (`wire.ts` `modernizeRequest`, shared with the HTTP transport). A modern stdio child whose discovery answers only with a modern error fails the connect with that error and is closed, never restarted or sent a legacy `initialize`; a -32022 rejection gets one retry at the newest mutual version, as on HTTP.
+- The stdio probe never breaks a legacy server that connects today. It waits at most `STDIO_PROBE_MS` (2 s, capped at a quarter of the connect timeout) under a string id (`senpi-era-probe`) the SDK, which numbers its requests from 0, can never produce. A clean non-modern JSON-RPC error reply, or no reply in time (a slow start, or a server that ignores unknown requests), keeps the SAME process for the legacy handshake; nothing is killed for being slow. Until the SDK's `initialize` gets its reply the probe window stays open: if that silent child then exits or writes non-JSON (a slow `uvx`/`npx` start of an older Python server that dies on the unknown request), it is restarted and the recorded `initialize` is replayed on the fresh process. If its discovery reply arrives late and complete and it then rejects `initialize` with any error, the rejection is replaced by the local initialize answer and the stream switches to modern (a legacy server cannot produce a complete discovery, so any error is safe to upgrade on); a slow-starting modern server thus connects on its first process, with one rejected legacy `initialize` on its wire. If instead `initialize` succeeds, the connection stays legacy for its lifetime even when a late discovery reply arrived. The upgrade relies on the server answering in order, as stdio servers do. A slow server that prints a non-JSON banner to stdout before answering `initialize` is therefore restarted once (startup paid twice), the same rule that applies inside the probe window; it still connects. Requests the SDK sends while a child is being replaced wait for the fresh process, so `initialize` reaches it exactly once. Once `initialize` is answered the probe wrappers are removed. Late probe replies never reach the SDK. Only a child that exited (as older Python SDK servers do on an unknown request) or wrote non-JSON to stdout is reaped and replaced by a fresh process for the untouched legacy handshake; the old child's close event is swallowed once, and a dispose that races the respawn closes the new child. A server that crashes on start is therefore spawned twice (probe, then legacy) and never more; `test/mcp/connection.test.ts`'s spawn count reflects that. Once a server has answered -32022 it is never downgraded: an unclean retry fails the connect as modern.
+- On HTTP, a well-formed JSON-RPC error without a modern code means legacy at any status (some servers answer an unknown method with 200), and an authorization failure during the probe propagates as needs-auth instead of being read as a transport error, so the OAuth flow is not started a second time by the legacy transport.
+- The two strict per-directory tsconfigs left from the implementation waves are removed; the root typecheck covers `modern/`.
+- No era cache: each connection probes once at materialization, and a cache scoped to one connection could never be reused. Caching across reconnects would need a service-scoped owner keyed by endpoint and credentials, and is left for when it is measured to matter.
+- `connection.ts` owns a pending connection before discovery and handles materialization errors through its existing connect-failure path. Disposing a pending connection aborts discovery. Each connection owns its era cache, so endpoint metadata and credentials cannot leak across sessions. Legacy session-required 404 responses still use the original SDK initialization and diagnostics.
+
+### Why
+
+Contract (a), a transport-level SDK compatibility adapter, preserves the installed SDK's actual invariants without copying its client implementation or mutating private state. SDK 1.32.1 installs protocol callbacks, requests `initialize`, validates `InitializeResultSchema` and its supported-version list, populates capabilities/serverInfo/instructions, calls `setProtocolVersion`, sends `notifications/initialized`, and installs capability-dependent list handlers. The bridge supplies discovery's capabilities, namespaced serverInfo and instructions through that normal validation path, using the SDK's own latest version solely for its local schema dialect; discovery must independently support the real modern wire version. That local version never reaches the modern transport or server. A facade would duplicate catalog, elicitation and notification behavior; post-connect seeding would couple us to private fields and skip initialization side effects. Once the SDK supports modern discovery natively, delete the bridge and the factory dispatch rather than replacing downstream Client consumers.
+
+### Why an extension could not handle it
+
+The MCP builtin owns transport construction and SDK initialization; another extension cannot replace this private lifecycle seam.
+
+### Expected merge conflict zones
+
+`transport.ts`'s materialization seam, `connection.ts`'s pending connection ownership, and the `modern/` modules. The legacy SDK materializer remains unchanged.
+
+Fixture accounting decision: `test/mcp/fixtures/sharing-http.ts` now increments `connects` only in the SDK's one-time `onsessioninitialized` callback, rather than for every sessionless POST. The existing sharing, reconnect, lifecycle, and catalog assertions measure established MCP sessions, not raw HTTP requests; none require raw POST accounting. Counting initialization events therefore preserves every assertion's intent without changing any assertion, remains independent of session-map cleanup during graceful shutdown, and avoids a discovery-specific exception that would still count other rejected sessionless requests as connections. Legacy containment is behavioral: the discovery probe does not establish a session or alter subsequent legacy traffic.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Capture session wire inventory for Native RPC only after removing app-server mode. Preserve the session-scoped inventory and credential ownership logic.
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-10 - Unsubscribe the control-inventory listeners on a reload, not only on quit
 
 ### What changed
@@ -1141,3 +1834,61 @@ The token store and refresh manager are this builtin's credential layer.
 ### Expected merge conflict zones
 
 `auth/oauth-provider.ts` token mapping and `auth/oauth-refresh.ts` `#doRefresh` at the next SDK or upstream sync.
+
+## 2026-10-22 - A connect or reconnect superseded by dispose or renew is not a server failure (senpi#4013)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`: `#markFailure` is a no-op once the connection is `disabled`, so `markDegraded`/`markSuspended`/`markNeedsAuth`/`markNeedsClientRegistration` from an attempt that dispose/disable superseded can no longer revive a disposed connection (which re-enabled `connect()`/`renew()`).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/shared-lease.ts`: a released lease's `mark*` methods no longer reach the shared connection the surviving owners still use.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: `connectMcpServer` returns without degrading or logging when the connection is `disabled` or its generation moved (a renew superseded the attempt); the startup `ensureFresh` catch returns silently once the connection is `disabled`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-connection.ts`: the reconnect callback's `ensureFresh` catch returns silently once the connection is `disabled`.
+
+### Why
+
+- `dispose()` aborts an in-flight attempt by shutting its transport down, but `shutdownMcpTransport` waits at most `SHUTDOWN_CLOSE_WAIT_MS` for the close; under Bun the close, and so the attempt's rejection, can land after `dispose()` returned. The late `connect was superseded` was then treated as a server failure: the disposed connection flipped to `degraded`, and a warning was written to a server log whose path is fixed at logger construction, recreating a removed agent dir. A reconnect in flight at dispose, a renew that superseded a startup connect, and a late OAuth refresh failure did the same.
+
+### Why an extension could not handle it
+
+- These are the MCP builtin's own connection state machine and its attach/reconnect paths; no extension hook observes or owns them.
+
+### Expected merge conflict zones
+
+- `connection.ts` `#markFailure`; `shared-lease.ts` `mark*` overrides; `startup-race.ts` `connectMcpServer` and the `refreshConnectedMcpCatalog` auth catch; `service-connection.ts` reconnect callback auth catch.
+
+## 2026-10-22 - whenAttachSettled observes an attach that is still running (senpi#4027)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `whenAttachSettled` first awaits the attach queue (every attach and re-sync joins it synchronously via `#queueSync`), bounded by the same timeout, and then the backgrounded connects in `#deferredAttach` with the remaining budget.
+
+### Why
+
+- An attach hands its backgrounded startup connects to `#deferredAttach` only after each startup race's 0 ms timer, near the end of the attach sync. A `whenAttachSettled` call that landed while the attach was still running read an empty pending set and reported `settled`, so a caller assembling the first turn (or a test observing the attach) saw MCP tools as attached when they were not.
+
+### Why an extension could not handle it
+
+- The attach queue and the deferred-connect set are private to the MCP service; no extension hook can observe an attach in flight.
+
+### Expected merge conflict zones
+
+- `service.ts` `whenAttachSettled` and its doc comment; the `./startup-race.ts` import list (`waitForMcpStartupRace`).
+
+## 2026-10-17 - Never hold the legacy migration lock across an await (senpi#3546)
+
+### What changed
+
+- `auth/legacy-lock.ts`: `withLegacyLock(path, stale, critical)` replaces `acquireLegacyLock`. Waiting for another holder stays asynchronous, but taking the lock, running the claim and releasing it now happen in one synchronous step.
+- `auth/legacy-migration.ts`: `readRecordAsync` and the synchronous `adoptLegacyRecord` return "no grant" without taking the lock when there is no legacy URL-keyed grant to claim. A lock-acquisition failure still surfaces as `LockAcquireError`; an error from the claim itself propagates unchanged.
+
+### Why
+
+Every MCP HTTP request looks up its token synchronously (`tokens()` in `modern/http-fetch.ts` and `transport-sdk.ts`). For a server with no saved grant that lookup took the migration lock with the event loop blocked. When the holder was the asynchronous lookup of the same process (OAuth preparation before each catalog refresh), the holder could never run its release, so the whole process froze until the lock went stale (30 s). Tool calls then failed with "MCP metadata was not ready before the request timeout", which is the intermittent failure in `test/mcp/session-expiry-full-reconnect.test.ts`.
+
+### Why an extension could not handle it
+
+The token store and its legacy migration are this builtin's credential layer.
+
+### Expected merge conflict zones
+
+`auth/legacy-migration.ts` `readRecordAsync` and `adoptLegacyRecord` at the next upstream or SDK sync.

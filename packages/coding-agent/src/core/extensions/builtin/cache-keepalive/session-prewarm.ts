@@ -1,5 +1,6 @@
 import {
 	type Context,
+	costCardAt,
 	isOpenAIResponsesPromptCacheModel,
 	type Model,
 	type Usage,
@@ -143,11 +144,12 @@ export function createSessionPrewarm(pi: ExtensionAPI, dependencies: SessionPrew
 }
 
 function toUsage(model: Model<any>, usage: WarmPromptCacheUsage): Usage {
+	const rates = costCardAt(model.cost, Date.now());
 	const cost = usage.cost ?? {
-		input: (usage.input * model.cost.input) / 1_000_000,
-		output: (usage.output * model.cost.output) / 1_000_000,
-		cacheRead: (usage.cacheRead * model.cost.cacheRead) / 1_000_000,
-		cacheWrite: (usage.cacheWrite * model.cost.cacheWrite) / 1_000_000,
+		input: (usage.input * rates.input) / 1_000_000,
+		output: (usage.output * rates.output) / 1_000_000,
+		cacheRead: (usage.cacheRead * rates.cacheRead) / 1_000_000,
+		cacheWrite: (usage.cacheWrite * rates.cacheWrite) / 1_000_000,
 		total: 0,
 	};
 	return {
@@ -157,5 +159,6 @@ function toUsage(model: Model<any>, usage: WarmPromptCacheUsage): Usage {
 		cacheWrite: usage.cacheWrite,
 		totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
 		cost: { ...cost, total: cost.input + cost.output + cost.cacheRead + cost.cacheWrite },
+		...(usage.cost === undefined && model.cost.unknown ? { costUnknown: true as const } : {}),
 	};
 }

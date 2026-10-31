@@ -23,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { signalOwnedProcess } from "./lib/common.mjs";
 
 const WORKER_ARGUMENT = "--persistent-query-worker";
 
@@ -160,6 +161,7 @@ async function runWorker() {
 		),
 	);
 	let claudePid = null;
+	let claudeIdentity;
 	let sawBash = false;
 	let sawHookDenial = false;
 	let sawReplayMatch = false;
@@ -191,6 +193,7 @@ async function runWorker() {
 				spawnClaudeCodeProcess: ({ command, args, cwd, env, signal }) => {
 					const child = spawn(command, args, { cwd, env, signal, stdio: ["pipe", "pipe", "pipe"] });
 					claudePid = child.pid ?? null;
+					claudeIdentity = { cwd: cwd ?? process.cwd(), command };
 					return child;
 				},
 			},
@@ -241,6 +244,8 @@ async function runWorker() {
 					sendWorkerResult({
 						kind: "observation",
 						pid: claudePid,
+						cwd: claudeIdentity?.cwd,
+						command: claudeIdentity?.command,
 						denial: sawBash && sawHookDenial ? "ok" : "degraded",
 						replay: sawReplayMatch ? "uuid-match" : "absent",
 					});
@@ -310,9 +315,11 @@ async function runSupervisor() {
 	if (!gone) {
 		if (pid !== null) {
 			try {
-				process.kill(pid, "SIGKILL");
-			} catch {
-				// already gone
+				// The worker returned this pid; its cwd and command identify it before the signal.
+				signalOwnedProcess({ pid, returned: true, sandboxPath: message.cwd, expectCommand: message.command, signal: "SIGKILL" });
+			} catch (cause) {
+				// A gone pid returns false above; anything thrown here is a refusal or a real failure, reported as such.
+				console.error(`orphan not signalled: ${cause instanceof Error ? cause.message : String(cause)}`);
 			}
 		}
 		console.error(`REJECTED signal=orphan_leaked denial=${message.denial} orphan=leaked replay=${message.replay}`);

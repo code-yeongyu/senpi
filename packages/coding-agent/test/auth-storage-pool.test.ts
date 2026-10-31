@@ -43,12 +43,12 @@ describe("auth.json accepts and preserves credential slots", () => {
 	test("a flat api_key and oauth file reads unchanged and is not rewritten", async () => {
 		const original = writeAuthFile({
 			openai: { type: "api_key", key: "sk-flat" },
-			anthropic: { type: "oauth", access: "a", refresh: "r", expires: FUTURE },
+			"github-copilot": { type: "oauth", access: "a", refresh: "r", expires: FUTURE },
 		});
 
 		const store = AuthStorage.create(authPath);
 		expect(await store.read("openai")).toEqual({ type: "api_key", key: "sk-flat" });
-		expect(await store.read("anthropic")).toMatchObject({ type: "oauth", access: "a" });
+		expect(await store.read("github-copilot")).toMatchObject({ type: "oauth", access: "a" });
 		expect(readFileSync(authPath, "utf-8")).toBe(original);
 	});
 

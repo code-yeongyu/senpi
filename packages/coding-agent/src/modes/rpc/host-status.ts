@@ -13,12 +13,16 @@
 import { isHostCrash, readHostCrashRecords } from "./host-crash-record.ts";
 import { readDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths, parseShardSocket, type ShardKind } from "./host-daemon-paths.ts";
+import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { type HostGenerationRow, pruneDeadGenerations, readGenerationRows } from "./host-generations.ts";
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
+import { electPointer, type HostPointerState } from "./host-pointer-election.ts";
+import type { PathIdentityResolverStatus } from "./path-identity-status.ts";
 import { observeProtocolInfo, requestOnSocket } from "./host-probe.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
 import { type HostPathClaimRow, type HostSessionRow, parseSessionRows, readClaimRows } from "./host-status-rows.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
 
 const STATUS_PROBE_TIMEOUT_MS = 10_000;
@@ -46,6 +50,7 @@ export interface HostStatusReport {
 	readonly lifecycle: "ready" | "stopping" | null;
 	readonly socket: string;
 	readonly pid: number | null;
+	readonly processStartTime: string | null;
 	readonly instanceId: string | null;
 	readonly generation: number | null;
 	readonly engineVersion: string | null;
@@ -59,15 +64,24 @@ export interface HostStatusReport {
 	readonly zombies: number | null;
 	readonly rss_mb: number | null;
 	readonly host_rss_mb: number | null;
+	/** The supervisor's and host's memory footprint (`phys_footprint` / `RssAnon`), which RSS understates (senpi#3110). */
+	readonly host_footprint_mb: number | null;
 	readonly open_fds: number | null;
 	/**
 	 * Whether the ANSWERING generation's memory sampler reads pressure right now (RSS above
 	 * `SENPI_RPC_HOST_RSS_WARN_MB`); `null` when nothing answers or the host predates the field.
 	 */
 	readonly memory_pressure: boolean | null;
+	/** The answering host's path identity resolver (`not_started`, `ready`, or `unavailable` naming why its worker could not start); `null` when nothing answers or the host predates the field. */
+	readonly path_identity_resolver: PathIdentityResolverStatus | null;
 	/** Environment NAMES the daemon was granted, never values. */
 	readonly env_keys: readonly string[];
 	readonly generations: readonly HostGenerationRow[];
+	/**
+	 * Which generation the pointer names: `current`, `elected` when this read gave a lost pointer back to
+	 * the one proven live generation (senpi#1911), or `missing` with the `candidates` it saw.
+	 */
+	readonly pointer: HostPointerState;
 	/** Records in this endpoint's `crashes.jsonl`: supervised host children that DIED, not stopped. */
 	readonly crashes: number;
 	/** The owner-keyed shard the socket names (`<kind>-<16hex>.sock`), `null` for any other endpoint. */
@@ -114,11 +128,21 @@ export async function readHostStatus(
 export async function probeHostStatus(
 	options: HostStatusOptions,
 	read: HostStatusReadOptions = {},
-): Promise<{
+): Promise<HostStatusProbe> {
+	// The host's key record lives under its own agent dir; a looker that names it proves the key from there.
+	return withRpcKeyRoot(rpcKeyRoot({}, options.agentDir), () => probeHostStatusInKeyRoot(options, read));
+}
+
+interface HostStatusProbe {
 	readonly report: HostStatusReport;
 	readonly answered: HostProtocolInfo | undefined;
 	readonly listing: readonly HostSessionRow[];
-}> {
+}
+
+async function probeHostStatusInKeyRoot(
+	options: HostStatusOptions,
+	read: HostStatusReadOptions,
+): Promise<HostStatusProbe> {
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
@@ -131,8 +155,10 @@ export async function probeHostStatus(
 	// Reading the directory is also when it is cleaned: an operator asking what runs here must not
 	// be shown generations that ended, and the next reader must get the same answer.
 	if (prune) await pruneDeadGenerations(paths);
+	const pointer = await electPointer(paths, { write: prune });
 	const generations = await readGenerationRows(paths, { includeDead: !prune });
 	const current = generations.find((row) => row.current && row.alive);
+	const registered = await readHostRegistration(paths);
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;
 	// A socket that did not answer who it is will not answer what it holds: asking again would only
 	// spend a second budget on a hung endpoint.
@@ -146,6 +172,10 @@ export async function probeHostStatus(
 		lifecycle: host?.lifecycle ?? null,
 		socket: options.socket,
 		pid: current?.pid ?? null,
+		processStartTime:
+			registered?.instanceId === current?.instanceId && registered?.record.pid === current?.pid
+				? (registered?.record.processStartTime ?? null)
+				: null,
 		instanceId: host?.instanceId ?? current?.instanceId ?? null,
 		generation: host?.generation ?? current?.generation ?? null,
 		engineVersion: host?.engineVersion ?? current?.engineVersion ?? null,
@@ -157,10 +187,13 @@ export async function probeHostStatus(
 		zombies: metrics.zombies,
 		rss_mb: metrics.rss_mb,
 		host_rss_mb: metrics.host_rss_mb,
+		host_footprint_mb: metrics.host_footprint_mb,
 		open_fds: metrics.open_fds,
 		memory_pressure: host?.memory_pressure ?? null,
+		path_identity_resolver: host?.path_identity_resolver ?? null,
 		env_keys: await readDaemonEnvKeys(paths),
 		generations,
+		pointer,
 		crashes: readHostCrashRecords(paths.dir).filter(isHostCrash).length,
 		shard: parseShardSocket(options.socket),
 		session_rows: includeWorkers ? listing : [],
@@ -216,7 +249,14 @@ export function hostSummary(host: HostProtocolInfo | undefined): Record<string, 
 		generation: host.generation ?? null,
 		engineVersion: host.engineVersion ?? null,
 		launchProfileId: host.launch_profile?.profile_id ?? null,
+		pathIdentityResolver: host.path_identity_resolver ?? null,
 	};
 }
 
-const UNOBSERVED_METRICS: HostProcessMetrics = { rss_mb: null, host_rss_mb: null, open_fds: null, zombies: null };
+const UNOBSERVED_METRICS: HostProcessMetrics = {
+	rss_mb: null,
+	host_rss_mb: null,
+	host_footprint_mb: null,
+	open_fds: null,
+	zombies: null,
+};

@@ -5,6 +5,7 @@ import net from "node:net";
 import { mock } from "node:test";
 import { runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
+import { admitInternalConnection } from "../helpers/sealed-internal-admit.ts";
 
 const [mode, socket, agentDir] = process.argv.slice(2);
 if (mode === "host" || mode === "successor-host") {
@@ -17,40 +18,43 @@ if (mode === "host" || mode === "successor-host") {
 		for (const peer of peers) peer.destroy();
 		server.close(() => process.exit(0));
 	};
-	const server = net.createServer((peer) => {
-		peers.add(peer);
-		peer.once("close", () => peers.delete(peer));
-		attachJsonlLineReader(peer, (line) => {
-			const request = JSON.parse(line);
-			const instanceId = process.env.SENPI_RPC_HOST_INSTANCE_ID;
-			const answer = (data: object) =>
-				peer.write(
-					`${JSON.stringify({ id: request.id, type: "response", command: request.type, success: true, data })}\n`,
-				);
-			if (request.type === "get_protocol_info") {
-				answer({
-					protocolVersion: 1,
-					serverVersion: "fixture",
-					capabilities: ["multi_session", "extension_events", "session_context", "session_kind"],
-					instanceId,
-				});
-			} else if (request.type === "open_session") {
-				process.send?.({ type: "open-reached-child" });
-				const complete = () =>
+	// The supervisor proves readiness over the sealed hop; replies are unchanged inside it.
+	const server = net.createServer((raw) => {
+		peers.add(raw);
+		raw.once("close", () => peers.delete(raw));
+		admitInternalConnection(raw, (peer) =>
+			attachJsonlLineReader(peer, (line) => {
+				const request = JSON.parse(line);
+				const instanceId = process.env.SENPI_RPC_HOST_INSTANCE_ID;
+				const answer = (data: object) =>
+					peer.write(
+						`${JSON.stringify({ id: request.id, type: "response", command: request.type, success: true, data })}\n`,
+					);
+				if (request.type === "get_protocol_info") {
 					answer({
-						sessionId: instanceId,
-						state: {
-							sessionId: instanceId,
-							sessionFile: `${request.cwd}/session.jsonl`,
-							cwd: request.cwd,
-							model: null,
-						},
+						protocolVersion: 1,
+						serverVersion: "fixture",
+						capabilities: ["multi_session", "extension_events", "session_context", "session_kind"],
+						instanceId,
 					});
-				if (held) pending.push(complete);
-				else complete();
-			} else if (request.type === "list_sessions") answer({ sessions: [] });
-			else answer({ echo: request });
-		});
+				} else if (request.type === "open_session") {
+					process.send?.({ type: "open-reached-child" });
+					const complete = () =>
+						answer({
+							sessionId: instanceId,
+							state: {
+								sessionId: instanceId,
+								sessionFile: `${request.cwd}/session.jsonl`,
+								cwd: request.cwd,
+								model: null,
+							},
+						});
+					if (held) pending.push(complete);
+					else complete();
+				} else if (request.type === "list_sessions") answer({ sessions: [] });
+				else answer({ echo: request });
+			}),
+		);
 	});
 	process.on("SIGTERM", () => {
 		process.send?.({ type: "child-stopping" });

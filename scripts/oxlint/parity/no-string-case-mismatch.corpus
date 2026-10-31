@@ -1,0 +1,27 @@
+declare const s: string;
+declare const t: string | undefined;
+export const a1 = s.toUpperCase() === "abc";
+export const a2 = s.toUpperCase() === "ABC";
+export const a3 = s.toUpperCase() == "abc";
+export const a4 = s.toUpperCase() !== "abc";
+export const a5 = s.toUpperCase() != "abc";
+export const b1 = "Abc" === s.toLowerCase();
+export const b2 = "abc" == s.toUpperCase();
+export const b3 = "Abc" !== s.toLowerCase();
+export const c1 = s.toUpperCase() === `abc`;
+export const c2 = `abc` === s.toUpperCase();
+export const c3 = s.toUpperCase() === `ABC`;
+export const d1 = t?.toUpperCase() === "abc";
+export const d2 = s["toUpperCase"]() === "abc";
+export const e1 = (s.toUpperCase()) === "abc";
+export const e2 = s.toUpperCase() === ("abc");
+export const f1 = s.toLowerCase() === "ǅ";
+export const f2 = s.toUpperCase() === "1-2";
+export const f3 = s.toLowerCase() === "ß";
+switch (s.toLowerCase()) { case "Abc": break; case "abc": break; case `XY`: break; }
+switch ((s.toLowerCase())) { case "Abc": break; }
+switch (s.toUpperCase()) { case ("abc"): break; }
+switch (s) { case "Abc": break; }
+export const g1 = s.toUpperCase() /* ( */ === "abc";
+switch (s.toLowerCase()) { case /* ( */ "Abc": break; }
+switch /* ( */ (s.toLowerCase()) { case "Abc": break; }

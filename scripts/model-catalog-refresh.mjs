@@ -4,17 +4,18 @@
  *
  * After `generate-models` regenerated the catalog in a clean checkout of `main`, this script drops a manifest change
  * that is only the `generatedAt` stamp, reads which catalog files changed, writes the PR summary, and keeps exactly
- * one refresh entry under `## [Unreleased]` / `### Changed` in `packages/ai/CHANGELOG.md`, never touching a released
- * section (the Changelog gate rejects any edit there). It prints `changed=true|false` for `$GITHUB_OUTPUT`. GitHub
+ * one AI changelog fragment for the workflow to attach after learning its PR number, without editing the changelog.
+ * It prints `changed=true|false` for `$GITHUB_OUTPUT`. GitHub
  * auto-merge then lands the PR once its required checks are green, so a release normally finds no catalog drift.
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { renderFragment } from "./changes-fragments.mjs";
 import { discardTimestampOnlyCatalogChange, REGENERATED_CATALOG_PATHS } from "./release-test-gate.mjs";
 
-export const REFRESH_ENTRY_PREFIX = "- The bundled model catalog is refreshed from models.dev";
+const REFRESH_ENTRY_PREFIX = "- The bundled model catalog is refreshed from models.dev";
 
 const DATA_FILE = /^packages\/ai\/src\/providers\/data\/([^/.][^/]*)\.json$/;
 const SHARD_FILE = /^packages\/ai\/src\/providers\/([^/]+)\.models\.ts$/;
@@ -47,36 +48,6 @@ export function refreshEntry(providers) {
 }
 
 /**
- * Put exactly one refresh entry under `## [Unreleased]` / `### Changed`. Only the `[Unreleased]` section is edited:
- * an earlier refresh entry there is replaced; one that already shipped in a released section stays as it is.
- * @param {string} changelog
- * @param {string[]} providers
- * @returns {string}
- */
-export function withRefreshEntry(changelog, providers) {
-	const lines = changelog.split("\n");
-	const start = lines.findIndex((line) => line.trim() === "## [Unreleased]");
-	if (start < 0) throw new Error("CHANGELOG.md has no ## [Unreleased] section");
-	const next = lines.findIndex((line, index) => index > start && line.startsWith("## "));
-	const end = next < 0 ? lines.length : next;
-	const section = lines.slice(start, end);
-	const previous = section.findIndex((line) => line.startsWith(REFRESH_ENTRY_PREFIX));
-	if (previous >= 0) {
-		const blankAfter = section[previous + 1] === "" && section[previous - 1] === "";
-		section.splice(previous, blankAfter ? 2 : 1);
-	}
-	const changed = section.findIndex((line) => line.trim() === "### Changed");
-	const entry = refreshEntry(providers);
-	if (changed >= 0) {
-		section.splice(changed + 1, 0, "", entry);
-	} else {
-		while (section.length > 1 && section.at(-1) === "") section.pop();
-		section.push("", "### Changed", "", entry, "");
-	}
-	return [...lines.slice(0, start), ...section, ...lines.slice(end)].join("\n");
-}
-
-/**
  * @param {{providers: string[], files: string[]}} change
  * @returns {string}
  */
@@ -98,12 +69,12 @@ export function summaryMarkdown(change) {
 }
 
 function main(argv) {
-	const changelogIndex = argv.indexOf("--changelog");
+	const fragmentIndex = argv.indexOf("--fragment");
 	const summaryIndex = argv.indexOf("--summary");
-	if (changelogIndex < 0 || summaryIndex < 0) {
-		throw new Error("usage: node scripts/model-catalog-refresh.mjs --changelog <CHANGELOG.md> --summary <out.md>");
+	if (fragmentIndex < 0 || summaryIndex < 0) {
+		throw new Error("usage: node scripts/model-catalog-refresh.mjs --fragment <out.md> --summary <out.md>");
 	}
-	const changelogPath = argv[changelogIndex + 1];
+	const fragmentFile = argv[fragmentIndex + 1];
 	const summaryPath = argv[summaryIndex + 1];
 	discardTimestampOnlyCatalogChange(process.cwd());
 	const porcelain = execFileSync(
@@ -116,7 +87,10 @@ function main(argv) {
 		process.stdout.write("changed=false\n");
 		return;
 	}
-	writeFileSync(changelogPath, withRefreshEntry(readFileSync(changelogPath, "utf8"), change.providers));
+	writeFileSync(fragmentFile, renderFragment([{
+		log: "packages/ai/CHANGELOG.md",
+		body: `### Changed\n${refreshEntry(change.providers)}`,
+	}]));
 	writeFileSync(summaryPath, summaryMarkdown(change));
 	process.stdout.write("changed=true\n");
 }

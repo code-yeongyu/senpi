@@ -6,8 +6,8 @@
  */
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { processIsLive } from "../../src/modes/app-server/daemon/process.ts";
 import { classifyEndpointLiveness, TUI_PROBE_TIMEOUT_MS } from "../../src/modes/rpc/host-endpoint-liveness.ts";
+import { processIsLive } from "../../src/utils/process-identity.ts";
 import { endpointScratch } from "../helpers/rpc-host-endpoint-scratch.ts";
 import { exitedPid } from "../helpers/rpc-host-gc-fixtures.ts";
 import {

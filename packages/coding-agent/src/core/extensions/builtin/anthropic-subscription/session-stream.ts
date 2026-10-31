@@ -1,10 +1,12 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { initializationOrAbort } from "./auth-attempt.ts";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
 import { coldSeedCalibration, coldSeedOverflow, estimateColdSeedTokens } from "./cold-seed-budget.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
+import { seatDigest } from "./seat-digest.ts";
 import { reattachRecoveringCheckpoint } from "./session-checkpoint-recovery.ts";
 import { type ContinuityDecision, decideNativeContinuity } from "./session-continuity.ts";
 import {
@@ -93,6 +95,12 @@ async function createResidentAttempt(
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
 	const { binding, transcriptAvailable } = await admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane);
+	const servedLineage = getBinding(sessionId);
+	const lineageSeat = existing?.accountName ?? servedLineage?.accountName ?? binding?.accountName;
+	const seat = {
+		seat: seatDigest(auth.accountName),
+		...(lineageSeat === undefined ? {} : { seatChanged: lineageSeat !== auth.accountName }),
+	};
 	const decision = decideNativeContinuity({
 		entry: existing ? entrySnapshot(existing, residentHashes) : undefined,
 		binding,
@@ -101,6 +109,7 @@ async function createResidentAttempt(
 		modelId: input.model.id,
 		fingerprint,
 		transcriptAvailable,
+		// claude-cli accounts share one transcript root through their `projects` link, like oauth-slots.
 		crossAccountResumeSupported: auth.authLane !== "config-dir",
 		idleExpired: existing ? isIdleExpired(existing) : false,
 		invalidationReason: bindingInvalidationReason(sessionId),
@@ -167,6 +176,20 @@ async function createResidentAttempt(
 			options: auth.options,
 		});
 	}
+	// A claude-cli account checks what its CLI initialized with before any prompt is pushed (senpi#4436).
+	if (auth.verifyInitialization && entry.query.initializationResult) {
+		try {
+			await auth.verifyInitialization(
+				await initializationOrAbort(entry.query.initializationResult(), input.streamOptions.signal),
+			);
+		} catch (error) {
+			closeSession(
+				sessionId,
+				input.streamOptions.signal?.aborted ? "initialization_aborted" : "initialization_refused",
+			);
+			throw error;
+		}
+	}
 	// Every branch above either reuses a subprocess whose token matched (delta)
 	// or spawned one with auth.options, so the entry now runs on this token.
 	entry.credentialDigest = auth.credentialDigest;
@@ -193,18 +216,24 @@ async function createResidentAttempt(
 		? flattenResult.blocks
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
 	const payloadBytes = flattenResult ? serializedPayloadBytes(flattenResult.blocks) : undefined;
+	const divergedPath =
+		observedReason === "assistant_rewritten" ? (existing?.pendingForkDivergedPath ?? undefined) : undefined;
 	const staged = stageContinuityDecision(
-		observeSessionSyncDecision({
-			kind: observedKind,
-			reason: observedReason,
-			deltaMessages: flatten ? hashes.length : hashes.length - from,
-			firstTurn,
-			senpiSessionId: sessionId,
-			...(payloadBytes !== undefined ? { payloadBytes } : {}),
-			...(flattenResult?.collapsedDirectives !== undefined
-				? { collapsedDirectives: flattenResult.collapsedDirectives }
-				: {}),
-		}),
+		{
+			...observeSessionSyncDecision({
+				kind: observedKind,
+				reason: observedReason,
+				deltaMessages: flatten ? hashes.length : hashes.length - from,
+				firstTurn,
+				senpiSessionId: sessionId,
+				...(payloadBytes !== undefined ? { payloadBytes } : {}),
+				...(flattenResult?.collapsedDirectives !== undefined
+					? { collapsedDirectives: flattenResult.collapsedDirectives }
+					: {}),
+				...(divergedPath === undefined ? {} : { divergedPath }),
+			}),
+			...seat,
+		},
 		sessionId,
 		input.onContinuityDecision,
 		// The pending close cause is consumed only when the staged observation
@@ -212,7 +241,14 @@ async function createResidentAttempt(
 		// cause pending for the next admission.
 		() => consumePendingCloseCause(sessionId),
 	);
-	return createSessionTurnAttempt(entry, userMessage(blocks), hashes, input.streamOptions.signal, staged);
+	return createSessionTurnAttempt(
+		entry,
+		userMessage(blocks),
+		hashes,
+		input.streamOptions.signal,
+		staged,
+		servedLineage,
+	);
 }
 
 export async function* residentSessionMessages(input: ResidentSessionStreamInput): AsyncGenerator<SDKMessage> {

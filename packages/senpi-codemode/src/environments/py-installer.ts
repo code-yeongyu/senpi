@@ -229,8 +229,8 @@ export async function runPipInstall(input: {
 			// pip's build backends run in their own subprocesses; stopping only pip would leave them writing.
 			const onAbort = () => {
 				const pid = child.pid;
-				if (pid === undefined) child.kill("SIGKILL");
-				else
+				// A child that never started has nothing to stop; on Node < 24.22 / 26.10 its kill() signals our own group.
+				if (pid !== undefined)
 					termination = terminateProcessTrees([pid], { graceMs: PIP_TREE_GRACE_MS }).catch(() => {
 						child.kill("SIGKILL");
 					});

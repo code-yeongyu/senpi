@@ -150,6 +150,7 @@ export function createEditToolDefinition(
 	const ops = options?.operations ?? defaultEditOperations;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
+		...(options?.operations !== undefined || options?.filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "edit",
 		label: "edit",
 		description:

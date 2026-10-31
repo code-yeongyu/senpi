@@ -35,7 +35,7 @@
  * therefore measured against the checkout that owns this module.
  */
 import { type Dirent, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Specifiers that child processes resolve through Node's `exports` maps. */
@@ -190,17 +190,46 @@ export function assertStaleWorkspacePackages(
 	);
 }
 
+function realpathOrSelf(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
+}
+
+/**
+ * Where a specifier may legitimately resolve for a checkout: inside the checkout itself, or inside
+ * the package its root `node_modules` links to (a git worktree that links the main checkout's
+ * `node_modules` loads the main checkout's package, which is what its children import).
+ */
+function workspaceResolutionRoots(specifier: string, workspaceRoot: string): string[] {
+	const packageName = specifier.split("/").slice(0, 2).join("/");
+	return [realpathOrSelf(workspaceRoot), realpathOrSelf(join(workspaceRoot, "node_modules", packageName))];
+}
+
 /**
  * Returns the specifiers whose built entrypoint cannot be resolved from
  * `parentUrl`. Resolution goes through Node's own ESM resolver rather than a
  * hardcoded `dist/index.js` guess, so this asserts exactly what an ESM child
  * process will do.
+ *
+ * Node's resolver climbs every ancestor `node_modules`, so a package installed above the checkout
+ * (for example in `~/node_modules`) would also resolve. Only a target inside the checkout that owns
+ * `parentUrl`, or inside the workspace package its `node_modules` links to, counts as built; from
+ * outside any checkout nothing counts (senpi#3482).
  */
 export function findUnbuiltWorkspaceSpecifiers(parentUrl: string): string[] {
+	const workspaceRoot = findWorkspaceRoot(dirname(fileURLToPath(parentUrl)));
 	const missing: string[] = [];
 	for (const specifier of CHILD_PROCESS_SPECIFIERS) {
 		try {
-			if (!existsSync(fileURLToPath(import.meta.resolve(specifier, parentUrl)))) missing.push(specifier);
+			const target = fileURLToPath(import.meta.resolve(specifier, parentUrl));
+			const realTarget = realpathOrSelf(target);
+			const insideWorkspace =
+				workspaceRoot !== undefined &&
+				workspaceResolutionRoots(specifier, workspaceRoot).some((root) => realTarget.startsWith(`${root}${sep}`));
+			if (!existsSync(target) || !insideWorkspace) missing.push(specifier);
 		} catch {
 			missing.push(specifier);
 		}
@@ -211,6 +240,16 @@ export function findUnbuiltWorkspaceSpecifiers(parentUrl: string): string[] {
 /** Throws an actionable error when the workspace build prerequisite is unmet. */
 export function assertWorkspaceBuildPrerequisite(parentUrl: string): void {
 	const missing = findUnbuiltWorkspaceSpecifiers(parentUrl);
+	const workspaceRoot = findWorkspaceRoot(dirname(fileURLToPath(parentUrl)));
+	if (missing.length > 0 && workspaceRoot !== undefined && !existsSync(join(workspaceRoot, "node_modules"))) {
+		// A checkout without node_modules (e.g. a worktree nested in the main checkout) can only reach
+		// packages installed above it, which do not count; building would not help.
+		throw new Error(
+			`Unmet test prerequisite: the checkout at ${workspaceRoot} has no node_modules of its own, so ` +
+				`${missing.join(", ")} resolve only from folders above it, which do not count. ` +
+				`Run \`bun install --ignore-scripts\` in that checkout, then build and re-run this suite.`,
+		);
+	}
 	if (missing.length > 0) {
 		throw new Error(
 			`Unmet test prerequisite: the workspace packages are not built, so child-process tests ` +

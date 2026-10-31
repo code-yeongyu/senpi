@@ -1,6 +1,5 @@
 // #2487: a credential read that finds auth.json locked must not become the process's model
-// availability. The app-server built its model/list registry once, and a busy first read left
-// it empty until restart; the async availability pass likewise published an empty snapshot as
+// availability. A busy first availability pass must not publish an empty snapshot as
 // "initialized". Only a busy read is retried: a readable empty store stays cached.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -12,14 +11,9 @@ import { brandEnvNames } from "../../../src/core/brand.ts";
 import { CredentialStoreBusyError } from "../../../src/core/lockfile-policy.ts";
 import { ModelRegistry } from "../../../src/core/model-registry.ts";
 import { ModelRuntime } from "../../../src/core/model-runtime.ts";
-import { createRegistry } from "../../../src/modes/app-server/rpc/registry.ts";
-import { registerAppServerModelMethods } from "../../../src/modes/app-server/server/models.ts";
 
 const PROVIDER = "openai";
 const STORED = { [PROVIDER]: { type: "api_key", key: "sk-test-2487" } } as const;
-const CONTEXT = { initialized: true, capabilities: { experimentalApi: true } };
-
-type ModelListResult = { result?: { data: { id: string }[] }; error?: unknown };
 
 let agentDir: string;
 let authPath: string;
@@ -28,19 +22,6 @@ let authPath: string;
 function holdAuthLock(): () => void {
 	mkdirSync(`${authPath}.lock`);
 	return () => rmSync(`${authPath}.lock`, { recursive: true, force: true });
-}
-
-async function listModelIds(registry: ReturnType<typeof createRegistry>, id: number): Promise<string[]> {
-	const response = (await registry.dispatch(CONTEXT, {
-		id,
-		method: "model/list",
-		params: { includeHidden: true },
-	})) as ModelListResult;
-	// A JSON-RPC error is a failed request, never an empty model list.
-	if (response.result === undefined) {
-		throw new Error(`model/list request ${id} returned no result: ${JSON.stringify(response)}`);
-	}
-	return response.result.data.map((model) => model.id);
 }
 
 function lockableStore(initial: object, options: { heldFromStart?: boolean } = {}) {
@@ -74,31 +55,6 @@ afterEach(() => {
 });
 
 describe("busy credential reads never become model availability (#2487)", () => {
-	it("app-server model/list returns the full list on the next call once the auth lock is released", async () => {
-		// Given: a stored credential, and auth.json locked across the process's first model/list.
-		writeFileSync(authPath, JSON.stringify(STORED));
-		const registry = createRegistry();
-		registerAppServerModelMethods(registry, { agentDir });
-		const release = holdAuthLock();
-		let whileLocked: string[];
-		try {
-			whileLocked = await listModelIds(registry, 1);
-		} finally {
-			release();
-		}
-
-		// When: the same process answers model/list again after the lock is gone.
-		const afterRelease = await listModelIds(registry, 2);
-
-		// Then: the busy answer did not stick; the list matches the same credentials read uncontended.
-		const expected = ModelRegistry.create(AuthStorage.inMemory(STORED), join(agentDir, "models.json"))
-			.getAvailable()
-			.map((model) => `${model.provider}/${model.id}`);
-		expect(whileLocked.filter((id) => id.startsWith(`${PROVIDER}/`))).toEqual([]);
-		expect(expected.filter((id) => id.startsWith(`${PROVIDER}/`)).length).toBeGreaterThan(0);
-		expect(afterRelease).toEqual(expected);
-	});
-
 	it("a busy availability pass stays uninitialized and the next pass publishes the full list", async () => {
 		// Given: a fresh process whose store has been locked since it opened.
 		const { storage, lock } = lockableStore(STORED, { heldFromStart: true });

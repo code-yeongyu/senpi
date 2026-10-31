@@ -6,7 +6,6 @@ import { VirtualTerminal } from "../../../tui/test/virtual-terminal.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import type { QuestionRequest, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
-import { UserInputBridge } from "../../src/modes/app-server/server/user-input-bridge.ts";
 import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
 import { CustomEditor } from "../../src/modes/interactive/components/custom-editor.ts";
@@ -191,21 +190,6 @@ describe("ask-user characterization", () => {
 		await first;
 	});
 
-	it("h: app-server replays both pending requests for the thread", async () => {
-		const send = vi.fn(() => 1);
-		const bridge = new UserInputBridge(send);
-		const pending = [
-			bridge.requestUserInput("thread", "turn", "first", request("first")),
-			bridge.requestUserInput("thread", "turn", "second", request("second")),
-		];
-		send.mockClear();
-		expect(bridge.replayPendingForThread("thread")).toBe(2);
-		expect(send.mock.calls).toHaveLength(2);
-		expect(bridge.pendingCount).toBe(2);
-		bridge.cancelPendingForThread("thread");
-		await Promise.all(pending);
-	});
-
 	it("i1: one async question parks on its idle window instead of the backstop", async () => {
 		vi.useRealTimers();
 		world = await createGoalAskUserWorld("characterization-idle");
@@ -297,42 +281,6 @@ describe("ask-user characterization", () => {
 			}),
 		);
 		bridge.cancelAll();
-		await pending;
-	});
-
-	it("m2: the app-server QuestionRequest frame is byte-identical", async () => {
-		const output: object[] = [];
-		const bridge = new UserInputBridge((_thread, message) => {
-			output.push(message);
-			return 1;
-		});
-		const pending = bridge.requestUserInput("thread", "turn", "item", request());
-		expect(JSON.stringify(output[0])).toBe(
-			JSON.stringify({
-				id: "user-input-0",
-				method: "item/tool/requestUserInput",
-				params: {
-					threadId: "thread",
-					turnId: "turn",
-					itemId: "item",
-					autoResolutionMs: null,
-					timeoutMs: QUESTION_TIMEOUT_MS,
-					waitForAnswer: false,
-					questions: [
-						{
-							...request().questions[0],
-							isOther: true,
-							isSecret: false,
-							options: [
-								{ label: "OAuth", description: "" },
-								{ label: "API key", description: "" },
-							],
-						},
-					],
-				},
-			}),
-		);
-		bridge.cancelPendingForThread("thread");
 		await pending;
 	});
 });

@@ -32,6 +32,10 @@ export class CircuitProbes {
 		return this.circuits?.governs(selector) ?? false;
 	}
 
+	isExhausted(selector: string): boolean {
+		return this.circuits?.isExhausted(selector) ?? false;
+	}
+
 	admit(selector: string): CircuitAdmission["kind"] {
 		const admission: CircuitAdmission = this.circuits?.admit(selector) ?? { kind: "closed" };
 		if (admission.kind === "probe" && this.token?.selector !== selector) {

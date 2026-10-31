@@ -8,7 +8,8 @@ import { closureFixture, executeQuestion } from "./ask-user-closure-support.ts";
 const fixtures: Awaited<ReturnType<typeof closureFixture>>[] = [];
 afterEach(() => {
 	for (const fixture of fixtures.splice(0)) {
-		for (const entry of getPendingQuestions(fixture.delivery.harness.sessionManager.getSessionId())) entry.cancel();
+		for (const entry of getPendingQuestions(fixture.delivery.harness.sessionManager.getSessionId()))
+			entry.cancel("session_closed");
 		fixture.delivery.harness.cleanup();
 	}
 	vi.useRealTimers();
@@ -49,7 +50,7 @@ it.each([true, false])("closes cancelled once without notifying settled listener
 	const entry = getPendingQuestions(ctx.sessionManager.getSessionId())[0];
 	if (!entry) throw new Error("missing pending question");
 	controller.abort();
-	entry.cancel();
+	entry.cancel("session_closed");
 	const response = await entry.completion;
 	expect(response.status).toBe("cancelled");
 	expect(Reflect.get(response, "resolvedBy")).toBeUndefined();
@@ -99,7 +100,7 @@ it("closes a detached non-blocking question cancelled during reload exactly once
 	const entry = getPendingQuestions(ctx.sessionManager.getSessionId())[0];
 	if (!entry) throw new Error("missing reload question");
 	await emitSessionShutdownEvent(fixture.runner, { type: "session_shutdown", reason: "reload" });
-	entry.cancel();
+	entry.cancel("session_closed");
 	await entry.completion;
 	await fixture.runner.emit({ type: "session_start", reason: "reload" });
 	await fixture.runner.emit({ type: "session_start", reason: "reload" });

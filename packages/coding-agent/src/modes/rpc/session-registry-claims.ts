@@ -2,9 +2,86 @@
  * The registry's path claims: the in-process reservation set and the cross-generation claim
  * (`host-reservations.ts`) follow whatever file each entry's runtime is actually writing.
  */
-import type { SessionPathReservations } from "./host-reservations.ts";
+import { SESSION_PATH_RETRY_AFTER_MS, type SessionPathReservations } from "./host-reservations.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
-import type { RpcSessionEntry } from "./session-registry-types.ts";
+import { type RpcSessionEntry, RpcSessionRegistryError } from "./session-registry-types.ts";
+
+/** Opens between their in-process reservation and their entry, by path: their cross-generation claim is in flight. */
+export type PendingClaims = Map<string, Promise<void>>;
+
+/**
+ * Marks `sessionPath` as mid-claim. The returned settle is called once the open has either recorded
+ * its entry or given the reservation back, so a waiter that wakes always finds one or the other.
+ */
+export function beginPendingClaim(pending: PendingClaims, sessionPath: string): () => void {
+	const settled = Promise.withResolvers<void>();
+	pending.set(sessionPath, settled.promise);
+	return () => {
+		if (pending.get(sessionPath) === settled.promise) pending.delete(sessionPath);
+		settled.resolve();
+	};
+}
+
+/**
+ * Takes the cross-generation claim for an open that already holds the in-process reservation, and
+ * returns the settle `beginPendingClaim` handed out: the caller settles it once its entry is recorded.
+ * A live claim another generation holds gives the reservation back and refuses with the owner.
+ */
+export async function takeCrossGenerationClaim(
+	reservations: Set<string>,
+	pending: PendingClaims,
+	pathReservations: SessionPathReservations,
+	sessionPath: string,
+): Promise<() => void> {
+	const settle = beginPendingClaim(pending, sessionPath);
+	let holder: Awaited<ReturnType<SessionPathReservations["claim"]>>;
+	try {
+		holder = await pathReservations.claim(sessionPath);
+	} catch (cause) {
+		reservations.delete(sessionPath);
+		settle();
+		throw cause;
+	}
+	if (holder === undefined) return settle;
+	reservations.delete(sessionPath);
+	settle();
+	throw new RpcSessionRegistryError("session_path_in_use", undefined, {
+		owner: holder,
+		retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
+	});
+}
+
+/**
+ * Waits out another open of this path that is still taking its claim (senpi#3485). Without the wait
+ * the path looked reserved by no session at all and a reopen was refused for a session about to be
+ * served. Bounded by the close grace window: a claim that never settles (a wedged daemon directory)
+ * ends this open with a retryable `session_path_in_use { reason: "claim_in_progress" }`.
+ */
+export async function settlePendingClaim(
+	pending: ReadonlyMap<string, Promise<void>>,
+	sessionPath: string,
+	graceMs: number,
+): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<"late">((resolve) => {
+		timer = setTimeout(() => resolve("late"), graceMs);
+	});
+	try {
+		for (let claim = pending.get(sessionPath); claim !== undefined; claim = pending.get(sessionPath)) {
+			if ((await Promise.race([claim.then(() => "settled" as const), late])) === "late")
+				throw new RpcSessionRegistryError(
+					"session_path_in_use",
+					"another open of this path is still taking its claim",
+					{
+						reason: "claim_in_progress",
+						retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
+					},
+				);
+		}
+	} finally {
+		clearTimeout(timer);
+	}
+}
 
 /** Reconcile path and durable identity after runtime replacement. */
 export function syncRuntimeMetadata(

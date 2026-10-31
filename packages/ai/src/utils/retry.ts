@@ -49,6 +49,18 @@ export const USAGE_LIMIT_EXHAUSTION = {
 } as const;
 
 /**
+ * Anthropic's rejection of a Claude subscription token used outside Claude Code (senpi#3259): a
+ * 400 invalid_request_error reading "Third-party apps now draw from your extra usage, not your plan
+ * limits. Add more at claude.ai/settings/usage and keep going." The request was billed to extra
+ * usage instead of the plan, so every model on the same credential is refused the same way.
+ */
+export const ANTHROPIC_THIRD_PARTY_BILLING_MARKER = "Third-party apps now draw from your extra usage";
+
+export function isAnthropicThirdPartyBillingMessage(errorMessage: string | undefined): boolean {
+	return errorMessage?.toLowerCase().includes(ANTHROPIC_THIRD_PARTY_BILLING_MARKER.toLowerCase()) === true;
+}
+
+/**
  * Account quota, budget, credit, and billing exhaustion: the account cannot
  * serve more requests until the user pays or the quota resets. Shared by the
  * terminal classifier below and the fallback circuit breaker, so both recognise
@@ -84,6 +96,9 @@ const QUOTA_EXHAUSTION_PATTERNS = [
 	// stays dead until its quota resets — every same-account retry is guaranteed
 	// to fail, so the failure is terminal, not rate-limited.
 	...USAGE_LIMIT_EXHAUSTION.markers,
+
+	// Anthropic billing a subscription token as a third-party app (senpi#3259).
+	escapeRegExp(ANTHROPIC_THIRD_PARTY_BILLING_MARKER),
 ] as const;
 
 const QUOTA_EXHAUSTION_PATTERN = buildProviderErrorPattern(QUOTA_EXHAUSTION_PATTERNS);
@@ -471,6 +486,8 @@ export async function retryAssistantCall(
  * before restarting the assistant turn.
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
+	// A route that does not serve the model answers the same on every attempt, whatever status wraps it.
+	if (message.errorCause?.type === "model_config") return false;
 	if (
 		message.stopReason === "error" &&
 		message.diagnostics?.some((diagnostic) => diagnostic.type === OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC)
@@ -490,8 +507,8 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
 
 /**
  * Matches the agent-loop stream watchdog failures ("Idle timeout waiting for
- * provider stream after <n>ms" and "Provider stream start timed out after
- * <n>ms"), the WebSocket liveness verdict ("WebSocket liveness timeout after
+ * provider stream after <n>ms", "Provider stream start timed out after
+ * <n>ms" and "Provider stream sent only keep-alives and timed out after <n>ms"), the WebSocket liveness verdict ("WebSocket liveness timeout after
  * <n>ms (<k> pings unanswered)"), and the Responses completion-phase verdict
  * ("Provider stream stalled after the last output item: response.completed
  * timed out after <n>ms"). These anchored shapes
@@ -499,7 +516,7 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
  * timeout diagnostics.
  */
 const PROVIDER_STREAM_STALL_ERROR_PATTERN =
-	/^(?:Idle timeout waiting for provider stream after \d+ms|Provider stream start timed out after \d+ms(?: \([^)]*\))?|WebSocket liveness timeout after \d+ms \(\d+ pings unanswered\)|Provider stream stalled after the last output item: response\.completed timed out after \d+ms)$/i;
+	/^(?:Idle timeout waiting for provider stream after \d+ms|Provider stream start timed out after \d+ms(?: \([^)]*\))?|Provider stream sent only keep-alives and timed out after \d+ms(?: \([^)]*\))?|WebSocket liveness timeout after \d+ms \(\d+ pings unanswered\)|Provider stream stalled after the last output item: response\.completed timed out after \d+ms)$/i;
 const PROVIDER_TRANSPORT_TIMEOUT_ERROR_PATTERN = /^Request timed out\.?$/i;
 
 export function isProviderStreamStallError(message: AssistantMessage): boolean {
@@ -518,6 +535,11 @@ const PROVIDER_STALL_PHASES: ReadonlyArray<{
 		pattern: /^Provider stream start timed out after (\d+)ms/i,
 		symptom: "accepted the request but never started sending a response",
 		setting: "retry.provider.streamStartTimeoutMs",
+	},
+	{
+		pattern: /^Provider stream sent only keep-alives and timed out after (\d+)ms/i,
+		symptom: "kept the connection alive but sent no response",
+		setting: "retry.provider.keepAliveTimeoutMs",
 	},
 	{
 		pattern: /^Idle timeout waiting for provider stream after (\d+)ms/i,

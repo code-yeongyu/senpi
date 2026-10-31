@@ -100,8 +100,11 @@ describe("senpi#3014 stop publication cannot skip goal lifecycle cleanup", () =>
 		expect(rendered).toEqual({ key: "goal", text: goalStatusText(stopped) });
 		expect(backstop).toHaveBeenCalledTimes(1);
 		expect(backstop).toHaveBeenCalledWith(expect.objectContaining({ goal: stopped }));
+		// A stale stop leaves the goal active with nothing armed, so the turn-end liveness verdict (#3863) records a stall.
 		expect(attempted).toEqual(
-			reason === "stale" ? ["goal-continuation-stopped", "engine-paused"] : ["goal-continuation-stopped"],
+			reason === "stale"
+				? ["goal-continuation-stopped", "engine-paused", "turn-end-liveness"]
+				: ["goal-continuation-stopped"],
 		);
 		if (reason === "cap") {
 			expect(stopped).toMatchObject({ status: "blocked", blockedReason: "continuation cap reached" });

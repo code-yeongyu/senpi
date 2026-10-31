@@ -18,7 +18,7 @@ export interface AutoDecision {
 }
 
 const WRITE_TOOLS = new Set(["write", "edit"]);
-const LIST_TOOLS = new Set(["ls", "find"]);
+const LIST_TOOLS = new Set(["ls", "find", "glob"]);
 const NO: AutoDecision = { approveBlanketAsk: false };
 const YES: AutoDecision = { approveBlanketAsk: true };
 

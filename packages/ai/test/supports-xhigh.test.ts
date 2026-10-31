@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { clampThinkingLevel, getModel, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
 import type { Model } from "../src/model.ts";
+import { opencodeGoProvider } from "../src/providers/opencode-go.ts";
 import type { Api } from "../src/types.ts";
 import {
 	FIXTURE_MAX_MODEL_ID,
@@ -222,10 +223,12 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
 
-	it("includes low/high/max plus off for DeepSeek V4 Flash on opencode-go", () => {
-		const model = getModel("opencode-go", "deepseek-v4-flash");
+	it("maps an opencode-go model served over Google Generative AI to its low/medium/high thinking levels", () => {
+		const model = opencodeGoProvider()
+			.getModels()
+			.find((candidate) => candidate.api === "google-generative-ai");
 		expect(model).toBeDefined();
-		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high"]);
 	});
 
 	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on OpenRouter", () => {

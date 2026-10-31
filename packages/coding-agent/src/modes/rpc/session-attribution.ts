@@ -15,7 +15,11 @@ export interface SessionAttribution {
 	readonly sessionId?: string;
 	/** Tool currently executing for that session. */
 	readonly tool?: string;
+	/** Kind of non-tool job holding the loop (senpi#3566): a hook, the event fanout, a parse, a prepare, a spool. */
+	readonly job?: JobKind;
 }
+
+export type JobKind = `hook:${string}` | "fanout" | "session.parse" | "compaction.prepare" | "history.spool";
 
 const attributionStore = new AsyncLocalStorage<SessionAttribution>();
 
@@ -27,6 +31,22 @@ const attributionStore = new AsyncLocalStorage<SessionAttribution>();
 let sequence = 0;
 /** Attributed work that is still running, keyed by its sequence number (ascending). */
 const openActivities = new Map<number, SessionAttribution>();
+/** Called synchronously when attributed work starts, before it can block the loop. */
+const activityStartListeners = new Set<() => void>();
+
+/**
+ * Subscribe to the start of attributed work (senpi#3738): the loop-lag watchdog slows its tick while the
+ * host is idle and uses this to return to its fast tick before the work that could stall the loop runs.
+ */
+export function onSessionActivityStart(listener: () => void): () => void {
+	activityStartListeners.add(listener);
+	return () => activityStartListeners.delete(listener);
+}
+
+function notifyActivityStarted(): void {
+	for (const listener of activityStartListeners) listener();
+}
+
 /** The most recent synchronous activity that has finished. */
 let lastFinished: { readonly sequence: number; readonly attribution: SessionAttribution } | undefined;
 
@@ -43,6 +63,7 @@ let lastFinished: { readonly sequence: number; readonly attribution: SessionAttr
 export function runWithSessionAttribution<T>(attribution: SessionAttribution, task: () => T): T {
 	const mark = ++sequence;
 	openActivities.set(mark, attribution);
+	notifyActivityStarted();
 	const finish = (): void => {
 		if (!openActivities.delete(mark)) return;
 		lastFinished = { sequence: ++sequence, attribution };
@@ -73,16 +94,41 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
  */
 export function openSessionAttributionSpan(attribution: SessionAttribution): () => void {
 	const ambient = attributionStore.getStore();
+	const sessionId = attribution.sessionId ?? ambient?.sessionId;
 	const merged: SessionAttribution = {
-		sessionId: attribution.sessionId ?? ambient?.sessionId,
-		tool: attribution.tool,
+		...(sessionId !== undefined ? { sessionId } : {}),
+		...(attribution.tool !== undefined ? { tool: attribution.tool } : {}),
+		...(attribution.job !== undefined ? { job: attribution.job } : {}),
 	};
 	const mark = ++sequence;
 	openActivities.set(mark, merged);
+	notifyActivityStarted();
 	return () => {
 		if (!openActivities.delete(mark)) return;
 		lastFinished = { sequence: ++sequence, attribution: merged };
 	};
+}
+
+/** A job-kind span that inherits the ambient session; it stays blamable until the disposer runs. */
+export function openJobSpan(job: JobKind): () => void {
+	const ambient = attributionStore.getStore();
+	return openSessionAttributionSpan({ sessionId: ambient?.sessionId, job });
+}
+
+/** Run `task` as a job of `job`'s kind, attributed for its whole lifetime like a routed command. */
+export function runWithJob<T>(job: JobKind, task: () => T): T {
+	const ambient = attributionStore.getStore();
+	return runWithSessionAttribution({ ...(ambient?.sessionId ? { sessionId: ambient.sessionId } : {}), job }, task);
+}
+
+/** One stall line's attribution clause: `sessionId=<id>[ tool=<name>][ job=<kind>]`. */
+export function describeAttribution(attribution: SessionAttribution | undefined): string {
+	if (attribution?.sessionId === undefined && attribution?.tool === undefined && attribution?.job === undefined) {
+		return "no attributed session";
+	}
+	const tool = attribution.tool ? ` tool=${attribution.tool}` : "";
+	const job = attribution.job ? ` job=${attribution.job}` : "";
+	return `sessionId=${attribution.sessionId ?? "unknown"}${tool}${job}`;
 }
 
 /** Current activity counter; the watchdog samples it once per tick. */

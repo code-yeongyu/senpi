@@ -3,7 +3,7 @@ import { rulesForPreset } from "../../src/core/extensions/builtin/permission-sys
 import { evaluate } from "../../src/core/extensions/builtin/permission-system/evaluate.ts";
 import { handleNoUI } from "../../src/core/extensions/builtin/permission-system/non-interactive.ts";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
-import type { Request } from "../../src/core/extensions/builtin/permission-system/types.ts";
+import { DENIAL_IS_FINAL, type Request } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
 function createRequest(overrides: Partial<Request> = {}): Request {
 	return {
@@ -101,7 +101,7 @@ describe("permission presets", () => {
 		expect(result).toEqual({
 			requestID: "request-1",
 			reply: "reject",
-			message: "Permission required for bash (git status). Use --permission bash=allow to override.",
+			message: `Permission required for bash (git status), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
 		});
 		expect(events.map((event) => event.event)).toEqual(["permission_asked"]);
 	});

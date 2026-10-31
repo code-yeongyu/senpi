@@ -57,7 +57,7 @@ export type KnownImageApi = "openrouter-images" | "openai-images";
 
 export type ImageApi = KnownImageApi | (string & {});
 
-export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one" | "llama-cpp-classify";
+export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one";
 
 export type ClassifierApi = KnownClassifierApi | (string & {});
 
@@ -186,6 +186,8 @@ export interface ProviderResponse {
 /** Authentication, HTTP transport, and lifecycle callbacks shared by provider requests. */
 export interface ProviderRequestOptions<TModel = Model<Api>> {
 	signal?: AbortSignal;
+	/** Originating session working directory for subprocess-backed providers. */
+	cwd?: string;
 	/**
 	 * Abort the request when the provider reports that a safety classifier
 	 * declined the requested model and a substitute model served the turn
@@ -270,6 +272,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * Adapter support is explicit; unsupported adapters do not invoke it.
 	 */
 	onProviderStreamEvent?: (data: unknown, model: Model<Api>) => void | Promise<void>;
+	/**
+	 * Called whenever the response body delivers bytes, keep-alives included (SSE `ping` events, `:` comments).
+	 * Liveness only: it says the connection is alive, not that the model produced anything. Adapter support is
+	 * explicit; unsupported adapters do not invoke it.
+	 */
+	onTransportActivity?: () => void;
 	temperature?: number;
 	/**
 	 * Arbitrary sampling parameters merged into the request body as-is, after the named request
@@ -569,6 +577,13 @@ export interface ProviderNativeContent {
 }
 
 export interface Usage {
+	/**
+	 * Latest request's context when billing covers multiple internal requests.
+	 * Input includes cached reads and writes; output belongs to that request only.
+	 * Null means no request measurement is available (estimate from the transcript).
+	 * Absent preserves the legacy contract: the billing counters describe one request.
+	 */
+	contextUsage?: { readonly input: number; readonly output: number } | null;
 	input: number;
 	output: number;
 	cacheRead: number;
@@ -589,6 +604,8 @@ export interface Usage {
 		cacheWrite: number;
 		total: number;
 	};
+	/** The model has no known price, so `cost` is not a real amount; consumers must not report it as $0. */
+	costUnknown?: true;
 }
 
 /**
@@ -691,6 +708,14 @@ export interface SystemMessage {
 	 * the original. Avoid integer-like names; JSON objects reorder those.
 	 */
 	sections?: Record<string, string | null>;
+	/**
+	 * Leading message only: the start of the rendered prompt that is the same across sessions in the same
+	 * working directory. Providers with block-level prompt caching (Anthropic) send it as its own block
+	 * holding the system cache breakpoint when the rendered prompt still starts with it, so another session
+	 * reads it from cache even when the rest differs; a rewrite that no longer starts with it sends one block.
+	 * Request-time only; rendered text is unchanged (senpi#4447).
+	 */
+	stablePrefix?: string;
 	/** Complete definitions of tools that become available at this point. */
 	toolsAdded?: Tool[];
 	/** Tools that stop being available at this point. */
@@ -710,6 +735,31 @@ export interface ConfigurationUpdateMessage {
 	content: (TextContent | ImageContent)[];
 	effort: string;
 	timestamp: number;
+}
+
+/**
+ * When the agent loop asked for a response and when it streamed, as Unix timestamps in milliseconds (senpi#3879).
+ * Stamped by the agent loop on the final message, so it is persisted with the session.
+ */
+export interface AssistantMessageTiming {
+	/**
+	 * Just before the stream function was called. A stream function that throws or never starts still gets it, so it
+	 * marks the attempt, not proof that a request reached the provider. An empty-response recovery retry keeps the
+	 * first attempt's value, so time to first token then spans the retries.
+	 */
+	requestedAt: number;
+	/** First streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	firstTokenAt?: number;
+	/** Last streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	lastTokenAt?: number;
+	/** When the response settled: done, error or abort. */
+	endedAt: number;
+	/**
+	 * Streamed generation time in milliseconds, by the TPS notice's rule (senpi#3393): first delta to last delta,
+	 * or from the response's start when it reasoned before its first delta. Absent when nothing streamed. Stamped on
+	 * aborted and failed responses too: a consumer computing a rate skips those, as the TPS notice does.
+	 */
+	generationMs?: number;
 }
 
 export interface AssistantMessage {
@@ -732,18 +782,41 @@ export interface AssistantMessage {
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
-	/** Redaction-safe cause retained when a session projects a provider limit as user-facing advice. */
-	errorCause?: { type: "usage_limit"; scope: "account" | "model" };
+	/**
+	 * Redaction-safe cause: a provider limit projected as user-facing advice, or a model id its route does not
+	 * serve (`model_config`, never retried or fallen back).
+	 */
+	errorCause?: { type: "usage_limit"; scope: "account" | "model" } | { type: "model_config"; model: string };
 	/** Structured provider failure family, minted only by a provider adapter from structured error metadata. */
 	providerDiagnostic?: ProviderDiagnostic;
 	/** Explicit owner for an abort initiated by the provider retry watchdog. */
 	abortSource?: "provider";
+	/**
+	 * Set when the run failed in local code (session bookkeeping, a local file) rather than in a provider request.
+	 * No model produced the failure, so retry and model fallback must not act on it.
+	 */
+	failureSource?: "local";
+	/**
+	 * Set by the model runtime on a failed response when the same credential (provider, endpoint and key) served a
+	 * response moments before: an `auth` failure then means the provider refused this request, not the key.
+	 */
+	credentialServedRecently?: true;
 	rawStopReason?: string;
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.
 	 * Preserved for debugging and does not currently affect agent control flow.
 	 */
 	endTurn?: boolean;
+	/**
+	 * Request-only hint, never persisted: the history up to and including this message is a stable
+	 * prefix, so adapters with explicit prompt-cache breakpoints mark it. Context reduction sets it on
+	 * the last message its frontier leaves unchanged, so the next frontier step reads that prefix
+	 * instead of re-writing it (senpi#3242).
+	 */
+	promptCacheBreakpoint?: true;
+
+	/** Response timing stamped by the agent loop. Absent on older messages and on messages built outside the loop. */
+	timing?: AssistantMessageTiming;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -813,6 +886,8 @@ export interface AssistantImages {
 	background?: "transparent" | "opaque";
 	stopReason: ImagesStopReason;
 	errorMessage?: string;
+	/** Structured classification of a provider rejection (HTTP status, category); set only on `error`. */
+	providerDiagnostic?: ProviderDiagnostic;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -923,6 +998,12 @@ export interface ToolReference {
  */
 export interface Context {
 	systemPrompt?: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions in the same working directory; the rest
+	 * changes between sessions (memory, MCP instructions). Folded into the leading system message as
+	 * `stablePrefix` when `systemPrompt` starts with it (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	messages: Message[];
 	tools?: Tool[];
 	/**
@@ -1209,6 +1290,12 @@ export interface AnthropicMessagesCompat {
 	 * the payload. Default: true only for the first-party Anthropic endpoint.
 	 */
 	supportsWebSearch?: boolean;
+	/**
+	 * Whether request bodies of 4096+ characters are sent with `Content-Encoding: gzip`. A refused encoding
+	 * (415, a proxy's 400/403, or the origin failing to parse the body) is resent uncompressed once and that
+	 * origin stays uncompressed for the process. Default: true only for the first-party Anthropic endpoint.
+	 */
+	supportsGzipRequestBody?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */
@@ -1322,9 +1409,21 @@ export interface ModelCostTier extends ModelCostRates {
 	inputTokensAbove: number;
 }
 
-export interface ModelCost extends ModelCostRates {
+export interface ModelCostCard extends ModelCostRates {
 	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
 	tiers?: ModelCostTier[];
+}
+
+export interface ModelCostEffectiveRate extends ModelCostCard {
+	/** ISO 8601 UTC instant from which this card replaces the base card and every earlier dated card. */
+	effectiveFrom: string;
+}
+
+export interface ModelCost extends ModelCostCard {
+	/** Scheduled list-price changes, each billed for requests at or after its `effectiveFrom`. */
+	effectiveRates?: ModelCostEffectiveRate[];
+	/** No price is known for this model (rates are placeholders): usage on it reports `costUnknown`, not a $0 cost. */
+	unknown?: true;
 }
 
 export interface ModelImageResizeOptions {

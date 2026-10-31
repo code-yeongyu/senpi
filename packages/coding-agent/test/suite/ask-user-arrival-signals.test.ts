@@ -109,7 +109,7 @@ describe("ask-user arrival signals", () => {
 				);
 				const settled = delivery.settled(ctx, "arrival");
 				expect(asked).toHaveLength(1);
-				expect(blocked).toEqual([{ active: true, id: "arrival", label: "Library — Which library?" }]);
+				expect(blocked).toEqual([{ active: true, id: "arrival", label: "Library - Which library?" }]);
 				if (outcome === "abort") controller.abort();
 				else
 					response.resolve({
@@ -124,7 +124,7 @@ describe("ask-user arrival signals", () => {
 				await Promise.resolve();
 				expect(asked).toHaveLength(1);
 				expect(blocked).toEqual([
-					{ active: true, id: "arrival", label: "Library — Which library?" },
+					{ active: true, id: "arrival", label: "Library - Which library?" },
 					{ active: false, id: "arrival" },
 				]);
 			},

@@ -1,3 +1,24 @@
+## 2026-10-16 - Resolve the openai provider like model calls; never strand on a gateway without images (omo#10285)
+
+### What changed
+
+- `openai-auth.ts` (new): resolves the `openai` provider from its catalog model, so a models.json `baseUrl` override is honoured, and through `getApiKeyAndHeaders`, so a models.json key applies before the auth store. A stored or runtime key keeps its lead over `PI_IMAGE_GEN_PROVIDER`; a models.json override ranks after the pin; a key only from `OPENAI_API_KEY` stays last.
+- `auth.ts`: `imageGenCandidates` yields the sources lazily in precedence order (stored openai, pin, openai override, scanned gateways, `OPENAI_API_KEY`); `resolveImageGenAuth` returns the first. Credential helpers moved to `credentials.ts`.
+- `request.ts` (new): `requestImagesAcrossCandidates` moves past a scanned gateway only when the structured provider diagnostic reports HTTP 404/405, and names skipped or exhausted providers.
+- `tool.ts`: uses the candidate loop; the result notes skipped gateways and the exhausted error lists every provider tried.
+
+### Why
+
+omo#10285: with `openai` overridden in models.json to a custom OpenAI-compatible baseUrl and key, `generate_image` ignored it and silently picked the alphabetically first gateway, which answered 404.
+
+### Why an extension could not handle it
+
+The resolver and the tool are this builtin's own code.
+
+### Expected merge conflict zones
+
+- NONE: fork-only builtin.
+
 ## 2026-10-01 - Share the declared skill payload path with read permissions (#2513)
 
 ### What changed

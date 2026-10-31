@@ -58,6 +58,7 @@ export {
 	type HandoffResult,
 	handoffHost,
 } from "./rpc/host-handoff.ts";
+export { describeHostHolder, type HostHolder } from "./rpc/host-holder.ts";
 // What a client hands `senpi host` to describe the daemon it wants, and the trust boundary it crosses.
 export {
 	DEFAULT_HOST_LAUNCH_SPEC,

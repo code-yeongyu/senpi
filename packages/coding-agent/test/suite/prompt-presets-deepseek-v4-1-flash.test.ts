@@ -42,6 +42,35 @@ const V41_FLASH_MODEL_IDS: ReadonlyArray<readonly [id: string, provider: string]
 	["accounts/fireworks/models/deepseek-v4p1-flash", "fireworks"],
 	["deepseek-v4-1-flash", "venice"],
 	["DeepSeek-V4.1-Flash", "custom"],
+	// The 2026-10-17 snapshot (DeepSeek-V4.1-Flash-1017): the official API serves it
+	// as deepseek-flash; gateways list it under a dated id.
+	["deepseek/deepseek-v4.1-flash-1017", "openrouter"],
+	["deepseek/deepseek-v4.1-flash-1017", "vercel-ai-gateway"],
+	["deepseek/deepseek-v4.1-flash-1017", "kilo"],
+	["deepseek-ai/DeepSeek-V4.1-Flash-1017", "baseten"],
+];
+
+// Every shipped catalog row of the 1017 snapshot, read from the catalogs themselves (id or display name),
+// so a row added later is checked without editing this file.
+const SNAPSHOT_1017 = /v4[.p -]?1[- ]flash[- (]+1017/i;
+const SHIPPED_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string, model: Model<Api>]> =
+	getProviders().flatMap((provider) =>
+		getModels(provider)
+			.filter((model) => SNAPSHOT_1017.test(`${model.id} ${model.name}`))
+			.map((model) => [provider, model.id, model] as const),
+	);
+
+// Rows known to ship on 2026-10-20; removing one from its catalog must fail the suite.
+const KNOWN_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string]> = [
+	["baseten", "deepseek-ai/DeepSeek-V4.1-Flash-1017"],
+	["baseten", "deepseek-ai/DeepSeek-V4.1-Flash-1017-Fast"],
+	["fireworks", "accounts/fireworks/models/deepseek-v4p1-flash-1017"],
+	["opengateway", "deepseek/deepseek-flash"],
+	["openrouter", "deepseek/deepseek-v4.1-flash-1017"],
+	["qwen-token-plan-cn", "deepseek-v4.1-flash-1017"],
+	["venice", "deepseek-v4-1-flash-1017"],
+	["vercel-ai-gateway", "deepseek/deepseek-v4.1-flash-1017"],
+	["vercel-ai-gateway", "deepseek/deepseek-v4.1-flash-1017-fast"],
 ];
 
 // The official API retired V4 Flash on 2026-09-10 and serves these names with V4.1 Flash.
@@ -83,11 +112,19 @@ function hasV4FlashSignal(searchable: string): boolean {
 
 function getV41CatalogModels(): Model<Api>[] {
 	return getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[]).filter((model) => {
+		getModels(provider).filter((model) => {
 			const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
 			return hasV41Signal(searchable) || (model.provider === "deepseek" && hasV4FlashSignal(searchable));
 		}),
 	);
+}
+
+// Image input and reasoning are per-provider serving choices, not snapshot facts: models.dev lists mistral's
+// deepseek-v4-1-flash-1017 as text-only (attachment false), so the release's catalog regeneration can add such a
+// row (senpi#4762). Every shipped row must reach the V4.1 preset; the curated KNOWN_1017_ROWS pin the multimodal set.
+function expectShipped1017Row(model: Model<Api>): void {
+	expect(model.input).toContain("text");
+	expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
 }
 
 describe("DeepSeek V4.1 Flash prompt preset", () => {
@@ -155,6 +192,30 @@ describe("DeepSeek V4.1 Flash prompt preset", () => {
 		expect(catalogModelIds.some((id) => id.startsWith("opencode-go/"))).toBe(true);
 		expect(misses).toEqual([]);
 	});
+
+	it.each(SHIPPED_1017_ROWS)("ships the 1017 snapshot row on %s (%s) on the V4.1 preset", (_provider, _id, model) => {
+		expectShipped1017Row(model);
+	});
+
+	it("accepts a text-only 1017 row as the release's catalog regeneration can add one", () => {
+		// given models.dev's mistral row, served text-only upstream
+		const model = { ...createModel("deepseek-v4-1-flash-1017", "mistral"), input: ["text"] } satisfies Model<Api>;
+
+		// then
+		expectShipped1017Row(model);
+	});
+
+	it.each(KNOWN_1017_ROWS)(
+		"still ships the 1017 snapshot row on %s (%s) as a multimodal reasoning row",
+		(provider, id) => {
+			// when
+			const model = SHIPPED_1017_ROWS.find(([p, i]) => p === provider && i === id)?.[2];
+
+			// then
+			expect(model?.reasoning).toBe(true);
+			expect(model?.input).toContain("image");
+		},
+	);
 });
 
 describe("DeepSeek V4.1 Flash prompt content", () => {

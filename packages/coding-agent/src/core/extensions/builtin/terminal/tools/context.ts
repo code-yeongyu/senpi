@@ -1,12 +1,13 @@
 import type { TextContent } from "@earendil-works/pi-ai";
+import type { TerminalSessionExit } from "@earendil-works/pi-pty";
 import type { TerminalManager } from "../manager.ts";
 import type { MonitorEvent, MonitorRegistry } from "../monitor-registry.ts";
 import { splitModelOnlyNotices } from "../output-format.ts";
-import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import type { TimeoutAction } from "../settings.ts";
 
 /** Shared dependencies handed to every terminal tool factory. */
 export interface TerminalToolContext {
+	readonly redactSecretsInOutput?: boolean;
 	readonly manager: TerminalManager;
 	readonly cwd: string;
 	/** Explicit shell path from settings (settings-manager `shellPath`), if any. */
@@ -24,10 +25,12 @@ export interface TerminalToolContext {
 	 * expose PI_* session metadata to spawned commands like the core bash tool does.
 	 */
 	readonly getSessionContext?: () => import("../../../types.ts").ExtensionContext | undefined;
-	/** Registers a session when it transitions to background liveness. */
-	readonly onBackgroundStart?: (id: string, description: string, startedAtMs: number) => void;
+	/** Registers a session when it transitions to background liveness; `command` is what it runs, when known. */
+	readonly onBackgroundStart?: (id: string, description: string, startedAtMs: number, command?: string) => void;
+	/** A person or the model wrote to a session's stdin (`bash_input`): it is interactive from now on. */
+	readonly onSessionInput?: (id: string) => void;
 	/** Notified when a background session exits, so the notify layer can wake the agent. */
-	readonly onBackgroundExit?: (id: string, runtime: TerminalRuntimeSession) => void;
+	readonly onBackgroundExit?: (id: string, runtime: TerminalExitView) => void;
 	/** Session-scoped monitor state, sharing the terminal manager's bash-id namespace. */
 	readonly monitorRegistry?: MonitorRegistry;
 	/** Receives filtered monitor line and terminal-summary events. */
@@ -41,6 +44,27 @@ export interface TerminalToolContext {
 	 * registration. Resolves immediately when persistence is already bound or unavailable.
 	 */
 	readonly ensurePersistence?: () => Promise<void>;
+	/**
+	 * The tool child's execution barrier for terminal launches (senpi#3566 todo 9). When set, every command starts
+	 * behind a go-line shim inside its PTY: `wrap` rewrites the launch, and `release` records the started session with
+	 * the server and only then lets the command run. Absent on the in-process path, which spawns exactly as before.
+	 */
+	readonly launchBarrier?: TerminalLaunchBarrier;
+}
+
+/** What a background exit notice reads: on the tool child it is a summary the child sent, not the live session. */
+export interface TerminalExitView {
+	readonly exitResult: Pick<TerminalSessionExit, "exitCode" | "signal" | "cancelled" | "timedOut"> | null;
+	fullOutput(): string;
+}
+
+export interface TerminalLaunchBarrier {
+	wrap(command: string, args: readonly string[]): { readonly command: string; readonly args: readonly string[] };
+	release(session: {
+		readonly pid: number | undefined;
+		write(data: string): unknown;
+		onExit(listener: (exitCode: number | null) => void): unknown;
+	}): Promise<void>;
 }
 
 /** Minimal tool-result shape returned by the terminal tools. */

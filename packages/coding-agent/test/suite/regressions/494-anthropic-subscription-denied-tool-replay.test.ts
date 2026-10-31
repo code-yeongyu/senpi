@@ -61,9 +61,7 @@ describe("issue #494: Claude SDK OAuth denied tool replay", () => {
 			hookSpecificOutput: {
 				hookEventName: "PreToolUse",
 				permissionDecision: "deny",
-				permissionDecisionReason: expect.stringMatching(
-					/senpi executes this tool on the host.*this denial is not a failure/i,
-				),
+				permissionDecisionReason: expect.stringMatching(/runs this tool on the host.*next user message/i),
 			},
 		});
 	});

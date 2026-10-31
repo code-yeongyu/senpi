@@ -9,6 +9,15 @@
  * the runtime's steering or follow-up queue exactly like a user's queued message.
  */
 
+import type { RelocationRequest, RelocationRequestResult, RelocationTargetsResult } from "../session-relocation.ts";
+
+export type {
+	RelocationRequest,
+	RelocationRequestResult,
+	RelocationTarget,
+	RelocationTargetsResult,
+} from "../session-relocation.ts";
+
 /** Why a `session_control_wake` fired. */
 export type SessionControlWakeReason =
 	| "idle"
@@ -56,6 +65,11 @@ export interface AdmitExternalMessageInput {
 	readonly deliverAs: ExternalDeliverAs;
 	/** The `turn_epoch` the sender observed; a steer is admitted only while it is still current. */
 	readonly expected_turn_id?: number;
+	/**
+	 * What an idle session does with it: `start` (the default) starts a turn, `queue` enqueues it for the next
+	 * turn, like an RPC `steer`/`follow_up` with `whenIdle: "queue"`.
+	 */
+	readonly whenIdle?: "start" | "queue";
 }
 
 /**
@@ -147,6 +161,12 @@ export interface SessionControlActions {
 	listAdmittedDeliveries(): AdmittedDeliveries;
 	/** Writes the session header now, so the session id is durable before anything exposes it. */
 	persistHeaderNow(): Promise<void>;
+	/** Whether the session's host offers continuing it on another computer right now. */
+	relocationOffered(): boolean;
+	/** The computers the session's host offers to continue on; `unavailable` when no host offers any. */
+	relocationTargets(signal?: AbortSignal): Promise<RelocationTargetsResult>;
+	/** Asks the host to continue this session on `target` once the current turn ends; never interrupts it. */
+	requestRelocation(request: RelocationRequest, signal?: AbortSignal): Promise<RelocationRequestResult>;
 }
 
 /** `customType` of the transcript entry an admitted delivery becomes. */

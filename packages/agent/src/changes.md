@@ -1,3 +1,482 @@
+## 2026-10-30 - Harness skill loader: ignore files no longer hide symlinked skills (senpi#5069)
+
+### What changed
+
+- `packages/agent/src/harness/skills.ts`: `loadSkillsFromDirInternal` skips the parent's ignore rules for an entry the environment reports as a symlink, and walks a linked directory with a fresh ignore matcher, matching the coding-agent skill walkers (senpi#5060).
+
+### Why
+
+- After senpi#5061 the two loaders disagreed: the coding-agent walkers loaded a git-ignored linked skill, the harness loader still dropped it silently.
+
+### Why an extension could not handle it
+
+- Skill discovery in the harness is a library function with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the directory loop of `loadSkillsFromDirInternal` in `skills.ts`.
+
+## 2026-10-27 - Agent state carries the stable system prefix to the provider context (senpi#4447)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentState.systemPromptStablePrefix` and `AgentContext.systemPromptStablePrefix`.
+- `packages/agent/src/agent.ts`: the initial state and the context snapshot copy it.
+- `packages/agent/src/agent-loop.ts`: `buildProviderContext` passes it to `normalizeContext`.
+
+### Why
+
+- The boundary computed when the system prompt is composed has to reach the provider request with the prompt.
+
+### Why an extension could not handle it
+
+- Provider context assembly in `packages/agent/src/agent-loop.ts` has no extension seam.
+
+### Expected merge conflict zones
+
+- LOW: `AgentState`/`AgentContext` in `packages/agent/src/types.ts`, `createMutableAgentState`/`createContextSnapshot` in `packages/agent/src/agent.ts`, `buildProviderContext` in `packages/agent/src/agent-loop.ts`.
+
+## 2026-10-30 - Keep-alive bytes keep a slow first token alive; keep-alive-only silence is capped (senpi#4608)
+
+### What changed
+
+- `packages/agent/src/stream-keepalive.ts` (new): `createTransportLiveness` records when the provider last reported bytes and when the last assistant event arrived, and judges a fired silence bound: expire it, extend it to one bound after the last byte, or end the request with `StreamKeepAliveTimeoutError` once keep-alives alone exceeded the keep-alive budget.
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` passes `onTransportActivity` to the stream function (chaining a caller's own hook) and hands the liveness to the assistant event reader. When the start or idle bound fires and the provider reported bytes within one full configured bound, the deadline is re-armed instead of ending the request; each assistant event restarts the keep-alive budget. A caller abort past a keep-alive timeout still reads as the abort.
+- `packages/agent/src/types.ts`: `AgentLoopConfig.streamKeepAliveTimeoutMs` (unset or non-positive: keep-alives are unbounded).
+- `packages/agent/src/agent.ts`: `AgentOptions.streamKeepAliveTimeoutMs` and `Agent.streamKeepAliveTimeoutMs`, forwarded into the loop config.
+
+### Why
+
+- The silence bounds counted only public assistant events. With the empty-assistant recovery wrapper holding `start` back until content commits, the start bound is a first-content bound, so a request the provider had accepted and kept alive with SSE `ping` events or `:` comment keep-alives was cut at `streamStartTimeoutMs` (90 s until 2026-09-02, 300 s since) while the model was still producing its first token. The retry re-sent and re-billed the whole prompt, and relays in front of the API had to inject a synthetic content-shaped event to keep slow requests alive.
+
+### Why an extension could not handle it
+
+- The bounds live inside the loop's per-request event reader; no hook sees a request between its start and its first event, and the bytes are only visible to the provider adapter.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` `streamAssistantResponse` stream-function options, `createAssistantEventReader` and `readNextAssistantEvent` signatures and deadline handler.
+- LOW: `types.ts` next to `streamStartTimeoutMs`; `agent.ts` timeout option plumbing.
+
+## 2026-10-30 - Remove redundant compaction type assertions (senpi#4979)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: use the declared `MessageEntry.message` type directly in message extraction, assistant-usage lookup and cut-point token estimation.
+- `packages/agent/src/harness/compaction/utils.ts`: use the discriminant-narrowed tool-call argument type in conversation serialization.
+
+### Why
+
+- `packages/agent/src/harness/compaction/compaction.ts`: the three assertions repeat the `MessageEntry` contract and can conceal future type changes.
+- `packages/agent/src/harness/compaction/utils.ts`: the `toolCall` discriminant already supplies the argument record type; the assertion adds no information.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/compaction/compaction.ts`: these are internal compaction implementation types.
+- `packages/agent/src/harness/compaction/utils.ts`: extensions cannot remove an internal source assertion; emitted runtime behavior is unchanged.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/harness/compaction/compaction.ts`: message extraction, assistant-usage lookup and cut-point token estimation expressions.
+- `packages/agent/src/harness/compaction/utils.ts`: the `toolCall` branch in `serializeConversation`.
+
+## 2026-10-29 - Share tree-sitter runtime initialization (senpi#4748)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts`: share initialization by resolved runtime path independently of parser caching. Serialize each initialization and its grammar loads on one process-global queue that survives cache resets. Discard only failed runtime and grammar loads, checking that the failing promise still owns its cache entry; retain genuinely missing grammars as negative cache entries.
+- `packages/agent/src/harness/utils/read-folders/index.ts` and the read-summary selection receipt refresh the engine source hash and receipt digest only. Historical measurements, measurement commit, language choices, and every receipt assertion remain unchanged; the boundary safety and harness suites requalify this initialization-only change.
+
+### Why
+
+- Concurrent uncached TypeScript and JavaScript loads reinitialized process-global web-tree-sitter state while a grammar was loading, producing an incompatible-language failure. Different injected runtime paths have the same process-global race, and pre-reset failures must not discard newer entries. Missing grammars must not repeat filesystem resolution on every cached read.
+
+### Why an extension could not handle it
+
+- Runtime initialization and parser caching are internal to the read folder engine, before any extension receives a folder.
+
+### Expected merge conflict zones
+
+- LOW: the runtime and grammar caches in `engine.ts`, plus the selection receipt hash binding in `index.ts`.
+
+## 2026-10-27 - Win32 simulation profile for code-level Windows tests (senpi#4510)
+
+### What changed
+
+- `packages/agent/src/testing/win32-sim.ts` (fork-only, test support): drive-letter `\` paths over a backing directory, case-insensitive and case-preserving names, `\\.\pipe\<name>` endpoints, `EBUSY`/`EPERM` with Windows errno values on rename or delete of an open file, and signal-less termination (`win32Kill`: supported signals terminate at once with no handler; others throw `ENOSYS`).
+
+### Why
+
+- `packages/agent/src/testing/win32-sim.ts`: Windows behavior is verified by code-level tests with simulated OS behavior rather than a VM, so every suite needs the same profile.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/testing/win32-sim.ts`: it is test support imported by package test suites, not runtime behavior.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-26 - Thrown provider errors pass the provider error boundary (senpi#4282)
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: `createTerminalFailureAssistantMessage` runs pi-ai's `sanitizeProviderErrorMessage` on the message it builds from a thrown error, so the terminal message is classified (`errorCause: { type: "model_config" }`) and redacted before `message_start`/`message_end`.
+- `packages/agent/src/agent.ts`: `handleRunFailure` runs `sanitizeProviderErrorMessage` on the failure message of a run that threw between turns.
+- `packages/agent/src/harness/pico3/kinds/generation.ts`: the terminal message the generation builds from a thrown stream error runs `sanitizeProviderErrorMessage`, so it is classified and redacted before it is recorded.
+
+### Why
+
+- An error the stream function throws, or one that fails the run between turns, never passes `AssistantMessageEventStream`: its raw text reached every event and the session file, and a thrown `404 model_not_found` lost its classification, so the session retried it and walked the fallback chain onto another model.
+
+### Why an extension could not handle it
+
+- Both messages are built inside the agent loop and published to every subscriber before an extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: the end of `createTerminalFailureAssistantMessage`; the two lines before the first `processEvents` call in `handleRunFailure` and the `pi-ai` import block of `agent.ts`; the `pi-ai` import block and the stream `catch` of `generation.ts`.
+
+## 2026-10-25 - Identify assistant stream starts for lifecycle activity (senpi#3864)
+
+### What changed
+
+- `types.ts` adds optional `streaming: true` to the `message_start` event.
+- `agent-loop.ts` sets the marker only at the provider assistant stream-start boundary; prepared messages, user messages, tool results, and synthetic failures do not set it.
+
+### Why
+
+- An assistant role alone cannot distinguish a live model stream from a prepared or synthetic assistant message.
+
+### Why an extension could not handle it
+
+- Only the agent loop knows whether a message start came from the provider stream or from prepared input.
+
+### Expected merge conflict zones
+
+- `agent-loop.ts`: provider stream-start event.
+- `types.ts`: additive message-start event metadata.
+
+## 2026-10-26 - Hand the internal channel to Agent at construction (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exposes only the internal channel factory and types for the session layer, never
+  `subscribeInternalAgent` or `dispatchInternalAgent`. `createInternalAgentChannel`, `InternalAgentChannel`,
+  `OrderedAgentRecord` and the `AgentOptions.internalChannel` constructor option DO ship in the published `.d.ts`
+  (marked `@internal`; no `stripInternal`): they are published surface, but construction-only. Passing a channel
+  when an Agent is built is the only way to receive its records; an existing Agent has no attach path.
+- `packages/agent/src/agent.ts`: consumes the internal channel option at construction and stores it in a private
+  field, with no getter or attach method. Only that channel receives this Agent's ordered records.
+- `packages/agent/src/internal-events.ts`: owns channel-local sequencing and listeners, acquiring capture on the
+  first listener and releasing it on the last. A run started without a listener still gets no progress sink.
+
+### Why
+
+- `packages/agent/src/index.ts`, `packages/agent/src/agent.ts`, and `packages/agent/src/internal-events.ts`: an
+  extension holding an existing Agent cannot attach a channel; a package subpath is public npm API, not privacy.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/index.ts`, `packages/agent/src/agent.ts`, and `packages/agent/src/internal-events.ts`: this
+  construction-time capability belongs below extension delivery, inside the session-owned agent pipeline.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` export list; `packages/agent/src/agent.ts` constructor options and internal
+  dispatch wiring; `packages/agent/src/internal-events.ts` channel implementation.
+
+## 2026-10-26 - Empty-assistant recovery forwards the kept attempt's records (senpi#4307, part of #4272)
+
+### What changed
+
+- `empty-assistant-recovery.ts` (fork-only): reads attempts with `assistantEvents`, holds controls beside the events
+  they follow, forwards both when the attempt commits and discards both with a discarded attempt; replaced terminals
+  relay their capture.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-25 - Internal-only ordered agent channel for capture records (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: when the run has an internal sink, `streamAssistantResponse` reads the
+  provider stream as ordered records, hands progress records to the sink in order, and carries the provider
+  carrier onto `message_start`, `message_update` and `message_end` (the terminal carrier holds the final
+  normalized message). Agent-stamped thinking timing goes to the sink as `message_block_metadata` after the event
+  it amends. Progress records do not re-arm the idle or start bound. Without a sink the loop reads the public stream
+  exactly as before.
+- `packages/agent/src/agent.ts`: a run's loop config gets the sink only when an internal listener exists at run
+  start; `processEvents` dispatches each event to the internal channel before public listeners, with no microtask
+  when there is no internal listener.
+- `packages/agent/src/internal-events.ts` (fork-only, new): `subscribeInternalAgent` registers an internal-only
+  listener (not exported from the package barrel, no production subscriber in this increment); records are frozen
+  `{ event | progress, sequence }` with one increasing sequence per agent.
+
+### Why
+
+- Contract-owner lane decision (option 3): S02a ends at an ordered internal agent channel that public
+  `Agent.subscribe` listeners, extensions and emitted events never see; the AgentSession bridge is S02b.
+
+### Why an extension could not handle it
+
+- `Agent.subscribe` is the public listener path and reaches extensions; an internal-only channel cannot be built on
+  top of it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` `streamAssistantResponse` (iterator creation, the record branch, the thinking case and
+  the terminal emits) and `createAssistantEventReader`.
+- LOW: `agent.ts` `createLoopConfig` return object and the `processEvents` listener loop.
+
+## 2026-10-24 - Settle response stop reasons before message_end (senpi#3029)
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: `settleStopReason` promotes stops with pending tool calls and demotes tool use without tool calls.
+- `packages/agent/src/agent-loop.ts`: settle the stop reason before storing the terminal response and emitting `message_end` on normal, stream-end, and idle-finalization paths. Preserve response timing stamps and pass the same object to `finishTurn` and `turn_end`.
+
+### Why
+
+- Normalizing after `message_end` created an unpersisted copy. Identity-based entry lookup then failed and skipped every `turn_end` extension handler for that turn.
+
+### Why an extension could not handle it
+
+- The copy was made inside the loop between persistence and turn completion, with no extension hook between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts`, the response handling in `runLoop` and terminal branches in `streamAssistantResponse`.
+- LOW: `packages/agent/src/assistant-terminal-state.ts`, stop-reason normalization helpers.
+
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
+## 2026-10-21 - The agent loop stamps each response's timing (senpi#3879)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` marks the request just before the stream function is called, feeds the provider's `start` and streamed delta events to a timing recorder, and stamps `timing` on the final message on every terminal path (the former `propagateThinkingTiming` is now `stampTiming`, which also stamps the thinking blocks as before). A failure before the request was issued gets no timing.
+- `packages/agent/src/response-timing.ts` (fork-only): the recorder, plus the exported `reasonedBeforeFirstDelta` / `STREAMED_DELTA_TYPES` rule that the TPS notice (`builtin/tps.ts`) also uses, so both measure one window. Wall-clock fields use `Date.now()`; `generationMs` uses the monotonic clock and the TPS notice's window (first delta to last delta, or from the response start when it reasoned before its first delta, senpi#3393).
+- `packages/agent/src/index.ts`: re-exports `response-timing.ts`.
+
+### Why
+
+- The final message is what the session persists and what `message_end`/`entry_appended` carry to RPC clients, so timing recorded there survives reloads and reaches the desktop turn stats line (desktop #3729).
+- `packages/agent/src/index.ts`: exports the generation-window rule so the TPS notice and the persisted timing share one implementation.
+
+### Why an extension could not handle it
+
+- Extensions see `message_update` events but cannot write a field onto the persisted final message before it is appended.
+- `packages/agent/src/index.ts`: the shared rule has to be importable by the coding-agent's TPS extension, which only reaches the package root.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` `streamAssistantResponse`: the stream function call, the `start` case, the delta cases and the four terminal `stampTiming` calls.
+- LOW: `packages/agent/src/index.ts`, one `export *` line after `agent-loop.ts`.
+
+## 2026-10-21 - Harness compaction reads request context (omo#10792)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: `calculateContextTokens` prefers the optional request measurement and treats an explicit unknown as unmeasured, allowing transcript estimation.
+
+### Why
+
+- `packages/agent/src/harness/compaction/compaction.ts`: cumulative SDK billing for multiple overlapping requests must not trigger compaction as if it occupied one context window.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/compaction/compaction.ts`: the optional harness is independently callable and owns its context estimator below coding-agent extensions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/compaction/compaction.ts`, `calculateContextTokens`. Preserve the existing fallback for providers without request measurements.
+
+## 2026-10-22 - Inspect both message queues (senpi#3864)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `peekQueuedMessages({ all: true })` returns steering and follow-up queues without consuming them.
+
+### Why
+
+- `packages/agent/src/agent.ts`: delivery-ticket retries must see every queued copy.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent.ts`: the queues are private to `Agent`.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: `peekQueuedMessages`.
+
+## 2026-10-21 - A run that failed in the queued-input port is marked local (senpi#3866)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `takeQueuedMessages` and `createLoopConfig` call the owner's `queuedInputPort` through `localFailurePort` (new `packages/agent/src/local-failure.ts`), which remembers every error the port's `claim`, `release` or `commitConsumption` raised. `handleRunFailure` stamps the failure message of a run that ended on such an error with `failureSource: "local"` (not on an abort).
+
+### Why
+
+- `packages/agent/src/agent.ts`: on Windows the coding-agent's pending-input journal failed its fsync with EPERM inside `commitConsumption`. `handleRunFailure` turned it into an ordinary `stopReason: "error"` message stamped with the current model, and the session took it for a model hard error and walked its whole fallback chain (omo#10781). The port is local bookkeeping, never a provider request, so its failures say so.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent.ts`: the failure message is built inside the agent from the thrown error; only the agent knows the error came from the port.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent.ts`, the import block, the `port` line in `takeQueuedMessages`, the `queuedInputPort` line in `createLoopConfig`, and the spread list of `handleRunFailure`'s failure message.
+
+## 2026-10-21 - Inspect both message queues for delivery-ticket retries (senpi#3864)
+
+### What changed
+
+`packages/agent/src/agent.ts`: `peekQueuedMessages({ all: true })` snapshots both steering and follow-up queues. Without the option it still previews only the next selected queue.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts` must detect a retained ticket in either queue before retrying admission; a pending steer must not hide an already queued follow-up.
+
+### Why an extension could not handle it
+
+The native agent owns both queues and their message identities.
+
+### Expected merge conflict zones
+
+`packages/agent/src/agent.ts`: queue preview methods.
+
+## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentLoopConfig.commitQueuedConsumption(queue, messages)`, awaited with the drained queued messages before any of them enters the context.
+- `packages/agent/src/agent-loop.ts`: `runLoop` remembers which queue the pending messages were drained from and awaits `commitQueuedConsumption` before inserting them; a rejection restores them to that queue and fails the attempt, so no provider request carries them.
+- `packages/agent/src/agent.ts`: an optional `AgentOptions.queuedInputPort` with `claim` (the native drain runs under the owner's gate), `release` (the native restore, likewise) and `commitConsumption`. The loop's queue polls and restores go through it, and so do the runs started from a queue (`continue()` after an assistant message, `continueWithQueuedMessages()`, the drain after `agent_end`): `takeQueuedMessages` claims, commits, and releases on a failed commit. Without a port every queue path behaves as before.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: the coding-agent session journals a pending input's delivery; a message must not reach a provider before that record is durable, or a crash would leave it sent but still pending (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the drain-to-context step happens inside the loop, with no hook between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts`, the queue drains in `runLoop` (each now goes through `drainSteering` / `drainFollowUp`) and the insertion before the next request.
+- MEDIUM: `packages/agent/src/agent.ts` `continue`, `continueWithQueuedMessages`, `runQueuedMessagesAfterAgentEnd` (their drains now go through `runQueuedMessages` / `takeQueuedMessages`) and `createLoopConfig`.
+- LOW: `packages/agent/src/agent.ts` `AgentOptions`; `packages/agent/src/types.ts` `AgentLoopConfig`.
+
+## 2026-10-17 - A caller's plain abort reason is carried as the turn's message (senpi#3510)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `abortError` keeps the caller's own words as the error message: a non-empty string reason (`controller.abort("user stop")`) or an object's non-empty `message`, capped at 500 characters with an ellipsis. An `Error` reason is kept as before (uncapped); a blank, empty, or any other reason still gets "Request was aborted".
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: a client that aborts with a reason expects to see it; the reason was dropped unless it was an `Error`.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the abort error is built inside the agent loop's request path.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, `abortError`.
+
+## 2026-10-17 - A caller-aborted turn past the pre-stream bound carries the abort's message (senpi#3481)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse`'s failure path gives a turn the caller aborted the abort's own error (`abortError(signal.reason)`) when the error it ended on is the pre-stream bound's `StreamStartTimeoutError` / `StreamIdleTimeoutError`. The `stopReason` was already `aborted`; only the message changes. Every other failure keeps its error.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: a turn aborted while a pre-stream step never finished ended at the bound and told the user a provider timed out and to raise a timeout setting; the user had stopped it.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the terminal assistant message is built inside one provider request in the agent loop.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, the `createTerminalFailureAssistantMessage` call in `streamAssistantResponse`.
+
+## 2026-10-16 - The pre-stream bound leaves a caller abort as it was (fixes the #3472 regression)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `createPreStreamBound`'s `run()` no longer races the caller's abort. Only the bound ends a pre-stream step; a caller abort reaches the step through the request signal and the request proceeds as it did before #3472 (the provider is still called with the aborted signal, and the turn reads aborted).
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: #3472 made `run()` reject the moment the caller aborted, so an abort during the context transform or key lookup ended the turn before the provider call. That changed the caller's abort semantics and broke `post-compaction-stale-usage-queue-exemption.test.ts` ("does not resurrect deferred work after InteractiveMode abort clears the visible queue": one provider call instead of two).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the bound and the request it aborts are internal to one provider request in the agent loop.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, `createPreStreamBound`'s `run()`.
+
+## 2026-10-16 - The start bound covers the work before a provider stream (senpi#3471)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` runs the context transform, the API key lookup and the stream function under `createPreStreamBound`: the start bound (or, without one, the idle bound) now starts before them, and a step that does not finish in time ends the turn with `StreamStartTimeoutError` (or `StreamIdleTimeoutError`) and aborts the request, whose signal the transform now receives. The first stream read gets only the rest of the start budget, but its timeout error still names the configured bound (which `retry.ts` parses and users raise). A caller abort still ends the turn as aborted; work that settles after the turn ended is handled (no unhandled rejection), and a stream returned after the bound fired is closed.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: those three awaits ran before any bound existed, so a key lookup or a provider that never returned a stream left the turn waiting forever on every surface (TUI, desktop, RPC), with no failure to show (omo-desktop-app #2856).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the bound and the request it aborts are internal to one provider request in the agent loop; no hook sees that request before its stream starts.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, the top of `streamAssistantResponse`'s `try` and the start-timeout argument of `createAssistantEventReader`.
+
+## 2026-10-15 - Remove or replace one queued message by identity (senpi#1971)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `PendingMessageQueue.remove/replace` and `Agent.removeQueuedMessage/replaceQueuedMessage` act on one exact message object; false once it was drained into a turn.
+
+### Why
+
+The session's dequeue/edit must reach the queue the agent drains, not only its own visible lists.
+
+### Why an extension could not handle it
+
+The queues are private agent-core state.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: `PendingMessageQueue` and the queue methods next to `clearSteeringQueue`.
+
 ## 2026-10-07 - Terminal auth failures preserve retry diagnostics (senpi#2893)
 
 ### What changed

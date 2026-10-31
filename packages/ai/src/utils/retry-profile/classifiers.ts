@@ -1,5 +1,5 @@
 import { classifyErrorMessage, USAGE_LIMIT_EXHAUSTION } from "../retry.ts";
-import type { RetryClassification, RetryClassifier, RetryFailure } from "./types.ts";
+import type { RetryClassification, RetryClassifier } from "./types.ts";
 
 /**
  * Status codes Kimi's provider-request stage treats as retryable. 429 is its

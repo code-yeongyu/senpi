@@ -262,7 +262,8 @@ describe("AgentSession actionable boundaries", () => {
 		harness.session.subscribe((event) => {
 			if (
 				event.type === "entry_appended" &&
-				(event.entry.type === "custom" || event.entry.type === "custom_message")
+				((event.entry.type === "custom" && event.entry.customType !== "session-lifecycle") ||
+					event.entry.type === "custom_message")
 			) {
 				snapshots.push(JSON.stringify(harness.session.messages));
 			}

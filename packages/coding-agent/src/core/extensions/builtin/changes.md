@@ -1,3 +1,411 @@
+## 2026-10-29 - Job widgets: review follow-ups to P1, P3 and P4
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/tui-widget.ts`: a new `JobWidgetArea` treats a job already `done` in the first state it receives as expired, so a reload (or a `config-reload`), whose re-bound registry re-sends every finished job it still holds, no longer flashes those widgets back for 10 s; a job that finishes later still lingers. The `+N more` row is cut to the inner width like the job lines (`cutPlain`, now exported from `tui-line.ts`), so no row is wider than a narrow terminal.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/line-reader.ts`, `runtime.ts`: the reader exposes `progress`, the newest CR segment of the line still in progress (sanitized; a trailing token-shaped run of 16+ characters is held back until the segment completes, since a redactor cannot recognize a token cut mid-write). The pending, fallback and live views use it, redacted by a fresh source redactor (the incomplete line never enters the source's stateful one), as the stage ahead of the last complete line, so a CR progress bar shows its current step instead of the previous one. Rules still match complete lines only.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/format.ts`: a compacted value picks its decimals after rounding and moves to the next suffix when it rounds to 1000: `99_960` prints `100k` (was `100.0k`), `999_999` prints `1.0M` (was `1000k`), `999_950_000` prints `1.0G`.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/matcher.ts`: `scanPattern` skips `\Q…\E` quoted text (literal in RE2, up to `\E` or the end), so the groups it names, and the lookaround and backreference checks, agree with RE2: `\Q(?<x>a)\E(?<y>\d)` names only `y`, and a spec reading field `x` is rejected. The RegExp test engine refuses patterns JS reads differently from RE2 (a class opening with `]`, `\Q…\E`), and the leading-`]` class reading is pinned for the scanner and RE2.
+- `NOTICE.md`: an oh-my-pi `9df0457b31` entry for the job-widgets port with the MIT block, like the TTSR and todo ports.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/session-host.ts`, `registry.ts`, `request-controller.ts`: a re-bind after a reload applies the re-read `authorAfterMs` and obfuscation (`configure`; the registry hands jobs and its publisher a redactor that calls the current one, so every state sent, author request and new runtime uses it; a reader already running keeps its stateful source redactor so a key block is never split). `onJobWidgetSessionChange` tells hosts when a session's widgets start or stop (a re-bind is neither), and `resendJobWidgetState` re-sends a session's state when some job is shown.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/key-block-redact.ts`: private-key body lines that carry a per-line prefix (`docker logs -t`, `kubectl logs --timestamps`, a `[pod] ` tag) are held and redacted like bare ones, also when the window cut off the BEGIN line or only the END line carries a marker. A line is read as a prefix plus the base64 token ending it; a run holds consecutive lines whose prefixes have the same shape (digit runs collapsed). A bare run starts on 16+ base64 characters with both cases, so hex hashes are no longer held (or redacted at a window cut); a prefixed run starts only on a full-width (60+) body line, so an ordinary line ending in a token still reaches the view.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/request-controller.ts`, `request-policy.ts`: when the author has no model, the call gives back the job's request and its hourly slot, and the session asks again after `noModelRetryMs` (30 s) instead of stopping the job for good, so widgets start once a model is selected.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/tui-line.ts`: the narrow-width order is documented as it runs: the chart goes before the headline label, and once the label is gone the chart comes back if it fits; a table pins the order for a wide headline label.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/view-build.ts`: a meter's unit that restates the total (`/60`, `/ 60`, `of 60 steps`, `60`, as authors copy a job's `step 24/60`) loses that leading total, so the count shows it once (`24/60`, `24/60 steps`) instead of `24/60 /60`; a real unit stays. Found in a real authored widget for `step i/60` output.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/extension.ts`: on `senpi:extension-rpc-subscribed` the session's current `job_widget_state` is sent once more, so an RPC client that starts receiving extension events sees the widgets (a frozen `done` one included) without waiting for a change. `model_select` copies the context's property descriptors instead of spreading it, so its guarded getters stay lazy.
+
+### Why
+
+- Review follow-ups on senpi#4681, senpi#4685, senpi#4686 and senpi#4691 (prefixed key bodies reaching the author and view, a model-less session spending its caps and stopping jobs for good, and a narrow-width doc that disagreed with the code): a quiet widget area across reloads, narrow terminals under `PI_TUI_STRICT_RENDER=1`, CR progress bars one step late, `1000k`, settings ignored until a new session, and late RPC clients seeing nothing.
+
+### Why an extension could not handle it
+
+- It is the job-widgets builtin's own code; the only shared piece is the subscribe signal recorded in `core/extensions/changes.md`.
+
+### Expected merge conflict zones
+
+- LOW: `openJobWidgetSession` / `closeJobWidgetSession` in `job-widgets/session-host.ts`, the `session_start` and `model_select` handlers in `job-widgets/extension.ts`.
+
+## 2026-10-29 - Job widgets: live widget lines in the TUI (job widgets P4)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/tui-line.ts` (new): `formatJobWidgetLine` draws one job as one line no wider than the width it gets: id, title, the primary block's label, a spark as 8-level block glyphs (or a meter as `[██████░░░░] 120/250`), then the headline and the spark's last value; a pending job shows `reading output · N lines`, a fallback its latest line, a skipped job nothing. Too wide, it gives way so the numbers go last: it drops the block label, shortens the title to 8 columns, drops the chart (a meter's `120/250` count stays with the numbers), drops the headline's label, then shortens the title further or drops it, narrows the gaps to one space, and only then cuts the line. Colors come from the theme tokens `accent`, `success`, `error` and `muted`; a non-empty `NO_COLOR` draws none (`jobWidgetLineStyle`).
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/tui-widget.ts` (new): `JobWidgetArea`, the widget above the editor (`setWidget("job-widgets")`). It shows while some job is live or pending, or a finished one lingers: at most 3 lines, newest first, then `+N more`; a job stays 10 s after it is first seen done, then leaves, and the area goes away with the last line. It redraws only when what it shows changed (the same component, one `requestRender`), and its only timer is the next linger expiry.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/extension.ts`: in the TUI (`ctx.mode === "tui"` with a UI), the session's `job_widget_state` events on `pi.events` feed a `JobWidgetArea`, subscribed before the session opens so a re-bound session's state reaches it; shutdown unsubscribes and clears the area.
+
+### Why
+
+- Live widgets reached RPC clients only; the terminal UI, where most long jobs are started, showed nothing.
+
+### Why an extension could not handle it
+
+- It is a builtin extension, drawn through the public `ctx.ui.setWidget` and `pi.events` APIs; nothing outside `job-widgets/` changes for the widget area.
+
+### Expected merge conflict zones
+
+- LOW: the `session_start` and `session_shutdown` handlers in `job-widgets/extension.ts`.
+
+## 2026-10-28 - Job widgets: live widgets for background sessions and the job_widget_state event (P3)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/`: the engine is wired to sessions. `registry-job.ts` holds one job (its text sources, its derivation runtime, replaced by a fresh one when a spec is installed, and where its spec request stands); a job joins the state once its first spec request starts. `registry.ts` (`JobWidgetRegistry`) holds one session's jobs and request controller: new output schedules a refresh at most every 250 ms, a 1 s unref'd ticker runs only while some job is open, and on exit a job settles to `done` with its last view frozen. `state-publisher.ts` sends the session's state at most once a second and only when what a client draws changed (`updatedAtMs` alone does not count). `session-host.ts` keeps the registries by session id, so a reload parks a session's registry and the next generation re-binds it; it holds the public host API `registerJobWidgetSource`, `getJobWidgetState` and `setJobWidgetAuthorResolver`. `session-author.ts` resolves the author model from `jobWidgets.model`, then the host route, then the session's current model, and sends the request through the session's model runtime with reasoning off. `extension.ts` is the new `job-widgets` builtin: on `session_start` it opens the session's widgets unless `jobWidgets.enabled` is false, and it sends `job_widget_state` through `pi.events` and `pi.rpc` (a stale-generation error alone is dropped). `public.ts` is the public barrel.
+- Views carry no secrets: `runtime.ts` takes a `redactSource` option and every source's lines go through one stateful redactor per source (`SourceLineReader` feeds it each complete line in order, marks text the tap dropped unread as a cut, ends it when the source closes, and cuts lines at 4,096 characters only after redaction): the built-in private-key rule, the session's secret obfuscation, then `redactSecrets`, before lines are matched or kept, so a key that spans lines, refreshes or a dropped gap never reaches a view, and `registry-job.ts` redacts the label and stage it derives from, so no view text is ever cut through a token. `view-redact.ts` (`redactJobWidgetState`) then redacts every string of every view (only `kind` and `tone` pass through) at the publisher boundary, for each sent state and for `getJobWidgetState`; clients persist the state.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `job-widgets` right after `terminal`.
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: adds `JOB_WIDGET_STATE_EVENT = "job_widget_state"`.
+
+### Why
+
+- Long background jobs print numbers nobody reads until they end; this turns their output into a small live chart that every client (TUI, RPC, desktop) receives the same way.
+
+### Why an extension could not handle it
+
+- It is a builtin extension; outside its own directory it only adds a registry entry and an event-name constant beside the existing ones.
+
+### Expected merge conflict zones
+
+- LOW: the `terminal` neighborhood of `builtinExtensions` in `builtin/index.ts`, and the constants at the top of `monitor-state-event.ts`.
+
+## 2026-10-28 - Job widgets: spec author, redacted samples and request controller (P2)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/`: new pure modules, still not registered in `builtin/index.ts` and not wired to any session. `author-types.ts` defines the `JobWidgetAuthor` port (`(request, signal) => Promise<unknown>`, `undefined` meaning no model) and its request (job id, brief, source samples, the spec being replaced, the rejected answer). `author-system-prompt.ts` and `author-user-prompt.ts` hold the respond-tool prompts as plain template code. `author-samples.ts` builds the sample: per source the first and newest lines, at most 3 lines of one shape, lines cut at 300 characters, fence lines left out, 12 KB in total with a fair share per source and two thirds of each share for the newest lines. `author-redact.ts` redacts every brief field, source label, sample line and retry text statefully per source (one redactor fed a source's lines, or a text's lines, in order, never a fresh one per line): first the built-in private-key rule of `key-block-redact.ts` (on whatever the session's secret setting; everything from a `BEGIN … PRIVATE KEY` armor line through its END line, or the end of the source, becomes one `[REDACTED private key]` line, and a base64 body run that an END line follows, or that a sample cut leaves open, is redacted with it, since a sample window can start inside a key), then the optional session obfuscator (a per-source `SecretOutputRedactor` factory), then `redactSecrets` (which runs `redactSensitiveOutput` first). Sample budgeting and line cuts run on the redacted request. `model-author.ts` adds `createModelJobWidgetAuthor({ resolveModel, complete })`: one request with the `respond` tool, `tool_choice` forced by name where the wire supports it (the `todotools` precedent), no reasoning, 3,000 output tokens, and the answer read from the tool call or from JSON text. It also adds `jobWidgetModelResolver` (explicit setting, then a host resolver, then the session's model). `request-policy.ts` and `request-controller.ts` decide and run requests: first request after 15 s and 3 lines, validation plus dry run, one retry carrying the errors, drift re-author after 200 unmatched lines with the newest match over 90 s old, at most 3 author calls per job, 2 jobs in flight and 30 calls per hour per session, a `skip` that ends a bash job's requests and a task job's until its watch hint changes, and no more requests once the author has no model.
+- Ported and adapted from oh-my-pi commit 9df0457b31 (`packages/coding-agent/src/job-widgets/{author,registry}.ts`, `src/prompts/system/job-widget-{system,user}.md`), MIT-licensed, Copyright Can Boluk et al. ([`oh-my-pi`](https://github.com/can1357/oh-my-pi)). Adaptations: redaction moved to the port boundary so injected authors never see raw text, the model and completion function are injected, the prompts no longer name oh-my-pi internals, and the caps follow the senpi plan (calls per job include retries; an hourly session cap is new).
+
+### Why
+
+- This is the author half of the job-widgets plan: a cheap model writes a widget spec once per job, inside fixed cost bounds, without seeing secrets.
+
+### Why an extension could not handle it
+
+- It is part of a new builtin extension directory; nothing outside it changes.
+
+### Expected merge conflict zones
+
+- None: every path is new and fork-only.
+
+## 2026-10-28 - Job widgets: RE2 line matcher (P1b)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/re2-matcher.ts`: new `Re2LineMatcher`, the production `LineMatcher` backed by `re2js`. It compiles every pattern with no flags (never `RE2JS.LOOKBEHINDS`), maps re2js syntax errors to `MatcherCompileError` with the pattern index, and reports each named group's span in UTF-16 units (`undefined` for a group that took no part). `defaultLineMatcher` is a shared instance, exported through the job-widgets barrel for later wiring; it is still not registered in `builtin/index.ts`.
+- `packages/coding-agent/test/job-widgets/`: the P1 table tests run once per engine (re2 and the RegExp fake) through `describeEachMatcher`; `re2-matcher.test.ts` adds span, compile-rejection (lookaround, numbered and named backreferences, syntax errors) and linear-time (`^(a+)+$` on 50k vs 250k `a…ab` lines, both above re2js's BitState cutoff so both run on its NFA/DFA path) coverage.
+
+### Why
+
+- Widget patterns are model-written, so a backtracking engine could stall on one line (ReDoS). RE2 semantics match in time linear in the line.
+
+### Why an extension could not handle it
+
+- It is a new file in the job-widgets builtin directory; nothing outside it changes.
+
+### Expected merge conflict zones
+
+- None: every path is new and fork-only.
+
+## 2026-10-28 - Job widgets: spec, validator and local derivation (P1)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/`: new pure modules, not registered in `builtin/index.ts` and not wired to any session yet. They hold the declarative widget spec (`spec-types.ts`), the respond-tool JSON schema (`spec-schema.ts`), structural parsing with local repairs (`spec-parse*.ts`, `spec-repair.ts`), the validator and its dry run against sample lines (`spec-validate.ts`, `spec-dry-run.ts`), a `LineMatcher` port with `MatcherCompileError` (`matcher.ts`), and the deterministic derivation runtime: the source line reader (partial lines, CR and CRLF, ANSI strip, 4,096-char cut, torn-gap skip), bounded per-field and keyed series with the ten aggregations, and view building into the `job_widget_state` v1 contract (`line-reader.ts`, `field-state.ts`, `rule-match.ts`, `view-build.ts`, `runtime.ts`, `view-types.ts`).
+- Every field keeps at most 256 keys (oldest first-seen dropped; keys the spec names are pinned), so a grid keyed per test or per path stays bounded for the life of a job.
+- The validator rejects lookaround, every backreference/recursion/conditional spelling (`\\1`, `\\k<n>`, `\\k{n}`, `\\g…`, `(?P=n)`, `(?P>n)`, `(?R)`, `(?1)`, `(?&n)`, `(?(1)…)`, `(*VERB)`), patterns over 400 characters, more than 12 rules and more than 4 blocks before any engine sees a pattern, and hands the engine `(?<name>…)` for both `(?P<name>…)` and `(?<name>…)`. No production matcher ships here: the linear-time engine adapter comes in a follow-up once its dependency is approved.
+- Ported and adapted from oh-my-pi commit 9df0457b31 (`packages/coding-agent/src/job-widgets/{spec,runtime,format,types,text-tap}.ts`), MIT-licensed, Copyright Can Boluk et al. ([`oh-my-pi`](https://github.com/can1357/oh-my-pi)). Adaptations: the native matcher became a port, the view follows the senpi v1 contract (states pending, live, done, skipped, fallback; seven tones; bars and grid cells keyed by display key), the missing-value text is `-`, and a missing `agg` on bars or meter blocks defaults to `last` instead of costing a retry.
+
+### Why
+
+- Long background jobs print numbers nobody reads until they end. This is the engine half of the job-widgets plan: once a spec exists, every update is computed locally from new output, with no model call.
+
+### Why an extension could not handle it
+
+- It is a new builtin extension directory; nothing outside it changes.
+
+### Expected merge conflict zones
+
+- None: every path is new and fork-only.
+
+## 2026-10-27 - Kimi recommendations and the look-at chain move to K3.1 Pro (senpi#4443)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Kimi rung of `RECOMMENDED_DEFAULT_MODELS` is `kimi-k3.1-pro` at `max` (was `kimi-k3`); `canonicalModelId` maps Kimi Code's bare `k3.1-pro` to `kimi-k3.1-pro` as it maps `k3` to `kimi-k3`.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/model-selector.ts`: `DEFAULT_LOOK_AT_CHAIN` ends at `kimi-k3.1-pro` (was `kimi-k3`).
+
+### Why
+
+- Kimi K3.1 Pro replaces K3 as Moonshot's flagship (senpi#4441); implicit Kimi picks should land on it.
+
+### Why an extension could not handle it
+
+- These are the builtin extensions' own shipped defaults.
+
+### Expected merge conflict zones
+
+- LOW: the `RECOMMENDED_DEFAULT_MODELS` table and `DEFAULT_LOOK_AT_CHAIN`.
+
+## 2026-10-26 - vertex-garden ambient auth carries a resolved project (senpi#4339)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: the ambient resolver resolves the target project (process env, then the sibling google-vertex stored profile env) and returns it in the ambient `AuthResult.env`; availability still tracks the ADC chain alone (no return of the reverted env-only gate, 9a497be00).
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: with a plain ADC login, no env vars and no quota project, the first garden request threw "Vertex AI requires a project ID" while google-vertex worked off the same login.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: needs the new `storedProviderEnv` input plus `AuthResult.env` flow through `ambientApiKeyAuth` — both core-owned.
+
+### Expected merge conflict zones
+
+- LOW: `resolveVertexModelGardenAmbient` body.
+
+## 2026-10-23 - show_html_page points at the visualize skill again (senpi#2869)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the `show_html_page` description gains one sentence, "Load the visualize skill before building the page." The guidelines are unchanged, so the pointer appears once.
+
+### Why
+
+- The 2026-10-06 entry removed the pointer until the skill shipped. The `visualize` skill now ships in released omo (oh-my-openagent#9702), so the description names it without restating its content.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its description is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `description` string of `showHtmlPageTool` in `html-render/tool.ts`.
+
+## 2026-10-21 - The TPS notice uses the shared generation-window rule (senpi#3879)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: `reasonedBeforeFirstDelta` and `STREAMED_DELTA_TYPES` now come from `@earendil-works/pi-agent-core` (`packages/agent/src/response-timing.ts`); the local copies are gone. Behavior is unchanged.
+
+### Why
+
+- The persisted response timing (senpi#3879) and the TPS notice must measure the same window; one shared rule keeps them from drifting (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- It is an extension already; the change only removes a duplicated helper.
+
+### Expected merge conflict zones
+
+- LOW: the imports and helper block at the top of `tps.ts`.
+
+## 2026-10-21 - Handoff estimates do not use cumulative context (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: the first-reply size estimate prefers an explicit request context measurement, skips an unknown one, and retains the prompt-only calculation for legacy usage.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: cumulative billing must not inflate the estimated fresh-session size. The request snapshot's input preserves the prompt-only estimate without subtracting cumulative output.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: this is the builtin's own usage reader.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`, `promptTokensOfFirstReply`.
+
+## 2026-10-21 - Deliver a resumed question's answer as a user message (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` passes `deliver: "user-message"` for a question resumed after a restart, as it already did for an async question; only a live blocking question passes `tool-result`.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: a resumed question's answer is delivered by `deliverAnswer`, whose question-input release reports it as human input. The RPC adapter reports `tool-result` answers itself, so the option must say which path delivers the answer or one answer counts twice.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the builtin owns answer delivery for every surface, while lifecycle accounting belongs to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the `deliver` member of the question dialog options in `startQuestion`.
+
+## 2026-10-21 - Declare lifecycle wake-source obligation kinds (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent` accepts an optional `children` or `background` kind. Publishers without it retain background semantics.
+
+### Why
+
+Child work must remain distinct from monitors and background jobs in lifecycle accounting.
+
+### Why an extension could not handle it
+
+The shared cross-package event contract is engine-owned.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent`.
+
+## 2026-10-21 - Distinguish human question answers from automatic timeouts (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: Routes actual answered/comment-submitted outcomes through the engine-owned question-input capability; automatic outcomes keep sendUserMessage and remain held.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: A question timeout must not release an unattended hold, while a real answer must.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: The builtin owns the canonical outcome and sends the answer for every surface; generic extensions cannot assert a human origin.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: deliverAnswer; the rest of question persistence and formatting is unchanged.
+
+## 2026-10-21 - Optional launch-gated Fable recommendation (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable recommendation uses the launch id only when both `FABLE55_LAUNCH.released` and `promoteDefaults` are true. Both are false in this draft, so today's list is unchanged. Effort remains xhigh, provider ranking remains unchanged, and Opus 5.5 remains the first recommendation.
+- This change and its four-case flag-matrix test are their own commit (82547134f3), which no later commit touches, so it reverts cleanly. Launch-day support can land without this commit; keeping it still requires an explicit promotion flip in the central launch block.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: release readiness and the decision to recommend a new Fable release are independent. No unreleased model should become a default.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the recommendation list belongs to this builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: import and Fable slot in `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/` (new): after a human-started turn settles, arms a timer for the prompt cache's expiry (last request, warm pings included, plus the model's TTL). When it fires on an idle session at or above `handoffHint.minContextTokens`, below the compaction trigger, with no active goal, and a fresh session would save at least `handoffHint.minSavingUsd` on the next reply (priced from the model's cost card), it sets one `handoff-hint` widget line with two choices: `/handoff` (opens a linked new session whose first entry is a deterministic brief: goal, open todos, last request and answer, touched files, old session path; no model call, no turn) and `/handoff keep` (hides it for the session, persisted as a `handoff-hint` custom entry). Once per threshold crossing; never for `worker` sessions, print/JSON mode, or extension-started turns. Emits `handoff_hint` on the event bus for shown, accepted and dismissed.
+- `handoff-hint/` (review follow-up): a session opened with history arms from its last assistant reply's timestamp, so a resumed session whose cache already expired gets the hint before its first reply; `accepted` is emitted only after `newSession` returns not cancelled (a cancelled switch keeps the hint); `/handoff <other>` notifies instead of starting a session; the brief lists at most 20 open todos, each capped at 200 characters.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `handoff-hint` after `cache-keepalive`.
+
+### Why
+
+Measured over 7 days of real sessions, the first reply after the cache expired cost a median $2.33 at 400k-600k tokens against $0.46 for a fresh session, and 82% of returns after a 5-60 minute break were cold. Nothing told the user (senpi#3230).
+
+### Why an extension could not handle it
+
+It is an extension; this records the new builtin.
+
+### Expected merge conflict zones
+
+- LOW: `builtin/index.ts` import block and the `builtinExtensions` entry after `cache-keepalive`.
+
+## 2026-10-17 - /files lists the whole active path after a reopen (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/files.ts`: `/files` reads `ctx.sessionManager.getFullBranch()` instead of `getBranch()`.
+
+### Why
+
+- A reopened compacted session keeps only its latest compaction window in memory (#3519), so `getBranch()` covers only that window; `/files` promises the files of the whole session.
+
+### Why an extension could not handle it
+
+- This is the builtin extension itself; the fix is the call it makes.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/files.ts`, the branch read at the top of the handler.
+
+## 2026-10-15 - TPS is timed from the first streamed token to the last (senpi#3393)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the rate divides the output of assistant messages that actually streamed by their first-to-last delta time (`text_delta`, `thinking_delta`, `toolcall_delta` from `message_update`). No tok/s is shown when nothing streamed or the streamed time is under 0.5 s. The rest of the notice (cache hit, elapsed message time) is unchanged. A message that reasoned before its first delta (its usage reports reasoning tokens, or it carries a thinking block, redacted included, whose text never streamed: Bedrock and omitted-display thinking report no reasoning count) is timed from its own start instead; thinking that streamed as `thinking_delta` keeps the first-to-last-delta window: reasoning can be hidden, or only summarised after it finished, so the first delta comes after most of it was generated. Aborted, errored and zero-output messages add nothing to the rate.
+
+### Why
+
+- Timing from `message_start` to `message_end` made a non-streamed reply read thousands of tok/s (`12853.9 tok/s ... 0.0s` on 5.1.30), and counted time-to-first-token for streamed ones. Regression: `test/suite/tps-extension.test.ts` (#3393 cases).
+
+### Why an extension could not handle it
+
+- This is the extension.
+
+### Expected merge conflict zones
+
+- LOW: the `message_update` handler and the rate line in `agent_end`.
+## 2026-10-14 - vertex-model-garden provider extension
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers the new `vertex-model-garden` builtin after `cursor-cli-oauth`.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/transport.ts`: keeps the URL builder private; the SDK-wire test owns the global endpoint contract without a duplicate helper test or test-only export.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/` (fork-only): registers only `vertex-garden` for Model Garden open models through `.../locations/global/endpoints/openapi` (`openai-completions`). It wraps the builtin API stream, injects an ADC bearer token plus `x-goog-user-project`, and is gated on the ADC credential chain through `ambientAuth` (`auth.ts`, composed by `provider-composer.ts`), so the lane is available while ADC is present without counting as a configured provider and never takes the automatic default over one the user configured (senpi#2327). The target project comes from `GOOGLE_CLOUD_PROJECT`/`GCLOUD_PROJECT`, else the ADC quota project, else `getProjectId()`; the API-key slot is never read, so a stored secret cannot reach the request URL. The starter catalog is exactly `deepseek-ai/deepseek-v4.1-flash-maas` (1,000,000-token context from the existing `deepseek-v4-1-flash` catalog data) and `zai-org/glm-5.2-maas`, priced at the model card's published MaaS list prices — DeepSeek V4.1 Flash $0.30/$1.20 per 1M tokens with a $0.03 cache hit, GLM 5.2 $1.40/$4.40 with a $0.14 cached input rate (https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing, "Deepseek's models" and "GLM's models"; DeepSeek V4.1 Flash is listed at no charge through 2026-10-16). Both models declare reasoning with every thinking level marked unsupported, so no level is offered that these endpoints cannot steer. Claude registration, catalog, rawPredict transport and tests are removed.
+
+### Why
+
+- Vertex Model Garden open models previously needed a hand-written models.json and a token script.
+- Marketplace partner models, including Claude and Grok, are excluded because they are card-billed and promotional credits do not apply.
+
+### Why an extension could not handle it
+
+- It is an extension; only the one-line registration in `builtin/index.ts` sits outside it.
+
+### Expected merge conflict zones
+
+- LOW: one import and one `builtinExtensions` entry.
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired mode from recommendation policy and update the shared async-answer ownership comment. Existing mode behavior and model provenance checks stay intact.
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-13 - tps: per-run stats notify is TUI-only (senpi#3236)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the `agent_end` handler returns early when `ctx.mode !== "tui"`, so the TPS/cache-hit notice is sent only to the TUI footer. Message text, timing accumulation, and the `output > 0`/`elapsedMs > 0` guards are unchanged.
+- `packages/coding-agent/test/suite/tps-extension.test.ts`: the ctx mock carries `mode: "tui"`, matching `ExtensionContext`.
+- `packages/coding-agent/test/suite/regressions/3236-tps-notify-tui-only.test.ts` (new): a TUI ctx still receives exactly one unchanged notice; rpc/app-server/json/print ctxs receive none.
+
+### Why
+
+In RPC mode `ctx.ui.notify` becomes an `extension_ui_request`, and the desktop rendered each one as an info warning row ("Work Log") once per agent run. The notice is a TUI footer nicety and has no RPC-mode consumer; the desktop now drops the string server-side (omo-desktop-app #2327), and this change stops the engine from emitting it outside the TUI in the first place.
+
+### Why an extension could not handle it
+
+It is an extension — the guard lives inside the existing `tps` builtin, whose notify call site is the only emitter of this string.
+
+### Expected merge conflict zones
+
+- LOW in `tps.ts` around the `agent_end` early-return block; LOW in `tps-extension.test.ts` around the ctx mock shape.
+
 ## 2026-10-11 - Restore shipped defaults and cache-preserving search policy (senpi#3125 delta)
 
 ### What changed
@@ -544,7 +952,6 @@ The provider id is resolved inside the package before any extension loads, and t
 
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/render.ts`: renderer exports.
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: attachment options.
-
 
 ## 2026-09-20 - Recover unsettled async questions after restart (#1857 I3)
 
@@ -1528,3 +1935,21 @@ The provider id is resolved inside the package before any extension loads, and t
 - `utils/changes.md`: corrected the stale `shortenPath()` note that claimed it backed the `/sessions` HUD picker; `shortenPath()` itself stays (other consumers remain).
 - Neo (the Go TUI) shipped a native port of the same HUD; it was removed in lockstep to satisfy the repo-wide "no /sessions HUD source" contract: `internal/ui/builtinext/{observer,observer_overlay,observer_viewer,observer_test,transcript,transcript_decode,transcript_render}.go`, the `ResolveSessionsCommandOutcome` resolver and its tests, the `app.sessions.observe` keybinding definition/scope/migration/registry-test entries, the qaharness `observer` scenario, the welcome-menu entry that advertised it, the `/sessions` command in the bridge `get_commands` testdata, and the `task-14-session-observer-tail` visual-claims manifest entry plus its triplet.
 - Why: user-requested cleanup. The HUD duplicated `/resume`'s session-picking surface and the `ctrl+s` chord collided with the more useful `app.session.toggleSort` / `app.models.save` chords that already bind `ctrl+s` in other scopes.
+
+## 2026-10-17 - /account marks a slot of the other login kind as unused (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: `statusOf` shows `unused (other login kind; switch with /login)` for an account summarized as unused.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: the list showed a never-used API key slot under an OAuth login as available (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts` is the built-in `/account` command.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: `statusOf`.

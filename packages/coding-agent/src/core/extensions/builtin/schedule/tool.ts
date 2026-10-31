@@ -12,6 +12,7 @@
 import { Type } from "typebox";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { cancelScheduledJob } from "./occurrences.ts";
+import type { LiveDelivery } from "./live-delivery.ts";
 import { isWatchRunnerAvailable } from "./runner-lease.ts";
 import { createScheduledJob, type JobRecord, listScheduledJobs, type ScheduledJobState, scheduleDir } from "./store.ts";
 import {
@@ -78,6 +79,7 @@ export interface SchedulePromptDetails {
 
 export interface SchedulePromptDeps {
 	readonly now: () => number;
+	readonly liveDelivery?: LiveDelivery;
 }
 
 function describeJob(job: ScheduledJob, state: ScheduledJobState): string {
@@ -126,6 +128,7 @@ async function create(
 	params: SchedulePromptParams,
 	ctx: ExtensionContext,
 	now: number,
+	liveDelivery: LiveDelivery | undefined,
 ): Promise<AgentToolResult<SchedulePromptDetails>> {
 	const prompt = params.prompt?.trim() ?? "";
 	if (prompt.length === 0) throw new Error("create needs a non-empty prompt.");
@@ -154,11 +157,21 @@ async function create(
 	);
 	const runnerAvailable = await isWatchRunnerAvailable(dir, now);
 	const lines = [`Scheduled ${describeJob(job, "pending")}`];
-	lines.push(
-		runnerAvailable
-			? "A schedule runner is active; it will deliver the prompt to this session when due."
-			: "No `senpi schedule run --watch` runner is active right now; the job fires the next time a runner runs.",
-	);
+	if (liveDelivery?.isLive() === true) {
+		await liveDelivery.replan();
+		lines.push(
+			"While this session stays open it delivers the prompt itself when due, steered into the current turn if one is running.",
+			runnerAvailable
+				? "After it closes, the active schedule runner delivers it."
+				: "If it closes first, the job fires the next time a `senpi schedule run` runner runs.",
+		);
+	} else {
+		lines.push(
+			runnerAvailable
+				? "A schedule runner is active; it will deliver the prompt to this session when due."
+				: "No `senpi schedule run --watch` runner is active right now; the job fires the next time a runner runs.",
+		);
+	}
 	return {
 		content: [{ type: "text", text: lines.join("\n") }],
 		details: { action: "create", jobs: [{ state: "pending", job }], runnerAvailable },
@@ -179,6 +192,7 @@ async function list(ctx: ExtensionContext): Promise<AgentToolResult<ScheduleProm
 async function cancel(
 	params: SchedulePromptParams,
 	ctx: ExtensionContext,
+	liveDelivery: LiveDelivery | undefined,
 ): Promise<AgentToolResult<SchedulePromptDetails>> {
 	const id = params.id?.trim() ?? "";
 	if (id.length === 0) throw new Error("cancel needs the job id.");
@@ -186,6 +200,7 @@ async function cancel(
 		sessionId: ctx.sessionManager.getSessionId(),
 	});
 	if (removed === undefined) throw new Error(`No scheduled job ${id} in this session.`);
+	await liveDelivery?.replan();
 	const text = removed.inFlight
 		? `Cancelled ${id}. One delivery had already started and may still arrive; nothing after it will run.`
 		: `Cancelled ${describeJob(removed.job, "pending")}`;
@@ -207,11 +222,11 @@ export function registerScheduleTool(pi: ExtensionAPI, deps: SchedulePromptDeps)
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<SchedulePromptDetails>> {
 			switch (params.action) {
 				case "create":
-					return create(params, ctx, deps.now());
+					return create(params, ctx, deps.now(), deps.liveDelivery);
 				case "list":
 					return list(ctx);
 				case "cancel":
-					return cancel(params, ctx);
+					return cancel(params, ctx, deps.liveDelivery);
 			}
 		},
 	});

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Every command a client can send must have a `#### <type>` section in the docs/rpc.md that
- * ships with the package. The command list is read from the `RpcCommand` union in rpc-types.ts,
+ * ships with the package. The command list is read from the protocol's command unions,
  * so adding a command without documenting it fails here rather than at a user's terminal.
  *
  * Commands listed in `UNDOCUMENTED` predate this check. Each one is named with the reason it is
@@ -38,7 +38,6 @@ const UNDOCUMENTED: Record<string, string> = {
 	get_follow_up_messages: "undocumented since it shipped",
 	get_steering_messages: "undocumented since it shipped",
 	import_jsonl: "undocumented since it shipped",
-	login_api_key: "undocumented since it shipped",
 	logout: "undocumented since it shipped",
 	record_bash_result: "undocumented since it shipped",
 	send_custom_message: "undocumented since it shipped",
@@ -49,18 +48,22 @@ const UNDOCUMENTED: Record<string, string> = {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, "..", "..");
-const typesPath = join(pkgRoot, "src", "modes", "rpc", "rpc-types.ts");
+const commandSources = [
+	["rpc-session-command-types.ts", "RpcSessionCommand"],
+	["rpc-host-command-types.ts", "RpcCommand"],
+	["attachment-types.ts", "RpcAttachmentCommand"],
+] as const;
 const docsPath = join(pkgRoot, "docs", "rpc.md");
 
 /**
- * Collect every `type: "<literal>"` inside the `RpcSessionCommand` and `RpcCommand` unions. Each
+ * Collect every `type: "<literal>"` inside the session, host and attachment command unions. Each
  * alias body runs from its declaration to the terminating `;` at the start of a line, which is how
- * rpc-types.ts closes both unions.
+ * the protocol closes those unions.
  */
 function commandTypes(): string[] {
-	const source = readFileSync(typesPath, "utf8");
 	const found = new Set<string>();
-	for (const alias of ["RpcSessionCommand", "RpcCommand"]) {
+	for (const [file, alias] of commandSources) {
+		const source = readFileSync(join(pkgRoot, "src", "modes", "rpc", file), "utf8");
 		const start = source.search(new RegExp(`^(export )?type ${alias} =`, "m"));
 		expect(start, `${alias} declaration`).toBeGreaterThanOrEqual(0);
 		const end = source.indexOf("\n\t  };\n", start);

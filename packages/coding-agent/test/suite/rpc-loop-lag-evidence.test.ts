@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HOST_DAEMON_DIR_ENV } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "../../src/modes/rpc/host-identity-env.ts";
-import { LOOP_LAG_TICK_MS, LoopLagWatchdog } from "../../src/modes/rpc/loop-lag-watchdog.ts";
+import {
+	LOOP_LAG_IDLE_AFTER_MS,
+	LOOP_LAG_IDLE_TICK_MS,
+	LOOP_LAG_TICK_MS,
+	LoopLagWatchdog,
+} from "../../src/modes/rpc/loop-lag-watchdog.ts";
 import { fileAppears } from "../helpers/rpc-supervised-host.ts";
 
 /**
@@ -89,5 +94,40 @@ describe("loop lag evidence files", () => {
 
 		// 11 healthy ticks over 2 s at the default 5 s threshold: beats at 0, 1 s and 2 s only.
 		expect(beats).toEqual([0, 1_000, 2_000].map((ms) => new Date(ms).toISOString()));
+	});
+
+	// senpi#3738: on the 1 s idle tick, a tick that fires slightly early must still beat, or the heartbeat a
+	// stall reader judges reaches two intervals old on an idle host.
+	it("keeps the heartbeat at most one interval old on the idle tick", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-looplag-idle-heartbeat-"));
+		roots.push(root);
+		const instanceId = "generation-under-test";
+		await mkdir(join(root, "generations", instanceId), { recursive: true });
+		let clock = 0;
+		const beats: number[] = [];
+		const watchdog = new LoopLagWatchdog({
+			emit: () => {},
+			log: () => {},
+			now: () => clock,
+			env: { [HOST_DAEMON_DIR_ENV]: root, [HOST_INSTANCE_ID_ENV]: instanceId },
+			writeHeartbeat: async () => {
+				beats.push(clock);
+			},
+		});
+
+		for (let elapsed = 0; elapsed <= LOOP_LAG_IDLE_AFTER_MS; elapsed += LOOP_LAG_TICK_MS) {
+			watchdog.tick();
+			await new Promise((settled) => setImmediate(settled));
+			clock += LOOP_LAG_TICK_MS;
+		}
+		beats.length = 0;
+		for (let tick = 0; tick < 5; tick += 1) {
+			clock += LOOP_LAG_IDLE_TICK_MS - 1;
+			watchdog.tick();
+			// Lets the injected write settle, so the in-flight guard is not what skips a beat.
+			await new Promise((settled) => setImmediate(settled));
+		}
+
+		expect(beats).toHaveLength(5);
 	});
 });

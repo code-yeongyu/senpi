@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
-import { breadcrumbBody, runTool, writeBreadcrumb } from "./moved-path-guard-fixtures.ts";
+import { breadcrumbBody, DESKTOP_DIR_MODE, runTool, writeBreadcrumb } from "./moved-path-guard-fixtures.ts";
 
 // code-yeongyu/senpi#2898 re-review H-new: a path the guard cannot resolve (EACCES, ENAMETOOLONG) is "not moved",
 // and a breadcrumb that cannot be evaluated is untrusted. Neither may fail an ordinary tool call.
@@ -41,7 +41,7 @@ describe.runIf(posixNonRoot)("moved-path-guard never fails a call it cannot eval
 		roots.push(root);
 		mkdirSync(join(root, "locked", "inner"), { recursive: true });
 		chmodSync(join(root, "locked"), 0o000);
-		mkdirSync(join(root, "repo", "src"), { recursive: true });
+		mkdirSync(join(root, "repo", "src"), { recursive: true, mode: DESKTOP_DIR_MODE });
 		const harness = await createHarness({
 			cwd: cwdOf(root),
 			extensionFactories: [guard.factory, unknownTool],

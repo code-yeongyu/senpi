@@ -62,7 +62,7 @@ export function createMcpProxyTool(server: string, entries: readonly McpToolCata
 	return {
 		name,
 		label: `MCP proxy for ${server}`,
-		description: `Gateway to the '${server}' MCP server (${entries.length} tools). Use op:"search" with a query to find tools, op:"describe" with a tool name for its schema, then op:"call" with tool + args (args is a JSON object STRING — no strict validation, so match the described schema exactly).`,
+		description: `Gateway to the '${server}' MCP server (${entries.length} tools). Use op:"search" with a query to find tools, op:"describe" with a tool name for its schema, then op:"call" with tool + args (args is a JSON object STRING: no strict validation, so match the described schema exactly).`,
 		promptSnippet: `Proxy for the ${server} MCP server: search -> describe -> call (args as a JSON string).`,
 		parameters,
 		executionMode: "parallel",
@@ -73,7 +73,7 @@ export function createMcpProxyTool(server: string, entries: readonly McpToolCata
 					matches.length === 0
 						? `No '${server}' tools matched. Try broader keywords or op:"describe" with an exact tool name.`
 						: matches
-								.map((match) => `- ${match.doc.label} — ${match.doc.description ?? "(no description)"}`)
+								.map((match) => `- ${match.doc.label} - ${match.doc.description ?? "(no description)"}`)
 								.join("\n");
 				return textResult(server, `Tools on '${server}':\n${body}`);
 			}

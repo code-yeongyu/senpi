@@ -9,7 +9,7 @@ import type { SessionEventWriter } from "./session-event-writer.ts";
  * Arm the host's self-observation: event-loop stall detection with per-session
  * attribution, and RSS reporting that tightens idle parking under pressure. Both run on
  * unref'd timers, and neither refuses, aborts or kills anything (#2207); a host that drops to zero
- * sessions collects once and reports it (`host_trimmed`).
+ * sessions, or a 2 GB+ host whose session count drops, collects once and reports it (`host_trimmed`).
  */
 export function startHostObservers(
 	router: SessionCommandRouter,

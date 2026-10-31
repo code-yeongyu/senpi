@@ -19,7 +19,7 @@ Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the oth
 
 Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.
 
-Pi runs in five modes: interactive, print or JSON, RPC for process integration, app-server for Codex-compatible app integrations, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
+Pi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
 
 ## Share your OSS coding agent sessions
 
@@ -146,8 +146,6 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Xiaomi MiMo Token Plan (Singapore)
 - Alibaba Token Plan
 
-Pi also supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage downloads and loaded models with `/llama`, then select a loaded model with `/model`. See [docs/llama-cpp.md](docs/llama-cpp.md) for setup and usage.
-
 See [docs/providers.md](docs/providers.md) for other provider setup instructions.
 
 **Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
@@ -187,7 +185,6 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | Command | Description |
 |---------|-------------|
 | `/login`, `/logout` | Manage provider credentials |
-| [`/llama`](docs/llama-cpp.md) | Download, load, and unload llama.cpp router models |
 | `/model` | Switch this session's model; Ctrl+S in the picker, or `/model <id> --default`, also makes it the startup default |
 | `/thinking` | Switch thinking level; Ctrl+S in the picker saves the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
@@ -533,16 +530,6 @@ RPC mode uses strict LF-delimited JSONL framing. Clients must split records on `
 
 See [docs/rpc.md](docs/rpc.md) for the protocol, socket host, and lifecycle details.
 
-### App Server Mode
-
-For Codex-compatible app or editor integrations, use app-server mode over authenticated loopback websocket or stdio:
-
-```bash
-senpi app-server --listen ws://127.0.0.1:18990
-```
-
-See [docs/app-server.md](docs/app-server.md) for activation, framing, and method coverage.
-
 ---
 
 ## Philosophy
@@ -598,7 +585,6 @@ pi config                    # Enable/disable package resources
 | `-p`, `--print` | Print response and exit |
 | `--mode json` | Output all events as JSON lines (see [docs/json.md](docs/json.md)) |
 | `--mode rpc` | RPC mode for process integration; add `--listen` for the shared multi-session socket host (see [docs/rpc.md](docs/rpc.md)) |
-| `app-server` | Codex-compatible app-server integration (see [docs/app-server.md](docs/app-server.md)) |
 | `--export <in> [out]` | Export session to HTML |
 
 In print mode, pi also reads piped stdin and merges it into the initial prompt:

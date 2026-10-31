@@ -14,6 +14,7 @@ import { createScheduledJob, listScheduledJobs } from "../../src/core/extensions
 import { holdSessionFile, liveSessionHolders } from "../../src/core/session-holders.ts";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "../helpers/fake-session-base.ts";
 import { createMovedLayout, type MovedLayout, writeSessionHeader } from "./moved-path-guard-fixtures.ts";
 
 /**
@@ -31,8 +32,7 @@ function recordingFactory(cwds: string[]): CreateAgentSessionRuntimeFactory {
 		cwds.push(options.cwd);
 		return {
 			session: {
-				sessionManager: options.sessionManager,
-				agentDir: options.agentDir,
+				...fakeSessionBase(options),
 				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},

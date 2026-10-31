@@ -4,6 +4,8 @@ export interface ContextReductionState {
 	engaged: boolean;
 	cutIndex: number;
 	prefixHash: string;
+	/** The cut before the last frontier step; its cache checkpoint stays marked so the prefix bytes never change between steps (senpi#3242). */
+	checkpointCut?: number;
 	anchorCount?: number;
 	anchorCut?: number;
 	anchorHash?: string;
@@ -69,6 +71,17 @@ export function readContextReductionState(data: unknown): ContextReductionState 
 	)
 		return undefined;
 	const state: ContextReductionState = { engaged: data.engaged, cutIndex: data.cutIndex, prefixHash: data.prefixHash };
+	if ("checkpointCut" in data) {
+		const checkpointCut = data.checkpointCut;
+		if (
+			typeof checkpointCut !== "number" ||
+			!Number.isSafeInteger(checkpointCut) ||
+			checkpointCut < 0 ||
+			checkpointCut >= data.cutIndex
+		)
+			return undefined;
+		state.checkpointCut = checkpointCut;
+	}
 	if ("anchorCount" in data || "anchorCut" in data || "anchorHash" in data || "anchorTokens" in data) {
 		if (
 			!("anchorCount" in data) ||

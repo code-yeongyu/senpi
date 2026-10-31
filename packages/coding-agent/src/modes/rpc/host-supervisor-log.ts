@@ -16,6 +16,14 @@ export function supervisorLog(message: string): void {
 	writeStderrLine(`senpi rpc host supervisor: ${message}`);
 }
 
+export function writeHostReady(socket: string, coldStart: string, idleExitMs: number): void {
+	writeStderrLine(
+		`senpi rpc host ready on unix://${socket} (coldStart=${coldStart}, idleExitMs=${
+			coldStart === "persistent" ? "never" : String(idleExitMs)
+		})`,
+	);
+}
+
 // Identity refusal loops share one process-local diagnostic budget, not a persisted latch.
 const loggedUnknownIdentities = new Set<string>();
 

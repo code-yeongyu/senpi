@@ -50,7 +50,7 @@ import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { deriveOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
 	applyAllowedToolsChoice,
 	hasRefusedAllowedToolsChoice,
@@ -272,7 +272,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 	context: TranscriptContext,
 	options?: OpenAIResponsesOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	// Start async processing
@@ -322,7 +322,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			params = sanitizeUnsupportedNativeTools(params, compat);
 			params = applyAllowedToolsChoice(params, normalizedContext, context.activeToolNames, compat);
 			if (hasRefusedAllowedToolsChoice(model)) params = restrictToAllowedTools(params);
-			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			const limitedTools = limitGitHubCopilotTools(
+				model.provider,
+				params.tools,
+				params.tool_choice,
+				getDeclaredTools(normalizedContext.messages).map((tool) => tool.name),
+			);
 			if (limitedTools.omittedCount > 0) {
 				params = { ...params, tools: limitedTools.tools };
 				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
@@ -531,7 +536,12 @@ export async function warmOpenAIResponsesPromptCache(
 	const nextParams = await resolved.onPayload?.(params, model);
 	if (nextParams !== undefined) params = nextParams as MutableResponsesPayload;
 	params = sanitizeUnsupportedNativeTools(params, compat);
-	const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+	const limitedTools = limitGitHubCopilotTools(
+		model.provider,
+		params.tools,
+		params.tool_choice,
+		getDeclaredTools(prefix.messages).map((tool) => tool.name),
+	);
 	if (limitedTools.omittedCount > 0) params = { ...params, tools: limitedTools.tools };
 	const body = {
 		...params,
@@ -654,11 +664,7 @@ function buildParams(
 		model: model.id,
 		input: messages,
 		stream: true,
-		prompt_cache_key:
-			cacheRetention === "none" ||
-			(isNativeEndpoint && (compat.supportsExplicitPromptCacheMode || model.cost.cacheWrite > 0))
-				? undefined
-				: clampOpenAIPromptCacheKey(options?.sessionId),
+		prompt_cache_key: cacheRetention === "none" ? undefined : deriveOpenAIPromptCacheKey(model.id, context),
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
 		prompt_cache_options: withPromptCacheComparison(
 			getPromptCacheOptions(compat, cacheRetention),

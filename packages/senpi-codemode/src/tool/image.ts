@@ -11,6 +11,8 @@ import {
 	TailBuffer,
 	truncateTail,
 } from "../output/streaming-output.ts";
+import { sanitizeDisplayJson } from "./display-json-bounds.ts";
+import { MAX_DISPLAY_TEXT_BYTES } from "./display-json-size.ts";
 import { type EvalImageContent, type EvalImageResizer, resizeEvalImage } from "./image-resize.ts";
 
 export {
@@ -21,8 +23,6 @@ export {
 	webpExclusionForModel,
 } from "./image-resize.ts";
 export { marshalToolResult, toolResultIsError } from "./tool-result-marshal.ts";
-
-const MAX_DISPLAY_TEXT_BYTES = 8_000;
 
 // Per-cell display caps: display payloads are retained for the whole result lifetime, so an unbounded
 // burst pins base64 originals plus resized copies on the session heap (#1695).
@@ -122,7 +122,7 @@ export class EvalOutputCollector {
 		if (message.mimeType.startsWith("image/")) {
 			const image = validateDisplayImage(message.dataBase64);
 			if ("reason" in image) {
-				this.#sink.push(`[display: image dropped \u2014 ${image.reason}]\n`);
+				this.#sink.push(`[display: image dropped - ${image.reason}]\n`);
 				return;
 			}
 			if (
@@ -149,7 +149,7 @@ export class EvalOutputCollector {
 				if (error instanceof SyntaxError) throw new DisplayPayloadError(message.mimeType, error);
 				throw error;
 			}
-			this.#jsonOutputs.push(value);
+			this.#jsonOutputs.push(sanitizeDisplayJson(value));
 			this.#sink.push(`display[${this.#jsonOutputs.length}]:\n${formatDisplayJson(value)}\n`);
 			return;
 		}

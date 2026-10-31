@@ -5,7 +5,7 @@ import { CURRENT_SESSION_VERSION, type SessionHeader, type SessionManager } from
 
 type TrailingEntries = (parentId: string | null, timestamp: string) => readonly object[];
 
-/** Serialize the current branch and optional export-only entries as JSONL. */
+/** Serialize the current branch, read whole from the file for a compacted session, and optional export-only entries as JSONL. */
 export function serializeSessionBranch(
 	sessionManager: SessionManager,
 	createTrailingEntries?: TrailingEntries,
@@ -20,7 +20,7 @@ export function serializeSessionBranch(
 	};
 	const entries: object[] = [header];
 	let parentId: string | null = null;
-	for (const entry of sessionManager.getBranch()) {
+	for (const entry of sessionManager.getFullBranch()) {
 		entries.push({ ...entry, parentId });
 		parentId = entry.id;
 	}

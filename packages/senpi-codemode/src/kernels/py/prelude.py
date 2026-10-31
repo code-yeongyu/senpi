@@ -14,6 +14,7 @@ import base64
 import codecs
 import contextlib
 import importlib
+import importlib.util
 import gc
 import inspect
 import io
@@ -42,6 +43,17 @@ from typing import Iterator
 from threading import Lock, Thread
 from typing import Any, Callable, Union
 from urllib.parse import unquote
+# Resolve the loopback bridge's lazy codec before user authority exists.
+codecs.lookup("idna")
+_permission_path = Path(__file__).with_name("permission_bridge.py")
+_permission_spec = importlib.util.spec_from_file_location(
+    "_senpi_permission_bridge", _permission_path
+)
+if _permission_spec is None or _permission_spec.loader is None:
+    raise RuntimeError("Python permission bridge asset is unavailable")
+_permission_module = importlib.util.module_from_spec(_permission_spec)
+exec(compile(_permission_path.read_bytes(), str(_permission_path), "exec"), _permission_module.__dict__)
+initialize_permissions = _permission_module.initialize
 
 sys.__stdout__.write('{"type":"status","event":{"op":"kernel-startup","stage":"runtime-init"}}\n')
 sys.__stdout__.flush()
@@ -51,6 +63,7 @@ USER_NS: dict[str, Any] = {"__name__": "__main__", "__doc__": None, "__builtins_
 LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(LOOP)
 EMIT_LOCK = Lock()
+permission_context = contextvars.ContextVar("senpi_unconfigured_permission", default=None)
 
 # Mirrors src/bridge/reserved.ts; this standalone subprocess asset cannot import TypeScript.
 RESERVED_AGENT_TOOL = "__agent__"
@@ -103,10 +116,21 @@ def emit(frame: dict[str, Any]) -> None:
 
 
 def bridge_error(exc: BaseException) -> dict[str, str]:
+    authority = permission_context.get()
+    if (authority and authority.get("active")) or isinstance(exc, KeyboardInterrupt) or getattr(exc, "code", None) == "cell_permission_denied":
+        # Formatting an exception must not issue a second cell-requested read
+        # (linecache opens source files). Keep the real frames without source I/O.
+        frames = [f'  File "{frame.f_code.co_filename}", line {line}, in {frame.f_code.co_name}\n'
+                  for frame, line in traceback.walk_tb(exc.__traceback__)]
+        stack = "Traceback (most recent call last):\n" + "".join(frames) + f"{type(exc).__name__}: {exc}\n"
+    else:
+        stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return {
         "name": type(exc).__name__,
         "message": str(exc),
-        "stack": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+        "stack": stack,
+        **({"code": getattr(exc, "code")} if getattr(exc, "code", None) else {}),
+        **({"permissionRule": getattr(exc, "permissionRule")} if getattr(exc, "permissionRule", None) else {}),
     }
 
 
@@ -162,7 +186,7 @@ def _display_image_dict(value: dict[str, Any]) -> bool:
         return False
     encoded = _image_base64(payload)
     if encoded is None:
-        print(f"[display: image dropped \u2014 `data` must be base64, a data: URL, or bytes; got {type(payload).__name__}]")
+        print(f"[display: image dropped - `data` must be base64, a data: URL, or bytes; got {type(payload).__name__}]")
         return True
     emit({"type": "display", "mimeType": mime_type, "dataBase64": encoded[0]})
     return True
@@ -910,6 +934,7 @@ class KernelToolRunner:
 
     def _run(self, invocation: Invocation, message: dict[str, Any]) -> None:
         output = io.StringIO()
+        permission_scope = permission_context.set(message.get("authority"))
         try:
             entry = self._registry.resolve(message)
             args = validate_args(entry.input_schema, message.get("args"))
@@ -935,8 +960,9 @@ class KernelToolRunner:
             self._reply_error(invocation, exc.code, str(exc), output, exc.details)
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — the invocation boundary serializes the tool's own failure.
             self._reply_error(invocation, "kernel_tool_failed", f"{type(exc).__name__}: {exc}", output,
-                              stack="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+                              stack=bridge_error(exc)["stack"])
         finally:
+            permission_context.reset(permission_scope)
             with self._lock:
                 self._invocations.pop(invocation.request_id, None)
 
@@ -1964,9 +1990,10 @@ def _footprint_reader() -> Callable[[], tuple[int, bool]] | None:
             if darwin() is not None:
                 return darwin
     if sys.platform.startswith("linux") and os.path.exists("/proc/self/status"):
+        open_status = open
 
         def linux() -> tuple[int, bool] | None:
-            with open("/proc/self/status", encoding="ascii", errors="replace") as status:
+            with open_status("/proc/self/status", encoding="ascii", errors="replace") as status:
                 for line in status:
                     if line.startswith("RssAnon:"):
                         return int(line.split()[1]) * 1024, False
@@ -2172,6 +2199,12 @@ async def run_code(code: Any, want_value: bool) -> Any:
     return None
 
 
+# Globals a tool prelude installs: the host reinstalls them on a fresh kernel, so they are never reported as lost.
+_PRELUDE_EXPORTS: set[str] = set()
+# The host keeps the newest list so a notice can name what a dead or replaced kernel took with it.
+_REPORTED_GLOBAL_NAMES = 64
+
+
 def apply_preludes(preludes: Any) -> None:
     # Host-computed per cell: globals of tools deactivated since the last cell are dropped,
     # and an active tool's snippet runs only while one of its exports is missing.
@@ -2179,9 +2212,20 @@ def apply_preludes(preludes: Any) -> None:
         return
     for name in preludes.get("remove", []):
         USER_NS.pop(name, None)
+        _PRELUDE_EXPORTS.discard(name)
     for contribution in preludes.get("install", []):
-        if any(name not in USER_NS for name in contribution.get("exports", [])):
+        exports = contribution.get("exports", [])
+        _PRELUDE_EXPORTS.update(exports)
+        if any(name not in USER_NS for name in exports):
             exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
+
+
+def _user_global_names() -> list[str]:
+    return sorted(
+        name
+        for name in list(USER_NS)
+        if name not in _MEMORY_BASELINE and name not in _PRELUDE_EXPORTS and not name.startswith("__")
+    )
 
 
 def _enter_source_file(source_file: str | None) -> Callable[[], None]:
@@ -2217,7 +2261,8 @@ def _enter_source_file(source_file: str | None) -> Callable[[], None]:
 
 
 def run_cell(
-    cell_id: str, code: str, preludes: Any = None, source_file: str | None = None, cell_token: str | None = None
+    cell_id: str, code: str, preludes: Any = None, source_file: str | None = None, cell_token: str | None = None,
+    authority: Any = None,
 ) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
@@ -2228,6 +2273,7 @@ def run_cell(
     result: dict[str, Any]
     leave_source_file: Callable[[], None] = lambda: None
     cell_scope = CURRENT_CELL_TOKEN.set(cell_token)
+    permission_scope = permission_context.set(authority)
     try:
         KERNEL_TOOL_TOKEN.acquire()
         with capture_streams(KERNEL_TOOL_STREAMS, (stdout, stderr), cell=True):
@@ -2260,6 +2306,7 @@ def run_cell(
         # Liveness and revocation first: nothing the cell installed (an import finder, a path hook) can skip them.
         KERNEL_TOOL_TOKEN.release()
         CURRENT_CELL_TOKEN.reset(cell_scope)
+        permission_context.reset(permission_scope)
         try:
             leave_source_file()
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — user code can break the restore; it must not wedge the kernel.
@@ -2272,6 +2319,9 @@ def run_cell(
         text("stderr", f"[senpi] kernel memory measurement failed: {exc}\n")
     if memory is not None:
         result["memory"] = memory
+    names = _user_global_names()
+    result["globalCount"] = len(names)
+    result["globalNames"] = names[:_REPORTED_GLOBAL_NAMES]
     emit(result)
 
 
@@ -2280,7 +2330,7 @@ def elapsed(start: float) -> int:
 
 
 def _handle_message(message: dict[str, Any]) -> bool:
-    global CONNECTION
+    global CONNECTION, permission_context
     message_type = message.get("type")
     if message_type == "init":
         connection = message.get("connection")
@@ -2292,6 +2342,10 @@ def _handle_message(message: dict[str, Any]) -> bool:
         if isinstance(generation, int) and not isinstance(generation, bool):
             KERNEL_TOOL_REGISTRY.generation = generation
         KERNEL_MEMORY.configure(message.get("memory"))
+        if KERNEL_MEMORY.thresholds is not None:
+            KERNEL_MEMORY._footprint()
+        if message.get("permission") is not None:
+            permission_context = initialize_permissions(message["permission"], connection["port"])
         emit({"type": "ready"})
         return True
     if message_type == "run":
@@ -2306,6 +2360,7 @@ def _handle_message(message: dict[str, Any]) -> bool:
             message.get("preludes"),
             source_file if isinstance(source_file, str) and source_file else None,
             token if isinstance(token, str) else None,
+            message.get("authority"),
         )
         return True
     if message_type == "close":
@@ -2334,12 +2389,21 @@ def _activate_env_root(root: str) -> None:
     importlib.invalidate_caches()
 
 
-def _terminate_process_group() -> None:
+PARENT_WATCH_MARKER = "[senpi] parent watch:"
+
+
+def _terminate_process_group(reason: str) -> None:
     # The kernel is spawned into its own session (setsid), so its pid is its process
     # group id and a cell's subprocesses inherit that group. Killing the group takes
     # those children down with the kernel instead of orphaning them to init.
+    # The reason goes to the real stderr first: a host that is still alive names it in its restart notice.
     if os.name != "posix":
         return
+    stream = sys.__stderr__
+    if stream is not None:
+        with contextlib.suppress(OSError, ValueError):
+            stream.write(f"{PARENT_WATCH_MARKER} {reason}; stopping the kernel\n")
+            stream.flush()
     with contextlib.suppress(OSError):
         os.killpg(os.getpgrp(), signal.SIGKILL)
 
@@ -2350,8 +2414,9 @@ def _watch_parent(initial_ppid: int) -> None:
     # daemon thread notices the reparenting instead and takes the whole group down.
     while True:
         time.sleep(1.0)
-        if os.getppid() != initial_ppid:
-            _terminate_process_group()
+        current_ppid = os.getppid()
+        if current_ppid != initial_ppid:
+            _terminate_process_group(f"its parent process changed from {initial_ppid} to {current_ppid}")
             return
 
 
@@ -2366,7 +2431,7 @@ def _watch_named_parent(parent_pid: int) -> None:
         try:
             os.kill(parent_pid, 0)
         except ProcessLookupError:
-            _terminate_process_group()
+            _terminate_process_group(f"its host process {parent_pid} is gone")
             return
 
 
@@ -2422,7 +2487,7 @@ def main() -> None:
     # Reaching here without a close frame means the host's pipe hit EOF: it is gone,
     # so retire any subprocess the last cell left running before the interpreter exits.
     if not host_closed:
-        _terminate_process_group()
+        _terminate_process_group("its host closed the control pipe")
 
 
 if __name__ == "__main__":

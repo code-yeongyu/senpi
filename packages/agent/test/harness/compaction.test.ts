@@ -158,6 +158,29 @@ describe("harness compaction", () => {
 		expect(calculateContextTokens(createMockUsage(0, 0, 0, 0))).toBe(0);
 	});
 
+	// oh-my-openagent#10792: compaction uses occupied context, not cumulative billing.
+	it("keeps cumulative SDK billing below the context threshold when the last request fits", () => {
+		const usage = Object.assign(createMockUsage(2_000, 300, 700_000), {
+			contextUsage: { input: 352_000, output: 200 },
+		});
+		const message = createAssistantMessage("done", usage);
+		const estimate = estimateContextTokens([message]);
+		expect(estimate.tokens).toBe(352_200);
+		expect(
+			shouldCompact(estimate.tokens, 1_000_000, {
+				enabled: true,
+				reserveTokens: 300_000,
+				keepRecentTokens: 20_000,
+			}),
+		).toBe(false);
+		expect(usage.totalTokens).toBe(702_300);
+	});
+
+	it("estimates content when no request-level context measurement exists", () => {
+		const usage = Object.assign(createMockUsage(700_000, 300), { contextUsage: null });
+		expect(estimateContextTokens([createAssistantMessage("done", usage)]).tokens).toBe(1);
+	});
+
 	it("checks compaction threshold", () => {
 		const settings: CompactionSettings = {
 			enabled: true,

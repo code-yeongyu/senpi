@@ -49,7 +49,7 @@ const TodoOperationSchema = Type.Union(
 		Type.Literal("append"),
 		Type.Literal("view"),
 	],
-	{ description: "Operation to perform. Required — always pass it explicitly." },
+	{ description: "Operation to perform. Required: always pass it explicitly." },
 );
 
 const TodoPhaseInputSchema = Type.Object({
@@ -160,7 +160,7 @@ function formatPhaseSummary(phase: TodoPhase, index: number, theme: Theme): stri
 	const closed = phase.tasks.filter((task) => task.status === "completed" || task.status === "abandoned").length;
 	return theme.fg(
 		"dim",
-		`${phaseRomanNumeral(index)}. ${sanitizeTodoText(phase.name)} — ${closed}/${phase.tasks.length} done`,
+		`${phaseRomanNumeral(index)}. ${sanitizeTodoText(phase.name)} - ${closed}/${phase.tasks.length} done`,
 	);
 }
 
@@ -290,6 +290,7 @@ function getTextContent(result: AgentToolResult<TodoToolDetails>): string {
 export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): void {
 	const tool: ToolDefinition<typeof TODO_PARAMS_SCHEMA, TodoToolDetails, unknown> = {
 		name: "todo",
+		workspaceEffect: "read",
 		label: "Todo",
 		description: TODO_TOOL_DESCRIPTION,
 		promptSnippet: "Track phased tasks with one op-based todo tool; reference tasks by their exact content.",

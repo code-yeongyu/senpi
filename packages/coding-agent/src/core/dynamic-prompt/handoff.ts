@@ -31,8 +31,8 @@ const APP_HANDOFF_LANGUAGE_RULE = HANDOFF_LANGUAGE_RULE.replace("the routing lin
 
 const HANDOFF_MOMENTS: Record<TerminalOrApp, string> = {
 	terminal:
-		"A handoff is the todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the final message of a turn that did work; the routing line is not one, and a reply that only answers a question is the answer itself.",
-	app: "A handoff is the todo list's creation (in the message that creates it or the next one), each todo phase change, a blocker or plan change, and the final message of a turn that did work; a reply that only answers a question is the answer itself.",
+		"A handoff is a multi-task todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the end of a turn that changed something; the routing line is not one, and an answer stays an answer, even after tool calls.",
+	app: "A handoff is a multi-task todo list's creation (in the message that creates it or the next one), each todo phase change, a blocker or plan change, and the end of a turn that changed something; an answer stays an answer, even after tool calls.",
 };
 
 /**

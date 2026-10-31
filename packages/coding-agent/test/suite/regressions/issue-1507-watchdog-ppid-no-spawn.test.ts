@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const probe = vi.hoisted(() => ({ calls: 0 }));
-vi.mock("../../../src/modes/app-server/daemon/process.ts", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../../../src/modes/app-server/daemon/process.ts")>();
+vi.mock("../../../src/utils/process-identity.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../../src/utils/process-identity.ts")>();
 	return {
 		...actual,
 		readProcessIdentity: () => {

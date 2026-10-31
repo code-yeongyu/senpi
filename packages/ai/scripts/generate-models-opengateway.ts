@@ -181,15 +181,28 @@ async function fetchJson(url: string, label: string): Promise<unknown> {
 	return response.json();
 }
 
-/** The committed catalog: what a failed non-strict fetch keeps shipping instead of an empty provider. */
+/** The committed catalog: what a failed fetch keeps shipping instead of an empty provider. */
 export function loadLastGoodOpenGatewayModels(path: string = LAST_GOOD_CATALOG_PATH): Model<any>[] {
 	const grouped = JSON.parse(readFileSync(path, "utf8")) as Record<string, Record<string, Model<any>>>;
-	return Object.values(grouped).flatMap((entries) => Object.values(entries));
+	const models = Object.values(grouped).flatMap((entries) => Object.values(entries));
+	if (models.length === 0) throw new Error("Last good OpenGateway catalog has no models");
+	return models;
+}
+
+/** One-line GitHub Actions workflow command; `%`, CR and LF are escaped as the runner requires. */
+function workflowAnnotation(level: "warning" | "error", message: string): string {
+	const escaped = message.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+	return `::${level} title=OpenGateway catalog::${escaped}`;
 }
 
 export async function fetchOpenGatewayModels(
 	recordReasoning: OpenGatewayReasoningRecorder,
-	options: { strict: boolean; lastGoodCatalogPath?: string },
+	options: {
+		strict: boolean;
+		/** Release generation: keep the committed catalog even under `strict` (senpi#4067). */
+		keepLastGoodOnFailure?: boolean;
+		lastGoodCatalogPath?: string;
+	},
 ): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from OpenGateway API...");
@@ -201,12 +214,22 @@ export async function fetchOpenGatewayModels(
 		const models = listing
 			.filter(isServableChatModel)
 			.flatMap((item) => buildModel(item, modelsDev, prices, recordReasoning) ?? []);
+		if (models.length === 0) throw new Error("OpenGateway refresh has no servable enriched chat models");
 		console.log(`Fetched ${models.length} chat-capable models from OpenGateway`);
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch OpenGateway models:", error);
-		if (options.strict) throw error;
+		const reason = error instanceof Error ? error.message : String(error);
+		// The dedicated `--strict --providers opengateway` refresh workflow fails here, so a persistent feed
+		// break turns its daily run red. Release generation opts in to keeping the committed catalog instead.
+		if (options.strict && !options.keepLastGoodOnFailure) {
+			console.log(workflowAnnotation("error", `OpenGateway refresh failed: ${reason}`));
+			throw error;
+		}
 		const lastGood = loadLastGoodOpenGatewayModels(options.lastGoodCatalogPath);
+		console.log(
+			workflowAnnotation("warning", `OpenGateway refresh failed (${reason}); kept the last good catalog (${lastGood.length} models)`),
+		);
 		console.warn(`Keeping the last good OpenGateway catalog (${lastGood.length} models)`);
 		return lastGood;
 	}

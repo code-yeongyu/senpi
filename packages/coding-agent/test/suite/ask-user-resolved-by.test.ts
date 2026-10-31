@@ -21,7 +21,8 @@ beforeAll(() => {
 afterEach(async () => {
 	for (const endpoint of endpoints.splice(0)) await endpoint.endpoint.dispose();
 	for (const fixture of fixtures.splice(0)) {
-		for (const entry of getPendingQuestions(fixture.delivery.harness.sessionManager.getSessionId())) entry.cancel();
+		for (const entry of getPendingQuestions(fixture.delivery.harness.sessionManager.getSessionId()))
+			entry.cancel("session_closed");
 		fixture.delivery.harness.cleanup();
 	}
 });
@@ -169,8 +170,8 @@ it.each(["local_ui", "control_endpoint"] as const)(
 			answers: { q1: { selected: [winner === "local_ui" ? "A" : "B"] } },
 		});
 		// Late abort/cancellation must not publish another closure for the winner.
-		entry.cancel();
-		entry.cancel();
+		entry.cancel("session_closed");
+		entry.cancel("session_closed");
 		expect(fixture.closed).toEqual([{ requestId: "race", status: "answered", resolvedBy: winner }]);
 		expect(fixture.settled).toHaveLength(1);
 		expect(fixture.settled[0]).toMatchObject({ response: { resolvedBy: winner } });

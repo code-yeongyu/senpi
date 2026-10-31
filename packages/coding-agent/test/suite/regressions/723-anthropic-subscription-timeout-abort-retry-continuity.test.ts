@@ -210,8 +210,15 @@ function continuityReasons(diagnostics: AssistantMessage["diagnostics"]): string
 		.map((diagnostic) => String((diagnostic.details as { reason?: unknown } | undefined)?.reason));
 }
 
+function continuityDetails(diagnostics: AssistantMessage["diagnostics"]): unknown[] {
+	return (diagnostics ?? [])
+		.filter((diagnostic) => diagnostic.type === "claude_sdk_oauth_session_continuity")
+		.map((diagnostic) => diagnostic.details);
+}
+
 async function runTurn(context: Context, signal?: AbortSignal): Promise<AssistantMessage> {
 	return await streamAnthropicSubscription(model, context, {
+		cwd: process.cwd(),
 		sessionId: SESSION_ID,
 		streamKind: "main",
 		...(signal ? { signal } : {}),
@@ -254,6 +261,11 @@ describe("issue #723 claude-sdk-oauth stream-start-timeout retry continuity", ()
 		const perLineage = new Map<string, number>();
 		for (const send of turnSends) perLineage.set(send.lineage, (perLineage.get(send.lineage) ?? 0) + 1);
 		expect({ maxSendsPerLineage: Math.max(...perLineage.values()) }).toEqual({ maxSendsPerLineage: 1 });
+		// oh-my-openagent#10304: a same-seat retry is reported as one - the prefix cache it
+		// forks onto lives on that seat - so it is never confused with a cold seat switch.
+		expect(continuityDetails(retry.diagnostics)).toEqual([
+			expect.objectContaining({ seat: expect.stringMatching(/^[0-9a-f]{8}$/), seatChanged: false }),
+		]);
 	}, 10_000);
 
 	it("re-seeds a stalled first turn byte-identically instead of storming", async () => {

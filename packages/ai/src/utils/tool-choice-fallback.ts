@@ -124,7 +124,10 @@ export function isForcedToolChoiceUnsupportedError(error: unknown, sentForcedToo
 		/forces?\s+tool\s+use.*?(not\s+(?:currently\s+)?compatible|incompatible|not\s+(?:currently\s+)?supported|unsupported)/is.test(
 			message,
 		) ||
-		/does\s+not\s+support\s+forced\s+tool[_\s-]?choices?/is.test(message) ||
+		// "does not support forced tool_choice", and opencode-go's thinking models (senpi#3324): "Thinking
+		// mode does not support this tool_choice". Only these determiners, so a refusal of some other
+		// parameter that merely sits next to tool_choice never matches.
+		/does\s+not\s+support\s+(?:forced|this|the)\s+tool[_\s-]?choices?/is.test(message) ||
 		// Auto-only tool-choice upstreams. OmniRoute serving opencode-go/muse-spark-1.3-contributor
 		// (2026-09-27): "only `\"auto\"` is supported for `tool_choice`. `\"none\"`, `\"required\"`, and named
 		// function choices are not currently supported". Kiro behind an OpenAI-compatible proxy

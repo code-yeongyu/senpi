@@ -1145,7 +1145,7 @@ describe("delta tracker piece arrays", () => {
 		const change = tracker.beginChange();
 		for (let index = 0; index < 256; index++) change.state.rows[index]!.flag = 1;
 		for (let index = 0; index < 256; index++) {
-			// biome-ignore lint/suspicious/noProto: the test deliberately reaches the __proto__ accessor to prove own reserved keys are data, not the prototype
+			// oxlint-disable-next-line eslint/no-proto -- the test deliberately reaches the __proto__ accessor to prove own reserved keys are data, not the prototype
 			change.state.rows[100]!.special!.__proto__.values[index] = -index - 1;
 		}
 		const prepared = change.prepare();
@@ -1422,10 +1422,10 @@ describe("delta tracker security and storage-style cloning", () => {
 		};
 		const tracker = track(initial);
 		const change = tracker.beginChange();
-		// biome-ignore lint/suspicious/noProto: the test deliberately reaches the __proto__ accessor to prove own reserved keys are data, not the prototype
+		// oxlint-disable-next-line eslint/no-proto -- the test deliberately reaches the __proto__ accessor to prove own reserved keys are data, not the prototype
 		change.state.safe.__proto__.value = 2;
 		const prepared = change.prepare();
-		// biome-ignore lint/suspicious/noProto: the test deliberately reaches the __proto__ accessor to prove own reserved keys are data, not the prototype
+		// oxlint-disable-next-line eslint/no-proto -- the test deliberately reaches the __proto__ accessor to prove own reserved keys are data, not the prototype
 		expect(prepared.value.safe.__proto__.value).toBe(2);
 		expect(replay(tracker.value, prepared.ops)).toEqual(prepared.value);
 		tracker.adopt(prepared);

@@ -1,0 +1,17 @@
+{
+  "note": "Captured 2026-10-15 from a live ChatGPT-subscription Codex response (status 200); only the x-codex-* rate-limit headers kept; credits balance replaced.",
+  "headers": {
+    "x-codex-credits-balance": "1000.0",
+    "x-codex-credits-has-credits": "True",
+    "x-codex-credits-unlimited": "False",
+    "x-codex-primary-over-secondary-limit-percent": "0",
+    "x-codex-primary-reset-after-seconds": "523382",
+    "x-codex-primary-reset-at": "1792555751",
+    "x-codex-primary-used-percent": "99",
+    "x-codex-primary-window-minutes": "10080",
+    "x-codex-secondary-reset-after-seconds": "0",
+    "x-codex-secondary-reset-at": "",
+    "x-codex-secondary-used-percent": "0",
+    "x-codex-secondary-window-minutes": "0"
+  }
+}

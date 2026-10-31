@@ -15,8 +15,6 @@ it("derives model API, ID, and provider literals from grouped model data", () =>
 	expectTypeOf(XAI_MODELS["grok-4.3"].api).toEqualTypeOf<"openai-responses">();
 	expectTypeOf(GITHUB_COPILOT_MODELS["grok-4.7"].api).toEqualTypeOf<"openai-responses">();
 	expectTypeOf(GITHUB_COPILOT_MODELS["grok-4.7"].id).toEqualTypeOf<"grok-4.7">();
-	expectTypeOf(XIAOMI_MODELS["mimo-v2.5-pro"].api).toEqualTypeOf<"openai-completions">();
-	expectTypeOf(XIAOMI_MODELS["mimo-v2.5-pro"].id).toEqualTypeOf<"mimo-v2.5-pro">();
 	expectTypeOf(XIAOMI_MODELS["mimo-v2.6-pro"].api).toEqualTypeOf<"openai-completions">();
 	expectTypeOf(XIAOMI_MODELS["mimo-v2.6-pro"].id).toEqualTypeOf<"mimo-v2.6-pro">();
 });
@@ -51,18 +49,19 @@ it("routes all GitHub Copilot GPT models through the Responses API", () => {
 
 // Grok 4.7 and MiMo V2.6 Pro must be reachable on their DIRECT provider shards
 // (xai.json / xiaomi.json), not only through aggregator catalogs — and through
-// the builtin registry consumers actually read. The grok-4.6 / mimo-v2.5-pro
-// checks are controls proving the addition did not replace an existing entry.
+// the builtin registry consumers actually read. The grok-4.6 / mimo-v2.6-flash
+// checks are controls proving the addition did not replace an existing entry
+// (mimo-v2.5-pro left the catalog when models.dev deprecated it).
 it("ships grok-4.7 and mimo-v2.6-pro on their direct provider shards and the builtin registry", () => {
 	expect(XAI_MODELS["grok-4.6"]?.id).toBe("grok-4.6");
 	expect(XAI_MODELS["grok-4.7"]?.id).toBe("grok-4.7");
-	expect(XIAOMI_MODELS["mimo-v2.5-pro"]?.id).toBe("mimo-v2.5-pro");
+	expect(XIAOMI_MODELS["mimo-v2.6-flash"]?.id).toBe("mimo-v2.6-flash");
 	expect(XIAOMI_MODELS["mimo-v2.6-pro"]?.id).toBe("mimo-v2.6-pro");
 
 	const xaiIds = getBuiltinModels("xai").map((model) => model.id);
 	expect(xaiIds).toContain("grok-4.6");
 	expect(xaiIds).toContain("grok-4.7");
 	const xiaomiIds = getBuiltinModels("xiaomi").map((model) => model.id);
-	expect(xiaomiIds).toContain("mimo-v2.5-pro");
+	expect(xiaomiIds).toContain("mimo-v2.6-flash");
 	expect(xiaomiIds).toContain("mimo-v2.6-pro");
 });

@@ -45,6 +45,8 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 	 * (for example `-fast` priority-tier variants aliasing their base model).
 	 */
 	upstreamModelId?: string;
+	/** True when the upstream catalog marks this model deprecated; it stays usable until it is removed upstream. */
+	deprecated?: boolean;
 	/** Service tier requested by default for this model (for example `-fast` variants). */
 	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	/** Whether to recover supported text-encoded tool calls from assistant text. */

@@ -7,7 +7,7 @@
  * source checkout all agree on one re-entry route.
  */
 import { existsSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBunBinary } from "../../config.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
@@ -37,9 +37,19 @@ export function defaultHostLaunch(
 	compiled: boolean = isBunBinary,
 	/** Null stands for a bundled layout, where no standalone sibling program exists. */
 	sibling: string | null = resolveHostLifecycleEntryPath() ?? null,
+	/** The bundle's own supervisor program beside its CLI entry; null when this bundle has none. */
+	bundledSupervisor: string | null = resolveBundledSupervisorEntryPath() ?? null,
 ): { command: string; args: string[] } {
 	if (compiled) return { command: process.execPath, args: [INTERNAL_SUPERVISOR_FLAG, ...supervisorArgs] };
 	if (sibling !== null) return { command: process.execPath, args: [...runtimeExecArgv(), sibling, ...supervisorArgs] };
+	// Bundled with its own supervisor program: start only the supervisor graph instead of booting the whole
+	// CLI to reach the route (senpi#3743). The sentinel stays in argv so a supervisor still reads as one.
+	if (bundledSupervisor !== null) {
+		return {
+			command: process.execPath,
+			args: [...runtimeExecArgv(), bundledSupervisor, INTERNAL_SUPERVISOR_FLAG, ...supervisorArgs],
+		};
+	}
 	// Bundled, the host-lifecycle entry beside us is a bundler chunk, not the standalone
 	// program the unbundled tree ships: run directly it returns immediately without ever
 	// listening, so ensure saw "exited with code 0 before answering get_protocol_info".
@@ -50,6 +60,15 @@ export function defaultHostLaunch(
 		command: process.execPath,
 		args: [...runtimeExecArgv(), resolveCliMainPath(), INTERNAL_SUPERVISOR_FLAG, ...supervisorArgs],
 	};
+}
+
+/** Emitted by the bundle build beside `cli.js` (`scripts/build-coding-agent-bundle.mjs`). */
+export const BUNDLED_SUPERVISOR_ENTRY = "host-supervisor.js";
+
+/** The bundle's own supervisor program, beside the CLI entry this install declares, when it exists. */
+function resolveBundledSupervisorEntryPath(): string | undefined {
+	const entry = join(dirname(resolveCliMainPath()), BUNDLED_SUPERVISOR_ENTRY);
+	return existsSync(entry) ? entry : undefined;
 }
 
 /**

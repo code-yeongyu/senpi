@@ -3,22 +3,35 @@
  * (`authenticateSocket`, the handshake every RPC transport shares); a wrong secret is disconnected
  * before a single JSONL line is read. After that it is the RPC framing: one LF-terminated JSON
  * object per request, one response per request carrying its `id`, plus pushed feed events.
+ *
+ * The socket path is the endpoint's logical address on every platform (its secret lives beside it); on win32 the
+ * listener binds the named pipe the host transport derives from that path and the secret (senpi#4267), which is
+ * the address every client already connects to.
  */
 import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "../rpc/jsonl.ts";
 import { rpcCommandShapeError } from "../rpc/rpc-input-validation.ts";
-import { authenticateSocket } from "../rpc/socket-transport.ts";
+import type { SessionEventWriterConnection } from "../rpc/session-event-fanout.ts";
+import { socketSink } from "../rpc/socket-sink.ts";
+import { authenticateSocket, resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
 
 export interface ControlConnection {
 	readonly id: number;
 	send(record: object): void;
+	/** The raw socket writer, for an endpoint that orders this connection's output through a record writer. */
+	readonly transport: SessionEventWriterConnection;
 }
 
 export type ControlCommand = Readonly<Record<string, unknown>> & { readonly type: string; readonly id?: unknown };
 
 export interface ControlServerHandlers {
-	command(connection: ControlConnection, command: ControlCommand): Promise<object>;
+	/** `null`: the command already answered on its own (through the endpoint's record writer). */
+	command(connection: ControlConnection, command: ControlCommand): Promise<object | null>;
+	/** An authenticated connection is about to send its first line. */
+	opened?(connection: ControlConnection): void;
+	/** Writes a command's answer; without it the answer goes straight to the socket. */
+	respond?(connection: ControlConnection, answer: object): void;
 	closed(connection: ControlConnection): void;
 	listenerError(error: Error): void;
 }
@@ -42,23 +55,29 @@ export async function listenControlSocket(
 	});
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
-		server.listen(socketPath, () => {
+		server.listen(resolveSocketTransportAddress(socketPath, process.platform, secret), () => {
 			server.off("error", reject);
 			resolve();
 		});
 	});
 	server.on("error", (error) => handlers.listenerError(error));
-	await chmod(socketPath, 0o600);
+	// A named pipe has no file to restrict: the secret, 0600 beside the logical path, is its gate.
+	if (process.platform !== "win32") await chmod(socketPath, 0o600);
 	return { close: () => closeServer(server, clients) };
 }
 
 function acceptConnection(socket: Socket, id: number, handlers: ControlServerHandlers): void {
 	const connection: ControlConnection = {
 		id,
+		// Every record, answers and feed events alike, leaves through the endpoint's writer when it has one,
+		// so this connection's output keeps one order.
 		send: (record) => {
-			if (!socket.destroyed) socket.write(serializeJsonLine(record));
+			if (handlers.respond !== undefined) handlers.respond(connection, record);
+			else if (!socket.destroyed) socket.write(serializeJsonLine(record));
 		},
+		transport: socketSink(socket),
 	};
+	handlers.opened?.(connection);
 	const detach = attachJsonlLineReader(socket, (line) => void answer(connection, line, handlers), {
 		maxLineLength: MAX_RPC_LINE_CHARACTERS,
 		onOversizedLine: () => connection.send(failure(undefined, "parse", "RPC line exceeds the size limit.")),
@@ -82,7 +101,9 @@ async function answer(connection: ControlConnection, line: string, handlers: Con
 		connection.send(failure(undefined, "parse", shapeError ?? "RPC command needs a string `type`."));
 		return;
 	}
-	connection.send(await handlers.command(connection, parsed));
+	const answer = await handlers.command(connection, parsed);
+	if (answer === null) return;
+	connection.send(answer);
 }
 
 function isCommand(value: unknown): value is ControlCommand {

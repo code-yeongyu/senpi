@@ -19,6 +19,7 @@ describe("model switching preserves the preferred reasoning level", () => {
 
 	it("preserves the preferred reasoning level across manual model switches", async () => {
 		const harness = await createHarness({
+			settings: { defaultThinkingLevel: "low" },
 			models: [
 				{ id: "claude-opus-4-8", reasoning: true },
 				{ id: "faux-basic", reasoning: true },
@@ -32,16 +33,17 @@ describe("model switching preserves the preferred reasoning level", () => {
 		await harness.session.setModel(basicModel);
 
 		expect(harness.session.thinkingLevel).toBe("high");
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 
 		await harness.session.setModel(maxModel);
 
 		expect(harness.session.thinkingLevel).toBe("max");
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 	});
 
 	it("preserves the preferred reasoning level across favorite model cycling", async () => {
 		const harness = await createHarness({
+			settings: { defaultThinkingLevel: "low" },
 			models: [
 				{ id: "claude-opus-4-8", reasoning: true },
 				{ id: "faux-basic", reasoning: true },
@@ -56,16 +58,17 @@ describe("model switching preserves the preferred reasoning level", () => {
 		await harness.session.cycleModel();
 
 		expect(harness.session.thinkingLevel).toBe("high");
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 
 		await harness.session.cycleModel();
 
 		expect(harness.session.thinkingLevel).toBe("max");
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 	});
 
 	it("does not replace the preferred reasoning level with a favorite override", async () => {
 		const harness = await createHarness({
+			settings: { defaultThinkingLevel: "low" },
 			models: [
 				{ id: "claude-opus-4-8", reasoning: true },
 				{ id: "faux-basic", reasoning: true },
@@ -80,11 +83,13 @@ describe("model switching preserves the preferred reasoning level", () => {
 		await harness.session.cycleModel();
 
 		expect(harness.session.thinkingLevel).toBe("low");
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 
+		// Forget the target's model memory so only the session preference can restore max.
+		harness.settingsManager.setModelThinkingLevel(maxModel.provider, maxModel.id, undefined);
 		await harness.session.cycleModel();
 
 		expect(harness.session.thinkingLevel).toBe("max");
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 	});
 });

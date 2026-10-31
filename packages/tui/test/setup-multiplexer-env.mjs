@@ -9,6 +9,13 @@
 // though CI (which has no multiplexer) passes — because they inherit the
 // ambient markers.
 //
+// herdr panes are scrubbed for the same reason: their environment markers
+// (`TERM_PROGRAM=herdr`, `HERDR_ENV`, `HERDR_PANE_ID`) arm the Kitty graphics
+// probe in every TUI-booting test (extra terminal writes, a pending 500ms
+// timer, and a resolution repaint), which deterministic render-timing tests
+// cannot tolerate and CI never sees. Probe behavior is covered explicitly by
+// `test/kitty-graphics-probe.test.ts` via `withEnv`.
+//
 // Clearing the markers here makes the test baseline deterministic and identical
 // to CI regardless of the developer's terminal. Tests that exercise the
 // multiplexer render path opt in explicitly via `withEnv({ TMUX: ... })` or an
@@ -23,3 +30,8 @@
 for (const key of ["TMUX", "TMUX_PANE", "STY", "ZELLIJ"]) {
 	delete process.env[key];
 }
+if (process.env.TERM_PROGRAM === "herdr") {
+	delete process.env.TERM_PROGRAM;
+}
+delete process.env.HERDR_ENV;
+delete process.env.HERDR_PANE_ID;

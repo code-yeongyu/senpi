@@ -21,7 +21,7 @@ import { setMaxListeners } from "node:events";
 import type { ImageContent, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
-import { MEDIA_PLACEHOLDERS_CAPABILITY } from "../src/modes/rpc/custom-capability.ts";
+import { AUTH_KEY_VERIFY_CAPABILITY, MEDIA_PLACEHOLDERS_CAPABILITY } from "../src/modes/rpc/custom-capability.ts";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import { RPC_ERROR_MEDIA_NOT_FOUND } from "../src/modes/rpc/rpc-types.ts";
@@ -226,6 +226,22 @@ describe("get_media", () => {
 
 		expect(data.mode).toBe("multi");
 		expect(data.capabilities).toContain(MEDIA_PLACEHOLDERS_CAPABILITY);
+	});
+
+	// #3372 review: classic hosts answer verify_api_key too, so they must say so.
+	it("advertises auth_key_verify in get_protocol_info in classic and multi mode", async () => {
+		const { lineHandler, cleanup } = await startClassicRpc();
+		try {
+			const response = await awaitResponse(sendCommand(lineHandler, { type: "get_protocol_info" }));
+			expect((response.data as { capabilities: string[] }).capabilities).toContain(AUTH_KEY_VERIFY_CAPABILITY);
+		} finally {
+			await cleanup();
+		}
+		const router = new SessionCommandRouter({ list: () => [] } as never, new SessionEventWriter(() => {}), {
+			cwd: "/tmp",
+		});
+		const multi = await router.handle({ id: "probe", type: "get_protocol_info" });
+		expect((multi as { data: { capabilities: string[] } }).data.capabilities).toContain(AUTH_KEY_VERIFY_CAPABILITY);
 	});
 
 	it("RpcClient.getMedia sends the command and unwraps the content block", async () => {

@@ -144,7 +144,12 @@ describe("provider retry classification", () => {
 		["Idle timeout waiting for provider stream after 300000ms", true, true],
 		["Provider stream start timed out after 90000ms", true, true],
 		[
-			"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+			"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+			true,
+			true,
+		],
+		[
+			"Provider stream sent only keep-alives and timed out after 900000ms (raise streamKeepAliveTimeoutMs: retry.provider.keepAliveTimeoutMs in senpi settings; 0 disables)",
 			true,
 			true,
 		],
@@ -243,7 +248,7 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", {
 					stopReason: "error",
 					errorMessage:
-						"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+						"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
 				}),
 			),
 		).toBe(true);

@@ -106,11 +106,12 @@ describe("detector-control-leak positives", () => {
 		});
 	});
 
-	it("B-P9 SGML(s) x3 at start fires on 3rd", () => {
-		const token = sgml("s");
+	// An opening `<s>` is HTML strikethrough, so the start-context BOS run uses Gemma's `<bos>` (senpi#3880).
+	it("B-P9 SGML(bos) x3 at start fires on 3rd", () => {
+		const token = sgml("bos");
 		const fixture = joined(token, 3, " ");
 		expectLeakMatchEverywhere(runSplitMatrix(fixture, [token]), {
-			tokenId: "sgml:s",
+			tokenId: "sgml:bos",
 			occurrences: 3,
 			context: "start",
 			anomalyStartOffset: 0,

@@ -20,6 +20,7 @@ export const MOVED_PATH_TOOL_CLASSES: Readonly<Record<string, MovedPathToolClass
 	write: { kind: "filesystem-policy" },
 	edit: { kind: "filesystem-policy" },
 	find: { kind: "filesystem-policy" },
+	glob: { kind: "filesystem-policy" },
 	ls: { kind: "filesystem-policy" },
 	grep: { kind: "filesystem-policy" },
 	apply_patch: { kind: "patch" },
@@ -47,4 +48,7 @@ export const MOVED_PATH_TOOL_CLASSES: Readonly<Record<string, MovedPathToolClass
 	schedule_wakeup: { kind: "none" },
 	schedule_prompt: { kind: "none" },
 	show_html_page: { kind: "none" },
+	// A computer name and a reason, never a path; the move itself runs through release_session and move_session.
+	list_relocation_targets: { kind: "none" },
+	relocate_session: { kind: "none" },
 };

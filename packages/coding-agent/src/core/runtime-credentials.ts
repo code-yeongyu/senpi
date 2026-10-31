@@ -5,6 +5,7 @@ import type {
 	CredentialStore,
 	OAuthAuth,
 } from "@earendil-works/pi-ai";
+import { projectSlot } from "@earendil-works/pi-ai/auth/pool/slots";
 
 type ExtensionOAuthRegistry = {
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void;
@@ -25,6 +26,11 @@ export class RuntimeCredentials implements CredentialStore {
 
 	constructor(store: CredentialStore) {
 		this.store = store;
+	}
+
+	/** The store extension OAuth providers register into; a session's ModelRegistry reads it (senpi#3434). */
+	get backingStore(): CredentialStore {
+		return this.store;
 	}
 
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void {
@@ -60,6 +66,18 @@ export class RuntimeCredentials implements CredentialStore {
 		options?.signal?.throwIfAborted();
 		const override = this.overrides.get(providerId);
 		return override ? { type: "api_key", key: override } : this.store.read(providerId, options);
+	}
+
+	async readSlot(
+		providerId: string,
+		slotName: string,
+		options?: AuthOperationOptions,
+	): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
+		const override = this.overrides.get(providerId);
+		if (override) return projectSlot({ type: "api_key", key: override }, slotName);
+		if (this.store.readSlot) return this.store.readSlot(providerId, slotName, options);
+		return projectSlot(await this.store.read(providerId, options), slotName);
 	}
 
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {

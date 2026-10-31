@@ -1,0 +1,54 @@
+{
+	"caseId": "json-escape-split",
+	"kind": "valid",
+	"contractIds": [
+		"R4.B3"
+	],
+	"description": "Raw bytes of a JSON string literal whose \\u00e9 escape starts at offset 131071: record 1 ends with the lone backslash, record 2 starts with \"u00e9\". Bytes are not parsed.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"generator": {
+			"kind": "segments",
+			"params": {
+				"segments": [
+					{
+						"kind": "bytes",
+						"base64": "Ig=="
+					},
+					{
+						"kind": "repeat",
+						"patternBase64": "ag==",
+						"length": 131070
+					},
+					{
+						"kind": "bytes",
+						"base64": "XHUwMGU5IHRhaWwi"
+					}
+				]
+			}
+		}
+	},
+	"sourceLength": 131083,
+	"sourceDigest": "493843b25c48dd2e3e06ed2e6ec2d6c7002d1bf720b942811d5e0c9f07693d67",
+	"expectedRecords": [
+		{
+			"offset": 0,
+			"length": 131072,
+			"digest": "545e557162c3a0f71f6739bc91a9d2bce26a9af8272e329265bc616e31a6b9c1",
+			"next": 131072,
+			"complete": false
+		},
+		{
+			"offset": 131072,
+			"length": 11,
+			"digest": "def09438ba30f5d48aa3d58502db6b09e47536efec06ca274730f7878135125b",
+			"next": null,
+			"complete": true
+		}
+	]
+}

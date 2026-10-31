@@ -26,7 +26,7 @@ goal per thread, re-engages the agent via hidden continuation prompts. 34 `.ts` 
 ## NO BUDGET-DRIVEN BEHAVIOR
 
 The deliberate divergence from `pi-goal` / codex `ext/goal`. `Goal` may persist an optional
-`tokenBudget` **only** as inert app-server wire-compatibility metadata; the tools neither
+`tokenBudget` **only** as inert legacy metadata; the tools neither
 create nor interpret it. No `budgetLimited`/`usageLimited` status, no budget-limit continuation,
 no budget-driven transition. `tokensUsed`/`timeUsedSeconds` are display-only. Status is
 `active | paused | blocked | complete`; `blocked` carries `blockedReason`/`blockedAt` and
@@ -35,7 +35,9 @@ suppresses continuations.
 ## CONTINUATION POLICY
 
 Admission guards: consecutive-continuation cap of 8 (persisted), stale-signature check on
-immediate re-entry, single-flight latch. From the 3rd consecutive toolless turn the prompt
+immediate re-entry, single-flight latch, and the no-progress guard (60 counted continuations
+without a new successful tool effect (a call/result fingerprint unlike the last 256; results mask timestamps/durations/ids, non-mutating calls mask argument numbers), a todo change, or human input — typed or from a `human_input`
+monitor; persisted, monitor-delayed exempt). There is no fixed total cap (omo#10280). From the 3rd consecutive toolless turn the prompt
 gains a `<goal_stall_check>` prefix — monitor-flavored bullets while monitors are active,
 generic recovery bullets otherwise. Accepted direct input disarms a pending continuation; a
 clean accepted user turn arms a visible 10-second grace countdown before the Goal resumes.

@@ -105,11 +105,6 @@ describe("preset-append deprecation guidance", () => {
 		expect(second).toBeUndefined();
 	});
 
-	it("returns undefined for full mode without conflict", () => {
-		resetPresetAppendDeprecation();
-		expect(presetAppendDeprecationGuidance({ mode: "full", sessionId: "s1" })).toBeUndefined();
-	});
-
 	it("reset re-arms the once-per-session guard for a specific session", () => {
 		resetPresetAppendDeprecation();
 		const first = presetAppendDeprecationGuidance({ mode: "preset-append", sessionId: "s1" });

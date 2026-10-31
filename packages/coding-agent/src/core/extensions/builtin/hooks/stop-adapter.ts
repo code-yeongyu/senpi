@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { HistoryReducer } from "../../../session-history-reduce.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { diagnostic } from "./diagnostics.ts";
 import type { HookDispatchResult, HookDispatchSummary } from "./dispatcher.ts";
@@ -127,15 +128,29 @@ async function waitForFollowUpQueue(ctx: ExtensionContext): Promise<void> {
 	}
 }
 
+/** The latest valid stop state per session and turn, folded without a full-history view: Stop runs every turn (senpi#2537). */
+const latestStopStates: HistoryReducer<Map<string, StopState>> = {
+	initial: () => new Map(),
+	add: (states, entry) => {
+		if (entry.type === "custom" && entry.customType === STOP_STATE_CUSTOM_TYPE && isStopState(entry.data)) {
+			states.set(stopStateKey(entry.data.sessionId, entry.data.turnKey), entry.data);
+		}
+		return states;
+	},
+};
+
+function stopStateKey(sessionId: string, turnKey: string): string {
+	return `${sessionId}\u0000${turnKey}`;
+}
+
 function latestStopState(ctx: ExtensionContext, sessionId: string, turnKey: string): StopState {
-	const entries = ctx.sessionManager.getEntries();
-	for (let index = entries.length - 1; index >= 0; index -= 1) {
-		const entry = entries[index];
-		if (entry?.type !== "custom" || entry.customType !== STOP_STATE_CUSTOM_TYPE) continue;
-		if (!isStopState(entry.data)) continue;
-		if (entry.data.sessionId === sessionId && entry.data.turnKey === turnKey) return entry.data;
-	}
-	return { count: 0, sessionId, turnKey };
+	return (
+		ctx.sessionManager.reduceHistory(latestStopStates).get(stopStateKey(sessionId, turnKey)) ?? {
+			count: 0,
+			sessionId,
+			turnKey,
+		}
+	);
 }
 
 function appendStopState(pi: StopRuntime, state: StopState): void {

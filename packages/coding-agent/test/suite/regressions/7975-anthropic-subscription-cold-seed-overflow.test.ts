@@ -79,7 +79,7 @@ const overflow: Reply = (sessionId) => [
 
 const residentStreamFn: StreamFn = (model, context, options) =>
 	wrapStreamWithModelRecovery(
-		streamAnthropicSubscription(model, context, options),
+		streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...options }),
 		model,
 		getCurrentTools(context.messages),
 	);

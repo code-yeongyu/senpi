@@ -6,21 +6,26 @@
  * crashed supervisor run no JS handler, and the host is then reparented to init
  * as a permanent orphan holding its private socket forever.
  *
- * The binding used here is the OS itself. The supervisor spawns the host with an
- * extra inherited pipe and keeps the write end open without ever writing to it.
- * The kernel closes that end when the supervisor dies for ANY reason, so the
- * host's read end reaches EOF and the host shuts down cleanly.
+ * POSIX children watch the reopened stdin key pipe, or poll the recorded supervisor's
+ * pid and start time when reopening is unavailable. Slot three is not trusted after
+ * wrappers/re-exec. Windows and explicit embedding callers retain their fd binding.
  *
- * Both variables are unset for every other host launch, so nothing changes for
+ * The bindings are unset for every other host launch, so nothing changes for
  * plain `senpi --mode rpc` runs, hosts started by hand, or embedders.
  */
 import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
-import { envValue } from "../../core/brand.ts";
+import { brandEnvNames, envValue } from "../../core/brand.ts";
 import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { armLifetimeBinding, HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
+import {
+	HOST_WATCH_BACKSTOP_INTERVAL_MS,
+	HOST_WATCH_PPID_BACKUP_INTERVAL_MS,
+	supervisorPoll,
+} from "./host-supervisor-poll.ts";
 
 /** Inherited fd whose EOF means "the supervisor died"; set by the supervisor only. */
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
@@ -30,13 +35,27 @@ export const HOST_SCRATCH_DIR_ENV = "SENPI_RPC_HOST_SCRATCH_DIR";
 export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 /** Fallback binding when no inherited fd is available: poll this pid. */
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
-/** Poll cadence for the ppid fallback. */
-export const HOST_WATCH_PPID_INTERVAL_MS = 250;
+export const HOST_WATCH_PSTART_ENV = "SENPI_RPC_HOST_WATCH_PSTART";
+/** Linux: the supervisor's `/proc` start ticks, compared on the boot clock (senpi#3816 review). */
+export const HOST_WATCH_PSTART_TICKS_ENV = "SENPI_RPC_HOST_WATCH_PSTART_TICKS";
+export { HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
+export {
+	HOST_WATCH_BACKSTOP_INTERVAL_MS,
+	HOST_WATCH_IDENTITY_INTERVAL_MS,
+	HOST_WATCH_IDENTITY_ONLY_INTERVAL_MS,
+	HOST_WATCH_PPID_BACKUP_INTERVAL_MS,
+	HOST_WATCH_PPID_INTERVAL_MS,
+	HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS,
+} from "./host-supervisor-poll.ts";
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
 export interface HostWatchdogConfig {
 	readonly fd?: number;
 	readonly ppid?: number;
+	readonly processStartTime?: string;
+	readonly processStartTicks?: string;
+	readonly lifetimeFifo?: string;
+	readonly lifetimeFd?: number;
 	readonly scratchDir?: string;
 	readonly cleanupPaths?: readonly string[];
 	readonly publicSocket?: string;
@@ -67,8 +86,10 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
 export function readHostWatchdogConfig(
 	env: Readonly<Record<string, string | undefined>> = process.env,
 ): HostWatchdogConfig | undefined {
-	const fd = parsePositiveInteger(env[HOST_WATCH_FD_ENV]);
 	const ppid = parsePositiveInteger(env[HOST_WATCH_PPID_ENV]);
+	// Slot three may have been closed/reused by a launcher. POSIX supervised children never arm it.
+	const fd =
+		process.platform !== "win32" && ppid !== undefined ? undefined : parsePositiveInteger(env[HOST_WATCH_FD_ENV]);
 	if (fd === undefined && ppid === undefined) return undefined;
 	const scratchDir = env[HOST_SCRATCH_DIR_ENV];
 	const cleanupPaths = env[HOST_CLEANUP_PATHS_ENV]?.split("\n").filter(Boolean);
@@ -78,6 +99,9 @@ export function readHostWatchdogConfig(
 	return {
 		fd,
 		ppid,
+		...(env[HOST_WATCH_PSTART_ENV] ? { processStartTime: env[HOST_WATCH_PSTART_ENV] } : {}),
+		...(env[HOST_WATCH_PSTART_TICKS_ENV] ? { processStartTicks: env[HOST_WATCH_PSTART_TICKS_ENV] } : {}),
+		...(env[HOST_WATCH_LIFETIME_FIFO_ENV] ? { lifetimeFifo: env[HOST_WATCH_LIFETIME_FIFO_ENV] } : {}),
 		scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir,
 		cleanupPaths,
 		publicSocket: publicSocket === "" ? undefined : publicSocket,
@@ -86,20 +110,52 @@ export function readHostWatchdogConfig(
 }
 
 /** Same configuration, resolved through the brand-aware env prefixes. */
-export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undefined {
+export function readHostWatchdogConfigFromBrandEnv(
+	env: NodeJS.ProcessEnv = process.env,
+): HostWatchdogConfig | undefined {
 	// The lifecycle supervisor intentionally uses the canonical SENPI_RPC_HOST_*
 	// names when spawning a child. envValue() resolves branded aliases for normal
 	// launches, but must not hide the canonical variables from the supervisor
 	// handoff or the lifetime binding is silently disabled.
 	return readHostWatchdogConfig({
-		[HOST_WATCH_FD_ENV]: process.env[HOST_WATCH_FD_ENV] ?? envValue("RPC_HOST_WATCH_FD"),
-		[HOST_WATCH_PPID_ENV]: process.env[HOST_WATCH_PPID_ENV] ?? envValue("RPC_HOST_WATCH_PPID"),
-		[HOST_SCRATCH_DIR_ENV]: process.env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR"),
-		[HOST_PUBLIC_SOCKET_ENV]: process.env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET"),
-		[HOST_CLEANUP_PATHS_ENV]: process.env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS"),
-		[HOST_DAEMON_DIR_ENV]: process.env[HOST_DAEMON_DIR_ENV],
-		[HOST_INSTANCE_ID_ENV]: process.env[HOST_INSTANCE_ID_ENV],
+		[HOST_WATCH_FD_ENV]: env[HOST_WATCH_FD_ENV] ?? envValue("RPC_HOST_WATCH_FD", env),
+		[HOST_WATCH_PPID_ENV]: env[HOST_WATCH_PPID_ENV] ?? envValue("RPC_HOST_WATCH_PPID", env),
+		[HOST_WATCH_PSTART_ENV]: env[HOST_WATCH_PSTART_ENV] ?? envValue("RPC_HOST_WATCH_PSTART", env),
+		[HOST_WATCH_PSTART_TICKS_ENV]: env[HOST_WATCH_PSTART_TICKS_ENV] ?? envValue("RPC_HOST_WATCH_PSTART_TICKS", env),
+		[HOST_WATCH_LIFETIME_FIFO_ENV]: env[HOST_WATCH_LIFETIME_FIFO_ENV] ?? envValue("RPC_HOST_LIFETIME_FIFO", env),
+		[HOST_SCRATCH_DIR_ENV]: env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR", env),
+		[HOST_PUBLIC_SOCKET_ENV]: env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET", env),
+		[HOST_CLEANUP_PATHS_ENV]: env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS", env),
+		[HOST_DAEMON_DIR_ENV]: env[HOST_DAEMON_DIR_ENV],
+		[HOST_INSTANCE_ID_ENV]: env[HOST_INSTANCE_ID_ENV],
 	});
+}
+
+const WATCH_ENV_SUFFIXES = [
+	"RPC_HOST_WATCH_FD",
+	"RPC_HOST_WATCH_PPID",
+	"RPC_HOST_WATCH_PSTART",
+	"RPC_HOST_WATCH_PSTART_TICKS",
+	"RPC_HOST_LIFETIME_FIFO",
+	"RPC_HOST_SCRATCH_DIR",
+	"RPC_HOST_PUBLIC_SOCKET",
+	"RPC_HOST_CLEANUP_PATHS",
+] as const;
+
+/**
+ * Reads the supervisor binding once and removes it from `env` (senpi#3815 review L4), so no tool, shell or nested host
+ * this host starts inherits a binding to a supervisor that is not its own. The generation identity (instance id,
+ * daemon dir) stays: sessions use it to name the host they run in.
+ */
+export function consumeHostWatchdogEnv(env: NodeJS.ProcessEnv = process.env): HostWatchdogConfig | undefined {
+	const config = readHostWatchdogConfigFromBrandEnv(env);
+	scrubHostWatchdogEnv(env);
+	return config;
+}
+
+export function scrubHostWatchdogEnv(env: NodeJS.ProcessEnv = process.env): void {
+	for (const suffix of WATCH_ENV_SUFFIXES)
+		for (const name of [`SENPI_${suffix}`, ...brandEnvNames(suffix)]) delete env[name];
 }
 
 /**
@@ -117,7 +173,11 @@ export function armHostWatchdog(
 	onSupervisorGone: (reason: string, cleanup?: Promise<void>) => void,
 ): () => void {
 	if (!config) return () => {};
+	let stopped = false;
+	let fired = false;
 	const fire = (reason: string): void => {
+		if (stopped || fired) return;
+		fired = true;
 		disarm();
 		// First, before any cleanup: a supervisor that died this way runs no exit handler of its own.
 		if (config.daemonDir !== undefined && config.instanceId !== undefined) {
@@ -142,10 +202,40 @@ export function armHostWatchdog(
 	};
 	const disarmers: Array<() => void> = [];
 	const disarm = (): void => {
+		stopped = true;
 		for (const stop of disarmers.splice(0)) stop();
 	};
-	if (config.fd !== undefined) disarmers.push(watchFdForEof(config.fd, fire));
-	if (config.ppid !== undefined) disarmers.push(watchPpid(config.ppid, fire));
+	const poll = supervisorPoll(
+		config.ppid,
+		{ ticks: config.processStartTicks, time: config.processStartTime },
+		fire,
+		() => stopped,
+	);
+	disarmers.push(() => poll.stop());
+	// The poll runs only when the lifetime binding is absent or failed. While a legacy inherited pipe is armed it merely
+	// backs that pipe up (senpi#3738); a pipe that cannot be read leaves the poll as the only binding (poll.soleInterval).
+	let pollWanted = false;
+	let pipeLive = false;
+	if (config.fd !== undefined) {
+		pipeLive = watchFdForEof(config.fd, fire, disarmers, () => {
+			pipeLive = false;
+			if (pollWanted) poll.arm(poll.soleInterval);
+		});
+	}
+	const fallback = (): void => {
+		pollWanted = true;
+		poll.arm(pipeLive ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : poll.soleInterval);
+	};
+	let stopLifetime: (() => void) | undefined;
+	try {
+		stopLifetime = armLifetimeBinding(config, fire, fallback);
+	} catch {
+		stopLifetime = undefined;
+	}
+	if (stopLifetime !== undefined) {
+		disarmers.push(stopLifetime);
+		poll.arm(HOST_WATCH_BACKSTOP_INTERVAL_MS);
+	} else fallback();
 	return disarm;
 }
 
@@ -162,7 +252,12 @@ export function armHostWatchdog(
  * handoff) would hang in exit until something killed it. With a socket the same EOF arrives from
  * kqueue/epoll and nothing holds the exit.
  */
-function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
+function watchFdForEof(
+	fd: number,
+	fire: (reason: string) => void,
+	disarmers: Array<() => void>,
+	onUnavailable: () => void,
+): boolean {
 	let stream: Socket;
 	let streamFailed = false;
 	let fired = false;
@@ -175,7 +270,7 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 		// The watchdog owns this inherited read end; destroying the socket releases it.
 		stream = new Socket({ fd, readable: true, writable: false });
 	} catch {
-		return () => {};
+		return false;
 	}
 	stream.resume();
 	const onEnd = (): void => fireOnce(`supervisor pipe fd ${fd} closed`);
@@ -184,52 +279,20 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 	};
 	const onError = (): void => {
 		streamFailed = true;
+		onUnavailable();
 	};
 	stream.once("end", onEnd);
 	// Win32 pipe teardown may report close without end; POSIX invalid-fd close is
 	// not supervisor death and remains inert.
 	if (process.platform === "win32") stream.once("close", onClose);
 	stream.once("error", onError);
-	return () => {
+	disarmers.push(() => {
 		stream.off("end", onEnd);
 		stream.off("close", onClose);
 		stream.off("error", onError);
 		stream.destroy();
-	};
-}
-
-/**
- * Fallback binding: the supervisor pid is gone, or this process was reparented
- * to init because the supervisor died. Polling covers the case where no extra
- * fd could be inherited.
- */
-function watchPpid(supervisorPid: number, fire: (reason: string) => void): () => void {
-	// Tests and embedders may bind the watchdog to this process itself; that
-	// is a valid live binding rather than evidence of supervisor loss.
-	if (supervisorPid === process.pid) return () => {};
-	const timer = setInterval(() => {
-		if (!processAlive(supervisorPid)) {
-			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
-			return;
-		}
-		// A dead supervisor is reaped by its own parent and this process is then
-		// reparented, so the ppid comparison observes the loss without spawning
-		// `ps` every tick; both checks here are free syscalls.
-		if (process.ppid !== supervisorPid) {
-			fire(`supervisor pid ${supervisorPid} is gone (ppid=${process.ppid})`);
-		}
-	}, HOST_WATCH_PPID_INTERVAL_MS);
-	timer.unref?.();
-	return () => clearInterval(timer);
-}
-
-function processAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (cause) {
-		return cause instanceof Error && "code" in cause && cause.code !== "ESRCH";
-	}
+	});
+	return true;
 }
 
 // A failing capture must never block the cleanup or the shutdown it precedes.

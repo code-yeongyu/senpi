@@ -9,6 +9,7 @@ import {
 	SOURCE_ROOT,
 } from "./lib/anthropic-subscription-fullstack-harness.mjs";
 import { safeDetail } from "./lib/output-safety.mjs";
+import { signalOwnedProcess } from "./lib/common.mjs";
 
 const TURN_TIMEOUT_MS = 180_000;
 const marker = "ISSUE6981-HEADLESS-RESTART";
@@ -20,7 +21,7 @@ function killTree(child) {
 	if (child.exitCode !== null) return;
 	try {
 		if (process.platform === "win32") child.kill("SIGKILL");
-		else process.kill(-child.pid, "SIGKILL");
+		else signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGKILL" });
 	} catch {
 		child.kill("SIGKILL");
 	}

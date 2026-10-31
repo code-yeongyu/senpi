@@ -69,9 +69,9 @@ describe("AgentSession tool orchestration", () => {
 
 		// The fork maps the "codemode" exposure alias to eval exposure, which stays active (C-EX-1).
 		expect(harness.session.getActiveToolNames()).toEqual(["echo", "helper", "run_tools"]);
-		// The fork's bash/powershell/grep builtins carry eval exposure, so they are callable too;
+		// The fork's bash/powershell/grep/glob builtins carry eval exposure, so they are callable too;
 		// the model-only run_tools is not.
-		expect(harness.session.getCallableToolNames()).toEqual(["bash", "powershell", "grep", "echo", "helper"]);
+		expect(harness.session.getCallableToolNames()).toEqual(["bash", "powershell", "grep", "glob", "echo", "helper"]);
 
 		harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("run_tools", {})], { stopReason: "toolUse" }),

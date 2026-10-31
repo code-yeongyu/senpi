@@ -228,7 +228,9 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 		this.settled = true;
 		this.countdown?.dispose();
 		this.state.comment = this.commentInput.getValue();
-		this.doneCallback(this.state.buildResponse(status, autoResolvedAfterMs));
+		const response = this.state.buildResponse(status, autoResolvedAfterMs);
+		// The widget cancels only on the user's own key (Esc, Ctrl+C); an abort never reaches here.
+		this.doneCallback(status === "cancelled" ? { ...response, cancelOrigin: "user" } : response);
 	}
 
 	private applyFocusFlags(): void {

@@ -12,6 +12,15 @@ export const COOLDOWN_BASE_MS = DEFAULT_SLOT_BLOCK_MS;
 export const COOLDOWN_CAP_MS = MAX_SLOT_BLOCK_MS;
 export const RETRY_SAME_MAX_ATTEMPTS = 2;
 
+/**
+ * Carried by every refusal a provider that runs its own account pool (Anthropic Subscription) makes
+ * before sending anything, because the accounts it may use are blocked. That pool already holds each
+ * account's real reason and deadline, so the refusal is a verdict on the pool, not on the outer slot
+ * this attempt happened to run on: classifying it per slot persisted one account's auth error against
+ * every slot until re-login (senpi#2081).
+ */
+export const ACCOUNT_POOL_REFUSAL_NOTE = "No request was sent: the account pool refused it locally.";
+
 export type CredentialBlock =
 	| { reason: "auth_error" }
 	| { reason: "account_disabled" }
@@ -48,6 +57,15 @@ export function rateLimitCooldown(
 	};
 }
 
+/** The cooldown of a spent account whose limit names a future reset: exactly until that reset, capped. */
+export function usageLimitCooldown(
+	resetMs: number,
+	policy: { capMs?: number } = {},
+): { cooldownMs: number; retryAfterWasCapped: boolean } {
+	const cap = policy.capMs ?? COOLDOWN_CAP_MS;
+	return { cooldownMs: Math.min(cap, resetMs), retryAfterWasCapped: resetMs > cap };
+}
+
 const INVALID_KEY_TEXT = /invalid[ _-]?(?:api[ _-]?)?key|authentication[_ ]?error|invalid x-api-key|unauthorized/i;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
@@ -66,6 +84,10 @@ const WEBSOCKET_TRANSPORT_FAULT_TEXT = /websocket (?:closed|error|connect timeou
 const FAIL_FAST_TEXT =
 	/context[ _-]?(?:length|window)|maximum context|invalid[ _-]?model|model[ _-]?not[ _-]?found|malformed[ _-]?stream|premature[ _-]?(?:close|stream)/i;
 const ABORT_TEXT = /\baborted?\b/i;
+// A statusless failure that names a timeout, reset, gateway or overload is the provider's (or a
+// proxy's) fault even when its text also mentions auth: unknown shapes default to temporary (senpi#2081).
+const TEMPORARY_FAULT_TEXT =
+	/time[ds]?[ _-]?out|timed out|disconnect|reset before|connection reset|gateway|temporarily|unavailable/i;
 
 function isAbort(error: unknown, message: string): boolean {
 	if (error instanceof Error && error.name === "AbortError") return true;
@@ -97,6 +119,16 @@ export function classifyCredentialFailure(
 	const failureCount = context.failureCount ?? 0;
 
 	if (isAbort(error, text)) return { kind: "fail_request" };
+	if (text.includes(ACCOUNT_POOL_REFUSAL_NOTE)) return { kind: "fail_request" };
+	// A server, gateway or timeout status describes the provider, not the credential: its body may
+	// echo words like "unauthorized" or "billing", but only the status says what failed (senpi#2081).
+	const providerFault =
+		status === 408 ||
+		(status !== undefined && status >= 500 && status < 600) ||
+		(status === undefined &&
+			(TEMPORARY_FAULT_TEXT.test(text) || NETWORK_TEXT.test(text) || OVERLOAD_TEXT.test(text)));
+	const usageLimit = isAccountUsageLimitText(text) && !isOverflowText(text);
+	const limitText = RATE_LIMIT_TEXT.test(text) || usageLimit;
 	// A slot whose material no longer resolves to usable auth is a per-credential
 	// fault, not a provider-wide one: failing the request here would let ONE bad
 	// slot dead-end a pool whose siblings are healthy. The block is permanent
@@ -104,22 +136,23 @@ export function classifyCredentialFailure(
 	if (text.includes(PROVIDER_NOT_CONFIGURED_PREFIX)) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
-	if (status === 401 || INVALID_KEY_TEXT.test(text)) {
+	// Only a 401, or auth text on a response whose status cannot mean something temporary, is an auth
+	// rejection; a 429 that mentions authentication is still a rate limit and cools down.
+	if (status === 401 || (!providerFault && status !== 429 && INVALID_KEY_TEXT.test(text))) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
-	if (status === 403) {
+	if (status === 403 && !limitText) {
 		return ACCOUNT_SCOPED_403_TEXT.test(text)
 			? { kind: "failover", block: { reason: "auth_error" } }
 			: { kind: "fail_request" };
 	}
-	if (status === 402 || BILLING_TEXT.test(text)) {
+	if (status === 402 || (!providerFault && BILLING_TEXT.test(text))) {
 		return { kind: "failover", block: { reason: "account_disabled" } };
 	}
 	// Subscription usage limits often arrive as prose with no status (#1768).
-	// Overflow prose is excluded here because this branch runs before the
-	// overflow branch below.
-	const usageLimit = isAccountUsageLimitText(text) && !isOverflowText(text);
-	if (status === 429 || RATE_LIMIT_TEXT.test(text) || usageLimit) {
+	// Overflow prose is excluded (`usageLimit` above) because this branch runs
+	// before the overflow branch below.
+	if (status === 429 || limitText) {
 		const nowMs = context.nowMs ?? Date.now();
 		// A spent account is out until its reset time, so that time (a reset
 		// header, a reset field or reset prose) floors its cooldown; without one,
@@ -128,14 +161,17 @@ export function classifyCredentialFailure(
 			extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
 			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined);
 		const modelFamily = rateLimitModelFamily(text);
+		const policy = { baseMs: context.cooldownBaseMs, capMs: context.cooldownCapMs };
 		return {
 			kind: "failover",
 			block: {
 				reason: "rate_limit",
-				...rateLimitCooldown(failureCount, hint, {
-					baseMs: context.cooldownBaseMs,
-					capMs: context.cooldownCapMs,
-				}),
+				// A spent account comes back at the reset it names, so that reset is the cooldown: an
+				// exponential backoff grown from earlier failures would keep it blocked past it (senpi#3771).
+				// A reset already past (clock skew, a stale string) proves nothing and keeps the default floor.
+				...(usageLimit && hint !== undefined && hint > 0
+					? usageLimitCooldown(hint, policy)
+					: rateLimitCooldown(failureCount, hint, policy)),
 				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};

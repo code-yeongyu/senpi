@@ -3,12 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { readProcessStartMs } from "../../../src/core/extensions/builtin/terminal/process-start-probe.ts";
-import {
-	ProcessIdentityUnreadableError,
-	processMatchesPidFile,
-	processStartTimeMs,
-	readProcessStartTime,
-} from "../../../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { writeHostRegistration, writtenByThisProcess } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import {
@@ -16,6 +10,12 @@ import {
 	createSessionPathReservations,
 	readSessionPathClaims,
 } from "../../../src/modes/rpc/host-reservations.ts";
+import {
+	ProcessIdentityUnreadableError,
+	processMatchesPidFile,
+	processStartTimeMs,
+	readProcessStartTime,
+} from "../../../src/utils/process-identity.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 const id = "29510000-0000-4000-8000-000000000005";

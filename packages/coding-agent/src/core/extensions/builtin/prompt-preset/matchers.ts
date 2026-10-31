@@ -83,6 +83,17 @@ export function isKimiK28Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK28Signal(model.id) || (model.name !== undefined && hasKimiK28Signal(model.name));
 }
 
+// Kimi K3.1 ids: `k3.1-pro` / `k3.1-pro-highspeed` on Kimi Code, `kimi-k3.1-pro` / `kimi-k3.1-pro-highspeed` on the
+// Kimi API (kimi.com/code/docs models + platform.kimi.com K3.1 Pro quickstart, checked 2026-10-24), plus the
+// dotless `k3p1` spelling OpenCode-style catalogs use. Checked before K3: every K3.1 id also carries the K3 signal.
+export function hasKimiK31Signal(value: string): boolean {
+	return /(?:^|[/@._-])(?:kimi-)?k3(?:[._-]|p)1(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+export function isKimiK31Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasKimiK31Signal(model.id) || (model.name !== undefined && hasKimiK31Signal(model.name));
+}
+
 export function hasKimiK3Signal(value: string): boolean {
 	const normalized = normalizeModelId(value);
 	return normalized === "k3" || /(?:^|[/@._-])kimi-k3(?:$|[/@._:-])/.test(normalized);
@@ -249,6 +260,20 @@ export const CLAUDE_HAIKU_55_MARKERS = ["haiku-5-5", "haiku-5.5"] as const;
 export function isClaudeHaiku55Model(modelId: string): boolean {
 	const normalized = normalizeModelId(modelId);
 	return CLAUDE_HAIKU_55_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+// Argon id shapes verified against the generated catalogs (2026-10-15):
+// gemini-4-argon (google, google-vertex, github-copilot, opencode, venice),
+// google/gemini-4-argon and its :batch row (openrouter, vercel-ai-gateway),
+// opencode-go's gemini-4-argon-contributor, the Antigravity -low/-medium/-high
+// SKUs, and the catalog display names of the plain and batch rows.
+// Bare gemini-4, other generations of the family and unknown siblings stay out.
+export function hasGemini4ArgonSignal(value: string): boolean {
+	return /(?:^|[/@:._-])gemini[._-]?4[._-]argon(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+export function isGemini4ArgonModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGemini4ArgonSignal(model.id) || (model.name !== undefined && hasGemini4ArgonSignal(model.name));
 }
 
 export type ClaudeOpusVersion = "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";

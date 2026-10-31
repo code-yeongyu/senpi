@@ -1,5 +1,7 @@
 import { close as closeInspector, url as inspectorUrl } from "node:inspector";
+import { hasModeCrashHandler } from "./core/bootstrap-crash-listeners.ts";
 import { envValue } from "./core/brand.ts";
+import { isStaleExtensionContextError } from "./core/extensions/builtin/goal/stale-context.ts";
 
 type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
 
@@ -73,23 +75,27 @@ export function installEarlyInspectorVmImportRecovery(): void {
 		return;
 	}
 	earlyRecoveryInstalled = true;
-	process.on("uncaughtException", (error: Error, origin: UncaughtExceptionOrigin) => {
+	const listener = (error: Error, origin: UncaughtExceptionOrigin) => {
 		// Interactive mode prepends its own crash handler, which runs first and owns both the
-		// recovery warning and the fatal terminal-restoration path. Once any other handler is
-		// registered, this early seam must neither double-count recoveries nor exit itself.
-		const otherHandlerActive = process.listenerCount("uncaughtException") > 1;
+		// recovery warning and the fatal terminal-restoration path. Once a mode handler is
+		// registered, this early seam must neither double-count recoveries nor exit itself. Other
+		// bootstrap listeners do not count: two of them deferring to each other would leave a real
+		// crash running.
+		const otherHandlerActive = hasModeCrashHandler("uncaughtException");
 		if (isRecoverableInspectorVmImportError(error, origin)) {
 			if (!otherHandlerActive) {
 				earlyRecoveryCount++;
 			}
 			return;
 		}
-		if (otherHandlerActive) {
+		// A retired extension ctx is contained by the stale-ctx seam installed right after this one.
+		if (otherHandlerActive || isStaleExtensionContextError(error)) {
 			return;
 		}
 		console.error(error);
 		process.exit(1);
-	});
+	};
+	process.on("uncaughtException", listener);
 }
 
 /**

@@ -11,6 +11,11 @@ import {
 } from "../../../src/core/extensions/builtin/compaction/speculative.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createInMemoryModelRegistry } from "../../model-runtime-test-utils.ts";
+import { builtinChatModelId } from "../../support/catalog-ids.ts";
+
+// Any Bedrock-hosted Claude and any Anthropic model: the subject is ambient AWS auth, not a model (senpi#1955).
+const BEDROCK_CLAUDE_ID = builtinChatModelId("amazon-bedrock", (model) => model.id.includes("anthropic.claude"));
+const ANTHROPIC_ID = builtinChatModelId("anthropic", (model) => model.id.startsWith("claude-"));
 
 const bedrockMock = vi.hoisted(() => ({
 	constructorCalls: [] as Array<Record<string, unknown>>,
@@ -21,6 +26,9 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 	class BedrockRuntimeServiceException extends Error {}
 
 	class BedrockRuntimeClient {
+		// Like the real client: requests that carry onResponse or custom headers register middleware (senpi#3400).
+		middlewareStack = { add: () => undefined };
+
 		constructor(config: Record<string, unknown>) {
 			bedrockMock.constructorCalls.push(config);
 		}
@@ -91,6 +99,7 @@ function createContext(model: Model<any>, modelRegistry: Awaited<ReturnType<type
 	});
 	sessionManager.appendMessage({ role: "user", content: "latest request", timestamp: Date.now() - 1_000 });
 	const context: SpeculativeCompactionContext = {
+		cwd: process.cwd(),
 		model,
 		modelRegistry,
 		sessionManager,
@@ -130,7 +139,7 @@ describe("issue #2441 Bedrock ambient auth compaction", () => {
 		vi.stubEnv("AWS_SECRET_ACCESS_KEY", undefined);
 
 		const registry = await createInMemoryModelRegistry(AuthStorage.inMemory());
-		const model = registry.find("amazon-bedrock", "us.anthropic.claude-opus-4-8");
+		const model = registry.find("amazon-bedrock", BEDROCK_CLAUDE_ID);
 		if (!model) throw new Error("expected built-in Bedrock model");
 		const { context, snapshot } = createContext(model, registry);
 
@@ -144,7 +153,7 @@ describe("issue #2441 Bedrock ambient auth compaction", () => {
 	it("still rejects a provider with no resolved credential before the request", async () => {
 		vi.stubEnv("ANTHROPIC_API_KEY", undefined);
 		const registry = await createInMemoryModelRegistry(AuthStorage.inMemory());
-		const model = registry.find("anthropic", "claude-sonnet-4-5");
+		const model = registry.find("anthropic", ANTHROPIC_ID);
 		if (!model) throw new Error("expected built-in Anthropic model");
 		const { context, snapshot } = createContext(model, registry);
 

@@ -13,12 +13,12 @@ import { realpathSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
-import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { type EnsuredHost, ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import { signalGeneration } from "../../../src/modes/rpc/host-stop.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import {
 	GENERATION_HOST_ARGS,
 	type GenerationScratch,
@@ -229,6 +229,8 @@ async function startOldHost(label: string, owner: "legacy" | "unprovable"): Prom
 	if (startTime === undefined) throw new Error(`old host pid ${ensured.pid} has no readable start time`);
 	const paths = createHostDaemonPaths({ socket, agentDir: qa.agentDir });
 	await rm(paths.pointerFile, { force: true });
+	// The generation record goes too: a pre-layout-2 build writes none, and it alone proves the host (senpi#1911).
+	await rm(generationPaths(paths, instanceId).pidFile, { force: true });
 	await rm(paths.layoutMarker, { force: true });
 	await rm(paths.endpointFile, { force: true });
 	const processStartTime = owner === "legacy" ? startTime : "not-the-live-start-time";

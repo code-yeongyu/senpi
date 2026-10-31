@@ -115,6 +115,7 @@ export function getAnthropicCompat(
 		// blocks on the next request (kimi-coding 400s with `tool_call_id is not
 		// found`).
 		supportsWebSearch: model.compat?.supportsWebSearch ?? isAnthropicApiBaseUrl(model.baseUrl),
+		supportsGzipRequestBody: model.compat?.supportsGzipRequestBody ?? isAnthropicApiBaseUrl(model.baseUrl),
 	};
 }
 

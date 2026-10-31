@@ -1,39 +1,11 @@
-import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
+import { ConfigValueSchema, NonemptyConfigValueSchema } from "@earendil-works/pi-ai/utils/config-reference";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
+import { CredentialPolicySchema } from "./credential-policy-schema.ts";
+
+export { CREDENTIAL_POLICY_DEFAULTS, type ModelsJsonCredentialPolicy } from "./credential-policy-schema.ts";
+
 import { ThinkingLevelMapSchema, ThinkingLevelSchema } from "./model-config-thinking-schema.ts";
-
-/** Policy defaults shared with the pool engine so schema and runtime cannot drift. */
-export const CREDENTIAL_POLICY_DEFAULTS = {
-	rotation: true,
-	affinity: true,
-	cooldownBaseMs: DEFAULT_SLOT_BLOCK_MS,
-	cooldownCapMs: MAX_SLOT_BLOCK_MS,
-} as const;
-
-const CredentialSlotRefSchema = Type.Object(
-	{
-		env: Type.Optional(Type.String({ minLength: 1 })),
-		value: Type.Optional(Type.String({ minLength: 1 })),
-	},
-	{ additionalProperties: false },
-);
-
-/**
- * Policy only: named slots REFERENCE env vars or command values; key material
- * itself stays in auth.json or the environment, and unknown keys (for example
- * a literal `apiKey`) are rejected outright.
- */
-const CredentialPolicySchema = Type.Object(
-	{
-		rotation: Type.Optional(Type.Boolean()),
-		affinity: Type.Optional(Type.Boolean()),
-		cooldownBaseMs: Type.Optional(Type.Number({ minimum: 0 })),
-		cooldownCapMs: Type.Optional(Type.Number({ minimum: 0 })),
-		slots: Type.Optional(Type.Record(Type.String({ minLength: 1 }), CredentialSlotRefSchema)),
-	},
-	{ additionalProperties: false },
-);
 
 const PercentileCutoffsSchema = Type.Object({
 	p50: Type.Optional(Type.Number()),
@@ -231,7 +203,7 @@ const ModelDefinitionSchema = Type.Object({
 	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	headers: Type.Optional(Type.Record(Type.String(), ConfigValueSchema)),
 	extraBody: Type.Optional(ExtraBodySchema),
 	cacheRetention: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("short"), Type.Literal("long")])),
 	compat: Type.Optional(ProviderCompatSchema),
@@ -258,7 +230,7 @@ const ModelOverrideSchema = Type.Object({
 	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	headers: Type.Optional(Type.Record(Type.String(), ConfigValueSchema)),
 	extraBody: Type.Optional(ExtraBodySchema),
 	cacheRetention: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("short"), Type.Literal("long")])),
 	compat: Type.Optional(ProviderCompatSchema),
@@ -268,9 +240,9 @@ const ProviderConfigSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	disabled: Type.Optional(Type.Boolean()),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
-	apiKey: Type.Optional(Type.String({ minLength: 1 })),
+	apiKey: Type.Optional(NonemptyConfigValueSchema),
 	api: Type.Optional(Type.String({ minLength: 1 })),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	headers: Type.Optional(Type.Record(Type.String(), ConfigValueSchema)),
 	extraBody: Type.Optional(ExtraBodySchema),
 	cacheRetention: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("short"), Type.Literal("long")])),
 	compat: Type.Optional(ProviderCompatSchema),
@@ -292,5 +264,4 @@ export const validateModelsConfig = Compile(ModelsConfigSchema);
 export type ModelsJsonModel = Static<typeof ModelDefinitionSchema>;
 export type ModelsJsonModelOverride = Static<typeof ModelOverrideSchema>;
 export type ModelsJsonProvider = Static<typeof ProviderConfigSchema>;
-export type ModelsJsonCredentialPolicy = Static<typeof CredentialPolicySchema>;
 export type ModelsJson = Static<typeof ModelsConfigSchema>;

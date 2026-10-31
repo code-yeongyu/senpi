@@ -42,6 +42,34 @@ const model: Model<"openai-responses"> = {
 };
 
 describe("context token estimation", () => {
+	// oh-my-openagent#10792: billed query totals are not the last request's context.
+	it("reserves output room using request context while retaining cumulative billing", () => {
+		const assistant = createAssistant(100, 9_500);
+		Object.assign(assistant.usage, { contextUsage: { input: 1_900, output: 100 } });
+		const context = normalizeContext({
+			messages: [assistant, { role: "user", content: "tail", timestamp: 101 }],
+		});
+
+		expect(estimateContextTokens(context).tokens).toBe(2_001);
+		expect(buildBaseOptions(model, context).maxTokens).toBe(3_903);
+		expect(assistant.usage.totalTokens).toBe(9_500);
+	});
+
+	it("estimates transcript size when only cumulative usage is available", () => {
+		const assistant = createAssistant(100, 9_500);
+		Object.assign(assistant.usage, { contextUsage: null });
+		const context = normalizeContext({
+			messages: [assistant, { role: "user", content: "tail", timestamp: 101 }],
+		});
+
+		expect(estimateContextTokens(context)).toEqual({
+			tokens: 2,
+			usageTokens: 0,
+			trailingTokens: 2,
+			lastUsageIndex: null,
+		});
+	});
+
 	it("ignores stale assistant usage after a newer message is inserted before it", () => {
 		const context = normalizeContext({
 			systemPrompt: "system",

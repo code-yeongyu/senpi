@@ -35,7 +35,9 @@ export type HandoffMoment = "list-created" | "phase-closed" | "all-closed";
  * Which handoff moment a successful mutation produced, if any: the list was just created, the
  * last open task of a phase closed, or the last open task of the whole list closed. The result
  * carries the cue right before the model writes its next text, where a system-prompt rule alone
- * proved unreliable on weaker models (senpi#2121 real-surface QA).
+ * proved unreliable on weaker models (senpi#2121 real-surface QA). A list of one task is no
+ * multi-step work: the first-turn opener makes a question such a list, and its reply is the answer
+ * itself, so it reaches no moment (senpi#3323).
  */
 export function handoffMomentOf(
 	before: readonly TodoPhase[],
@@ -44,7 +46,7 @@ export function handoffMomentOf(
 ): HandoffMoment | undefined {
 	const hasOpen = (tasks: readonly TodoItem[]) => tasks.some((task) => !isTerminalTodoStatus(task.status));
 	const afterTasks = after.flatMap((phase) => phase.tasks);
-	if (afterTasks.length === 0) return undefined;
+	if (afterTasks.length < 2) return undefined;
 	if (createsList) return "list-created";
 	if (!hasOpen(afterTasks)) return hasOpen(before.flatMap((phase) => phase.tasks)) ? "all-closed" : undefined;
 	const closedPhase = after.some(
@@ -127,7 +129,7 @@ function formatListSummary(phases: readonly TodoPhase[], errors: readonly string
 	lines.push(
 		`Active phase ${currentIdx + 1}/${phases.length} "${current.name}" (${done}/${current.tasks.length})${
 			workedAhead
-				? " — earliest phase with open tasks; the in-progress pointer auto-advances to the earliest open task on each completion, so it can sit behind out-of-order work (nothing was un-completed)."
+				? ": earliest phase with open tasks; the in-progress pointer auto-advances to the earliest open task on each completion, so it can sit behind out-of-order work (nothing was un-completed)."
 				: "."
 		}`,
 	);

@@ -18,7 +18,8 @@ beforeAll(() => {
 });
 afterEach(() => {
 	for (const delivery of deliveries.splice(0)) {
-		for (const entry of getPendingQuestions(delivery.harness.sessionManager.getSessionId())) entry.cancel();
+		for (const entry of getPendingQuestions(delivery.harness.sessionManager.getSessionId()))
+			entry.cancel("session_closed");
 		delivery.harness.cleanup();
 	}
 });
