@@ -10,8 +10,8 @@ import { hermeticEnv } from "../../../../scripts/lib/mock-loop-support.mjs";
 
 export const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const MCP_SERVER = "fxstdio";
-/** The EQ task fixture: a deterministic stand-in for the sub-agent component, used only by the self-test. */
-export const SELF_TEST_TASK_EXTENSION = join(FIXTURE, "..", "..", "fused-equivalence", "fixtures", "task-tool.mjs");
+/** Background child reports and continuation delivery, used only by the self-test. */
+export const SELF_TEST_TASK_EXTENSION = join(FIXTURE, "support", "self-test-task.mjs");
 
 /** Terminal-identity variables the CLI renders into its prompt; pinned so every host sees the same. */
 const TERMINAL_ENV = ["TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM", "TERM_SESSION_ID", "ITERM_SESSION_ID"];

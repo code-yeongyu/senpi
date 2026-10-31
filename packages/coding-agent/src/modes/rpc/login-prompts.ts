@@ -9,8 +9,8 @@
  * Cancellation has two independent sources and both must release the dialog:
  * the login-wide signal (login_cancel, or the login having settled) and the
  * per-prompt `AuthPrompt.signal` a provider aborts when an out-of-band step
- * wins the race — e.g. `loginAnthropic` racing a manual-code prompt against
- * its local callback server. A released dialog rejects with "Login cancelled",
+ * wins the race — e.g. the chatgpt-subscription login racing a manual-code
+ * prompt against its local callback server. A released dialog rejects with "Login cancelled",
  * matching the interactive TUI.
  *
  * Only the prompt text, placeholder, and option labels cross the wire; the
