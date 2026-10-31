@@ -1044,40 +1044,19 @@ export class AuthStorage implements CredentialStore {
 			prompt: (prompt) => this.handleLegacyPrompt(prompt, callbacks),
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
-		const before = listSlots(this.get(providerId) as PooledCredential | undefined);
+		const before = this.get(providerId);
 		const credential = await oauth.login(interaction);
 		this.set(providerId, credential);
-		await this.retireReloggedSlotHealth(providerId, before);
-	}
-
-	/**
-	 * A login that replaced an existing slot's material starts that slot's pool health clean. Pool health
-	 * is keyed to the account, so a token refresh keeps a block (senpi#4093); a login is the user's own
-	 * step to repair the account (a top-up, a plan change, another account under the same name), and must
-	 * not inherit the verdicts recorded before it. A newly added slot has no health to retire.
-	 */
-	private async retireReloggedSlotHealth(providerId: string, before: readonly CredentialSlot[]): Promise<void> {
 		if (this.authPath === undefined) return;
-		const after = listSlots(this.get(providerId) as PooledCredential | undefined);
-		const replaced = after.filter((slot) => {
-			const previous = before.find((candidate) => candidate.name === slot.name);
-			return (
-				previous !== undefined &&
-				(previous.access !== slot.access || previous.refresh !== slot.refresh || previous.key !== slot.key)
-			);
-		});
-		if (replaced.length === 0) return;
 		// Lazy like ModelRuntime.loadCredentialPool: the pool store pulls zod, which must stay out of the
 		// model-runtime import graph that every auth-storage importer shares.
-		const [{ writeHealthUnlessStoreBusy }, { CredentialSlotRepository, credentialPoolStatePath }] = await Promise.all(
-			[import("./credential-pool/health-write.ts"), import("./credential-pool/state-store.ts")],
+		const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+		await retireLoginSlotHealth(
+			join(dirname(this.authPath), "credential-pool-state.json"),
+			providerId,
+			before,
+			this.get(providerId),
 		);
-		const repository = new CredentialSlotRepository(credentialPoolStatePath(dirname(this.authPath)));
-		for (const slot of replaced) {
-			await writeHealthUnlessStoreBusy(`re-login of ${slot.name}`, () =>
-				repository.mutateSlotState(providerId, "stored", slot.name, () => undefined),
-			);
-		}
 	}
 
 	logout(provider: string): void {
