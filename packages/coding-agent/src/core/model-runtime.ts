@@ -65,7 +65,6 @@ import {
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
-import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
 import {
 	assertChatModel,
 	assertClassifierModel,
@@ -141,19 +140,6 @@ interface ModelRuntimeSnapshot {
 	configuredProviders: ReadonlySet<string>;
 	storedProviders: ReadonlySet<string>;
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
-}
-
-/**
- * The Claude Code version the Anthropic OAuth fingerprint advertises is cached beside
- * models.json, so every runtime on this agent directory shares one background lookup per
- * six hours. An in-memory runtime (`modelsPath: null`) keeps pi-ai's bundled floor.
- */
-function installClaudeCodeVersionCache(modelsPath: string | undefined): void {
-	if (modelsPath === undefined) return;
-	installClaudeCodeVersionFileStore({
-		path: join(dirname(modelsPath), "claude-code-version.json"),
-		offline: envValue("OFFLINE") !== undefined,
-	});
 }
 
 export interface ProviderRegistrationOptions {
@@ -368,7 +354,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -423,7 +408,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = ModelConfig.loadSync(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
