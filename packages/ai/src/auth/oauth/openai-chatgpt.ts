@@ -48,7 +48,7 @@ type TokenResponse = {
 	scope?: unknown;
 };
 
-export class OpenAIConsentDeclinedError extends Error {
+class OpenAIConsentDeclinedError extends Error {
 	readonly code = "consent_declined";
 
 	constructor() {
@@ -57,7 +57,7 @@ export class OpenAIConsentDeclinedError extends Error {
 	}
 }
 
-export class OpenAIPlanUsageNotEnabledError extends Error {
+class OpenAIPlanUsageNotEnabledError extends Error {
 	readonly code = "plan_usage_not_enabled";
 	readonly recovery = ["enable_plan_usage", "use_api_key"] as const;
 
