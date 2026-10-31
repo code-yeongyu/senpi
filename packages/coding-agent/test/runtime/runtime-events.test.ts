@@ -72,4 +72,38 @@ describe("runtime events without a session (RT11)", () => {
 		await emitAll(runner);
 		expect(seen).toEqual([...RUNTIME_EVENTS, ...LOOP_EVENTS]);
 	});
+
+	it("runs no loop handler through the specialized emitters on a runner with no session manager", async () => {
+		// Given a runner without a session manager whose extension handles loop events.
+		const seen: string[] = [];
+		const extensions = await createTestExtensionsResult([
+			(pi) => {
+				pi.on("context", () => void seen.push("context"));
+				pi.on("context_with_system", () => void seen.push("context_with_system"));
+				pi.on("before_provider_request", () => void seen.push("before_provider_request"));
+				pi.on("before_provider_headers", () => void seen.push("before_provider_headers"));
+				pi.on("model_select", () => void seen.push("model_select"));
+			},
+		]);
+		const runner = new ExtensionRunner(
+			extensions.extensions,
+			extensions.runtime,
+			process.cwd(),
+			undefined,
+			await createInMemoryModelRegistry(AuthStorage.inMemory()),
+			extensions.eventBus,
+		);
+		const messages = [{ role: "user" as const, content: [], timestamp: 0 }];
+		const payload = { probe: true };
+		const headers = { "x-probe": "1" };
+		// When each loop emitter runs.
+		const context = await runner.emitContext(messages);
+		const request = await runner.emitBeforeProviderRequest(payload);
+		const sentHeaders = await runner.emitBeforeProviderHeaders(headers);
+		// Then no handler ran, and every input passes through unchanged.
+		expect(seen).toEqual([]);
+		expect(context).toEqual(messages);
+		expect(request).toBe(payload);
+		expect(sentHeaders).toEqual(headers);
+	});
 });

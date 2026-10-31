@@ -2028,7 +2028,7 @@ export class ExtensionRunner {
 			throw err;
 		}
 		let valid = true;
-		const handlers = flattenHandlers(this.extensions, baseEvent.type);
+		const handlers = this.dropsLoopEvent(baseEvent.type) ? [] : flattenHandlers(this.extensions, baseEvent.type);
 
 		// Boundary handlers hold the agent loop's turn end and the run's settle, so they run under the same host budget
 		// as the lifecycle events and the turn deadline can release them (senpi#3650).
@@ -2174,10 +2174,13 @@ export class ExtensionRunner {
 		return this.emit({ type: "held_wakes_released", sources });
 	}
 
+	/** A runner without a session manager has no loop, so it dispatches no `loop` event (senpi#5231). */
+	private dropsLoopEvent(type: ExtensionEvent["type"]): boolean {
+		return this.sessionManager === undefined && EXTENSION_EVENT_PLACEMENT[type] === "loop";
+	}
+
 	emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
-		if (this.sessionManager === undefined && EXTENSION_EVENT_PLACEMENT[event.type] === "loop") {
-			return Promise.resolve(undefined as RunnerEmitResult<TEvent>);
-		}
+		if (this.dropsLoopEvent(event.type)) return Promise.resolve(undefined as RunnerEmitResult<TEvent>);
 		// Not async: other events keep the exact microtask timing of a direct dispatch.
 		// Turns requested from any session_start handler start after the last one returns (senpi#1972).
 		if (event.type === "session_start") return this.sessionStartTurns.dispatch(() => this.dispatchEmit(event));
@@ -2193,10 +2196,12 @@ export class ExtensionRunner {
 	 * the import hand-over keeps the moved state for the next open on an import failure.
 	 */
 	async emitSessionMove(event: SessionMoveEmission): Promise<readonly SessionMoveFailure[]> {
-		const calls = flattenHandlers(this.extensions, event.type).map(({ path, handler }) => ({
-			extensionPath: path,
-			call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
-		}));
+		const calls = (this.dropsLoopEvent(event.type) ? [] : flattenHandlers(this.extensions, event.type)).map(
+			({ path, handler }) => ({
+				extensionPath: path,
+				call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
+			}),
+		);
 		const failures = await runSessionMoveHandlers(event.type, calls, this.resolveSessionShutdownBudget().handler);
 		for (const failure of failures) this.emitError({ ...failure, event: event.type });
 		return failures;
@@ -2263,6 +2268,7 @@ export class ExtensionRunner {
 	}
 
 	async emitModelSelect(event: ModelSelectEvent): Promise<ModelSelectEventResult | undefined> {
+		if (this.dropsLoopEvent("model_select")) return undefined;
 		let result: ModelSelectEventResult | undefined;
 
 		for (const ext of this.extensions) {
@@ -2495,8 +2501,10 @@ export class ExtensionRunner {
 		source: ContextEvent["source"] = "agent",
 	): Promise<AgentMessage[]> {
 		return dispatchContextMessages(messages, {
-			contextHandlers: snapshotEventHandlers(this.extensions, "context"),
-			contextWithSystemHandlers: snapshotEventHandlers(this.extensions, "context_with_system"),
+			contextHandlers: this.dropsLoopEvent("context") ? [] : snapshotEventHandlers(this.extensions, "context"),
+			contextWithSystemHandlers: this.dropsLoopEvent("context_with_system")
+				? []
+				: snapshotEventHandlers(this.extensions, "context_with_system"),
 			createContext: (path) => this.createContext(path),
 			emitError: (error) => this.emitError(error),
 			excludeExtensionPath,
@@ -2528,7 +2536,10 @@ export class ExtensionRunner {
 	): Promise<unknown> {
 		let currentPayload = payload;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_request")) {
+		const requestHandlers = this.dropsLoopEvent("before_provider_request")
+			? []
+			: snapshotEventHandlers(this.extensions, "before_provider_request");
+		for (const { ext, handlers } of requestHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
 				try {
@@ -2558,7 +2569,10 @@ export class ExtensionRunner {
 	}
 
 	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_headers")) {
+		const headerHandlers = this.dropsLoopEvent("before_provider_headers")
+			? []
+			: snapshotEventHandlers(this.extensions, "before_provider_headers");
+		for (const { ext, handlers } of headerHandlers) {
 			for (const handler of handlers) {
 				try {
 					// Handlers mutate `headers` in place; the return value is ignored.
