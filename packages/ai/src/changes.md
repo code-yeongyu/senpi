@@ -1,3 +1,566 @@
+## 2026-10-27 - No Anthropic OAuth flow in the bundled loaders or the oauth entry point (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/bun-oauth.ts`: the standalone binary registers no `anthropic` OAuth flow.
+- `packages/ai/src/oauth.ts`: `loadAnthropicOAuth` is no longer re-exported; `registerBundledOAuthFlowLoaders` stays.
+
+### Why
+
+- senpi#4436 (R7): the PKCE direct-login route and its token refresh are removed; nothing loads them.
+
+### Why an extension could not handle it
+
+- The bundled flow registry and the `./oauth` subpath are pi-ai's own public surface.
+
+### Expected merge conflict zones
+
+- LOW: the import list and loader object in `bun-oauth.ts`; the first export line of `oauth.ts`.
+
+## 2026-10-27 - Context and the leading system message carry the stable system prefix (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `Context.systemPromptStablePrefix` and request-time `SystemMessage.stablePrefix` (the prefix text, so a rewritten prompt that no longer starts with it is detected). The prefix is shared across sessions in the same working directory: the base prompt names the cwd.
+
+### Why
+
+- Providers with block-level prompt caching need to know where the cross-session stable part of the system prompt ends.
+
+### Why an extension could not handle it
+
+- `Context` and `SystemMessage` are the provider-facing contract defined in `packages/ai/src/types.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the `Context` and `SystemMessage` interfaces in `packages/ai/src/types.ts`.
+
+## 2026-10-30 - `StreamOptions.onTransportActivity` (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/types.ts`: new optional `StreamOptions.onTransportActivity`, called whenever a response body delivers bytes, keep-alives included. Liveness only; adapter support is explicit.
+
+### Why
+
+- The agent loop needs to tell a connection that is alive but has no content yet from a dead one, and only the adapter sees the bytes. A callback in the options crosses lazy and recovery wrappers unchanged, which a method on the inner stream would not.
+
+### Why an extension could not handle it
+
+- The option is part of the core stream contract every adapter receives.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `StreamOptions`, next to `onProviderStreamEvent`.
+
+## 2026-10-29 - `Provider.baseUrl` documents the model.baseUrl transport contract (senpi#4765)
+
+### What changed
+
+- `packages/ai/src/models.ts`: the `Provider.baseUrl` doc comment states that transports send each request to `model.baseUrl`, never to this value or a hard-coded host, because senpi sets every model's `baseUrl` (and this field) to a user's models.json `baseUrl` when one is configured. Documentation only; no type change.
+
+### Why
+
+- senpi#4765: a native `Provider` registered by an extension is composed under the same rule as any other provider: when models.json sets a `baseUrl`, every model carries it, so its `stream` must read `model.baseUrl`.
+
+### Why an extension could not handle it
+
+- `Provider` is the pi-ai public provider type; its contract is documented where it is declared.
+
+### Expected merge conflict zones
+
+- LOW: the doc comment above `Provider.baseUrl` in `models.ts`.
+
+## 2026-10-27 - Shared seed frontier contract (part of #4272)
+
+### What changed
+
+- `packages/ai/src/index.ts` exports the shared seed frontier validator and typed error.
+
+### Why
+
+- `packages/ai/src/index.ts` gives the producer and session projector one frontier contract.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/index.ts` owns the package surface used by the session projector.
+
+### Expected merge conflict zones
+
+- The capture export block in `packages/ai/src/index.ts`.
+
+## 2026-10-26 - AssistantMessage.credentialServedRecently (senpi#2491)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `credentialServedRecently?: true`, set by the coding-agent model runtime on a failed response whose credential (provider, endpoint and key) served a response moments before.
+
+### Why
+
+- `packages/ai/src/types.ts`: a 401 right after the same key served is a gateway refusing that one request, not a dead key; consumers need a typed mark to tell the two apart without reading `errorMessage`.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the mark rides the core message type that the agent loop, `agent_end.failure` and the fallback decision all read; an extension cannot add a typed field to it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts` `AssistantMessage`, beside `failureSource`.
+
+## 2026-10-25 - errorCause names a model configuration error (senpi#4282)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage.errorCause` also accepts `{ type: "model_config"; model: string }`.
+- `packages/ai/src/index.ts`: exports `utils/provider-error.ts` (`isModelConfigError`, `redactSecrets`, `redactCredentialShapes`, `sanitizeProviderErrorMessage`).
+
+### Why
+
+- Clients and task hosts read a typed cause instead of matching provider text when a configured model id is not served by its route.
+
+### Why an extension could not handle it
+
+- The assistant message shape is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `errorCause` field of `AssistantMessage`; one export line in `index.ts`.
+
+## 2026-10-26 - Reader note on the capture index (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts`: a doc line on `getAssistantCapture` says internal readers address a
+  block by `capture.contentIndex ?? event.contentIndex` (#4285 review L1/L2). No code change.
+
+### Why
+
+- The Google/Vertex public `contentIndex` drifts after natively inserted parts; readers that use it name a foreign block.
+
+### Why an extension could not handle it
+
+- The capture carrier is internal to the provider pipeline.
+
+### Expected merge conflict zones
+
+- LOW: the doc comment above `getAssistantCapture`.
+
+## 2026-10-26 - Root exports for wrappers that relay capture records (senpi#4307, part of #4272)
+
+### What changed
+
+- `packages/ai/src/index.ts`: also exports `assistantEvents` (read a stream's events while its ordered progress records
+  go to a callback, without forcing capture on) and `pushAssistantProgress`, next to the capture accessors S02a-1 and
+  the fold already export.
+
+### Why
+
+- The agent's empty-assistant recovery wrapper (packages/agent) re-emits a provider stream; to keep the provider's
+  capture records it reads them with `assistantEvents` and forwards progress with `pushAssistantProgress`, through the
+  package root it already imports from.
+
+### Why an extension could not handle it
+
+- The wrapper is internal to the agent loop and must forward records in the same order as the events it buffers.
+
+### Expected merge conflict zones
+
+- LOW: the `./utils/assistant-capture.ts` export block in `index.ts`.
+
+## 2026-10-25 - Root exports the assistant capture accessors (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `assistantRecords`, `carryAssistantCapture`, `getAssistantCapture`,
+  `isAssistantProgress` and the `AssistantProgress`/`AssistantRecord` types from `utils/assistant-capture.ts`.
+
+### Why
+
+- The agent loop reads provider records and carries carriers through `@earendil-works/pi-ai`; S02b's projector
+  reads the same accessor.
+
+### Why an extension could not handle it
+
+- The root export list is the package's public surface.
+
+### Expected merge conflict zones
+
+- LOW: one export block after `export * from "./api/lazy.ts"`.
+
+## 2026-10-24 - Provider requests carry the session working directory (senpi#2848)
+
+### What changed
+
+- `packages/ai/src/types.ts`: provider request options accept the originating session's `cwd` for subprocess-backed providers.
+
+### Why
+
+- `packages/ai/src/types.ts`: a shared engine process can serve projects outside its process working directory; subprocess adapters need the session directory rather than the host directory.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: this option crosses the shared provider request contract before an adapter is selected.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the optional fields at the start of `ProviderRequestOptions`.
+
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `KnownClassifierApi` drops the `"llama-cpp-classify"` member.
+
+### Why
+
+- `packages/ai/src/types.ts`: Q ordered removal of the `/llama` feature, including its dedicated classifier API.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: an extension cannot narrow the shared `KnownClassifierApi` type union.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `KnownClassifierApi` union.
+
+## 2026-10-21 - ModelCost.unknown and Usage.costUnknown (senpi#3844)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `ModelCost` gains optional `unknown: true`; `Usage` gains optional `costUnknown: true`.
+- `packages/ai/src/models.ts`: `calculateCost` on a model whose cost is `unknown` zeroes the cost fields and sets `usage.costUnknown` instead of multiplying placeholder rates.
+
+### Why
+
+- Lets a model with no known price report its turns as cost-unknown, so consumers show no amount instead of a reported $0 (senpi#3844).
+
+### Why an extension could not handle it
+
+- Cost calculation and the `Usage` contract live in the ai package.
+
+### Expected merge conflict zones
+
+- LOW: the `ModelCost` and `Usage` interfaces in `types.ts`; the head of `calculateCost` in `models.ts`.
+
+## 2026-10-21 - Kimi keeps its blank-key, region-only login (senpi#3869)
+
+### What changed
+
+- `packages/ai/src/providers/kimi-coding-auth.ts`: the Kimi API-key auth declares `keyOptional: true`.
+
+### Why
+
+- senpi#3869 review: before senpi#3867 a user with `KIMI_API_KEY` in the environment could leave the key prompt blank to store only the region (`resolve` falls back from an empty stored key to `KIMI_API_KEY` and still routes to the stored region). Refusing that login would be a user-facing regression. Regression: the Kimi case in `test/login-empty-api-key.test.ts`.
+
+### Why an extension could not handle it
+
+- This is the in-tree Kimi provider declaring its own auth metadata.
+
+### Expected merge conflict zones
+
+- LOW: the object returned by `kimiCodeApiKeyAuth`.
+
+## 2026-10-21 - Logins refuse a blank API key unless the provider declares it optional (senpi#3867)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `ApiKeyAuth` gains optional `keyOptional`, which a provider sets when it works without a key (a local server such as llama.cpp).
+- `packages/ai/src/models.ts`: `Models.login` passes the provider's login result through `withoutBlankKey` when `keyOptional` is set, so a blank or `undefined` key is dropped and the URL/env-only credential is saved. Then `assertLoginKeyPresent` (fork-only `src/auth/pool/slots.ts`) throws `EmptyApiKeyError` for any remaining blank, whitespace or `undefined` key, before the store is touched. `appendLoginSlot` in the same file runs the same check, so `AuthStorage.set` and RPC `login_api_key` stay strict. Env-only logins that carry no `key` field (Bedrock profile or credential chain, Vertex ADC) still save.
+
+### Why
+
+- senpi#3867: an empty key was appended as a keyless `login-2` account that nothing could use. Regression: `test/login-empty-api-key.test.ts`.
+
+### Why an extension could not handle it
+
+- `Models.login` owns the write; an extension cannot veto a credential before the store mutation.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the line after `raceWithAbortSignal(loginOperation, signal)` in `Models.login`.
+
+## 2026-10-22 - AssistantMessage.promptCacheBreakpoint (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `promptCacheBreakpoint?: true`, a request-only hint that the history up to and including the message is a stable prefix. Context reduction sets it on copies; it is never persisted.
+
+### Why
+
+- `packages/ai/src/types.ts`: context reduction must tell the provider adapter where the prefix it leaves unchanged ends, so the adapter can keep a cache checkpoint there instead of re-writing the cached conversation at every frontier step.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the hint has to travel on the message the adapter converts, which is a core message contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the end of `AssistantMessage`.
+
+## 2026-10-21 - AssistantMessage.timing (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/types.ts`: new `AssistantMessageTiming` (`requestedAt`, optional `firstTokenAt`/`lastTokenAt`, `endedAt`, optional `generationMs`, all milliseconds) and an optional `AssistantMessage.timing`.
+
+### Why
+
+- A reply's time to first token and generation rate were measured only live by the TPS notice and discarded; RPC clients (the desktop turn stats line, desktop #3729) and reloaded sessions had no record of them.
+
+### Why an extension could not handle it
+
+- The message type is the public `pi-ai` contract; an extension cannot add a persisted field to it.
+
+### Expected merge conflict zones
+
+- LOW: `AssistantMessage` in `packages/ai/src/types.ts`, next to `endTurn`/`timestamp`.
+
+## 2026-10-21 - Request context is distinct from cumulative billing (omo#10792)
+
+### What changed
+
+- `packages/ai/src/types.ts`: optional `Usage.contextUsage` records the latest request's input (including cache reads/writes) and output separately. `null` means the provider reports cumulative billing but no request measurement; absent preserves the legacy single-request contract. Existing billing fields retain their semantics. The two-part snapshot preserves both prompt-only overflow/anchor calculations and occupied-context totals without subtracting cumulative output.
+
+### Why
+
+- `packages/ai/src/types.ts`: an SDK query can bill multiple requests whose input contexts overlap. Their sum cannot describe the current context window.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the public usage contract must carry the distinction through persistence, provider middleware, and every context consumer without changing billing.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts`, the optional fields in `Usage`. Keep this additive field if upstream still uses one usage object.
+
+## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `failureSource?: "local"`.
+
+### Why
+
+- A run can fail in local code (the session's pending-input journal, a local file) with no provider request involved. The agent marks that failure so a session never retries the model or walks the fallback chain on it (omo#10781).
+
+### Why an extension could not handle it
+
+- `AssistantMessage` is the public message contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: after `abortSource` in `AssistantMessage` in `packages/ai/src/types.ts`.
+
+## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AnthropicMessagesCompat` gains optional `supportsGzipRequestBody`.
+
+### Why
+
+- Lets a model or provider opt in or out of gzip request bodies (senpi#3643).
+
+### Why an extension could not handle it
+
+- The compat type is part of the public model contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the end of `AnthropicMessagesCompat` in `packages/ai/src/types.ts`.
+
+## 2026-10-17 - Export the provider credential env names (senpi#3531)
+
+### What changed
+
+- `packages/ai/src/env-api-keys.ts`: the provider-to-variable map is the module-level `API_KEY_ENV_VARS`, read by `getApiKeyEnvVars` exactly as before. New exports:
+  - `apiKeyEnvProviders()`: every provider id `getApiKeyEnvVars` maps.
+  - `providerCredentialEnvNames()`: every name `getEnvApiKey` can read, meaning those variables plus the Vertex ADC and Bedrock names.
+
+### Why
+
+senpi#3531: the RPC host daemon's environment allowlist was a separate hand-written list. It dropped credential names the lookup reads (`COPILOT_GITHUB_TOKEN`, `HF_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, every numbered slot), so a host never saw credentials a direct process used. The daemon now derives its list from these exports.
+
+### Why an extension could not handle it
+
+The map is private to `pi-ai`; a consumer can only enumerate it through an export.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/env-api-keys.ts`: the map moved out of `getApiKeyEnvVars`, and the two exports sit above it.
+
+
+## 2026-10-18 - Cursor families published after the 2026-08-18 capture (senpi#3620)
+
+### What changed
+
+- `src/cursor/capability-table.ts` (split out of `src/cursor/model-capabilities.ts`, which keeps the types, parser
+  and alias lookups): capability entries for `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`,
+  `claude-haiku-5-5`, `muse-wonder-1.0`, `muse-spark-1.3`, `grok-4.7`, `gemini-4-argon`, `gemini-3.8-flash` and
+  `default`. Each window is the ceiling the server reported on the first checkpoint on 2026-10-18 for the suffix
+  variant senpi sends; `maxWindow` is the largest context option AvailableModels offers. `reasoning_effort` joins
+  `CursorParameterId` (Sonnet 5.5, Haiku 5.5, Muse Wonder, Grok 4.7 and the Gemini 4/3.8 rows name the axis so).
+- `src/cursor/display-name.ts` (moved out of `catalog-grouping.ts`): names drop zero-width characters and doubled
+  spaces, the Haiku 5.5 plain group drops Cursor's "No Thinking" whole, and a thinking group whose label never said
+  so gains "Thinking".
+- `src/cursor/model-input.ts` (moved out of `api/cursor-agent.ts`): image input follows AvailableModels'
+  `supportsImages`, adding Kimi K3, Muse and Grok 4.5/4.6.
+- `src/cursor/model-capabilities.ts` + `src/cursor/display-name.ts` + `src/cursor/catalog-grouping.ts` (review LOW-1 fix):
+  the ten families' entries carry the new `served-checkpoint` evidence kind, and a display name drops its `1M` size
+  token when the measured window is smaller — Opus 5.5, Fable 5.1 and Muse Spark 1.3 serve 300k for the default option
+  senpi sends; Cursor's `1M` label names the extended-context tier (`maxWindow`). `available-models` entries keep
+  Cursor's label untouched (their mismatch is senpi#3621's scope).
+
+### Why
+
+- The ten families answered live requests through the #2038 derived grouping but advertised the 200k placeholder
+  window, two carried broken names, and image-capable families were offered as text-only.
+- A picker name promising 1M while the served window is 300k misleads (review LOW-1); the name now follows the window
+  the server was measured serving, sourced from the committed 2026-10-18 checkpoint fixture and Cursor's published
+  "up to 1M with extended context" tier.
+
+### Why an extension couldn't do it
+
+- Catalog normalization and discovery run inside the provider before any extension sees a model.
+
+### Expected merge-conflict zones
+
+- `src/cursor/model-capabilities.ts`, `src/cursor/capability-table.ts`, `src/cursor/catalog-grouping.ts`, the
+  discovery block of `api/cursor-agent.ts`.
+## 2026-10-16 - Image generation results carry the provider diagnostic (omo#10285)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantImages` gains optional `providerDiagnostic`, the same bounded classification `AssistantMessage` already carries.
+- `packages/ai/src/api/openai-images.ts`: the SDK images call runs inside `awaitProviderTransport` with `openAICompatibleProviderDiagnosticFromError`, as the chat adapters' calls do, and a failed request sets `providerDiagnostic` from `readProviderDiagnostic(error)`.
+
+### Why
+
+The coding agent's `generate_image` tool needs the HTTP status of a rejected images request (404/405 means the provider has no images endpoint) to move past such a gateway. Reading it from the formatted `errorMessage` would be guessing from prose.
+
+### Why an extension could not handle it
+
+`AssistantImages` is the `pi-ai` result type; only the adapter that made the request sees the SDK error.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `AssistantImages` field list, beside `errorMessage`.
+- `packages/ai/src/api/openai-images.ts`: the request callback and the `catch` block of `generateImages`.
+
+## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
+
+### What changed
+
+- `packages/ai/src/provider-diagnostic.ts`: `ProviderDiagnosticCategory` adds `network`; `ProviderDiagnosticEvidence` adds `structured_transport`; `sanitizeProviderDiagnostic` accepts a transport diagnostic only with no status and a code from the allowlist.
+
+### Why
+
+See `utils/changes.md` (senpi#3228): connection failures need a category clients can act on.
+
+### Why an extension could not handle it
+
+The diagnostic type and its boundary validation are part of the `pi-ai` contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/provider-diagnostic.ts`: the category and evidence unions and `sanitizeProviderDiagnostic`.
+
+## 2026-10-15 - Bill usage with the cost card in force (senpi#3378)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `ModelCostCard` (the rates plus `tiers`) and `ModelCostEffectiveRate` (`effectiveFrom` plus a card); `ModelCost` gains optional `effectiveRates`.
+- `packages/ai/src/models.ts`: `calculateCost(model, usage, atMs = Date.now())` bills with `costCardAt(model.cost, atMs)` and takes the tiers from that card.
+- `packages/ai/src/index.ts`: re-exports the new fork file `model-cost.ts` (`costCardAt`).
+
+### Why
+
+- senpi#3378: the provider moves the 2026-10-13 Argon model from $2/$10 to $4/$20 per 1M tokens on 2026-12-01 08:00Z. A single static card under-reports every request after that instant by 2x until a catalog refresh, and a session loaded before the refresh keeps the old card even after it.
+
+### Why an extension could not handle it
+
+- `calculateCost` is the single billing function every wire adapter calls; an extension cannot change how a builtin adapter bills.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `calculateCost`, the `ModelCost` interface block in `types.ts`, and the export list in `index.ts`.
+
+## 2026-10-14 - Map-less generation-4 rows offer only the levels the provider accepts (senpi#3292 review)
+
+### What changed
+
+- `packages/ai/src/models.ts`: new `inferThinkingLevelMap` returns the row's own map, else the OpenAI inference, else `inferGoogleThinkingLevelMap` from the fork-only `packages/ai/src/google-thinking-generation.ts`. `getSupportedThinkingLevels` reads it, so a generation-4-or-later Google row without a `thinkingLevelMap` offers only `low`, `medium` and `high`, and `clampThinkingLevel` raises `off` and `minimal` to `low`.
+
+### Why
+
+Custom `models.json` and discovered rows usually carry no map. Before this, such a row still offered `off` (sent as a zero budget) and `minimal`, both rejected with HTTP 400; the review of #3293 found the fix only worked for rows that shipped a map.
+
+### Why an extension could not handle it
+
+Supported levels and clamping are computed in the core model runtime before any adapter or extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `packages/ai/src/models.ts` and the line in `getSupportedThinkingLevels` that reads the inferred map.
+
+## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
+
+### What changed
+
+- `packages/ai/src/types.ts`: assistant messages have an optional redaction-safe `errorCause` identifying account- or model-scoped usage exhaustion independently of presentation text.
+
+### Why
+
+Recovery advice includes `/model`, so parsing the rewritten sentence loses the original account scope.
+
+### Why an extension could not handle it
+
+The shared assistant message is the transport contract consumed by session events and RPC history.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: optional assistant failure metadata.
+
+## 2026-10-11 - Evidence-gated server search opt-in (senpi#3122 review)
+
+### What changed
+
+- `model.ts`: Google generation and Vertex models accept typed `compat.supportsWebSearch`.
+- `providers/xai.ts`: retains the documented `webSearchToolType` without setting `supportsWebSearchPreview: true`; the unverified route now requires explicit opt-in.
+
+### Why
+
+- Documented tool support and an accepted request are not proof of executed search and replay. The held xAI probe failed authentication.
+
+### Why an extension could not handle it
+
+- Model compatibility types and provider catalog defaults belong to pi-ai.
+
+### Expected merge conflict zones
+
+- `model.ts` compatibility conditional and the xAI catalog mapping.
+
+## 2026-10-11 - Explicit in-turn search capabilities (senpi#3122)
+
+### What changed
+
+- `providers/xai.ts` marks the built-in Responses catalogue with `supportsWebSearchPreview: true`; the coding-agent injector uses xAI's documented `web_search` type, not OpenAI's legacy preview type.
+- `api/openai-responses.ts` gates the current `web_search` name alongside the two legacy preview names, preventing unsupported custom endpoints from receiving hook-injected native search.
+- `types.ts` adds optional `OpenAICompletionsCompat.supportsWebSearch` for endpoint-specific completion server search, and the compatibility resolver keeps this declaration optional rather than synthesizing support for a coding-plan endpoint.
+- Focused xAI, custom-Responses and existing Anthropic encrypted-replay tests cover the boundary.
+
+### Why
+
+- Server search must be the first choice on a supported main-request API. Search capability belongs to the exact provider/API route, not to a guessed proxy hostname or an auxiliary search model.
+
+### Why an extension could not handle it
+
+- Provider catalogue capabilities, shared model types and the final wire sanitizer are owned by pi-ai.
+
+### Expected merge conflict zones
+
+- The xAI catalogue mapping, optional completion compatibility fields, and the Responses native-tool predicate.
+
 ## 2026-10-10 - allowed_tools only on native OpenAI API hosts (senpi#3080)
 
 ### What changed
@@ -5905,3 +6468,20 @@ Provider authentication and API behaviour live in this package, below any extens
 ### Expected merge conflict zones
 
 Upstream provider/auth changes in these files at the next sync.
+## 2026-10-11 - Explain account-wide usage limits (senpi#3131)
+
+### What changed
+
+- `packages/ai/src/utils/provider-failure-description.ts`: accepts the caller's classified usage-limit scope and describes an account limit with provider identity, a reset hint, and model-switch/fallback recovery.
+
+### Why
+
+Raw provider JSON does not explain that another model on the same account will also fail.
+
+### Why an extension could not handle it
+
+The shared provider-error formatter owns presentation across session, print, and interactive consumers.
+
+### Expected merge conflict zones
+
+The options type and account-limit branch in `describeProviderFailureForUser`.

@@ -125,6 +125,38 @@ describe("openai-completions prompt caching", () => {
 		};
 	}
 
+	it("leaves usage.reasoning unset when the provider reports no reasoning breakdown (senpi#3879)", async () => {
+		mockState.usage = { prompt_tokens: 100, completion_tokens: 10 };
+
+		const { message } = await captureRequest();
+
+		expect(message.usage.reasoning).toBeUndefined();
+	});
+
+	it("leaves usage.reasoning unset when the provider sends a null reasoning count (senpi#3879)", async () => {
+		mockState.usage = {
+			prompt_tokens: 100,
+			completion_tokens: 10,
+			completion_tokens_details: { reasoning_tokens: null as unknown as number },
+		};
+
+		const { message } = await captureRequest();
+
+		expect(message.usage).not.toHaveProperty("reasoning");
+	});
+
+	it("keeps a reported zero reasoning count as 0 (senpi#3879)", async () => {
+		mockState.usage = {
+			prompt_tokens: 100,
+			completion_tokens: 10,
+			completion_tokens_details: { reasoning_tokens: 0 },
+		};
+
+		const { message } = await captureRequest();
+
+		expect(message.usage.reasoning).toBe(0);
+	});
+
 	it("parses flat cached_tokens from Kimi usage as cache-read tokens", async () => {
 		mockState.usage = {
 			prompt_tokens: 1000,

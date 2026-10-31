@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # User-facing PRs must ship a CHANGELOG [Unreleased] entry (or carry the
+  # User-facing PRs must ship a package CHANGELOG.md fragment block (or carry the
   # `no-changelog` label) and cover every upstream-owned production change in
   # its exact nearest changes.md tracker with all four canonical sections.
   changelog-gate:

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { formatModelAnswer } from "../../src/core/extensions/builtin/ask-user/format.ts";
 import { ConnectionQuestionBridge, degradeQuestion } from "../../src/modes/rpc/connection-question-bridge.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 
@@ -15,19 +16,120 @@ const request = {
 	})),
 };
 afterEach(() => vi.useRealTimers());
-it("degrades into sequential select/input and a final comment", async () => {
+it("degrades into sequential select/input dialogs, one per question and nothing after them", async () => {
 	const select = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce("Other (type an answer)");
-	const input = vi.fn().mockResolvedValueOnce("custom").mockResolvedValueOnce("do it");
+	const input = vi.fn().mockResolvedValueOnce("custom");
 	expect(await degradeQuestion({ select, input }, request)).toEqual({
-		status: "comment-submitted",
+		status: "answered",
 		resolvedBy: "rpc_connection",
 		answers: { q1: { selected: ["A"] }, q2: { selected: [], text: "custom" } },
-		comment: "do it",
+		comment: undefined,
 		unanswered: [],
 	});
 	expect(select).toHaveBeenCalledTimes(2);
-	expect(input).toHaveBeenCalledTimes(2);
+	expect(input).toHaveBeenCalledTimes(1);
+	expect(input.mock.calls[0][0]).toBe("q2");
 	expect(select.mock.calls[0][1]).toEqual(["A", "B", "Other (type an answer)"]);
+});
+// sisyphuslabs/omo-desktop-app#4042: a client without the `question` capability renders every
+// dialog as its own blocking card, so a trailing optional-comment prompt reads as a new question.
+it("settles a degraded question from its picks alone, raising no optional-comment prompt", async () => {
+	const select = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce("B");
+	const input = vi.fn().mockResolvedValue("");
+	expect(await degradeQuestion({ select, input }, request)).toEqual({
+		status: "answered",
+		resolvedBy: "rpc_connection",
+		answers: { q1: { selected: ["A"] }, q2: { selected: ["B"] } },
+		comment: undefined,
+		unanswered: [],
+	});
+	expect(input).not.toHaveBeenCalled();
+});
+// The desktop answers an input card with its one option label, "Answer" (#4042): that label must never
+// become the user's comment, so the model never reads "The user responded: Answer".
+it("never turns an input card's 'Answer' label into the comment the model reads", async () => {
+	const select = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce("B");
+	const input = vi.fn().mockResolvedValue("Answer");
+	const response = await degradeQuestion({ select, input }, request);
+	expect("comment" in response).toBe(false);
+	const { text, words } = formatModelAnswer(response, request.requestId, request.questions);
+	expect(text).toBe("q1: A\nq2: B");
+	expect(words).toEqual([]);
+});
+// A partial fallback answer settles like the structured path (`settledQuestionStatus`): the answered
+// questions reach the model and the rest are listed as unanswered, never "dismissed" (#4042 review).
+it("keeps a partial degraded answer: answered questions reach the model, the rest are unanswered", async () => {
+	const select = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce(undefined);
+	const input = vi.fn();
+	const response = await degradeQuestion({ select, input }, request);
+	expect(response).toStrictEqual({
+		status: "answered",
+		resolvedBy: "rpc_connection",
+		answers: { q1: { selected: ["A"] } },
+		unanswered: ["q2"],
+	});
+	expect(formatModelAnswer(response, request.requestId, request.questions).text).toBe("q1: A\nUnanswered: q2");
+});
+it("settles a degraded question with no answer at all as cancelled", async () => {
+	const select = vi.fn().mockResolvedValue(undefined);
+	const input = vi.fn();
+	expect(await degradeQuestion({ select, input }, request)).toStrictEqual({
+		status: "cancelled",
+		answers: {},
+		unanswered: ["q1", "q2"],
+	});
+});
+// An abort is never an answer: the fallback settles it like the structured bridge (cancelled, or
+// timed_out when the abort carries that status), keeps what the user had answered, and asks nothing more.
+const threeQuestions = {
+	...request,
+	questions: ["q1", "q2", "q3"].map((id) => ({ ...request.questions[0], id, header: id, question: id })),
+};
+const abortOnSecondSelect = (controller: AbortController, reason?: string) =>
+	vi
+		.fn()
+		.mockResolvedValueOnce("A")
+		.mockImplementationOnce(async () => {
+			controller.abort(reason);
+			return undefined;
+		})
+		.mockResolvedValue("B");
+it("settles a fallback aborted partway as cancelled, keeping the partial answers and asking nothing more", async () => {
+	const controller = new AbortController();
+	const select = abortOnSecondSelect(controller);
+	const input = vi.fn();
+	const response = await degradeQuestion({ select, input }, threeQuestions, { signal: controller.signal });
+	expect(response).toStrictEqual({
+		status: "cancelled",
+		answers: { q1: { selected: ["A"] } },
+		unanswered: ["q2", "q3"],
+	});
+	expect(select).toHaveBeenCalledTimes(2);
+	expect(input).not.toHaveBeenCalled();
+});
+it("settles a fallback aborted with a timeout as timed_out, keeping the partial answers", async () => {
+	const controller = new AbortController();
+	const select = abortOnSecondSelect(controller, "timed_out");
+	const response = await degradeQuestion({ select, input: vi.fn() }, threeQuestions, { signal: controller.signal });
+	expect(response).toMatchObject({
+		status: "timed_out",
+		answers: { q1: { selected: ["A"] } },
+		unanswered: ["q2", "q3"],
+	});
+	expect(response.resolvedBy).toBeUndefined();
+	expect(typeof response.autoResolvedAfterMs).toBe("number");
+	expect(select).toHaveBeenCalledTimes(2);
+});
+it("opens no dialog when the signal is already aborted", async () => {
+	const controller = new AbortController();
+	controller.abort();
+	const select = vi.fn();
+	expect(await degradeQuestion({ select, input: vi.fn() }, request, { signal: controller.signal })).toStrictEqual({
+		status: "cancelled",
+		answers: {},
+		unanswered: ["q1", "q2"],
+	});
+	expect(select).not.toHaveBeenCalled();
 });
 it("broadcasts, replays once after message end, and forgets resolved questions", async () => {
 	const writer = new SessionEventWriter(() => {});

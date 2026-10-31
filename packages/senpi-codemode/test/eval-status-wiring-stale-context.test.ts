@@ -144,7 +144,7 @@ async function startGeneration(cwd: string, sessionId: string, reason: string) {
 }
 
 // The runner builds a fresh extension instance for the next session. The retired one is a
-// session disposed without session_shutdown (as app-server thread unload does), so its
+// session disposed without session_shutdown, so its
 // ticker is still armed when its context retires.
 describe("#2549 eval footer status across a retired session", () => {
 	it.each([

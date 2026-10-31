@@ -1,5 +1,158 @@
 # core/tools changes
 
+## 2026-10-27 - The core bash tool applies the session's caller env (fixes senpi#4381)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `resolveSpawnContext` applies `ctx.sessionEnv` to the subprocess environment after the session's `PI_*` values, when the session environment is exposed.
+
+### Why
+
+- On a shared host the process environment is every session's; the variables a caller passed for ONE session must come from that session's context, as `OMO_BROWSER_ENGINE` does.
+
+### Why an extension could not handle it
+
+- The core bash tool's spawn environment is built inside the tool, out of reach of the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `exposeSessionEnvironment` block in `resolveSpawnContext`.
+
+## 2026-10-26 - Redact shell output before accumulation (senpi#4358)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/secret-output-redactor.ts`: bounded incremental tokenization for credential prefixes, JWTs, PEM private keys, Bearer credentials and secret-named assignments; preserve incomplete-token state across chunks and omit hidden OSC payloads.
+- Review fixes: detect credential prefixes inside URL/path/assignment tokens at non-alphanumeric boundaries, consume full charset-designation escapes, anchor AUTH/AUTHORIZATION key segments, require token-shaped Bearer values, and end unclosed quoted assignments at a newline.
+- Idle flush withholds tokens once a full public credential prefix or Bearer value has begun, including incomplete AWS/Google keys and JWTs. Mere prefix fragments (`I`, `e.g.`, `git`, `sk`, `AI`) remain visible. Delimiters release withheld tokens redacted or verbatim using complete-shape rules; EOF masks incomplete started shapes as public prefix plus `<redacted>`, without repeating published prefix characters. Secret assignment values remain masked from their first character.
+- `packages/coding-agent/src/core/tools/bash.ts`: opt-in per-stream redaction before output accumulation, streaming updates, truncation, structured output and spill writes; flush pending tokens on completion or error.
+
+### Why
+
+- Redacting a final result is too late: a partial token or an unredacted spill file can already have reached the agent.
+
+### Why an extension could not handle it
+
+- The accumulator and its spill writes are internal to the core tool's execution.
+
+### Expected merge conflict zones
+
+- `BashOperations` output callback options and `createShellToolDefinition` output ingestion/finalization.
+
+## 2026-10-19 - Read-only built-in tools declare `workspaceEffect: "read"` (senpi#3717)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`, `find.ts`, `ls.ts` (and fork-only `glob.ts`, `grep/index.ts`): each definition sets `workspaceEffect: "read"`, so it runs while a tool barrier is armed.
+
+### Why
+
+A client that captures a pre-turn workspace checkpoint had to finish the capture before sending the prompt, because a write tool could run before it was ready; that capture sat on the send-to-first-request path. A session tool barrier lets the prompt go out at once while workspace-changing tools wait for the client's release.
+
+### Why an extension could not handle it
+
+The built-in definitions are upstream-owned; the classification belongs on the definition, not in a name list an extension would have to keep in sync.
+
+### Expected merge conflict zones
+
+- Each factory's returned definition head (the `name` property line).
+
+## 2026-10-19 - A stuck lock holder fails its waiters fast (senpi#3622)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: `acquireFileMutationLock` resolves with a `FileMutationLock` - the release, plus `markStuck(holder)`. A stuck mark keeps the slot held and fails every waiter on that file (queued or later, through `acquireFileMutationLock` or `withFileMutationQueue`) with `FileLockedByStuckModuleError` (`file_locked_by_stuck_module`), passing each refused waiter's queued slot on as an abort does; the release clears the mark. Both entry points now share one registration and one wait.
+
+### Why
+
+An in-process `ctx.offload` module that outlives its deadline cannot be stopped, so its lock must stay held (a release could interleave a second writer with its write); without the mark, the session's own edit and write tools would wait on that file forever.
+
+### Why an extension could not handle it
+
+The queue and its waiters are module-private to this file; only it can refuse a waiter that is already queued.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: the bodies of `acquireFileMutationLock` and `withFileMutationQueue`, now over the shared `registerSlot` / `waitTurn`.
+
+## 2026-10-18 - The file mutation queue can be held across a call (senpi#3566 todo 7)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: `acquireFileMutationLock(filePath, signal?)` takes the same per-file slot as `withFileMutationQueue` (same map, same `getMutationQueueKey` identity, same registration order) and resolves with its release once every earlier mutation of the file has finished. A waiter whose signal aborts rejects without ever holding the slot, and the slot it queued passes on as soon as its predecessor finishes. `withFileMutationQueue` is unchanged.
+
+### Why
+
+A tool body running in the session's tool child must serialize its writes with the session's own file tools; the server holds the slot for it between `lock_file` and `unlock_file`, which a callback-scoped queue cannot express.
+
+### Why an extension could not handle it
+
+The queue map is module-private to this file; a second queue elsewhere would not serialize against the built-in edit and write tools.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: the new export between `getMutationQueueKey` and `withFileMutationQueue`.
+
+## 2026-10-19 - Tool-dispatcher review fixes: every call through the dispatcher, exact server pins (senpi#3574)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: with a dispatcher, every call goes through `dispatcher.run`, including the context-less one (the dispatcher's in-process path runs it unchanged); the wrapped tool's details type admits `ToolUnavailableDetails`.
+- `packages/coding-agent/src/core/tools/bash.ts`: `createShellToolDefinition` also pins the tool to the server when the caller injected a `spawnHook`.
+- `packages/coding-agent/src/core/tools/powershell.ts`: drops the pin its own default local operations would set and pins only for caller-injected `operations` or `spawnHook`.
+
+### Why
+
+The #3574 review: a call that skipped the dispatcher was never observed or placed, a `spawnHook` is caller code that must run where the caller is, and PowerShell's default operations are not caller-injected, so they must not pin it.
+
+### Why an extension could not handle it
+
+Tool wrapping and the built-in tool factories are core; an extension cannot route a built-in tool's calls or set its placement.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: the `execute` body of `wrapToolDefinition`.
+- `packages/coding-agent/src/core/tools/bash.ts`: the `serverPinned` spread at the head of `createShellToolDefinition`'s returned definition.
+- `packages/coding-agent/src/core/tools/powershell.ts`: `createPowerShellToolDefinition`'s body.
+
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/find.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-18 - Tool factories pin injected operations to the server; the wrapper routes through ToolDispatcher (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: `wrapToolDefinition`/`wrapToolDefinitions` take an optional `ToolDispatcher`; with one and a resolved context, execute goes through `dispatcher.run({ definition, toolCallId, params, signal, onUpdate, ctx })`; otherwise the call is unchanged, keeping upstream's `as ExtensionToolContext` idiom for the factory-less no-context case, so standalone `createBashTool` consumers keep today's behavior.
+- `packages/coding-agent/src/core/tools/read.ts`, `edit.ts`, `write.ts`, `find.ts`, `ls.ts`, `bash.ts`, `grep/index.ts`: each factory sets `serverPinned: true` on its returned definition when the caller injected `operations` or a filesystem-policy override (bash marks injected `operations`; powershell inherits through `createShellToolDefinition`, which always passes explicit operations). Such definitions execute on the session's server process even under `--tool-runtime child` with `placement: "child"`.
+
+### Why
+
+A definition that closes over caller-injected operations or policy cannot run in a tool child, and the dispatcher needs the single wrapper seam for every tool call (senpi#3566).
+
+### Why an extension could not handle it
+
+Core tool factories and the core wrapper are upstream-owned surfaces an extension cannot replace.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: the `wrapToolDefinition` execute.
+- Each factory's returned definition head (the `name` property line).
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
 
 ### What changed
@@ -801,3 +954,21 @@ The edit card header is produced inside the built-in edit renderer, below the ex
 ### Expected merge conflict zones
 
 Upstream edits to `renderToolDiff`/`renderers/edit.ts` at the next sync.
+
+## 2026-10-14 - Eval-only glob tool registered with the builtins (#3330)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/index.ts`: adds `glob` to `ToolName`, `allToolNames`, `ToolsOptions` and `createAllToolDefinitions`, and re-exports `createGlobTool` / `createGlobToolDefinition` from the fork-only `glob.ts`, which reuses the find search with `exposure: "eval"`.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/index.ts`: models inside eval reach for `tool.glob`; it has to exist as a builtin that is only callable inside eval (senpi#3330).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/index.ts`: the builtin tool set and its option types are assembled in this module.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/index.ts`: the `ToolName` union, `allToolNames`, `ToolsOptions`, and `createAllToolDefinitions` at the next upstream sync.

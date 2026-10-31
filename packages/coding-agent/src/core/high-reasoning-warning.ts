@@ -26,7 +26,7 @@ export function buildHighReasoningWarning(
 	thinkingLevel: ThinkingLevel,
 ): HighReasoningWarningContent {
 	const modelId = model.id;
-	const title = `⚠ HIGH-REASONING MODEL WARNING — ${model.provider}/${modelId} @ ${thinkingLevel}`;
+	const title = `⚠ HIGH-REASONING MODEL WARNING - ${model.provider}/${modelId} @ ${thinkingLevel}`;
 	const body = [
 		`${modelId} is a frontier reasoning model. Running it at "${thinkingLevel}" effort makes it acutely sensitive to prompt quality.`,
 		"Driving this model directly from a human prompt is NOT recommended. Risks include:",
@@ -34,7 +34,7 @@ export function buildHighReasoningWarning(
 		'  • It may perform unrequested actions in order to "complete" the task.',
 		"  • It may take risky, irreversible, or dangerous actions to force completion.",
 		"Strongly recommended: use this model ONLY through the ultrabrain subagent.",
-		"Human prompts leave gaps; an agent-authored prompt is denser and stricter than a human's — exactly what these high-effort models need to stay bounded.",
+		"Human prompts leave gaps; an agent-authored prompt is denser and stricter than a human's: exactly what these high-effort models need to stay bounded.",
 		'From the main agent, delegate instead: "query ultrabrain with <task>".',
 		`If you drive this model directly at ${thinkingLevel}, YOU assume ALL responsibility for the consequences.`,
 	];

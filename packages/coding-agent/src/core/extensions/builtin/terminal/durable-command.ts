@@ -163,6 +163,8 @@ export function createRestartableCommandHandler(deps: RestartableCommandDeps): R
 			deadlineMs: ephemeralTimeLeft !== undefined ? Date.now() + ephemeralTimeLeft : null,
 			runtime: spawned.runtime,
 			filter: compileFilter(monitor.filter),
+			...(monitor.humanInput === true ? { humanInput: true } : {}),
+			...(monitor.wakesPerHour !== undefined ? { wakesPerHour: monitor.wakesPerHour } : {}),
 			// The persisted deadline rides through verbatim; a restore never extends it.
 			...(monitor.expiresAt !== null ? { expiresAt: monitor.expiresAt } : {}),
 		});

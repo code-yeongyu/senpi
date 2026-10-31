@@ -19,7 +19,13 @@ function fauxWherePrimaryIsAtItsUsageLimit() {
 			? fauxAssistantMessage("", { stopReason: "error", errorMessage: USAGE_LIMIT })
 			: fauxAssistantMessage(`answered by ${model.id}`);
 	faux.setResponses(Array.from({ length: 12 }, () => step));
-	return faux;
+	const spare = fauxProvider({
+		api: "faux-spare",
+		provider: "faux-spare",
+		models: [{ id: "spare-a" }, { id: "spare-b" }],
+	});
+	spare.setResponses(Array.from({ length: 12 }, () => step));
+	return { faux, spare };
 }
 
 function lastAssistantText(host: Awaited<ReturnType<typeof contextHost>>, sessionId: string): string {
@@ -38,15 +44,15 @@ function lastAssistantText(host: Awaited<ReturnType<typeof contextHost>>, sessio
 
 it("runs each session on its own fallback chain from open_session, and leaves the user's settings file untouched", async () => {
 	// given
-	const faux = fauxWherePrimaryIsAtItsUsageLimit();
-	await using host = await contextHost({ faux, globalSettings: USER_SETTINGS });
+	const { faux, spare } = fauxWherePrimaryIsAtItsUsageLimit();
+	await using host = await contextHost({ faux, additionalProviders: [spare.provider], globalSettings: USER_SETTINGS });
 	const settingsPath = join(host.agentDir, "settings.json");
 	const settingsBefore = await readFile(settingsPath);
 	const toA = await host.open("conn-a", {
-		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-fallback/spare-a"] } },
+		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-spare/spare-a"] } },
 	});
 	const toB = await host.open("conn-b", {
-		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-fallback/spare-b"] } },
+		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-spare/spare-b"] } },
 	});
 
 	// when
@@ -61,10 +67,10 @@ it("runs each session on its own fallback chain from open_session, and leaves th
 
 it("keeps a session opened without a profile on the host's settings: its usage limit has no chain and fails cleanly", async () => {
 	// given
-	const faux = fauxWherePrimaryIsAtItsUsageLimit();
-	await using host = await contextHost({ faux, globalSettings: USER_SETTINGS });
+	const { faux, spare } = fauxWherePrimaryIsAtItsUsageLimit();
+	await using host = await contextHost({ faux, additionalProviders: [spare.provider], globalSettings: USER_SETTINGS });
 	await host.open("conn-a", {
-		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-fallback/spare-a"] } },
+		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-spare/spare-a"] } },
 	});
 	const plain = await host.open("conn-b", {});
 
@@ -72,8 +78,8 @@ it("keeps a session opened without a profile on the host's settings: its usage l
 	await host.prompt("conn-b", String(plain.sessionId), "go");
 
 	// then
-	expect(lastAssistantText(host, String(plain.sessionId))).toContain("session limit");
-	expect(faux.getCallLog().map((call) => call.modelId)).not.toContain("spare-a");
+	expect(lastAssistantText(host, String(plain.sessionId))).toContain("faux-fallback account usage limit");
+	expect(spare.getCallLog().map((call) => call.modelId)).not.toContain("spare-a");
 }, 120_000);
 
 it("refuses a malformed retryFallback instead of opening a session without the chain its caller asked for", async () => {
@@ -91,16 +97,16 @@ it("refuses a malformed retryFallback instead of opening a session without the c
 
 it("keeps the policy a session was created with when a later open attaches with another one", async () => {
 	// given
-	const faux = fauxWherePrimaryIsAtItsUsageLimit();
-	await using host = await contextHost({ faux, globalSettings: USER_SETTINGS });
+	const { faux, spare } = fauxWherePrimaryIsAtItsUsageLimit();
+	await using host = await contextHost({ faux, additionalProviders: [spare.provider], globalSettings: USER_SETTINGS });
 	const sessionPath = join(host.scratch, "shared.jsonl");
 	const created = await host.open("conn-a", {
 		sessionPath,
-		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-fallback/spare-a"] } },
+		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-spare/spare-a"] } },
 	});
 	const attached = await host.open("conn-b", {
 		sessionPath,
-		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-fallback/spare-b"] } },
+		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-spare/spare-b"] } },
 	});
 
 	// when
@@ -156,8 +162,8 @@ it("advertises retry_fallback_profile, the capability a client waits for before 
 
 it("refuses set_retry_fallback on a host session and never advertises it there: a host session takes its chain from open_session", async () => {
 	// given
-	const faux = fauxWherePrimaryIsAtItsUsageLimit();
-	await using host = await contextHost({ faux, globalSettings: USER_SETTINGS });
+	const { faux, spare } = fauxWherePrimaryIsAtItsUsageLimit();
+	await using host = await contextHost({ faux, additionalProviders: [spare.provider], globalSettings: USER_SETTINGS });
 	const settingsBefore = await readFile(join(host.agentDir, "settings.json"));
 	const session = await host.open("conn-a", {});
 
@@ -166,13 +172,13 @@ it("refuses set_retry_fallback on a host session and never advertises it there: 
 	const refused = await host.send("conn-a", {
 		type: "set_retry_fallback",
 		sessionId: String(session.sessionId),
-		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-fallback/spare-a"] } },
+		retryFallback: { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-spare/spare-a"] } },
 	} as unknown as Parameters<typeof host.send>[1]);
 	await host.prompt("conn-a", String(session.sessionId), "go");
 
 	// then
 	expect(z.array(z.string()).parse(info.capabilities)).not.toContain("retry_fallback_command");
 	expect(refused?.success).toBe(false);
-	expect(lastAssistantText(host, String(session.sessionId))).toContain("session limit");
+	expect(lastAssistantText(host, String(session.sessionId))).toContain("faux-fallback account usage limit");
 	expect(await readFile(join(host.agentDir, "settings.json"))).toEqual(settingsBefore);
 }, 120_000);

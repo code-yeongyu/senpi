@@ -2,6 +2,7 @@ import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import type { McpElicitationUiProvider } from "./elicitation.ts";
 import type { McpLogger } from "./log.ts";
+import type { ProjectMcpAuthority } from "./project-skill-policy.ts";
 
 export type ServerConnectionState =
 	| "disabled"
@@ -31,6 +32,7 @@ export type ServerConnectionToolsChangedEvent = {
 };
 
 export interface ServerConnectionOptions {
+	readonly projectPolicy?: ProjectMcpAuthority;
 	readonly credentialIdentity?: string;
 	readonly credentialsCurrent?: () => boolean;
 	readonly serverName: string;
@@ -39,6 +41,12 @@ export interface ServerConnectionOptions {
 	readonly env?: Record<string, string | undefined>;
 	readonly authProvider?: McpOAuthProvider;
 	readonly elicitationUiProvider?: McpElicitationUiProvider;
+	/** Print/json processes cannot present elicitation; UI-less lessees fail independently. */
+	readonly elicitationEnabled?: boolean;
+	/** Present when the server declares references: every new transport re-reads them (senpi#3858). */
+	readonly resolveConfig?: () => Promise<McpServerConfig>;
+	/** Called when a shared renewal finds this owner's generation changed, so the owner re-keys. */
+	readonly onGenerationChanged?: () => void;
 }
 
 export type ServerConnectionListener<TEvent> = (event: TEvent) => void | Promise<void>;

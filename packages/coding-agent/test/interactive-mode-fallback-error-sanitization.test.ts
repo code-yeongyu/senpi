@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { NoticeSpec } from "../src/core/extensions/notice/index.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { ProviderErrorPresentation } from "../src/modes/interactive/provider-error-presentation.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { createHarness } from "./suite/harness.ts";
 
@@ -33,6 +34,62 @@ function stripSgr(value: string): string {
 }
 
 describe("InteractiveMode fallback exhaustion errors", () => {
+	it("shows the provider-requested long wait when terminal retry ends without an attempt", async () => {
+		initTheme("dark");
+		const raw = "HTTP 429: rate_limit_error (retry-after-ms: 3600000)";
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
+		});
+		try {
+			harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: raw })]);
+			await harness.session.prompt("hit the long rate-limit wait");
+			const ended = harness.eventsOfType("auto_retry_end").at(-1);
+			if (!ended?.finalError) throw new Error("missing long-wait terminal event");
+			expect(ended).toMatchObject({ success: false, attempt: 0 });
+			expect(ended.finalError).toContain("3600s");
+			const chat = new Container();
+			const providerErrors = new ProviderErrorPresentation(chat);
+			providerErrors.record(raw, true);
+			const fixture = {
+				isInitialized: true,
+				footer: { invalidate: vi.fn() },
+				fallbackAppliedBeforeRetryStart: false,
+				clearStatusIndicator: vi.fn(),
+				providerErrors,
+				getProviderErrors: () => providerErrors,
+				showError: vi.fn(),
+				ui: { requestRender: vi.fn() },
+			};
+			const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent");
+			await Reflect.apply(handleEvent, fixture, [ended]);
+			const rendered = stripSgr(chat.children.flatMap((child) => child.render(500)).join("\n"));
+			expect(rendered).toContain(ended.finalError);
+			expect(fixture.clearStatusIndicator).toHaveBeenCalledWith("retry");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("does not label a fail-fast account refusal as zero failed retry attempts", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true } } });
+		try {
+			harness.setResponses([
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: '429 {"error":{"message":"You have hit your session limit"}}',
+				}),
+			]);
+			await harness.session.prompt("hit the account limit");
+			expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
+			expect(harness.eventsOfType("auto_retry_end")).toEqual([]);
+			expect(harness.eventsOfType("message_end").at(-1)).toMatchObject({
+				message: { errorCause: { type: "usage_limit", scope: "account" } },
+			});
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("renders a provider-derived exhausted fallback error safely without mutating the raw event", async () => {
 		initTheme("dark");
 		const rawProviderError =

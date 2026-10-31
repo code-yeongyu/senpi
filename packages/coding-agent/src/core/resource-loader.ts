@@ -8,7 +8,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -19,10 +19,12 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { ACCEPTED_SHIM_BANNERS, GENERATED_SHIM_BANNER } from "./generated-shim-banner.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
+export { loadProjectContextFiles };
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { bundledBuiltinExtensions } from "./bundled-resources.ts";
+import { type ContextFile, loadProjectContextFiles } from "./context-files.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	type BuiltinExtensionFactory,
@@ -51,15 +53,16 @@ import type {
 	SessionKind,
 } from "./extensions/types.ts";
 import { EMPTY_SESSION_CONTEXT } from "./extensions/types.ts";
-import { findGitPaths } from "./footer-data-provider.ts";
 import { dedupePathsByPackageIdentity, findNearestPackageIdentity } from "./package-identity.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-memo.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import type { SkillProvenance } from "./skill-access.ts";
 import type { Skill } from "./skills.ts";
-import { loadSkills } from "./skills.ts";
+import { ignoredSkillDiagnostics, loadSkills } from "./skills.ts";
+import { warnIfLargeSkillCatalog } from "./skills-prompt.ts";
 import {
 	BUILTIN_PATH_PREFIX,
 	createSourceInfo,
@@ -196,7 +199,7 @@ export interface ResourceLoader {
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
-	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
+	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics?: ResourceDiagnostic[] };
 	getSystemPrompt(): string | undefined;
 	getSystemPromptSource(): { path: string } | undefined;
 	getAppendSystemPrompt(): string[];
@@ -373,94 +376,6 @@ function resolveGeneratedGlobalDefaultExtensionFactory(
 	}
 }
 
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
-	const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
-	for (const filename of candidates) {
-		const filePath = join(dir, filename);
-		if (existsSync(filePath)) {
-			try {
-				if (!statSync(filePath).isFile()) {
-					continue;
-				}
-				return {
-					path: filePath,
-					content: stripBom(readFileSync(filePath, "utf-8")),
-				};
-			} catch (error) {
-				console.error(chalk.yellow(`Warning: Could not read ${filePath}: ${error}`));
-			}
-		}
-	}
-	return null;
-}
-
-/**
- * The main repo's context file that a nested linked worktree's own copy shadows: both
- * occupy the same logical repository scope, so loading both applies that context twice. Returns
- * undefined when nothing is shadowed, leaving normal ancestor inheritance alone.
- *
- * Returned canonicalized (realpath), because `git worktree add` writes the `.git`
- * file's `gitdir:` target in realpath form while cwd may still be symlinked
- * (macOS `/tmp` -> `/private/tmp`).
- */
-function findShadowedContextFile(cwd: string): string | undefined {
-	const gitPaths = findGitPaths(cwd);
-	if (!gitPaths) return undefined;
-	const commonGitDir = canonicalizePath(gitPaths.commonGitDir);
-	const worktreeRoot = canonicalizePath(gitPaths.repoDir);
-	const mainRepoRoot = dirname(commonGitDir);
-	// False for an ordinary repo, where the two are the same dir, and for a sibling
-	// worktree (`git worktree add ../feat`), whose main repo is not an ancestor.
-	if (!worktreeRoot.startsWith(`${mainRepoRoot}${sep}`)) return undefined;
-	// dirname of the common git dir is the main worktree root only when that dir is
-	// itself checked out from the same repo. In a bare layout (`proj/.bare` +
-	// `proj/main`) it is just the directory holding `.bare`, which tracks nothing; a
-	// submodule's gitdir has no `commondir`, so it lands under `.git/modules`.
-	if (canonicalizePath(join(mainRepoRoot, ".git")) !== commonGitDir) return undefined;
-	const worktreeContextFile = loadContextFileFromDir(worktreeRoot);
-	return worktreeContextFile ? join(mainRepoRoot, basename(worktreeContextFile.path)) : undefined;
-}
-
-export function loadProjectContextFiles(options: {
-	cwd: string;
-	agentDir: string;
-}): Array<{ path: string; content: string }> {
-	const resolvedCwd = resolvePath(options.cwd);
-	const resolvedAgentDir = resolvePath(options.agentDir);
-
-	const contextFiles: Array<{ path: string; content: string }> = [];
-	const seenPaths = new Set<string>();
-
-	const globalContext = loadContextFileFromDir(resolvedAgentDir);
-	if (globalContext) {
-		contextFiles.push(globalContext);
-		seenPaths.add(globalContext.path);
-	}
-
-	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
-
-	const shadowedContextFile = findShadowedContextFile(resolvedCwd);
-	let currentDir = resolvedCwd;
-
-	while (true) {
-		const contextFile = loadContextFileFromDir(currentDir);
-		const isShadowed =
-			shadowedContextFile !== undefined && canonicalizePath(contextFile?.path ?? "") === shadowedContextFile;
-		if (contextFile && !isShadowed && !seenPaths.has(contextFile.path)) {
-			ancestorContextFiles.unshift(contextFile);
-			seenPaths.add(contextFile.path);
-		}
-
-		const parentDir = dirname(currentDir);
-		if (parentDir === currentDir) break;
-		currentDir = parentDir;
-	}
-
-	contextFiles.push(...ancestorContextFiles);
-
-	return contextFiles;
-}
-
 export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
@@ -497,8 +412,8 @@ export interface DefaultResourceLoaderOptions {
 		themes: Theme[];
 		diagnostics: ResourceDiagnostic[];
 	};
-	agentsFilesOverride?: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
-		agentsFiles: Array<{ path: string; content: string }>;
+	agentsFilesOverride?: (base: { agentsFiles: ContextFile[] }) => {
+		agentsFiles: ContextFile[];
 	};
 }
 
@@ -538,8 +453,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		themes: Theme[];
 		diagnostics: ResourceDiagnostic[];
 	};
-	private agentsFilesOverride?: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
-		agentsFiles: Array<{ path: string; content: string }>;
+	private agentsFilesOverride?: (base: { agentsFiles: ContextFile[] }) => {
+		agentsFiles: ContextFile[];
 	};
 
 	private extensionsResult: LoadExtensionsResult;
@@ -549,7 +464,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private promptDiagnostics: ResourceDiagnostic[];
 	private themes: Theme[];
 	private themeDiagnostics: ResourceDiagnostic[];
-	private agentsFiles: Array<{ path: string; content: string }>;
+	private agentsFiles: ContextFile[];
+	private contextDiagnostics: ResourceDiagnostic[] = [];
 	private systemPrompt?: string;
 	private systemPromptSourcePath?: string;
 	private appendSystemPrompt: string[];
@@ -663,8 +579,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { themes: this.themes, diagnostics: this.themeDiagnostics };
 	}
 
-	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {
-		return { agentsFiles: this.agentsFiles };
+	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics: ResourceDiagnostic[] } {
+		return { agentsFiles: this.agentsFiles, diagnostics: this.contextDiagnostics };
 	}
 
 	getSystemPrompt(): string | undefined {
@@ -768,6 +684,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 			await this.settingsManager.reload();
 		}
 		const { resolvedPaths, cliExtensionPaths } = await this.resolvePackagePaths({ refresh });
+		this.userSkillRoots = [...(resolvedPaths.skillRoots ?? []), ...(cliExtensionPaths.skillRoots ?? [])]
+			.filter((selection) => selection.kind === "user")
+			.map((selection) => selection.selectedRoot);
+		this.ignoredSkillFiles = this.noSkills ? [] : [...(resolvedPaths.ignoredSkills ?? [])];
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -802,8 +722,25 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// itself part of the harness keeps the system scope and root it resolved to.
 		const cliMetadata = (resource: ResolvedResource): PathMetadata =>
 			resource.metadata.scope === "system"
-				? { source: "cli", scope: "system", origin: "top-level", baseDir: resource.metadata.baseDir }
-				: { source: "cli", scope: "temporary", origin: "top-level" };
+				? {
+						source: "cli",
+						scope: "system",
+						origin: "top-level",
+						baseDir: resource.metadata.baseDir,
+						skillProvenance: {
+							kind: "user",
+							selectedRoot: resource.metadata.skillProvenance?.selectedRoot ?? resource.path,
+						},
+					}
+				: {
+						source: "cli",
+						scope: "temporary",
+						origin: "top-level",
+						skillProvenance: {
+							kind: "user",
+							selectedRoot: resource.metadata.skillProvenance?.selectedRoot ?? resource.path,
+						},
+					};
 		for (const resources of [
 			cliExtensionPaths.extensions,
 			cliExtensionPaths.skills,
@@ -911,14 +848,16 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		const agentsFiles = {
 			agentsFiles: this.noContextFiles
-				? []
+				? Object.assign([], { diagnostics: [] })
 				: loadProjectContextFiles({
 						cwd: this.cwd,
 						agentDir: this.agentDir,
+						...this.settingsManager.getSettings().contextFiles,
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
-		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
+		this.agentsFiles = [...resolvedAgentsFiles.agentsFiles];
+		this.contextDiagnostics = agentsFiles.agentsFiles.diagnostics;
 		time("contextFiles", "extensions");
 
 		// SYSTEM.md / APPEND_SYSTEM.md file discovery was intentionally removed; the explicit
@@ -1211,6 +1150,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 	}
 
+	private userSkillRoots: string[] = [];
+	private ignoredSkillFiles: string[] = [];
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
@@ -1221,6 +1162,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 				agentDir: this.agentDir,
 				skillPaths,
 				includeDefaults: false,
+				provenanceByPath: new Map<string, SkillProvenance>(
+					skillPaths.map((path) => [
+						path,
+						metadataByPath?.get(path)?.skillProvenance ?? { kind: "user", selectedRoot: path },
+					]),
+				),
+				userSkillRoots: [
+					...this.userSkillRoots,
+					...(this.settingsManager.getGlobalSettings().skills ?? [])
+						.filter((path) => !/^[!+-]/.test(path))
+						.map((path) => resolvePath(path, this.agentDir, { trim: true })),
+				],
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;
@@ -1231,7 +1184,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 				skill.sourceInfo ??
 				this.getDefaultSourceInfoForPath(skill.filePath),
 		}));
-		this.skillDiagnostics = resolvedSkills.diagnostics;
+		this.skillDiagnostics = [
+			...resolvedSkills.diagnostics,
+			...ignoredSkillDiagnostics(this.ignoredSkillFiles, this.skills),
+			...warnIfLargeSkillCatalog(this.skills),
+		];
 	}
 
 	private updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {

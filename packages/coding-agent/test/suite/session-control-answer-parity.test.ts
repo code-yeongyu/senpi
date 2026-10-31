@@ -68,7 +68,11 @@ async function askAsync(
 	return { settled: delivery.settled(ctx, REQUEST_ID) };
 }
 
-async function answerOnHost(frame: Frame, questions: AskedQuestions = ASYNC_QUESTIONS): Promise<Outcome> {
+async function answerOnHost(
+	frame: Frame,
+	questions: AskedQuestions = ASYNC_QUESTIONS,
+	draft?: RpcQuestionAnswers,
+): Promise<Outcome> {
 	const delivery = await createAskUserDelivery();
 	deliveries.push(delivery);
 	const bridge = new ConnectionQuestionBridge(() => {});
@@ -79,6 +83,7 @@ async function answerOnHost(frame: Frame, questions: AskedQuestions = ASYNC_QUES
 	);
 	const uiRequestId = bridge.pendingQuestions()[0]?.id;
 	if (uiRequestId === undefined) throw new Error("the host bridge has no pending question");
+	if (draft) bridge.progress({ type: "extension_ui_progress", id: uiRequestId, answers: draft });
 	const reply = settleExtensionUiResponse(frame(uiRequestId), {
 		questions: bridge,
 		dialogs: { resolve: () => false },
@@ -90,7 +95,11 @@ async function answerOnHost(frame: Frame, questions: AskedQuestions = ASYNC_QUES
 	return { reply, delivered: delivery.deliveries.map((entry) => entry.content), pending };
 }
 
-async function answerOnTerminal(frame: Frame, questions: AskedQuestions = ASYNC_QUESTIONS): Promise<Outcome> {
+async function answerOnTerminal(
+	frame: Frame,
+	questions: AskedQuestions = ASYNC_QUESTIONS,
+	draft?: RpcQuestionAnswers,
+): Promise<Outcome> {
 	const delivery = await createAskUserDelivery();
 	deliveries.push(delivery);
 	const pending = new Map<string, { request: QuestionRequest; finish: (response: QuestionResponse) => void }>();
@@ -107,18 +116,19 @@ async function answerOnTerminal(frame: Frame, questions: AskedQuestions = ASYNC_
 	endpoints.push(fixture);
 	const { settled } = await askAsync(
 		delivery,
-		delivery.context(
-			(request) =>
-				new Promise<QuestionResponse>((resolve) => {
-					pending.set(request.requestId, {
-						request,
-						finish: (response) => {
-							pending.delete(request.requestId);
-							resolve(response);
-						},
-					});
-				}),
-		),
+		delivery.context((request, opts) => {
+			// The terminal widget reports what the user picked as progress, as the interactive TUI does.
+			if (draft) opts?.onProgress?.({ answers: draft });
+			return new Promise<QuestionResponse>((resolve) => {
+				pending.set(request.requestId, {
+					request,
+					finish: (response) => {
+						pending.delete(request.requestId);
+						resolve(response);
+					},
+				});
+			});
+		}),
 		questions,
 	);
 	const reply = await controlRequest(fixture.socket, frame(REQUEST_ID));
@@ -346,5 +356,25 @@ describe("one extension_ui_response frame to a three-question request, host and 
 				expect(outcome.pending).toBe(false);
 			}
 		});
+	}
+});
+
+// senpi#4002 review: the desktop's Remove on a question a terminal session asked is the user's cancel. After
+// the user answered part of it, both surfaces deliver those answers once instead of a silent dismissal.
+it("delivers the answers given before a cancel frame identically on host and terminal", async () => {
+	const cancel: Frame = (uiRequestId) => ({
+		type: "extension_ui_response",
+		id: "answer-1",
+		uiRequestId,
+		cancelled: true,
+	});
+	const draft = { q1: { selected: ["OAuth"] } };
+	const host = await answerOnHost(cancel, THREE_QUESTIONS, draft);
+	const terminal = await answerOnTerminal(cancel, THREE_QUESTIONS, draft);
+	for (const outcome of [host, terminal]) {
+		expect(outcome.delivered).toEqual([
+			"[Answer to question ask-1]\nThe user cancelled the question after answering part of it.\nLibrary: OAuth\nUnanswered: Cache, Deploy",
+		]);
+		expect(outcome.pending).toBe(false);
 	}
 });

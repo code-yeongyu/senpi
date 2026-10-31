@@ -17,11 +17,13 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey, readByProviderId } from "@earendil-works/pi-ai";
+import { type CredentialKind, slotKind, unusedSlotKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
 import {
 	appendLoginSlot,
 	type CredentialSlot,
 	listSlots,
 	type PooledCredential,
+	projectSlot,
 	removeSlot,
 	repairManagedSentinelSlots,
 	upsertSlot,
@@ -34,7 +36,18 @@ import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
+import {
+	resolveReadOnlyCredential,
+	resolveStoredCredential,
+	resolveStoredSlot,
+	validateReadOnlyAuthData,
+} from "./auth-credential-values.ts";
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/provider-id.ts";
+import type { AnthropicSubscriptionCredential } from "./extensions/builtin/anthropic-subscription/accounts.ts";
+import { signInAgainMessage, signInRequiredNames } from "./extensions/builtin/anthropic-subscription/sign-in-again.ts";
+import { lockWithLossHandling } from "./file-lock.ts";
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
@@ -44,7 +57,6 @@ import {
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
 } from "./lockfile-policy.ts";
-import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
 
@@ -66,6 +78,68 @@ function repairPoisonedPoolSlots(data: AuthStorageData): { data: AuthStorageData
 		repaired[providerId] = healed;
 	}
 	return repaired ? { data: repaired, repaired: true } : { data, repaired: false };
+}
+
+const KIND_LABEL: Readonly<Record<CredentialKind, string>> = { oauth: "OAuth login", api_key: "API key" };
+
+/** A credential problem the user should see once per change: `id` changes when the problem does. */
+export type AuthNotice = {
+	readonly id: string;
+	readonly provider: string;
+	readonly message: string;
+	/** Shown at every start while the problem lasts, instead of once per change. */
+	readonly repeats?: boolean;
+};
+
+/**
+ * One notice per provider whose stored credential holds slots its type cannot use (senpi#3448).
+ * Nothing is changed: which credential pays stays the user's choice, so the notice names the
+ * unused login, where it still is, and the action that switches to it.
+ */
+function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
+	const notices: AuthNotice[] = [];
+	for (const [provider, credential] of Object.entries(data)) {
+		if (typeof credential !== "object" || credential === null) continue;
+		for (const kind of unusedSlotKinds(credential)) {
+			const slots = listSlots(credential).filter((slot) => slotKind(slot) === kind);
+			const inUse = KIND_LABEL[credential.type];
+			const names = slots.map((slot) => slot.name);
+			notices.push({
+				// Slot names, never key material: a new unused login gets a new id and is shown again.
+				id: `${provider}:${kind}:${names.join(",")}`,
+				provider,
+				message: `${provider}: an ${KIND_LABEL[kind]} saved earlier is stored next to your ${inUse} but is never used; the ${inUse} stays in use. It is still in auth.json (${slots.map((slot) => slot.name).join(", ")}); to switch to it, save it again with /login (the ${inUse} is backed up first).`,
+			});
+		}
+	}
+	return notices;
+}
+
+/**
+ * One notice, at every start, while Claude subscription accounts from the retired sign-in still need a sign-in again
+ * (senpi#4436); it repeats until they are signed in again or removed, so it is never marked seen.
+ */
+function signInRequiredNotices(data: AuthStorageData): AuthNotice[] {
+	const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
+	const accounts = Array.isArray(subscription?.accounts) ? subscription.accounts : [];
+	const names = signInRequiredNames(accounts);
+	if (names.length === 0) return [];
+	return [
+		{
+			id: `${ANTHROPIC_SUBSCRIPTION_PROVIDER_ID}:sign-in-required:${names.join(",")}`,
+			provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+			message: signInAgainMessage(names),
+			repeats: true,
+		},
+	];
+}
+
+export type CredentialReplacement = { readonly replaced: CredentialKind; readonly backupPath?: string };
+
+/** What a login that replaced a credential of the other kind tells the user (senpi#3448, #3486). */
+export function describeCredentialReplacement(provider: string, replacement: CredentialReplacement): string {
+	const where = replacement.backupPath ? ` It is saved in ${replacement.backupPath}` : " It was not backed up";
+	return `Your ${KIND_LABEL[replacement.replaced]} for ${provider} was replaced by this login.${where}; to switch back, log in with it again.`;
 }
 
 export type AuthCredential = Credential;
@@ -225,10 +299,10 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		// whole budget, and `onCompromised` is rebound per attempt.
 		while (true) {
 			try {
-				const release = await lockfile.lock(this.authPath, {
+				const { release } = await lockWithLossHandling(this.authPath, {
 					...FILE_STORAGE_LOCK_OPTIONS,
 					retries: 0,
-					onCompromised,
+					onLost: onCompromised,
 				});
 				if (signal?.aborted) {
 					await release();
@@ -321,34 +395,7 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 			throw new Error(`Failed to read auth.json: ${error instanceof Error ? error.message : String(error)}`);
 		}
 
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			throw new Error("Invalid auth.json: expected an object");
-		}
-		for (const [providerId, credential] of Object.entries(parsed)) {
-			if (typeof credential !== "object" || credential === null || Array.isArray(credential)) {
-				throw new Error(`Invalid auth.json credential for provider "${providerId}"`);
-			}
-			const value = credential as Record<string, unknown>;
-			if (value.type === "api_key") {
-				const validKey = value.key === undefined || typeof value.key === "string";
-				const validEnv =
-					value.env === undefined ||
-					(typeof value.env === "object" &&
-						value.env !== null &&
-						!Array.isArray(value.env) &&
-						Object.values(value.env).every((entry) => typeof entry === "string"));
-				if (validKey && validEnv) continue;
-			} else if (
-				value.type === "oauth" &&
-				typeof value.access === "string" &&
-				typeof value.refresh === "string" &&
-				typeof value.expires === "number" &&
-				Number.isFinite(value.expires)
-			) {
-				continue;
-			}
-			throw new Error(`Invalid auth.json credential for provider "${providerId}"`);
-		}
+		validateReadOnlyAuthData(parsed);
 
 		this.data = repairPoisonedPoolSlots(parsed as AuthStorageData).data;
 		return this.data;
@@ -362,11 +409,20 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 		// rename. Nothing is rewritten here.
 		const credential = readByProviderId(this.load(), providerId);
 		options?.signal?.throwIfAborted();
-		if (!credential) return undefined;
-		if (credential.type !== "api_key" || !credential.key || isCommandConfigValue(credential.key)) {
-			return structuredClone(credential);
-		}
-		return { ...credential, key: await resolveConfigValue(credential.key, credential.env) };
+		return resolveReadOnlyCredential(credential, providerId, this.authPath);
+	}
+
+	async readSlot(
+		providerId: string,
+		slotName: string,
+		options?: AuthOperationOptions,
+	): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
+		const credential = readByProviderId(this.load(), providerId);
+		options?.signal?.throwIfAborted();
+		return resolveStoredSlot(credential, { providerId, slotName, authPath: this.authPath }, (flat) =>
+			resolveReadOnlyCredential(flat, providerId, this.authPath),
+		);
 	}
 
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
@@ -432,6 +488,11 @@ export class AuthStorage implements CredentialStore {
 	private readonly runtimeOverrides = new Map<string, string>();
 	private readonly extensionOAuthProviders = new Map<string, OAuthAuth>();
 	private errors: Error[] = [];
+	private readonly reportedMigrationSkips = new Set<string>();
+	private notices: AuthNotice[] = [];
+	private readonly seenInMemory = new Set<string>();
+	private readonly takenNotices = new Set<string>();
+	private readonly replacements = new Map<string, CredentialReplacement>();
 	private storage: AuthStorageBackend;
 	private authPath: string | undefined;
 	private readState: AuthFileReadState;
@@ -504,7 +565,21 @@ export class AuthStorage implements CredentialStore {
 		}
 		const repaired = repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData);
 		const migrated = migrateLegacyProviderKeys(repaired.data);
-		return { data: migrated.data, repaired: repaired.repaired, migrated: migrated.migrated };
+		const moved = signOutLegacyClaudeLogins(migrated.data);
+		if (moved.skipped && !this.reportedMigrationSkips.has(moved.skipped)) {
+			this.reportedMigrationSkips.add(moved.skipped);
+			this.recordError(
+				new Error(
+					`A Claude login in auth.json was left unchanged because ${moved.skipped}. Claude logins from the old sign-in are no longer used; sign in again with Claude: run /login anthropic-subscription.`,
+				),
+			);
+		}
+		this.notices = [...unusedLoginNotices(moved.data), ...signInRequiredNotices(moved.data)];
+		return {
+			data: moved.data,
+			repaired: repaired.repaired,
+			migrated: migrated.migrated || moved.migrated,
+		};
 	}
 
 	private recordError(error: unknown): void {
@@ -517,14 +592,15 @@ export class AuthStorage implements CredentialStore {
 	 * re-run after a crash between backup and rewrite writes another backup;
 	 * the loop suffix keeps same-millisecond names from overwriting each other.
 	 */
-	private backupAuthFile(content: string | undefined): void {
-		if (!this.authPath || content === undefined) return;
+	private backupAuthFile(content: string | undefined): string | undefined {
+		if (!this.authPath || content === undefined) return undefined;
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 		let backupPath = `${this.authPath}.backup-${stamp}`;
 		for (let attempt = 1; existsSync(backupPath); attempt++) {
 			backupPath = `${this.authPath}.backup-${stamp}-${attempt}`;
 		}
 		writeFileSync(backupPath, content, AUTH_FILE_WRITE_OPTIONS);
+		return backupPath;
 	}
 
 	private updateReadState(data: AuthStorageData, revision?: string): void {
@@ -610,14 +686,103 @@ export class AuthStorage implements CredentialStore {
 		return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
 	}
 
-	set(provider: string, credential: Credential): void {
-		this.storage.withLock((content) => {
+	/**
+	 * Stores a login. A login of the other kind replaces the provider's credential (senpi#3448); the
+	 * previous bytes are backed up first, and the replacement is returned and kept for
+	 * `takeReplacement`, so no credential disappears without the user being told where it went.
+	 */
+	set(provider: string, credential: Credential): CredentialReplacement | undefined {
+		return this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
-			const next = appendLoginSlot(currentData[provider], credential);
+			const replacement = this.noteReplacement(provider, currentData[provider], credential, content);
+			const next = appendLoginSlot(currentData[provider], credential, undefined, {
+				accountIdentity: this.oauthAuth(provider)?.accountIdentity,
+			});
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
-			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
+			return { result: replacement, next: JSON.stringify(nextData, null, 2) };
 		});
+	}
+
+	/** The last replacement a login made for this provider, once; the caller shows it to the user. */
+	takeReplacement(provider: string): CredentialReplacement | undefined {
+		const replacement = this.replacements.get(provider);
+		this.replacements.delete(provider);
+		return replacement;
+	}
+
+	/** Credential notices not yet marked seen; a changed problem gets a new id and shows again. */
+	pendingNotices(): ReadonlyArray<AuthNotice> {
+		const seen = this.seenNoticeIds();
+		return this.notices.filter((notice) => notice.repeats === true || !seen.has(notice.id));
+	}
+
+	/**
+	 * Hands out each pending notice once per process, so a run that reports auth problems at several
+	 * points shows it once (senpi#3486). With `persistSeen`, the notices are also recorded as seen, so
+	 * the next launch stays quiet until the problem changes; a run nobody reads (RPC) leaves them pending.
+	 */
+	takePendingNotices(options: { persistSeen: boolean }): ReadonlyArray<AuthNotice> {
+		const taken = this.pendingNotices().filter((notice) => !this.takenNotices.has(notice.id));
+		for (const notice of taken) this.takenNotices.add(notice.id);
+		if (options.persistSeen) this.markNoticesSeen(taken.map((notice) => notice.id));
+		return taken;
+	}
+
+	/**
+	 * Records notices as shown, so the next launch stays quiet until the problem changes. Ids of
+	 * problems that no longer exist are dropped. A failed write never aborts startup: it is reported,
+	 * and the notice may be shown once more.
+	 */
+	markNoticesSeen(ids: readonly string[]): void {
+		if (ids.length === 0) return;
+		const path = this.seenNoticesPath();
+		if (!path) {
+			for (const id of ids) this.seenInMemory.add(id);
+			return;
+		}
+		const current = new Set(this.notices.map((notice) => notice.id));
+		const seen = [...new Set([...this.seenNoticeIds(), ...ids])].filter((id) => current.has(id));
+		try {
+			writeFileSync(path, JSON.stringify(seen, null, 2), AUTH_FILE_WRITE_OPTIONS);
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			this.recordError(
+				new Error(
+					`Could not record which credential notices were shown (${path}): ${reason}. They may be shown again on the next start; check that the file is writable.`,
+				),
+			);
+		}
+	}
+
+	private seenNoticesPath(): string | undefined {
+		return this.authPath ? join(dirname(this.authPath), "auth-notices-seen.json") : undefined;
+	}
+
+	private seenNoticeIds(): Set<string> {
+		const path = this.seenNoticesPath();
+		if (!path) return new Set(this.seenInMemory);
+		try {
+			const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+			return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+		} catch {
+			return new Set();
+		}
+	}
+
+	private noteReplacement(
+		provider: string,
+		previous: Credential | undefined,
+		next: Credential,
+		content: string | undefined,
+	): CredentialReplacement | undefined {
+		if (previous === undefined || previous.type === next.type) return undefined;
+		const backupPath = this.backupAuthFile(content);
+		const replacement: CredentialReplacement = backupPath
+			? { replaced: previous.type, backupPath }
+			: { replaced: previous.type };
+		this.replacements.set(provider, replacement);
+		return replacement;
 	}
 
 	remove(provider: string): void {
@@ -752,9 +917,18 @@ export class AuthStorage implements CredentialStore {
 		if (runtimeKey) return { type: "api_key", key: runtimeKey };
 		const credential = (await this.readLatestData(options))[provider];
 		options?.signal?.throwIfAborted();
-		if (credential?.type !== "api_key") return credential;
-		if (credential.key === undefined) return credential;
-		return { ...credential, key: await resolveConfigValue(credential.key, credential.env) };
+		return resolveStoredCredential(credential, provider, this.authPath);
+	}
+
+	async readSlot(provider: string, slotName: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
+		const runtimeKey = this.runtimeOverrides.get(provider);
+		if (runtimeKey) return projectSlot({ type: "api_key", key: runtimeKey }, slotName);
+		const credential = (await this.readLatestData(options))[provider];
+		options?.signal?.throwIfAborted();
+		return resolveStoredSlot(credential, { providerId: provider, slotName, authPath: this.authPath }, (flat) =>
+			resolveStoredCredential(flat, provider, this.authPath),
+		);
 	}
 
 	async modify(
@@ -773,6 +947,7 @@ export class AuthStorage implements CredentialStore {
 				return { result: currentData[provider] };
 			}
 
+			this.noteReplacement(provider, currentData[provider], next, content);
 			const merged: AuthStorageData = { ...currentData, [provider]: next };
 			latestData = merged;
 			return { result: next, next: JSON.stringify(merged, null, 2) };
@@ -853,10 +1028,15 @@ export class AuthStorage implements CredentialStore {
 		return [...dynamic, ...builtin];
 	}
 
-	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
-		const oauth =
+	private oauthAuth(providerId: string): OAuthAuth | undefined {
+		return (
 			this.extensionOAuthProviders.get(providerId) ??
-			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth;
+			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth
+		);
+	}
+
+	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+		const oauth = this.oauthAuth(providerId);
 		if (!oauth) throw new Error(`Unknown OAuth provider: ${providerId}`);
 		const signal = callbacks.signal ?? new AbortController().signal;
 		const interaction: AuthInteraction & { signal: AbortSignal } = {

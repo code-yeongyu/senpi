@@ -1,5 +1,158 @@
 # changes — senpi-monorepo root
 
+## 2026-10-31 - Drop findSlot from knip's pre-existing unused exports (part of senpi#4600)
+
+### What changed
+
+- `knip.jsonc`: `findSlot` leaves the `preprocessorOptions.preExistingExports` entry for `packages/ai/src/auth/pool/slots.ts` and its comment; the other four names stay.
+
+### Why
+
+- Since senpi#4603, `packages/coding-agent/src/core/credential-account-unblock.ts` imports `findSlot`, so knip no longer reports it and `scripts/knip-preexisting-exports.test.mjs` failed on main.
+
+### Why an extension could not handle it
+
+- The knip configuration is repository tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `packages/ai/src/auth/pool/slots.ts` line and its comment in `knip.jsonc`.
+
+## 2026-10-29 - Use Bun for no-emit type checking (senpi#4770)
+
+### What changed
+
+- The root `check` script runs `bun check --no-script --all -p` for `tsconfig.json` and `scripts/tsconfig.json`.
+
+### Why
+
+- Use the pinned Bun checker while preserving the checked projects and type-error failures. `--no-script` prevents dispatching the root `check` script recursively.
+
+### Why an extension could not handle it
+
+- Repository validation runs outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the two type-check commands in the root `package.json` `check` script.
+
+## 2026-10-27 - knip dead-code check (senpi#4421)
+
+### What changed
+
+- `package.json`: a new `knip:check` script runs `knip`, and `knip` is pinned exactly at 6.43.0 in `devDependencies`. `package-lock.json` and `bun.lock` were refreshed through `bun run refresh-lock`.
+- `knip.jsonc`: new config. The `types`/`nsTypes` rules are off. Run-by-path scripts get an explicit `entry`, including every `.agents/skills/senpi-qa/scripts/**` driver, and each workspace has its own config. Findings already on main are scoped ignores, each with a `pre-existing at origin main aceb1cc1d9` reason.
+- `knip.jsonc` with `scripts/knip-preexisting-exports.ts`: no unused export is ignored file-wide on our own files. The 1262 pre-existing unused exports in 717 files are listed by (file, export) under `preprocessorOptions.preExistingExports`, each with its reason, and the `preprocessor` drops only those pairs, so a new unused export in the same file still fails `knip:check`. File-wide `"exports"` remains only for the generated protobuf-es files, with a comment saying so; the vendored pi-codemode `runtime/prelude-source.ts` carries senpi changes and no byte pin, so its two exports are named like any other file's. The preprocessor is a byte-identical copy of sisyphuslabs/omo-relay-daemon's (daemon main 757e46e0b6, from daemon#123); `scripts/knip-preexisting-exports.test.mjs` pins its sha256, unit-tests it, and fails when a listed export is no longer reported.
+- `knip.jsonc`: knip export-checks an entry only when it comes from a workspace's `entry` list in a workspace with `includeEntryExports`; a file it resolves only from a package.json script, a CI workflow `run:` line or a tool config stays unchecked. All 11 workspaces with an `entry` list now set `includeEntryExports`, the files knip resolves that no `entry` glob covered (vitest setup and reporter files, the tui `--import` setup) are listed by name, and named lines a glob in the same list already matched are gone (knip's resolved entry set is identical without them). Existing exports this surfaces are listed by name like every other pre-existing unused export (below);
+- `scripts/knip-entry-exports.test.mjs` with `scripts/knip-entry-table.test-support.mjs` and `scripts/knip-probe.test-support.mjs`: the probe table is knip's own resolved entry list (one programmatic knip run that records every file knip adds as an entry and how), not a parser of our own. A coarse scan of package.json scripts and workflow lines can only add: a file it sees run by path that knip does not list as an entry fails the test by name. The test then appends one unused export to every table file in a temp copy (used only through its real path, since macOS `tmpdir()` is a symlink), runs knip once with the exact `knip.jsonc` CI runs, and fails when any probe goes unreported outside the files knip's own ignore matcher covers.
+- `scripts/check-knip-export-coverage.mjs`: knip export coverage never shrinks. It probes every source file in a temp copy, runs knip with this tree's `knip.jsonc` and with the base branch's (or the branch's first `knip.jsonc` when the base has none), and fails naming every file the base export-checked that this config does not.
+
+### Why
+
+- oxlint catches unused variables inside a file. It cannot see a file nothing imports, an export nobody consumes, or a dependency nothing uses (senpi#4419).
+
+### Why an extension could not handle it
+
+- Repository tooling that runs before any agent code exists.
+
+### Expected merge conflict zones
+
+- LOW: the root `scripts` and `devDependencies` blocks in `package.json`. Upstream pi-mono has no knip, so on a sync keep `knip:check` and the pin.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `biome.json`: removed. `.oxlintrc.json` and `.oxfmtrc.json` take over, scoped to the same 6,393 files through negated ignore patterns; the tab/3/120 layout carries over through `oxfmt --migrate=biome`.
+- `package.json`: `check` runs `npm run lint` (`oxlint --deny-warnings`), `npm run fmt:check` (`oxfmt --check`) and `npm run lint:ratchet` in place of `biome check --error-on-warnings .`; `check:fix` runs `npm run fmt` and `oxlint --fix` first. `@biomejs/biome` is replaced by exact pins of `oxlint` 1.89.0, `oxfmt` 0.74.0 and `oxc-parser` 0.148.0. Every type-aware rule is set off in `.oxlintrc.json` (lint runs without `--type-aware`, so an enabled one would be skipped silently).
+
+### Why
+
+- Sisyphus Labs moved every repository to the oxc toolchain (approved 2026-10-20). The per-file ratchet stops new `any`, `@ts-` comments and non-null assertions while the existing ones are rewritten later.
+
+### Why an extension could not handle it
+
+- The lint and format toolchain runs before any agent code exists.
+
+### Expected merge conflict zones
+
+- The `check` script chain and root `devDependencies` in `package.json`. Upstream pi-mono still uses Biome: on a sync, keep this repository's oxc scripts and pins and do not restore `biome.json`.
+
+
+## 2026-10-22 - hono and @hono/node-server overrides for GHSA-5r4p-p66f-jhc7 and GHSA-rmxm-3fg6-px4f
+
+### What changed
+
+- `package.json`: the root `overrides` block moves `hono` from 4.13.8 to 4.13.11 and `@hono/node-server` from 2.1.1 to 2.1.3; `package-lock.json`, `bun.lock` and the coding-agent install lock resolve both versions.
+
+### Why
+
+- GHSA-5r4p-p66f-jhc7 (`hono`) and GHSA-rmxm-3fg6-px4f (`@hono/node-server`), both moderate: `serveStatic` decoded the request path twice, so middleware guarding static paths could be bypassed. `hono` and `@hono/node-server` each ship a `serveStatic`, and both arrive through the `@modelcontextprotocol/sdk` subtree the fork does not declare, so both pins move.
+
+### Why an extension could not handle it
+
+- Dependency resolution is read by the package manager before any extension is loaded.
+
+### Expected merge conflict zones
+
+- The root `overrides` block in `package.json` and the matching lockfile entries, if another override bump lands first.
+
+## 2026-10-21 - Quarantine the agent dir for every test process (senpi#3867)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`, `packages/senpi-codemode/vitest.config.ts`: each calls `quarantineVitestAgentDir()` (fork-only `scripts/vitest-agent-dir-quarantine.mjs`) before its config is built. A Vitest run that `scripts/run-tests.mjs` did not already quarantine (the codemode gate calls Vitest directly) gets a temp `SENPI_CODING_AGENT_DIR` under `tmpdir()`. Every inherited `*_CODING_AGENT_DIR` lane is dropped, `SENPI_TEST_AGENT_DIR_GUARD=1` arms the guard for that process tree, and the dir is removed on exit. `scripts/run-tests.mjs` applies the same helper (fork-only `scripts/test-agent-dir.mjs`) to each run's owned temp root. The shared `vitest.base.ts` is untouched, because the evals configs import it and must read the real agent dir.
+
+### Why
+
+- senpi#3867: `getAgentDir()` throws in a senpi test run when it resolves the real agent dir. Kernels, compiled binaries and other children that tests spawn inherited no quarantined dir, so they resolved, and could write, the real one.
+
+### Why an extension could not handle it
+
+- Test-process environment is fixed before any agent code or extension loads.
+
+### Expected merge conflict zones
+
+- The import block and the line before `export default mergeConfig(` in both `vitest.config.ts` files.
+
+## 2026-10-17 - Pin TypeScript type roots to the repository (senpi#3482)
+
+### What changed
+
+- `tsconfig.base.json`: `typeRoots` is pinned to the repository's own `node_modules/@types` and `node_modules`, next to the existing `types: ["node"]`.
+
+### Why
+
+- With only `types`, TypeScript also looks for `@types` packages in every ancestor directory, so a checkout below a folder with its own `node_modules/@types/node` (for example `~/node_modules`) could typecheck against that copy instead of the repository's. The type roots resolve relative to this file, so every package config that extends it reads types only from the checkout.
+
+### Why an extension could not handle it
+
+- The TypeScript project configuration is read by the compiler before any agent code exists.
+
+### Expected merge conflict zones
+
+- The `compilerOptions` block of `tsconfig.base.json`. Keep `typeRoots` next to `types` when upstream changes either.
+
+## 2026-10-10 - Isolate test-process temp directories (senpi#3064)
+
+### What changed
+
+- `package.json`: script tests run under the temp-owning test launcher.
+- `packages/agent/package.json`, `packages/ai/package.json`, `packages/chord/package.json`, `packages/client/package.json`, `packages/coding-agent/package.json`, `packages/evals/package.json`, `packages/protocol/package.json`, `packages/pty/package.json`, `packages/senpi-codemode/package.json`, `packages/server/package.json`, `packages/session-backends/sqlite-node/package.json`, `packages/telemetry/package.json`, `packages/tui/package.json`: package test commands retain their arguments while launching under private temporary storage.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: direct Vitest/Bun test invocations use the same launcher and enable its post-exit temp leak guard.
+
+### Why
+
+- The launcher must set TMPDIR before Vitest constructs its core transform-copy cache, and CI must exercise the same cleanup contract as local package tests.
+
+### Why an extension could not handle it
+
+- Package scripts and CI workflows execute before any agent extension is loaded.
+
+### Expected merge conflict zones
+
+- Test scripts and CI commands. Preserve the selected runtime, reporters, shards and forwarded arguments when merging.
+
 ## 2026-10-04 - Biome skips the vendored pi codemode runtime (codemode plan node 18, part 1)
 
 ### What changed

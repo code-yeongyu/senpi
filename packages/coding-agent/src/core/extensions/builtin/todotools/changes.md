@@ -1,5 +1,16 @@
 # todotools Fork Tracker
 
+## 2026-10-15 - A one-task list reaches no handoff moment (senpi#3323)
+
+### What changed
+
+- `todo-format.ts` `handoffMomentOf`: a list with fewer than two tasks returns no moment, so its results carry no "Handoff due" cue.
+- `first-turn.ts` `FIRST_TURN_REMINDER`: "a question is one task, and its reply is the answer itself, with no handoff block" replaces "a question needs none past answering it".
+
+### Why
+
+- The opener arms for a first request that does not end in `?` or `!`, which includes most questions typed without a question mark ("explain this function"). The model planned it as one task, the todo result then said "write the Ask / For you / Now / Next block", and that cue outweighed the system prompt's "a reply that only answers a question is the answer itself" (senpi#2723). The senpi#2724 QA asked questions ending in `?`, which never arm the opener.
+
 ## 2026-10-01 - The first-turn opener asks for the phases the request needs (senpi#2505)
 
 ### What changed

@@ -73,7 +73,7 @@ describe("collapsed async ask-user widget content", () => {
 
 		const text = widgetLines(fake).join("\n");
 		expect(text).toContain("Question pending (1 unanswered)");
-		expect(text).toContain("Auth — Which auth method?");
+		expect(text).toContain("Auth - Which auth method?");
 		expect(text).toContain("[ OAuth ]  [ API key ]  [ own answer… ]");
 	});
 
@@ -99,9 +99,9 @@ describe("collapsed async ask-user widget content", () => {
 
 		const text = widgetLines(fake).join("\n");
 		expect(text).toContain("Question pending (1 unanswered)");
-		expect(text).toContain("Deploy — Where should it deploy?");
+		expect(text).toContain("Deploy - Where should it deploy?");
 		expect(text).toContain("[ Staging ]  [ Production ]  [ own answer… ]");
-		expect(text).not.toContain("Auth —");
+		expect(text).not.toContain("Auth -");
 		expect(text).not.toContain("more question");
 	});
 
@@ -117,7 +117,7 @@ describe("collapsed async ask-user widget content", () => {
 
 		const text = widgetLines(fake).join("\n");
 		expect(text).toContain("Question pending (0 unanswered)");
-		expect(text).not.toContain("Auth —");
+		expect(text).not.toContain("Auth -");
 		expect(text).toContain("to answer");
 	});
 
@@ -131,7 +131,7 @@ describe("collapsed async ask-user widget content", () => {
 		const lines = widgetLines(fake);
 		expect(lines.length).toBeGreaterThan(4);
 		for (const line of lines) expect(line.length).toBeLessThanOrEqual(WIDGET_WIDTH);
-		expect(lines[1]).toContain("Database — Which of the many equally plausible");
+		expect(lines[1]).toContain("Database - Which of the many equally plausible");
 		expect(lines[1]?.match(/standardize on\?/g)).toHaveLength(1);
 		expect(lines[2]).toContain("[ Engine number 1 ]  [ Engine number 2 ]");
 		for (let index = 1; index <= 30; index++) {

@@ -59,13 +59,13 @@ describe("abortedErrorLabel", () => {
 			},
 			stopReason: "aborted",
 			errorMessage:
-				"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+				"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
 			timestamp: 0,
 		} satisfies AssistantMessage;
 		const rendered = abortedMessageForRendering(message, 1, "provider");
 		expect(rendered.errorMessage).toContain("Provider stream start timed out");
 		expect(message.errorMessage).toBe(
-			"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+			"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
 		);
 	});
 

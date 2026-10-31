@@ -41,6 +41,7 @@ function fakeQuery(onClose?: () => void): SdkQueryHandle {
 function fakeExtension(): FakeExtension {
 	const handlers = new Map<string, EventHandler[]>();
 	const api = {
+		cwd: process.cwd(),
 		on(event: string, handler: EventHandler): void {
 			const registered = handlers.get(event) ?? [];
 			registered.push(handler);
@@ -351,6 +352,7 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		expect(extension.handlers.get("message_update")).toHaveLength(1);
 		expect(extension.handlers.get("message_end")).toHaveLength(1);
 		expect(extension.handlers.get("session_extensions_removed")).toHaveLength(1);
-		expect(extension.handlers.get("session_shutdown")).toHaveLength(2);
+		// The third stops following the 1M-window refusal state (senpi#3408).
+		expect(extension.handlers.get("session_shutdown")).toHaveLength(3);
 	});
 });

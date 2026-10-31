@@ -124,6 +124,24 @@ describe("pending-question keyboard model", () => {
 			);
 		},
 	);
+	// senpi#4002 review: the builtin delivers the partial answers of a cancel the user chose, so the
+	// command adds no second copy; with nothing answered it still sends the dismissal (test above).
+	it("/answer skip after a partial answer settles it as the user's cancel and sends no copy itself", async () => {
+		const h = mount();
+		const first = h.ask("Auth", 2);
+		await h.fake.submitEditorText("");
+		h.overlay()!.handleInput("1");
+		await h.fake.submitEditorText("/answer skip");
+		await Promise.resolve();
+		expect(first.settled).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({
+				status: "cancelled",
+				cancelOrigin: "user",
+				answers: { q0: { selected: ["OAuth"] } },
+			}),
+		);
+		expect(h.fake.session.sendUserMessage).not.toHaveBeenCalled();
+	});
 	it("/answer with two requests opens a two-row SelectList", async () => {
 		const h = mount();
 		h.ask();

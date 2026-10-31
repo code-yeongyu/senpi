@@ -167,6 +167,12 @@ const RESOURCE_EXHAUSTED_PATTERN = /resource.?exhausted/i;
  * @returns true if the message indicates a context overflow
  */
 export function isContextOverflow(message: AssistantMessage, contextWindow?: number): boolean {
+	const contextInput =
+		message.usage.contextUsage === undefined
+			? message.usage.input + message.usage.cacheRead
+			: (message.usage.contextUsage?.input ?? 0);
+	const contextOutput =
+		message.usage.contextUsage === undefined ? message.usage.output : (message.usage.contextUsage?.output ?? 0);
 	// Case 1: Check error message patterns
 	if (message.stopReason === "error" && message.errorMessage) {
 		// Skip messages matching known non-overflow patterns (e.g. throttling / rate-limit)
@@ -194,8 +200,7 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 
 	// Case 2: Silent overflow (z.ai style) - successful but usage exceeds context
 	if (contextWindow && message.stopReason === "stop") {
-		const inputTokens = message.usage.input + message.usage.cacheRead;
-		if (inputTokens > contextWindow) {
+		if (contextInput > contextWindow) {
 			return true;
 		}
 	}
@@ -203,9 +208,8 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 	// Case 3: Length-stop overflow (Xiaomi MiMo style) - server truncates oversized input
 	// to fit the context window, leaving no room for output. Returns stopReason "length"
 	// with output=0 and input+cacheRead filling the context window.
-	if (contextWindow && message.stopReason === "length" && message.usage.output === 0) {
-		const inputTokens = message.usage.input + message.usage.cacheRead;
-		if (inputTokens >= contextWindow * 0.99) {
+	if (contextWindow && message.stopReason === "length" && contextOutput === 0) {
+		if (contextInput >= contextWindow * 0.99) {
 			return true;
 		}
 	}
@@ -219,7 +223,9 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
  * limit before any context-based clamping.
  */
 export function isRecoverableLength(message: AssistantMessage, desiredMaxOutput: number): boolean {
-	return message.stopReason === "length" && desiredMaxOutput > 0 && message.usage.output < desiredMaxOutput;
+	// Unknown request context (`null`, e.g. a result-only subscription stop) falls back to the message output.
+	const output = message.usage.contextUsage?.output ?? message.usage.output;
+	return message.stopReason === "length" && desiredMaxOutput > 0 && output < desiredMaxOutput;
 }
 
 /**

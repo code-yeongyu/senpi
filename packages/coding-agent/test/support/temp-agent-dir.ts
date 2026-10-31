@@ -9,12 +9,12 @@
  * The signature of that hazard is a different test failing on each run.
  *
  * These helpers return a path unique per process and per call, so no two runs can collide. The
- * directory lives under `os.tmpdir()` and is left for the OS to reap, matching
- * `support/quarantine.ts`, which solves the same problem for `SENPI_CODING_AGENT_DIR`.
+ * directory lives under the test run's `os.tmpdir()` and is removed at file teardown.
  */
-import { mkdtempSync } from "node:fs";
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { makeTempDir } from "../../../../scripts/vitest-temp.ts";
 
 /**
  * Create a fresh directory usable as an `agentDir`.
@@ -23,5 +23,5 @@ import { join } from "node:path";
  * to add their own entropy.
  */
 export function createTempAgentDir(prefix = "senpi-test-agent-"): string {
-	return mkdtempSync(join(tmpdir(), prefix));
+	return makeTempDir(join(tmpdir(), prefix));
 }

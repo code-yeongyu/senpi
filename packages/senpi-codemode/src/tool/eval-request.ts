@@ -44,11 +44,11 @@ export function parseEvalRequest(
 	if (!isEvalLanguage(params.language))
 		throw new TypeError(`eval run language must be one of: ${enabledLanguages.join(", ")}`);
 	if (typeof params.code !== "string")
-		throw new TypeError("eval run requires code — the cell body to execute, verbatim");
+		throw new TypeError("eval run requires code: the cell body to execute, verbatim");
 	const summary = normalizeEvalSummary(params.summary);
 	if (summary === undefined)
 		throw new TypeError(
-			"eval run requires summary — one line in the user's language: what you are working on and for what purpose",
+			"eval run requires summary (one line in the user's language): what you are working on and for what purpose",
 		);
 	if (params.on_timeout !== undefined && params.on_timeout !== "detach" && params.on_timeout !== "error")
 		throw new TypeError(`Unknown eval on_timeout value "${String(params.on_timeout)}"`);
@@ -91,5 +91,5 @@ function isEvalLanguage(value: unknown): value is EvalToolInput["language"] {
 }
 
 function evalRunRequiresLanguageMessage(languages: readonly EvalLanguage[]): string {
-	return `eval run requires language — one of ${languages.map((language) => `"${language}"`).join(", ")}`;
+	return `eval run requires language: one of ${languages.map((language) => `"${language}"`).join(", ")}`;
 }

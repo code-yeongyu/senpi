@@ -73,6 +73,7 @@ export function createNotifier(
 			maxLinesPerInjection: number;
 			maxCharsPerInjection: number;
 			wakeBudget: number;
+			wakesPerHour: number;
 		}>;
 	} = {},
 ) {
@@ -93,6 +94,7 @@ export function createNotifier(
 			maxLinesPerInjection: 50,
 			maxCharsPerInjection: 4096,
 			wakeBudget: 5,
+			wakesPerHour: 12,
 			...overrides.settings,
 		}),
 		pauseMonitors,

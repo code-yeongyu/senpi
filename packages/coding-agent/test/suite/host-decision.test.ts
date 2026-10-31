@@ -76,6 +76,13 @@ interface Row {
 
 const rows: readonly Row[] = [
 	{
+		name: "a stopping host refuses adoption even when the client could upgrade it",
+		client: client(),
+		host: host({ lifecycle: "stopping" }),
+		policy: "upgrade",
+		expected: { action: "refuse", reason: "host_stopping", upgradeable: false },
+	},
+	{
 		name: "no host on the socket -> start",
 		client: client(),
 		host: undefined,

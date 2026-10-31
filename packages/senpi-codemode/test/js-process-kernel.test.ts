@@ -1,7 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { readFileSync, writeFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -9,15 +8,7 @@ import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import type { JavaScriptKernelOptions } from "../src/kernels/js/local-module-loader.ts";
 import { resolveJavaScriptProcessCommand, runtimeNameOf } from "../src/kernels/js/process-worker.ts";
 import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
-
-const kernels = new Set<JavaScriptKernel>();
-const tempRoots = new Set<string>();
-
-async function trackedTempRoot(prefix: string): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), prefix));
-	tempRoots.add(root);
-	return root;
-}
+import { kernels, trackedTempRoot } from "./js-process-fixtures.ts";
 
 /** A bun executable to run the kernel child under, when bun is installed: only bun can move fd 0 and fd 1. */
 const bunChild = (() => {
@@ -714,6 +705,7 @@ return "done";`,
 			const mode = how.endsWith("spins") ? ["busy"] : [];
 			// The host runs on bun, as the product does, so its kernel child is a bun child.
 			const host = spawn(productChild(), [hostFixture, ...mode], { stdio: ["pipe", "pipe", "inherit"] });
+			const hostClosed = once(host, "close", { signal: AbortSignal.timeout(30_000) });
 			const childPid = await new Promise<number>((resolve, reject) => {
 				let out = "";
 				host.stdout.on("data", (data: Buffer) => {
@@ -737,6 +729,7 @@ return "done";`,
 				await waitFor("the kernel child to exit with its host", () => !pidAlive(childPid), 2_000);
 			} finally {
 				host.kill("SIGKILL");
+				await hostClosed;
 			}
 		},
 	);
@@ -848,6 +841,7 @@ return "done";`,
 			const wrapper = spawn(productChild(), [subreaperFixture, productChild(), hostFixture], {
 				stdio: ["pipe", "pipe", "inherit"],
 			});
+			const wrapperClosed = once(wrapper, "close", { signal: AbortSignal.timeout(30_000) });
 			try {
 				const pids = await new Promise<{ host: number; child: number }>((resolve, reject) => {
 					let out = "";
@@ -869,6 +863,7 @@ return "done";`,
 				);
 			} finally {
 				wrapper.kill("SIGKILL");
+				await wrapperClosed;
 			}
 		},
 	);

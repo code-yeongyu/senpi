@@ -199,7 +199,7 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 		cleanup: async () => {
 			unsubscribe();
 			const pending = getPendingQuestions(askCtx.sessionManager.getSessionId());
-			for (const entry of pending) entry.cancel();
+			for (const entry of pending) entry.cancel("session_closed");
 			await Promise.all(pending.map((entry) => entry.completion));
 			await runGoalHandlers(goal.handlers, "session_shutdown", { type: "session_shutdown", reason: "quit" }, ctx);
 			ask.harness.cleanup();

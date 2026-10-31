@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { open } from "node:fs/promises";
+import { signalSpawnedChild } from "../../../../utils/child-signal.ts";
 import { cursorAgentEnvironment } from "./environment.ts";
 
 export type CursorCliModelProbeInput = {
@@ -52,7 +53,7 @@ export const runModelsProbe: CursorCliModelProbe = async ({ executable, stdoutPa
 			};
 			const deadline = setTimeout(() => {
 				timedOut = true;
-				child.kill("SIGKILL");
+				signalSpawnedChild(child, "SIGKILL");
 			}, timeoutMs);
 			child.once("error", (error) => finish(error));
 			child.once("close", (code, signal) => {

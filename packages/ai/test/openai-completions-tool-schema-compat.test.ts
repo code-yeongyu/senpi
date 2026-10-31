@@ -357,15 +357,34 @@ describe("tool-schema-compat", () => {
 			]);
 		});
 
-		it("does not claim object type for a root union of non-object branches", () => {
-			// Forcing `type: "object"` here would contradict every branch. The root
-			// object guarantee only applies to schemas that really are objects.
+		it("claims object type for a root union of non-object branches (DeepSeek contract)", () => {
+			// DeepSeek rejects any root parameters schema without `type: "object"`:
+			// `schema must be a JSON Schema of 'type: "object"', got 'type: null'`.
+			// Tool parameters are objects in practice, so an unmergeable root union is
+			// normalized into an object root that keeps the union, not left typeless.
 			const schema = { anyOf: [{ type: "string" }, { type: "number" }] };
 
 			const normalized = normalizeToolParametersForOpenAICompat(structuredClone(schema));
 
-			expect(normalized.type).toBeUndefined();
+			expect(normalized.type).toBe("object");
 			expect(normalized.anyOf).toEqual([{ type: "string" }, { type: "number" }]);
+		});
+
+		it("adds the object type to a typeless root union that cannot merge (#3245)", () => {
+			// Live-verified against DeepSeek: a root anyOf mixing object and scalar
+			// branches 400s with `got 'type: null'`; the same union with a root
+			// `type: "object"` is accepted.
+			const schema = {
+				anyOf: [{ type: "object", properties: { a: { type: "string" } } }, { type: "string" }],
+			};
+
+			const normalized = normalizeToolParametersForOpenAICompat(structuredClone(schema));
+
+			expect(normalized.type).toBe("object");
+			expect(normalized.anyOf).toEqual([
+				{ type: "object", properties: { a: { type: "string" } } },
+				{ type: "string" },
+			]);
 		});
 
 		it("does not merge a root union whose branches are not all object shapes", () => {

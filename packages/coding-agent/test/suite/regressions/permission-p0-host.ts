@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolCall } from "@earendil-works/pi-ai";
@@ -6,7 +6,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-work
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { parseArgs } from "../../../src/cli/args.ts";
-import { CONFIG_DIR_NAME, getAgentDir } from "../../../src/config.ts";
+import { CONFIG_DIR_NAME } from "../../../src/config.ts";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
@@ -48,21 +48,15 @@ export async function createPermissionP0Host(
 	const agentDir = join(scratch, "agent");
 	await mkdir(cwd);
 	await mkdir(agentDir);
+	// The session's own agent dir holds its global settings (senpi#2465), so the setup's global
+	// settings go there, beside the builtin list; the process-wide agent dir is never touched.
 	await writeFile(
 		join(agentDir, "settings.json"),
 		JSON.stringify({
+			...setup.globalSettings,
 			enabledBuiltinExtensions: ["permission-system", "tool-search", ...additionalBuiltins],
 		}),
 	);
-	// The permission extension reads global settings from the process agent dir, not the host's.
-	const globalSettingsPath = join(getAgentDir(), "settings.json");
-	const originalGlobalSettings = setup.globalSettings
-		? await readFile(globalSettingsPath, "utf8").catch(() => undefined)
-		: undefined;
-	if (setup.globalSettings) {
-		await mkdir(getAgentDir(), { recursive: true });
-		await writeFile(globalSettingsPath, JSON.stringify(setup.globalSettings));
-	}
 	if (setup.projectSettings) {
 		await mkdir(join(cwd, CONFIG_DIR_NAME), { recursive: true });
 		await writeFile(join(cwd, CONFIG_DIR_NAME, "settings.json"), JSON.stringify(setup.projectSettings));
@@ -184,10 +178,6 @@ export async function createPermissionP0Host(
 		},
 		async dispose() {
 			await router.dispose();
-			if (setup.globalSettings) {
-				if (originalGlobalSettings === undefined) await rm(globalSettingsPath, { force: true });
-				else await writeFile(globalSettingsPath, originalGlobalSettings);
-			}
 			await rm(scratch, { recursive: true, force: true });
 		},
 	};

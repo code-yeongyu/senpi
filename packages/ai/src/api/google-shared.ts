@@ -10,6 +10,7 @@ import {
 	type Part,
 	type ThinkingConfig,
 } from "@google/genai";
+import { isGoogleGeneration4OrLaterModelId } from "../google-thinking-generation.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	ImageContent,
@@ -79,6 +80,8 @@ export function usesGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>
 		// Match Gemini 3 Pro/Flash IDs with or without a minor version, such as
 		// gemini-3-flash-preview, gemini-3.1-pro-preview, and gemini-3.8-flash.
 		/gemini-3(?:\.\d+)?-(?:pro|flash)/.test(id) ||
+		// Generation 4 and later only accept discrete levels; a budget is rejected with HTTP 400 (senpi#3292).
+		isGoogleGeneration4OrLaterModelId(id) ||
 		id === "gemini-flash-latest" ||
 		id === "gemini-flash-lite-latest" ||
 		// Match both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.
@@ -359,6 +362,7 @@ export function convertMessages<T extends GoogleApiType>(
 						parts.push(part);
 					}
 				} else if (block.type === "providerNative") {
+					// providerNative blocks are not replayed to Google.
 				}
 			}
 

@@ -36,10 +36,9 @@ export async function executeEvalControl(
 	return createDetachedControlResult(snapshot);
 }
 
-function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolResult<EvalListDetails> {
+export function listEvalCells(cellManager: EvalDetachedCellManager): EvalListedCell[] {
 	const { live, recent } = cellManager.list();
-	const snapshots = [...live, ...recent];
-	const cells: EvalListedCell[] = snapshots.map((snapshot) => {
+	return [...live, ...recent].map((snapshot) => {
 		const summary = snapshot.result.details.summary;
 		return {
 			cellId: snapshot.cellId,
@@ -50,6 +49,12 @@ function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolRe
 			...(summary ? { summary } : {}),
 		};
 	});
+}
+
+function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolResult<EvalListDetails> {
+	const { live, recent } = cellManager.list();
+	const snapshots = [...live, ...recent];
+	const cells = listEvalCells(cellManager);
 	const text = snapshots
 		.map((snapshot, index) => {
 			const cell = cells[index];

@@ -131,6 +131,84 @@ describe("retired boundary handlers (#2785)", () => {
 		expect(errors).toEqual([]);
 	});
 
+	// #3101: the first preview build is the one boundary step that had no stand-down path.
+	it("does not report an initial boundary build that fails after retirement (#3101)", async () => {
+		let boundary: TurnEndEvent | undefined;
+		let observedCalls = 0;
+		const errors: ExtensionError[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("turn_end", (event) => {
+						boundary = event;
+					});
+					pi.on("turn_end", () => {
+						observedCalls++;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const runner = harness.getExtensionRunner();
+		runner.onError((error) => errors.push(error));
+		harness.setResponses([fauxAssistantMessage("warm")]);
+		await harness.session.prompt("capture a real boundary preview");
+		if (!boundary) throw new Error("Warm turn did not emit turn_end");
+		const initialCalls = observedCalls;
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<BoundaryContextPreview>();
+		let previewCalls = 0;
+		const emission = runner.emitBoundary(boundary, () => {
+			previewCalls++;
+			entered.resolve();
+			return release.promise;
+		});
+		try {
+			await entered.promise;
+			runner.invalidate("Retired by the next session");
+		} finally {
+			release.reject(new Error("Built the initial boundary preview after retirement"));
+		}
+		const result = await emission;
+		expect(previewCalls).toBe(1);
+		expect(observedCalls).toBe(initialCalls);
+		expect(errors).toEqual([]);
+		expect(result.entries).toEqual([]);
+		expect(result.continue).toBe(false);
+		expect(result.valid).toBe(false);
+	});
+
+	it("still surfaces an initial boundary build failure while the runner is active (#3101)", async () => {
+		let boundary: TurnEndEvent | undefined;
+		let observedCalls = 0;
+		const errors: ExtensionError[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("turn_end", (event) => {
+						boundary = event;
+					});
+					pi.on("turn_end", () => {
+						observedCalls++;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const runner = harness.getExtensionRunner();
+		runner.onError((error) => errors.push(error));
+		harness.setResponses([fauxAssistantMessage("warm")]);
+		await harness.session.prompt("capture a real boundary preview");
+		if (!boundary) throw new Error("Warm turn did not emit turn_end");
+		const initialCalls = observedCalls;
+		await expect(
+			runner.emitBoundary(boundary, () => Promise.reject(new Error("Initial boundary preview failed"))),
+		).rejects.toThrow("Initial boundary preview failed");
+		expect(runner.isActive).toBe(true);
+		expect(observedCalls).toBe(initialCalls);
+		expect(errors).toEqual([]);
+	});
+
 	it("does not report a boundary rebuild that fails after retirement", async () => {
 		let boundary: TurnEndEvent | undefined;
 		const errors: ExtensionError[] = [];

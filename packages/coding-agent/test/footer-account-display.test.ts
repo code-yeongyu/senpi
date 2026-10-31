@@ -37,4 +37,21 @@ describe("accountFooterSuffix", () => {
 	it("never contains key material", () => {
 		expect(accountFooterSuffix(pooled("work"), "session-1")).not.toContain("key-");
 	});
+
+	// senpi#3486 review: the footer must name the slot that serves; a mixed pool's key slot never does.
+	it("never names the other kind's slot of a mixed pool", () => {
+		const mixed = {
+			type: "oauth" as const,
+			access: "a",
+			refresh: "r",
+			expires: 4_102_444_800_000,
+			accounts: [
+				{ name: "default", source: "login" as const, access: "a", refresh: "r", expires: 4_102_444_800_000 },
+				{ name: "login-2", source: "login" as const, key: "sk-unused" },
+			],
+		};
+		for (let session = 0; session < 64; session++) {
+			expect(accountFooterSuffix(mixed, `session-${session}`)).toBe("");
+		}
+	});
 });

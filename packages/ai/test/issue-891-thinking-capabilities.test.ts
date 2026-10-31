@@ -28,7 +28,7 @@ describe("issue #891 generated thinking capabilities", () => {
 	});
 
 	it("does not change Xiaomi's existing disabled-thinking transport contract", () => {
-		const model = getBuiltinModel("xiaomi", "mimo-v2.5");
+		const model = getBuiltinModel("xiaomi", "mimo-v2.6-flash");
 
 		expect(model.thinkingLevelMap).toBeUndefined();
 		expect(model.compat).toMatchObject({ supportsDisabledThinking: false, thinkingFormat: "deepseek" });

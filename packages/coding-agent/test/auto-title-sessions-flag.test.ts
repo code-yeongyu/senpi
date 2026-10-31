@@ -35,7 +35,7 @@ describe("resolveAutoTitleSessions", () => {
 		expect(resolveAutoTitleSessions("rpc", parsed, false, [AUTO_TITLE_SESSIONS_CAPABILITY])).toBe(true);
 	});
 
-	test.each(["rpc", "print", "json", "app-server"] as const)("honors the flag in %s mode", (appMode) => {
+	test.each(["rpc", "print", "json"] as const)("honors the flag in %s mode", (appMode) => {
 		const parsed = parseArgs(["--mode", "rpc", "--multi-session", "--auto-title-sessions"]);
 		expect(resolveAutoTitleSessions(appMode, parsed, false)).toBe(true);
 	});

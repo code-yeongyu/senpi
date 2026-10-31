@@ -94,7 +94,7 @@ describe("manual compaction on the Claude subscription lane", () => {
 		});
 		const residentStream: StreamFn = (model, context, options) =>
 			wrapStreamWithModelRecovery(
-				streamAnthropicSubscription(model, context, options),
+				streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...options }),
 				model,
 				getCurrentTools(context.messages),
 			);

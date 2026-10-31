@@ -3,7 +3,6 @@ import { once } from "node:events";
 import { access, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
 import {
 	createDaemonDirectories,
@@ -18,6 +17,7 @@ import {
 	writeHostSettings,
 } from "../../../src/modes/rpc/host-daemon-state.ts";
 import { hostLaunchProfile } from "../../../src/modes/rpc/protocol-identity.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import {
 	type GenerationScratch,
 	generationEnv,
@@ -25,6 +25,7 @@ import {
 	JsonlPeer,
 } from "../../helpers/rpc-generation-support.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-owner-review-clock.ts");
 const children: Array<{ child: ChildProcess; command: string; exited: Promise<unknown> }> = [];
@@ -89,7 +90,7 @@ function launch(args: string[], env: NodeJS.ProcessEnv) {
 async function rig(owned = true, watchMode = "normal") {
 	const qa = generationScratch("rv");
 	roots.push(qa);
-	const env = { ...process.env, ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir };
+	const env = { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir };
 	const owner = owned ? launch(["owner"], env) : undefined;
 	let identity: HostLifetimeOwner | null = null;
 	if (owner) {

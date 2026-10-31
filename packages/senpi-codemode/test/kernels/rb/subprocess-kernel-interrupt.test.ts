@@ -6,6 +6,8 @@ import { SubprocessKernel } from "../../../src/kernels/shared/subprocess-kernel.
 import type { EvalKernel } from "../../../src/tool/types.ts";
 
 class InterruptibleFakeProcess extends EventEmitter {
+	// POSIX: a pid above every platform's pid_max, so a real group signal fails with ESRCH and the direct kill is recorded.
+	readonly pid: number | undefined = process.platform === "win32" ? undefined : 2 ** 22 + 1;
 	readonly stdinWrites: string[] = [];
 	readonly stdin = { writes: this.stdinWrites, write: (chunk: string): unknown => this.stdinWrites.push(chunk) };
 	readonly stdout = new PassThrough();

@@ -1,4 +1,38 @@
-import { describeProviderStallForUser, formatStallDuration, type ProviderStallDescriptionOptions } from "./retry.ts";
+import {
+	describeProviderStallForUser,
+	formatStallDuration,
+	isAnthropicThirdPartyBillingMessage,
+	type ProviderStallDescriptionOptions,
+} from "./retry.ts";
+
+const CLAUDE_EXTRA_USAGE_URL = "https://claude.ai/settings/usage";
+
+/**
+ * `PROVIDER_NOT_CONFIGURED_PREFIX` from `../auth/resolve.ts`, repeated because importing it pulls the auth
+ * modules past this entry's import budget (`check:entry-graphs`). The description test builds its input with
+ * `providerNotConfiguredMessage`, so the two copies cannot drift apart.
+ */
+const PROVIDER_NOT_CONFIGURED_PREFIX = "Provider is not configured: ";
+
+/**
+ * Opens the sentence an adapter adds when its own account-limit text already names the next step
+ * (senpi#3615). Such text is shown as written instead of the generic switch-provider advice.
+ */
+export const ACCOUNT_LIMIT_NEXT_STEP_LEAD = "To keep going now, ";
+const RETRY_AFTER_MARKER = /\s*\(retry-after-ms: \d+\)$/;
+
+/**
+ * senpi#3259: the billing path is the whole story. On the direct `anthropic` provider a Claude
+ * subscription token is billed as a third-party app, so the fix is the Agent SDK lane; on the
+ * `anthropic-subscription` lane the request already ran through Claude Code, so only extra usage or
+ * another model can help.
+ */
+function describeAnthropicThirdPartyBilling(provider: string | undefined): string {
+	if (provider === "anthropic-subscription") {
+		return `Anthropic billed this Claude Code request to your extra usage instead of your plan limits, and your extra usage is used up. Add extra usage at ${CLAUDE_EXTRA_USAGE_URL}, or switch to another model.`;
+	}
+	return `Anthropic billed this request to your extra usage instead of your Claude plan limits, because a Claude subscription used directly through the Anthropic API counts as a third-party app. Connect "Anthropic Subscription (Claude Pro/Max)" so requests run through Claude Code and use your plan limits, add extra usage at ${CLAUDE_EXTRA_USAGE_URL}, or switch to another model.`;
+}
 
 /**
  * Session-internal replay-suppression signal, read off the error text by the
@@ -48,11 +82,28 @@ function transportSymptom(errorMessage: string, subject: string): string | undef
  */
 export function describeProviderFailureForUser(
 	errorMessage: string | undefined,
-	options: ProviderStallDescriptionOptions = {},
+	options: ProviderStallDescriptionOptions & { usageLimit?: "account" | "model" } = {},
 ): string | undefined {
 	if (!errorMessage) return undefined;
 	const message = stripTurnRetrySuppressionPrefix(errorMessage).trim();
 	if (!message) return undefined;
+	if (isAnthropicThirdPartyBillingMessage(message)) {
+		return describeAnthropicThirdPartyBilling(options.model?.split("/")[0]);
+	}
+	// The sentinel stays on the message for the classifiers that key on it; the reader gets the step (senpi#4329).
+	if (message.startsWith(PROVIDER_NOT_CONFIGURED_PREFIX)) {
+		const provider = message.slice(PROVIDER_NOT_CONFIGURED_PREFIX.length);
+		return `${provider} is not connected: no API key or sign-in is saved for it. Connect the provider, or choose another model.`;
+	}
+	if (options.usageLimit === "account") {
+		if (message.includes(ACCOUNT_LIMIT_NEXT_STEP_LEAD)) return message.replace(RETRY_AFTER_MARKER, "");
+		const provider = options.model?.split("/")[0];
+		const reset = /\bresets?\s+([^"}\n]+)/i
+			.exec(message)?.[1]
+			?.trim()
+			.replace(/[.;]+$/, "");
+		return `The ${provider ? `${provider} ` : ""}account usage limit has been reached${reset ? ` (resets ${reset})` : ""}. Switch to another provider, or configure another provider in retry.fallbackChains.`;
+	}
 	const stall = describeProviderStallForUser(message, options);
 	if (stall !== undefined) return stall;
 

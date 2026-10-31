@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult } from "../../types.ts";
 import type { DispatchAuthorizer, DispatchPolicy } from "./dispatch.ts";
-import { type ParserRegistry, toolOwnedPermissionRequests } from "./parsers.ts";
+import { type ParserRegistry, permissionRequestsFor } from "./parsers.ts";
 import type { PermissionService } from "./service.ts";
 import type { PermissionPresetName } from "./types.ts";
 
@@ -27,15 +27,20 @@ export function createDispatchAuthorizer(
 			if (state.setupError !== null) throw new Error(`Permission setup failed: ${state.setupError}`);
 			const { service, parsers } = state;
 			if (!service || !parsers) throw new Error("Permission authorizer is not initialized");
-			const requests = parsers.has(request.toolName)
-				? parsers.parse(request.toolName, request.input, ctx.cwd)
-				: (toolOwnedPermissionRequests(pi.getAllTools(), request.toolName, request.input, ctx.cwd) ??
-					parsers.parse(request.toolName, request.input, ctx.cwd));
+			const requests = permissionRequestsFor(
+				() => pi.getAllTools(),
+				parsers,
+				request.toolName,
+				request.input,
+				ctx.cwd,
+			);
 			let action: DispatchPolicy["action"] = "allow";
 			const decisions = requests.map((permission) => {
 				const rules = permission.patterns.map((pattern) =>
-					service.dispatchDecision(permission.permission, permission.ruleAliases ?? pattern, {
+					service.dispatchDecision(permission.permission, pattern, {
 						presetBound: state.preset === "auto",
+						ruleAliases: permission.ruleAliases,
+						originalPaths: permission.originalPaths,
 					}),
 				);
 				for (const decision of rules) {

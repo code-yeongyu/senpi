@@ -1,8 +1,9 @@
 import type { GenerateContentParameters } from "@google/genai";
 import { describe, expect, it } from "vitest";
 import { streamSimple as streamSimpleGoogle } from "../src/api/google-generative-ai.ts";
-import { resolveGoogleThinkingLevel } from "../src/api/google-shared.ts";
+import { resolveGoogleThinkingLevel, usesGoogleThinkingLevel } from "../src/api/google-shared.ts";
 import { streamSimple as streamSimpleVertex } from "../src/api/google-vertex.ts";
+import { getSupportedThinkingLevels } from "../src/models.ts";
 import type { Model, ThinkingBudgets, ThinkingLevel, ThinkingLevelMap } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -159,6 +160,96 @@ describe("Google thinking level maps", () => {
 
 		expect(payload.config?.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: "MEDIUM" });
 	});
+
+	// gemini-4-argon rejects thinking_budget with HTTP 400; it only accepts LOW/MEDIUM/HIGH levels (senpi#3292).
+	const argonMap = {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: null,
+		max: null,
+	} as const satisfies ThinkingLevelMap;
+
+	it.each(googleAdapters)(
+		"sends a thinking level, never a budget, for gemini-4-argon on $name",
+		async ({ capture }) => {
+			const payload = await capture("gemini-4-argon", argonMap, "high");
+
+			expect(payload.config?.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: "HIGH" });
+		},
+	);
+
+	it.each(googleAdapters)("clamps disabled thinking to LOW for gemini-4-argon on $name", async ({ capture }) => {
+		const payload = await capture("gemini-4-argon", argonMap);
+
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+	});
+
+	// Custom models.json and discovery rows usually carry no thinkingLevelMap, so generation 4 and later
+	// must still offer only the levels the provider accepts (senpi#3292 review).
+	const mapLessAdapters = [
+		{
+			name: "Google Generative AI",
+			model: (id: string) => {
+				const { thinkingLevelMap: _omitted, ...rest } = googleModel(id, {});
+				return rest;
+			},
+			capture: (id: string, reasoning?: ThinkingLevel) => {
+				const { thinkingLevelMap: _omitted, ...rest } = googleModel(id, {});
+				return captureGooglePayload(rest, reasoning);
+			},
+		},
+		{
+			name: "Google Vertex",
+			model: (id: string) => {
+				const { thinkingLevelMap: _omitted, ...rest } = vertexModel(id, {});
+				return rest;
+			},
+			capture: (id: string, reasoning?: ThinkingLevel) => {
+				const { thinkingLevelMap: _omitted, ...rest } = vertexModel(id, {});
+				return captureVertexPayload(rest, reasoning);
+			},
+		},
+	] as const;
+
+	it.each(mapLessAdapters)("offers only low, medium and high for a map-less gemini-4-argon on $name", ({ model }) => {
+		expect(getSupportedThinkingLevels(model("gemini-4-argon"))).toEqual(["low", "medium", "high"]);
+	});
+
+	it.each(mapLessAdapters)("raises minimal to LOW for a map-less gemini-4-argon on $name", async ({ capture }) => {
+		const payload = await capture("gemini-4-argon", "minimal");
+
+		expect(payload.config?.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: "LOW" });
+	});
+
+	it.each(mapLessAdapters)(
+		"clamps disabled thinking to LOW, not a zero budget, for a map-less gemini-4-argon on $name",
+		async ({ capture }) => {
+			const payload = await capture("gemini-4-argon");
+
+			expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+		},
+	);
+
+	it.each(mapLessAdapters)("keeps off and minimal for a map-less gemini-2.5-flash on $name", ({ model }) => {
+		expect(getSupportedThinkingLevels(model("gemini-2.5-flash")).slice(0, 2)).toEqual(["off", "minimal"]);
+	});
+
+	it.each(["gemini-4", "gemini-4-argon", "gemini-4.5-pro", "models/gemini-4-argon", "gemini-10-x"])(
+		"treats %s as generation 4 or later",
+		(id) => {
+			expect(usesGoogleThinkingLevel(googleModel(id, {}))).toBe(true);
+		},
+	);
+
+	it.each(["xgemini-4-argon", "gemini-40b", "gemini-embedding-4-001", "gemini-2.5-pro"])(
+		"does not treat %s as generation 4 or later",
+		(id) => {
+			expect(usesGoogleThinkingLevel(googleModel(id, {}))).toBe(false);
+		},
+	);
 
 	it.each(googleAdapters)("disables Gemini 2.5 thinking when reasoning is omitted on $name", async ({ capture }) => {
 		const payload = await capture("gemini-2.5-flash", {});

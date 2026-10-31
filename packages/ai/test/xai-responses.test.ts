@@ -172,6 +172,13 @@ describe("xAI Responses provider", () => {
 		}
 	});
 
+	it("declares the Responses search shape without enabling an unverified route", () => {
+		const models = xaiProvider().getModels();
+		expect(models.length).toBeGreaterThan(0);
+		expect(models.every((model) => model.compat?.supportsWebSearchPreview !== true)).toBe(true);
+		expect(models.every((model) => model.compat?.webSearchToolType === "web_search")).toBe(true);
+	});
+
 	it("exposes the documented per-model efforts", () => {
 		expect(XAI_MODELS["grok-4.5"].api).toBe("openai-responses");
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high"]);
@@ -228,10 +235,11 @@ describe("xAI Responses provider", () => {
 			model: "grok-4.5",
 			store: false,
 			stream: true,
-			prompt_cache_key: "pi-session-123",
+			prompt_cache_key: expect.stringMatching(/^.{1,64}$/),
 			reasoning: { effort: "medium" },
 			include: ["reasoning.encrypted_content"],
 		});
+		expect(captured.body.prompt_cache_key).not.toBe("pi-session-123");
 		expect(captured.body).not.toHaveProperty("prompt_cache_retention");
 		expect(captured.body.input).toEqual(
 			expect.arrayContaining([
@@ -256,29 +264,6 @@ describe("xAI Responses provider", () => {
 			include: ["reasoning.encrypted_content"],
 		});
 		expect(captured.body).not.toHaveProperty("reasoning");
-	});
-
-	it("uses /responses for Grok 4.7 with xhigh effort and encrypted reasoning", async () => {
-		const captured = await captureRequest(
-			XAI_MODELS["grok-4.7"],
-			{
-				systemPrompt: "You are a careful coding assistant.",
-				messages: [{ role: "user", content: "hello", timestamp: 1 }],
-			},
-			{
-				apiKey: "xai-test-token",
-				reasoningEffort: "xhigh",
-			},
-		);
-
-		expect(captured.url).toBe("https://api.x.ai/v1/responses");
-		expect(captured.body).toMatchObject({
-			model: "grok-4.7",
-			store: false,
-			stream: true,
-			reasoning: { effort: "xhigh" },
-			include: ["reasoning.encrypted_content"],
-		});
 	});
 
 	it("uses /responses for Grok 4.7 with xhigh effort and encrypted reasoning", async () => {

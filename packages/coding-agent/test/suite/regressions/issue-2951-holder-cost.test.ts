@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import * as daemonProcess from "../../../src/modes/app-server/daemon/process.ts";
 import { createSessionPathReservations } from "../../../src/modes/rpc/host-reservations.ts";
+import * as daemonProcess from "../../../src/utils/process-identity.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 

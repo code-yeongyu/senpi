@@ -32,8 +32,13 @@ export function describeLoginFailure(error: unknown, providerName: string, metho
 		return { level: "error", message: `${done}, but local model state could not be synchronized: ${message}` };
 	}
 	const failed =
-		method === "oauth" ? `Failed to login to ${providerName}` : `Failed to save API key for ${providerName}`;
-	return { level: "error", message: `${failed}: ${message}` };
+		method === "oauth"
+			? `Sign-in to ${providerName} did not finish`
+			: `Could not save the API key for ${providerName}`;
+	return {
+		level: "error",
+		message: `${failed}: ${message}${/[.!?]$/.test(message) ? "" : "."} Run /login to try again.`,
+	};
 }
 
 function errorMessage(error: unknown): string {

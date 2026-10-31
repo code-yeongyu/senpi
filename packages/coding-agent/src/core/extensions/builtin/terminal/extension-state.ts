@@ -7,15 +7,16 @@ import {
 	TERMINAL_MONITOR_STATE_EVENT,
 	WAKE_SOURCE_STATE_EVENT,
 } from "../monitor-state-event.ts";
+import { withTerminalContext } from "./context-lifetime.ts";
+import { tapBackgroundSession, untapBackgroundSession } from "./job-widget-tap.ts";
 import type { MonitorNotifier } from "./monitor-notify.ts";
 import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
 import type { MonitorStatusTicker } from "./monitor-status-ticker.ts";
 import type { TerminalNotifier } from "./notify.ts";
 import type { PersistenceState } from "./restore-session.ts";
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import { type TerminalEventSinks, TerminalSessionBundle } from "./session-bundle.ts";
 import type { ResolvedTerminalSettings } from "./settings.ts";
-import type { TerminalToolContext } from "./tools/context.ts";
+import type { TerminalExitView, TerminalToolContext } from "./tools/context.ts";
 
 export interface TerminalExtensionState extends PersistenceState {
 	settings: ResolvedTerminalSettings;
@@ -42,6 +43,13 @@ export function createBundle(state: TerminalExtensionState): TerminalSessionBund
 
 /** Sinks read the live instance state at call time, so notifier swaps need no re-bind. */
 export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): TerminalEventSinks {
+	const retire = () => {
+		state.monitorNotifier?.dispose();
+		state.monitorNotifier = null;
+		state.notifier = null;
+		state.statusTicker.stop();
+		state.keeper?.stop();
+	};
 	return {
 		onMonitorEvent: (event) => state.monitorNotifier?.notifyEvent(event),
 		onMonitorEnded: (event) => {
@@ -51,13 +59,17 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 			// runs again, so its restore baseline goes. Disposal is a shutdown or reload: the watch is
 			// suspended, not ended, and a later restore still needs the dir.
 			if (event.reason === "disposed") return;
-			const dir = terminalStateDir(state.ctx);
+			const dir = withTerminalContext(() => terminalStateDir(state.ctx), retire);
 			const monitorId = state.bundle?.manager.monitorIdOf(event.id);
 			if (dir === undefined || monitorId === undefined) return;
 			removeMonitorStateDir(dir, monitorId).catch((error: unknown) => {
-				state.ctx?.ui?.notify?.(
-					`Could not remove the state dir of ${monitorId}: ${error instanceof Error ? error.message : String(error)}`,
-					"warning",
+				withTerminalContext(
+					() =>
+						state.ctx?.ui?.notify?.(
+							`Could not remove the state dir of ${monitorId}: ${error instanceof Error ? error.message : String(error)}`,
+							"warning",
+						),
+					retire,
 				);
 			});
 		},
@@ -84,8 +96,9 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
 				source: "terminal-monitors",
 				activeCount: snapshot.length,
+				// The stable "mon_" id: runtime ids churn on restore, and item ids feed the custody signature.
 				monitors: snapshot.map((entry) => ({
-					id: entry.id,
+					id: entry.monitorId ?? entry.id,
 					description: entry.description,
 					startedAtMs: entry.startedAtMs,
 				})),
@@ -144,6 +157,9 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		get shellPath() {
 			return state.shellPath;
 		},
+		get redactSecretsInOutput() {
+			return state.settings.redactSecretsInOutput;
+		},
 		get defaultCols() {
 			return state.settings.defaultCols;
 		},
@@ -163,10 +179,22 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		getSessionContext: () => state.ctx,
 		// Exit listeners registered before a reload reach the post-reload owner through the
 		// shared bundle, so this must dispatch via the bundle, never the instance notifier.
-		onBackgroundStart: (id: string, description: string, startedAtMs: number) => {
+		onBackgroundStart: (id: string, description: string, startedAtMs: number, command?: string) => {
 			state.bundle?.notifyBackgroundStart(id, description, startedAtMs);
+			const runtime = state.bundle?.manager.get(id);
+			if (runtime) {
+				const key = withTerminalContext(
+					() => sessionKeyOf(state.ctx),
+					() => {},
+				);
+				tapBackgroundSession(key, id, runtime, {
+					command: command ?? description,
+					description,
+				});
+			}
 		},
-		onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => {
+		onSessionInput: (id: string) => untapBackgroundSession(state.bundle?.manager.get(id)),
+		onBackgroundExit: (id: string, runtime: TerminalExitView) => {
 			state.bundle?.notifyBackgroundExit(id, runtime);
 		},
 		onMonitorRearmed: (id: string) => state.monitorNotifier?.rearm(id),

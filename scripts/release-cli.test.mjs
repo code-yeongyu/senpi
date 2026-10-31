@@ -29,15 +29,17 @@ const ciCheckRuns = (ci) =>
 		},
 	]);
 
-for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false } of [
+for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, forceTests = false } of [
 	{ mergeStatus: 0, ci: "success" },
 	{ mergeStatus: 1, ci: "success" },
 	{ mergeStatus: 0, ci: "failure" },
 	{ mergeStatus: 0, ci: "success", catalogDirty: true },
 	{ mergeStatus: 0, ci: "superseded" },
 	{ mergeStatus: 0, ci: "success", manifestStampOnly: true },
+	{ mergeStatus: 0, ci: "success", forceTests: true },
+	{ mergeStatus: 0, ci: "success", catalogDirty: true, forceTests: true },
 ]) {
-	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
+	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
 		try {
 			for (const file of WORKSPACE_PACKAGES) {
@@ -57,6 +59,8 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false } 
 			for (const name of ["git", "npm", "node", "bun", "gh"]) {
 				const body = `
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...args]) + "\\n");
 if (${JSON.stringify(name)} === "git") {
@@ -74,6 +78,10 @@ if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "merge-base") process.exit(1);
 	if (args[0] === "merge") process.exit(${mergeStatus});
 }
+if (${JSON.stringify(name)} === "npm" && args[0] === "test") {
+	const changelog = require("node:fs").readFileSync(${JSON.stringify(CHANGELOGS[0])}, "utf8");
+	writeFileSync("TEST_SAW_CHANGELOG", changelog.includes("## [Unreleased]\\n\\n### Fixed\\n\\n- Fixture.") ? "unstamped" : "stamped");
+}
 if (${JSON.stringify(name)} === "gh") {
 	process.stdout.write(String(args[1]).includes("actions/runs?check_suite_id=7")
 		? ${JSON.stringify(JSON.stringify({ workflow_runs: [{ status: "completed", conclusion: ci === "superseded" ? "cancelled" : "failure" }] }))}
@@ -89,13 +97,49 @@ if (${JSON.stringify(name)} === "gh") {
 					chmodSync(join(bin, name), 0o755);
 				}
 			}
-			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3"], {
+			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : [])], {
 				cwd: root,
 				env: { ...process.env, PATH: `${bin}${delimiter}${dirname(process.execPath)}` },
 				encoding: "utf8",
 				timeout: 15000,
 			});
 			const commands = readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse);
+			if (catalogDirty && !forceTests) {
+				// A changed catalog is never pushed to main untested (v2026.10.19-1): without --force-tests the release stops
+				// before it commits, tags or pushes anything.
+				assert.equal(result.status, 1, result.stderr);
+				assert.match(result.stderr, /dispatch with force_tests/);
+				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
+				return;
+			}
+			if (catalogDirty && forceTests) {
+				// The catalog commit stays on the release; the forced suite runs after it, and main is pushed once, at the end.
+				assert.equal(result.status, 0, result.stderr);
+				const index = (predicate) => commands.findIndex(predicate);
+				const catalogCommit = index((args) => args[1] === "commit" && /regenerate the model catalog/.test(args.at(-1)));
+				const test = index((args) => args[0] === "npm" && args[1] === "test");
+				const firstPush = index((args) => args[1] === "push");
+				assert.ok(catalogCommit >= 0 && catalogCommit < test && test < firstPush, JSON.stringify(commands));
+				assert.deepEqual(commands.filter((args) => args[1] === "push"), [
+					["git", "push", "origin", "main"],
+					["git", "push", "origin", "v2026.9.12-3"],
+				]);
+				return;
+			}
+			if (forceTests) {
+				// The forced suite tests the release's code before the version and changelog stamping: a test that reads a
+				// real CHANGELOG.md must see its [Unreleased] section, as CI would (v2026.10.16 release run 38824836070).
+				assert.equal(result.status, 0, result.stderr);
+				const index = (predicate) => commands.findIndex(predicate);
+				const test = index((args) => args[0] === "npm" && args[1] === "test");
+				const firstClean = index((args) => args[0] === "npm" && args[1] === "run" && args[2] === "clean");
+				const firstBuild = index((args) => args[0] === "npm" && args[1] === "run" && args[2] === "build");
+				const releaseCommit = index((args) => args[1] === "commit" && /^release: v/.test(args.at(-1)));
+				assert.ok(firstClean >= 0 && firstClean < firstBuild && firstBuild < test && test < releaseCommit, JSON.stringify(commands));
+				assert.equal(readFileSync(join(root, "TEST_SAW_CHANGELOG"), "utf8"), "unstamped");
+				assert.equal(commands.some((args) => args[0] === "gh"), false, "a forced release does not wait for CI");
+				return;
+			}
 			if (ci === "superseded") {
 				// The workflow run's outcome is read, so the cancellation is recognised (not "CI failed"), and since
 				// main moved to a tip that does not contain the commit, the release stops before tagging (senpi#2943).
@@ -125,26 +169,6 @@ if (${JSON.stringify(name)} === "gh") {
 				return;
 			}
 			assert.equal(commands.some((args) => args[0] === "npm" && args[1] === "test"), false);
-			if (catalogDirty) {
-				// senpi#2943: the changed catalog is committed alone and pushed to main, after the remote sync,
-				// before the gate reads CI, so CI tests exactly the tree the release tags.
-				const index = (predicate) => commands.findIndex(predicate);
-				const addCatalog = index(
-					(args) => args[1] === "add" && args.includes("packages/ai/src/models.generated.ts") && args.includes("packages/ai/src/providers"),
-				);
-				const catalogCommit = index((args) => args[1] === "commit" && /regenerate the model catalog/.test(args.at(-1)));
-				const firstSync = index((args) => args[1] === "fetch");
-				const catalogPush = index((args) => args[1] === "push" && args[3] === "main");
-				const ciLookup = index((args) => args[0] === "gh" && String(args[2]).includes("/check-runs"));
-				assert.deepEqual(commands[addCatalog], ["git", "add", "--", "packages/ai/src/models.generated.ts", "packages/ai/src/providers"]);
-				assert.ok(addCatalog < catalogCommit && catalogCommit < firstSync && firstSync < catalogPush && catalogPush < ciLookup, JSON.stringify(commands));
-				assert.deepEqual(commands.filter((args) => args[1] === "push"), [
-					["git", "push", "origin", "main"],
-					["git", "push", "origin", "main"],
-					["git", "push", "origin", "v2026.9.12-3"],
-				]);
-				return;
-			}
 			assert.ok(commands.some((args) => args[0] === "git" && args[1] === "merge"), result.stderr);
 			assert.equal(result.status, mergeStatus, result.stderr);
 			assert.deepEqual(commands.filter((args) => args[1] === "push"), mergeStatus === 0 ? [

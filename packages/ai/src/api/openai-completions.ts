@@ -65,6 +65,7 @@ import {
 } from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderStreamRequest } from "../utils/provider-retry.ts";
+import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { primeStreamUntilContent, sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
@@ -526,7 +527,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 	context: TranscriptContext,
 	options?: OpenAICompletionsOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	(async () => {
@@ -550,6 +551,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 		// `reasoning_details` are replay metadata, not user-visible stream deltas.
 		// Keep them in memory during streaming and serialize once when the block is finalized.
+		// oxlint-disable-next-line eslint/no-unassigned-vars -- dead since #8671's serialize-once was lost in an upstream sync merge; fixed in senpi#3934
 		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
 		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
 			if (streamedReasoningDetails !== undefined) {
@@ -850,17 +852,25 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				for (const block of blocks) {
 					const contentIndex = getContentIndex(block);
 					if (block.type === "text") {
-						stream.push({ type: "text_start", contentIndex, partial: output });
+						stream.push({ type: "text_start", contentIndex, partial: output }, { offset: 0 });
 						for (const delta of deferredTextDeltas) {
 							stream.push({ type: "text_delta", contentIndex, delta, partial: output });
 						}
 					} else if (block.type === "thinking") {
-						stream.push({ type: "thinking_start", contentIndex, partial: output });
+						stream.push({ type: "thinking_start", contentIndex, partial: output }, { offset: 0 });
 						for (const delta of deferredThinkingDeltas) {
 							stream.push({ type: "thinking_delta", contentIndex, delta, partial: output });
 						}
 					} else {
-						stream.push({ type: "toolcall_start", contentIndex, partial: output });
+						const rawArgumentPrefix = (deferredToolCallDeltas.get(block) ?? []).join("");
+						stream.push(
+							{ type: "toolcall_start", contentIndex, partial: output },
+							{
+								rawArgumentPrefix,
+								parsedThrough: rawArgumentPrefix.length,
+								offset: 0,
+							},
+						);
 						for (const delta of deferredToolCallDeltas.get(block) ?? []) {
 							stream.push({ type: "toolcall_delta", contentIndex, delta, partial: output });
 						}
@@ -2032,12 +2042,13 @@ function parseChunkUsage(
 	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
 	// OpenAI completion_tokens already includes reasoning_tokens.
 	const outputTokens = rawUsage.completion_tokens || 0;
+	const reasoning = reportedCount(rawUsage.completion_tokens_details?.reasoning_tokens);
 	const usage: AssistantMessage["usage"] = {
 		input,
 		output: outputTokens,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
-		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
+		...(reasoning === undefined ? {} : { reasoning }),
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};

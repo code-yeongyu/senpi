@@ -93,7 +93,10 @@ function closeContentBlock(context: StreamEventContext, event: Extract<StreamEve
 
 export function applyStreamEvent(context: StreamEventContext, event: StreamEvent): void {
 	if (event.type === "message_start") {
-		updateUsage(context.model, context.output, event.message.usage);
+		// Preserve first-response identity for transcript pairing (oh-my-openagent#10547),
+		// even when the SDK re-requests internally. Context belongs to the latest request.
+		context.output.responseId ??= event.message.id || undefined;
+		updateUsage(context.model, context.output, event.message.usage, "request-start");
 	} else if (event.type === "content_block_start") {
 		startContentBlock(context, event);
 	} else if (event.type === "content_block_delta") {
@@ -102,6 +105,6 @@ export function applyStreamEvent(context: StreamEventContext, event: StreamEvent
 		closeContentBlock(context, event);
 	} else if (event.type === "message_delta") {
 		context.output.stopReason = mapStopReason(event.delta.stop_reason);
-		updateUsage(context.model, context.output, event.usage);
+		updateUsage(context.model, context.output, event.usage, "request-delta");
 	}
 }

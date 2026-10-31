@@ -19,26 +19,42 @@
  * error to a caller that asked for exactly that outcome.
  */
 
-import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
+import { createHostDaemonPaths, generationPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
-import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
-import { provenLegacyOwner } from "./host-legacy.ts";
+import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
+import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import type { HostProtocolInfo } from "./host-protocol-info.ts";
+import { type DrainHostResult, drainHost } from "./host-stop-drain.ts";
+import { compareStopGeneration, type HostStopGeneration } from "./host-stop-generation.ts";
 import { writeStopIntent } from "./host-stop-intent.ts";
+import { startedBeforeRegistration } from "./host-stop-start-time.ts";
 
 export interface StopHostOptions {
 	readonly socket: string;
 	readonly agentDir?: string;
-	/** Ask the host to finish its work and exit (SIGUSR1) instead of terminating it. */
+	/** Ask the host to finish its work and exit instead of terminating it (host-stop-drain.ts). */
 	readonly drain?: boolean;
+	/** With `drain`: the generation to ask, by instance id, instead of the one the pointer names. */
+	readonly instanceId?: string;
+	/** With `drain`: wait up to this long for the generation to exit, and report `exited`. */
+	readonly waitMs?: number;
 	/** Terminate even when the host still reports open sessions. */
 	readonly force?: boolean;
 	readonly timeoutMs?: number;
+	/** Refuse unless the host answers both reads: a caller that judged it idle must not stop it unseen. */
+	readonly requireAnswer?: boolean;
+	/** Refuse rather than signal a generation other than the one the operator confirmed. */
+	readonly expectedGeneration?: HostStopGeneration;
 }
 
 export type StopHostResult =
-	| { readonly action: "drained" | "stopped"; readonly pid: number }
-	| { readonly action: "refuse"; readonly reason: "unknown_owner" | "drain_unsupported" | "sessions_live" };
+	| DrainHostResult
+	| { readonly action: "stopped"; readonly pid: number }
+	| {
+			readonly action: "refuse";
+			readonly reason: "unknown_owner" | "drain_unsupported" | "sessions_live" | "stale_generation";
+	  };
 
 /**
  * Ends a running generation. `drain` is always permitted - it ends no work, it only stops the
@@ -46,26 +62,43 @@ export type StopHostResult =
  * operator never silently kills another client's sessions.
  */
 export async function stopHost(options: StopHostOptions): Promise<StopHostResult> {
+	// A binding names the generation a HARD stop may signal; a drain targets its own instance and must not hold the lock.
+	if (options.expectedGeneration !== undefined && options.drain === true)
+		throw new TypeError("stopHost: expectedGeneration binds a hard stop and cannot be combined with drain");
+	// GC already holds this lock and uses an unqualified stop. Conditional operator stops acquire it
+	// here so ensure/handoff cannot publish a different generation between the check and signal.
+	if (options.expectedGeneration === undefined) return stopHostLocked(options);
+	const release = await acquireHostEnsureLock(options.socket, 30_000);
+	try {
+		return await stopHostLocked(options);
+	} finally {
+		await release();
+	}
+}
+
+async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult> {
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
 	});
-	const registered = await readHostRegistration(paths);
-	const owner = await provenOwner(registered, options.socket);
-	if (options.drain === true) {
-		const pid = owner?.pid ?? (await provenLegacyOwner(paths, options.socket))?.pid;
-		if (pid === undefined) return { action: "refuse", reason: "unknown_owner" };
-		const host = await probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000);
-		// SIGUSR1 terminates a process that installed no handler for it: a host that does not
-		// advertise the drain is refused rather than killed by the request to shut down gently.
-		if (!host?.capabilities.includes(GENERATION_HANDOFF_CAPABILITY) || process.platform === "win32") {
-			return { action: "refuse", reason: "drain_unsupported" };
-		}
-		// A generation that left on its own between the proof and the signal is already drained.
-		signalGeneration(pid, "SIGUSR1");
-		return { action: "drained", pid };
+	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
+	await electPointer(paths);
+	const expected = options.expectedGeneration;
+	if (expected !== undefined) {
+		const refusal = generationRefusal(compareStopGeneration(await readHostRegistration(paths), expected));
+		if (refusal !== undefined) return refusal;
 	}
-	if (!owner) return { action: "refuse", reason: "unknown_owner" };
+	if (options.drain === true) {
+		return drainHost(paths, {
+			socket: options.socket,
+			...(options.instanceId !== undefined && { instanceId: options.instanceId }),
+			...(options.waitMs !== undefined && { waitMs: options.waitMs }),
+			...(options.timeoutMs !== undefined && { timeoutMs: options.timeoutMs }),
+		});
+	}
+	const owner =
+		expected === undefined ? await provenOwner(await readHostRegistration(paths), options.socket) : undefined;
+	if (expected === undefined && !owner) return { action: "refuse", reason: "unknown_owner" };
 	const host = await probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000);
 	// A hard stop ends whatever the host is doing, including work that belongs to other clients:
 	// it is allowed only against a host that reports nothing open, or by an explicit override.
@@ -73,18 +106,73 @@ export async function stopHost(options: StopHostOptions): Promise<StopHostResult
 	if (options.force !== true && host !== undefined && sessions !== undefined && sessions > 0) {
 		return { action: "refuse", reason: "sessions_live" };
 	}
-	await writeStopIntent(generationPaths(paths, owner.instanceId), {
+	if (options.requireAnswer === true && (host === undefined || sessions === undefined)) {
+		return { action: "refuse", reason: "sessions_live" };
+	}
+	const target = expected === undefined ? owner : await recheckedTarget(paths, options.socket, expected, host);
+	if (target === undefined) return { action: "refuse", reason: "unknown_owner" };
+	if ("action" in target) return target;
+	await writeStopIntent(generationPaths(paths, target.instanceId), {
 		sender: { pid: process.pid, kind: "stop" },
-		targetPid: owner.pid,
+		targetPid: target.pid,
 		reason: "operator_stop",
 		signal: "SIGTERM",
 		at: new Date().toISOString(),
 	});
-	const delivered = signalGeneration(owner.pid, "SIGTERM");
+	const delivered = signalGeneration(target.pid, "SIGTERM");
 	// A signal is not an exit: only the supervisor may release ownership after reaping its host.
 	// Its circuit breaker deliberately leaves these records intact while the child might be alive.
-	if (!delivered) await releaseGeneration(paths, { instanceId: owner.instanceId, pid: owner.pid });
-	return { action: "stopped", pid: owner.pid };
+	if (!delivered) await releaseGeneration(paths, { instanceId: target.instanceId, pid: target.pid });
+	return { action: "stopped", pid: target.pid };
+}
+
+type StopRefusal = Extract<StopHostResult, { action: "refuse" }>;
+
+function generationRefusal(match: ReturnType<typeof compareStopGeneration>): StopRefusal | undefined {
+	if (match === "stale") return { action: "refuse", reason: "stale_generation" };
+	if (match === "unprovable") return { action: "refuse", reason: "unknown_owner" };
+	return undefined;
+}
+
+/**
+ * Refuses a binding the endpoint no longer matches, before any probe or census (desktop#3561 review): a
+ * caller learns its confirmation is stale rather than that the host it no longer names is busy.
+ */
+export async function staleStopGeneration(
+	socket: string,
+	agentDir: string | undefined,
+	expected: HostStopGeneration,
+): Promise<StopRefusal | undefined> {
+	const paths = createHostDaemonPaths({ socket, ...(agentDir ? { agentDir } : {}) });
+	return generationRefusal(compareStopGeneration(await readHostRegistration(paths), expected));
+}
+
+/**
+ * The confirmed generation re-read after the probes, and the only pid/instance the stop may signal: the
+ * expected identity itself, never a registration read that was not compared with it.
+ */
+async function recheckedTarget(
+	paths: ReturnType<typeof createHostDaemonPaths>,
+	socket: string,
+	expected: HostStopGeneration,
+	host: HostProtocolInfo | undefined,
+): Promise<StopRefusal | { readonly pid: number; readonly instanceId: string } | undefined> {
+	const current = await readHostRegistration(paths);
+	const match = compareStopGeneration(current, expected);
+	const refusal = generationRefusal(match);
+	if (refusal !== undefined) return refusal;
+	if (match === "proven" && !(await provenOwner(current, socket))) return undefined;
+	if (match === "bound_without_start_time") {
+		// No start time was recorded (Windows), so prove the same process another way before signalling: this
+		// endpoint, a live process that started before it wrote this registration (a later start is a reused pid),
+		// and, when the host answered, the confirmed instance.
+		if (current?.socket !== undefined && !sameEndpoint(current.socket, socket)) return undefined;
+		if (!(await startedBeforeRegistration(expected.pid, generationPaths(paths, expected.instanceId).pidFile)))
+			return undefined;
+		if (host?.instanceId !== undefined && host.instanceId !== expected.instanceId)
+			return { action: "refuse", reason: "stale_generation" };
+	}
+	return { pid: expected.pid, instanceId: expected.instanceId };
 }
 
 /**

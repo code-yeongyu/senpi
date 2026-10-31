@@ -1,7 +1,5 @@
 import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
 import type { AnthropicOptions } from "../api/anthropic-messages.ts";
-import { lazyOAuth } from "../auth/helpers.ts";
-import { loadAnthropicOAuth } from "../auth/oauth/load.ts";
 import type { ApiKeyAuth } from "../auth/types.ts";
 import {
 	ANTHROPIC_API_KEY_ENV,
@@ -82,13 +80,12 @@ export function anthropicProvider(): Provider<"anthropic-messages"> {
 		id: "anthropic",
 		name: "Anthropic",
 		baseUrl: "https://api.anthropic.com",
+		// No Claude subscription OAuth here (senpi#3259): Anthropic bills a subscription token sent
+		// straight to the Messages API as a third-party app (extra usage). Subscriptions log in through
+		// the Agent SDK lane (`anthropic-subscription`), which signs in through the bundled Claude Code CLI;
+		// senpi ships no Anthropic OAuth flow of its own (senpi#4436).
 		auth: {
 			apiKey: anthropicApiKeyAuth(),
-			oauth: lazyOAuth({
-				name: "Anthropic (Claude Pro/Max)",
-				isSubscription: true,
-				load: loadAnthropicOAuth,
-			}),
 		},
 		models: Object.values(ANTHROPIC_MODELS),
 		api: anthropicMessagesApi(),

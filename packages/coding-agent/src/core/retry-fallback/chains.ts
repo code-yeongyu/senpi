@@ -135,6 +135,16 @@ export function baseSelector(selector: Pick<FallbackSelector, "provider" | "id">
 }
 
 /**
+ * A rung's identity: the model plus the thinking level it runs at. An entry
+ * without an explicit level inherits the running level, so it names the rung in
+ * flight rather than a second rung of that model.
+ */
+export function rungSelector(selector: Pick<FallbackSelector, "provider" | "id" | "thinkingLevel">): string {
+	const base = baseSelector(selector);
+	return selector.thinkingLevel ? `${base}:${selector.thinkingLevel}` : base;
+}
+
+/**
  * Converts validated configuration to canonical selector strings for runtime lookup.
  *
  * A bare key (no provider prefix) is a model-family policy: it expands to one
@@ -227,17 +237,24 @@ export function resolveChainKey(
 }
 
 function formatParsedSelector(selector: FallbackSelector): string {
-	const base = baseSelector(selector);
-	return selector.thinkingLevel ? `${base}:${selector.thinkingLevel}` : base;
+	return rungSelector(selector);
+}
+
+/** The explicit `:level` suffix of a selector string, when it has one. */
+function explicitThinkingLevel(selector: string): string | undefined {
+	const normalized = selector.trim().toLowerCase();
+	const lastColon = normalized.lastIndexOf(":");
+	if (lastColon === -1) return undefined;
+	const suffix = normalized.slice(lastColon + 1);
+	return isValidThinkingLevel(suffix) ? suffix : undefined;
 }
 
 function normalizedBase(selector: FallbackSelector | string): string {
 	if (typeof selector !== "string") return baseSelector(selector).toLowerCase();
 
 	const normalized = selector.trim().toLowerCase();
-	const lastColon = normalized.lastIndexOf(":");
-	if (lastColon === -1 || !isValidThinkingLevel(normalized.slice(lastColon + 1))) return normalized;
-	return normalized.slice(0, lastColon);
+	const level = explicitThinkingLevel(normalized);
+	return level === undefined ? normalized : normalized.slice(0, normalized.lastIndexOf(":"));
 }
 
 function normalizedExact(selector: FallbackSelector | string): string {
@@ -257,6 +274,13 @@ export function candidatesAfter(
 	if (exactIndex !== -1) return chainEntries.slice(exactIndex + 1);
 
 	const base = normalizedBase(currentSelector);
-	const baseIndex = chainEntries.findIndex((entry) => normalizedBase(entry) === base);
+	// Only a same-base entry WITHOUT a level is the position: it inherits the
+	// running level, so it is the rung in flight. A same-base entry at another
+	// explicit level is a rung of its own - with `["X:off", "Y"]` and the session
+	// on X:high, matching on the base alone consumed X:off as the position and the
+	// chain skipped straight past it to Y.
+	const baseIndex = chainEntries.findIndex(
+		(entry) => normalizedBase(entry) === base && explicitThinkingLevel(entry) === undefined,
+	);
 	return baseIndex === -1 ? chainEntries : chainEntries.slice(baseIndex + 1);
 }

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
+import { processIsLive, readProcessStartTime } from "../../utils/process-identity.ts";
 import {
 	createDaemonDirectories,
 	createHostDaemonPaths,
@@ -17,12 +17,19 @@ import {
 	writtenByThisProcess,
 } from "./host-daemon-registration.ts";
 import { claimHostOwner } from "./host-daemon-state.ts";
-import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
-import { ensureClient } from "./host-ensure-client.ts";
-import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
+import { HostEnsureRefusedError } from "./host-decision.ts";
+import { decideEnsureAction as decide } from "./host-ensure-client.ts";
+import { refuseIfForeignHeld, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
-import { ensureSender, matchesPidFileOrUnknown, STOP_WAIT_BUDGET_MS, stopManagedHost } from "./host-ensure-stop.ts";
+import {
+	delay,
+	ensureSender,
+	matchesPidFileOrUnknown,
+	resolvePidFileOwnership,
+	STOP_WAIT_BUDGET_MS,
+	stopManagedHost,
+} from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { scheduleOpportunisticHostGc } from "./host-gc-pass.ts";
 import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
@@ -30,9 +37,9 @@ import { reapOrphanedInternalHostDirs } from "./host-internal-dir-reaper.ts";
 import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
-import { isHostGenerationProcess } from "./host-process-role.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 
 export {
 	createHostDaemonPaths,
@@ -64,6 +71,10 @@ const ENSURE_LOCK_WAIT_MS =
 	10_000;
 const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
 export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
+	return withRpcKeyRoot(rpcKeyRoot(options, options.agentDir), () => ensureHostInKeyRoot(options));
+}
+
+async function ensureHostInKeyRoot(options: EnsureHostOptions): Promise<EnsuredHost> {
 	const socket = normalizeSocketPath(options.socket);
 	const paths = createHostDaemonPaths({ socket, ...(options.agentDir ? { agentDir: options.agentDir } : {}) });
 	await createDaemonDirectories(paths);
@@ -96,6 +107,7 @@ async function ensureHostLocked(
 	paths: HostDaemonPaths,
 	socket: string,
 	options: EnsureHostOptions,
+	stopDeadline = Date.now() + Math.min(options.stoppingTimeoutMs ?? STOP_WAIT_BUDGET_MS, STOP_WAIT_BUDGET_MS),
 ): Promise<EnsuredHost> {
 	// Under the lock, so a torn or foreign `endpoint.json` is repaired rather than left unaddressable.
 	await ensureEndpointIdentity(paths, socket, { repair: true });
@@ -113,8 +125,30 @@ async function ensureHostLocked(
 	)
 		throw new HostEnsureRefusedError(socket, "host_stalled", undefined);
 	// A reusable host is held from the connection that proved it compatible, never re-probed later.
-	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	const held = await holdProtocolInfo(
+		socket,
+		testOptions?.existingHostProbeTimeoutMs ?? EXISTING_HOST_PROBE_TIMEOUT_MS,
+	);
 	const protocol = held?.info;
+	if (protocol?.lifecycle === "stopping") {
+		held?.hold.release();
+		// A typed stop is not permission to signal or overwrite a foreign generation.
+		// Wait for BOTH identities to be gone, then re-run discovery under this lock.
+		if (!registeredHere || !registered || registered.instanceId !== protocol.instanceId)
+			throw new HostEnsureRefusedError(socket, "host_stopping", protocol, "no matching registered generation");
+		const generation = generationPaths(paths, registered.instanceId);
+		for (;;) {
+			if (
+				(await resolvePidFileOwnership(registered.record, testOptions?.readProcessStartTime)) === "gone" &&
+				!(await hostChildAlive(generation))
+			)
+				return ensureHostLocked(paths, socket, options, stopDeadline);
+			const remaining = stopDeadline - Date.now();
+			if (remaining <= 0)
+				throw new HostEnsureRefusedError(socket, "host_stopping", protocol, "generation exit exceeded stop budget");
+			await delay(Math.min(50, remaining));
+		}
+	}
 	const startedByUs =
 		registeredHere && (await writtenByThisProcess(registered?.writer, testOptions?.readProcessStartTime));
 	const attachedPid = registeredHere ? (registered?.record.pid ?? 0) : 0;
@@ -141,7 +175,13 @@ async function ensureHostLocked(
 		case "refuse":
 			throw new HostEnsureRefusedError(socket, decision.reason, protocol);
 		case "handoff":
-			return upgradeGeneration(paths, socket, options, attachedPid);
+			try {
+				return await upgradeGeneration(paths, socket, options, attachedPid);
+			} catch (cause) {
+				if (cause instanceof HostEnsureRefusedError && cause.reason === "host_stopping")
+					return ensureHostLocked(paths, socket, options, stopDeadline);
+				throw cause;
+			}
 		case "start":
 			break;
 		default:
@@ -155,7 +195,7 @@ async function ensureHostLocked(
 		if (!startedByUs) {
 			// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
 			// this record may end it - anyone else refuses rather than signalling somebody else's host.
-			if (await publicEndpointAccepts(socket)) throw new HostEnsureRefusedError(socket, "foreign_writer", protocol);
+			await refuseIfForeignHeld(paths, registered, socket, protocol);
 			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
 			// A foreign record whose public endpoint accepts NOTHING names a generation nobody can reach:
 			// its entry was replaced (so it is already draining, #1893) or removed, or a dead listener
@@ -192,21 +232,19 @@ async function ensureHostLocked(
 	const legacyRefusal = await retireIdleLegacyHost(paths, probe, testOptions?.stopTimeoutMs);
 	if (legacyRefusal !== undefined) throw new HostEnsureRefusedError(socket, "legacy_host", protocol, legacyRefusal);
 	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
+	// Something no registration names still ACCEPTS at the public path and did not answer the probe.
+	// A start can only lose the bind ("address already in use") and exit without a reason, and the
+	// holder is not ours to remove (I1): refuse with the reason instead. A stale entry nobody listens
+	// behind reads as free here, so the start below still replaces it.
+	if (await unregisteredEndpointHeld(socket))
+		throw new HostEnsureRefusedError(
+			socket,
+			"endpoint_occupied",
+			protocol,
+			"no host registration names this socket and its listener did not answer get_protocol_info",
+		);
 	if (registeredHere) await clearHostRegistration(paths);
 	return startHost(paths, socket, options);
-}
-
-/** `fallback` belongs to clients that can live without a host; an ensure must produce one or fail. */
-function decide(
-	options: EnsureHostOptions,
-	startedByUs: boolean,
-	protocol: HostProtocolInfo | undefined,
-): Exclude<HostDecision, { action: "fallback" }> {
-	if (options.upgrade !== "if-engine-differs" || isHostGenerationProcess()) {
-		return decideHostAction(ensureClient(options, startedByUs), protocol, "never");
-	}
-	const decision = decideHostAction(ensureClient(options, startedByUs), protocol, "upgrade");
-	return decision.action === "fallback" ? { action: "reuse", reason: "compatible", upgradeable: false } : decision;
 }
 
 /**
@@ -223,6 +261,8 @@ async function upgradeGeneration(
 		socket,
 		agentDir: options.agentDir ?? getAgentDir(),
 		hostArgs: options.hostArgs ?? [],
+		presenterBootstrap: options.presenterBootstrap,
+		mcpPresenterEnforcement: options.mcpPresenterEnforcement,
 		...(options.env ? { env: options.env } : {}),
 		...(options.policy ? { policy: options.policy } : {}),
 		_test: {
@@ -243,6 +283,10 @@ async function upgradeGeneration(
 async function holdEnsured(socket: string): Promise<() => void> {
 	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	if (!held) throw new Error(`RPC socket host at ${socket} stopped answering before this ensure could hold it`);
+	if (held.info.lifecycle === "stopping") {
+		held.hold.release();
+		throw new HostEnsureRefusedError(socket, "host_stopping", held.info);
+	}
 	return held.hold.release;
 }
 

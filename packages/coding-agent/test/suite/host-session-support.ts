@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,8 @@ const dirs: string[] = [];
 const clients: RpcClient[] = [];
 const models: (FakeModelServer | HeldAnthropicModel)[] = [];
 const closeWires: (() => Promise<void>)[] = [];
+// Captured once: a rig after a cleanup that never reached restoreAllMocks would otherwise capture its own spy (#4890).
+const ensureHost = hostEnsure.ensureHost;
 export function scratch(): string {
 	const dir = mkdtempSync(join(tmpdir(), "hs-unit-"));
 	dirs.push(dir);
@@ -31,7 +34,7 @@ export async function cleanupHostSessionRigs(): Promise<void> {
 		await model.close();
 	}
 	vi.restoreAllMocks();
-	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 }
 
 export async function rig(held = false, hostEnv: Readonly<Record<string, string>> = {}) {
@@ -41,9 +44,8 @@ export async function rig(held = false, hostEnv: Readonly<Record<string, string>
 	const fake = held ? await HeldAnthropicModel.start() : await startFakeModelServer();
 	models.push(fake);
 	writeRpcModelsJson(qa.agentDir, fake.origin, ["mock-claude-rpc-2"]);
-	const ensure = hostEnsure.ensureHost;
 	vi.spyOn(hostEnsure, "ensureHost").mockImplementation((options) =>
-		ensure({ ...options, _test: { launch: supervisorLaunch, readinessTimeoutMs: 30_000 } }),
+		ensureHost({ ...options, _test: { launch: supervisorLaunch, readinessTimeoutMs: 30_000 } }),
 	);
 	const target = { socket: qa.socket, agentDir: qa.agentDir };
 	const spec = {
@@ -116,6 +118,9 @@ export async function wireRig(
 					sessions: [{ sessionId: "rpc-1", cwd: dir, sessionPath: join(dir, "session.jsonl"), status: "open" }],
 				});
 			else if (command.type === "open_session") reply({ sessionId: "rpc-1", state: {} });
+			// Answered like a host without `detach_connection`, so the client's closing probe gets an answer.
+			else if (command.type === "get_protocol_info")
+				reply({ protocolVersion: 1, capabilities: ["multi_session"], mode: "multi" });
 			else if (command.type === "get_state") onState(++stateReads, send, reply, peer);
 			else throw new Error(`Unexpected wire request ${command.type}`);
 		});

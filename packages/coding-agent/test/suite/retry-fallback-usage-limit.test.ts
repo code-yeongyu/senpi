@@ -1,9 +1,10 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
-const fallback = "faux/faux-2";
+const fallback = "other-faux/faux-2";
 
 const USAGE_LIMITS: ReadonlyArray<readonly [string, string]> = [
 	["Claude session limit", "You've hit your session limit · resets 3pm (Asia/Seoul)"],
@@ -48,6 +49,7 @@ describe("usage-limit failures move to the next fallback model", () => {
 				},
 			});
 			harnesses.push(harness);
+			registerFallbackModels(harness, "other-faux", ["faux-2"]);
 			harness.setResponses([errorTurn(errorMessage), fauxAssistantMessage("fallback answer")]);
 
 			await harness.session.prompt("hello");

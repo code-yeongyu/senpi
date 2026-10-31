@@ -52,9 +52,7 @@ describe("Claude SDK OAuth tool integration", () => {
 	});
 
 	it("states host-tool denial as a fact without telling the model to end the turn", () => {
-		expect(HOST_TOOL_EXECUTION_DENIED_MESSAGE).toBe(
-			"Senpi executes this tool on the host and returns its result as the next user message. Wait for that result; this denial is not a failure.",
-		);
+		expect(HOST_TOOL_EXECUTION_DENIED_MESSAGE).toMatch(/returns its result as the next user message/);
 		expect(TOOL_EXECUTION_DENIED_MESSAGE).toBe(HOST_TOOL_EXECUTION_DENIED_MESSAGE);
 		expect(HOST_TOOL_EXECUTION_DENIED_MESSAGE).not.toMatch(/end the turn/i);
 	});

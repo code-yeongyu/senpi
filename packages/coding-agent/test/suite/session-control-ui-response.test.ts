@@ -19,6 +19,23 @@ afterEach(async () => {
 
 const QUESTION = { id: "q1", header: "Ship", question: "Ship it?", options: [], multiSelect: false };
 
+it("never downgrades a secret-marked response into a persisted ordinary question answer", async () => {
+	const { answer, answered } = await terminalAsking("ordinary");
+	expect(
+		await answer({
+			id: "private",
+			uiRequestId: "ordinary",
+			answerId: "private",
+			secret: true,
+			answers: { q1: { selected: ["synthetic"] } },
+		}),
+	).toMatchObject({
+		success: false,
+		error: "invalid_secret_response",
+	});
+	expect(answered).toEqual([]);
+});
+
 async function terminalAsking(...requestIds: string[]) {
 	const pending = new Set(requestIds);
 	const answered: Array<{ readonly requestId: string; readonly response: QuestionResponse }> = [];
@@ -46,7 +63,13 @@ it("answers a uiRequestId answer under the frame id, once, and refuses a replay 
 	const { answer, answered } = await terminalAsking("ask-1");
 
 	const first = await answer({ id: "answer-1", uiRequestId: "ask-1", answers: { q1: { selected: ["yes"] } } });
-	expect(first).toEqual({ id: "answer-1", type: "response", command: "extension_ui_response", success: true });
+	expect(first).toEqual({
+		id: "answer-1",
+		type: "response",
+		command: "extension_ui_response",
+		success: true,
+		disposition: "applied",
+	});
 	expect(answered).toEqual([
 		{
 			requestId: "ask-1",
@@ -80,6 +103,7 @@ it("keeps the short form: id alone names the question and is answered under that
 		type: "response",
 		command: "extension_ui_response",
 		success: true,
+		disposition: "applied",
 	});
 	expect(answered).toEqual([
 		{

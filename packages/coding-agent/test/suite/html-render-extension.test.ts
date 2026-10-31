@@ -1,7 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Check } from "typebox/value";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	HTML_RENDER_CONTENT_SECURITY_POLICY,
@@ -36,7 +35,7 @@ describe("html-render builtin", () => {
 	it("registers show_html_page", async () => {
 		const harness = await createHarness({ extensionFactories: [htmlRenderExtension] });
 		try {
-			const names = harness.agent.state.tools.map((tool) => tool.name);
+			const names = harness.session.getAllTools().map((tool) => tool.name);
 			expect(names).toContain("show_html_page");
 		} finally {
 			harness.cleanup();
@@ -116,9 +115,55 @@ describe("html-render builtin", () => {
 		expect(JSON.stringify(result.content)).not.toContain("marker-7f3a");
 	});
 
-	it("refuses a page over the input limit before preparing anything", () => {
-		expect(Check(showHtmlPageTool.parameters, { html: "x".repeat(512_000), title: "Max" })).toBe(true);
-		expect(Check(showHtmlPageTool.parameters, { html: "x".repeat(512_001), title: "Big" })).toBe(false);
+	it("refuses a page over the input limit before preparing anything", async () => {
+		await expect(
+			showHtmlPageTool.execute(
+				"call-max",
+				{ html: "x".repeat(512_001), title: "Big" },
+				undefined,
+				undefined,
+				ctxFor(tempDir),
+			),
+		).rejects.toThrow(/512000 characters/);
+		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
+	});
+
+	it("#3418: tells the agent to pass screenshots as file paths when base64 images push a page past the limit", async () => {
+		const screenshot = `<img src="data:image/png;base64,${"A".repeat(200_000)}">`;
+		const html = `<html><body><h1>Report</h1>${screenshot.repeat(3)}</body></html>`;
+
+		const refused = showHtmlPageTool.execute(
+			"call-b64",
+			{ html, title: "Report" },
+			undefined,
+			undefined,
+			ctxFor(tempDir),
+		);
+
+		await expect(refused).rejects.toThrow(/3 base64 images/);
+		await expect(refused).rejects.toThrow(/absolute file path/);
+		expect(existsSync(join(tempDir, ".senpi/html-pages"))).toBe(false);
+	});
+
+	it("#3418: opens a report whose screenshots are absolute file paths, however large they are once inlined", async () => {
+		const paths = [0, 1, 2].map((index) => {
+			const path = join(tempDir, `shot-${index}.png`);
+			writeFileSync(path, Buffer.concat([PNG_BYTES, Buffer.alloc(300_000, index + 1)]));
+			return path;
+		});
+		const html = `<html><body>${paths.map((path) => `<img src="${path}">`).join("")}</body></html>`;
+
+		const result = await showHtmlPageTool.execute(
+			"call-paths",
+			{ html, title: "Report" },
+			undefined,
+			undefined,
+			ctxFor(tempDir),
+		);
+
+		const written = readFileSync((result.details as { path: string }).path, "utf8");
+		expect(written.length).toBeGreaterThan(512_000);
+		expect(written).toContain("data:image/png;base64,");
 	});
 
 	it("returns an error the agent can act on when inlined images push the page past 25 MiB, and writes nothing", async () => {

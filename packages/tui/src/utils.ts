@@ -91,6 +91,7 @@ export const cjkBreakRegex =
 
 // CJK letters remain part of words and paths; only punctuation can separate prose from completions.
 export const cjkPunctuationRegex = new RegExp(
+	// oxlint-disable-next-line senpi-copy/no-em-dash-copy -- This character class recognizes punctuation; it is not displayed copy.
 	`(?:(?=\\p{Punctuation})${cjkBreakRegex.source}|[，．：；！？（）［］｛｝“”‘’…—])`,
 	"u",
 );

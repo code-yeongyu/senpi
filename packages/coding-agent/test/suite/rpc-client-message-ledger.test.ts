@@ -117,6 +117,43 @@ describe("RPC client admission ledger", () => {
 		}
 	});
 
+	it("reads a cleared_by_abort receipt written by v2026.10.16-2 as cleared and never restores that input", async () => {
+		// Given: a queued input whose clearing v2026.10.16-2 recorded under its released outcome name
+		const fixture = await setup();
+		const rpc = fixture.bind();
+		await rpc.send({ type: "steer", message: "cleared before", clientMessageId: "legacy-cleared" });
+		const queued = fixture.session.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "custom" && entry.customType === CLIENT_ADMISSION_ENTRY)
+			.map((entry) => (entry as { data: Record<string, unknown> }).data)
+			.findLast((record) => record.clientMessageId === "legacy-cleared");
+		// The exact record v2026.10.16-2 wrote: a completed record carries no `prepared` input.
+		const { prepared: _prepared, ...settled } = queued ?? {};
+		fixture.session.sessionManager.appendCustomEntry(CLIENT_ADMISSION_ENTRY, {
+			...settled,
+			state: "completed",
+			outcome: {
+				kind: "cleared_by_abort",
+				reason: "cleared_by_abort",
+				detail: "an abort with clearQueue removed this queued input before it was delivered",
+				action: "send the input again with a new clientMessageId if it is still needed",
+			},
+		});
+
+		// When
+		const reopened = await fixture.reopen();
+		const state = await reopened.send({ type: "get_state" });
+		const receipt = await reopened.send({ type: "get_effect_status", effectId: "legacy-cleared" });
+
+		// Then
+		expect(queued).toMatchObject({ state: "queued" });
+		expect(state).toMatchObject({ success: true, data: { ordered: [] } });
+		expect(receipt).toMatchObject({
+			success: true,
+			data: { found: true, effect: { state: "failed", outcome: { kind: "cleared_by_abort" } } },
+		});
+	});
+
 	it("admits a fresh delivery behind the queue it restores from the transcript", async () => {
 		// Given
 		const fixture = await setup();

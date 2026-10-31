@@ -220,6 +220,50 @@ describe("summarization provider failure authorizes the deterministic fallback",
 		expect(harness.registration.getCallLog()).toHaveLength(1);
 	});
 
+	it("recovers a soft-threshold pre_prompt compaction when the summarizer model is gone (404)", async () => {
+		// The reported wedge: below the reserve line the pre_prompt compaction is not
+		// "required", so a dead summarizer model used to cancel with
+		// "compaction generator failed", the session rejected the compaction, and the
+		// pending prompt then failed with RequiredCompactionError. A terminal provider
+		// failure must degrade through the deterministic fallback on any compaction kind.
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 5_000 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "models/gemini-2.5-flash is no longer available to new users (404 NOT_FOUND)",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		if (!preparation) throw new Error("Expected a compaction preparation");
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "soft-threshold-dead-summarizer",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		if (!result) throw new Error("Expected a compaction handler result");
+		expect(result).not.toHaveProperty("cancel");
+		expect(result).toMatchObject({
+			compaction: {
+				details: {
+					schema: "senpi.compaction.deterministic-fallback.v1",
+					origin: "required-compaction-recovery",
+					failureKind: "summarization-provider-failure",
+				},
+			},
+		});
+	});
+
 	it("tells the user plainly what happened without the internal retry-suppression marker", async () => {
 		const handlers = createCompactionHandlers();
 		const harness = createBlockingContext({ usageTokens: 9_900 });

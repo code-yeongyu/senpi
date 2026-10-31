@@ -163,7 +163,7 @@ describe("fallback chain selectors", () => {
 	});
 
 	it("ships the fable family an opus-only ladder led by Opus 5.5 at max", () => {
-		const ladder = ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"];
+		const ladder = ["claude-opus-5-5:max", "claude-opus-5:max"];
 		const resolved = resolveRetryFallbackSettings(undefined);
 
 		expect(resolved.chains["claude-fable-5-1"]).toEqual(ladder);
@@ -174,17 +174,19 @@ describe("fallback chain selectors", () => {
 	it("ships Opus 5.5 its own same-family step-down ladder", () => {
 		const resolved = resolveRetryFallbackSettings(undefined);
 
-		expect(resolved.chains["claude-opus-5-5"]).toEqual([
-			"claude-opus-5:max",
-			"claude-opus-4-8:max",
-			"claude-opus-4-6:max",
-		]);
+		expect(resolved.chains["claude-opus-5-5"]).toEqual(["claude-opus-5:max"]);
 	});
 
 	it("keeps every shipped rung inside the anthropic opus family", () => {
 		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
 			expect(entries.length).toBeGreaterThan(0);
 			for (const entry of entries) expect(entry.startsWith("claude-opus-")).toBe(true);
+		}
+	});
+
+	it("never ships a pre-5 Opus rung, so a Claude session cannot land on claude-opus-4-x (senpi#3727)", () => {
+		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
+			for (const entry of entries) expect(entry).not.toMatch(/^claude-opus-4-/);
 		}
 	});
 
@@ -203,13 +205,24 @@ describe("fallback chain selectors", () => {
 		expect(resolveChainKey(model, "max", chains)).toBe("openai/gpt-5.4");
 	});
 
-	it("returns candidates after the current entry, using base matching when thinking differs", () => {
+	it("returns candidates after the current entry, treating another level of the same model as a rung", () => {
 		const entries = ["anthropic/claude-sonnet-4-5:max", "openrouter/qwen/qwen3-coder:exacto", "openai/gpt-5.4"];
 
 		expect(candidatesAfter(entries, "openai/primary:high")).toEqual(entries);
 		expect(candidatesAfter(entries, "openai/gpt-5.4:high")).toEqual([]);
-		expect(candidatesAfter(entries, "anthropic/claude-sonnet-4-5:high")).toEqual(entries.slice(1));
+		// The same model at ANOTHER level is a rung of its own. Consuming it as the
+		// current position dropped it from every chain whose head rung the caller
+		// holds separately - the plugin sends `models: [A:high, A:off, B]` as the
+		// entries `[A:off, B]` under the bare `A` key, and A:off was never scanned.
+		expect(candidatesAfter(entries, "anthropic/claude-sonnet-4-5:high")).toEqual(entries);
+		expect(candidatesAfter(entries, "anthropic/claude-sonnet-4-5:max")).toEqual(entries.slice(1));
 		expect(candidatesAfter(entries, "unknown/model")).toEqual(entries);
+	});
+
+	it("falls back to the same model at a lower level before moving to the next model", () => {
+		const entries = ["faux/primary:off", "faux/toggle"];
+
+		expect(candidatesAfter(entries, "faux/primary:high")).toEqual(entries);
 	});
 });
 

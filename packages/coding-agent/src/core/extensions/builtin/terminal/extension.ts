@@ -12,7 +12,8 @@ import {
 	type TerminalExtensionState,
 } from "./extension-state.ts";
 import { currentLeaseToken, releaseTerminalLease, retireLeaseToken } from "./manifest-lease.ts";
-import { MonitorNotifier } from "./monitor-notify.ts";
+import { MonitorNotifier, type MonitorSpillResult } from "./monitor-notify.ts";
+import { appendMonitorOverflow } from "./monitor-overflow-file.ts";
 import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
@@ -28,8 +29,36 @@ import { createPtyBashTool } from "./tools/bash.ts";
 import { createBashInputTool } from "./tools/bash-input.ts";
 import { createBashOutputTool } from "./tools/bash-output.ts";
 import { createBashResizeTool } from "./tools/bash-resize.ts";
+import { TERMINAL_CHILD_JOB_KINDS, terminalChildJob } from "./tools/child-placement.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
 import { bindTerminalManifestWriter, createMonitorTool } from "./tools/monitor.ts";
+
+/**
+ * Only paced (persistent command) watches of a session with a durable state dir get an overflow file.
+ * A failing file is reported once per monitor, not once per spilled chunk.
+ */
+function spillMonitorOverflow(
+	state: TerminalExtensionState,
+	warned: Set<string>,
+	id: string,
+	lines: readonly string[],
+): MonitorSpillResult | undefined {
+	const terminalDir = terminalStateDir(state.ctx);
+	const monitorId = state.bundle?.manager.monitorIdOf(id);
+	if (terminalDir === undefined || monitorId === undefined || state.bundle?.monitors.wakePacing(id) === undefined)
+		return undefined;
+	try {
+		return appendMonitorOverflow(terminalDir, monitorId, lines);
+	} catch (error) {
+		if (warned.has(monitorId)) return undefined;
+		warned.add(monitorId);
+		state.ctx?.ui?.notify?.(
+			`Could not write the overflow file of ${monitorId}: ${error instanceof Error ? error.message : String(error)}`,
+			"warning",
+		);
+		return undefined;
+	}
+}
 
 function shouldStepAside(ctx: ExtensionContext | undefined): boolean {
 	return isAnthropicBashEnabled() && ctx?.model?.api === "anthropic-messages";
@@ -48,7 +77,7 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 	if (stepAside) {
 		for (const companion of TERMINAL_COMPANION_TOOLS) active.add(companion);
 		if (!state.noticeShown) {
-			state.ctx?.ui.notify("native Anthropic bash active — monitor sessions remain available", "info");
+			state.ctx?.ui.notify("native Anthropic bash active: monitor sessions remain available", "info");
 			state.noticeShown = true;
 		}
 	} else {
@@ -61,6 +90,8 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 }
 
 export function registerTerminalExtension(pi: ExtensionAPI): void {
+	let reducedMotion = false;
+	let agentBusy = false;
 	const state: TerminalExtensionState = {
 		bundle: null,
 		settings: TERMINAL_SETTINGS_DEFAULTS,
@@ -76,6 +107,9 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 						: ctx.ui.theme.bg("selectedBg", ctx.ui.theme.fg("text", status)),
 				);
 			},
+			// Pulse only in the TUI while the agent idles on its monitors; a busy turn already has
+			// the working spinner, and non-TUI hosts would just receive extra status events.
+			animate: () => !reducedMotion && !agentBusy && state.ctx?.mode === "tui",
 		}),
 		ctx: undefined,
 		shellPath: undefined,
@@ -93,31 +127,44 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	};
 	const toolCtx = buildToolContext(pi, state);
 
-	pi.registerTool(createPtyBashTool(toolCtx));
-	pi.registerTool(createBashOutputTool(toolCtx));
-	pi.registerTool(createBashInputTool(toolCtx));
-	pi.registerTool(createBashResizeTool(toolCtx));
-	pi.registerTool(createKillBashTool(toolCtx));
+	const onChild = <T extends object>(tool: T, kind: Parameters<typeof terminalChildJob>[1]) => ({
+		...tool,
+		placement: "child" as const,
+		childJob: terminalChildJob(toolCtx, kind),
+	});
+	pi.registerTool(onChild(createPtyBashTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.bash));
+	pi.registerTool(onChild(createBashOutputTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.output));
+	pi.registerTool(onChild(createBashInputTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.input));
+	pi.registerTool(onChild(createBashResizeTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.resize));
+	pi.registerTool(onChild(createKillBashTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.kill));
 	pi.registerTool(createMonitorTool(toolCtx));
 	registerRestoreDigestRenderer(pi);
 
 	pi.on("session_start", async (event, ctx) => {
 		state.ctx = ctx;
-		const settingsManager = SettingsManager.create(ctx.cwd);
+		const settingsManager = SettingsManager.create(ctx.cwd, ctx.agentDir);
 		state.settings = loadTerminalSettings(settingsManager);
 		state.shellPath = settingsManager.getShellPath();
+		reducedMotion = settingsManager.getReducedMotion();
+		agentBusy = false;
 		state.notifier = new TerminalNotifier({
 			sendMessage: (message, options) => pi.sendMessage(message, options),
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 		});
 		state.monitorNotifier?.dispose();
+		const overflowWarned = new Set<string>();
 		state.monitorNotifier = new MonitorNotifier({
 			sendMessage: (message, options) => pi.sendMessage(message, options),
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 			getSettings: () => state.settings.monitor,
 			pauseMonitors: (ids) => state.bundle?.monitors.pause(ids) ?? [],
+			wakesPerHour: (id) => {
+				const pacing = state.bundle?.monitors.wakePacing(id);
+				return pacing === undefined ? undefined : (pacing.wakesPerHour ?? state.settings.monitor.wakesPerHour);
+			},
+			spillOverflow: (id, lines) => spillMonitorOverflow(state, overflowWarned, id, lines),
 		});
 		const sessionKey = sessionKeyOf(ctx);
 		if (event.reason === "reload") {
@@ -132,6 +179,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			state.bundle = createBundle(state);
 		}
 		state.bundle ??= createBundle(state);
+		state.bundle.monitors.setRunawayGuard(state.settings.monitorRunaway);
 		state.bundle.bind(bundleSinks(pi, state));
 		const holdsLease = sessionKey !== undefined && currentLeaseToken(encodedSessionId(sessionKey)) !== undefined;
 		if (event.reason === "reload" && holdsLease) {
@@ -149,6 +197,14 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			await startPersistence({ pi, state, toolCtx, sessionKey });
 		}
 		syncToolset(pi, state);
+	});
+
+	pi.on("agent_start", () => {
+		agentBusy = true;
+	});
+
+	pi.on("agent_end", () => {
+		agentBusy = false;
 	});
 
 	pi.on("session_parked", () => {
@@ -184,9 +240,8 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	pi.on(
 		"before_agent_start",
 		async (event) => {
-			if (state.steppedAside) return undefined;
 			return {
-				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({ evalOnly: isEvalOnlyRouting(pi) })}`,
+				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({ evalOnly: isEvalOnlyRouting(pi), ptyBash: !state.steppedAside })}`,
 			};
 		},
 		{ previewSafe: true },

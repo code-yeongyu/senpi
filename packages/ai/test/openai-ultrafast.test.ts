@@ -63,33 +63,40 @@ describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast", (prov
 		});
 	});
 
-	it.each([100_000, 300_000])("prices all token classes at 6x Standard with %i input tokens", async (inputTokens) => {
-		const result = await run({
-			apiKey: token,
-			transport: "sse",
-			serviceTier: "ultrafast",
-			reasoning: "xhigh",
-			fetch: async () => completion(provider === "chatgpt-subscription" ? "default" : "ultrafast", inputTokens),
-		});
-		expect(result.stopReason).toBe("stop");
-		const longContext = inputTokens > 272_000;
-		const rates = longContext
-			? { input: 120, output: 450, cacheRead: 12, cacheWrite: 150 }
-			: { input: 60, output: 300, cacheRead: 6, cacheWrite: 75 };
-		for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
-			expect(result.usage.cost[key]).toBeCloseTo((result.usage[key] * rates[key]) / 1_000_000, 8);
-		}
-		expect(result.usage.cost.total).toBeCloseTo(
-			result.usage.cost.input +
-				result.usage.cost.output +
-				result.usage.cost.cacheRead +
-				result.usage.cost.cacheWrite,
-			8,
-		);
-	});
+	// OpenAI's published Ultrafast rates: 6x Standard on the API, 8x of a ChatGPT plan's included usage
+	// (https://developers.openai.com/codex/pricing).
+	const multiplier = provider === "chatgpt-subscription" ? 8 : 6;
+	it.each([100_000, 300_000])(
+		"prices all token classes at the Ultrafast multiplier with %i input tokens",
+		async (inputTokens) => {
+			const result = await run({
+				apiKey: token,
+				transport: "sse",
+				serviceTier: "ultrafast",
+				reasoning: "xhigh",
+				fetch: async () => completion(provider === "chatgpt-subscription" ? "default" : "ultrafast", inputTokens),
+			});
+			expect(result.stopReason).toBe("stop");
+			const longContext = inputTokens > 272_000;
+			const standard = longContext
+				? { input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }
+				: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 };
+			for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+				expect(result.usage.cost[key]).toBeCloseTo((result.usage[key] * standard[key] * multiplier) / 1_000_000, 8);
+			}
+			expect(result.usage.cost.total).toBeCloseTo(
+				result.usage.cost.input +
+					result.usage.cost.output +
+					result.usage.cost.cacheRead +
+					result.usage.cost.cacheWrite,
+				8,
+			);
+		},
+	);
 });
 
 describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast price scope", (provider) => {
+	const multiplier = provider === "chatgpt-subscription" ? 8 : 6;
 	it.each(
 		(
 			[
@@ -98,44 +105,51 @@ describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast price s
 				{ id: "gpt-6-astra-ultrafast", upstreamModelId: "gpt-6-astra" },
 			] as const
 		).flatMap((model) => [100_000, 300_000].map((inputTokens) => ({ ...model, inputTokens }))),
-	)("prices $id at 6x Standard with $inputTokens input tokens", async ({ id, upstreamModelId, inputTokens }) => {
-		let payload: unknown;
-		const options: SimpleStreamOptions = {
-			apiKey: token,
-			transport: "sse",
-			serviceTier: "ultrafast",
-			fetch: async () => completion(provider === "chatgpt-subscription" ? "default" : "ultrafast", inputTokens),
-			onPayload: (body) => {
-				payload = body;
-			},
-		};
-		const result = await (provider === "openai"
-			? streamResponses({ ...getModel("openai", upstreamModelId), id, upstreamModelId }, context, options)
-			: streamCodex({ ...getModel("chatgpt-subscription", upstreamModelId), id, upstreamModelId }, context, options)
-		).result();
-		expect(result.stopReason).toBe("stop");
-		// The session resolves wire aliases; these direct adapter calls isolate pricing metadata.
-		expect(payload).toMatchObject({ model: id, service_tier: "ultrafast" });
-		const longContext = inputTokens > 272_000;
-		const rates =
-			upstreamModelId === "gpt-6.1-sol"
-				? longContext
-					? { input: 24, output: 90, cacheRead: 1.2, cacheWrite: 30 }
-					: { input: 12, output: 60, cacheRead: 0.6, cacheWrite: 15 }
-				: longContext
-					? { input: 120, output: 450, cacheRead: 12, cacheWrite: 150 }
-					: { input: 60, output: 300, cacheRead: 6, cacheWrite: 75 };
-		for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
-			expect(result.usage.cost[key]).toBeCloseTo((result.usage[key] * rates[key]) / 1_000_000, 8);
-		}
-		expect(result.usage.cost.total).toBeCloseTo(
-			result.usage.cost.input +
-				result.usage.cost.output +
-				result.usage.cost.cacheRead +
-				result.usage.cost.cacheWrite,
-			8,
-		);
-	});
+	)(
+		"prices $id at the Ultrafast multiplier with $inputTokens input tokens",
+		async ({ id, upstreamModelId, inputTokens }) => {
+			let payload: unknown;
+			const options: SimpleStreamOptions = {
+				apiKey: token,
+				transport: "sse",
+				serviceTier: "ultrafast",
+				fetch: async () => completion(provider === "chatgpt-subscription" ? "default" : "ultrafast", inputTokens),
+				onPayload: (body) => {
+					payload = body;
+				},
+			};
+			const result = await (provider === "openai"
+				? streamResponses({ ...getModel("openai", upstreamModelId), id, upstreamModelId }, context, options)
+				: streamCodex(
+						{ ...getModel("chatgpt-subscription", upstreamModelId), id, upstreamModelId },
+						context,
+						options,
+					)
+			).result();
+			expect(result.stopReason).toBe("stop");
+			// The session resolves wire aliases; these direct adapter calls isolate pricing metadata.
+			expect(payload).toMatchObject({ model: id, service_tier: "ultrafast" });
+			const longContext = inputTokens > 272_000;
+			const standard =
+				upstreamModelId === "gpt-6.1-sol"
+					? longContext
+						? { input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }
+						: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }
+					: longContext
+						? { input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }
+						: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 };
+			for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+				expect(result.usage.cost[key]).toBeCloseTo((result.usage[key] * standard[key] * multiplier) / 1_000_000, 8);
+			}
+			expect(result.usage.cost.total).toBeCloseTo(
+				result.usage.cost.input +
+					result.usage.cost.output +
+					result.usage.cost.cacheRead +
+					result.usage.cost.cacheWrite,
+				8,
+			);
+		},
+	);
 
 	it("keeps gpt-6-sol at its base rate when ultrafast is requested", async () => {
 		const run = (serviceTier?: "ultrafast") => {

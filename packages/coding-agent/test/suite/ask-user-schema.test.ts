@@ -170,7 +170,7 @@ describe("ask-user formatters", () => {
 	const answeredPartialText = "Auth method: OAuth (Recommended)\nUnanswered: Library";
 	const commentText = "The user responded: just ship it\nAuth method: OAuth (Recommended)\nUnanswered: Library";
 	const timedOutText = `The user did not answer within 30 minutes. ${TIMEOUT_KO}\n${CONTINUE}`;
-	const timedOutDraftText = `The user did not answer within 30 minutes. ${TIMEOUT_KO}\nBefore going idle the user had selected: Auth method: OAuth (Recommended)\n${CONTINUE}`;
+	const timedOutDraftText = `The user did not answer within 30 minutes. ${TIMEOUT_KO}\nBefore going idle the user had selected: Auth method: OAuth (Recommended)\nUnanswered: Library\n${CONTINUE}`;
 
 	it("(e) formatter snapshots for all six statuses in both variants", () => {
 		for (const variant of VARIANTS) {

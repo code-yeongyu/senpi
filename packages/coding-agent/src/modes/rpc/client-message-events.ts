@@ -1,8 +1,28 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentSessionEvent } from "../../core/agent-session.ts";
 import { type ClientMessageIdentity, readClientMessageIdentity } from "../../core/client-message-identity.ts";
+import { carryRecovery } from "../../core/session-recovery-identity.ts";
+import { clientFacingIdentity } from "./client-admission-record.ts";
 
 export const clientInputContext = new AsyncLocalStorage<ClientMessageIdentity>();
+
+/** The record kinds that carry the active client correlation, so one without it answers no client message. */
+export function correlatedRecord(record: object): boolean {
+	const type = "type" in record ? record.type : undefined;
+	if (type === "entry_appended") {
+		const entry = "entry" in record ? record.entry : undefined;
+		return typeof entry === "object" && entry !== null && "type" in entry && entry.type === "message";
+	}
+	return (
+		typeof type === "string" &&
+		(type === "turn_start" ||
+			type === "turn_end" ||
+			type.startsWith("message_") ||
+			type.startsWith("tool_execution_") ||
+			type === "session_abort" ||
+			type === "agent_end")
+	);
+}
 
 /** Resolve a turn's input metadata without changing the order of its event prefix. */
 export class ClientMessageEvents {
@@ -39,7 +59,7 @@ export class ClientMessageEvents {
 		if (event.type === "message_start" && event.message.role === "user") {
 			if (!this.sawUser) this.active = [];
 			this.sawUser = true;
-			const identity = readClientMessageIdentity(event.message);
+			const identity = clientFacingIdentity(readClientMessageIdentity(event.message));
 			if (identity.clientMessageId !== undefined || identity.clientTurnId !== undefined) this.inputs.push(identity);
 			this.active = this.inputs;
 			this.flush();
@@ -69,19 +89,15 @@ export class ClientMessageEvents {
 	private output(event: AgentSessionEvent): void {
 		const identity =
 			"message" in event && event.message.role === "user"
-				? readClientMessageIdentity(event.message)
+				? clientFacingIdentity(readClientMessageIdentity(event.message))
 				: this.active.at(-1);
-		const correlated =
-			event.type === "turn_start" ||
-			event.type === "turn_end" ||
-			event.type.startsWith("message_") ||
-			event.type.startsWith("tool_execution_") ||
-			(event.type === "entry_appended" && event.entry.type === "message") ||
-			event.type === "session_abort" ||
-			event.type === "agent_end";
 		this.emit(
-			correlated && identity
-				? { ...event, ...identity, ...(this.active.length > 1 ? { clientMessages: this.active } : {}) }
+			correlatedRecord(event) && identity
+				? carryRecovery(event, {
+						...event,
+						...identity,
+						...(this.active.length > 1 ? { clientMessages: this.active } : {}),
+					})
 				: event,
 		);
 	}

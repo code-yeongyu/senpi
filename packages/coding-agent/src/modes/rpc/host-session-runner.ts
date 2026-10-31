@@ -4,20 +4,37 @@ import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { HostEnsureRefusedError } from "./host-decision.ts";
 import { endpointKindOfSocket } from "./host-endpoints.ts";
 import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
+import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
-import { HOST_EXIT_OK, type HostOutcome, refusal } from "./host-outcome.ts";
+import { HOST_EXIT_OK, HOST_EXIT_REFUSED, type HostOutcome, refusal } from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
+import { detachBeforeClose } from "./host-session-detach.ts";
 import { mapError } from "./host-session-errors.ts";
 import { type HostSessionOpen, openHostSession } from "./host-session-open.ts";
 import { resolveSessionRef, type SessionRef } from "./host-session-ref.ts";
 import { type HostSessionWait, waitForHostSession } from "./host-session-wait.ts";
-import { RpcClient, type RpcClientEvent, type RpcTransportGoneError } from "./rpc-client.ts";
+import {
+	isTransportGoneError,
+	RpcClient,
+	type RpcClientEvent,
+	RpcCommandError,
+	type RpcTransportGoneError,
+} from "./rpc-client.ts";
+import { RpcRequestTimeoutError } from "./rpc-request-deadline.ts";
 import type { RpcSessionClosedEvent } from "./rpc-types.ts";
 
 type Model = { provider: string; id: string };
 export type HostSessionRequest = { target: HostTarget } & (
 	| ({ action: "open"; spec: ResolvedHostLaunchSpec; launchSpecPath?: string } & HostSessionOpen)
 	| { action: "close"; ref: SessionRef }
+	| {
+			action: "unload";
+			ref: SessionRef;
+			interrupt: boolean;
+			force: boolean;
+			clearQueue: boolean;
+			children: "refuse" | "detach";
+	  }
 	| { action: "model"; ref: SessionRef; model: Model }
 	| { action: "prompt"; ref: SessionRef; text: string }
 	| { action: "steer"; ref: SessionRef; text: string }
@@ -29,10 +46,30 @@ export type HostSessionRequest = { target: HostTarget } & (
 );
 
 export async function runHostSessionRequest(request: HostSessionRequest): Promise<HostOutcome> {
+	const deadline = Date.now() + STOP_WAIT_BUDGET_MS;
+	for (;;) {
+		try {
+			return await runHostSessionRequestOnce(request, Math.max(0, deadline - Date.now()));
+		} catch (error) {
+			if (
+				request.action === "open" &&
+				error instanceof RpcCommandError &&
+				error.errorCode === "host_stopping" &&
+				Date.now() < deadline
+			)
+				continue;
+			return mapError(error, request.target.socket);
+		}
+	}
+}
+
+async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTimeoutMs: number): Promise<HostOutcome> {
 	const { socket, agentDir } = request.target;
 	let client: RpcClient | undefined;
 	let ensured: EnsuredHost | undefined;
 	let disconnected: ((error: RpcTransportGoneError) => void) | undefined;
+	// A host that stopped answering or a lost transport cannot confirm a detach; the socket close releases.
+	let connectionUnusable = false;
 	try {
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
 			return refusal("refuse", undefined, { reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" });
@@ -45,6 +82,7 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 				env: daemonEnvOverrides(process.env, request.spec.env),
 				policy: request.spec.policy,
 				upgrade: "never",
+				stoppingTimeoutMs,
 			});
 			if (!ensured.reused) {
 				await writeDaemonEnvKeys(
@@ -53,7 +91,13 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 				);
 			}
 		}
-		client = new RpcClient({ socketPath: socket, onDisconnect: (error) => disconnected?.(error) });
+		client = new RpcClient({
+			socketPath: socket,
+			onDisconnect: (error) => {
+				connectionUnusable = true;
+				disconnected?.(error);
+			},
+		});
 		try {
 			await client.start();
 		} catch (error) {
@@ -76,7 +120,12 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 			// A parked session resumes from its transcript and stays retained past this short-lived client.
 			const reopen =
 				found.kind === "parked"
-					? { sessionPath: found.sessionPath, cwd: found.cwd, retain_on_disconnect: true }
+					? {
+							sessionPath: found.sessionPath,
+							cwd: found.cwd,
+							retain_on_disconnect: true,
+							attended: false as const,
+						}
 					: { sessionPath: found.row.sessionPath, cwd: found.row.cwd };
 			durableSessionId = found.kind === "parked" ? found.durableSessionId : found.row.durableSessionId;
 			sessionId = (await client.openSession(reopen)).sessionId;
@@ -154,6 +203,19 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 				return await waitForHostSession(client, sessionId, request, (handler) => {
 					disconnected = handler;
 				});
+			case "unload": {
+				const answer = await client.unloadSession({
+					sessionId,
+					interrupt: request.interrupt,
+					force: request.force,
+					clearQueue: request.clearQueue,
+					children: request.children,
+				});
+				return {
+					exitCode: answer.outcome === "unloaded" ? HOST_EXIT_OK : HOST_EXIT_REFUSED,
+					payload: { action: "unload", sessionId, ...answer },
+				};
+			}
 			case "close": {
 				let reason: string | undefined;
 				const unsubscribe = client.onEvent((record) => {
@@ -178,12 +240,18 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 				return assertNever(request);
 		}
 	} catch (error) {
+		if (error instanceof RpcRequestTimeoutError || isTransportGoneError(error)) connectionUnusable = true;
+		// Only an explicit open owns a launch spec. No other operation may invent one.
+		if (request.action === "open" && error instanceof RpcCommandError && error.errorCode === "host_stopping")
+			throw error;
 		if (error instanceof HostEnsureRefusedError) {
 			return refusal("refuse", undefined, { reason: error.reason, socket, detail: error.detail });
 		}
 		return mapError(error, socket);
 	} finally {
 		ensured?.release();
+		if (client && !connectionUnusable)
+			await detachBeforeClose(client, (line) => process.stderr.write(`senpi host session: ${line}\n`));
 		await client?.stop();
 	}
 }

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -17,7 +18,7 @@ assertWorkspaceBuildPrerequisite(import.meta.url);
  * interactive session hangs (or silently answers "no" once stdin ends). Two
  * distinct shapes have to stay covered:
  *
- * 1. stdin is not a terminal at all - pipes, detached spawns, app-server children.
+ * 1. stdin is not a terminal at all - pipes and detached spawns.
  * 2. stdin IS a terminal while the resolved application mode is non-interactive,
  *    which is the documented `senpi --session <id> -p "say ok"` one-shot. Gating
  *    on `process.stdin.isTTY` alone misses this second shape.
@@ -128,7 +129,7 @@ async function runCli(args: string[], fixture: CliFixture): Promise<CliResult> {
 	const child = spawn(process.execPath, args, {
 		cwd: fixture.projectDir,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			[ENV_AGENT_DIR]: fixture.agentDir,
 			PI_OFFLINE: "1",
 			TSX_TSCONFIG_PATH: rootTsconfigPath,

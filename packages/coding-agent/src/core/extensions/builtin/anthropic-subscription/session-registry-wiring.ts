@@ -3,6 +3,7 @@ import { convertToLlm } from "../../../messages.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import { restoreColdSeedCalibration } from "./cold-seed-budget.ts";
+import { sdkModelId } from "./context-window.ts";
 import {
 	BINDING_ENTRY_TYPE,
 	BINDING_MARKER,
@@ -41,8 +42,14 @@ function persistBindingInvalidation(
 	pi: Partial<Pick<ExtensionAPI, "appendEntry">>,
 	sessionId: string,
 	reason: string,
+	divergedPath?: string,
 ): void {
-	pi.appendEntry?.(BINDING_ENTRY_TYPE, { schemaVersion: 1, invalidated: true, reason } satisfies BindingInvalidation);
+	pi.appendEntry?.(BINDING_ENTRY_TYPE, {
+		schemaVersion: 1,
+		invalidated: true,
+		reason,
+		...(divergedPath === undefined ? {} : { divergedPath }),
+	} satisfies BindingInvalidation);
 	rememberBindingInvalidation(sessionId, reason);
 }
 
@@ -50,12 +57,13 @@ async function invalidateBinding(
 	pi: Partial<Pick<ExtensionAPI, "appendEntry">>,
 	ctx: Pick<ExtensionContext, "sessionManager">,
 	reason: string,
+	divergedPath?: string,
 ): Promise<void> {
 	const sessionId = ctx.sessionManager.getSessionId();
 	forgetBinding(sessionId);
 	const sessionFile = ctx.sessionManager.getSessionFile?.();
 	if (sessionFile) await deleteStoredBinding(sessionFile);
-	persistBindingInvalidation(pi, sessionId, reason);
+	persistBindingInvalidation(pi, sessionId, reason, divergedPath);
 }
 
 function keepBindingThenClose(sessionId: string, reason: string): void {
@@ -127,7 +135,7 @@ export function registerSessionRegistry(
 			keepBindingThenClose(sessionId, "model_selected");
 			return;
 		}
-		if (!(await switchSessionModel(sessionId, event.model.id))) {
+		if (!(await switchSessionModel(sessionId, event.model.id, sdkModelId(event.model)))) {
 			keepBindingThenClose(sessionId, "model_selected");
 		}
 	});
@@ -157,10 +165,10 @@ export function registerSessionRegistry(
 			commitBoundary.forget(sessionId);
 			return;
 		}
-		const outcome = commitBoundary.commit(sessionId, event.message, modelId);
+		const { outcome, divergedPath } = commitBoundary.commit(sessionId, event.message, modelId);
 		if (outcome === "rewritten") {
-			recordPendingFork(sessionId, "assistant_rewritten");
-			await invalidateBinding(pi, ctx, "assistant_rewritten");
+			recordPendingFork(sessionId, "assistant_rewritten", divergedPath);
+			await invalidateBinding(pi, ctx, "assistant_rewritten", divergedPath);
 			return;
 		}
 		// Only an assistant this provider actually produced may anchor a record.

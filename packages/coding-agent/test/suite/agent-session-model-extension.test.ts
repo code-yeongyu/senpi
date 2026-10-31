@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { ModelSwitchAuthError } from "../../src/core/model-switch-auth-error.ts";
 import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
 
@@ -50,6 +51,7 @@ describe("AgentSession model and extension characterization", () => {
 	it("setModel preserves its model-selection persistence and lifecycle contract", async () => {
 		const modelEvents: string[] = [];
 		const harness = await createHarness({
+			settings: { defaultThinkingLevel: "low" },
 			models: [
 				{ id: "faux-1", name: "One", reasoning: true },
 				{ id: "faux-2", name: "Two", reasoning: true },
@@ -74,7 +76,7 @@ describe("AgentSession model and extension characterization", () => {
 		expect(harness.session.thinkingLevel).toBe("high");
 		expect(harness.settingsManager.getDefaultProvider()).toBe(nextModel.provider);
 		expect(harness.settingsManager.getDefaultModel()).toBe(nextModel.id);
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("high");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 		expect(modelEvents).toEqual(["faux-1->faux-2:set"]);
 		expect(
 			harness.sessionManager
@@ -297,9 +299,7 @@ describe("AgentSession model and extension characterization", () => {
 		});
 		harnesses.push(harness);
 
-		await expect(harness.session.setModel(harness.getModel("faux-2")!)).rejects.toThrow(
-			`No API key for ${harness.getModel().provider}/faux-2`,
-		);
+		await expect(harness.session.setModel(harness.getModel("faux-2")!)).rejects.toBeInstanceOf(ModelSwitchAuthError);
 	});
 
 	it("allows extension tool_call handlers to block tool execution", async () => {

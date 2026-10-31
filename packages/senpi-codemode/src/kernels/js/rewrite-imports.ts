@@ -151,8 +151,16 @@ function applyEdits(code: string, edits: readonly TextEdit[]): string {
 	return output;
 }
 
+// Cells are prepared on the shared host loop (#3205), so Babel runs only for text that can be import syntax: the
+// keyword as a whole word, not `import-1` or `import.meta`. Anything after it (comments, non-ASCII names) still
+// parses; a false positive only costs a parse, a false negative would skip a rewrite. The AST walk runs when
+// `import` is followed by `(` or by a comment that could hide one. The gate never scans a comment body: a
+// comment-matching pattern backtracks quadratically on large data full of `import /*` text.
+const IMPORT_SYNTAX = /\bimport\b(?![-.$])/u;
+const DYNAMIC_IMPORT_SYNTAX = /\bimport\s*[(/]/u;
+
 export function rewriteImports(code: string): string {
-	if (!code.includes("import")) return code;
+	if (!IMPORT_SYNTAX.test(code)) return code;
 	const ast = parseProgram(code);
 	if (!ast) return code;
 	const edits: TextEdit[] = [];
@@ -161,9 +169,55 @@ export function rewriteImports(code: string): string {
 		if (node.type !== "ImportDeclaration" || typeof node.start !== "number" || typeof node.end !== "number") continue;
 		edits.push({ start: node.start, end: node.end, text: rewriteImportDeclaration(node) });
 	}
-	walkNodes(ast.program, (node) => {
-		const edit = dynamicImportEdit(node);
-		if (edit) edits.push(edit);
-	});
+	if (DYNAMIC_IMPORT_SYNTAX.test(code)) {
+		walkNodes(ast.program, (node) => {
+			const edit = dynamicImportEdit(node);
+			if (edit) edits.push(edit);
+		});
+	}
 	return applyEdits(code, edits);
+}
+
+/** Host-side preflight: worker assets stay dependency-free, and direct eval keeps native lexical scope. */
+export function hasDynamicCodeCapability(code: string): boolean {
+	if (!/\b(?:eval|Function|plugin)\b/u.test(code)) return false;
+	const ast = parseProgram(code);
+	if (!ast) return false;
+	let unsupported = false;
+	walkNodes(ast.program, (node) => {
+		if (node.type === "MemberExpression" && !node.value.computed) {
+			const owner = nodeFrom(node.value.object);
+			const member = nodeFrom(node.value.property);
+			const outer = owner && nodeFrom(owner.value.object);
+			const inner = owner && nodeFrom(owner.value.property);
+			if (
+				member?.value.name === "plugin" &&
+				(owner?.value.name === "Bun" || (outer?.value.name === "globalThis" && inner?.value.name === "Bun"))
+			) {
+				unsupported = true;
+			}
+		}
+		if (node.type !== "CallExpression" && node.type !== "NewExpression") return;
+		const callee = nodeFrom(node.value.callee);
+		const object = callee && nodeFrom(callee.value.object);
+		const property = callee && nodeFrom(callee.value.property);
+		const name =
+			callee?.type === "Identifier"
+				? callee.value.name
+				: callee?.type === "MemberExpression" && !callee.value.computed && object?.value.name === "globalThis"
+					? property?.value.name
+					: undefined;
+		if (name !== "eval" && name !== "Function") return;
+		const args = node.value.arguments;
+		if (!Array.isArray(args)) return;
+		for (const argument of args) {
+			const value = nodeFrom(argument);
+			if (value?.type !== "StringLiteral") unsupported = true;
+		}
+		const body = nodeFrom(args.at(-1));
+		if (body?.type === "StringLiteral" && typeof body.value.value === "string") {
+			unsupported ||= hasDynamicCodeCapability(body.value.value);
+		}
+	});
+	return unsupported;
 }

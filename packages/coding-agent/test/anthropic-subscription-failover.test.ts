@@ -1,5 +1,6 @@
 import { type CredentialStore, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { AUTH_BLOCK_REPROBE_MS } from "../src/core/credential-pool/auth-reprobe.ts";
 import {
 	type AccountSlot,
 	type AnthropicSubscriptionCredential,
@@ -9,17 +10,14 @@ import {
 import { rendezvousOrder, selectAccount } from "../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { classifySdkError } from "../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import { ClassifiedSdkError, runFailover } from "../src/core/extensions/builtin/anthropic-subscription/failover.ts";
+import { cliSlot } from "./support/claude-cli-test-slots.ts";
 
 type AttemptEvent =
 	| { type: "text_delta"; delta: string }
 	| { type: "toolcall_delta"; delta: string }
 	| { type: "done"; value: string };
 
-const accountPool: AccountSlot[] = [
-	{ name: "alpha", refresh: "r-alpha", access: "a-alpha", expires: 1, source: "login" },
-	{ name: "bravo", refresh: "r-bravo", access: "a-bravo", expires: 1, source: "login" },
-	{ name: "charlie", refresh: "r-charlie", access: "a-charlie", expires: 1, source: "login" },
-];
+const accountPool: AccountSlot[] = [cliSlot("alpha"), cliSlot("bravo"), cliSlot("charlie")];
 const now = 10_000;
 
 async function storeWithAccounts(): Promise<CredentialStore> {
@@ -203,7 +201,7 @@ describe("Claude SDK OAuth failover", () => {
 		expect(emitted.at(-1)).toEqual(last);
 	});
 
-	it("blocks authentication failures until re-login instead of assigning a time-based expiry", async () => {
+	it("blocks authentication failures until a re-probe time (senpi#3264)", async () => {
 		const store = await storeWithAccounts();
 		const stream = runFailover({
 			accounts: [accountPool[0]!],
@@ -220,7 +218,9 @@ describe("Claude SDK OAuth failover", () => {
 		});
 		await expect(collect(stream)).rejects.toBeInstanceOf(ClassifiedSdkError);
 		const credential = (await store.read("anthropic-subscription")) as AnthropicSubscriptionCredential;
-		expect(credential.accounts?.[0]).toMatchObject({ blockReason: "auth_error" });
-		expect(credential.accounts?.[0]?.blockedUntil).toBeUndefined();
+		expect(credential.accounts?.[0]).toMatchObject({
+			blockReason: "auth_error",
+			blockedUntil: now + AUTH_BLOCK_REPROBE_MS,
+		});
 	});
 });

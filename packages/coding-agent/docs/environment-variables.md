@@ -93,7 +93,8 @@ These variables are read by Pi itself:
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
 | `PI_CACHE_RETENTION` | Set to `long` to opt into extended provider prompt caching where supported; direct Anthropic defaults to 5 minutes |
 | `PI_CLAUDE_CODE_VERSION` | Exact `X.Y.Z` to advertise as the Claude Code version on Anthropic OAuth requests (`claude-cli/<version>`) and skip the background lookup. Unset, senpi advertises the higher of its bundled floor and the latest published Claude Code, refreshed at most every six hours and cached in `<agent dir>/claude-code-version.json`; a `claude_code_version_too_old` rejection raises it and retries once |
-| `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
+| `PI_SHARE_VIEWER_URL` | Opt-in viewer base URL printed by `/share` (the viewer receives the gist id); unset, `/share` prints only the gist link |
+| `PI_DISABLE_SHARE` | Set to `1` to turn `/share` off on this machine; the `enableSessionShare: false` setting does the same per user or project |
 | `PI_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |
 | `PI_HYPERLINKS` | Override OSC 8 hyperlink detection with `1`, `0`, or `auto` |
 | `PI_IMAGE_PROTOCOL` | Override inline image detection with `kitty`, `iterm2`, `none`, or `auto` |

@@ -1,3 +1,172 @@
+## 2026-10-27 - The Anthropic provider comment names the CLI sign-in (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/providers/anthropic.ts`: the comment on the absent subscription OAuth says the `anthropic-subscription` lane signs in through the bundled Claude Code CLI, not a shared OAuth flow.
+
+### Why
+
+- senpi#4436 (R7): the PKCE flow the comment pointed at is removed.
+
+### Why an extension could not handle it
+
+- Comment-only change in the builtin provider factory.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` comment in `anthropicProvider`.
+
+## 2026-10-26 - The faux provider captures block seeds at emission (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/providers/faux.ts`: both the streamed and the deferred-fetch stream enable capture; each tool
+  argument delta carries `parsedThrough: 0`, because faux never parses its generated chunks and only the end installs
+  the arguments.
+
+### Why
+
+- Faux backs the unit tests and real-CLI QA; its streams must carry the same capture facts as provider streams so
+  later stages can be exercised end to end (R3.C6.2).
+
+### Why an extension could not handle it
+
+- Capture has to run inside the stream's `push`, which only the provider controls.
+
+### Expected merge conflict zones
+
+- LOW: the two `createAssistantMessageEventStream()` sites in `createFauxCore` and the tool delta push in
+  `streamWithDeltas`.
+
+## 2026-10-24 - Kimi K3.1 Pro rows in the kimi-coding shard (senpi#4183)
+
+### What changed
+
+- `packages/ai/src/providers/kimi-coding.models.ts`: adds `chat:k3.1-pro` and `chat:k3.1-pro-highspeed` with the `k3` compat flags and image resize profile, the K3 thinking map, context 1048576, maxTokens 131072, text + image + video input, and the Moonshot API rates as implied cost (2 / 10 / 0.2 / 2 and 4 / 20 / 0.2 / 4 per MTok), like `k3`.
+
+### Why
+
+- Moonshot shipped K3.1 Pro on Kimi Code on 2026-10-23 under the ids `k3.1-pro` / `k3.1-pro-highspeed` (kimi.com/code/docs models page, checked 2026-10-24). Without a row the model could not be selected, and a mistyped id silently falls back to K2.8 Preview without thinking.
+
+### Why an extension could not handle it
+
+- The `kimi-coding` catalog is a hand-owned builtin shard; the builtin provider reads only this file.
+
+### Expected merge conflict zones
+
+- LOW: the `anthropic-messages` block of `packages/ai/src/providers/kimi-coding.models.ts`, between `chat:k3` and `chat:k3-256k`.
+
+## 2026-10-16 - Xiaomi MiMo compat covers mimo-v2.6-pro (senpi v2026.10.16 release)
+
+### What changed
+
+- `packages/ai/src/providers/all.ts`: the Xiaomi MiMo compat normalization (reasoning content on assistant messages, DeepSeek thinking format, thinking cannot be disabled) applies to `mimo-v2.6-pro` as well as `mimo-v2.5-pro`.
+
+### Why
+
+- `packages/ai/src/providers/all.ts`: models.dev marked `mimo-v2.5-pro` deprecated, so a regenerated catalog drops it and `mimo-v2.6-pro` becomes the xiaomi default. Its generated entry already carries the same compat; the normalization keeps that guaranteed if a future regeneration loses it.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/all.ts`: built-in model normalization runs when the bundled catalog is loaded, before any extension.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/all.ts`: `normalizeBuiltinModel` and the Xiaomi provider/id sets above it.
+
+## 2026-10-15 - Faux provider reports configurable response headers (senpi#3370)
+
+### What changed
+
+`RegisterFauxProviderOptions.responseHeaders` sets the headers every scripted response reports through `onResponse` (default none, unchanged behaviour).
+
+- `packages/ai/src/providers/faux.ts`
+
+### Why
+
+Tests of code that reads provider response headers (subscription limit windows) need a provider that sends them, without a network call.
+
+### Why an extension could not handle it
+
+The faux provider is the in-tree test transport; an extension cannot change what it passes to `onResponse`.
+
+### Expected merge conflict zones
+
+The `onResponse` calls in the faux core and the options interface.
+
+## 2026-10-14 - OpenCode Go registers the Google Generative AI transport (senpi#3342)
+
+### What changed
+
+- `packages/ai/src/providers/opencode-go.ts`: `opencodeGoProvider()` registers `google-generative-ai` (`withOpenCodeSessionHeader(googleGenerativeAIApi())`) beside its Anthropic Messages and OpenAI Completions/Responses transports, the same registration the OpenCode Zen provider (`opencode.ts`) already has. The provider's API union gains `google-generative-ai`.
+
+### Why
+
+- The refreshed models.dev catalog lists an OpenCode Go model in a `google-generative-ai` API group. Without a transport for it the typed catalog no longer fit the provider (TS2322), main stopped type-checking, and the v2026.10.14 release could not be cut. Registering the transport gives that model a working route instead of filtering it out.
+
+### Why an extension could not handle it
+
+- The builtin provider factory owns its transport map; an extension can register a separate provider but cannot add a transport to a builtin provider's catalog models.
+
+### Expected merge conflict zones
+
+- LOW: the import block, the API type union, and the `api` map of `opencodeGoProvider()`.
+
+## 2026-10-14 - The direct anthropic provider offers no Claude subscription OAuth (senpi#3259)
+
+### What changed
+
+- `packages/ai/src/providers/anthropic.ts`: `anthropicProvider()` no longer registers the "Anthropic (Claude Pro/Max)" OAuth method; it keeps API-key, `ANTHROPIC_AUTH_TOKEN`, env and workload-identity auth. Claude subscriptions sign in through the coding-agent `anthropic-subscription` lane, which runs the same OAuth flow (`loadAnthropicOAuth`) behind the Claude Agent SDK.
+
+### Why
+
+- Anthropic bills a Claude subscription token sent straight to the Messages API as a third-party app: every request is refused with "Third-party apps now draw from your extra usage, not your plan limits", so a user who signed in this way could never use their plan (senpi#3259). The Agent SDK lane runs requests through Claude Code, the path that draws from plan limits.
+
+### Why an extension could not handle it
+
+- Login surfaces (TUI `/login`, RPC `get_auth_providers`, `AuthStorage.getOAuthProviders()`) enumerate `builtinProviders()` auth methods directly; an extension can add a provider but cannot remove a builtin provider's OAuth method.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` block of `anthropicProvider()` and its two OAuth imports.
+
+## 2026-10-11 - Keep unverified xAI search opt-in (senpi#3122 review)
+
+### What changed
+
+- `xai.ts` selects `web_search` as the Responses tool shape without enabling server search in the catalog. Users opt in with `supportsWebSearchPreview: true`.
+
+### Why
+
+- The held live probe returned HTTP 403; official documentation alone must not enable a route by default.
+
+### Why an extension could not handle it
+
+- The capability default is owned by the provider factory.
+
+### Expected merge conflict zones
+
+- The xAI model mapping.
+
+## 2026-10-11 - xAI in-turn Responses search (senpi#3122)
+
+### What changed
+
+- `packages/ai/src/providers/xai.ts`: explicitly marks built-in Responses models with `supportsWebSearchPreview: true` and `webSearchToolType: "web_search"`, matching https://docs.x.ai/developers/tools/web-search.
+- No model/API or credential migration is performed. Custom compatible routes declare their exact tool type separately.
+
+### Why
+
+xAI's built-in Responses route supports in-turn search and must not default to an auxiliary model.
+
+### Why an extension could not handle it
+
+Provider catalogue flags belong to the provider factory.
+
+### Expected merge conflict zones
+
+The mapped xAI model catalogue.
+
 ## 2026-10-09 - Restore providers-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

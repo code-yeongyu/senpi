@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { McpServerConfig, McpServerDeclaration } from "./config-schema.ts";
+import type { McpServerDeclaration } from "./config-schema.ts";
 import type { ServerConnectionOptions } from "./connection-types.ts";
 
 const sessionDependent = new WeakSet<object>();
@@ -15,12 +15,12 @@ function hasSessionValues(config: McpServerDeclaration, cwd?: string): boolean {
 	const values = [config.command, ...(config.args ?? []), ...Object.values(config.env ?? {})];
 	return (
 		Object.keys(config.env ?? {}).some((key) => sessionVariable.test(key)) ||
-		[...values, config.cwd].some((value) => value !== undefined && sessionTemplate.test(value)) ||
-		(cwd !== undefined && values.some((value) => value?.includes(cwd)))
+		[...values, config.cwd].some((value) => typeof value === "string" && sessionTemplate.test(value)) ||
+		(cwd !== undefined && values.some((value) => typeof value === "string" && value.includes(cwd)))
 	);
 }
 
-export function shareable(config: McpServerConfig, cwd?: string): boolean {
+export function shareable(config: McpServerDeclaration, cwd?: string): boolean {
 	return config.type === "http" || (!sessionDependent.has(config) && !hasSessionValues(config, cwd));
 }
 
@@ -29,6 +29,13 @@ export function sharedMcpKey(options: ServerConnectionOptions, agentDir: string)
 	const { config, env } = options;
 	const bearer = config.bearerTokenEnv;
 	const identity = {
+		...(options.projectPolicy === undefined
+			? {}
+			: {
+					declarationDigest: options.projectPolicy.identity,
+					policyDigest: options.projectPolicy.policyDigest,
+					skillAuthorityDigest: options.projectPolicy.provenanceDigest,
+				}),
 		credentialIdentity: options.credentialIdentity,
 		agentDir,
 		name: options.serverName,

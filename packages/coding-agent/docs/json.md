@@ -65,7 +65,7 @@ Other base events come from
 type AgentEvent =
   // Agent lifecycle
   | { type: "agent_start" }
-  | { type: "agent_end"; messages: AgentMessage[] }  // in JSON mode also: willRetry: boolean
+  | { type: "agent_end"; messages: AgentMessage[] }  // in JSON mode also: willRetry: boolean; abortCause?: AgentAbortCause (a run stopped by a session replacement)
   // Turn lifecycle
   | { type: "turn_start" }
   | { type: "turn_end"; message: AgentMessage; toolResults: ToolResultMessage[] }

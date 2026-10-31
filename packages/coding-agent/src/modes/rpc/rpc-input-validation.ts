@@ -1,5 +1,7 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { MAX_TOOL_BARRIER_ID_LENGTH, toolBarrierSpecError } from "../../core/tool-barrier.ts";
+import { validatePauseCommand } from "./pause-command-validation.ts";
 
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
 
@@ -94,12 +96,90 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
 	}
+	if (value.type === "prompt" && value.toolBarrier !== undefined) {
+		const barrierError = toolBarrierSpecError(value.toolBarrier);
+		if (barrierError !== undefined) return barrierError;
+	}
+	if (
+		value.type === "release_tool_barrier" &&
+		!(
+			typeof value.barrierId === "string" &&
+			value.barrierId.length > 0 &&
+			value.barrierId.length <= MAX_TOOL_BARRIER_ID_LENGTH
+		)
+	) {
+		return `barrierId must be a non-empty string of at most ${MAX_TOOL_BARRIER_ID_LENGTH} characters.`;
+	}
+	if (
+		(value.type === "dequeue_message" || value.type === "edit_queued_message") &&
+		!(typeof value.queuedId === "string" && value.queuedId.length > 0 && value.queuedId.length <= 256)
+	) {
+		return "queuedId must be a non-empty string of at most 256 characters; read it from get_state or queue_update.";
+	}
+	if (
+		value.type === "edit_queued_message" &&
+		!(typeof value.text === "string" && value.text.length > 0 && value.text.length <= MAX_RPC_MESSAGE_CHARACTERS)
+	) {
+		return `text must be a non-empty string of at most ${MAX_RPC_MESSAGE_CHARACTERS} characters; dequeue_message removes an input.`;
+	}
+	if (
+		(value.type === "dequeue_message" || value.type === "edit_queued_message") &&
+		value.expectedRevision !== undefined &&
+		!(Number.isSafeInteger(value.expectedRevision) && (value.expectedRevision as number) >= 1)
+	) {
+		return "expectedRevision must be a whole number of at least 1; read it from the input's revision in get_state or queue_update.";
+	}
+	if (
+		value.type === "resolve_path" &&
+		!(typeof value.path === "string" && value.path.trim().length > 0 && value.path.length <= 4096)
+	) {
+		return "path must be a non-empty string of at most 4096 characters.";
+	}
+	if (value.type === "unload_session") {
+		if (value.children !== undefined && value.children !== "refuse" && value.children !== "detach")
+			return 'children must be "refuse" or "detach".';
+		for (const flag of ["interrupt", "clearQueue", "force"] as const)
+			if (value[flag] !== undefined && typeof value[flag] !== "boolean") return `${flag} must be a boolean.`;
+	}
 	if (
 		(value.type === "steer" || value.type === "follow_up") &&
 		value.enqueueOrder !== undefined &&
 		!(typeof value.enqueueOrder === "number" && Number.isFinite(value.enqueueOrder))
 	) {
 		return "enqueueOrder must be a finite number.";
+	}
+	if (
+		(value.type === "steer" || value.type === "follow_up") &&
+		value.whenIdle !== undefined &&
+		value.whenIdle !== "queue" &&
+		value.whenIdle !== "start"
+	) {
+		return 'whenIdle must be "queue" or "start"; omit it to queue on an idle session.';
+	}
+	if (
+		(value.type === "abort" ||
+			value.type === "set_model" ||
+			value.type === "set_thinking_level" ||
+			value.type === "get_effect_status") &&
+		(value.effectId !== undefined || value.type === "get_effect_status") &&
+		!(typeof value.effectId === "string" && value.effectId.length > 0 && value.effectId.length <= 256)
+	) {
+		return "effectId must be a non-empty string of at most 256 characters.";
+	}
+	const pauseFieldError = validatePauseCommand(value);
+	if (pauseFieldError !== undefined) return pauseFieldError;
+	if (value.type === "get_pending_inputs" && value.knownClientMessageIds !== undefined) {
+		const ids: unknown = value.knownClientMessageIds;
+		if (
+			!Array.isArray(ids) ||
+			ids.length > 64 ||
+			!ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 256)
+		) {
+			return "knownClientMessageIds must be an array of at most 64 non-empty strings of at most 256 characters.";
+		}
+	}
+	if (value.type === "get_effect_status" && value.sessionPath !== undefined && typeof value.sessionPath !== "string") {
+		return "sessionPath must be a string.";
 	}
 	if (value.type === "append_user_message" && !validContent(value.content)) {
 		return "append_user_message content must be a string or text/image content array.";

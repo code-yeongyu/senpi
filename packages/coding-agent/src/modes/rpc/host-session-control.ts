@@ -45,12 +45,21 @@ export class HostSessionControl implements ControlEndpointHost {
 		this.releaseActive();
 		if (this.disposed || this.socket === undefined) return { status: "unsupported", reason: "unsupported_mode" };
 		const { session } = this;
+		// Every wake runs a pass, so a failure that repeats is reported once, until a pass succeeds again.
+		let failing: string | undefined;
 		const scheduler = new WakeScheduler(
 			async (event) => {
 				await session.extensionRunner.emit(event);
-				return (await options.drain(event)) ?? { admitted: [] };
+				const result = (await options.drain(event)) ?? { admitted: [] };
+				failing = undefined;
+				return result;
 			},
-			(error) => this.report(`control drain failed: ${errorText(error)}`),
+			(error) => {
+				const reason = errorText(error);
+				if (reason === failing) return;
+				failing = reason;
+				this.report(`control drain failed: ${reason}`);
+			},
 		);
 		const wake = (reason: SessionControlWakeReason): void => void scheduler.request(reason);
 		const unsubscribeIdle = session.subscribe((event) => {

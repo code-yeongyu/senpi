@@ -15,7 +15,7 @@ const pty = vi.hoisted(() => {
 	const observedRejection = (record: RejectionRecord): Promise<void> => {
 		const failure = new Error("write data discarded, use flow control to avoid losing data");
 		const thenable = {
-			// biome-ignore lint/suspicious/noThenProperty: intentional thenable observing handler attachment
+			// oxlint-disable-next-line unicorn/no-thenable -- intentional thenable observing handler attachment
 			then(
 				_onFulfilled?: ((value: undefined) => unknown) | null,
 				onRejected?: ((reason: unknown) => unknown) | null,

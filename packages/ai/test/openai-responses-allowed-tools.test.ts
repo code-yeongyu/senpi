@@ -58,13 +58,13 @@ describe("openai-responses allowed_tools restriction", () => {
 	it("keeps every declared tool and restricts the active subset through tool_choice", async () => {
 		const payload = await captureRequestBody(flagged, { tools: TOOLS, activeToolNames: ["read", "bash"] });
 
-		expect(toolNames(payload)).toEqual(["read", "ask_user", "bash"]);
+		expect(toolNames(payload)).toEqual(["ask_user", "bash", "read"]);
 		expect(payload.tool_choice).toEqual({
 			type: "allowed_tools",
 			mode: "auto",
 			tools: [
-				{ type: "function", name: "read" },
 				{ type: "function", name: "bash" },
+				{ type: "function", name: "read" },
 			],
 		});
 	});
@@ -75,14 +75,14 @@ describe("openai-responses allowed_tools restriction", () => {
 			activeToolNames: ["bash", "read", "ask_user"],
 		});
 
-		expect(toolNames(payload)).toEqual(["read", "ask_user", "bash"]);
+		expect(toolNames(payload)).toEqual(["ask_user", "bash", "read"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
 	it("forbids tool calls with tool_choice none when the active subset is empty", async () => {
 		const payload = await captureRequestBody(flagged, { tools: TOOLS, activeToolNames: [] });
 
-		expect(toolNames(payload)).toEqual(["read", "ask_user", "bash"]);
+		expect(toolNames(payload)).toEqual(["ask_user", "bash", "read"]);
 		expect(payload.tool_choice).toBe("none");
 	});
 
@@ -102,7 +102,7 @@ describe("openai-responses allowed_tools restriction", () => {
 			activeToolNames: ["read"],
 		});
 
-		expect(toolNames(payload)).toEqual(["read", "ask_user", "bash"]);
+		expect(toolNames(payload)).toEqual(["ask_user", "bash", "read"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -121,7 +121,7 @@ describe("openai-responses allowed_tools restriction", () => {
 			{ onPayload: swapInHostedWebSearch },
 		);
 
-		expect(toolNames(payload)).toEqual(["read", "ask_user", "bash", undefined]);
+		expect(toolNames(payload)).toEqual(["ask_user", "bash", "read", undefined]);
 		expect(payload.tool_choice).toEqual({
 			type: "allowed_tools",
 			mode: "auto",
@@ -167,7 +167,7 @@ describe("openai-responses allowed_tools restriction", () => {
 			],
 		});
 
-		expect(toolNames(payload)).toEqual(["read", "ask_user", "bash"]);
+		expect(toolNames(payload)).toEqual(["ask_user", "bash", "read"]);
 		expect(payload.tool_choice).toEqual({
 			type: "allowed_tools",
 			mode: "auto",

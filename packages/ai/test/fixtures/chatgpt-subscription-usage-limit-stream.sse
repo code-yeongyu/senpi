@@ -1,0 +1,9 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_fixture_3771","object":"response","status":"in_progress","model":"gpt-5.1-codex","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_fixture_3771","object":"response","status":"in_progress","model":"gpt-5.1-codex","output":[]}}
+
+event: error
+data: {"type":"error","status":429,"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":1792540800,"resets_in_seconds":259200},"headers":{"x-codex-primary-used-percent":"100","x-codex-primary-window-minutes":"10080"}}
+

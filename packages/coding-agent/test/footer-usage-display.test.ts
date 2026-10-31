@@ -50,6 +50,24 @@ describe("FooterComponent usage display", () => {
 		expect(renderedFooter).toContain("$1.250");
 	});
 
+	it("#given a total that includes a turn with no known price #when the footer renders #then the amount is marked as a lower bound (senpi#3844)", () => {
+		// given
+		const session = createFooterSession({
+			sessionName: "",
+			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } },
+			toolUsage: { input: 15, output: 3, cacheRead: 0, cacheWrite: 0, cost: { total: 0 }, costUnknown: true },
+		});
+
+		// when
+		const renderedFooter = new FooterComponent(session, createFooterData(1))
+			.render(120)
+			.map((line) => stripAnsi(line))
+			.join("\n");
+
+		// then
+		expect(renderedFooter).toContain("$0.500+?");
+	});
+
 	it("shows the latest cache hit rate when cache usage is present", () => {
 		const session = createFooterSession({
 			sessionName: "",

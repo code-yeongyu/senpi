@@ -4,10 +4,11 @@ import { APP_NAME, getAgentDir } from "../config.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC, HostLaunchSpecError, loadHostLaunchSpec } from "../modes/rpc/host-launch-spec.ts";
 import { HOST_EXIT_ERROR, HOST_EXIT_USAGE } from "../modes/rpc/host-outcome.ts";
 import { type HostSessionRequest, runHostSessionRequest } from "../modes/rpc/host-session-runner.ts";
+import { withRpcKeyRoot } from "../modes/rpc/rpc-auth-client.ts";
 import { resolveHostSocket } from "./host-command.ts";
 import { emit } from "./host-emit.ts";
 
-const USAGE = `usage: ${APP_NAME} host session <command> [--socket <path>] [--json]
+const USAGE = `usage: ${APP_NAME} host session <command> [--socket <path>] [--rpc-key-root <dir>] [--json]
 
   open --cwd <dir> [--model <provider/id>] [--name <text>] [--prompt <text|@file>] [--launch-spec <file>]
   close <ref>
@@ -29,21 +30,29 @@ export interface ParsedHostSessionArgs {
 	readonly command: CommandArgs<HostSessionRequest>;
 	readonly socket?: string;
 	readonly specPath?: string;
+	readonly keyRoot?: string;
 }
 
 export function parseHostSessionArgs(args: readonly string[]): ParsedHostSessionArgs | string {
 	const [action, ...rest] = args;
 	if (
-		!["open", "close", "model", "prompt", "steer", "abort", "read", "state", "list", "wait"].includes(action ?? "")
+		!["open", "close", "unload", "model", "prompt", "steer", "abort", "read", "state", "list", "wait"].includes(
+			action ?? "",
+		)
 	) {
 		return `Unknown host session command "${action ?? ""}".`;
 	}
 	const values: Record<string, string> = {};
 	const positional: string[] = [];
 	let messages = false;
+	const unloadFlags = { interrupt: false, force: false, clearQueue: false };
 	for (let index = 0; index < rest.length; index++) {
 		const flag = rest[index];
 		if (flag === "--json") continue;
+		if (action === "unload" && (flag === "--interrupt" || flag === "--force" || flag === "--clear-queue")) {
+			unloadFlags[flag === "--clear-queue" ? "clearQueue" : (flag.slice(2) as "interrupt" | "force")] = true;
+			continue;
+		}
 		if (flag === "--messages" && action === "read") {
 			messages = true;
 			continue;
@@ -54,9 +63,11 @@ export function parseHostSessionArgs(args: readonly string[]): ParsedHostSession
 		}
 		const allowed =
 			flag === "--socket" ||
+			flag === "--rpc-key-root" ||
 			(action === "open" && ["--cwd", "--model", "--name", "--prompt", "--launch-spec"].includes(flag)) ||
 			(action === "read" && ["--tail", "--since"].includes(flag)) ||
-			(action === "wait" && ["--until", "--timeout"].includes(flag));
+			(action === "wait" && ["--until", "--timeout"].includes(flag)) ||
+			(action === "unload" && flag === "--children");
 		const value = rest[++index];
 		if (!allowed || value === undefined || value.startsWith("--")) return `Invalid option or missing value: ${flag}.`;
 		values[flag] = value;
@@ -65,7 +76,7 @@ export function parseHostSessionArgs(args: readonly string[]): ParsedHostSession
 		action === "open" || action === "list" ? 0 : ["model", "prompt", "steer"].includes(action ?? "") ? 2 : 1;
 	if (positional.length !== count) return `${action} expects ${count} positional argument(s).`;
 	const ref = positional[0] ?? "";
-	const common = { socket: values["--socket"], specPath: values["--launch-spec"] };
+	const common = { socket: values["--socket"], specPath: values["--launch-spec"], keyRoot: values["--rpc-key-root"] };
 	switch (action) {
 		case "open": {
 			if (!values["--cwd"]) return "open requires --cwd <dir>.";
@@ -95,6 +106,11 @@ export function parseHostSessionArgs(args: readonly string[]): ParsedHostSession
 			return { ...common, command: { action, ref } };
 		case "list":
 			return { ...common, command: { action } };
+		case "unload": {
+			const children = values["--children"] ?? "refuse";
+			if (children !== "refuse" && children !== "detach") return "--children must be refuse or detach.";
+			return { ...common, command: { action, ref, ...unloadFlags, children } };
+		}
 		case "read": {
 			const tail = values["--tail"] === undefined ? undefined : integer(values["--tail"], 1);
 			if (tail === null) return "--tail must be a positive integer.";
@@ -154,7 +170,10 @@ export async function runHostSessionCommand(args: readonly string[]): Promise<nu
 								: await loadHostLaunchSpec(parsed.specPath),
 					}
 				: { ...command, target };
-		const outcome = await runHostSessionRequest(request);
+		const outcome = await withRpcKeyRoot(
+			parsed.keyRoot === undefined ? (process.env.SENPI_RPC_KEY_ROOT ?? agentDir) : resolve(parsed.keyRoot),
+			() => runHostSessionRequest(request),
+		);
 		emit(outcome.payload);
 		return outcome.exitCode;
 	} catch (error) {

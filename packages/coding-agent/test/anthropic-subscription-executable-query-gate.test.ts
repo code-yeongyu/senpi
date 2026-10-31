@@ -51,7 +51,7 @@ describe("streamAnthropicSubscription executable gate", () => {
 			isFile: () => false,
 		});
 
-		const result = await streamAnthropicSubscription(model, { messages: [] }).result();
+		const result = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 
 		expect(queries).toBe(0);
 		expect(result.stopReason).toBe("error");
@@ -84,7 +84,7 @@ describe("streamAnthropicSubscription executable gate", () => {
 			isFile: () => true,
 		});
 
-		const result = await streamAnthropicSubscription(model, { messages: [] }).result();
+		const result = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 
 		expect(result.stopReason).not.toBe("error");
 		expect(seen).toBe(`\\\\?\\${HOISTED_SIDECAR}`);

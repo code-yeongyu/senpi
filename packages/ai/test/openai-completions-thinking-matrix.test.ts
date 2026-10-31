@@ -86,6 +86,22 @@ function getOpenAICompletionsModel(provider: BuiltinProvider, id: string): Model
 	return model;
 }
 
+// A live catalog id leaves the catalog on regeneration (v2026.10.19-1 dropped deepseek/deepseek-r1), so the DeepSeek
+// cases take any OpenRouter DeepSeek reasoner the catalog marks reasoning-mandatory.
+function getOpenRouterDeepSeekReasoner(): Model<"openai-completions"> {
+	const model = (getModels("openrouter") as Model<"openai-completions">[]).find(
+		(candidate) =>
+			candidate.api === "openai-completions" &&
+			candidate.id.includes("deepseek") &&
+			candidate.reasoning &&
+			candidate.thinkingLevelMap?.off === null &&
+			candidate.compat?.thinkingFormat === "openrouter",
+	);
+	if (!model)
+		throw new Error("the OpenRouter catalog has no reasoning-mandatory DeepSeek model on openai-completions");
+	return model;
+}
+
 describe("OpenAI Completions thinking ladder fallbacks", () => {
 	it("infers the GPT-6 Astra ladder for map-less custom models", async () => {
 		const model = {
@@ -122,7 +138,7 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 		},
 		{
 			name: "OpenRouter DeepSeek's high-only fallback ladder",
-			model: withoutCatalogLadder(getOpenAICompletionsModel("openrouter", "deepseek/deepseek-r1")),
+			model: withoutCatalogLadder(getOpenRouterDeepSeekReasoner()),
 			reasoning: "minimal" as const,
 			expected: { reasoning: { effort: "high" } },
 		},
@@ -250,7 +266,7 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 	});
 
 	it("does not send OpenRouter's none sentinel to a model the catalog marks reasoning-mandatory", async () => {
-		const model = getOpenAICompletionsModel("openrouter", "deepseek/deepseek-r1");
+		const model = getOpenRouterDeepSeekReasoner();
 
 		const payload = await capturePayload(model);
 

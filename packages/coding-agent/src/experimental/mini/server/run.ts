@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core/harness/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
 import { JsonlSessionRepo } from "@earendil-works/pi-agent-core/harness/session";
+import { signalSpawnedChild } from "../../../utils/child-signal.ts";
 import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
 import { type SessionSummary, Sessions, type SessionsServiceApi, Worker } from "../shared/protocol.ts";
 import { createPeer, type RpcPeer } from "../shared/rpc.ts";
@@ -83,7 +84,7 @@ export async function runServer(options: { transport: Transport; sessionsRoot: s
 			sessionId: described.sessionId,
 			worker: peer,
 			subscribers: new Map(),
-			stop: () => child.kill(),
+			stop: () => signalSpawnedChild(child),
 		};
 		// Routing is the server's job. An addressed event reaches one presentation; the rest are shared.
 		peer.onEvent((service, payload, to) => {

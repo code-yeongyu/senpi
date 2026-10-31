@@ -16,6 +16,13 @@ const bridgeErrorSchema = Type.Object({
 	message: Type.String(),
 	stack: Type.Optional(Type.String()),
 	code: Type.Optional(Type.String()),
+	permissionRule: Type.Optional(
+		Type.Object({
+			permission: Type.String(),
+			pattern: Type.String(),
+			layer: Type.String(),
+		}),
+	),
 });
 
 const statusEventSchema = Type.Object({ op: Type.String() }, { additionalProperties: true });
@@ -100,6 +107,12 @@ const hostToKernelMessageSchema = Type.Union([
  */
 const kernelStateSchema = Type.Union([Type.Literal("lost"), Type.Literal("restarted"), Type.Literal("not-run")]);
 
+/** Python results: the user globals defined after the cell, so a notice can name what a lost kernel took with it. */
+const resultGlobalsSchema = {
+	globalCount: Type.Optional(Type.Integer({ minimum: 0 })),
+	globalNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 })),
+};
+
 const kernelToHostMessageSchema = Type.Union([
 	Type.Object({ type: Type.Literal("ready"), memoryGlobals: Type.Optional(Type.Boolean()) }),
 	Type.Object({ type: Type.Literal("init-failed"), error: bridgeErrorSchema }),
@@ -129,6 +142,7 @@ const kernelToHostMessageSchema = Type.Union([
 		valueRepr: Type.Optional(Type.String()),
 		durationMs: Type.Integer({ minimum: 0 }),
 		memory: Type.Optional(kernelMemoryReportSchema),
+		...resultGlobalsSchema,
 		/** Host-set: the bracketed notice that this cell ran on a kernel restarted after its interpreter died. */
 		notice: Type.Optional(Type.String()),
 		kernelState: Type.Optional(kernelStateSchema),
@@ -140,6 +154,7 @@ const kernelToHostMessageSchema = Type.Union([
 		error: bridgeErrorSchema,
 		durationMs: Type.Integer({ minimum: 0 }),
 		memory: Type.Optional(kernelMemoryReportSchema),
+		...resultGlobalsSchema,
 		notice: Type.Optional(Type.String()),
 		kernelState: Type.Optional(kernelStateSchema),
 	}),

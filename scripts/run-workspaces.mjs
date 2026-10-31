@@ -61,7 +61,8 @@ export function parseArguments(argv) {
 		}
 		if (argument === "--workspace") {
 			const selector = argv[++index];
-			if (selector === undefined || selector === "--") throw new UsageError("--workspace requires a package name or path");
+			if (selector === undefined || selector === "--")
+				throw new UsageError("--workspace requires a package name or path");
 			parsed.workspaces.push(selector);
 			continue;
 		}
@@ -88,9 +89,7 @@ function toPosixPath(path) {
 }
 
 function normalizePattern(pattern) {
-	return toPosixPath(pattern)
-		.replace(/^\.\//, "")
-		.replace(/\/+$/, "");
+	return toPosixPath(pattern).replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
 /**
@@ -113,7 +112,9 @@ function expandPattern(rootDirectory, pattern) {
 			continue;
 		}
 		if (/[*?[\]{}!]/.test(segment)) {
-			throw new UsageError(`unsupported workspace pattern "${pattern}" (only "*" as a whole path segment is supported)`);
+			throw new UsageError(
+				`unsupported workspace pattern "${pattern}" (only "*" as a whole path segment is supported)`,
+			);
 		}
 		directories = directories.map((directory) => join(directory, segment));
 	}
@@ -124,7 +125,9 @@ export async function resolveWorkspaceDirectories(rootDirectory) {
 	const manifest = readManifest(rootDirectory);
 	const patterns = Array.isArray(manifest.workspaces) ? manifest.workspaces : manifest.workspaces?.packages;
 	if (!Array.isArray(patterns)) {
-		throw new UsageError(`${join(rootDirectory, "package.json")} has no "workspaces" field; run from the workspace root`);
+		throw new UsageError(
+			`${join(rootDirectory, "package.json")} has no "workspaces" field; run from the workspace root`,
+		);
 	}
 	const byPath = new Map();
 	for (const pattern of patterns) {
@@ -149,7 +152,8 @@ function selectWorkspaces(workspaces, selectors) {
 	for (const selector of selectors) {
 		const normalized = normalizePattern(selector);
 		const match = workspaces.find((workspace) => workspace.name === selector || workspace.relativePath === normalized);
-		if (!match) throw new UsageError(`unknown workspace "${selector}" (expected a package name or a path relative to the root)`);
+		if (!match)
+			throw new UsageError(`unknown workspace "${selector}" (expected a package name or a path relative to the root)`);
 		selected.add(match);
 	}
 	return workspaces.filter((workspace) => selected.has(workspace));
@@ -184,7 +188,7 @@ async function runInParallel(pm, pmArgs, workspaces, childEnv) {
 			),
 		);
 	} finally {
-		const forwarded = fanout.release();
+		const forwarded = await fanout.release();
 		if (forwarded) process.kill(process.pid, forwarded);
 	}
 }

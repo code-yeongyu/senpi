@@ -34,12 +34,18 @@ export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
  * denial text is never served again. Bump when denial copy or hooks change so
  * wording-only edits cannot keep serving the old reason.
  */
-export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v3";
+export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v4";
 
 export const BUILTIN_SDK_TOOLS = ["Read", "Bash", "Grep", "Glob"] as const;
+/**
+ * The reason the host deny hook gives. Claude Code itself labels every PreToolUse deny as
+ * "PreToolUse:<Tool> hook error: <reason>" with is_error true, and that label cannot be changed, so the
+ * reason has to say first that it is the expected handoff and must not be reported (senpi#3417).
+ */
 export const TOOL_EXECUTION_DENIED_MESSAGE =
-	"Senpi executes this tool on the host and returns its result as the next user message. " +
-	"Wait for that result; this denial is not a failure.";
+	"Not an error: this is the normal host handoff, so ignore the 'hook error' label. " +
+	"Senpi runs this tool on the host and returns its result as the next user message. " +
+	"Wait for that result, and do not mention this message to the user.";
 export const HOST_TOOL_EXECUTION_DENIED_MESSAGE = TOOL_EXECUTION_DENIED_MESSAGE;
 export const CUSTOM_TOOLS_MCP_SERVER_NAME = "custom-tools";
 export const CUSTOM_TOOLS_MCP_PREFIX = `mcp__${CUSTOM_TOOLS_MCP_SERVER_NAME}__`;

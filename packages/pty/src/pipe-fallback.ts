@@ -63,9 +63,11 @@ export function shouldUsePipeFallback(
 export function terminateChildTree(
 	child: Pick<ChildProcessHandle, "pid" | "kill">,
 	signal: NodeJS.Signals,
-): "group" | "direct" {
+): "group" | "direct" | "none" {
 	const pid = child.pid;
-	if (pid !== undefined && process.platform !== "win32") {
+	// A child that never started has no pid; on Node < 24.22 / 26.10 its kill() signals our own process group.
+	if (pid === undefined) return "none";
+	if (process.platform !== "win32") {
 		try {
 			process.kill(-pid, signal);
 			return "group";
@@ -266,7 +268,15 @@ export class PipeFallbackSession {
 				return { ok: true, note: `Sent ${signal} to child_process pipe fallback session.` };
 			}
 		}
-		if (terminateChildTree(this.child, signal) === "group") {
+		const route = terminateChildTree(this.child, signal);
+		if (route === "none") {
+			return {
+				ok: false,
+				code: "not_started",
+				note: "Cannot kill pipe fallback session: its process never started.",
+			};
+		}
+		if (route === "group") {
 			return { ok: true, note: `Sent ${signal} to child_process pipe fallback process group (pgid ${pid}).` };
 		}
 		return { ok: true, note: `Sent ${signal} to child_process pipe fallback session.` };

@@ -39,7 +39,7 @@ describe("AgentSessionRuntime characterization", () => {
 
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
-		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean },
+		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean; inMemory?: boolean },
 	) {
 		const tempDir =
 			options?.cwd ?? join(tmpdir(), `pi-runtime-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -107,7 +107,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const runtime = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir),
+			sessionManager: options?.inMemory === true ? SessionManager.inMemory(tempDir) : SessionManager.create(tempDir),
 		});
 		await runtime.session.bindExtensions({});
 
@@ -700,5 +700,34 @@ describe("AgentSessionRuntime characterization", () => {
 
 		expect(runtime.session.model?.id).toBe("faux-2");
 		expect(runtime.session.thinkingLevel).toBe("off");
+	});
+
+	it.each([
+		{ inMemory: false, names: "the replacement's file and id" },
+		{ inMemory: true, names: "no id it does not have yet" },
+	])("a fork's teardown abort names the replacement ($names) (senpi#3357)", async ({ inMemory }) => {
+		const { runtime } = await createRuntimeForTest(() => {}, { inMemory });
+		await runtime.session.prompt("hello");
+		const userMessage = runtime.session.getUserMessagesForForking()[0]!;
+		const causes: unknown[] = [];
+		const abort = runtime.session.abort.bind(runtime.session);
+		runtime.session.abort = (options) => {
+			causes.push(options?.cause);
+			return abort(options);
+		};
+
+		await runtime.fork(userMessage.entryId);
+
+		const replacement = runtime.session.sessionManager;
+		expect(causes).toStrictEqual([
+			inMemory
+				? { kind: "session_replaced", reason: "fork" }
+				: {
+						kind: "session_replaced",
+						reason: "fork",
+						targetSessionFile: replacement.getSessionFile(),
+						targetSessionId: replacement.getSessionId(),
+					},
+		]);
 	});
 });

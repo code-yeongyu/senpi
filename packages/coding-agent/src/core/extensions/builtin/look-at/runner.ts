@@ -85,6 +85,7 @@ export async function runLookAt(
 			resolved.model,
 			{ systemPrompt: LOOK_AT_SYSTEM_PROMPT, messages: [userMessage] },
 			{
+				cwd: ctx.cwd,
 				...(reasoning === undefined ? {} : { reasoning }),
 				maxTokens: 4096,
 				signal: request.signal,

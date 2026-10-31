@@ -1,4 +1,5 @@
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
+import { resetCredentialAccount } from "../../../credential-account-reset.ts";
 import {
 	type CredentialAccountSummary,
 	getCredentialAccounts,
@@ -14,13 +15,18 @@ function parseArgs(rawArgs: string): string[] {
 
 function usage(ctx: ExtensionCommandContext): void {
 	ctx.ui.notify(
-		"Usage: /account <provider> [list | pin <id> | unpin | remove <id> | rename <id> <display name...> | clear-name <id>]",
+		"Usage: /account <provider> [list | pin <id> | unpin | reset <id> | remove <id> | rename <id> <display name...> | clear-name <id>]",
 		"error",
 	);
 }
 
 function statusOf(account: CredentialAccountSummary): string {
-	const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
+	const availability = account.unused
+		? "unused (other login kind; switch with /login)"
+		: account.blocked
+			? "blocked"
+			: "available";
+	const states = [accountLabel(account), account.source, availability];
 	for (const { model, until } of account.blockedModels ?? []) {
 		states.push(`blocked for ${model} until ${new Date(until).toISOString()}`);
 	}
@@ -47,7 +53,7 @@ export default function accountExtension(pi: ExtensionAPI): void {
 		description: "List and manage credential accounts for any provider.",
 		requiresArguments: true,
 		argumentHint:
-			"<provider> [list | pin <id> | unpin | remove <id> | rename <id> <display name...> | clear-name <id>]",
+			"<provider> [list | pin <id> | unpin | reset <id> | remove <id> | rename <id> <display name...> | clear-name <id>]",
 		handler: async (rawArgs, ctx) => {
 			const args = parseArgs(rawArgs);
 			const provider = args[0];
@@ -72,9 +78,17 @@ export default function accountExtension(pi: ExtensionAPI): void {
 					ctx.ui.notify(`Unpinned ${provider} account.`, "info");
 					return;
 				}
+				if (action === "reset" && args[2] !== undefined) {
+					await resetCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
+					ctx.ui.notify(
+						`Cleared the cooldown on ${provider} account '${args[2]}'; the next request tries it again.`,
+						"info",
+					);
+					return;
+				}
 				if (action === "remove" && args[2] !== undefined) {
-					await removeCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
-					ctx.ui.notify(`Removed ${provider} account '${args[2]}'.`, "info");
+					const { notice } = await removeCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
+					ctx.ui.notify(notice ?? `Removed ${provider} account '${args[2]}'.`, notice ? "warning" : "info");
 					return;
 				}
 				usage(ctx);

@@ -485,13 +485,18 @@ describe("OpenAI Codex OAuth", () => {
 		expect(consoleError).not.toHaveBeenCalled();
 	});
 
-	it("falls back to the pasted redirect URL when the fixed callback port is taken", async () => {
-		// Port 1455 is registered with OpenAI; the Codex CLI may hold it. Occupy it unless it already is.
-		const blocker = createServer();
-		await new Promise<void>((resolve) => {
-			blocker.once("error", () => resolve());
-			blocker.listen(1455, "127.0.0.1", () => resolve());
-		});
+	it("falls back to the pasted redirect URL and says why when every registered callback port is held", async () => {
+		const blockers = [
+			createServer((_request, response) => response.end("busy")),
+			createServer((_request, response) => response.end("busy")),
+		];
+		const ports: number[] = [];
+		for (const blocker of blockers) {
+			await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", () => resolve()));
+			const address = blocker.address();
+			if (address && typeof address === "object") ports.push(address.port);
+		}
+		vi.stubEnv("PI_CHATGPT_OAUTH_CALLBACK_PORTS", ports.join(","));
 		try {
 			let exchangeBody: URLSearchParams | undefined;
 			vi.stubGlobal(
@@ -508,10 +513,14 @@ describe("OpenAI Codex OAuth", () => {
 			);
 
 			let authUrl = "";
+			let instructions = "";
 			const credential = await chatgptSubscriptionOAuth.login({
 				signal: neverAbortedSignal,
 				notify: (event) => {
-					if (event.type === "auth_url") authUrl = event.url;
+					if (event.type === "auth_url") {
+						authUrl = event.url;
+						instructions = event.instructions ?? "";
+					}
 				},
 				prompt: async (prompt) => {
 					if (prompt.type === "select") return "browser";
@@ -524,8 +533,11 @@ describe("OpenAI Codex OAuth", () => {
 			expect(credential.accountId).toBe("acct");
 			expect(exchangeBody?.get("code")).toBe("pasted-code");
 			expect(exchangeBody?.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
+			expect(new URL(authUrl).searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
+			expect(instructions).toContain("paste it below");
 		} finally {
-			blocker.close();
+			vi.unstubAllEnvs();
+			for (const blocker of blockers) blocker.close();
 		}
 	});
 });

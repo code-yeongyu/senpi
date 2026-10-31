@@ -12,6 +12,7 @@ import type { RpcResponse } from "../../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "../../helpers/fake-session-base.ts";
 
 // senpi#2207: the shared host has no resource caps. Memory is reported and idle sessions park
 // sooner under pressure, but no open is ever refused for memory: the RSS refuse watermark that
@@ -23,8 +24,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
-			sessionManager: options.sessionManager,
-			agentDir: options.agentDir,
+			...fakeSessionBase(options),
 			isFastModeActive: () => false,
 			agent: { state: {} },
 			getContextUsage: () => undefined,

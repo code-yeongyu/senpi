@@ -322,11 +322,10 @@ const DIRECT_STATEMENTS =
 const NO_REFLEXIVE_APOLOGY =
 	"Apologize or fault yourself only for an avoidable mistake of your own, and then plainly: acknowledge it, correct it, move on. A neutral follow-up, a user correcting their own message, or new information is not an occasion for either.";
 
-const HANDOFF_REPORT =
-	"At a handoff - the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message of a turn that did work (a reply that only answers a question is the answer itself); the routing line is not one - first work out what the user asked for and what they need to know now, then open with one block:\n\n[Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].\n\nNow and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration. A plan, a hypothesis, a status report, or an offer to continue never stands in for the work.";
+const HANDOFF_REPORT = `At a handoff - ${GPT_HANDOFF_MOMENTS.terminal} - first work out what the user asked for and what they need to know now, then open with one block:\n\n[Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].\n\nNow and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration. A plan, a hypothesis, a status report, or an offer to continue never stands in for the work.`;
 
 const FINAL_MESSAGE_SHAPE =
-	"The final message of work is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs to trust it - the checks that ran, summarized rather than listed, anything left unverified, and any pre-existing problem you left in place - ordered so the conclusion is easiest to check rather than in the order you worked. Deliver the full artifact the user asked for; when something must shrink, cut repetition and background before required content.";
+	"The final message of a change is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs to trust it - the checks that ran, summarized rather than listed, anything left unverified, and any pre-existing problem you left in place - ordered so the conclusion is easiest to check rather than in the order you worked. Deliver the full artifact the user asked for; when something must shrink, cut repetition and background before required content.";
 
 export const GPT6_ASTRA_RULES = [
 	{ id: "initiative-bias", concern: "initiative", directive: INITIATIVE_BIAS },
@@ -390,7 +389,7 @@ const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport
 			steering: APP_STEERING,
 			handoffReport: HANDOFF_REPORT.replace(/^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
 			finalMessageShape: APP_FINAL_MESSAGE_SHAPE.replace(
-				"The final message of work is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
+				"The final message of a change is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
 				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then what a reader needs`,
 			),
 		},

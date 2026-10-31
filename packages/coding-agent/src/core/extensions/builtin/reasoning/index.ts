@@ -193,7 +193,6 @@ export default function reasoningExtension(pi: ExtensionAPI): void {
 			pi.setSessionThinkingLevel(target);
 			const settingsManager = createSettingsManager(ctx);
 			settingsManager.setModelThinkingLevel(model.provider, model.id, target, { preserveLastOn: true });
-			settingsManager.setDefaultThinkingLevel(target);
 			await settingsManager.flush();
 			ctx.ui.notify(reasoningStatus(pi.getThinkingLevel()), "info");
 		},

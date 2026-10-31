@@ -7,7 +7,9 @@ import {
 } from "../src/core/extensions/builtin/anthropic-subscription/cold-seed-images.ts";
 import {
 	buildPromptBlocks,
+	CONTINUE_TURN_INSTRUCTION,
 	mapPiToolNameToSdk,
+	RESPOND_TO_USER_INSTRUCTION,
 } from "../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
 import type { ContentBlockParam } from "../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import {
@@ -92,6 +94,26 @@ function rebuild(messages: Message[]): ContentBlockParam[] {
 }
 
 describe("anthropic-subscription cold seed replays tool-read images as tool output (#2490)", () => {
+	it("labels an earlier upload as history and keeps it out of a plain new question (senpi#2768)", () => {
+		const messages = [
+			upload(distinctImage(1), 1),
+			...readOf("read-1", distinctImage(2), 2),
+			say("What is the build command?", 3),
+		];
+
+		const blocks = rebuild(messages);
+		const closer = blocks.findIndex(
+			(block) => block.type === "text" && block.text.startsWith("The above is the conversation history"),
+		);
+
+		expect(closer).toBeGreaterThan(-1);
+		expect(images(blocks.slice(closer))).toEqual([]);
+		expect(labelsBeforeImages(blocks.slice(0, closer))).toEqual([
+			coldSeedImageText.userHistory,
+			coldSeedImageText.toolOutput(READ),
+		]);
+	});
+
 	it("willowite's reproduction: one upload plus five reads replays one user image, not six", () => {
 		const messages = [
 			upload(image(SCREENSHOT)),
@@ -102,7 +124,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		const blocks = rebuild(messages);
 
 		expect(images(blocks)).toEqual([SCREENSHOT]);
-		expect(labelsBeforeImages(blocks)).toEqual(["Here is a screenshot"]);
+		expect(labelsBeforeImages(blocks)).toEqual([coldSeedImageText.userHistory]);
 		expect(countText(blocks, SEE_ATTACHED)).toBe(0);
 		const read: ReplayedImageOrigin = { kind: "tool", toolName: READ, toolCallId: "read-0" };
 		expect(countText(blocks, coldSeedImageText.duplicate(read, USER))).toBe(5);
@@ -124,7 +146,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		expect(userAttachmentNotes).toEqual([0, 0, 0, 0]);
 	});
 
-	it("labels a tool image as tool output and sends identical reads once, then refers back to it", () => {
+	it("labels a pending tool image as tool output and does not re-send reads the assistant already answered (senpi#2768)", () => {
 		const messages = [
 			say("Open the screenshot", 0),
 			...Array.from({ length: 5 }, (_, n) => readOf(`read-${n}`, image(SCREENSHOT), n + 1)).flat(),
@@ -136,16 +158,33 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		expect(images(blocks)).toEqual([SCREENSHOT]);
 		expect(labelsBeforeImages(blocks)).toEqual([coldSeedImageText.toolOutput(READ)]);
 		expect(countText(blocks, SEE_ATTACHED)).toBe(0);
-		const first: ReplayedImageOrigin = { kind: "tool", toolName: READ, toolCallId: "read-0" };
-		const repeat = coldSeedImageText.duplicate({ ...first, toolCallId: "read-1" }, first);
-		expect(countText(blocks, repeat)).toBe(4);
+		for (let n = 0; n < 4; n++) {
+			expect(texts(blocks)).toContain(
+				coldSeedImageText.answered({ kind: "tool", toolName: READ, toolCallId: `read-${n}` }),
+			);
+		}
 	});
 
-	it("caps distinct historical images, keeping the user's upload and the most recent reads", () => {
+	it("caps distinct replayed images, keeping the user's upload and the most recent pending reads", () => {
 		const reads = MAX_REPLAYED_HISTORY_IMAGES + 3;
-		const messages = [
+		const ids = Array.from({ length: reads }, (_, n) => `read-${n}`);
+		const fanOut: AssistantMessage = {
+			...assistantRead("read-0", 1),
+			content: ids.map((id) => ({ type: "toolCall", id, name: "read", arguments: { path: `${id}.png` } })),
+		};
+		const messages: Message[] = [
 			upload(image(SCREENSHOT)),
-			...Array.from({ length: reads }, (_, n) => readOf(`read-${n}`, distinctImage(n), n + 1)).flat(),
+			fanOut,
+			...ids.map(
+				(id, n): Message => ({
+					role: "toolResult",
+					toolCallId: id,
+					toolName: "read",
+					content: [distinctImage(n)],
+					isError: false,
+					timestamp: 2 + n,
+				}),
+			),
 			say("Compare them", 100),
 		];
 
@@ -159,6 +198,59 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 			coldSeedImageText.capped({ kind: "tool", toolName: READ, toolCallId: `read-${n}` }),
 		);
 		expect(texts(rebuild(messages))).toEqual(expect.arrayContaining(dropped));
+	});
+
+	it("a replay that ends mid-turn with generated images says there is no new user message (senpi#2768)", () => {
+		const messages = [
+			say("Keep generating with dots", 0),
+			...readOf("gen-1", distinctImage(1), 1),
+			...readOf("gen-2", distinctImage(2), 2),
+		];
+
+		const blocks = rebuild(messages);
+
+		expect(texts(blocks)).toContain(CONTINUE_TURN_INSTRUCTION);
+		expect(texts(blocks)).not.toContain(RESPOND_TO_USER_INSTRUCTION);
+		expect(labelsBeforeImages(blocks)).toEqual([
+			coldSeedImageText.toolOutput(READ),
+			coldSeedImageText.toolOutput(READ),
+		]);
+	});
+
+	it("a mid-turn replay leaves the current turn's own upload unlabeled (senpi#2768)", () => {
+		const messages = [
+			say("earlier", 0),
+			{ ...assistantRead("noop", 1), content: [{ type: "text" as const, text: "ok" }], stopReason: "stop" as const },
+			upload(distinctImage(5), 2),
+			...readOf("look-1", distinctImage(6), 3),
+		];
+
+		const blocks = rebuild(messages);
+
+		expect(texts(blocks)).toContain(CONTINUE_TURN_INSTRUCTION);
+		expect(texts(blocks)).not.toContain(coldSeedImageText.userHistory);
+		expect(images(blocks)).toContain(distinctImage(5).data);
+	});
+
+	it("a long tool-screenshot session switched to the Claude lane replays none of its answered images (senpi#2768)", () => {
+		const messages = [
+			say("Run the UI QA", 0),
+			...Array.from({ length: 34 }, (_, n) => [
+				...readOf(`shot-${n}`, distinctImage(n), 1 + n * 2),
+				{
+					...assistantRead(`noop-${n}`, 2 + n * 2),
+					content: [{ type: "text" as const, text: `checked ${n}` }],
+					stopReason: "stop" as const,
+				},
+			]).flat(),
+			say("What is the build command?", 200),
+		];
+
+		const blocks = rebuild(messages);
+
+		expect(images(blocks)).toEqual([]);
+		expect(texts(blocks).filter((text) => text.startsWith("[image returned earlier by the"))).toHaveLength(34);
+		expect(blocks.at(-1)).toEqual({ type: "text", text: "What is the build command?" });
 	});
 
 	it("drops a broken image reference with a note and still ends with the user's message", () => {

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +36,14 @@ async function startHolder(cwd: string | null = root) {
 		["--import", "tsx", fileURLToPath(fixture), sessionFile, SESSION_ID, ...(cwd === null ? [] : [cwd])],
 		{
 			cwd: fileURLToPath(new URL("../../../", import.meta.url)),
-			env: { PATH: process.env.PATH, HOME: root, SENPI_CODING_AGENT_DIR: join(root, "agent") },
+			env: {
+				PATH: process.env.PATH,
+				HOME: root,
+				TMPDIR: root,
+				TEMP: root,
+				TMP: root,
+				SENPI_CODING_AGENT_DIR: join(root, "agent"),
+			},
 			stdio: ["pipe", "pipe", "pipe"],
 		},
 	);
@@ -44,6 +51,7 @@ async function startHolder(cwd: string | null = root) {
 	try {
 		const [chunk] = await once(child.stdout, "data", { signal: AbortSignal.timeout(10_000) });
 		expect(String(chunk)).toBe("HELD\n");
+		expect((await readdir(root)).some((name) => name.startsWith("tsx-"))).toBe(true);
 	} catch (cause) {
 		child.kill();
 		await exited;

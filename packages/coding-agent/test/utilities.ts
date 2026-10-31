@@ -1,4 +1,4 @@
-// allow: SIZE_OK - shared legacy test harness remains oversized; this branch only injects a streamFn for app-server deterministic sessions.
+// allow: SIZE_OK - shared legacy test harness remains oversized; streamFn injection supports deterministic sessions.
 /**
  * Shared test utilities for coding-agent tests.
  */

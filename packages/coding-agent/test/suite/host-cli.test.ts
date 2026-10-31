@@ -25,12 +25,17 @@ const STATUS_FIELDS = [
 	"generation",
 	"generations",
 	"handover",
+	"host_footprint_mb",
 	"host_rss_mb",
 	"instanceId",
 	"launchProfile",
+	"lifecycle",
 	"memory_pressure",
 	"open_fds",
+	"path_identity_resolver",
 	"pid",
+	"pointer",
+	"processStartTime",
 	"reachable",
 	"rss_mb",
 	"runtimeBuildId",
@@ -55,7 +60,7 @@ describe.skipIf(process.platform === "win32")("senpi host ensure", () => {
 
 		const result = await runHostCli(qa, ["ensure", "--json"]);
 
-		expect(result.exitCode).toBe(0);
+		expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
 		const payload = onlyJsonLine(result);
 		expect(payload).toMatchObject({ action: "start", socket: qa.socket, reused: false, upgradeable: true });
 		expect(typeof payload.pid).toBe("number");
@@ -66,11 +71,13 @@ describe.skipIf(process.platform === "win32")("senpi host ensure", () => {
 
 	it("reuses the running daemon when a second ensure finds it", async () => {
 		const qa = await hostCliSandbox("reuse");
-		const first = onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+		const firstResult = await runHostCli(qa, ["ensure", "--json"]);
+		expect(firstResult.exitCode, `${firstResult.stdout}${firstResult.stderr}`).toBe(0);
+		const first = onlyJsonLine(firstResult);
 
 		const second = await runHostCli(qa, ["ensure", "--json"]);
 
-		expect(second.exitCode).toBe(0);
+		expect(second.exitCode, `${second.stdout}${second.stderr}`).toBe(0);
 		const payload = onlyJsonLine(second);
 		expect(payload).toMatchObject({
 			action: "reuse",
@@ -83,20 +90,20 @@ describe.skipIf(process.platform === "win32")("senpi host ensure", () => {
 	it("gives the daemon the allowlisted environment and nothing else", async () => {
 		const qa = await hostCliSandbox("env");
 
-		const ensured = onlyJsonLine(
-			await runHostCli(qa, ["ensure", "--json"], {
-				MY_SECRET_TOKEN: "canary-value",
-				PI_SESSION_ID: "session-2208",
-				PI_SESSION_FILE: "/tmp/session-2208.jsonl",
-				PI_SESSION_CWD: "/tmp/worktree",
-				PI_GOAL_STORE_FILE: "/tmp/goals/session-2208.json",
-				PI_PROVIDER: "fake",
-				PI_MODEL: "fake-model",
-				PI_REASONING_LEVEL: "high",
-				PI_PROMPT_CACHE_SAFE_WAIT_SECONDS: "1770",
-				SENPI_PY_KERNEL_PARENT_PID: "2208",
-			}),
-		);
+		const result = await runHostCli(qa, ["ensure", "--json"], {
+			MY_SECRET_TOKEN: "canary-value",
+			PI_SESSION_ID: "session-2208",
+			PI_SESSION_FILE: "/tmp/session-2208.jsonl",
+			PI_SESSION_CWD: "/tmp/worktree",
+			PI_GOAL_STORE_FILE: "/tmp/goals/session-2208.json",
+			PI_PROVIDER: "fake",
+			PI_MODEL: "fake-model",
+			PI_REASONING_LEVEL: "high",
+			PI_PROMPT_CACHE_SAFE_WAIT_SECONDS: "1770",
+			SENPI_PY_KERNEL_PARENT_PID: "2208",
+		});
+		expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
+		const ensured = onlyJsonLine(result);
 
 		const environment = daemonEnvironmentText(ensured.pid as number);
 		expect(environment).toMatch(/\bHOME=/u);
@@ -124,7 +131,9 @@ describe.skipIf(process.platform === "win32")("senpi host ensure", () => {
 describe.skipIf(process.platform === "win32")("senpi host status", () => {
 	it("reports the running daemon's identity, occupancy and environment scope", async () => {
 		const qa = await hostCliSandbox("status");
-		const ensured = onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+		const ensureResult = await runHostCli(qa, ["ensure", "--json"]);
+		expect(ensureResult.exitCode, `${ensureResult.stdout}${ensureResult.stderr}`).toBe(0);
+		const ensured = onlyJsonLine(ensureResult);
 
 		const result = await runHostCli(qa, ["status", "--json"]);
 
@@ -133,12 +142,15 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		expect(Object.keys(status).sort()).toEqual(STATUS_FIELDS);
 		expect(status).toMatchObject({
 			reachable: true,
+			lifecycle: "ready",
 			socket: qa.socket,
 			pid: ensured.pid,
 			instanceId: ensured.instanceId,
 			generation: 0,
 		});
 		expect(Object.keys(status.sessions as Record<string, unknown>).sort()).toEqual(SESSION_COUNT_FIELDS);
+		// The host's own footprint, the number its sampler acts on; RSS hides compressed and swapped pages (senpi#3110).
+		expect(status.host_footprint_mb).toBeGreaterThan(0);
 		expect(status.sessions).toEqual({
 			total: 0,
 			interactive: 0,
@@ -187,12 +199,20 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		expect(result.exitCode).toBe(3);
 		const status = onlyJsonLine(result);
 		expect(Object.keys(status).sort()).toEqual(STATUS_FIELDS);
-		expect(status).toMatchObject({ reachable: false, socket: qa.socket, pid: null, generations: [] });
+		expect(status).toMatchObject({
+			reachable: false,
+			lifecycle: null,
+			socket: qa.socket,
+			pid: null,
+			generations: [],
+		});
 	}, 60_000);
 
 	it("lists every endpoint of the agent directory under --all, ignoring --socket", async () => {
 		const qa = await hostCliSandbox("all");
-		const ensured = onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+		const ensureResult = await runHostCli(qa, ["ensure", "--json"]);
+		expect(ensureResult.exitCode, `${ensureResult.stdout}${ensureResult.stderr}`).toBe(0);
+		const ensured = onlyJsonLine(ensureResult);
 
 		const result = await runHostCli(qa, ["status", "--all", "--json"]);
 
@@ -227,7 +247,9 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 describe.skipIf(process.platform === "win32")("senpi host gc", () => {
 	it("keeps a running daemon, and answers an empty --agent-dir with nothing, exit 0 both times", async () => {
 		const qa = await hostCliSandbox("gc");
-		onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+		const ensureResult = await runHostCli(qa, ["ensure", "--json"]);
+		expect(ensureResult.exitCode, `${ensureResult.stdout}${ensureResult.stderr}`).toBe(0);
+		onlyJsonLine(ensureResult);
 
 		const live = await runHostCli(qa, ["gc", "--json"]);
 		const empty = await runHostCli(qa, ["gc", "--agent-dir", qa.specDir, "--json"]);

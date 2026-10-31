@@ -74,6 +74,16 @@ describe("OpenAI flagship catalog rows store the input cap", () => {
 		["github-copilot", "gpt-6.1-sol", 400_000],
 		["openai", "gpt-5-pro", 272_000],
 		["azure-openai-responses", "gpt-5-pro", 272_000],
+		// #3150: only subscription 6.1 Sol follows the new live Codex default.
+		["chatgpt-subscription", "gpt-6.1-sol", 500_000],
+		["chatgpt-subscription", "gpt-6.1-sol-fast", 500_000],
+		["chatgpt-subscription", "gpt-6.1-sol-ultrafast", 500_000],
+		["chatgpt-subscription", "gpt-6-sol", 400_000],
+		["chatgpt-subscription", "gpt-6-astra", 600_000],
+		["chatgpt-subscription", "gpt-6-luna", 922_000],
+		["chatgpt-subscription", "gpt-5.6-sol", 650_000],
+		["chatgpt-subscription", "gpt-5.6-luna", 272_000],
+		["chatgpt-subscription", "gpt-5.6-terra", 272_000],
 	] as const)("%s/%s resolves to %i", (provider: BuiltinProvider, id: string, contextWindow: number) => {
 		const model = getBuiltinModels(provider).find((candidate) => candidate.id === id);
 		expect(model, `${provider}/${id} should exist`).toBeDefined();

@@ -173,7 +173,12 @@ describe("bundled codemode bridge", () => {
 		const harness = await createCodemodeHarness({ extensionFactory: createInlineExtension(state) });
 		const settingsDir = join(harness.tempDir, CONFIG_DIR_NAME);
 		mkdirSync(settingsDir, { recursive: true });
-		writeFileSync(join(settingsDir, "settings.json"), `${JSON.stringify({ permission: { demo_tool: "ask" } })}\n`);
+		// The full-access default never prompts (senpi#2465): the ask preset makes demo_tool ask, and the
+		// user's explicit eval allow lets the cell run so the ask happens inside the bridge.
+		writeFileSync(
+			join(settingsDir, "settings.json"),
+			`${JSON.stringify({ permissionPreset: "ask", permission: { eval: "allow", demo_tool: "ask" } })}\n`,
+		);
 		const uiContext = {
 			select: vi.fn(async () => "Deny"),
 			confirm: async () => false,

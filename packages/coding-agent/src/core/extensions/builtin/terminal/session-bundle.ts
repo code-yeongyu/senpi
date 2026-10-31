@@ -2,14 +2,14 @@ import type { WakeSourceStateItem } from "../monitor-state-event.ts";
 import { TerminalManager, type TerminalManagerOptions } from "./manager.ts";
 import type { MonitorEndedEvent } from "./monitor-registry.ts";
 import { type MonitorEvent, MonitorRegistry, type MonitorSnapshotEntry } from "./monitor-registry.ts";
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
+import type { TerminalExitView } from "./tools/context.ts";
 
 export interface TerminalEventSinks {
 	readonly onMonitorEvent: (event: MonitorEvent) => void;
 	readonly onMonitorState: (snapshot: readonly MonitorSnapshotEntry[], transition?: boolean) => void;
 	readonly onMonitorEnded: (event: MonitorEndedEvent) => void;
 	readonly onBackgroundState: (snapshot: readonly WakeSourceStateItem[]) => void;
-	readonly onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => void;
+	readonly onBackgroundExit: (id: string, runtime: TerminalExitView) => void;
 }
 
 const MAX_PARKED_MONITOR_EVENTS = 100;
@@ -28,7 +28,7 @@ export class TerminalSessionBundle {
 	#sinks: TerminalEventSinks | null = null;
 	#parkedMonitorEvents: MonitorEvent[] = [];
 	#parkedMonitorEndings: MonitorEndedEvent[] = [];
-	#parkedExits = new Map<string, TerminalRuntimeSession>();
+	#parkedExits = new Map<string, TerminalExitView>();
 	#backgrounds = new Map<string, WakeSourceStateItem>();
 	#torndown = false;
 
@@ -76,7 +76,7 @@ export class TerminalSessionBundle {
 		this.#sinks?.onBackgroundState(this.backgroundSnapshot());
 	}
 
-	notifyBackgroundExit(id: string, runtime: TerminalRuntimeSession): void {
+	notifyBackgroundExit(id: string, runtime: TerminalExitView): void {
 		if (this.#torndown) return;
 		if (this.#backgrounds.delete(id)) this.#sinks?.onBackgroundState(this.backgroundSnapshot());
 		if (this.#sinks) {

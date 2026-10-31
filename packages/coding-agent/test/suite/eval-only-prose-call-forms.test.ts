@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildBashTimeoutPrompt } from "../../src/core/extensions/builtin/bash-timeout/timeout.ts";
 import { buildTerminalPromptSection } from "../../src/core/extensions/builtin/terminal/prompt.ts";
+import { monitorSourceOf } from "../../src/core/extensions/builtin/terminal/tools/monitor-rpc.ts";
 
 /**
  * The eval-only policy hides `bash`, `powershell`, `workflow` and `monitor` from the
@@ -52,10 +53,13 @@ describe("eval-only prose call forms", () => {
 		});
 
 		it("preserves the monitor branch teaching in both branches", () => {
+			// The one-source rule the prompt teaches is enforced by the tool, so it is pinned there, not by wording.
+			expect(monitorSourceOf({ description: "d", command: "c", path: "p" })).toHaveProperty("error");
+			expect(monitorSourceOf({ description: "d" })).toHaveProperty("error");
+			expect(monitorSourceOf({ description: "d", target: "children" })).toBe("rpc");
 			for (const evalOnly of [true, false]) {
 				const section = buildTerminalPromptSection({ evalOnly });
 
-				expect(section, `evalOnly=${evalOnly}`).toContain("XOR");
 				expect(section, `evalOnly=${evalOnly}`).toContain("event");
 				expect(section, `evalOnly=${evalOnly}`).toMatch(/fires only/);
 			}
