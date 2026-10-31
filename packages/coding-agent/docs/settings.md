@@ -150,6 +150,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
+| `reducedMotion` | boolean | `false` | Keep decorative indicators static. Currently stops the footer's `watching` glyph from pulsing while the agent idles on monitors. Read at session start; takes effect after a reload |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
 | `enableInstallTelemetry` | boolean | `true` | Send the anonymous install/update ping and selected provider attribution headers. This does not control update checks |
@@ -216,7 +217,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
 
 Files receive budget nearest-first: the current directory, its ancestors, then the global file. A cut prefers a newline in the last quarter of the available content budget; otherwise it uses a UTF-8 character boundary. An open backtick or tilde fence is closed with the same marker before the truncation note; the closing marker's bytes count against the budget. Files with less than 1024 bytes of budget left are skipped when they would need truncation, with a warning distinguishing an undersized per-file limit from budget used by nearer files. Both limits accept positive numbers (rounded down); invalid values use the defaults.
 
-The skills section has a fixed 48 KiB rendered UTF-8 byte cap, including its roots table and markup. Above 100 visible skills or 64 KiB of descriptions, descriptions become one line of at most 160 characters. If needed to meet the section cap, smaller catalogs also use compact descriptions, then all descriptions are dropped. If names and locations still exceed the cap, only the first skills that fit are listed, with the omitted count inside the section. Skills remain available for explicit invocation.
+The skills section has a fixed 48 KiB rendered UTF-8 byte cap, including its roots table and markup. Above 100 visible skills or 16 KiB of descriptions, the catalog lists one line per skill, `- name [location]: description`, where the location is the shortest path that still resolves against the roots table and the description is cut to at most 160 characters. A cut keeps the description's when-to-use sentence ("Use when ...", "MUST USE for ...", "Triggers: ...") and fills the remaining room with the text around it. If needed to meet the section cap, smaller catalogs also use the one-line form, then all descriptions are dropped (`- name [location]`). If names and locations still exceed the cap, only the first skills that fit are listed, with the omitted count inside the section. Skills remain available for explicit invocation.
 
 Context cuts, skipped files, and compacted or omitted skills share the "Context size limits" resource notice in interactive mode and appear once on stderr at startup in print, JSON, and RPC modes, with the affected path when present. Ordinary skill validation warnings keep their existing diagnostic behavior and are not printed to stderr by this size check.
 
@@ -293,7 +294,8 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `fallback.circuitMaxCooldownMs` | number | `1800000` | Ceiling for the doubled circuit-breaker cooldown (30 minutes) |
 | `retry.maxAgentDelayMs` | number | `60000` | Hard ceiling on agent-level retry delay (60s), applied after the retry profile and jitter |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
-| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables |
+| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables. Keep-alive bytes (SSE pings, comment keep-alives) received within the bound extend it |
+| `retry.provider.keepAliveTimeoutMs` | number | `900000` | Maximum time keep-alive bytes alone may hold a request without any response content; `0` disables the cap. Checked when the start or idle bound fires, so it has no effect when both are disabled |
 | `retry.provider.streamRetryTimeoutMs` | number | `30000` | First-request liveness cap after a known provider stream/transport timeout; `0` disables the cap |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay honored on the same model before the fallback chain engages (60s) |
@@ -318,6 +320,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
     "provider": {
       "timeoutMs": 3600000,
       "streamStartTimeoutMs": 300000,
+      "keepAliveTimeoutMs": 900000,
       "streamRetryTimeoutMs": 30000,
       "maxRetries": 0,
       "maxRetryDelayMs": 60000
@@ -504,6 +507,20 @@ run.
 | `handoffHint.enabled` | boolean | `true` | Offer the hint at all |
 | `handoffHint.minContextTokens` | number | `200000` | No hint below this context size |
 | `handoffHint.minSavingUsd` | number | `1` | No hint unless a fresh session saves at least this much on the next reply |
+
+### Job widgets
+
+A background command that keeps printing numbers (a render, a benchmark, a test run) gets a small live chart:
+once it has run for `authorAfterMs` and printed a few lines, a model reads the command and a redacted sample of
+its output once and writes a chart spec, and every update after that is computed locally from new output. Jobs
+whose output has nothing worth charting stay plain. It needs no setup; the views reach clients through the
+`job_widget_state` event ([RPC](rpc.md#job-widgets)).
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `jobWidgets.enabled` | boolean | `true` | Build widgets at all; `false` taps no output and never calls a model |
+| `jobWidgets.model` | string | - | `provider/model-id` that writes the specs; otherwise a model the host provides, else the session's model |
+| `jobWidgets.authorAfterMs` | number | `15000` | Job age in milliseconds before its spec is written |
 
 ### Shell
 
@@ -814,7 +831,6 @@ Paths in `~/.senpi/agent/settings.json` resolve relative to `~/.senpi/agent`. Pa
 | `prompts` | string[] | `[]` | Local prompt template paths or directories |
 | `themes` | string[] | `[]` | Local theme file paths or directories |
 | `enableSkillCommands` | boolean | `true` | Register skills as `/skill:name` commands |
-| `maxSkillExpansionsPerPrompt` | number | `5` | Distinct skills one prompt may expand; later skill commands stay literal. Must be a positive integer, otherwise the default applies. The parser reads at most 64 invocation tokens per prompt |
 
 Arrays support glob patterns and exclusions. Use `!pattern` to exclude. Use `+path` to force-include an exact path and `-path` to force-exclude an exact path.
 

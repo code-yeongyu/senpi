@@ -1,18 +1,22 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
+import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { getCredentialAccounts } from "../src/core/credential-accounts.ts";
 import {
 	listRotationSlots,
 	sha256SlotHasher,
 	streamWithCredentialRotation,
 } from "../src/core/credential-pool/rotation-stream.ts";
-import { CredentialSlotRepository } from "../src/core/credential-pool/state-store.ts";
+import { type CredentialSlotState, CredentialSlotRepository } from "../src/core/credential-pool/state-store.ts";
+import { subscribeProviderAccountEvents } from "../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { FILE_STORAGE_LOCK_OPTIONS } from "../src/core/lockfile-policy.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
 const NOW = 1_756_000_000_000;
@@ -614,5 +618,156 @@ describe("credential rotation over a pooled provider", () => {
 		expect(slots.map((slot) => slot.name)).toEqual(["env", "env-2"]);
 		// The persisted block belonged to the previous value of OPENAI_API_KEY.
 		expect(slots[0]?.blockedUntil).toBeUndefined();
+	});
+});
+
+/**
+ * Account rows reread the listing only when the engine says a provider's accounts changed
+ * (sisyphuslabs/omo-desktop-app#4203). Health the generic pool commits is such a change even when
+ * no other account takes over, and the notice may only follow a write that landed.
+ */
+describe("committed pool health publishes an account-change notice", () => {
+	// A clock past the real one, so the listing (which reads the real clock) sees these blocks as live.
+	const LATER = 4_102_444_800_000;
+	const solo: PooledCredential = {
+		type: "api_key",
+		key: "key-solo",
+		accounts: [{ name: "solo", key: "key-solo", source: "login" }],
+	};
+	let heldLock: (() => Promise<void>) | undefined;
+
+	afterEach(async () => {
+		await heldLock?.();
+		heldLock = undefined;
+	});
+
+	function statePath(): string {
+		return join(dir, "credential-pool-state.json");
+	}
+
+	function persistedSolo(): CredentialSlotState | undefined {
+		const document = JSON.parse(readFileSync(statePath(), "utf-8"));
+		return document.providers?.test?.lanes?.stored?.slots?.solo;
+	}
+
+	/** Records each notice with the slot health on disk at the moment it fired. */
+	function watchNotices() {
+		const notices: { provider: string; atNotice: CredentialSlotState | undefined }[] = [];
+		let arrive: () => void = () => undefined;
+		const first = new Promise<void>((resolve) => {
+			arrive = resolve;
+		});
+		const unsubscribe = subscribeProviderAccountEvents((event) => {
+			if (event.type !== "accounts_changed") return;
+			notices.push({ provider: event.provider, atNotice: persistedSolo() });
+			arrive();
+		});
+		const arrived = async (): Promise<void> => {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const deadline = new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error("no account-change notice within 5 s")), 5_000);
+			});
+			try {
+				await Promise.race([first, deadline]);
+			} finally {
+				clearTimeout(timer);
+			}
+		};
+		return { notices, arrived, unsubscribe };
+	}
+
+	function rotate(source: CredentialSlotRepository, runAttempt: () => AsyncGenerator<AssistantMessageEvent>) {
+		return collect(
+			streamWithCredentialRotation({
+				sources: {
+					providerId: "test",
+					credential: solo,
+					env: () => undefined,
+					repository: source,
+					now: () => LATER,
+				},
+				runAttempt,
+			}),
+		);
+	}
+
+	async function seedLiveBlock(): Promise<void> {
+		const credentialRevision = await repository.storedCredentialRevision("test", "solo", { key: "key-solo" });
+		await repository.mutateSlotState("test", "stored", "solo", () => ({
+			blockedUntil: LATER + 60_000,
+			blockReason: "rate_limit",
+			failureCount: 1,
+			credentialRevision,
+		}));
+	}
+
+	async function listedSolo() {
+		const storage = AuthStorage.inMemory({ test: solo });
+		return (await getCredentialAccounts(storage, "test", {}, repository)).find((account) => account.name === "solo");
+	}
+
+	test.each([
+		["429 rate limited", "rate_limit"],
+		["401 unauthorized", "auth_error"],
+	] as const)(
+		"a %s on the only account publishes once its block is on disk, and the reread shows it",
+		async (failure, reason) => {
+			const watch = watchNotices();
+			try {
+				const seen = await rotate(repository, () => stream(startEvent(), errorEvent(failure)));
+				await watch.arrived();
+
+				expect(seen.at(-1)?.type).toBe("error");
+				expect(watch.notices).toEqual([
+					{ provider: "test", atNotice: expect.objectContaining({ blockReason: reason }) },
+				]);
+				expect(await listedSolo()).toMatchObject({ blocked: true, blockedReason: reason });
+			} finally {
+				watch.unsubscribe();
+			}
+		},
+	);
+
+	test("a success that lifts a live block publishes once the release is on disk; a healthy success publishes nothing", async () => {
+		await seedLiveBlock();
+		expect(await listedSolo()).toMatchObject({ blocked: true, blockedReason: "rate_limit" });
+		const watch = watchNotices();
+		try {
+			await rotate(repository, () => stream(startEvent(), textEvent("recovered")));
+			await watch.arrived();
+
+			expect(watch.notices).toHaveLength(1);
+			expect(watch.notices[0]?.provider).toBe("test");
+			expect(watch.notices[0]?.atNotice).toMatchObject({ lastSuccessAt: LATER });
+			expect(watch.notices[0]?.atNotice?.blockReason).toBeUndefined();
+			expect(await listedSolo()).toMatchObject({ blocked: false });
+
+			await rotate(repository, () => stream(startEvent(), textEvent("still fine")));
+			expect(watch.notices).toHaveLength(1);
+		} finally {
+			watch.unsubscribe();
+		}
+	});
+
+	test.each([
+		["block", () => stream(startEvent(), errorEvent("429 rate limited"))],
+		["release", () => stream(startEvent(), textEvent("recovered"))],
+	] as const)("a %s write the busy state file refused publishes nothing", async (kind, reply) => {
+		if (kind === "release") await seedLiveBlock();
+		await repository.listSlots("test", "stored");
+		const before = persistedSolo();
+		const busy = new CredentialSlotRepository(statePath(), { lockWaitBudgetMs: 50 });
+		const watch = watchNotices();
+		try {
+			await rotate(busy, async function* () {
+				heldLock = await lockfile.lock(statePath(), FILE_STORAGE_LOCK_OPTIONS);
+				yield* reply();
+			});
+
+			expect(persistedSolo()).toEqual(before);
+			expect(watch.notices).toEqual([]);
+		} finally {
+			watch.unsubscribe();
+		}
 	});
 });

@@ -1,3 +1,7 @@
+import type { SeededJsonMessageUpdateEvent } from "../json-event.ts";
+import type { SeededBlockEvent } from "./compact-seeded-block.ts";
+import type { SeededMessageRecord } from "./compact-seeded-messages.ts";
+
 /**
  * The typed transitions compact current state accepts (senpi#4272, R3.C6.4) and the typed
  * rejection `CompactSessionState.accept` throws when one fails validation.
@@ -11,7 +15,33 @@ export interface BlockAddress {
 	readonly contentIndex: number;
 }
 
+interface SeededIdentity {
+	readonly messageId: string;
+	readonly epoch: string;
+	readonly ordinal: number;
+	readonly firstOrdinal: number;
+}
+
 export type CompactTransition =
+	| (SeededIdentity & {
+			readonly type: "seeded_block";
+			readonly event: SeededBlockEvent;
+			/** The enclosing record's message-level usage and changed metadata (`null` removes a field). */
+			readonly usage?: SeededJsonMessageUpdateEvent["usage"];
+			readonly messageMetadata?: SeededJsonMessageUpdateEvent["messageMetadata"];
+			/** The record's own client correlation and resolved tool name, read by the calls component (S06). */
+			readonly correlation?: object;
+			readonly resolvedToolName?: string;
+	  })
+	| (SeededIdentity & {
+			readonly type: "seeded_message";
+			readonly record: SeededMessageRecord;
+			/** Bound once when the message is created; later records never rewrite it. */
+			readonly correlation?: object;
+			/** Producer terminal cutoffs: these indexes, and every index at or above `rewrittenFrom`, lose raw spelling. */
+			readonly invalidatedBlocks?: readonly number[];
+			readonly rewrittenFrom?: number;
+	  })
 	| (BlockAddress & {
 			readonly type: "block_start";
 			readonly epoch: string;
@@ -29,7 +59,9 @@ export type CompactTransition =
 	| (BlockAddress & { readonly type: "block_delta"; readonly offset: number; readonly text: string })
 	| (BlockAddress & { readonly type: "block_replace"; readonly text: string })
 	| { readonly type: "message_status"; readonly messageId: string; readonly persistence: CompactPersistence }
-	| { readonly type: "message_remove"; readonly messageId: string };
+	| { readonly type: "message_remove"; readonly messageId: string }
+	/** A JSON-normal host-origin lifecycle, run-state or dialog record (`COMPONENT_RECORDS`). */
+	| { readonly type: "component"; readonly record: object };
 
 type CompactRejection =
 	| "invalid_start_identity"
@@ -40,7 +72,13 @@ type CompactRejection =
 	| "non_contiguous"
 	| "conflicting_overlap"
 	| "cold_operation_required"
-	| "unknown_message";
+	| "unknown_message"
+	| "invalid_parse_frontier"
+	| "invalid_seed_frontier"
+	| "invalid_phase"
+	| "wrong_kind"
+	| "wrong_epoch"
+	| "invalid_terminal";
 
 export class CompactTransitionError extends Error {
 	readonly reason: CompactRejection;

@@ -11,6 +11,7 @@ import type { ExtensionFlag } from "../core/extensions/types.ts";
 import type { SpawnedBy } from "../core/session-lifecycle-types.ts";
 import { isSpawnedBy } from "../core/session-spawned-by.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
+import { applyAttachArgs } from "./attach-args.ts";
 import { isGrokNeoEnabled } from "./grok-neo-gate.ts";
 import { isToolRuntimeKind, type ToolRuntimeKind } from "./tool-runtime.ts";
 
@@ -31,6 +32,7 @@ export interface Args {
 	name?: string;
 	noSession?: boolean;
 	session?: string;
+	attach?: string;
 	sessionId?: string;
 	spawnedBy?: SpawnedBy;
 	fork?: string;
@@ -92,7 +94,7 @@ const SESSION_RUNTIMES = ["in-process", "worker"] as const;
 export type SessionRuntimeKind = (typeof SESSION_RUNTIMES)[number];
 
 export function isSessionRuntimeKind(value: string): value is SessionRuntimeKind {
-	return SESSION_RUNTIMES.includes(value as SessionRuntimeKind);
+	return SESSION_RUNTIMES.some((runtime) => runtime === value);
 }
 
 /**
@@ -110,7 +112,7 @@ export function resolveSessionRuntime(parsed: Pick<Args, "sessionRuntime" | "lis
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export function isValidThinkingLevel(level: string): level is ThinkingLevel {
-	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
+	return VALID_THINKING_LEVELS.some((candidate) => candidate === level);
 }
 
 export function normalizeSessionName(value: string): string | undefined {
@@ -387,6 +389,7 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		});
 	}
 
+	applyAttachArgs(result);
 	return result;
 }
 
@@ -439,6 +442,7 @@ ${chalk.bold("Options:")}
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID
+  --attach <address>             Attach the TUI to an RPC endpoint (requires --session <ref>)
   --session-id <id>              Use exact project session ID, creating it if missing
   --spawned-by <json>            Fresh session ancestry: parentSessionId, rootSessionId, taskId
                                  Ignored with a warning when resuming or forking

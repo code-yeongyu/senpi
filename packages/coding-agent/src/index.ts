@@ -1,4 +1,6 @@
 // Core session management
+export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
+export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
 
 export { sanitizeTerminalLabel, visibleWidth } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
@@ -63,6 +65,8 @@ export {
 	engineBuildIdentityFrom,
 } from "./core/engine-build-identity.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+// Job widgets: hosts register background jobs and their widget-author model route
+export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
 	type CancelReceipt,
 	EVAL_HANDLE_ERROR_CODES,
@@ -133,11 +137,13 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionUIInputOptions,
 	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
@@ -148,6 +154,7 @@ export type {
 	FindToolCallEvent,
 	GrepToolCallEvent,
 	InlineExtension,
+	InputAttribution,
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,
@@ -159,6 +166,7 @@ export type {
 	MarkdownTransformContext,
 	MarkdownTransformer,
 	McpServerDeclaration,
+	McpServersChangeEvent,
 	MessageEndEvent,
 	MessageEndEventResult,
 	MessageRenderer,
@@ -179,6 +187,7 @@ export type {
 	ProviderStreamEvent,
 	ReadToolCallEvent,
 	RegisteredCommand,
+	RegisteredMcpServer,
 	RegisteredTool,
 	ResolvedCommand,
 	ResourcesDiscoverEvent,

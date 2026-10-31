@@ -1,10 +1,14 @@
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import type { ComponentRoot } from "./compact-component-roots.ts";
+import type { SeededBlock } from "./compact-seeded-block.ts";
+import type { SeededFields } from "./compact-seeded-draft.ts";
 import type { FrozenBlock } from "./compact-text-view.ts";
 import { type CompactBlockKind, CompactTransitionError } from "./compact-transition.ts";
 
 export interface ActiveBlock {
 	readonly kind: CompactBlockKind;
+	readonly seeded?: SeededBlock;
+	readonly epoch?: string;
 	root: LeafId;
 	tail: string;
 	tailRoot: LeafId;
@@ -17,7 +21,10 @@ export interface ActiveBlock {
 export interface ActiveMessage {
 	readonly order: string;
 	readonly blocks: Map<number, ActiveBlock>;
+	readonly epoch?: string;
+	readonly correlation?: SeededFields;
 	root: ComponentRoot<FrozenBlock>;
+	fields?: SeededFields;
 	tailBytes: number;
 	witnessBytes: number;
 }
