@@ -114,6 +114,12 @@ export type * from "./settings-public-types.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
+/**
+ * How long keep-alive bytes alone may hold a provider request without content (senpi#4608). Longer than any
+ * first-token latency observed through relays (a few minutes) and than Anthropic's 10-minute ceiling for a
+ * non-streaming request, well short of the 60-minute turn inactivity lease.
+ */
+const DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS = 900_000;
 
 /** Warn threshold for a single `session_shutdown` extension handler. */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
@@ -2084,6 +2090,19 @@ export class SettingsManager {
 			return undefined;
 		}
 		return Math.min(DEFAULT_STREAM_START_TIMEOUT_MS, idleTimeoutMs);
+	}
+
+	/**
+	 * Cap on keep-alive-only silence. While a provider keeps sending bytes (SSE pings, comment keep-alives) the
+	 * start and idle bounds do not end the request; this bounds how long that may last without any assistant
+	 * event. `retry.provider.keepAliveTimeoutMs` overrides the 15-minute default; 0 disables the cap.
+	 */
+	getAgentStreamKeepAliveTimeoutMs(): number | undefined {
+		const explicit = this.settings.retry?.provider?.keepAliveTimeoutMs;
+		if (explicit !== undefined) {
+			return explicit > 0 ? explicit : undefined;
+		}
+		return DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS;
 	}
 
 	getWebSocketConnectTimeoutMs(): number | undefined {

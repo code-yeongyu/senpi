@@ -94,7 +94,7 @@ const SESSION_RUNTIMES = ["in-process", "worker"] as const;
 export type SessionRuntimeKind = (typeof SESSION_RUNTIMES)[number];
 
 export function isSessionRuntimeKind(value: string): value is SessionRuntimeKind {
-	return SESSION_RUNTIMES.includes(value as SessionRuntimeKind);
+	return SESSION_RUNTIMES.some((runtime) => runtime === value);
 }
 
 /**
@@ -112,7 +112,7 @@ export function resolveSessionRuntime(parsed: Pick<Args, "sessionRuntime" | "lis
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export function isValidThinkingLevel(level: string): level is ThinkingLevel {
-	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
+	return VALID_THINKING_LEVELS.some((candidate) => candidate === level);
 }
 
 export function normalizeSessionName(value: string): string | undefined {
