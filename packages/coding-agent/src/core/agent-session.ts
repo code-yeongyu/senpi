@@ -353,7 +353,7 @@ import {
 	monotonicNow,
 } from "./retry-fallback/circuit.ts";
 import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
-import { RetryFallbackController } from "./retry-fallback/controller.ts";
+import { followProviderAccountChanges, RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
 	classifyRateLimitedWait,
@@ -1392,6 +1392,7 @@ export class AgentSession {
 	private _unsubscribeRecovery: (() => void) | undefined;
 	readonly securityNotices = new SecurityNoticeSnapshot();
 	private _unsubscribeSecurityNotices?: () => void;
+	private readonly _unfollowProviderAccountChanges: () => void;
 	private _unsubscribeSettingsSource?: () => void;
 	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
@@ -1960,6 +1961,7 @@ export class AgentSession {
 			getCurrentSelector: () => (this.model ? { model: this.model, thinkingLevel: this.thinkingLevel } : undefined),
 			isAuthAvailable: (provider) => this._modelRuntime.hasConfiguredAuth(provider),
 		});
+		this._unfollowProviderAccountChanges = followProviderAccountChanges(this._retryFallback);
 		this._probeBackScheduler = new ProbeBackScheduler({
 			now: this._fallbackNow,
 		});
@@ -4771,6 +4773,7 @@ export class AgentSession {
 	dispose(): void {
 		this._disposed = true;
 		this._unsubscribeSecurityNotices?.();
+		this._unfollowProviderAccountChanges();
 		this.securityNotices.dispose();
 		clearMcpGrantPresentations(this.sessionId);
 		this._engineTurnHold.invalidate();

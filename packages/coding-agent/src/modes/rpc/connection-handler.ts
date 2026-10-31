@@ -43,7 +43,6 @@ import {
 	emitProviderAccountsChanged,
 	subscribeProviderAccountEvents,
 } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
-import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../core/extensions/builtin/anthropic-subscription/account-management.ts";
 import {
 	ProviderAccountTestError,
 	testClaudeCliAccount,
@@ -1154,7 +1153,7 @@ export function createRpcConnectionHandler(
 				signal: controller.signal,
 			});
 			session.modelRegistry.refresh();
-			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
+			emitProviderAccountsChanged(provider, "login");
 			// The client shows what this login replaced and where the previous credential is (senpi#3486).
 			const replacement = authStorage.takeReplacement(provider);
 			// A Claude CLI sign-in names the account it signed in and its connection test (senpi#4436).
