@@ -85,7 +85,7 @@ it("T6 edits a settled message after acceptance, keeping its persistence and eve
 	}
 });
 
-it("T6 maps user delete, compaction removal and branch replacement to ordered typed outcomes", async () => {
+it("T6 maps context-edit removal, compaction removal and branch replacement to ordered typed outcomes", async () => {
 	const root = await spoolRoot();
 	const state = new CompactSessionState({ dir: root.dir, compactAboveRows: 1 });
 	try {
@@ -102,7 +102,7 @@ it("T6 maps user delete, compaction removal and branch replacement to ordered ty
 			removed: ["b"],
 			installed: [{ messageId: "d", message: edited(), persistence: "appended" }],
 		});
-		const remove = state.applyColdFlow({ type: "user_delete", messageId: "c" });
+		const remove = state.applyColdFlow({ type: "context_edit_removal", messageId: "c" });
 		const applied = { kind: "applied", afterSequence: 7 };
 		expect(await compaction).toEqual([
 			applied,

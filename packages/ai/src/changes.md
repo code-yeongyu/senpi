@@ -1,3 +1,76 @@
+## 2026-10-27 - No Anthropic OAuth flow in the bundled loaders or the oauth entry point (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/bun-oauth.ts`: the standalone binary registers no `anthropic` OAuth flow.
+- `packages/ai/src/oauth.ts`: `loadAnthropicOAuth` is no longer re-exported; `registerBundledOAuthFlowLoaders` stays.
+
+### Why
+
+- senpi#4436 (R7): the PKCE direct-login route and its token refresh are removed; nothing loads them.
+
+### Why an extension could not handle it
+
+- The bundled flow registry and the `./oauth` subpath are pi-ai's own public surface.
+
+### Expected merge conflict zones
+
+- LOW: the import list and loader object in `bun-oauth.ts`; the first export line of `oauth.ts`.
+
+## 2026-10-27 - Context and the leading system message carry the stable system prefix (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `Context.systemPromptStablePrefix` and request-time `SystemMessage.stablePrefix` (the prefix text, so a rewritten prompt that no longer starts with it is detected). The prefix is shared across sessions in the same working directory: the base prompt names the cwd.
+
+### Why
+
+- Providers with block-level prompt caching need to know where the cross-session stable part of the system prompt ends.
+
+### Why an extension could not handle it
+
+- `Context` and `SystemMessage` are the provider-facing contract defined in `packages/ai/src/types.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the `Context` and `SystemMessage` interfaces in `packages/ai/src/types.ts`.
+
+## 2026-10-30 - `StreamOptions.onTransportActivity` (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/types.ts`: new optional `StreamOptions.onTransportActivity`, called whenever a response body delivers bytes, keep-alives included. Liveness only; adapter support is explicit.
+
+### Why
+
+- The agent loop needs to tell a connection that is alive but has no content yet from a dead one, and only the adapter sees the bytes. A callback in the options crosses lazy and recovery wrappers unchanged, which a method on the inner stream would not.
+
+### Why an extension could not handle it
+
+- The option is part of the core stream contract every adapter receives.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `StreamOptions`, next to `onProviderStreamEvent`.
+
+## 2026-10-29 - `Provider.baseUrl` documents the model.baseUrl transport contract (senpi#4765)
+
+### What changed
+
+- `packages/ai/src/models.ts`: the `Provider.baseUrl` doc comment states that transports send each request to `model.baseUrl`, never to this value or a hard-coded host, because senpi sets every model's `baseUrl` (and this field) to a user's models.json `baseUrl` when one is configured. Documentation only; no type change.
+
+### Why
+
+- senpi#4765: a native `Provider` registered by an extension is composed under the same rule as any other provider: when models.json sets a `baseUrl`, every model carries it, so its `stream` must read `model.baseUrl`.
+
+### Why an extension could not handle it
+
+- `Provider` is the pi-ai public provider type; its contract is documented where it is declared.
+
+### Expected merge conflict zones
+
+- LOW: the doc comment above `Provider.baseUrl` in `models.ts`.
+
 ## 2026-10-27 - Shared seed frontier contract (part of #4272)
 
 ### What changed
