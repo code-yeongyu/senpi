@@ -1,5 +1,6 @@
 import type { TranscriptRoot } from "./accepted-transcript.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
+import { RecoveryManifests } from "./compact-recovery-manifest.ts";
 import { RecoveryStreams } from "./compact-recovery-streams.ts";
 import {
 	type CheckpointToken,
@@ -12,6 +13,7 @@ import {
 	type RecoveryStreamState,
 	type RecoveryToken,
 	type RefusalReason,
+	type StorageUnavailableReason,
 	recovered,
 	refusalReason,
 	repairNeeded,
@@ -60,7 +62,9 @@ export class RecoveryCheckpoints {
 	/** Every token minted here, with the admission it was minted for; a holder's copy or a forgery is not in it. */
 	private readonly issued = new WeakMap<RecoveryToken, RecoveryAdmission>();
 	private readonly streams = new RecoveryStreams();
+	private readonly manifests = new RecoveryManifests();
 	private readonly refusals = new Map<RefusalReason, number>();
+	private readonly unavailable = new Map<StorageUnavailableReason, number>();
 	private minted = 0;
 	private frozen = 0;
 	private reclaimed = 0;
@@ -85,6 +89,7 @@ export class RecoveryCheckpoints {
 			frozen: this.frozen,
 			reclaimed: this.reclaimed,
 			refused: Object.fromEntries(this.refusals),
+			unavailable: Object.fromEntries(this.unavailable),
 		};
 	}
 
@@ -114,6 +119,7 @@ export class RecoveryCheckpoints {
 		});
 		const lease = new CompactReadLease(
 			() => {
+				this.manifests.release(token.id);
 				lane.release(root);
 				this.checkpoints.delete(token.id);
 			},
@@ -205,16 +211,28 @@ export class RecoveryCheckpoints {
 		return this.read(token, caller, (lane, root) => lane.readCurrentCalls(root));
 	}
 
+	/** The bounded manifest of the cut (S09, R4.B1): built once per token from its pinned root, never a component list. */
+	catalog(token: RecoveryToken, caller: RecoveryCaller) {
+		return this.read(token, caller, (lane, root, lease) =>
+			this.manifests.manifest(token, lane, root, () => lease.assert()),
+		);
+	}
+
+	/** One catalog node or component under the token, verified against its parent's digest before it is decoded. */
+	readCatalog(token: RecoveryToken, caller: RecoveryCaller, ref: string) {
+		return this.read(token, caller, (lane, root) => this.manifests.read(token.id, lane, root, ref));
+	}
+
 	private async read<T>(
 		token: RecoveryToken,
 		caller: RecoveryCaller,
-		component: (lane: SessionAcceptanceLane, root: FrozenAcceptedRoot) => Promise<T>,
+		component: (lane: SessionAcceptanceLane, root: FrozenAcceptedRoot, lease: CompactReadLease) => Promise<T>,
 	): Promise<RecoveryOutcome<T>> {
 		const claimed = this.claim(token, caller);
 		if (!claimed.ok) return claimed;
 		const { lease, lane, root } = claimed.value;
 		try {
-			return recovered(await lease.run(() => component(lane, root)));
+			return recovered(await lease.run(() => component(lane, root, lease)));
 		} catch (cause) {
 			return this.refused(token, lane, cause);
 		}
@@ -279,10 +297,12 @@ export class RecoveryCheckpoints {
 		throw cause;
 	}
 
-	/** Every typed failure leaves through here, counted by its reason. */
+	/** Every typed failure leaves through here, counted by its reason; a storage refusal also by its detail. */
 	private refuse(failure: RecoveryFailure): RecoveryOutcome<never> {
 		const reason = refusalReason(failure);
 		this.refusals.set(reason, (this.refusals.get(reason) ?? 0) + 1);
+		if (failure.kind === "storage_unavailable")
+			this.unavailable.set(failure.reason, (this.unavailable.get(failure.reason) ?? 0) + 1);
 		return { ok: false, failure };
 	}
 }
