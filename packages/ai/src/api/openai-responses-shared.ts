@@ -332,7 +332,8 @@ export function convertResponsesMessages<TApi extends Api>(
 		if (itemId === CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL) {
 			return `${normalizedCallId}|${CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL}`;
 		}
-		if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
+		const isResponsesWireProvider = model.api === "openai-responses" || allowedToolCallProviders.has(model.provider);
+		if (!isResponsesWireProvider) return normalizeIdPart(id);
 		const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
 		let normalizedItemId = isForeignToolCall ? buildForeignResponsesItemId(itemId) : normalizeIdPart(itemId);
 		// OpenAI Responses API requires item id to start with "fc"
@@ -476,7 +477,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
 					const reasoningItem = parseReasoningSignature(block.thinkingSignature);
-					if (reasoningItem) {
+					if (isSameModel && reasoningItem) {
 						output.push(reasoningItem);
 					} else if (block.thinkingSignature && block.thinking.trim() !== "") {
 						// A signed thinking block whose signature is not a real reasoning
@@ -561,7 +562,7 @@ export function convertResponsesMessages<TApi extends Api>(
 					} else {
 						output.push({
 							type: "function_call",
-							...(itemId?.startsWith("fc_") ? { id: itemId } : {}),
+							id: itemId?.startsWith("fc_") ? itemId : `fc_${shortHash(callId)}`,
 							call_id: callId,
 							name: toolCall.name,
 							arguments: JSON.stringify(toolCall.arguments),
