@@ -76,12 +76,13 @@ export class RpcSessionRegistry {
 			},
 			releaseReservation: async (key) => {
 				// Close may finish at its grace deadline before removal settles. Keep
-				// that work visible to reopen even after the closing entry is gone.
+				// that work visible to reopen even after the closing entry is gone. A failed removal
+				// still gives the path back: no entry is left to ever release it later.
 				const settle = beginPendingClaim(this.pendingClaims, key);
 				try {
 					await this.options.pathReservations?.release(key);
-					this.reservations.delete(key);
 				} finally {
+					this.reservations.delete(key);
 					settle();
 				}
 			},

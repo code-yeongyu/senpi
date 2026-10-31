@@ -211,30 +211,31 @@ it("reopens a closed path while the previous session is still tearing down", asy
 	]);
 });
 
+/** An in-process registry whose cross-generation claim removal is `release`, closing within `CLAIM_GRACE_MS`. */
+const CLAIM_GRACE_MS = 100;
+function registryWithRelease(dir: string, release: () => Promise<void>): RpcSessionRegistry {
+	return new RpcSessionRegistry({
+		agentDir: dir,
+		createRuntime: inProcessRuntimeFactory().createRuntime,
+		closeGraceMs: CLAIM_GRACE_MS,
+		pathReservations: { claim: async () => undefined, release, setAttached: () => {} },
+	});
+}
+
 it("reopens after close grace expires while the path claim is still being removed", async () => {
 	vi.useFakeTimers({ toFake: [...IDLE_CLOCK_FAKES] });
 	const dir = await rigDir();
 	const path = join(dir, "slow-release.jsonl");
 	const removing = Promise.withResolvers<void>();
 	const removed = Promise.withResolvers<void>();
-	const { createRuntime } = inProcessRuntimeFactory();
-	const registry = new RpcSessionRegistry({
-		agentDir: dir,
-		createRuntime,
-		closeGraceMs: 100,
-		pathReservations: {
-			claim: async () => undefined,
-			release: async () => {
-				removing.resolve();
-				await removed.promise;
-			},
-			setAttached: () => {},
-		},
+	const registry = registryWithRelease(dir, async () => {
+		removing.resolve();
+		await removed.promise;
 	});
 	const session = await registry.openSession({ cwd: dir, sessionPath: path });
 	const closing = registry.close(session.sessionId);
 	await removing.promise;
-	await vi.advanceTimersByTimeAsync(100);
+	await vi.advanceTimersByTimeAsync(CLAIM_GRACE_MS);
 	await closing;
 	expect(registry.size).toBe(0);
 
@@ -254,6 +255,65 @@ it("reopens after close grace expires while the path claim is still being remove
 	} finally {
 		const entries = registry.list();
 		await Promise.all(entries.map((entry) => registry.close(entry.sessionId)));
+	}
+});
+
+it("refuses a reopen with claim_in_progress while a path claim removal never finishes", async () => {
+	vi.useFakeTimers({ toFake: [...IDLE_CLOCK_FAKES] });
+	const dir = await rigDir();
+	const path = join(dir, "stuck-release.jsonl");
+	const removing = Promise.withResolvers<void>();
+	const registry = registryWithRelease(dir, () => {
+		removing.resolve();
+		return new Promise<void>(() => {});
+	});
+	const session = await registry.openSession({ cwd: dir, sessionPath: path });
+	const closing = registry.close(session.sessionId);
+	await removing.promise;
+	await vi.advanceTimersByTimeAsync(CLAIM_GRACE_MS);
+	await closing;
+	expect(registry.size).toBe(0);
+
+	// The removal is wedged: the reopen waits out its bounded pending-claim wait and is refused
+	// with a retryable claim_in_progress, instead of opening over a claim that is still live.
+	const outcome = registry.openSession({ cwd: dir, sessionPath: path }).then(
+		(value) => value,
+		(cause: unknown) => cause,
+	);
+	await vi.advanceTimersByTimeAsync(CLAIM_GRACE_MS);
+	expect(await outcome).toMatchObject({
+		code: "session_path_in_use",
+		detail: { reason: "claim_in_progress" },
+	});
+	expect(registry.size).toBe(0);
+});
+
+it("clears the pending claim when a path claim removal throws, so a reopen succeeds", async () => {
+	vi.useFakeTimers({ toFake: [...IDLE_CLOCK_FAKES] });
+	const dir = await rigDir();
+	const path = join(dir, "failed-release.jsonl");
+	let releases = 0;
+	const registry = registryWithRelease(dir, async () => {
+		if (releases++ === 0) throw new Error("claim removal failed");
+	});
+	const session = await registry.openSession({ cwd: dir, sessionPath: path });
+	await registry.close(session.sessionId);
+	expect(registry.size).toBe(0);
+
+	// The failed removal must not leave a pending claim or the path's reservation behind: the
+	// reopen opens the file fresh rather than being refused with claim_in_progress or path_still_held.
+	const outcome = registry.openSession({ cwd: dir, sessionPath: path }).then(
+		(value) => value,
+		(cause: unknown) => cause,
+	);
+	await vi.advanceTimersByTimeAsync(CLAIM_GRACE_MS);
+	try {
+		expect(await outcome).toMatchObject({
+			sessionPath: session.sessionPath,
+			sessionId: expect.not.stringMatching(`^${session.sessionId}$`),
+		});
+	} finally {
+		await Promise.all(registry.list().map((entry) => registry.close(entry.sessionId)));
 	}
 });
 
