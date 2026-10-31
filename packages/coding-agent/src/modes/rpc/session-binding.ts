@@ -2,7 +2,14 @@ import { bindToProviderScope, runWithProviderScope } from "@earendil-works/pi-ai
 import { randomUUID } from "node:crypto";
 import { carriesExtensionOwner, type ExtensionOwner } from "./extension-owner.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
+import {
+	type RecoveryCarrier,
+	recoveryCarrier,
+	setSessionRecoveryEpoch,
+} from "../../core/session-recovery-identity.ts";
+import { CanonicalPairing, carryCanonical } from "./compact-canonical-pairing.ts";
+import type { CanonicalRecord, CanonicalUnit } from "./compact-lane-transitions.ts";
+import { CompactProducerStamp } from "./compact-producer-stamp.ts";
 import {
 	createRpcConnectionHandler,
 	type RpcConnectionHandler,
@@ -49,17 +56,32 @@ export async function createRpcSessionBinding(
 	if (lane) writer.registerAcceptance(sessionId, lane);
 	// The manager whose journal the lane follows; a replacement's bootstrap moves the lane to the new one.
 	let journaled = lane ? entry.runtime.session.sessionManager : undefined;
+	// One acceptance unit per legacy record or block control (RULING-26 Q2); a worker frames it, in process the lane folds it.
+	const pairing = structuredLaneEnabled() ? new CanonicalPairing() : undefined;
+	const stamp = new CompactProducerStamp();
+	const unit = (
+		carrier: RecoveryCarrier | undefined,
+		record: CanonicalRecord | undefined,
+		legacy?: object,
+	): CanonicalUnit | undefined => {
+		const { ordinal, firstOrdinal } = stamp.stamp(carrier, record, legacy);
+		return carrier && record && firstOrdinal !== undefined ? { record, carrier, ordinal, firstOrdinal } : undefined;
+	};
 	const enqueueRecord = (record: object): void => {
 		toolSpans.observe(record);
+		const canonical = pairing?.take(record);
+		const refused = pairing?.refused(record) === true;
 		// Accepted before the writer serializes or routes it; a replacement is the next incarnation's bootstrap.
 		if (lane && "type" in record && record.type === "session_replaced") {
 			journaled = entry.runtime?.session.sessionManager;
 			lane.bootstrap({ transcript: journaled?.beginTranscriptJournal() ?? [] });
+			stamp.forget();
 			if (entry.runtime) setSessionRecoveryEpoch(entry.runtime.session, lane.recoveryEpoch);
 		} else if (lane) {
 			lane.applyTranscript(journaled?.drainTranscript() ?? []);
-			lane.accept(record, recoveryCarrier(record));
-		}
+			const carrier = recoveryCarrier(record);
+			lane.accept(record, carrier, unit(carrier, canonical, record), refused);
+		} else carryCanonical(record, canonical, refused);
 		writer.enqueue(sessionId, record);
 	};
 	// Attachments share one entry, so resolve the host from the live runtime. In
@@ -97,15 +119,22 @@ export async function createRpcSessionBinding(
 			if (entry.scope.state === "closed") return dropAfterClose();
 			writeInScope(record);
 		};
-		const writeStructuredInScope = bindToProviderScope((record: object) =>
-			writer.structuredLanes.accept(sessionId, record),
-		);
+		const writeStructuredInScope = bindToProviderScope((record: object) => {
+			writer.structuredLanes.accept(sessionId, record);
+			const control = pairing?.structured(record);
+			if (control && lane) lane.acceptControl(unit(control.carrier, control.record));
+			else if (control) writer.enqueueCanonical(sessionId, control);
+		});
 		const taggedSink: RpcConnectionSink = {
 			writeRecord,
 			...(structuredLaneEnabled()
 				? {
 						writeStructured: (record: object) => {
 							if (entry.scope.state !== "closed") writeStructuredInScope(record);
+						},
+						structuredFailed: (cause: unknown) => {
+							if (lane) lane.compactUnavailable(cause);
+							else writer.canonicalUnavailable(sessionId, cause);
 						},
 					}
 				: {}),

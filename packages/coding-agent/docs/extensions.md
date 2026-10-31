@@ -838,6 +838,8 @@ pi.on(
 
 Opt in only when the handler has no side effects in a preview: it returns the same `systemPrompt` a real turn would get and consumes no one-shot state, starts no work, and changes nothing a later turn observes (the builtin `compaction`, `hooks`, and `prompt-url-widget` handlers return early; `rules` and `openai-image-gen` compose without committing state). A handler registered without the option is never called for a preview. While any registered `before_agent_start` handler lacks it, senpi skips the preview entirely, because a prefix composed without that handler's additions would not match the first turn; the prewarm then appends a `prompt-cache-prewarm` custom entry with `phase: "skipped"` and a `reason` naming the extensions.
 
+Register with `{ runLast: true }` to run after every `before_agent_start` handler registered without it, whatever order the extensions loaded in; run-last handlers keep their registration order among themselves, on real turns and previews alike. Builtin run-last handlers run after every other extension's run-last handlers: the builtin MCP extension uses this so `<mcp_instructions>` always closes the system prompt, even after your own run-last addition (senpi#4448).
+
 `ctx.getPromptCachePrefixRequest({ signal })` resolves `{ status: "ready", request }` or `{ status: "skipped", reason }`. It is skipped when a handler is not preview-safe, when no model is selected, when `signal` aborts, and when a user prompt starts its turn first: senpi cancels every in-flight preview before a real turn dispatches `before_agent_start`, so the two passes never run the same handlers concurrently.
 
 #### agent_start / agent_end / agent_settled
@@ -856,7 +858,9 @@ pi.on("agent_settled", async (_event, ctx) => {
 });
 ```
 
-`agent_before_settle` fires just before `agent_settled` and is the final actionable boundary: like `turn_end`, its handlers can append entries and request one continuation (see [turn_start / turn_end](#turn_start--turn_end)). `agent_settled` stays notification-only. Runs requested from `agent_settled` handlers start after every settled handler has finished, so handlers never see a reentrant `agent_start` during the same notification.
+`agent_before_settle` fires just before `agent_settled` and is the final actionable boundary: like `turn_end`, its handlers can append entries and request one continuation (see [turn_start / turn_end](#turn_start--turn_end)). `agent_settled` stays notification-only. Runs requested from `agent_settled` handlers start after every settled handler has finished, so handlers never see a reentrant `agent_start` during the same notification. Session subscribers (RPC clients, the TUI) receive `agent_settled` before these handlers run, so a slow handler never delays a client's view of the finished turn; anything that tears a session down (TUI shutdown, host idle exit, a release or move) waits for `agent_idle`, which follows the handlers; host idle exit waits at most one idle window, so a handler that never resolves cannot keep the host alive. A person's next prompt stops the host waiting on every settled handler that is still running: they keep running, `session.log` records the held one as `extension_handler_stalled` with `stage: "released"`, nothing is shown as an error, and the prompt's turn starts at once. A slow `agent_settled` handler is logged, never shown as a notice.
+
+For a run that settles without a continuation, the order is: extension `agent_end` handlers, session `agent_end` subscribers, extension `agent_before_settle` handlers, session `agent_settled` subscribers, then extension `agent_settled` handlers. The publish-first rule applies only to `agent_settled`; other hooks retain their existing ordering. Handler failures still reach extension error listeners; failures after a handler was released are recorded as `extension_handler_stalled` with `stage: "late_failure"`.
 
 #### ui_prompt_start / ui_prompt_end
 
