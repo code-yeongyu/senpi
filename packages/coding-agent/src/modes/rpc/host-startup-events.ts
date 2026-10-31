@@ -92,11 +92,11 @@ export function attachStartupEvents(stream: Readable, controller: StartupControl
 		}
 		if (pending.length > maxLine) supervisor(pending);
 	});
-	// The supervisor holds its end for life: the launcher's end must never keep the caller's process alive, and it
-	// is closed once the attempt settles, so a settled attempt reads nothing more (the writer's EPIPE is ignored).
+	// The supervisor holds its end for life: the launcher's end must never keep the caller's process alive. It is
+	// never destroyed here - the ChildProcess closes its own stdio when the supervisor exits - and a settled
+	// attempt only drains and ignores what arrives.
 	stream.on("error", () => {});
 	if ("unref" in stream && typeof stream.unref === "function") stream.unref();
-	void controller.settled().then(() => stream.destroy());
 }
 
 type RawRecord = { binding: unknown; role: unknown; seq: number; milestone: unknown };
