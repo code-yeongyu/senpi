@@ -16,13 +16,16 @@ export interface PersistedBase {
 	readonly fileIdentity: FileIdentity;
 	readonly count: number;
 	readonly idFingerprint: string;
+	/** RULING-72: the counted lines' content as the load read them (`BaseContentHash`); any later edit changes it. */
+	readonly contentFingerprint: string;
 }
 
 export type TranscriptUnavailableReason =
 	| "transition_over_worker_frame_limit"
 	| "transcript_file_identity_unavailable"
 	| "transcript_tail_trimmed"
-	| "transcript_tail_over_byte_limit";
+	| "transcript_tail_over_byte_limit"
+	| "transcript_ancestry_over_byte_limit";
 
 export interface TranscriptPersistence {
 	readonly fileIdentity: FileIdentity;
@@ -52,6 +55,9 @@ export type TranscriptTransition =
 	| {
 			readonly kind: "append";
 			readonly id: string;
+			/** The entry's engine kind and parent link: what a cut keeps of the entry once persistence released its text. */
+			readonly type: string;
+			readonly parentId: string | null;
 			readonly entry?: string;
 			readonly persistence?: TranscriptPersistence;
 			readonly owningMessageId?: string;
@@ -87,11 +93,17 @@ export class TranscriptJournal {
 	}
 }
 
+/** One entry's part of `idFingerprint`, whatever the parsed line holds; the recovery base scan hashes the same. */
+export const fingerprintLine = (entry: FileEntry): string => `${entry.type}\u0000${entry.id}\n`;
+
 function fingerprint(entries: readonly FileEntry[]): string {
 	const hash = createHash("sha256");
-	for (const entry of entries) hash.update(`${entry.type}\u0000${entry.id}\n`);
+	for (const entry of entries) hash.update(fingerprintLine(entry));
 	return hash.digest("hex");
 }
+
+/** The parent link of a file entry; the session header has none. */
+const entryParent = (entry: FileEntry): string | null => (entry.type === "session" ? null : entry.parentId);
 
 /** Describe the loaded/written entries now; the owning descriptor supplies their identity asynchronously. */
 export function captureTranscriptBase(entries: readonly FileEntry[]): {
@@ -165,6 +177,8 @@ export function snapshotTranscript(state: {
 		...state.unpersisted.map((entry): TranscriptTransition => ({
 			kind: "append",
 			id: entry.id,
+			type: entry.type,
+			parentId: entryParent(entry),
 			...(state.persistence ? { persistence: state.persistence } : { entry: state.own(entry) }),
 		})),
 		{ kind: "leaf", leafId: state.leafId },
