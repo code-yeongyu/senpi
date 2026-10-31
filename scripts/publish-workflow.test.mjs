@@ -187,3 +187,54 @@ describe("publish-only native addons and inputs", () => {
 		assert.equal(render(false), "DISPATCHSHA");
 	});
 });
+
+describe("local receipt test evidence (senpi#4981)", () => {
+	const inputBlock = (name) => workflow.match(new RegExp(`\\n      ${name}:\\n([\\s\\S]*?)(?=\\n      [\\w-]+:\\n|\\n\\n)`))?.[1] ?? "";
+	const releaseStep = workflow.match(/- name: Run release\n([\s\S]*?)(?=\n\n      - name: )/)?.[1] ?? "";
+	const releaseScript = releaseStep.match(/run: \|\n([\s\S]*)$/)?.[1].replace(/^ {10}/gm, "") ?? "";
+
+	it("declares both dispatch inputs as optional strings that default to empty", () => {
+		for (const name of ["local_receipt_sha", "local_receipt"]) {
+			assert.match(inputBlock(name), /type: string/, name);
+			assert.match(inputBlock(name), /default: ''/, name);
+		}
+	});
+
+	it("passes the receipt to release.mjs only through env, never by expression interpolation in the script", () => {
+		assert.match(releaseStep, /LOCAL_RECEIPT_SHA: \$\{\{ inputs\.local_receipt_sha \}\}/);
+		assert.match(releaseStep, /LOCAL_RECEIPT: \$\{\{ inputs\.local_receipt \}\}/);
+		assert.doesNotMatch(releaseScript, /inputs\.local_receipt/);
+	});
+
+	it("adds both receipt flags when either input is set, and none when both are empty", () => {
+		const args = (env) => {
+			const script = releaseScript
+				.replace(/^git remote set-url .*$/m, ":")
+				.replace('npm run release -- "${ARGS[@]}"', 'printf "%s\\n" "${ARGS[@]}"')
+				.replace(/\$\{\{[^}]*\}\}/g, "");
+			const result = spawnSync("bash", ["-c", script], { encoding: "utf8", env: { PATH: process.env.PATH, GH_TOKEN: "t", ...env } });
+			assert.equal(result.status, 0, result.stderr);
+			return result.stdout.split("\n").slice(0, -1);
+		};
+		const sha = "b7be6744c8d1a2f3e4b5c6d7e8f9a0b1c2d3e4f5";
+		assert.deepEqual(args({ RELEASE_SHA: sha, LOCAL_RECEIPT_SHA: sha, LOCAL_RECEIPT: "rt; echo pwned" }), [
+			"--sha", sha, "--local-receipt-sha", sha, "--local-receipt", "rt; echo pwned",
+		]);
+		assert.deepEqual(args({ RELEASE_SHA: sha, LOCAL_RECEIPT: "rt" }), ["--sha", sha, "--local-receipt-sha", "", "--local-receipt", "rt"]);
+		assert.deepEqual(args({ RELEASE_SHA: sha }), ["--sha", sha]);
+	});
+
+	it("records the receipt in the run summary", () => {
+		const step = workflow.match(/- name: Workflow summary\n[\s\S]*?run: \|\n([\s\S]*?)(?=\n\n|\n      - name: |$)/)?.[1] ?? "";
+		const script = step.replace(/^ {10}/gm, "").replace(/\$\{\{[^}]*\}\}/g, "x");
+		const summary = join(mkdtempSync(join(tmpdir(), "publish-summary-")), "summary.md");
+		const result = spawnSync("bash", ["-c", script], {
+			encoding: "utf8",
+			env: { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: summary, LOCAL_RECEIPT: "rt-sfull-1030", LOCAL_RECEIPT_SHA: "b7be6744c8" },
+		});
+		assert.equal(result.status, 0, result.stderr);
+		const text = readFileSync(summary, "utf8");
+		assert.match(text, /\| Local receipt \| rt-sfull-1030 \|/);
+		assert.match(text, /\| Local receipt sha \| b7be6744c8 \|/);
+	});
+});
