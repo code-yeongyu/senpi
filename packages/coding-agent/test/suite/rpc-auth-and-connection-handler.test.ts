@@ -14,7 +14,7 @@ import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.t
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
 import { createHarness } from "./harness.ts";
-import { cliSlot } from "../support/claude-cli-test-slots.ts";
+import { cliDirId, cliSlot } from "../support/claude-cli-test-slots.ts";
 import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
 describe("RPC auth and connection handler contracts", () => {
@@ -610,11 +610,10 @@ describe("account_reset unblocks one account over RPC", () => {
 
 	async function seed(provider: string) {
 		const oauth = provider === "anthropic-subscription";
+		// Stored Claude accounts are Claude CLI accounts (senpi#4436); a token slot would not be listed.
 		const accounts = ["a", "b"].map((name) => ({
 			name,
-			...(oauth
-				? { access: `access-${name}`, refresh: `refresh-${name}`, expires: FUTURE }
-				: { key: `synthetic-${name}` }),
+			...(oauth ? { store: "claude-cli" as const, dirId: cliDirId(name) } : { key: `synthetic-${name}` }),
 			source: name === "a" ? ("import" as const) : ("login" as const),
 			displayName: `Account ${name}`,
 			...block,
@@ -632,7 +631,9 @@ describe("account_reset unblocks one account over RPC", () => {
 		}));
 		const repo = credentialPoolRepository(harness.authStorage);
 		for (const slot of accounts) {
-			const credentialRevision = await repo.storedCredentialRevision(provider, slot.name, slot);
+			// Same material the listing hashes (credential-accounts.ts); a Claude CLI slot carries none of the three.
+			const material = "key" in slot ? { key: slot.key } : {};
+			const credentialRevision = await repo.storedCredentialRevision(provider, slot.name, material);
 			await repo.mutateSlotState(provider, "stored", slot.name, () => ({
 				...block,
 				...history,
