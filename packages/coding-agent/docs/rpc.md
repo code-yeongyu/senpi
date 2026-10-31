@@ -5775,7 +5775,7 @@ Stores an API key for a provider. The response comes after the model registry ha
 {"type": "login_api_key", "provider": "openrouter", "key": "<key>"}
 ```
 
-A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"global"`) takes it as `region`, and the key is stored with that region exactly as the CLI's `/login` stores it. A region the provider does not offer, a region other than the one the host's environment sets (`KIMI_CODE_REGION` / `KIMI_CODE_OAUTH_HOST`), or a `region` for a provider whose key has none fails the command and stores nothing:
+A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"global"`) takes it as `region`, and the key is stored with that region exactly as the CLI's `/login` stores it. A region the provider does not offer, a region other than the one the host's environment sets (`KIMI_CODE_REGION` / `KIMI_CODE_OAUTH_HOST`), a provider whose login asks a second select, or a `region` for a provider whose key has none fails the command and stores nothing:
 
 ```json
 {"type": "login_api_key", "provider": "kimi-coding", "key": "<key>", "region": "global"}
