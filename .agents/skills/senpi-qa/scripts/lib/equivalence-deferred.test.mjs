@@ -12,6 +12,7 @@ import {
 	goldenCellVerdict,
 	staleDeferredEntries,
 	summarizeRun,
+	unrecordedGoldens,
 	validateDeferredList,
 } from "./equivalence-deferred.mjs";
 
@@ -80,6 +81,26 @@ test("a listed cell whose golden exists is stale and fails the run", () => {
 		assert.equal(summarizeRun(passing, [ENTRY], "compare").exitCode, 1);
 		assert.match(summarizeRun(passing, [ENTRY], "compare").line, /1\/1 passed, 0 deferred, 1 failed/);
 	});
+});
+
+test("a record run fails for every golden it did not rewrite unless --leave-unrecorded names it (senpi#5189)", () => {
+	const results = [
+		{ id: "E01", pass: true, written: true },
+		{ id: "E29", pass: false, error: "E29 needs EQ_GONDOLIN_IMAGE_STORE" },
+		{ id: "E30", pass: false, skipped: "no gondolin image store" },
+	];
+	const goldenIds = ["E01", "E02", "E29", "E30"];
+	const unrecorded = unrecordedGoldens({ goldenIds, results });
+	assert.deepEqual(
+		unrecorded.map((line) => line.split(":")[0]),
+		["E02", "E29", "E30"],
+	);
+	const written = [{ id: "E01", pass: true, written: true }];
+	const left = unrecordedGoldens({ goldenIds: ["E01", "E29"], results: written });
+	assert.equal(summarizeRun(written, [], "record", left).exitCode, 1);
+	const named = unrecordedGoldens({ goldenIds: ["E01", "E29"], results: written, leaveUnrecorded: ["E29"] });
+	assert.deepEqual(named, []);
+	assert.equal(summarizeRun(written, [], "record", named).exitCode, 0);
 });
 
 test("a missing golden that is not listed fails; a listed one is DEFERRED, never PASS, and does not fail", () => {
