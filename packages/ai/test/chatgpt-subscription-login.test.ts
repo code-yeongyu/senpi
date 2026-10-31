@@ -46,7 +46,8 @@ it("replaces the same SIWC identity in place while retaining its name, pin, orde
 		pinned: "default",
 		order: ["default", "login-2"],
 	};
-	pool.accounts![0].displayName = "Personal";
+	if (!pool.accounts) throw new Error("pool accounts not found");
+	pool.accounts[0].displayName = "Personal";
 	const replacement = {
 		...first,
 		access: "synthetic-new",
@@ -131,10 +132,16 @@ it("signs two validated SIWC accounts into the existing provider and replaces a 
 		async prompt(prompt) {
 			expect(prompt.type).toBe("manual_code");
 			expect(authorize.searchParams.get("client_id")).toBe("dynamic_agent_client");
-			const callback = new URL(authorize.searchParams.get("redirect_uri")!);
+			const redirectUri = authorize.searchParams.get("redirect_uri");
+			if (!redirectUri) throw new Error("redirect_uri not found");
+			const callback = new URL(redirectUri);
 			callback.search = new URLSearchParams({
 				code: "synthetic-code",
-				state: authorize.searchParams.get("state")!,
+				state: (() => {
+					const s = authorize.searchParams.get("state");
+					if (!s) throw new Error("state not found");
+					return s;
+				})(),
 				client_id: `oaiapp_${subject}`,
 			}).toString();
 			return callback.toString();
