@@ -13,7 +13,6 @@ import {
 	type StartupBinding,
 	type StartupMilestone,
 	type StartupProducerRole,
-	unwrapStartupRelay,
 } from "./host-startup-wire.ts";
 
 const MAX_STARTUP_EVENTS_PER_PRODUCER = 32;
@@ -97,6 +96,19 @@ export function attachStartupEvents(stream: Readable, controller: StartupControl
 	// attempt only drains and ignores what arrives.
 	stream.on("error", () => {});
 	if ("unref" in stream && typeof stream.unref === "function") stream.unref();
+}
+
+/** The host-child record a relay frame carries, or undefined for the supervisor's own records. */
+function unwrapStartupRelay(line: string): string | undefined {
+	if (!line.startsWith('{"relay":')) return undefined;
+	try {
+		const frame: unknown = JSON.parse(line);
+		if (typeof frame !== "object" || frame === null) return undefined;
+		const { relay, line: inner } = frame as Record<string, unknown>;
+		return relay === "host" && typeof inner === "string" ? inner : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 type RawRecord = { binding: unknown; role: unknown; seq: number; milestone: unknown };

@@ -17,7 +17,6 @@ import {
 	type StartupBinding,
 	startupEventLine,
 	withStartupPipe,
-	unwrapStartupRelay,
 } from "../../src/modes/rpc/host-startup-wire.ts";
 
 const fillerFixture = join(import.meta.dirname, "..", "fixtures", "startup-pipe-filler-spawn.ts");
@@ -120,12 +119,6 @@ describe("startup event wire (senpi#4602)", () => {
 			}
 		},
 	);
-
-	it("frames a relayed host record so it cannot be read as the supervisor's own", () => {
-		const line = startupEventLine(binding(), "host", 1, "host_bootstrap").trimEnd();
-		expect(unwrapStartupRelay(relayStartupLine(line).trimEnd())).toBe(line);
-		expect(unwrapStartupRelay(line)).toBeUndefined();
-	});
 
 	it("feeds relayed host records to the host ingress and the supervisor's own to the supervisor ingress", () => {
 		const attempt = binding();
