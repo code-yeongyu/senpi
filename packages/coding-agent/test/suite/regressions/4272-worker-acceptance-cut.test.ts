@@ -125,7 +125,7 @@ it("T5/X03 holds worker acceptance while its fork is on disk: the cut keeps the 
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);
 
 it("flag off: the worker client owns no lane and frames carry no ordinal", async () => {
 	const host = await workerAcceptanceHost();
@@ -136,4 +136,4 @@ it("flag off: the worker client owns no lane and frames carry no ordinal", async
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);

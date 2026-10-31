@@ -100,11 +100,16 @@ export type HostToSessionWorker =
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "cancel_grant"; id: string }
+	| { type: "cancel_secret"; id: string }
 	/** A change to the host's subscription limit records after `prepare`, mirrored into the isolate (senpi#3695). */
 	| { type: "subscription_limits"; accounts: readonly MirroredLimits[] }
 	| { type: "close" };
 
 export type SessionWorkerToHost =
+	| { type: "secret_select"; id: string; connection?: string; decision: SharedArrayBuffer; signal: SharedArrayBuffer }
+	| { type: "secret_frame"; id: string; record: object; signal: SharedArrayBuffer }
+	| { type: "secret_settled" | "secret_forget"; id: string; signal: SharedArrayBuffer }
+	| { type: "secret_handshake"; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "mcp_form_bind"; id: string; durableId: string }
 	| { type: "mcp_form_ready"; id: string; epoch: string }
 	| { type: "mcp_form_release"; epoch: string }
@@ -135,6 +140,8 @@ export type SessionWorkerToHost =
 			bootstrap?: SessionBootstrap;
 			/** The record's canonical projection, folded in the same unit; `firstOrdinal` is the producer's binding. */
 			canonical?: CanonicalRecord;
+			/** The isolate refused this event's canonical record at the protocol depth limit and already sent that refusal. */
+			canonicalRefused?: true;
 			firstOrdinal?: number;
 			connection?: string;
 			/** The command's captured incarnation; targeted output never downgrades to the routing string. */
@@ -152,8 +159,17 @@ export type SessionWorkerToHost =
 			record: CanonicalRecord;
 			signal: SharedArrayBuffer;
 	  }
-	/** The isolate lost a canonical record before framing it; the host lane's compact state for the epoch ends. */
-	| { type: "canonical_unavailable"; ordinal: number; reason: string; signal: SharedArrayBuffer }
+	/**
+	 * The isolate lost a canonical record before framing it; the host lane's compact state for the epoch ends, unless
+	 * `limit` says the record was refused at that protocol depth limit (RULING-59 C), which the host counts instead.
+	 */
+	| {
+			type: "canonical_unavailable";
+			ordinal: number;
+			reason: string;
+			limit?: number | undefined;
+			signal: SharedArrayBuffer;
+	  }
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "loaded_surfaces"; previous?: string; digest: string; signal: SharedArrayBuffer }
 	| { type: "request_close" }
