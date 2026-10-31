@@ -200,7 +200,7 @@ function javaStringHash(value: string): number {
  * non-alphanumeric character replaced by `-`, and past 200 characters the first 200 plus a base-36 hash of the path.
  * It must match the CLI's rule exactly; the seed-transcript test reads the result back through the SDK.
  */
-export function claudeProjectDirName(cwd: string): string {
+function claudeProjectDirName(cwd: string): string {
 	let path = resolve(cwd);
 	try {
 		path = realpathSync(path);
@@ -214,7 +214,7 @@ export function claudeProjectDirName(cwd: string): string {
 }
 
 /** Claude Code's config root: the lane's `CLAUDE_CONFIG_DIR`, else `~/.claude`. */
-export function claudeConfigRoot(configDir: string | undefined): string {
+function claudeConfigRoot(configDir: string | undefined): string {
 	return (configDir ?? join(homedir(), ".claude")).normalize("NFC");
 }
 
