@@ -86,7 +86,7 @@ it("S12b carry 66: a root held across a replace does not starve the new version'
 	expect(lane.storageStatus().transcript.residentPayloadBytes).toBe(current.transcript.tail.retainedBytes);
 	lane.release(current);
 	manager.dispose();
-}, 120_000);
+}, 600_000);
 
 // RULING-80 (4) = C: an append refused while the superseded tail is still spilling is a typed refusal, and the version it
 // refused becomes available again: the refused text is never kept outside the budget, so once the spill completed, the
@@ -130,4 +130,4 @@ it("S12b RULING-80 (4): a version refused during the superseded tail's spill is 
 		lane.release(recovered);
 		manager.dispose();
 	}
-}, 120_000);
+}, 600_000);

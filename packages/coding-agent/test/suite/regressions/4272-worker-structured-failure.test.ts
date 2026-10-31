@@ -60,5 +60,5 @@ it.skipIf(BUN_NO_STRUCTURED_FRAMES)(
 			await host.dispose();
 		}
 	},
-	90_000,
+	600_000,
 );

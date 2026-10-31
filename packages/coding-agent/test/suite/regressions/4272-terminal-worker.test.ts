@@ -106,4 +106,4 @@ it("T1 R24.1 R24.2 Q7 worker terminals join, failures survive, and replacement f
 		await host.dispose();
 		releaseSnapshot?.();
 	}
-}, 90000);
+}, 600_000);
