@@ -27,6 +27,32 @@ function validate(tool: EvalTool, args: JsonObject): unknown {
 	);
 }
 
+// The generic validator's message for the same call: the eval schema under a fresh identity has no registered validator.
+function genericMessage(tool: EvalTool, args: JsonObject): string {
+	const parameters = tool.parameters;
+	const generic = Object.create(Object.getPrototypeOf(parameters), Object.getOwnPropertyDescriptors(parameters));
+	try {
+		validateToolArguments(
+			{ name: "eval", description: "eval", parameters: generic },
+			{ type: "toolCall", id: "call-1", name: "eval", arguments: args },
+		);
+	} catch (error) {
+		if (error instanceof Error) return error.message;
+		throw error;
+	}
+	throw new Error("expected generic eval validation to fail");
+}
+
+function failureMessage(tool: EvalTool, args: JsonObject): string {
+	try {
+		validate(tool, args);
+	} catch (error) {
+		if (error instanceof Error) return error.message;
+		throw error;
+	}
+	throw new Error("expected eval validation to fail");
+}
+
 // The protocol-validator formatter emits one "  - <field>: <message> (<keyword>)" line per error.
 function validationLines(tool: EvalTool, args: JsonObject): ValidationLine[] {
 	try {
@@ -84,8 +110,22 @@ describe("eval argument validator", () => {
 		expect(validate(tool, { action: "list" })).toEqual({ action: "list" });
 		for (const action of ["peek", "stop"]) {
 			expect(validate(tool, { action, cell_id: "cell-1" })).toEqual({ action, cell_id: "cell-1" });
-			expect(() => validate(tool, { action })).toThrow(/Validation failed for tool "eval"/u);
 		}
-		expect(() => validate(tool, { ...run, language: "rb" })).toThrow(/Validation failed for tool "eval"/u);
+	});
+
+	it("reports every other invalid call with the generic validator's exact message", () => {
+		const invalid: JsonObject[] = [
+			{ action: "peek" },
+			{ action: "stop" },
+			{ action: "list", reset: "x" },
+			{ action: "bogus" },
+			{ ...run, language: "rb" },
+			{ ...run, timeout: "abc" },
+		];
+		for (const args of invalid) {
+			const message = failureMessage(tool, args);
+			expect(message).toBe(genericMessage(tool, args));
+			expect(message).toContain(`\n\nReceived arguments:\n${JSON.stringify(args, null, 2)}`);
+		}
 	});
 });
