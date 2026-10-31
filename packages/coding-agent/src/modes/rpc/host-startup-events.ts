@@ -7,9 +7,9 @@
 import { randomBytes } from "node:crypto";
 import type { StartupController, StartupPhase } from "./host-startup-policy.ts";
 
-export const STARTUP_EVENT_PROTOCOL_VERSION = 1;
+const STARTUP_EVENT_PROTOCOL_VERSION = 1;
 export const MAX_STARTUP_EVENT_BYTES = 4096;
-export const MAX_STARTUP_EVENTS_PER_PRODUCER = 32;
+const MAX_STARTUP_EVENTS_PER_PRODUCER = 32;
 
 export type StartupProducerRole = "supervisor" | "host";
 
@@ -23,7 +23,7 @@ export interface StartupBinding {
 }
 
 /** The only role allowed to complete each producer-reported phase; the controller completes the rest itself. */
-export const STARTUP_PHASE_PRODUCER: Readonly<Partial<Record<StartupPhase, StartupProducerRole>>> = {
+const STARTUP_PHASE_PRODUCER: Readonly<Partial<Record<StartupPhase, StartupProducerRole>>> = {
 	supervisor_bootstrap: "supervisor",
 	supervisor_setup: "supervisor",
 	host_bootstrap: "host",
