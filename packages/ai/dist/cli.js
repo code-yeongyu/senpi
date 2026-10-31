@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { builtinProviders } from "./providers/all.js";
 const AUTH_FILE = "auth.json";
@@ -20,6 +22,21 @@ function loadAuth() {
 }
 function saveAuth(auth) {
     writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), "utf-8");
+}
+function getOrCreateDeviceId() {
+    const directory = join(homedir(), ".senpi", "ai");
+    const path = join(directory, "device-id");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (!existsSync(path)) {
+        try {
+            writeFileSync(path, randomUUID(), { flag: "wx", mode: 0o600 });
+        }
+        catch (error) {
+            if (error.code !== "EEXIST")
+                throw error;
+        }
+    }
+    return readFileSync(path, "utf-8").trim();
 }
 async function answerPrompt(rl, authPrompt) {
     if (authPrompt.type === "select") {
@@ -41,7 +58,6 @@ async function login(providerId) {
         throw new Error(`Unknown provider: ${providerId}`);
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
-        // This dev CLI does not persist an installation ID; apps should reuse one across logins.
         const credential = await provider.auth.oauth.login({
             signal: new AbortController().signal,
             prompt: (authPrompt) => answerPrompt(rl, authPrompt),
@@ -62,7 +78,7 @@ async function login(providerId) {
                         break;
                 }
             },
-        }, { getDeviceId: randomUUID });
+        }, { getDeviceId: getOrCreateDeviceId });
         const auth = loadAuth();
         auth[providerId] = credential;
         saveAuth(auth);
