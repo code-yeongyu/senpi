@@ -70,7 +70,7 @@ async function probeInFlight<TSlot extends RotationSlot>(
 	return { ...slot, blockedUntil: lease.expiresAt, blockReason: PROBE_IN_FLIGHT };
 }
 
-export const PROBE_IN_FLIGHT = "probe_in_flight";
+const PROBE_IN_FLIGHT = "probe_in_flight";
 
 /**
  * The half-open probe lease for a slot whose cooldown elapsed. When the state

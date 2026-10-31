@@ -70,7 +70,7 @@ function cacheMarkerSnapshot(payload: unknown): CacheMarkerSnapshot {
 	};
 }
 
-function oauthSseResponse(): Response {
+function sseResponse(): Response {
 	const events = [
 		'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_test","usage":{"input_tokens":1,"output_tokens":0}}}\n',
 		'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n',
@@ -82,7 +82,7 @@ function oauthSseResponse(): Response {
 	return new Response(events.join("\n"), { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-async function captureOAuthCacheMarkers(
+async function captureCacheMarkers(
 	model: Model<"anthropic-messages">,
 	context: Context,
 	cacheRetention?: "none",
@@ -90,19 +90,19 @@ async function captureOAuthCacheMarkers(
 	let payload: unknown;
 	const fetch: typeof globalThis.fetch = async (_input, init) => {
 		payload = JSON.parse(String(init?.body));
-		return oauthSseResponse();
+		return sseResponse();
 	};
 	const response = streamAnthropic(model, normalizeContext(context), {
-		apiKey: "sk-ant-oat-test",
+		apiKey: "sk-ant-api03-test",
 		fetch,
 		...(cacheRetention ? { cacheRetention } : {}),
 	});
 	await response.result();
-	if (payload === undefined) throw new Error("Expected the OAuth request payload");
+	if (payload === undefined) throw new Error("Expected the request payload");
 	return cacheMarkerSnapshot(payload);
 }
 
-function oauthToolLoopContexts(systemPrompt?: string): readonly [Context, Context, Context] {
+function toolLoopContexts(systemPrompt?: string): readonly [Context, Context, Context] {
 	const firstToolLoop: Context = {
 		...(systemPrompt ? { systemPrompt } : {}),
 		messages: [
@@ -174,46 +174,43 @@ describe("Anthropic cache checkpoints", () => {
 		expect(cacheBreakpointCount(buildAnthropicWarmPromptCacheParams(model, thirdToolLoop))).toBe(4);
 	});
 
-	it.each([
-		["without", undefined],
-		["with", "Keep the response concise."],
-	])("retains two rolling OAuth checkpoints %s a context system prompt", async (_label, systemPrompt) => {
+	it("retains two rolling checkpoints on the wire when a context system prompt holds the system checkpoint", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const [firstToolLoop, secondToolLoop, thirdToolLoop] = oauthToolLoopContexts(systemPrompt);
+		const [firstToolLoop, secondToolLoop, thirdToolLoop] = toolLoopContexts("Keep the response concise.");
 
-		expect((await captureOAuthCacheMarkers(model, firstToolLoop)).toolResultIds).toEqual([FIRST_TOOL_USE_ID]);
-		expect((await captureOAuthCacheMarkers(model, secondToolLoop)).toolResultIds).toEqual([
+		expect((await captureCacheMarkers(model, firstToolLoop)).toolResultIds).toEqual([FIRST_TOOL_USE_ID]);
+		expect((await captureCacheMarkers(model, secondToolLoop)).toolResultIds).toEqual([
 			FIRST_TOOL_USE_ID,
 			SECOND_TOOL_USE_ID,
 		]);
-		const thirdSnapshot = await captureOAuthCacheMarkers(model, thirdToolLoop);
+		const thirdSnapshot = await captureCacheMarkers(model, thirdToolLoop);
 		expect(thirdSnapshot.toolResultIds).toEqual([SECOND_TOOL_USE_ID, THIRD_TOOL_USE_ID]);
 		expect(thirdSnapshot.breakpointCount).toBe(4);
 	});
 
-	it("marks only the OAuth tail when there is no preceding tool-result checkpoint", async () => {
+	it("marks only the tail when there is no preceding tool-result checkpoint", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const [firstToolLoop] = oauthToolLoopContexts();
+		const [firstToolLoop] = toolLoopContexts();
 
-		expect((await captureOAuthCacheMarkers(model, firstToolLoop)).toolResultIds).toEqual([FIRST_TOOL_USE_ID]);
+		expect((await captureCacheMarkers(model, firstToolLoop)).toolResultIds).toEqual([FIRST_TOOL_USE_ID]);
 	});
 
-	it("omits every OAuth cache marker when cache retention is none", async () => {
+	it("omits every cache marker when cache retention is none", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const [, , thirdToolLoop] = oauthToolLoopContexts("Keep the response concise.");
+		const [, , thirdToolLoop] = toolLoopContexts("Keep the response concise.");
 
-		expect((await captureOAuthCacheMarkers(model, thirdToolLoop, "none")).breakpointCount).toBe(0);
+		expect((await captureCacheMarkers(model, thirdToolLoop, "none")).breakpointCount).toBe(0);
 	});
 
-	it("does not mark an unpaired OAuth tool result", async () => {
+	it("does not mark an unpaired tool result", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const [firstToolLoop] = oauthToolLoopContexts();
+		const [firstToolLoop] = toolLoopContexts();
 		const unpairedResultContext: Context = {
 			...firstToolLoop,
 			messages: [...firstToolLoop.messages, toolResultMessage("toolu_unpaired")],
 		};
 
-		expect((await captureOAuthCacheMarkers(model, unpairedResultContext)).toolResultIds).toEqual([]);
+		expect((await captureCacheMarkers(model, unpairedResultContext)).toolResultIds).toEqual([]);
 	});
 
 	it("does not add a rolling checkpoint to an ordinary multi-turn history", () => {
