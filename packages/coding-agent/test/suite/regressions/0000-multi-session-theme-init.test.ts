@@ -25,8 +25,6 @@ assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(testDir, "..", "..", "..");
-const repoRoot = path.resolve(packageDir, "..", "..");
-const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
 const senpiCli = path.join(packageDir, "src", "cli.ts");
 const themeModule = path.join(packageDir, "src", "modes", "interactive", "theme", "theme.ts");
 
@@ -61,7 +59,7 @@ describe("multi-session host initializes the interactive theme", () => {
 			].join("\n"),
 		);
 
-		const spawned = spawn(process.execPath, [tsxCli, senpiCli, "--mode", "rpc", "--multi-session"], {
+		const spawned = spawn(process.execPath, [senpiCli, "--mode", "rpc", "--multi-session"], {
 			cwd: workspace,
 			env: { ...hostSpawnEnv(), SENPI_CODING_AGENT_DIR: agentDir, NO_COLOR: "1" },
 			stdio: ["pipe", "pipe", "pipe"],

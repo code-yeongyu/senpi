@@ -33,7 +33,8 @@ export async function releaseDisconnectAttachment(host: RouterContext, sessionId
 	if (endsSession && session?.isStreaming) {
 		let released = false;
 		const unsubscribe = session.subscribe((event) => {
-			if (event.type !== "agent_settled" && event.type !== "agent_idle") return;
+			// agent_idle, not agent_settled: settle-time extension handlers may still be writing (omo#11419).
+			if (event.type !== "agent_idle") return;
 			if (released) return;
 			released = true;
 			unsubscribe();

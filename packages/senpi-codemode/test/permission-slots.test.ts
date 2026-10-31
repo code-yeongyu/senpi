@@ -12,6 +12,39 @@ const request = { token: "one", call: { tool: "write" as const, input: { path: "
 const pass = { action: "pass" as const };
 
 describe("permission slot ownership (#4309)", () => {
+	it.each(["before-wait", "during-wait"] as const)(
+		"bounds a held decision when the host claims %s (#4709)",
+		async (order) => {
+			const slots = createPermissionSlots();
+			const answer = Promise.withResolvers<typeof pass>();
+			let serving: Promise<void> | undefined;
+			let claim = () => {};
+			let claimed = false;
+			const client = createPermissionRequester(slots, {
+				wake: (slot, generation) => {
+					claim = () => {
+						claimed = true;
+						serving = servePermissionSlot(slots, slot, generation, () => answer.promise);
+					};
+					if (order === "before-wait") claim();
+				},
+				wait: (...args) => {
+					if (!claimed) claim();
+					return Reflect.apply(Atomics.wait, Atomics, args);
+				},
+			});
+			try {
+				const started = performance.now();
+				expect(() => client.check(request)).toThrow("Permission check interrupted or timed out");
+				expect(performance.now() - started).toBeGreaterThanOrEqual(1_900);
+				expect(claimed).toBe(true);
+			} finally {
+				answer.resolve(pass);
+				await serving;
+			}
+		},
+	);
+
 	it.each(["interrupt", "timeout"] as const)("reclaims repeated %s requests beyond the pool size", async (kind) => {
 		const slots = createPermissionSlots();
 		let interrupted = true;
