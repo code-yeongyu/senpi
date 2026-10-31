@@ -31,6 +31,11 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 		auth: {
 			oauth: {
 				...legacy,
+				loginLabel: "Continue with ChatGPT",
+				login: async (interaction, options) => ({
+					...(await siwc.login(interaction, options)),
+					route: "siwc",
+				}),
 				refresh: async (credential, signal) =>
 					credential.route === "siwc"
 						? { ...credential, ...(await siwc.refresh(credential, signal)), route: "siwc" }

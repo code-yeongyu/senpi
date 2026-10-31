@@ -11,6 +11,7 @@ import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
+import { createOpenAIIdTokenVerifier, type OpenAIIdTokenDependencies } from "./openai-id-token.ts";
 import { generatePKCE } from "./pkce.ts";
 
 // every login registers a new client with this ID; OpenAI returns the issued client ID in the callback
@@ -132,8 +133,12 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
 	});
 }
 
-async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise<TokenResponse> {
-	const response = await fetch(TOKEN_URL, {
+async function requestToken(
+	body: URLSearchParams,
+	signal: AbortSignal,
+	fetchToken: OpenAIIdTokenDependencies["fetch"],
+): Promise<TokenResponse> {
+	const response = await fetchToken(TOKEN_URL, {
 		method: "POST",
 		headers: {
 			accept: "application/json",
@@ -163,7 +168,7 @@ function requireTokenString(value: unknown, field: "access_token" | "refresh_tok
 	return value;
 }
 
-function credentialFromTokenResponse(token: TokenResponse, clientId: string): OAuthCredential {
+function credentialFromTokenResponse(token: TokenResponse, clientId: string, now: () => number): OAuthCredential {
 	const access = requireTokenString(token.access_token, "access_token");
 	const refresh = requireTokenString(token.refresh_token, "refresh_token");
 	const scope = requireTokenString(token.scope, "scope");
@@ -178,7 +183,7 @@ function credentialFromTokenResponse(token: TokenResponse, clientId: string): OA
 		type: "oauth",
 		access,
 		refresh,
-		expires: Date.now() + token.expires_in * 1000 - EXPIRY_MARGIN_MS,
+		expires: now() + token.expires_in * 1000 - EXPIRY_MARGIN_MS,
 		clientId,
 		scopes,
 	};
@@ -189,6 +194,9 @@ async function exchangeAuthorizationCode(
 	verifier: string,
 	clientId: string,
 	signal: AbortSignal,
+	nonce: string,
+	deps: OpenAIIdTokenDependencies,
+	verifyIdToken: ReturnType<typeof createOpenAIIdTokenVerifier>,
 ): Promise<OAuthCredential> {
 	const token = await requestToken(
 		new URLSearchParams({
@@ -200,16 +208,17 @@ async function exchangeAuthorizationCode(
 			resource: RESOURCE,
 		}),
 		signal,
+		deps.fetch,
 	);
-	// Pi does not use the ID token to identify the user or read profile data.
-	// Keep the presence check as part of the token-response contract.
-	if (typeof token.id_token !== "string" || token.id_token.trim().length === 0) {
-		throw new Error("OpenAI OAuth token response did not contain an ID token");
-	}
-	return credentialFromTokenResponse(token, clientId);
+	const identity = await verifyIdToken(token.id_token, clientId, nonce, signal);
+	return { ...credentialFromTokenResponse(token, clientId, deps.now), ...identity, idToken: token.id_token as string };
 }
 
-async function refreshAccessToken(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential> {
+async function refreshAccessToken(
+	credential: OAuthCredential,
+	signal: AbortSignal,
+	deps: OpenAIIdTokenDependencies,
+): Promise<OAuthCredential> {
 	const clientId = credential.clientId;
 	if (typeof clientId !== "string" || clientId.trim().length === 0) {
 		throw new Error("Stored OpenAI OAuth credential does not contain an issued client ID; reconnect ChatGPT");
@@ -222,8 +231,9 @@ async function refreshAccessToken(credential: OAuthCredential, signal: AbortSign
 			resource: RESOURCE,
 		}),
 		signal,
+		deps.fetch,
 	);
-	return credentialFromTokenResponse(token, clientId);
+	return { ...credential, ...credentialFromTokenResponse(token, clientId, deps.now) };
 }
 
 /** OpenAI identifies each installation ("agent host") by a stable URI such as `urn:uuid:<uuid>`. */
@@ -236,7 +246,9 @@ function agentHostId(deviceId: string | undefined): string {
 
 async function loginOpenAIChatGPT(
 	interaction: ProviderAuthInteraction,
-	options?: LoginOptions,
+	options: LoginOptions | undefined,
+	deps: OpenAIIdTokenDependencies,
+	verifyIdToken: ReturnType<typeof createOpenAIIdTokenVerifier>,
 ): Promise<OAuthCredential> {
 	const hostId = agentHostId(options?.getDeviceId?.());
 	const { verifier, challenge } = await generatePKCE();
@@ -286,7 +298,15 @@ async function loginOpenAIChatGPT(
 	try {
 		const result = await (callback ? Promise.race([callback.result, manualCode]) : manualCode);
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return await exchangeAuthorizationCode(result.code, verifier, result.clientId, interaction.signal);
+		return await exchangeAuthorizationCode(
+			result.code,
+			verifier,
+			result.clientId,
+			interaction.signal,
+			nonce,
+			deps,
+			verifyIdToken,
+		);
 	} catch (error) {
 		if (interaction.signal.aborted) throw new Error("Login cancelled");
 		throw error;
@@ -302,13 +322,22 @@ async function loginOpenAIChatGPT(
 	}
 }
 
-export const openaiChatGPTOAuth: OAuthAuth = {
-	name: "OpenAI (ChatGPT subscription)",
-	isSubscription: true,
-	loginLabel: "Sign in with ChatGPT",
-	login: loginOpenAIChatGPT,
-	refresh: refreshAccessToken,
-	async toAuth(credential) {
-		return { apiKey: credential.access };
-	},
-};
+export function createOpenAIChatGPTOAuth(dependencies: Partial<OpenAIIdTokenDependencies> = {}): OAuthAuth {
+	const deps: OpenAIIdTokenDependencies = {
+		fetch: dependencies.fetch ?? ((url, init) => fetch(url, init)),
+		now: dependencies.now ?? (() => Date.now()),
+	};
+	const verifyIdToken = createOpenAIIdTokenVerifier(deps);
+	return {
+		name: "OpenAI (ChatGPT subscription)",
+		isSubscription: true,
+		loginLabel: "Sign in with ChatGPT",
+		login: (interaction, options) => loginOpenAIChatGPT(interaction, options, deps, verifyIdToken),
+		refresh: (credential, signal) => refreshAccessToken(credential, signal, deps),
+		async toAuth(credential) {
+			return { apiKey: credential.access };
+		},
+	};
+}
+
+export const openaiChatGPTOAuth = createOpenAIChatGPTOAuth();
