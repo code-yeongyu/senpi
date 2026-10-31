@@ -14,6 +14,8 @@ import { answeredUiRequestId } from "./extension-ui-response.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import { frameUnit } from "./compact-canonical-pairing.ts";
+import { canonicalLoss } from "./compact-protocol-depth.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import type {
@@ -411,17 +413,7 @@ export class SessionWorkerClient {
 					return;
 				}
 				const lane = this.acceptance;
-				if (lane) {
-					// A gap, duplicate or reordered frame is denied and ends this incarnation before any mutation.
-					if (message.ordinal !== this.expectedOrdinal) {
-						acknowledge(message.signal, false);
-						const kind =
-							(message.ordinal ?? Number.POSITIVE_INFINITY) < this.expectedOrdinal ? "duplicate" : "gap";
-						this.fail(`session_worker_frame_${kind}`);
-						return;
-					}
-					this.expectedOrdinal += 1;
-				}
+				if (!this.inOrder(message)) return;
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
 				if (message.snapshot) {
 					this.snapshot = message.snapshot;
@@ -482,7 +474,7 @@ export class SessionWorkerClient {
 					if (message.bootstrap) lane?.bootstrap(message.bootstrap);
 					else {
 						lane?.applyTranscript(message.transitions ?? []);
-						lane?.accept(message.record, message.recovery);
+						lane?.accept(message.record, message.recovery, frameUnit(message), message.canonicalRefused === true);
 					}
 					if (!writer.enqueue(sessionId, message.record)) {
 						acknowledge(message.signal, false);
@@ -509,6 +501,19 @@ export class SessionWorkerClient {
 				);
 				return;
 			}
+			case "canonical":
+			case "canonical_unavailable":
+				// Credited under the same condition as an output frame: only a bound, running incarnation accepts units.
+				if (!this.writer || !this.sessionId || this.stopped) {
+					acknowledge(message.signal, false);
+					return;
+				}
+				if (!this.inOrder(message)) return;
+				if (message.type === "canonical")
+					this.acceptance?.acceptControl(frameUnit({ ...message, canonical: message.record }));
+				else this.acceptance?.compactUnavailable(canonicalLoss(message));
+				acknowledge(message.signal, true);
+				return;
 			case "capabilities":
 				if (message.connection === undefined)
 					this.options = { ...this.options, capabilities: message.capabilities };
@@ -544,6 +549,19 @@ export class SessionWorkerClient {
 				this.fail(message.error);
 				return;
 		}
+	}
+
+	/** A gap, duplicate or reordered frame is denied and ends this incarnation before any mutation. */
+	private inOrder(message: { readonly ordinal?: number; readonly signal: SharedArrayBuffer }): boolean {
+		if (!this.acceptance) return true;
+		if (message.ordinal === this.expectedOrdinal) {
+			this.expectedOrdinal += 1;
+			return true;
+		}
+		acknowledge(message.signal, false);
+		const kind = (message.ordinal ?? Number.POSITIVE_INFINITY) < this.expectedOrdinal ? "duplicate" : "gap";
+		this.fail(`session_worker_frame_${kind}`);
+		return false;
 	}
 
 	private fail(error: string): void {

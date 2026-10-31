@@ -87,8 +87,8 @@ export default function accountExtension(pi: ExtensionAPI): void {
 					return;
 				}
 				if (action === "remove" && args[2] !== undefined) {
-					await removeCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
-					ctx.ui.notify(`Removed ${provider} account '${args[2]}'.`, "info");
+					const { notice } = await removeCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
+					ctx.ui.notify(notice ?? `Removed ${provider} account '${args[2]}'.`, notice ? "warning" : "info");
 					return;
 				}
 				usage(ctx);
