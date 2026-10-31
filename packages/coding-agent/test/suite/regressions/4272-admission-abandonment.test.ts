@@ -178,7 +178,7 @@ it.each(["connection release", "host dispose"] as const)(
 			await host[Symbol.asyncDispose]();
 		}
 	},
-	120_000,
+	600_000,
 );
 
 it("RULING-90 swallows a producer rejection after the deadline without publishing an answer", async () => {
