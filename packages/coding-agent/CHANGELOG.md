@@ -12,6 +12,32 @@
 
 ### Removed
 
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- Optional `runId` on lifecycle snapshots, `agent_start`, and lifecycle state readback lets clients correlate snapshots with their producing run, including idle delivery and restart ([#4925](https://github.com/code-yeongyu/senpi/issues/4925)).
+
+### Changed
+
+- The experimental, OFF-by-default compact recovery path now folds each structured record into the session's acceptance lane together with its unchanged legacy record, at one sequence and with one producer numbering on worker sessions (S03b-3a, part of [#4272](https://github.com/code-yeongyu/senpi/issues/4272)).
+- The experimental, OFF-by-default compact recovery path now holds run state, lifecycle and open dialogs as frozen roots, follows message edits, removals, compactions and branch moves from the session's own transcript changes, and records each settled message's persistence (S03b-3b, part of [#4272](https://github.com/code-yeongyu/senpi/issues/4272)).
+- Coding-agent test children launched from source on Node share one compile cache per test run, so a repeated launch no longer re-strips and recompiles its whole TypeScript graph ([#4620](https://github.com/code-yeongyu/senpi/pull/4620))
+- Validate CLI runtime and thinking choices without type assertions, preserving accepted values ([#4971](https://github.com/code-yeongyu/senpi/pull/4971)).
+- Compaction uses existing value types instead of four redundant assertions, with unchanged runtime behavior ([#4973](https://github.com/code-yeongyu/senpi/pull/4973)).
+
+### Fixed
+
+- Provider `whitelist`, `blacklist`, and `hideFreeModels` settings in models.json now apply to extension-declared models, refreshed catalogs, and legacy OAuth model projections.
+- Earlier TUI status rows retain their own content when a later notice arrives before rendering or a theme redraw ([#4841](https://github.com/code-yeongyu/senpi/issues/4841)).
+- Caller-owned RPC supervisors and their hosts detect owner death when Bun leaves the inherited lifetime pipe silent, without interrupting retained peers or turns ([#4852](https://github.com/code-yeongyu/senpi/pull/4852)).
+- A provider request the server accepted and keeps alive with SSE pings or keep-alive comments is no longer cut by the stream-start or idle bound while the model is still producing its first token; keep-alives alone are bounded by the new `retry.provider.keepAliveTimeoutMs` (default 15 minutes, `0` disables) ([#4980](https://github.com/code-yeongyu/senpi/pull/4980))
+- A skill directory symlinked into a skills root now loads even when that root's `.gitignore`, `.ignore` or `.fdignore` lists the link; the linked tree's own ignore files still apply inside it ([#5060](https://github.com/code-yeongyu/senpi/issues/5060))
+
+### Removed
+
 ## [2026.10.30-1] - 2026-10-30
 
 ### Breaking Changes

@@ -1,6 +1,7 @@
 import type { Credential } from "@earendil-works/pi-ai";
 import { accountDisplayName } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { AuthStorage } from "../../../auth-storage.ts";
+import { type RemoveCredentialAccountResult, removeCredentialAccount } from "../../../credential-accounts.ts";
 import { emitProviderAccountsChanged } from "./account-events.ts";
 import {
 	type AccountSlot,
@@ -8,11 +9,11 @@ import {
 	emptyCredential,
 	listAccounts,
 	pinAccount,
-	removeAccount,
 } from "./accounts.ts";
 import { forgetSessionBlocksFor } from "./failover.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./provider-id.ts";
 
-export const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
+export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID };
 
 export type ProviderAccountSummary = {
 	readonly name: string;
@@ -79,23 +80,19 @@ export async function pinProviderAccount(
 	emitProviderAccountsChanged(provider);
 }
 
-export async function removeProviderAccount(storage: AuthStorage, provider: string, name: string): Promise<void> {
+/**
+ * `/claude-account remove` takes the same removal as RPC `account_remove` and `/account remove`, so the entry points
+ * cannot diverge: a `claude-cli` slot is signed out of the CLI by its account dir, a linked dir is never followed,
+ * and the slot is removed even when the sign-out cannot run, with a notice (senpi#4436).
+ */
+export async function removeProviderAccount(
+	storage: AuthStorage,
+	provider: string,
+	name: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<RemoveCredentialAccountResult> {
 	assertManagedProvider(provider);
-	await storage.modify(provider, async (current) => {
-		const credential = credentialFrom(current);
-		const account = (credential.accounts ?? []).find((candidate) => candidate.name === name);
-		if (!account) {
-			const environmentAccount = listAccounts(credential, (key) => process.env[key]).find(
-				(candidate) => candidate.name === name,
-			);
-			if (environmentAccount?.source === "env") {
-				throw new Error(`Environment provider account cannot be removed: ${name}`);
-			}
-			throw new Error(`Provider account not found: ${name}`);
-		}
-		return removeAccount(credential, name);
-	});
-	emitProviderAccountsChanged(provider);
+	return removeCredentialAccount(storage, provider, name, env);
 }
 
 /**
