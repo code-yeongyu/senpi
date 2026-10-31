@@ -12,12 +12,17 @@ import { plannedContextWindow } from "./context-window.ts";
  *   and its native compaction stays off.
  * - Base URL: the registration baseUrl is the api-id sentinel. Any other value is the user's models.json baseUrl
  *   (senpi#4765); Claude Code sends its requests to `ANTHROPIC_BASE_URL` and keeps the selected login as the credential.
+ * - Tool search: every tool the model can call is a senpi tool on the custom-tools MCP server (senpi#5159), and
+ *   `tools: []` removes Claude Code's ToolSearch. A resumed Claude Code session marks every MCP tool its earlier
+ *   catalog lacked `defer_loading` for the rest of that session, `alwaysLoad` notwithstanding (measured on 2.1.306),
+ *   so the model would never see those schemas again. With tool search off nothing is deferred and no
+ *   `DeferredToolPlaceholder` is sent.
  */
 export function claudeCodeQueryEnvironment(
 	model: Model<Api>,
 	senpiOwnsCompaction: boolean,
 ): Record<string, string> | undefined {
-	const environment: Record<string, string> = {};
+	const environment: Record<string, string> = { ENABLE_TOOL_SEARCH: "false" };
 	if (senpiOwnsCompaction) {
 		environment.CLAUDE_CODE_TOTAL_TOKENS_REMINDER = "off";
 		environment.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(plannedContextWindow(model));

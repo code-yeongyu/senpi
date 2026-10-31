@@ -3,14 +3,16 @@
 ### What changed
 
 - `tools.ts`: `BUILTIN_SDK_TOOLS` is empty and `PI_TO_SDK_TOOL_NAME` is gone: `resolveSdkTools` puts every active tool on the custom-tools MCP server with its own schema (so a custom `bash` schema is served as written, senpi#4059) and derives `toolAliases` from the active tools through `BUILTIN_TOOL_ALIASES` (`Read`/`Write`/`Edit`/`MultiEdit`/`Bash`/`Grep`/`Glob`, each in both spellings, -> `mcp__custom-tools__<tool>`; `Glob` prefers an active `glob` over `find`). `mapSdkToolNameToPi` consults the active context first, then the kept `SDK_TO_PI_TOOL_NAME` table, which now only serves transcripts recorded while the built-ins were offered. `translatesBuiltinArguments(sdkName)` is true for the exact built-in spellings only; `mapToolArgs` translates `MultiEdit` entries (`old_string`/`new_string` per edit). `HOST_CAPTURED_SDK_TOOL_MATCHER` is `mcp__custom-tools__.*`. `HOST_TOOL_POLICY_FINGERPRINT` is `host-tool-denial-v5`.
-- `options.ts`: `tools: []` on every query; `toolAliases` (new input, replaces `tools`) is attached when a tool-carrying query has any.
+- `options.ts`: `tools: []` on every query; `toolAliases` (new input, replaces `tools`) is attached when a tool-carrying query has any. The thinking/effort mapping moved verbatim into `thinking-options.ts` (`thinkingQueryOptions`).
 - `custom-tools.ts`: the server is created with `alwaysLoad: true`.
+- `query-environment.ts`: `ENABLE_TOOL_SEARCH=false` on every lane. Measured on Claude Code 2.1.306: a resumed or forked session marks every MCP tool its earlier catalog lacked `defer_loading: true` for the rest of that session, `alwaysLoad` notwithstanding, and `tools: []` removes the ToolSearch that could load them - so after this upgrade a reattached session would never see the schemas of `read`/`bash`/`grep`/`find` again. With tool search off nothing is deferred and the `DeferredToolPlaceholder` entry leaves the request.
 - `stream-protocol.ts` / `stream-events.ts`: a tool block keeps the name the model emitted (`sdkName`) until it closes; `mapToolArguments` translates Claude Code's argument shape only when that name is a built-in spelling, and passes MCP-named arguments through verbatim.
 - `stream.ts`: passes `resolvedTools.toolAliases` to `buildAnthropicSubscriptionQueryOptions`.
 
 ### Why
 
 - A built-in name the SDK was not offered (`Edit`, `Write`, or any name the model emitted from habit or a skill document) was answered by Claude Code itself with `<tool_use_error>No such tool available` and the model was called again inside the same query - no hook fired, so the turn did not end while senpi had already captured the streamed tool_use and executed it: one call, two results, the #2401 shape reached by name. With no built-in and an alias for every built-in name an active tool covers, each such call resolves to the custom-tools tool, the deny hook ends the turn, and senpi executes once.
+- A toolset change on a resumed Claude Code session hides the added tools (see `query-environment.ts` above); every session alive across this upgrade is such a resume.
 - Claude Code's built-in schemas shadowed senpi's: a `bash` tool with a `{program, args}` schema was dropped for the built-in `Bash` by name alone (#4059). Translating arguments only for alias-named calls keeps a custom schema intact.
 - Measured with the pinned CLI (2.1.306 / SDK 0.3.306) against a local Messages API stub: tools JSON 7028 -> 3214 B for the four stock tools, request 1 9568 -> 5132 B, `system` and `tools` byte-identical across a session's requests, every call `hook_stopped`.
 
@@ -21,8 +23,8 @@
 ### Expected merge conflict zones
 
 - HIGH: `tools.ts` (`BUILTIN_TOOL_ALIASES`, `resolveSdkTools`, `mapSdkToolNameToPi`, `mapToolArgs`, the matcher and fingerprint constants).
-- MEDIUM: the `tools:` / `toolAliases` lines of `buildAnthropicSubscriptionQueryOptions` in `options.ts`; `mapToolArguments` in `stream-protocol.ts` and `closeContentBlock` in `stream-events.ts`.
-- LOW: `alwaysLoad` in `custom-tools.ts`; the `toolAliases` argument in `stream.ts`.
+- MEDIUM: the `tools:` / `toolAliases` lines of `buildAnthropicSubscriptionQueryOptions` in `options.ts` and the removed thinking helpers; `mapToolArguments` in `stream-protocol.ts` and `closeContentBlock` in `stream-events.ts`.
+- LOW: `alwaysLoad` in `custom-tools.ts`; the `toolAliases` argument in `stream.ts`; the `ENABLE_TOOL_SEARCH` seed of `claudeCodeQueryEnvironment` in `query-environment.ts`.
 
 ## 2026-10-29 - Export the account-level block predicate (senpi#4885)
 

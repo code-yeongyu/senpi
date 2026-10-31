@@ -228,11 +228,20 @@ describe("Claude SDK OAuth query options", () => {
 	// Claude Code's per-turn token reminder rewrites the prompt each turn and defeats prompt-cache reuse.
 	it("turns Claude Code's total-tokens reminder and compaction off, at senpi's window, only while senpi owns compaction", () => {
 		expect(optionsFor({}).env).toEqual({
+			ENABLE_TOOL_SEARCH: "false",
 			CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off",
 			CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model().contextWindow),
 			DISABLE_COMPACT: "1",
 		});
-		expect(optionsFor({ compactionOwner: "sdk" }).env).toBeUndefined();
+		expect(optionsFor({ compactionOwner: "sdk" }).env).toEqual({ ENABLE_TOOL_SEARCH: "false" });
+	});
+
+	// A resumed Claude Code session defers every MCP tool its earlier catalog lacked behind ToolSearch, which
+	// `tools: []` removes, so the model would never see those schemas again (senpi#5159); tool search is off.
+	it("turns Claude Code's tool search off on every lane so no senpi tool is ever deferred", () => {
+		for (const settings of [{}, { compactionOwner: "sdk" as const }]) {
+			expect(optionsFor(settings).env?.ENABLE_TOOL_SEARCH).toBe("false");
+		}
 	});
 
 	it("keeps preset-append as the Claude Code preset with the three extracted blocks joined", () => {
