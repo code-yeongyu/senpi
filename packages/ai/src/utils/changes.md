@@ -1,3 +1,39 @@
+## 2026-10-30 - The retry-hint extractor reads a zoned wall-clock reset (senpi#1771)
+
+### What changed
+
+- `packages/ai/src/utils/retry-hint.ts`: exports `clockResetMs(text, nowMs)`, the wall-clock reset reader moved from the credential pool ("resets 12am (Asia/Seoul)", "resets Oct 2, 9am", "try again at 12:00 AM"; a time with no zone reads in the host's zone). Body prose tries it last, after the markers, relative prose and ISO timestamps; the 429 / rate-limit eligibility gate is unchanged.
+
+### Why
+
+- Claude Code writes its reset as a zoned wall clock, so `extract429RetryAfterMs` returned no hint and every caller treated the limit as having no reset.
+
+### Why an extension could not handle it
+
+- The extractor is shared by provider retry, the session retry delay and the failure profiles inside `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the end of `fromBodyProse` and the new wall-clock section at the end of `retry-hint.ts`.
+
+## 2026-10-27 - The leading system message records the stable prefix length (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/utils/transcript.ts`: `createInitialSystemMessage` takes the stable prefix and sets `stablePrefix` when the prompt starts with it; `normalizeContext` passes `Context.systemPromptStablePrefix`; `getCurrentSystemMessage` keeps the leading message's `stablePrefix`.
+
+### Why
+
+- The provider adapters read the boundary from the leading system message; the rendered text is unchanged.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/transcript.ts` builds the transcript every provider consumes.
+
+### Expected merge conflict zones
+
+- LOW: `createInitialSystemMessage`, `normalizeContext` and `getCurrentSystemMessage` in `packages/ai/src/utils/transcript.ts`.
+
 ## 2026-10-30 - Keep-alive timeout is a provider stream stall (senpi#4608)
 
 ### What changed
