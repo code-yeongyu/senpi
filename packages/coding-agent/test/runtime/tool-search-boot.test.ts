@@ -104,6 +104,45 @@ describe("tool_search boots without a session start (RT5a)", () => {
 		expect(getCatalog).not.toHaveBeenCalled();
 	});
 
+	it("boots once for a runtime whose contexts have no session manager", async () => {
+		// Given a runner without a session manager over a runtime that can list its tools.
+		const { harness, service, extensionsResult } = await runtimeWithoutSessionStart(["records_lookup"]);
+		const runtime = new ExtensionRunner(
+			extensionsResult.extensions,
+			extensionsResult.runtime,
+			process.cwd(),
+			undefined,
+			harness.session.modelRegistry,
+			extensionsResult.eventBus,
+		);
+		const getCatalog = vi.spyOn(service, "getCatalog");
+		const added = vi.spyOn(WeakSet.prototype, "add");
+		// When tool calls arrive.
+		await toolCall(runtime, "call-1");
+		await toolCall(runtime, "call-2");
+		// Then the runtime booted once, and no undefined key reached a WeakSet.
+		expect(getCatalog).toHaveBeenCalledTimes(1);
+		expect(added.mock.calls.some(([value]) => value === undefined)).toBe(false);
+	});
+
+	it("defers the boot without failing the call while the runtime cannot list its tools", async () => {
+		// Given a runner without a session manager whose runtime core is not bound.
+		const extensionsResult = await createTestExtensionsResult([
+			{ path: "<builtin:tool-search>", factory: toolSearchExtension },
+		]);
+		const runtime = new ExtensionRunner(
+			extensionsResult.extensions,
+			extensionsResult.runtime,
+			process.cwd(),
+			undefined,
+			(await runtimeWithoutSessionStart([])).harness.session.modelRegistry,
+			extensionsResult.eventBus,
+		);
+		// Then its tool calls pass through tool-search untouched.
+		await expect(toolCall(runtime, "call-1")).resolves.toBeUndefined();
+		await expect(toolCall(runtime, "call-2")).resolves.toBeUndefined();
+	});
+
 	it("boots each context once", async () => {
 		// Given one extension load seen through two contexts with no session start.
 		const { harness, service, extensionsResult } = await runtimeWithoutSessionStart(["records_lookup"]);
