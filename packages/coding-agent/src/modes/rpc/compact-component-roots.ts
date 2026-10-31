@@ -64,18 +64,28 @@ export class CompactComponentRoots<T extends object> {
 		});
 	}
 
-	async *entries(ref: ValueRef | undefined, valid: () => void): AsyncGenerator<readonly [string, T]> {
+	/**
+	 * The incremental reader (S03b-4): rows in key order, each value as the ref its walk starts from, with one
+	 * tree page resident per open level. Nothing here assembles a value; `entries` does, for the whole-view callers.
+	 */
+	async *rows(ref: ValueRef | undefined, valid: () => void): AsyncGenerator<readonly [string, ValueRef]> {
 		if (!ref) return;
 		valid();
 		const page: Page = JSON.parse(await this.store.readLeaf(ref.node));
 		valid();
-		yield* this.entries(page.left, valid);
-		const key = await this.values.read(page.key);
+		yield* this.rows(page.left, valid);
+		const key = await this.values.read(page.key, valid);
 		if (typeof key !== "string") throw new CompactReadError("ownership");
-		const value: T = JSON.parse(JSON.stringify(await this.values.read(page.value)));
-		valid();
-		yield [key, value];
-		yield* this.entries(page.right, valid);
+		yield [key, page.value];
+		yield* this.rows(page.right, valid);
+	}
+
+	async *entries(ref: ValueRef | undefined, valid: () => void): AsyncGenerator<readonly [string, T]> {
+		for await (const [key, value] of this.rows(ref, valid)) {
+			const row = (await this.values.read(value, valid)) as T;
+			valid();
+			yield [key, row];
+		}
 	}
 
 	private project(node: IndexNode<Stored<T>>, created: ValueRef[]): ValueRef {

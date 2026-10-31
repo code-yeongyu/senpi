@@ -1,3 +1,84 @@
+## 2026-10-30 - Keep-alive bytes keep a slow first token alive; keep-alive-only silence is capped (senpi#4608)
+
+### What changed
+
+- `packages/agent/src/stream-keepalive.ts` (new): `createTransportLiveness` records when the provider last reported bytes and when the last assistant event arrived, and judges a fired silence bound: expire it, extend it to one bound after the last byte, or end the request with `StreamKeepAliveTimeoutError` once keep-alives alone exceeded the keep-alive budget.
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` passes `onTransportActivity` to the stream function (chaining a caller's own hook) and hands the liveness to the assistant event reader. When the start or idle bound fires and the provider reported bytes within one full configured bound, the deadline is re-armed instead of ending the request; each assistant event restarts the keep-alive budget. A caller abort past a keep-alive timeout still reads as the abort.
+- `packages/agent/src/types.ts`: `AgentLoopConfig.streamKeepAliveTimeoutMs` (unset or non-positive: keep-alives are unbounded).
+- `packages/agent/src/agent.ts`: `AgentOptions.streamKeepAliveTimeoutMs` and `Agent.streamKeepAliveTimeoutMs`, forwarded into the loop config.
+
+### Why
+
+- The silence bounds counted only public assistant events. With the empty-assistant recovery wrapper holding `start` back until content commits, the start bound is a first-content bound, so a request the provider had accepted and kept alive with SSE `ping` events or `:` comment keep-alives was cut at `streamStartTimeoutMs` (90 s until 2026-09-02, 300 s since) while the model was still producing its first token. The retry re-sent and re-billed the whole prompt, and relays in front of the API had to inject a synthetic content-shaped event to keep slow requests alive.
+
+### Why an extension could not handle it
+
+- The bounds live inside the loop's per-request event reader; no hook sees a request between its start and its first event, and the bytes are only visible to the provider adapter.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` `streamAssistantResponse` stream-function options, `createAssistantEventReader` and `readNextAssistantEvent` signatures and deadline handler.
+- LOW: `types.ts` next to `streamStartTimeoutMs`; `agent.ts` timeout option plumbing.
+
+## 2026-10-30 - Remove redundant compaction type assertions (senpi#4979)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: use the declared `MessageEntry.message` type directly in message extraction, assistant-usage lookup and cut-point token estimation.
+- `packages/agent/src/harness/compaction/utils.ts`: use the discriminant-narrowed tool-call argument type in conversation serialization.
+
+### Why
+
+- `packages/agent/src/harness/compaction/compaction.ts`: the three assertions repeat the `MessageEntry` contract and can conceal future type changes.
+- `packages/agent/src/harness/compaction/utils.ts`: the `toolCall` discriminant already supplies the argument record type; the assertion adds no information.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/compaction/compaction.ts`: these are internal compaction implementation types.
+- `packages/agent/src/harness/compaction/utils.ts`: extensions cannot remove an internal source assertion; emitted runtime behavior is unchanged.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/harness/compaction/compaction.ts`: message extraction, assistant-usage lookup and cut-point token estimation expressions.
+- `packages/agent/src/harness/compaction/utils.ts`: the `toolCall` branch in `serializeConversation`.
+
+## 2026-10-29 - Share tree-sitter runtime initialization (senpi#4748)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts`: share initialization by resolved runtime path independently of parser caching. Serialize each initialization and its grammar loads on one process-global queue that survives cache resets. Discard only failed runtime and grammar loads, checking that the failing promise still owns its cache entry; retain genuinely missing grammars as negative cache entries.
+- `packages/agent/src/harness/utils/read-folders/index.ts` and the read-summary selection receipt refresh the engine source hash and receipt digest only. Historical measurements, measurement commit, language choices, and every receipt assertion remain unchanged; the boundary safety and harness suites requalify this initialization-only change.
+
+### Why
+
+- Concurrent uncached TypeScript and JavaScript loads reinitialized process-global web-tree-sitter state while a grammar was loading, producing an incompatible-language failure. Different injected runtime paths have the same process-global race, and pre-reset failures must not discard newer entries. Missing grammars must not repeat filesystem resolution on every cached read.
+
+### Why an extension could not handle it
+
+- Runtime initialization and parser caching are internal to the read folder engine, before any extension receives a folder.
+
+### Expected merge conflict zones
+
+- LOW: the runtime and grammar caches in `engine.ts`, plus the selection receipt hash binding in `index.ts`.
+
+## 2026-10-27 - Win32 simulation profile for code-level Windows tests (senpi#4510)
+
+### What changed
+
+- `packages/agent/src/testing/win32-sim.ts` (fork-only, test support): drive-letter `\` paths over a backing directory, case-insensitive and case-preserving names, `\\.\pipe\<name>` endpoints, `EBUSY`/`EPERM` with Windows errno values on rename or delete of an open file, and signal-less termination (`win32Kill`: supported signals terminate at once with no handler; others throw `ENOSYS`).
+
+### Why
+
+- `packages/agent/src/testing/win32-sim.ts`: Windows behavior is verified by code-level tests with simulated OS behavior rather than a VM, so every suite needs the same profile.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/testing/win32-sim.ts`: it is test support imported by package test suites, not runtime behavior.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
 ## 2026-10-26 - Thrown provider errors pass the provider error boundary (senpi#4282)
 
 ### What changed
