@@ -1,3 +1,125 @@
+## 2026-10-31 - Every invoked skill loads; no per-prompt skill cap (senpi#5151)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillTokens()` no longer caps how many distinct skills one prompt expands and no longer emits the `skill:expansion` "Skipped N skills" error. Skill bodies are inlined while their running total stays within `SKILL_INLINE_BUDGET_CHARS` (the first skill is always inlined); a later skill past the budget is still expanded, as the same `<skill-instruction>` block whose body is `formatSkillReferenceBody(filePath)`, so `parseSkillBlock` and every renderer keep recognizing it. A repeated invocation keeps its `[skill: name]` marker and is logged at debug level (`skill_expansion_duplicate`) instead of going to the extension-error channel. The `MAX_SKILL_EXPANSIONS_PER_PROMPT` and `MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT` re-exports are gone.
+- `packages/coding-agent/src/core/settings-manager.ts`: the `maxSkillExpansionsPerPrompt` setting and `getMaxSkillExpansionsPerPrompt()` are removed, with the `MAX_SKILL_EXPANSIONS_PER_PROMPT` import. A value left in `settings.json` is ignored without a warning.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `MAX_SKILL_EXPANSIONS_PER_PROMPT` and `MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT` are removed, so `parseSkillInvocationTokens()` returns every token; `SKILL_INLINE_BUDGET_CHARS` (128K characters) and `formatSkillReferenceBody()` are added; `removeSkillInvocationTokens()` drops its `unloaded` parameter and the `[skill not loaded: name]` marker.
+
+### Why
+
+- The count cap dropped skills the user explicitly invoked and told them to raise a setting. It was a proxy for prompt size, which count does not bound; a size budget with a read-the-file reference bounds the prompt and never skips a skill.
+
+### Why an extension could not handle it
+
+- Explicit skill expansion runs inside `AgentSession` prompt preprocessing before any extension sees the text, and the setting lives in the core settings schema.
+
+### Expected merge conflict zones
+
+- LOW: `_expandSkillTokens()` in `packages/coding-agent/src/core/agent-session.ts`, the skill-invocation import/re-export blocks there, and the skill-command settings in `packages/coding-agent/src/core/settings-manager.ts`.
+
+## 2026-10-31 - No Claude Code version cache beside models.json (senpi#5131)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `installClaudeCodeVersionCache` and the `@earendil-works/pi-ai/utils/claude-code-version-cache` import are removed from `ModelRuntime.create` and `createSync`; nothing writes `<agent dir>/claude-code-version.json` any more.
+
+### Why
+
+- senpi#5131: the cache fed the removed `claude-cli/<version>` fingerprint.
+
+### Why an extension could not handle it
+
+- The runtime bootstrap is core.
+
+### Expected merge conflict zones
+
+- LOW: the two `create*` heads in `model-runtime.ts`.
+
+## 2026-10-30 - Restoring the primary waits for its own account hold; login or explicit reset drops it (senpi#3347)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `maybeRestorePrimary` does not restore an original that `UnusableEntries` still holds (an account usage limit with the reset it named, or a model-scoped exhaustion). The stranded-fallback exception (senpi#2376) still wins. New `noteProviderAccountsChanged(provider)` drops that provider's holds, and `followProviderAccountChanges(controller)` feeds it only `accounts_changed` events explicitly marked as a successful login or block reset. Pool block/release writes and listing-only mutations do not clear another session's hold.
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts`: `clearProvider(provider, models)` clears the provider's `account:` hold, its recorded account error and every `exhausted:` entry of its models.
+- `packages/coding-agent/src/core/agent-session.ts`: the session follows provider account changes for its controller and stops following on `dispose()`.
+- `packages/coding-agent/src/core/model-runtime.ts`: `login()` emits `accounts_changed` with the `login` remedy for the provider after a successful login.
+- `packages/coding-agent/src/core/credential-account-reset.ts`: an explicit account reset emits the `reset` remedy after clearing the account's block.
+
+### Why
+
+- senpi#3347: the shared circuit caps an open at 30 minutes, while the account hold lasts until the reset the provider named. With a 2-hour reset the session went back to the primary at about 31 minutes, hit the same spent account, and fell back again at every circuit window.
+- Waiting out the hold must not outlast the remedy the refusal names: after `/login` (a re-login or an added account) nothing cleared the session's hold, so a weekly limit kept the session on the fallback until the 48-hour cap.
+- Account notifications are process-global and also announce ordinary health writes; a sibling session persisting a block or releasing its own block is not evidence that this session's refused account recovered.
+
+### Why an extension could not handle it
+
+- The restore decision and the hold it reads are internal to the retry-fallback controller; no extension hook runs between the circuit check and the switch back, and the login path is core.
+
+### Expected merge conflict zones
+
+- LOW: the restore guard and account-event listener in `controller.ts`, the controller construction and `dispose()` in `agent-session.ts`, `login()` in `model-runtime.ts`, and the publish in `credential-account-reset.ts`.
+
+## 2026-10-30 - AuthStorage.set replaces a re-logged-in saved account (senpi#5009)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `set` passes the provider's `accountIdentity` to `appendLoginSlot`; `login` and `set` share a private `oauthAuth(providerId)` lookup.
+
+### Why
+
+- oh-my-openagent#9633: RPC OAuth login writes through `AuthStorage.set`.
+
+### Why an extension could not handle it
+
+- The write runs inside the auth store's file lock.
+
+### Expected merge conflict zones
+
+- LOW: the `appendLoginSlot` call in `set` and the start of `login`.
+
+## 2026-10-28 - Test-only date pin for the environment context (senpi#4662, fixes #4660)
+
+### What changed
+
+- `packages/coding-agent/src/core/environment-context.ts`: `resolveEnvironmentContext` takes `currentDate` from `SENPI_TEST_CURRENT_DATE` when it is set to a calendar date `YYYY-MM-DD`, and throws an error naming the variable for any other non-empty value, including an out-of-range month or day such as `2030-13-01` (checked before `toISOString()`, which would throw an anonymous `RangeError`). Unset or empty, the date still comes from `now.toISOString().slice(0, 10)`, so production output is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/environment-context.ts`: a harness that drives the real CLI as a child process (the fused-path equivalence harness, #4639) cannot pin the clock inside that process, so the environment-context bytes, and every hash over them (Cursor root-prompt blob ids, case E19), change every day.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/environment-context.ts`: the date is resolved by the session core before a turn; no extension hook sees or replaces it.
+
+### Expected merge conflict zones
+
+- LOW: `resolveEnvironmentContext` and the lines above it in `environment-context.ts`.
+
+## 2026-10-26 - A linked git worktree inherits its main checkout's project trust (senpi#4388)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: new exported `getSavedProjectTrust(store, cwd)` returns the store's own decision for `cwd` (the folder or the nearest folder above it) and, only when it has none and `cwd` is inside a linked git worktree, the main checkout's decision for the matching folder. The new `linkedWorktreeMainCheckoutDir` reads the `.git` pointer file, the admin dir's `commondir` and `gitdir` back-pointer with `node:fs/promises`, resolves every pointer against the admin dir's real path (so `git worktree add --relative-paths` layouts work), and accepts only an admin dir whose real parent is `<common dir>/worktrees` and a common dir named `.git` that is the main checkout's own `.git` directory; no git is spawned, and any unreadable or mismatched layout answers "no main checkout". `ProjectTrustStore.get` is unchanged.
+- `packages/coding-agent/src/core/project-trust.ts`: `resolveProjectTrusted` reads the saved decision through `getSavedProjectTrust` instead of `trustStore.get`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `syncFullAccessTrust` reads the saved decision through `getSavedProjectTrust`. Because that read is asynchronous, each sync is chained after the previous `projectTrustChange` and becomes the new one at once, so preset changes still apply in order and `projectTrustChange` still settles after the rebuild. A sync whose trust read fails is recorded as a runtime diagnostic and never blocks the next one, and a session retired during the read is not rebuilt.
+
+### Why
+
+- `packages/coding-agent/src/core/trust-manager.ts`: tools that run one agent per worktree (Orca's `~/orca/workspaces/<repo>/<name>`) create the worktree outside the main checkout, so every new worktree of a trusted repository stopped at "Trust project folder?" before its first turn; in Orca the dialog is not visible in the pane, so `worktree create --agent pi --prompt` looked hung. The admin-dir location check stops a folder that is not a worktree of the repository (for example an extracted archive with its own consistent pointer files) from inheriting a trusted repository's decision.
+- `packages/coding-agent/src/core/project-trust.ts`: `resolveProjectTrusted` is where a session's trust is decided, and it is already asynchronous, so the git layout is read without adding synchronous file I/O to the RPC session path (`no-sync-in-session-path` baseline).
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: a saved "do not trust" must win on every path, including the main checkout's decision a worktree inherits, and leaving Full access must not withdraw trust the worktree inherits.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/trust-manager.ts`: an extension can answer the `project_trust` event, but every user would need that extension for a fact about git's own layout, and a remembered answer is saved for the worktree path instead of following the main checkout.
+- `packages/coding-agent/src/core/project-trust.ts`: the saved-decision lookup inside `resolveProjectTrusted` is core code; an extension cannot change which store entry it reads.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the Full-access trust sync is core runtime code that rebuilds the session; no extension hook decides which saved decision it reads.
+
+### Expected merge conflict zones
+
+- LOW: the `node:fs/promises`/`node:path` import lines and the end of `trust-manager.ts`; the import block and the saved-decision line in `resolveProjectTrusted`; the trust-manager import and the body of `syncFullAccessTrust` in `agent-session-runtime.ts`.
+
 ## 2026-10-30 - A skills root's ignore files no longer hide symlinked root skill files (senpi#5069)
 
 ### What changed

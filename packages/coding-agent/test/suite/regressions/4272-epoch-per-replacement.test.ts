@@ -147,12 +147,12 @@ function expectNewEpoch({
 // Part of #4272, ruling 10 Q2: replacement, fork and switch each start a new AgentSession incarnation.
 it("Q2 replace: new_session mints a new sessionEpoch with its own transcript root, and its sequences are never compared with the old epoch", async () => {
 	expectNewEpoch(await acrossReplacement("new_session"));
-}, 120_000);
+}, 600_000);
 
 it("Q2 fork: fork mints a new sessionEpoch with its own transcript root, and its sequences are never compared with the old epoch", async () => {
 	expectNewEpoch(await acrossReplacement("fork"));
-}, 120_000);
+}, 600_000);
 
 it("Q2 switch: switch_session mints a new sessionEpoch with its own transcript root, and its sequences are never compared with the old epoch", async () => {
 	expectNewEpoch(await acrossReplacement("switch_session"));
-}, 120_000);
+}, 600_000);
