@@ -53,6 +53,10 @@ export type CredentialAccountSummary = {
 	readonly blockedModels?: readonly { readonly model: string; readonly until: number }[];
 	/** A slot of the other kind than the stored credential: kept, never used, cannot be pinned (senpi#3486). */
 	readonly unused?: true;
+	/** ChatGPT registration route; never inferred from token contents. */
+	readonly route?: "siwc" | "legacy";
+	readonly planUsageEnabled?: boolean;
+	readonly signedOut?: boolean;
 	/** Set for an account signed in through the bundled `claude` CLI, whose own store holds the login (senpi#4436). */
 	readonly store?: "claude-cli";
 	readonly signedInAt?: number;
@@ -309,6 +313,15 @@ async function summarizeInStoredOrder(
 			const applicable = persisted?.credentialRevision === revision ? persisted : undefined;
 			summaries.push({
 				name: slot.name,
+				...(normalizeProviderId(provider) === "chatgpt-subscription" && credential.type === "oauth"
+					? {
+							route: slot.route === "siwc" ? ("siwc" as const) : ("legacy" as const),
+							...(slot.route === "siwc" && typeof slot.planUsageEnabled === "boolean"
+								? { planUsageEnabled: slot.planUsageEnabled }
+								: {}),
+							...(slot.signedOut === true ? { signedOut: true } : {}),
+						}
+					: {}),
 				...(displayName === undefined ? {} : { displayName }),
 				source: slot.source ?? "login",
 				...slotBlocked(provider, slot, applicable, now),

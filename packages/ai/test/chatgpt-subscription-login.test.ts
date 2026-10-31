@@ -21,6 +21,30 @@ beforeAll(async () => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+// #5003 W12: the shared provider choice reaches CLI, TUI and RPC login clients.
+it("offers SIWC first and preserves the legacy sign-in choice", async () => {
+	let choices: readonly { id: string; label: string }[] = [];
+	const oauth = chatgptSubscriptionProvider().auth.oauth;
+	if (!oauth) throw new Error("chatgpt-subscription oauth is not configured");
+	await expect(
+		oauth.login(
+			{
+				signal: new AbortController().signal,
+				notify() {},
+				async prompt(prompt) {
+					if (prompt.type === "select") choices = prompt.options;
+					throw new Error("selection recorded");
+				},
+			},
+			{ getDeviceId: () => DEVICE },
+		),
+	).rejects.toThrow("selection recorded");
+	expect(choices).toEqual([
+		{ id: "siwc", label: "Continue with ChatGPT" },
+		{ id: "legacy", label: "Legacy sign-in (existing users)" },
+	]);
+});
+
 function saved(subject: string, clientId = "oaiapp_one"): OAuthCredential {
 	return {
 		type: "oauth",
@@ -130,6 +154,7 @@ it("signs two validated SIWC accounts into the existing provider and replaces a 
 			if (event.type === "auth_url") authorize = new URL(event.url);
 		},
 		async prompt(prompt) {
+			if (prompt.type === "select") return "siwc";
 			expect(prompt.type).toBe("manual_code");
 			expect(authorize.searchParams.get("client_id")).toBe("dynamic_agent_client");
 			const redirectUri = authorize.searchParams.get("redirect_uri");
