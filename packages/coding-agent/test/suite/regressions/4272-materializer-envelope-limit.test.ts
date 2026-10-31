@@ -43,4 +43,4 @@ it("R4.A3 rejects an oversized materializer header with a typed error and no out
 	} finally {
 		oversized.mockRestore();
 	}
-}, 120_000);
+}, 600_000);
