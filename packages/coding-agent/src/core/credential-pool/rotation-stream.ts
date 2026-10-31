@@ -9,7 +9,7 @@ import { runCredentialFailover } from "./failover.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
-import { listRotationSlots, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
+import { listRotationSlots, type RotationSlot, type RotationSources, releaseProbeLease } from "./rotation-slots.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
@@ -162,6 +162,13 @@ export function streamWithCredentialRotation(
 			);
 			// A healthy account answering again changes nothing a listing shows.
 			if (written !== STORE_BUSY && released) emitProviderAccountsChanged(sources.providerId);
+		},
+		// A probe that ended without a verdict hands its lease back at once instead of holding the slot
+		// for the lease's whole TTL (senpi#4094).
+		// Only the lease this request took: `slot.lease` mirrors the shared file and can be another request's.
+		releaseSlot: async (slot) => {
+			if (slot.heldLeaseId === undefined) return;
+			await releaseProbeLease(sources.repository, sources.providerId, slot.lane, slot.name, slot.heldLeaseId);
 		},
 		persistBlock: async (slot, block) => {
 			const revision =

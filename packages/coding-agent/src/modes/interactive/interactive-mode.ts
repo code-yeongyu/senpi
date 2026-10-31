@@ -602,10 +602,6 @@ export function formatCrashExtensionHint(extensionMatches: readonly string[] | u
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
 
-function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
-	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
-}
-
 function isUnknownModel(model: Model<any> | undefined): boolean {
 	return !!model && model.provider === "unknown" && model.id === "unknown" && model.api === "unknown";
 }
@@ -8427,13 +8423,7 @@ export class InteractiveMode {
 		}
 
 		try {
-			if ((await this.session.modelRuntime.checkAuth("anthropic"))?.type === "oauth") {
-				this.anthropicSubscriptionWarningShown = true;
-				this.showWarning(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
-				return;
-			}
-			const apiKey = (await this.session.modelRuntime.getAuth(model.provider))?.auth.apiKey;
-			if (!isAnthropicSubscriptionAuthKey(apiKey)) {
+			if ((await this.session.modelRuntime.checkAuth("anthropic"))?.type !== "oauth") {
 				return;
 			}
 			this.anthropicSubscriptionWarningShown = true;
