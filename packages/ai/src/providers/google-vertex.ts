@@ -83,9 +83,10 @@ const vertexAuth: ApiKeyAuth = {
 		signal.throwIfAborted();
 		const hasCredentials = await ctx.fileExists(adcPath ?? VERTEX_ADC_PATH);
 		signal.throwIfAborted();
+		// An empty stored answer counts as unset, matching getProviderEnvValue (senpi#2961).
 		const project =
-			credential?.env?.GOOGLE_CLOUD_PROJECT ?? (await env("GOOGLE_CLOUD_PROJECT")) ?? (await env("GCLOUD_PROJECT"));
-		const location = credential?.env?.GOOGLE_CLOUD_LOCATION ?? (await env("GOOGLE_CLOUD_LOCATION"));
+			credential?.env?.GOOGLE_CLOUD_PROJECT || (await env("GOOGLE_CLOUD_PROJECT")) || (await env("GCLOUD_PROJECT"));
+		const location = credential?.env?.GOOGLE_CLOUD_LOCATION || (await env("GOOGLE_CLOUD_LOCATION"));
 		if (hasCredentials && project && location) {
 			return credential
 				? { auth: {}, env: credential.env, source: "stored credential" }
