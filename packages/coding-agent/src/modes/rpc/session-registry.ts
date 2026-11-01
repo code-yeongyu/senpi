@@ -34,6 +34,7 @@ export {
 
 /** Process-local lifecycle owner for multi-session RPC runtimes. */
 export class RpcSessionRegistry {
+	readonly supportsCompact: (profile?: RpcSessionLaunchProfile) => boolean;
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new Set<string>();
 	private readonly pendingClaims: PendingClaims = new Map();
@@ -64,6 +65,7 @@ export class RpcSessionRegistry {
 						createRuntime: (runtimeOptions) =>
 							options.createRuntime({ ...runtimeOptions, mcpRegistry: options.mcpRegistry }),
 					};
+		this.supportsCompact = options.createRuntime.supportsCompact ?? (() => false);
 		this.now = options.now ?? Date.now;
 		this.closeGraceMs = options.closeGraceMs ?? 10_000;
 		this.teardownHost = {

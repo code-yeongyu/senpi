@@ -16,6 +16,7 @@ import {
 	type RpcConnectionOptions,
 	type RpcConnectionSink,
 } from "./connection-handler.ts";
+import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
 import { createToolAttributionSpans } from "./session-attribution.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
@@ -57,7 +58,8 @@ export async function createRpcSessionBinding(
 	// The manager whose journal the lane follows; a replacement's bootstrap moves the lane to the new one.
 	let journaled = lane ? entry.runtime.session.sessionManager : undefined;
 	// One acceptance unit per legacy record or block control (RULING-26 Q2); a worker frames it, in process the lane folds it.
-	const pairing = structuredLaneEnabled() ? new CanonicalPairing() : undefined;
+	const structured = structuredLaneEnabled();
+	const pairing = structured ? new CanonicalPairing() : undefined;
 	const stamp = new CompactProducerStamp();
 	const unit = (
 		carrier: RecoveryCarrier | undefined,
@@ -82,7 +84,7 @@ export async function createRpcSessionBinding(
 			const carrier = recoveryCarrier(record);
 			lane.accept(record, carrier, unit(carrier, canonical, record), refused);
 		} else carryCanonical(record, canonical, refused);
-		writer.enqueue(sessionId, record);
+		enqueueLegacyRecord(writer, sessionId, record);
 	};
 	// Attachments share one entry, so resolve the host from the live runtime. In
 	// particular, switch_session must use the entry's replacement-aware method
@@ -92,8 +94,14 @@ export async function createRpcSessionBinding(
 			if (property === "switchSession" && entry.switchSession) return entry.switchSession;
 			if (property === "setRebindSession")
 				return (callback?: Parameters<AgentSessionRuntime["setRebindSession"]>[0]) => {
-					entry.rebindSession = callback;
-					entry.runtime?.setRebindSession(callback);
+					entry.rebindSession =
+						lane && callback
+							? async (session) => {
+									await lane.generations.bind(session.sessionId);
+									await callback(session);
+								}
+							: callback;
+					entry.runtime?.setRebindSession(entry.rebindSession);
 				};
 			const runtime = entry.runtime;
 			if (!runtime) throw new Error("Session runtime was not created");
@@ -127,7 +135,7 @@ export async function createRpcSessionBinding(
 		});
 		const taggedSink: RpcConnectionSink = {
 			writeRecord,
-			...(structuredLaneEnabled()
+			...(structured
 				? {
 						writeStructured: (record: object) => {
 							if (entry.scope.state !== "closed") writeStructuredInScope(record);

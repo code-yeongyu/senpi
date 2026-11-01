@@ -10,6 +10,7 @@ import {
 	minOfRuns,
 	percentile,
 	runMetrics,
+	streamedAnswer,
 } from "./latency-measure.mjs";
 
 test("percentile is nearest-rank over the sorted samples and refuses an empty list", () => {
@@ -154,4 +155,32 @@ test("the barrier clock releases a barrier the moment it is reached and refuses 
 	assert.deepEqual(released, ["reached"]);
 	assert.equal(typeof clock.read("reached"), "number");
 	assert.throws(() => clock.read("never"), /barrier never was never reached/);
+});
+
+/**
+ * The TTSR repetitive-turns detector's view of a turn (packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/
+ * repetitive-turns.ts): lowercased, hex-like runs and digit runs collapsed to `#`, compared as word-trigram Jaccard. It
+ * interrupts the third consecutive turn whose similarity reaches 0.55, which sends an unscripted provider request.
+ */
+function detectorTrigrams(text) {
+	const normalized = text
+		.toLowerCase()
+		.replace(/\b[0-9a-f]{7,}\b/gi, "#")
+		.replace(/\d[\d.,:/-]*/g, "#");
+	const words = normalized.match(/[\p{L}\p{N}#]+/gu) ?? [];
+	const grams = new Set();
+	for (let i = 0; i + 3 <= words.length; i++) grams.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+	return grams;
+}
+
+test("consecutive streamed answers stay far from the TTSR repetitive-turns threshold (senpi#5270)", () => {
+	const iterations = 20;
+	for (let i = 1; i < iterations; i++) {
+		const a = detectorTrigrams(streamedAnswer(i - 1));
+		const b = detectorTrigrams(streamedAnswer(i));
+		const shared = [...a].filter((gram) => b.has(gram)).length;
+		const jaccard = shared / (a.size + b.size - shared);
+		assert.ok(jaccard < 0.1, `iterations ${i - 1} and ${i}: trigram Jaccard ${jaccard.toFixed(2)}`);
+		assert.ok(streamedAnswer(i).endsWith(`E01-STREAMED-${i}`));
+	}
 });
