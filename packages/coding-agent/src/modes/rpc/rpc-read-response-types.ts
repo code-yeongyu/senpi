@@ -8,7 +8,8 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { PendingInputSnapshot } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
-import type { RecoveryPageAnswer } from "./compact-recovery-requests.ts";
+import type { ReleaseReceipt } from "./compact-event-leases.ts";
+import type { EventPageAnswer, RecoveryPageAnswer } from "./compact-recovery-requests.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 
 import type { EffectStatus } from "./effect-record.ts";
@@ -109,7 +110,14 @@ export type RpcReadResponse =
 			success: true;
 			data: { tree: SessionTreeNode[]; leafId: string | null };
 	  }
-	| { id?: string; type: "response"; command: "get_recovery_page"; success: true; data: RecoveryPageAnswer }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_recovery_page";
+			success: true;
+			data: RecoveryPageAnswer | EventPageAnswer;
+	  }
+	| { id?: string; type: "response"; command: "release_recovery"; success: true; data: ReleaseReceipt }
 	| {
 			id?: string;
 			type: "response";

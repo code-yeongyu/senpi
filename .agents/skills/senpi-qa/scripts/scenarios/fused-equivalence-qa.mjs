@@ -35,6 +35,7 @@ import {
 } from "../lib/equivalence-deferred.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
 import { tuiCaptureHash, tuiGoldenDir } from "../lib/equivalence-tui-capture.mjs";
+import { diffTuiObservations, tuiVerdictLine } from "../lib/equivalence-tui-compare.mjs";
 import { runTuiCase, TUI_CASE_IDS } from "../lib/equivalence-tui-cases.mjs";
 
 /** Placements and surfaces whose producers come later in the plan; asking for them is an error, never a PASS. */
@@ -182,7 +183,7 @@ async function main() {
 					? JSON.parse(readFileSync(goldenPath, "utf8")).observations
 					: undefined;
 				result.diffs = golden
-					? diffNormalized(golden, first)
+					? (tui ? diffTuiObservations : diffNormalized)(golden, first)
 					: [{ path: "$", golden: "<missing golden>", actual: "<observed>" }];
 			}
 			result.observed = first;
@@ -208,6 +209,8 @@ async function main() {
 	for (const line of unrecorded) process.stdout.write(`[FAIL] unrecorded golden ${line}\n`);
 	const summary = summarizeRun(results, stale, options.mode, unrecorded);
 	process.stdout.write(`\n${summary.line} (child_runtime=${manifest.runtimes.child})\n`);
+	const verdict = tui && options.mode === "compare" ? tuiVerdictLine(cell.platform, results, stale.length) : undefined;
+	if (verdict) process.stdout.write(`${verdict}\n`);
 	if (options.evidence) {
 		const out = evidenceDir(options.evidence);
 		const receipt = {

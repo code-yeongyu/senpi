@@ -42,6 +42,24 @@ export interface CheckpointToken {
 export type RecoveryToken = CheckpointToken;
 
 /**
+ * An ordinary-event lease (S13, RULING-65 S13-Q1 A): the accepted record at `sequence` of `sessionEpoch`, pinned for
+ * one peer admission and paged as `componentRef` (`length`/`digest` of its stored bytes). It never mints a generation.
+ */
+export interface EventLease {
+	readonly kind: "event";
+	readonly id: string;
+	readonly admissionId: string;
+	readonly sessionEpoch: string;
+	readonly sequence: number;
+	readonly componentRef: string;
+	readonly length: number;
+	readonly digest: string;
+}
+
+/** Every lease the recovery owner hands out, by `kind`: S13 extends S08's tagged token and reshapes no variant. */
+export type RecoveryLease = CheckpointToken | EventLease;
+
+/**
  * Why a token needs repair. A token minted for another peer or session is `unknown_token` (RULING-56 (1)): the
  * asker learns nothing about a stream that is not its own.
  */
