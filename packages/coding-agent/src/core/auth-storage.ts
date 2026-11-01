@@ -695,7 +695,9 @@ export class AuthStorage implements CredentialStore {
 		return this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
 			const replacement = this.noteReplacement(provider, currentData[provider], credential, content);
-			const next = appendLoginSlot(currentData[provider], credential);
+			const next = appendLoginSlot(currentData[provider], credential, undefined, {
+				accountIdentity: this.oauthAuth(provider)?.accountIdentity,
+			});
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: replacement, next: JSON.stringify(nextData, null, 2) };
@@ -1026,10 +1028,15 @@ export class AuthStorage implements CredentialStore {
 		return [...dynamic, ...builtin];
 	}
 
-	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
-		const oauth =
+	private oauthAuth(providerId: string): OAuthAuth | undefined {
+		return (
 			this.extensionOAuthProviders.get(providerId) ??
-			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth;
+			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth
+		);
+	}
+
+	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+		const oauth = this.oauthAuth(providerId);
 		if (!oauth) throw new Error(`Unknown OAuth provider: ${providerId}`);
 		const signal = callbacks.signal ?? new AbortController().signal;
 		const interaction: AuthInteraction & { signal: AbortSignal } = {
@@ -1037,8 +1044,19 @@ export class AuthStorage implements CredentialStore {
 			prompt: (prompt) => this.handleLegacyPrompt(prompt, callbacks),
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
+		const before = this.get(providerId);
 		const credential = await oauth.login(interaction);
 		this.set(providerId, credential);
+		if (this.authPath === undefined) return;
+		// Lazy like ModelRuntime.loadCredentialPool: the pool store pulls zod, which must stay out of the
+		// model-runtime import graph that every auth-storage importer shares.
+		const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+		await retireLoginSlotHealth(
+			join(dirname(this.authPath), "credential-pool-state.json"),
+			providerId,
+			before,
+			this.get(providerId),
+		);
 	}
 
 	logout(provider: string): void {

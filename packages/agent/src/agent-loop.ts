@@ -42,6 +42,7 @@ import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiveness } from "./stream-keepalive.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
 import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
+import type { ToolHost } from "./execution/tool-host.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -216,7 +217,10 @@ async function runLoop(
 	streamFunction: StreamFn,
 ): Promise<void> {
 	let currentContext = initialContext;
-	let config = initialConfig;
+	let config: AgentLoopConfig = {
+		...initialConfig,
+		executionScope: initialConfig.executionScope ?? { id: crypto.randomUUID(), root: "" },
+	};
 	let firstTurn = true;
 	let firstProviderRequest = true;
 	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
@@ -595,6 +599,9 @@ export async function buildProviderContext(
 	const { tools, activeToolNames } = providerTools(context, config.model);
 	return normalizeContext({
 		systemPrompt: context.systemPrompt,
+		...(context.systemPromptStablePrefix === undefined
+			? {}
+			: { systemPromptStablePrefix: context.systemPromptStablePrefix }),
 		messages: await config.convertToLlm(messages),
 		...(tools === undefined ? {} : { tools: tools.map(toProviderToolDeclaration) }),
 		...(activeToolNames === undefined ? {} : { activeToolNames }),
@@ -1195,10 +1202,44 @@ async function executeToolCalls(
 	const toolCalls = assistantMessage.content.filter(
 		(c): c is AgentToolCall => c.type === "toolCall" && !isCursorExecResolved(c as CursorExecResolvedCarrier),
 	);
-	if (config.toolExecution === "sequential") {
-		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
-	}
-	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+	const host: ToolHost = config.toolHost ?? {
+		execute: async (call, options) => {
+			// Only yield when a witness sink is configured and returns a promise: an unconditional `await` adds a
+			// microtask per call and reorders lifecycle vs message events against today's fused path (EQ E03).
+			const recordWitness = options.recordWitness;
+			if (recordWitness) {
+				for (const raw of call.calls) {
+					const pending = recordWitness({ pipeline: "legacy", toolCallId: raw.id });
+					if (pending) await pending;
+				}
+			}
+			return call.mode === "sequential"
+				? executeToolCallsSequential(
+						currentContext,
+						assistantMessage,
+						toolCalls,
+						config,
+						options.signal,
+						options.emit,
+					)
+				: executeToolCallsParallel(
+						currentContext,
+						assistantMessage,
+						toolCalls,
+						config,
+						options.signal,
+						options.emit,
+					);
+		},
+	};
+	return host.execute(
+		{
+			scope: config.executionScope ?? { id: crypto.randomUUID(), root: "" },
+			calls: toolCalls,
+			mode: config.toolExecution ?? "parallel",
+		},
+		{ signal, emit, recordWitness: config.onExecutionPipeline },
+	);
 }
 
 type ExecutedToolCallBatch = {

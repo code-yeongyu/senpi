@@ -194,8 +194,8 @@
       "packages/ai/src/auth/oauth/devin-token.ts": ["DEVIN_API_ENDPOINT", "DEVIN_FALLBACK_EXPIRY_MS", "DEVIN_TOKEN_URL", "devinCredential"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_KIMI_CODE_REGION, KIMI_CODE_REGION_PROFILES, isKimiCodeRegion
       "packages/ai/src/auth/oauth/kimi-region.ts": ["DEFAULT_KIMI_CODE_REGION", "KIMI_CODE_REGION_PROFILES", "isKimiCodeRegion"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS, findSlot, managedSentinelMaterials
-      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName", "findSlot", "managedSentinelMaterials"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS, managedSentinelMaterials
+      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName", "managedSentinelMaterials"],
       // pre-existing at origin main aceb1cc1d9: unused exports ALIBABA_TOKEN_PLAN_IMAGE_MODELS, ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS
       "packages/ai/src/providers/alibaba-token-plan.models.ts": ["ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS", "ALIBABA_TOKEN_PLAN_IMAGE_MODELS"],
       // pre-existing at origin main aceb1cc1d9: unused exports AMAZON_BEDROCK_IMAGE_MODELS, AMAZON_BEDROCK_CLASSIFIER_MODELS
@@ -322,8 +322,6 @@
       "packages/ai/src/utils/assistant-capture.ts": ["freezeCapture", "publicBlock"],
       // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_SUBSCRIPTION_AUTH_CLAIM_PATH
       "packages/ai/src/utils/chatgpt-subscription-auth.ts": ["CHATGPT_SUBSCRIPTION_AUTH_CLAIM_PATH"],
-      // pre-existing at origin main aceb1cc1d9: unused exports resolveClaudeCodeVersionCachePath, createClaudeCodeVersionFileStore
-      "packages/ai/src/utils/claude-code-version-cache.ts": ["createClaudeCodeVersionFileStore", "resolveClaudeCodeVersionCachePath"],
       // pre-existing at origin main aceb1cc1d9: unused exports ConfigReferenceSchema
       "packages/ai/src/utils/config-reference.ts": ["ConfigReferenceSchema"],
       // pre-existing at origin main aceb1cc1d9: unused exports truncateErrorText, safeJsonStringify
@@ -1321,8 +1319,8 @@
       "packages/senpi-codemode/src/kernels/js/worker-host.ts": ["errorFromBridge"],
       // pre-existing at origin main aceb1cc1d9: unused exports resolvePackage
       "packages/senpi-codemode/src/kernels/js/worker-package-resolve.js": ["resolvePackage"],
-      // pre-existing at origin main aceb1cc1d9: unused exports PROCESS_STARTUP_DEADLINE_MS, ProcessKernelStartupTimeoutError
-      "packages/senpi-codemode/src/kernels/js/worker-startup.ts": ["PROCESS_STARTUP_DEADLINE_MS", "ProcessKernelStartupTimeoutError"],
+      // pre-existing at origin main aceb1cc1d9: unused export ProcessKernelStartupTimeoutError (PROCESS_STARTUP_DEADLINE_MS gained its first consumer in senpi#5183)
+      "packages/senpi-codemode/src/kernels/js/worker-startup.ts": ["ProcessKernelStartupTimeoutError"],
       // pre-existing at origin main aceb1cc1d9: unused exports PythonKernelStartupError
       "packages/senpi-codemode/src/kernels/py/startup.ts": ["PythonKernelStartupError"],
       // vendored from earendil-works/pi v1.0.1 with senpi changes; pre-existing exports at origin main aceb1cc1d9: unused exports MAX_STORE_VALUE_CHARS, MAX_STORE_TOTAL_CHARS

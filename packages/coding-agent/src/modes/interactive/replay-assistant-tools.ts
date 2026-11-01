@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
-import { abortedMessageForRendering } from "./aborted-error-label.ts";
+import { abortedMessageForRendering, unrunToolCallText } from "./aborted-error-label.ts";
 import type { ToolExecutionComponent } from "./components/tool-execution.ts";
 
 type ReplayToolHost = {
@@ -42,11 +42,8 @@ export function replayAssistantTools(message: AssistantMessage, host: ReplayTool
 		component.setExpanded(host.expanded);
 		host.addChild(component);
 		if (message.stopReason === "aborted" || message.stopReason === "error") {
-			const errorMessage =
-				message.stopReason === "aborted"
-					? abortedMessageForRendering(message, 0, undefined).errorMessage || "Provider request failed"
-					: message.errorMessage || "Error";
-			component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
+			const text = unrunToolCallText(abortedMessageForRendering(message, 0, undefined));
+			component.updateResult({ content: [{ type: "text", text }], isError: true });
 		} else {
 			host.pending.set(content.id, component);
 		}
