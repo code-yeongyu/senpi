@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
-import { MAX_PENDING_JOINS, MessageIdentities } from "../../../src/modes/rpc/compact-message-identity.ts";
+import { MAX_EVICTED_JOINS, MAX_PENDING_JOINS, MessageIdentities } from "../../../src/modes/rpc/compact-message-identity.ts";
 import { settledRig } from "./4272-settled-support.ts";
 
 // senpi#5337, RULING-121: an entry's owning message is captured when its append is applied, keyed to that entry, so
@@ -51,17 +51,60 @@ it("RULING-121 (#5337) two transcript batches between an append and its entry_ap
 	}
 });
 
-it("RULING-121 (#5337) joins waiting for their entry_appended are bounded, oldest dropped first", () => {
+const append = (n: number) => ({ kind: "append" as const, id: `e${n}`, type: "message", parentId: null });
+
+/** The identity an entry's `entry_appended` would be stamped with, taken from `identities`. */
+function stampOf(identities: MessageIdentities, n: number) {
+	identities.hold("entry_appended", n, { entry: { id: `e${n}` } }, undefined);
+	return identities.of("entry_appended", n);
+}
+
+it("RULING-122 (#5337) a join evicted past the bound stamps ownerUnknown, never a bare absence", () => {
 	const identities = new MessageIdentities();
-	const append = (n: number) => ({ kind: "append" as const, id: `e${n}`, type: "message", parentId: null });
 	for (let n = 0; n <= MAX_PENDING_JOINS; n++) identities.joined(append(n), `m${n}`);
-	const owner = (n: number) => {
-		identities.hold("entry_appended", n, { entry: { id: `e${n}` } }, undefined);
-		return identities.of("entry_appended", n);
-	};
-	expect(owner(0), "the oldest join went over the bound").toBeUndefined();
-	expect(owner(1)).toEqual({ owningMessageId: "m1" });
-	expect(owner(MAX_PENDING_JOINS)).toEqual({ owningMessageId: `m${MAX_PENDING_JOINS}` });
+	expect(stampOf(identities, 0), "the oldest join went over the bound").toEqual({ ownerUnknown: true });
+	expect(stampOf(identities, 1)).toEqual({ owningMessageId: "m1" });
+	expect(stampOf(identities, MAX_PENDING_JOINS)).toEqual({ owningMessageId: `m${MAX_PENDING_JOINS}` });
+	expect(identities.status()).toEqual({ ownerJoinsEvicted: 1, ownerJoinsOverflowed: 0 });
+});
+
+it("RULING-122 (#5337) once the evicted ring overflows, every unmatched entry of the epoch stamps ownerUnknown", () => {
+	const identities = new MessageIdentities();
+	const writes = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	try {
+		const joins = MAX_PENDING_JOINS + MAX_EVICTED_JOINS + 2;
+		for (let n = 0; n < joins; n++) identities.joined(append(n), `m${n}`);
+		expect(stampOf(identities, 0), "evicted out of the ring too").toEqual({ ownerUnknown: true });
+		expect(stampOf(identities, joins + 5), "never joined, but the engine cannot vouch").toEqual({ ownerUnknown: true });
+		expect(stampOf(identities, joins - 1)).toEqual({ owningMessageId: `m${joins - 1}` });
+		expect(identities.status()).toEqual({ ownerJoinsEvicted: MAX_EVICTED_JOINS + 2, ownerJoinsOverflowed: 2 });
+		const lines = writes.mock.calls.map(([line]) => String(line)).filter((line) => line.includes("owner join"));
+		expect(lines, "one stderr line per epoch, at the first overflow").toHaveLength(1);
+	} finally {
+		writes.mockRestore();
+	}
+});
+
+it("RULING-122 (#5337) without eviction an owned entry carries owningMessageId and an unowned one carries neither", () => {
+	const identities = new MessageIdentities();
+	identities.joined(append(1), "m1");
+	expect(stampOf(identities, 1)).toEqual({ owningMessageId: "m1" });
+	expect(stampOf(identities, 2), "not message-owned, and the engine can vouch").toBeUndefined();
+	expect(identities.status()).toEqual({ ownerJoinsEvicted: 0, ownerJoinsOverflowed: 0 });
+});
+
+it("RULING-122 (#5337) an epoch reset clears the evicted ring and the overflow, keeping the counters", () => {
+	const identities = new MessageIdentities();
+	const writes = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	try {
+		for (let n = 0; n < MAX_PENDING_JOINS + MAX_EVICTED_JOINS + 1; n++) identities.joined(append(n), `m${n}`);
+		identities.reset();
+		expect(stampOf(identities, MAX_PENDING_JOINS), "its ring entry went with the epoch").toBeUndefined();
+		expect(stampOf(identities, 0), "no overflow carried into the new epoch").toBeUndefined();
+		expect(identities.status()).toEqual({ ownerJoinsEvicted: MAX_EVICTED_JOINS + 1, ownerJoinsOverflowed: 1 });
+	} finally {
+		writes.mockRestore();
+	}
 });
 
 it("RULING-121 (#5337) a join from an ended epoch never stamps a record of the next one", async () => {
