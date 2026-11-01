@@ -372,6 +372,40 @@ jobs:
       - name: Normalizer unit tests
         run: node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs
 
+      # E29 (example extension gondolin) starts a real micro-VM, so the runner needs QEMU and a gondolin image store with
+      # alpine-base:latest pulled ahead of time (the senpi#4751 M0 readiness recipe). Provisioned here so E29 runs on CI
+      # instead of reporting SKIPPED(host-capability) (#5265). KVM is enabled when the runner exposes /dev/kvm; gondolin
+      # falls back to TCG otherwise.
+      - name: Enable KVM for the E29 micro-VM
+        shell: bash
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          fi
+
+      - name: Install QEMU for E29
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+
+      - name: Cache the gondolin image store for E29
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gondolin-images
+          key: gondolin-images-alpine-base-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Pull alpine-base into the gondolin image store and smoke-test a VM
+        shell: bash
+        env:
+          GONDOLIN_IMAGE_STORE: ${{ runner.temp }}/gondolin-images
+        run: |
+          set -euo pipefail
+          gondolin=node_modules/@earendil-works/gondolin/dist/bin/gondolin.js
+          node "$gondolin" image pull alpine-base:latest --arch x86_64
+          timeout 900 node "$gondolin" exec -- /bin/sh -c 'uname -m; echo VM_OK' | tee gondolin-smoke.log
+          grep -q '^VM_OK' gondolin-smoke.log
+          echo "EQ_GONDOLIN_IMAGE_STORE=$GONDOLIN_IMAGE_STORE" >> "$GITHUB_ENV"
+
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
         run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy --placement fused --evidence eq-ci
