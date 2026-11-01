@@ -93,12 +93,6 @@ export const REVIEWED_FIELDS = {
 	edit_user_message: {
 		fields: ["customInstructions", "entryId", "expectedLeafId", "id", "sessionId", "summarize", "text", "type"],
 	},
-	edit_assistant_message: {
-		fields: ["customInstructions", "entryId", "expectedLeafId", "id", "sessionId", "summarize", "text", "type"],
-	},
-	send_custom_message: {
-		fields: ["content", "customType", "deliverAs", "details", "display", "id", "sessionId", "triggerTurn", "type"],
-	},
 	continue_from_leaf: { fields: ["id", "sessionId", "type"] },
 	navigate_tree: {
 		fields: [

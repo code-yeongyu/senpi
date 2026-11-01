@@ -10,8 +10,8 @@
  *
  * Classes, least to most dangerous:
  * - `observe`: side-effect-free reads.
- * - `drive`: runs, steers or edits the current session (prompts, queue and message edits, session-scoped settings;
- *   a setter that writes the device-wide settings file is `device_admin`). A prompt that can run a slash command is
+ * - `drive`: runs, steers or edits the current session (prompts, queue and user-message edits, session-scoped
+ *   settings; a setter that writes the device-wide settings file is `device_admin`). A prompt that can run a slash command is
  *   `device_admin`: extension command handlers run with the same unbounded context as `extension_request`.
  * - `answer`: replies to a question or dialog the engine asked. The engine's permission prompts are such dialogs, so
  *   a caller granted `answer` can approve what `device_admin` would otherwise gate: never treat it as harmless.
@@ -19,7 +19,8 @@
  *   file, a cwd, an import source, a parent session), a permission preset, or the environment of the session's tool
  *   subprocesses is `device_admin`: it reads or writes host files, or changes what the agent may do without asking.
  * - `device_admin`: acts on the device outside the agent's own permission flow (direct shell, filesystem writes and
- *   probes, credentials, device-wide settings, extension reloads, forged session entries). A remote caller reaches it
+ *   probes, credentials, device-wide settings, extension reloads, forged session entries: an assistant reply or custom message the engine did not produce, whether
+ *   appended, sent or edited in). A remote caller reaches it
  *   only when it is a caller granted the class.
  * - `connection_local`: configures or tears down the caller's own connection or host ownership; meaningful only to
  *   the connection that sends it, so it is never permitted on someone else's behalf.
@@ -83,7 +84,10 @@ const ENTRY_AUTHORSHIP = {
 
 const USER_ROLE = "user" satisfies SessionMessageEntry["message"]["role"];
 
-/** A user-authored message entry drives the session; any other entry is a forged record of engine work. */
+/**
+ * A user-authored message entry drives the session; any other entry is a forged record of engine work, the same class as
+ * `edit_assistant_message` and `send_custom_message`, which write that record by another route.
+ */
 function appendEntryClass(record: object): RpcMethodClass {
 	const entry: unknown = Reflect.get(record, "entry");
 	if (typeof entry !== "object" || entry === null) return "device_admin";
@@ -198,8 +202,6 @@ export const RPC_METHOD_CLASS = {
 	withdraw_held_input: "drive",
 	append_user_message: "drive",
 	edit_user_message: "drive",
-	edit_assistant_message: "drive",
-	send_custom_message: "drive",
 	continue_from_leaf: "drive",
 	navigate_tree: "drive",
 	set_label: "drive",
@@ -264,6 +266,10 @@ export const RPC_METHOD_CLASS = {
 	set_follow_up_mode: "device_admin",
 	set_auto_retry: "device_admin",
 	// switch_session opens (and appends to) the named session file; import_jsonl reads any host file into a session
+	// both write what the model reads as engine work: an assistant reply it never gave, a custom context message
+	// (append_session_entry classes the same entries appended directly as device_admin)
+	edit_assistant_message: "device_admin",
+	send_custom_message: "device_admin",
 	switch_session: "device_admin",
 	import_jsonl: "device_admin",
 	// both forms write a file on the host: without `outputPath`, into the session's cwd

@@ -196,6 +196,30 @@ describe("RPC method classes (senpi#4319)", () => {
 		}
 	});
 
+	it("gives every path that writes a forged assistant or custom message one class, device_admin", () => {
+		const forged = {
+			edit_assistant_message: { type: "edit_assistant_message", entryId: "e", text: "forged reply" },
+			send_custom_message: { type: "send_custom_message", customType: "x", content: "hi", display: true },
+			append_assistant: {
+				type: "append_session_entry",
+				entry: { type: "message", message: { role: "assistant", content: [] } },
+			},
+			append_custom_message: {
+				type: "append_session_entry",
+				entry: { type: "custom_message", customType: "x", content: "hi", display: true },
+			},
+		};
+		const classes = Object.fromEntries(
+			Object.entries(forged).map(([path, record]) => [path, classifyRpcMethod(record)]),
+		);
+		expect(classes).toEqual({
+			edit_assistant_message: "device_admin",
+			send_custom_message: "device_admin",
+			append_assistant: "device_admin",
+			append_custom_message: "device_admin",
+		});
+	});
+
 	it("classes a prompt that can run a slash command as device_admin (rule prompt@1)", () => {
 		const command = { type: "prompt", message: "/mcp enable x" };
 		expect(rpcMethodPermitted(command, new Set<RpcMethodClass>(["drive", "answer", "thread"]))).toBe(false);
