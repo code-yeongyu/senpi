@@ -1,3 +1,22 @@
+## 2026-10-27 - Compaction summary requests split the system prompt like the turn (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`, `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: speculative and core-route summary snapshots record `ctx.getSystemPromptStablePrefix()` next to `systemPrompt`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: the summary request passes it as `systemPromptStablePrefix` when it sends the agent's own prompt.
+
+### Why
+
+- A summary request meant to reuse the turn's cached prefix must send the same system blocks and breakpoint as the turn.
+
+### Why an extension could not handle it
+
+- These are the compaction builtin's own request builders.
+
+### Expected merge conflict zones
+
+- LOW: the snapshot objects in `speculative.ts` and `index.ts`, the request context in `speculative-summary.ts`.
+
 ## 2026-10-26 - Terminal summarizer failures degrade on every compaction kind (senpi#4340)
 
 ### What changed
