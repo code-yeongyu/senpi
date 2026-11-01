@@ -47,6 +47,14 @@ export function iterationSamples({ callAt, nextAt, bodies }) {
 }
 
 /**
+ * The answer TUI frame iteration `i` streams. Its closing marker `E01-STREAMED-<i>` is on screen only once the last delta
+ * rendered.
+ */
+export function streamedAnswer(i) {
+	return `${Array.from({ length: 30 }, (_, k) => `word${k}`).join(" ")} E01-STREAMED-${i}`;
+}
+
+/**
  * Frame-time samples of one streaming window. `chunks` are the EQ.tui capture's output chunks (`{ at, frameEnds }`, the
  * capture's `frames`) from the stream's release through the chunk whose frame shows its last delta. A frame ends where
  * the renderer's synchronized-output FRAME_END marker arrives, so a frame split over several PTY reads is one frame
