@@ -524,9 +524,15 @@ function replaceSameAccount(
 	const identity = accountIdentity(flat);
 	if (identity === undefined) return undefined;
 	const slots = listSlots(current);
+	// A token identity names a ChatGPT account, not a sign-in: the legacy Codex route and Sign in with ChatGPT
+	// hold separate grants for one person, so a login replaces only a slot on its own route (#5003).
+	const route = flat.route ?? "codex";
 	const matches = slots.filter(
 		(slot) =>
-			slot.source !== "env" && slot.access !== undefined && accountIdentity({ access: slot.access }) === identity,
+			slot.source !== "env" &&
+			(slot.route ?? "codex") === route &&
+			slot.access !== undefined &&
+			accountIdentity({ access: slot.access }) === identity,
 	);
 	const kept = matches[0];
 	if (!kept) return undefined;
