@@ -6,18 +6,12 @@ import {
 	releaseKillGuardRuntime,
 } from "../../../kill-guard/runtime.ts";
 import type { ExtensionAPI, ToolCallEventResult } from "../../types.ts";
+import { bashInputStream, typeInto } from "./typed-lines.ts";
 
-const SUBMIT_KEYS = new Set(["enter", "return"]);
-
-/** The shell text a tool call would run now, or `undefined` when it runs none (A7: unsubmitted bash_input text). */
-export function submittedCommand(toolName: string, input: Record<string, unknown>): string | undefined {
-	if (toolName === "bash" || toolName === "monitor")
-		return typeof input.command === "string" ? input.command : undefined;
-	if (toolName !== "bash_input" || typeof input.input !== "string") return undefined;
-	const submit = typeof input.submit === "boolean" ? input.submit : input.input.length > 0;
-	const keys = Array.isArray(input.keys) ? input.keys : [];
-	const enter = keys.some((key) => typeof key === "string" && SUBMIT_KEYS.has(key.toLowerCase()));
-	return submit || enter ? input.input : undefined;
+/** The command text of a `bash` or `monitor` call, or `undefined` for any other tool. */
+function commandOf(toolName: string, input: Record<string, unknown>): string | undefined {
+	if (toolName !== "bash" && toolName !== "monitor") return undefined;
+	return typeof input.command === "string" ? input.command : undefined;
 }
 
 /**
@@ -31,7 +25,25 @@ export function submittedCommand(toolName: string, input: Record<string, unknown
 export default function killGuardExtension(pi: ExtensionAPI): void {
 	let enabled = true;
 	const holder = {};
+	// Text typed into a background session without a line break, per bash_id: a later Enter submits it (A7).
+	const pendingLines = new Map<string, string>();
+	const refusal = (command: string): ToolCallEventResult | undefined => {
+		// The PTY bash tool, the core bash tool and monitors start the command in a fresh session and process group.
+		const verdict = judgeCommand(command, hostKillGuardContext({ kind: "fresh-session" }, "bash"));
+		return verdict.action === "refuse" ? { block: true, reason: verdict.message } : undefined;
+	};
+	const judgeBashInput = (input: Record<string, unknown>): ToolCallEventResult | undefined => {
+		const id = typeof input.bash_id === "string" ? input.bash_id : "";
+		const typed = typeInto(pendingLines.get(id) ?? "", bashInputStream(input));
+		// Every line the call completes runs, each line break a command separator; a refused call writes nothing.
+		const refused = typed.lines.length === 0 ? undefined : refusal(typed.lines.join("\n"));
+		if (refused !== undefined) return refused;
+		if (typed.pending === "") pendingLines.delete(id);
+		else pendingLines.set(id, typed.pending);
+		return undefined;
+	};
 	pi.on("session_start", (_event, ctx) => {
+		pendingLines.clear();
 		enabled = readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on";
 		if (!enabled) {
 			deactivateKillGuardRuntime();
@@ -54,10 +66,8 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => releaseKillGuardRuntime(holder));
 	pi.on("tool_call", (event): ToolCallEventResult | undefined => {
 		if (!enabled) return undefined;
-		const command = submittedCommand(event.toolName, event.input);
-		if (command === undefined) return undefined;
-		// The PTY bash tool, the core bash tool and monitors start the command in a fresh session and process group.
-		const verdict = judgeCommand(command, hostKillGuardContext({ kind: "fresh-session" }, "bash"));
-		return verdict.action === "refuse" ? { block: true, reason: verdict.message } : undefined;
+		if (event.toolName === "bash_input") return judgeBashInput(event.input);
+		const command = commandOf(event.toolName, event.input);
+		return command === undefined ? undefined : refusal(command);
 	});
 }

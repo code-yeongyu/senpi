@@ -85,6 +85,9 @@ describe("kill guard on model-facing shell tools", () => {
 		["monitor", { command: REPORTER, description: "watch" }],
 		["bash_input", { bash_id: "b1", input: REPORTER }],
 		["bash_input", { bash_id: "b1", input: REPORTER, keys: ["enter"], submit: false }],
+		["bash_input", { bash_id: "b1", input: "kill -9 -1\n", submit: false }],
+		["bash_input", { bash_id: "b1", input: "kill -9 -1\r", submit: false }],
+		["bash_input", { bash_id: "b1", input: "echo ok\nkill -9 -1\npartial", submit: false }],
 		["bash", { command: "kill -9 -1" }],
 	] as const)("refuses %s %j before the tool runs (E1, E2, E3, A7, C18, C19)", async (tool, params) => {
 		const { harness, ran } = await setup();
@@ -103,6 +106,39 @@ describe("kill guard on model-facing shell tools", () => {
 
 		expect(outcome).toEqual({ blocked: false });
 		expect(ran).toEqual([`bash_input: ${REPORTER}`]);
+	});
+
+	it("judges typed text when a later call submits it with an enter key (A7)", async () => {
+		const { harness, ran } = await setup();
+
+		expect(await call(harness, "bash_input", { bash_id: "b1", input: "kill -9 ", submit: false })).toEqual({
+			blocked: false,
+		});
+		expect(await call(harness, "bash_input", { bash_id: "b2", input: "echo other", submit: false })).toEqual({
+			blocked: false,
+		});
+		expect(await call(harness, "bash_input", { bash_id: "b1", input: "-1", submit: false })).toEqual({
+			blocked: false,
+		});
+		const enter = await call(harness, "bash_input", { bash_id: "b1", keys: ["enter"] });
+
+		expect(enter.blocked).toBe(true);
+		if (enter.blocked) expect(enter.text).toContain("[senpi:kill-guard]");
+		expect(ran).toEqual(["bash_input: kill -9 ", "bash_input: echo other", "bash_input: -1"]);
+	});
+
+	it("drops typed text the line editor discards before the enter key", async () => {
+		const { harness, ran } = await setup();
+
+		await call(harness, "bash_input", { bash_id: "b1", input: "kill -9 -1", submit: false });
+		await call(harness, "bash_input", { bash_id: "b1", keys: ["ctrl+u"] });
+		const afterKillLine = await call(harness, "bash_input", { bash_id: "b1", keys: ["enter"] });
+		await call(harness, "bash_input", { bash_id: "b1", input: "kill -9 -1", submit: false, keys: ["ctrl+c"] });
+		const afterInterrupt = await call(harness, "bash_input", { bash_id: "b1", keys: ["enter"] });
+
+		expect(afterKillLine).toEqual({ blocked: false });
+		expect(afterInterrupt).toEqual({ blocked: false });
+		expect(ran).toHaveLength(5);
 	});
 
 	it("lets ordinary and narrow commands through untouched (C1, C11, C15)", async () => {
