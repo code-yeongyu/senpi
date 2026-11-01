@@ -13,6 +13,9 @@
 // case matches its golden on every declared observable and its witness matches `--pipeline`, except a cell listed in
 // fused-equivalence/deferred-goldens.mjs whose golden is missing: it is reported DEFERRED(<owner>, <issue>), never PASS,
 // and does not fail the run. A listed cell whose golden exists fails the run (lib/equivalence-deferred.mjs).
+// A `--record` run fails when a golden already on disk was not rewritten (not selected, failed, or skipped, e.g. E29
+// without a gondolin image store) unless `--leave-unrecorded <ids>` names it: a partial re-record is said out loud
+// (senpi#5189).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
@@ -24,6 +27,7 @@ import { expectedWitness, readWitness } from "../../scenarios/fused-equivalence/
 import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
 import {
+	finishRecord,
 	goldenCellVerdict,
 	staleDeferredEntries,
 	summarizeRun,
@@ -70,7 +74,12 @@ function parseArgs(argv) {
 		throw new Error(`no TUI drive for case(s): ${noTui.join(", ")} (EQ.tui: ${TUI_CASE_IDS.join(", ")})`);
 	const repeat = Number.parseInt(value("--repeat") ?? "1", 10);
 	if (!Number.isInteger(repeat) || repeat < 1) throw new Error("--repeat must be a positive integer");
-	return { mode, placement, surface, pipeline, selected, repeat, evidence: value("--evidence") };
+	const leaveUnrecorded = (value("--leave-unrecorded") ?? "")
+		.split(",")
+		.map((id) => id.trim().toUpperCase())
+		.filter(Boolean);
+	if (leaveUnrecorded.length && mode !== "record") throw new Error("--leave-unrecorded applies only to --record");
+	return { mode, placement, surface, pipeline, selected, repeat, leaveUnrecorded, evidence: value("--evidence") };
 }
 
 async function runCase(testCase, { pipeline, surface }) {
@@ -171,6 +180,7 @@ async function main() {
 						goldenPath,
 						`${JSON.stringify({ id: testCase.id, title: testCase.title, observations: first }, null, 1)}\n`,
 					);
+					result.written = true;
 				}
 				result.diffs = [];
 			} else {
@@ -197,8 +207,12 @@ async function main() {
 	}
 	guard.assertUnchanged();
 	if (tui) manifest.hashes.tuiCapture = tuiCaptureHash();
-	if (options.mode === "record") writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
-	const summary = summarizeRun(results, stale, options.mode);
+	const unrecorded =
+		options.mode === "record"
+			? finishRecord({ dir, results, leaveUnrecorded: options.leaveUnrecorded, manifest })
+			: [];
+	for (const line of unrecorded) process.stdout.write(`[FAIL] unrecorded golden ${line}\n`);
+	const summary = summarizeRun(results, stale, options.mode, unrecorded);
 	process.stdout.write(`\n${summary.line} (child_runtime=${manifest.runtimes.child})\n`);
 	if (options.evidence) {
 		const out = evidenceDir(options.evidence);
@@ -208,6 +222,7 @@ async function main() {
 			manifest,
 			options,
 			staleDeferred: stale,
+			unrecorded,
 			results: results.map(({ observed, ...rest }) => rest),
 		};
 		writeFileSync(join(out, "receipt.json"), `${JSON.stringify(receipt, null, 1)}\n`);

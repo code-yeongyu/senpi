@@ -11,6 +11,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { roleConnection } from "./connection-roles.ts";
 import { answeredUiRequestId, refusedExtensionUiResponse } from "./extension-ui-response.ts";
+import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
 import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
@@ -29,6 +30,7 @@ import { subscriptionLimits } from "../../core/subscription-limits/limit-store.t
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 import { WorkerOwnerGates } from "./session-worker-owners.ts";
+import { WorkerSecretIds } from "./session-worker-secrets.ts";
 import { sessionWorkerDataRegistry } from "./session-worker-data.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
@@ -73,7 +75,7 @@ function spawnSessionWorker(webviewBroker: ReturnType<typeof createWebViewBroker
 
 export class SessionWorkerClient {
 	private secretRoute?: SecretInputRoute;
-	private readonly secretIds = new Set<string>();
+	private readonly secretIds = new WorkerSecretIds();
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
 	private readonly privateOperations = new Map<
@@ -116,7 +118,7 @@ export class SessionWorkerClient {
 		this.worker = this.spawned.result;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
-				for (const id of this.secretIds) this.secretRoute?.forget(id);
+				for (const id of this.secretIds.ids()) this.secretRoute?.forget(id);
 				this.secretIds.clear();
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
@@ -305,6 +307,10 @@ export class SessionWorkerClient {
 		}
 		switch (message.type) {
 			case "secret_select": {
+				if (!this.secretIds.has(message.id) && !this.secretIds.admitsNew()) {
+					acknowledge(message.signal, false);
+					return;
+				}
 				const select = () => {
 					const reason =
 						this.secretRoute?.select(message.id, () => this.post({ type: "cancel_secret", id: message.id })) ??
@@ -324,6 +330,10 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "secret_frame":
+				if (!this.secretIds.admitFrame(message.id, message.record)) {
+					acknowledge(message.signal, false);
+					return;
+				}
 				this.secretRoute?.send(message.id, message.record);
 				acknowledge(message.signal, true);
 				return;
@@ -332,7 +342,7 @@ export class SessionWorkerClient {
 				acknowledge(message.signal, true);
 				return;
 			case "secret_forget":
-				this.secretIds.delete(message.id);
+				this.secretIds.forget(message.id);
 				this.secretRoute?.forget(message.id);
 				acknowledge(message.signal, true);
 				return;
@@ -470,7 +480,7 @@ export class SessionWorkerClient {
 						...message.activity,
 						state: { ...this.snapshot.state, isStreaming: message.activity.streaming },
 					};
-				const record = message.record;
+				const record: object = message.recordText === undefined ? message.record : JSON.parse(message.recordText);
 				if (
 					"type" in record &&
 					record.type === "security_grant_settled" &&
@@ -521,9 +531,9 @@ export class SessionWorkerClient {
 					if (message.bootstrap) lane?.bootstrap(message.bootstrap);
 					else {
 						lane?.applyTranscript(message.transitions ?? []);
-						lane?.accept(message.record, message.recovery, frameUnit(message), message.canonicalRefused === true);
+						lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
 					}
-					if (!writer.enqueue(sessionId, message.record)) {
+					if (!enqueueLegacyRecord(writer, sessionId, record)) {
 						acknowledge(message.signal, false);
 						this.fail("session_output_overflow_or_closed");
 						return Promise.reject(new Error("session_output_overflow_or_closed"));

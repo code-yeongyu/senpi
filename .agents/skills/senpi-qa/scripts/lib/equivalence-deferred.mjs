@@ -5,7 +5,7 @@
 //   - golden exists                    -> compare it (a listed cell whose golden exists is STALE and fails the run)
 //   - golden missing, cell listed      -> DEFERRED(<owner>, <issue>): never a PASS, never a failure
 //   - golden missing, cell not listed  -> missing: the case FAILS
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,15 +54,47 @@ export function goldenCellVerdict(entries, cell, root = EQ_DIR) {
 }
 
 /**
- * The run's summary line and exit code. DEFERRED and SKIPPED (host-capability, senpi#5265) cells are counted on their own
- * and do not fail the run, unless every selected case was skipped (nothing ran); a failed
- * case or a stale deferred entry does, and so does a run with nothing selected.
+ * The goldens a record run leaves stale (senpi#5189). Every golden already in the platform dir must be rewritten by the
+ * run (`written` on its result) or named in `--leave-unrecorded`; one that was not selected, failed, or was skipped (E29
+ * without a gondolin image store) would otherwise keep the old tree's observations next to a baseline.json that claims
+ * the new tree. Each returned line fails the run.
  */
-export function summarizeRun(results, staleEntries, mode) {
+export function unrecordedGoldens({ goldenIds, results, leaveUnrecorded = [] }) {
+	const byId = new Map(results.map((r) => [r.id, r]));
+	return goldenIds
+		.filter((id) => !byId.get(id)?.written && !leaveUnrecorded.includes(id))
+		.map((id) => {
+			const result = byId.get(id);
+			const why = !result ? "not selected" : result.skipped ? `skipped: ${result.skipped}` : "its run failed";
+			return `${id}: golden exists but this record run did not rewrite it (${why}); record it or name it in --leave-unrecorded`;
+		});
+}
+
+/**
+ * The end of a record run (senpi#5189): every golden in `dir` the run left unrecorded, and `baseline.json` written only
+ * when there is none, since the baseline names the tree the goldens in `dir` were recorded from.
+ */
+export function finishRecord({ dir, results, leaveUnrecorded, manifest }) {
+	const goldenIds = existsSync(dir)
+		? readdirSync(dir)
+				.filter((name) => /^E\d+\.json$/.test(name))
+				.map((name) => name.slice(0, -".json".length))
+		: [];
+	const unrecorded = unrecordedGoldens({ goldenIds, results, leaveUnrecorded });
+	if (unrecorded.length === 0) writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
+	return unrecorded;
+}
+
+/**
+ * The run's summary line and exit code. DEFERRED and SKIPPED (host-capability, senpi#5265) cells are counted on their own
+ * and do not fail the run, unless every selected case was skipped (nothing ran); a failed case, a stale deferred entry or
+ * a golden a record run left unrecorded does, and so does a run with nothing selected.
+ */
+export function summarizeRun(results, staleEntries, mode, unrecorded = []) {
 	const passed = results.filter((r) => r.pass).length;
 	const deferred = results.filter((r) => r.deferred).length;
 	const skipped = results.filter((r) => r.skipped).length;
-	const failed = results.length - passed - deferred - skipped + staleEntries.length;
+	const failed = results.length - passed - deferred - skipped + staleEntries.length + unrecorded.length;
 	return {
 		line: `fused-equivalence-qa ${mode}: ${passed}/${results.length} passed, ${deferred} deferred, ${failed} failed${skipped ? `, ${skipped} skipped` : ""}`,
 		exitCode: failed === 0 && results.length > skipped ? 0 : 1,
