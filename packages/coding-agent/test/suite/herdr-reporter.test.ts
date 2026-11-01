@@ -299,6 +299,21 @@ describe("herdr program status without a herdr socket (senpi#5321)", () => {
 		expect(f.requests).toHaveLength(0);
 	});
 
+	it("keeps reporting to the herdr socket when the UI context has no setProgramStatus", async () => {
+		const f = await herdrReporterFixture();
+		const { setProgramStatus: _absent, ...legacyUi } = f.ctx.ui;
+		Object.assign(f.ctx, { ui: legacyUi });
+		await f.start();
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.emit("session_shutdown", { reason: "quit" });
+		expect(f.requests.filter((r) => r.method === "pane.report_agent").map((r) => r.params.state)).toEqual([
+			"idle",
+			"working",
+		]);
+		expect(f.requests.at(-1)?.method).toBe("pane.release_agent");
+	});
+
 	it("keeps the status on reload so the successor runtime reports over it", async () => {
 		const f = await herdrReporterFixture();
 		vi.stubEnv("HERDR_ENV", undefined);

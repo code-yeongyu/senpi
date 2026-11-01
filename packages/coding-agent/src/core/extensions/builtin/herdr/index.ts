@@ -89,7 +89,8 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			const key = JSON.stringify(status);
 			if (lastProgramStatus === key) return;
 			lastProgramStatus = key;
-			boundCtx?.ui.setProgramStatus(status);
+			// An outside SDK host's UI context may predate setProgramStatus (senpi#5344); the herdr socket must not depend on it.
+			boundCtx?.ui.setProgramStatus?.(status);
 		}
 		async function publish(): Promise<void> {
 			if (!bound || stopped) return;
@@ -185,7 +186,7 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			stopped = true;
 			if (poll) clearInterval(poll);
 			for (const unsubscribe of subscriptions) unsubscribe();
-			if (event.reason === "quit") ctx.ui.setProgramStatus(undefined);
+			if (event.reason === "quit") ctx.ui.setProgramStatus?.(undefined);
 			// Drain before the host builds the successor runtime, or releases the pane.
 			await Promise.all(pending);
 			if (event.reason === "quit") await send("pane.release_agent", { agent: "pi" });
