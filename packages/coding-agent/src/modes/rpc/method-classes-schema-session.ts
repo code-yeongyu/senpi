@@ -1,0 +1,248 @@
+/** The schemas of the session-routed inbound records (senpi#4324). */
+
+import Type from "typebox";
+import {
+	Bool,
+	Id,
+	Images,
+	literals,
+	ModelEntries,
+	Num,
+	Opt,
+	OptBool,
+	OptId,
+	OptNum,
+	OptPath,
+	OptStr,
+	PathStr,
+	RetryFallback,
+	RPC_INBOUND_LIMITS,
+	Secret,
+	Str,
+	Strings,
+	session,
+	ThinkingLevel,
+} from "./method-classes-schema-fields.ts";
+
+const steerOrFollowUp = <const T extends "steer" | "follow_up">(type: T) =>
+	session(type, {
+		message: Str,
+		images: Opt(Images),
+		enqueueOrder: OptNum,
+		whenIdle: Opt(literals("queue", "start")),
+		clientMessageId: OptId,
+		clientTurnId: OptId,
+	});
+
+const editMessage = <const T extends "edit_assistant_message" | "edit_user_message">(type: T) =>
+	session(type, { entryId: Id, text: Str, expectedLeafId: OptId, summarize: OptBool, customInstructions: OptStr });
+
+const navigateTreeFields = {
+	intent: Opt(literals("select", "resume")),
+	expectedLeafId: OptId,
+	summarize: OptBool,
+	customInstructions: OptStr,
+	replaceInstructions: OptBool,
+	label: OptStr,
+};
+
+const PROMPTING_SCHEMAS = {
+	prompt: session("prompt", {
+		message: Str,
+		images: Opt(Images),
+		streamingBehavior: Opt(literals("steer", "followUp")),
+		thinkingLevel: Opt(ThinkingLevel),
+		sessionTitlePrompt: Opt(Type.Union([Str, Type.Literal(false)])),
+		expandPromptTemplates: OptBool,
+		unknownCommandAsText: OptBool,
+		clientMessageId: OptId,
+		clientTurnId: OptId,
+		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
+	}),
+	release_tool_barrier: session("release_tool_barrier", { barrierId: Id }),
+	send_custom_message: session("send_custom_message", {
+		customType: Id,
+		content: Type.Unknown(),
+		display: Bool,
+		details: Opt(Type.Unknown()),
+		triggerTurn: OptBool,
+		deliverAs: Opt(literals("steer", "followUp", "nextTurn")),
+	}),
+	continue_from_leaf: session("continue_from_leaf", {}),
+	resume_session: session("resume_session", {
+		expectedSeq: OptNum,
+		mode: Opt(literals("continue", "release")),
+		message: OptStr,
+		effectId: OptId,
+	}),
+	append_user_message: session("append_user_message", { content: Type.Unknown() }),
+	append_session_entry: session("append_session_entry", { entry: Type.Unknown() }),
+	steer: steerOrFollowUp("steer"),
+	follow_up: steerOrFollowUp("follow_up"),
+	abort: session("abort", {
+		effectId: OptId,
+		awaitIdle: OptBool,
+		clearQueue: OptBool,
+		graceMs: OptNum,
+		intent: Opt(literals("stop", "abort")),
+	}),
+	interrupt: session("interrupt", { turnId: OptId, intent: Opt(literals("stop", "abort")) }),
+	hold_input: session("hold_input", {
+		inputId: Id,
+		revision: Num,
+		text: Str,
+		parentSessionId: OptId,
+		origin: Opt(Type.Literal("human")),
+	}),
+	withdraw_held_input: session("withdraw_held_input", { inputId: Id }),
+	pause_for_run: session("pause_for_run", {
+		parentSessionId: Id,
+		parentPauseSeq: Num,
+		runRef: Type.Object({ kind: literals("dag", "task", "workpool", "team"), id: Id }),
+	}),
+	resume_for_run: session("resume_for_run", {
+		parentSessionId: Id,
+		parentPauseSeq: Num,
+		resumeId: Id,
+		childSeqCutoff: Num,
+	}),
+	abort_compaction: session("abort_compaction", {}),
+	reload: session("reload", {}),
+	check_reload_veto: session("check_reload_veto", {}),
+	clear_queue: session("clear_queue", { abortWillFollow: OptBool }),
+	dequeue_message: session("dequeue_message", { queuedId: Id, expectedRevision: OptNum, effectId: OptId }),
+	edit_queued_message: session("edit_queued_message", {
+		queuedId: Id,
+		text: Str,
+		expectedRevision: OptNum,
+		effectId: OptId,
+	}),
+	get_steering_messages: session("get_steering_messages", {}),
+	get_follow_up_messages: session("get_follow_up_messages", {}),
+	abort_branch_summary: session("abort_branch_summary", {}),
+	new_session: session("new_session", { parentSession: OptPath }),
+	wake: session("wake", { delivery_ids: Opt(Strings) }),
+};
+
+const STATE_AND_MODEL_SCHEMAS = {
+	get_state: session("get_state", {}),
+	get_snapshot: session("get_snapshot", { tail: OptNum, maxBytes: OptNum, observe: OptBool }),
+	request_self_settle: session("request_self_settle", {}),
+	get_effect_status: session("get_effect_status", { effectId: Id, sessionPath: OptPath }),
+	get_pending_inputs: session("get_pending_inputs", { knownClientMessageIds: Opt(Strings) }),
+	set_model: session("set_model", { provider: Id, modelId: Id, effectId: OptId }),
+	set_favorite_models: session("set_favorite_models", { models: ModelEntries }),
+	set_scoped_models: session("set_scoped_models", { models: ModelEntries }),
+	cycle_model: session("cycle_model", { direction: Opt(literals("forward", "backward")) }),
+	get_available_models: session("get_available_models", {}),
+	set_thinking_level: session("set_thinking_level", {
+		level: ThinkingLevel,
+		scope: Opt(Type.Literal("turn")),
+		effectId: OptId,
+	}),
+	cycle_thinking_level: session("cycle_thinking_level", {}),
+	get_available_thinking_levels: session("get_available_thinking_levels", {}),
+	get_model_thinking_level: session("get_model_thinking_level", { provider: Id, modelId: Id }),
+	set_fast_mode: session("set_fast_mode", { enabled: Bool }),
+	get_fast_mode: session("get_fast_mode", {}),
+	set_steering_mode: session("set_steering_mode", { mode: literals("all", "one-at-a-time") }),
+	set_follow_up_mode: session("set_follow_up_mode", { mode: literals("all", "one-at-a-time") }),
+	compact: session("compact", { customInstructions: OptStr }),
+	set_auto_compaction: session("set_auto_compaction", { enabled: Bool }),
+	set_auto_retry: session("set_auto_retry", { enabled: Bool }),
+	abort_retry: session("abort_retry", {}),
+	set_retry_fallback: session("set_retry_fallback", { retryFallback: RetryFallback }),
+};
+
+const BASH_AND_TREE_SCHEMAS = {
+	bash: session("bash", {
+		command: Str,
+		bashId: OptId,
+		excludeFromContext: OptBool,
+		executionId: OptId,
+		operations: Opt(Type.Record(Id, Type.Unknown(), { maxProperties: RPC_INBOUND_LIMITS.recordKeys })),
+	}),
+	record_bash_result: session("record_bash_result", {
+		command: Str,
+		// JSON has no `undefined`: a killed command's result arrives without `exitCode`.
+		result: Type.Object({
+			output: Str,
+			exitCode: Opt(Type.Integer()),
+			cancelled: Bool,
+			truncated: Bool,
+			fullOutputPath: OptPath,
+		}),
+		excludeFromContext: OptBool,
+	}),
+	abort_bash: session("abort_bash", {}),
+	cleanup_bash_output: session("cleanup_bash_output", { path: PathStr }),
+	set_label: session("set_label", { entryId: Id, label: OptStr }),
+	navigate_tree: Type.Union([
+		session("navigate_tree", { ...navigateTreeFields, entryId: Id, targetId: Opt(Type.Never()) }),
+		session("navigate_tree", { ...navigateTreeFields, targetId: Id, entryId: Opt(Type.Never()) }),
+	]),
+	get_session_stats: session("get_session_stats", {}),
+	resolve_path: session("resolve_path", { path: PathStr }),
+	memory_report: session("memory_report", {}),
+	export_html: session("export_html", { outputPath: OptPath, themeName: OptId }),
+	export_jsonl: session("export_jsonl", { outputPath: OptPath }),
+	switch_session: session("switch_session", { sessionPath: PathStr, cwdOverride: OptPath }),
+	fork: session("fork", { entryId: Id, position: Opt(literals("before", "at")) }),
+	edit_assistant_message: editMessage("edit_assistant_message"),
+	edit_user_message: editMessage("edit_user_message"),
+	clone: session("clone", {}),
+	get_fork_messages: session("get_fork_messages", {}),
+	get_entries: session("get_entries", {
+		since: OptId,
+		before: OptId,
+		limit: OptNum,
+		tail: OptNum,
+		maxBytes: OptNum,
+	}),
+	get_tree: session("get_tree", {}),
+	// every field is a bounded id at the token owner (`parseBoundedId`); a cursor is at most 128 bytes
+	get_recovery_page: session("get_recovery_page", {
+		token: Id,
+		admissionId: Id,
+		componentRef: Id,
+		requestId: Id,
+		cursor: OptId,
+	}),
+	get_last_assistant_text: session("get_last_assistant_text", {}),
+	set_session_name: session("set_session_name", { name: Str }),
+	record_user_activity: session("record_user_activity", { kind: Type.Literal("draft") }),
+	import_jsonl: session("import_jsonl", { inputPath: PathStr, cwdOverride: OptPath }),
+	get_messages: session("get_messages", {}),
+	get_media: session("get_media", { toolCallId: Id, contentIndex: Num }),
+};
+
+const SURFACE_AND_ACCOUNT_SCHEMAS = {
+	get_commands: session("get_commands", {}),
+	get_loaded_surfaces: session("get_loaded_surfaces", {}),
+	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
+	"eval_cells.list": session("eval_cells.list", {}),
+	"eval_cells.peek": session("eval_cells.peek", { cellId: Id, tailBytes: OptNum }),
+	"eval_cells.stop": session("eval_cells.stop", { cellId: Id }),
+	get_auth_providers: session("get_auth_providers", {}),
+	login_start: session("login_start", { provider: Id }),
+	login_cancel: session("login_cancel", { provider: Id }),
+	login_api_key: session("login_api_key", { provider: Id, key: Secret, region: OptId }),
+	logout: session("logout", { provider: Id }),
+	verify_api_key: session("verify_api_key", { provider: Id, key: Secret }),
+	get_provider_accounts: session("get_provider_accounts", { provider: Id }),
+	account_pin: session("account_pin", { provider: Id, name: Type.Union([Id, Type.Null()]) }),
+	account_remove: session("account_remove", { provider: Id, name: Id }),
+	account_order: session("account_order", { provider: Id, names: Type.Union([Strings, Type.Null()]) }),
+	test_provider_account: session("test_provider_account", { provider: Id, name: Id }),
+	set_client_info: session("set_client_info", {
+		width: Type.Integer({ minimum: 1, maximum: 100_000 }),
+		capabilities: Opt(Strings),
+	}),
+};
+
+export const SESSION_RECORD_SCHEMAS = {
+	...PROMPTING_SCHEMAS,
+	...STATE_AND_MODEL_SCHEMAS,
+	...BASH_AND_TREE_SCHEMAS,
+	...SURFACE_AND_ACCOUNT_SCHEMAS,
+};
