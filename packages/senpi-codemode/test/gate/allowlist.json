@@ -3928,6 +3928,102 @@
 				"legacyContracts/test/prompt.test.ts/buildEvalPrompt bun pointer under the test-only repoRoot pin a path inside the pinned checkout is shown under the pinned root"
 			],
 			"reason": "senpi#4837 (fixes #5193): contract tests for the test-only SENPI_TEST_WORKSTATION host-fact and repoRoot pins (hostLine, pinnedDisplayPath, buildEvalPrompt bun pointer under the pin; titles as retitled by senpi#5158). Production leaves the pin unset, so no prompt cell moves; only the new contracts are recorded."
+		},
+		"senpi#5150": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/eval-argument-validator.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/eval-argument-validator.ts",
+				"legacyContracts/test/eval-argument-validator.test.ts/eval argument validator reports a missing language first, naming the enabled languages",
+				"legacyContracts/test/eval-argument-validator.test.ts/eval argument validator reports every missing run field, in language, code, summary order, and nothing else",
+				"legacyContracts/test/eval-argument-validator.test.ts/eval argument validator accepts complete runs with the same argument coercion as before",
+				"legacyContracts/test/eval-argument-validator.test.ts/eval argument validator keeps list, peek and stop validating without run fields",
+				"legacyContracts/test/eval-argument-validator.test.ts/eval argument validator reports every other invalid call with the generic validator's exact message",
+				"legacyContracts/test/eval-schema-required-fields.test.ts/eval action schemas tells OpenAI-compatible routes which fields a run requires"
+			],
+			"reason": "senpi#5150: eval argument validator (src/tool/eval-argument-validator.ts, imported by the extension and first-kernel surfaces) teaches missing run fields before anyOf validation, plus its contract tests and the required-run-fields schema hint test. Reviewed and merged without reviewed-addition records; record only these additions, the frozen baseline is unchanged."
+		},
+		"senpi#5155": {
+			"additions": [
+				"legacyContracts/test/eval-cell-id-suggestion.test.ts/unknown detached cell id suggests the one close known id names the settled cell one edit away",
+				"legacyContracts/test/eval-cell-id-suggestion.test.ts/unknown detached cell id suggests the one close known id names a live cell when stopping a mistyped id",
+				"legacyContracts/test/eval-cell-id-suggestion.test.ts/unknown detached cell id suggests the one close known id suggests nothing when no known id is close",
+				"legacyContracts/test/eval-cell-id-suggestion.test.ts/unknown detached cell id suggests the one close known id suggests nothing when two known ids are equally close"
+			],
+			"reason": "senpi#5155: contract tests for suggesting the one close known cell id on a mistyped detached cell id. Reviewed and merged without reviewed-addition records; record only these additions, the frozen baseline is unchanged."
+		},
+		"senpi#5157": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/eval-language-inference.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/eval-language-inference.ts",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"def main():\\n    return 1\" as py",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"    def helper(x):\\n        return x\" as py",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"import os\\nos.getcwd()\" as py",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"import os.path as osp, sys\" as py",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"from pathlib import Path\\nPath('.').resolve()\" as py",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"const r = await read('a.txt')\\nr\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"let total = 0\\ntotal\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"[1, 2].map((x) => x * 2)\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"console.log(1)\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"return await tool.grep({ pattern: 'x' })\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"import { join } from \\\"node:path\\\"\\njoin(\\\"a\\\", \\\"b\\\")\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"print(await read('a.txt'))\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"print(JSON.stringify(data))\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"print(Object.keys(x))\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"print(`a ${b}`)\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"print(await tool.grep({ pattern: 'x' }))\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"const x = 1\\nprint(x)\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode classifies \"import fs from 'node:fs'\\nprint(fs)\" as js",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify no markers at all",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify print alone, shared by both runtimes",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify print of a call, shared by both runtimes",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify JS const beside a Python True",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify python def beside a trailing brace",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify python import beside an arrow",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify python def beside console.log",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify print with a JS statement terminator",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify print beside a JS null",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify JS const beside a Python None",
+				"legacyContracts/test/eval-language-inference.test.ts/classifyEvalCode refuses to classify arrow beside a Python block header",
+				"legacyContracts/test/eval-language-inference.test.ts/inferEvalLanguage fills the only enabled language whatever the code says",
+				"legacyContracts/test/eval-language-inference.test.ts/inferEvalLanguage fills from code markers only when exactly js and py are enabled",
+				"legacyContracts/test/eval-language-inference.test.ts/parseEvalRequest language inference fills the only enabled language and says it was inferred",
+				"legacyContracts/test/eval-language-inference.test.ts/parseEvalRequest language inference fills \"import json\\nprint(json.dumps({}))\" as py when js and py are enabled",
+				"legacyContracts/test/eval-language-inference.test.ts/parseEvalRequest language inference fills \"const xs = await tool.read({ path: 'a' })\" as js when js and py are enabled",
+				"legacyContracts/test/eval-language-inference.test.ts/parseEvalRequest language inference keeps the teaching error when js and py are enabled and the markers conflict",
+				"legacyContracts/test/eval-language-inference.test.ts/parseEvalRequest language inference never changes an explicit language",
+				"legacyContracts/test/eval-language-inference.test.ts/eval argument validation language inference fills the only enabled language before the missing-language check",
+				"legacyContracts/test/eval-language-inference.test.ts/eval argument validation language inference fills \"from os import path\\npath.sep\" as py when js and py are enabled",
+				"legacyContracts/test/eval-language-inference.test.ts/eval argument validation language inference fills \"const sep = '/'\\nsep\" as js when js and py are enabled",
+				"legacyContracts/test/eval-language-inference.test.ts/eval argument validation language inference reports the missing language when the markers conflict",
+				"legacyContracts/test/eval-language-inference.test.ts/eval argument validation language inference never changes an explicit language and drops a caller-sent inference marker",
+				"legacyContracts/test/eval-language-inference.test.ts/eval argument validation language inference reports the caller's own arguments when a filled call still fails validation",
+				"legacyContracts/test/eval-language-inference.test.ts/eval tool reports an inferred language leads the result with a machine-readable inference line",
+				"legacyContracts/test/eval-language-inference.test.ts/eval tool reports an inferred language ignores an inference marker that argument validation did not set",
+				"legacyContracts/test/eval-language-inference.test.ts/eval tool reports an inferred language keeps the inference line for arguments the validator filled",
+				"legacyContracts/test/eval-language-inference.test.ts/eval tool reports an inferred language adds no inference line when the language was given",
+				"legacyContracts/test/eval-request-language.test.ts/eval request language validation rejects an omitted language when the kernel cannot be inferred"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-request-language.test.ts/eval request language validation rejects an omitted language instead of selecting a default kernel",
+					"reason": "senpi#5157 (fixes #5154): contract intentionally changed: an omitted run language is now inferred when unambiguous (only enabled kernel, or strong js/py markers), so the test is retitled to \"rejects an omitted language when the kernel cannot be inferred\"; the new title is listed under additions."
+				}
+			],
+			"reason": "senpi#5157 (fixes #5154): eval run language inference (src/tool/eval-language-inference.ts, imported by the extension and first-kernel surfaces) and its contract tests; the omitted-language rejection contract is retitled because inference intentionally changed it. Reviewed and merged without reviewed-addition records; no prompt cell moves."
+		},
+		"senpi#5052": {
+			"additions": [
+				"legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer matches isolated Win32 lexical joining with builtin normpath=false",
+				"legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer matches isolated Win32 lexical joining with builtin normpath=true",
+				"legacyContracts/test/py-packaged-assets.test.ts/ships every Python runtime sibling in the isolated Windows startup host"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer matches Win32 lexical joining without dropping earlier path components",
+					"reason": "senpi#5052: the Win32 lexical-joining parity case is split into two isolated cases (builtin normpath=false and normpath=true) when restoring Windows Python kernel startup; both new titles are listed under additions."
+				}
+			],
+			"reason": "senpi#5052: Windows Python kernel startup restore added isolated Win32 lexical-joining parity cases and a packaged-assets check for the isolated Windows startup host; the old combined parity title is removed. Reviewed and merged without reviewed-addition records; no prompt cell moves."
 		}
 	}
 }
