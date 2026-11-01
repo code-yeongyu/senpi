@@ -1,6 +1,7 @@
 import { SessionExtensionUiRequests } from "../../modes/rpc/session-extension-ui-requests.ts";
 import type { RpcExtensionUIRequest, RpcExtensionUIResponse } from "../../modes/rpc/rpc-types.ts";
 import { noOpUIContext } from "../extensions/runner.ts";
+import { SecretInputUnavailableError } from "../extensions/secret-input.ts";
 import type { ExtensionUIContext, ExtensionUIDialogOptions } from "../extensions/types.ts";
 
 /**
@@ -110,13 +111,16 @@ export function createRpcUiPresenter(output: (frame: RpcExtensionUIRequest) => v
 						? response.confirmed
 						: false,
 			),
-		input: (title, placeholder, opts) =>
-			dialog(
+		// This presenter does not speak the secret-input protocol, so a secret is refused, never asked as plain text.
+		input: (title, placeholder, opts) => {
+			if (opts?.secret) return Promise.reject(new SecretInputUnavailableError("client_unsupported"));
+			return dialog(
 				opts,
 				undefined,
 				{ method: "input", title, placeholder, timeout: opts?.timeout, ...dialogCall(opts) },
 				answeredValue,
-			),
+			);
+		},
 		editor: (title, prefill) => dialog(undefined, undefined, { method: "editor", title, prefill }, answeredValue),
 		notify: (message, type) => fireAndForget({ method: "notify", message, notifyType: type }),
 		setStatus: (key, text) => fireAndForget({ method: "setStatus", statusKey: key, statusText: text }),
