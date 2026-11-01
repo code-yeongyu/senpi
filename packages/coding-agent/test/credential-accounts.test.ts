@@ -42,6 +42,15 @@ const storedSlot = (block: StoredBlock) => ({
 	...block,
 });
 
+/** A stored Claude account is a claude CLI account and holds no token (senpi#4436). */
+const storedClaudeSlot = (block: StoredBlock) => ({
+	name: "default",
+	source: "login" as const,
+	store: "claude-cli" as const,
+	dirId: "c".repeat(32),
+	...block,
+});
+
 /** Whether the provider lane's own selector hands this stored account to a request right now. */
 async function laneSelectorAccepts(provider: string, block: StoredBlock): Promise<boolean> {
 	try {
@@ -68,7 +77,7 @@ async function laneSelectorAccepts(provider: string, block: StoredBlock): Promis
 			for await (const _event of stream) {
 				// Consuming the real failover engine proves this slot reached an attempt.
 			}
-		} else if (provider === "anthropic-subscription") selectClaudeAccount([storedSlot(block)]);
+		} else if (provider === "anthropic-subscription") selectClaudeAccount([storedClaudeSlot(block)]);
 		else selectCursorAccount([storedSlot(block)]);
 		return true;
 	} catch (error) {
@@ -327,16 +336,18 @@ describe("provider-neutral credential accounts", () => {
 		expect(account).not.toHaveProperty("blockedUntil");
 	});
 
+	// The generic listing adds the CLI account fields (store, signIn) on top of the lane's own.
+	const sameAccounts = (lane: readonly object[]) => lane.map((account) => expect.objectContaining(account));
+
 	test("the Claude lane listing agrees with the generic one for a disabled account", async () => {
 		await storage.modify("anthropic-subscription", async () => ({
 			...emptyCredential(),
 			accounts: [
 				{
 					name: "default",
-					access: "fake-a",
-					refresh: "fake-r",
-					expires: NOW_FAR_FUTURE,
 					source: "login",
+					store: "claude-cli",
+					dirId: "a".repeat(32),
 					blockReason: "account_disabled",
 				},
 			],
@@ -345,7 +356,24 @@ describe("provider-neutral credential accounts", () => {
 		const generic = await getCredentialAccounts(storage, "anthropic-subscription", {}, repository);
 
 		expect(generic[0]).toMatchObject({ blocked: true, blockedReason: "disabled" });
-		expect(getProviderAccounts(storage, "anthropic-subscription", {})).toEqual(generic);
+		expect(generic).toEqual(sameAccounts(getProviderAccounts(storage, "anthropic-subscription", {})));
+	});
+
+	test("a stored Claude account that still holds tokens is absent from both listings (senpi#4436)", async () => {
+		await storage.modify("anthropic-subscription", async () => ({
+			...emptyCredential(),
+			accounts: [
+				{ name: "legacy", access: "fake-a", refresh: "fake-r", expires: NOW_FAR_FUTURE, source: "login" },
+				{ name: "cli", source: "login", store: "claude-cli", dirId: "b".repeat(32) },
+			],
+		}));
+
+		const generic = await getCredentialAccounts(storage, "anthropic-subscription", {}, repository);
+		const lane = getProviderAccounts(storage, "anthropic-subscription", {});
+
+		expect(generic.map((account) => account.name)).toEqual(["cli"]);
+		expect(lane.map((account) => account.name)).toEqual(["cli"]);
+		expect(generic).toEqual(sameAccounts(lane));
 	});
 
 	test("an env key blocked for auth reports auth_error; an expired block reports no reason", async () => {
@@ -377,7 +405,9 @@ describe("provider-neutral credential accounts", () => {
 			await storage.modify(provider, async () =>
 				provider === "openai"
 					? { type: "api_key", key: "key-default", accounts: [{ name: "default", key: "key-default", ...stored }] }
-					: { ...base, accounts: [storedSlot(stored)] },
+					: provider === "anthropic-subscription"
+						? { ...base, accounts: [storedClaudeSlot(stored)] }
+						: { ...base, accounts: [storedSlot(stored)] },
 			);
 			if (health !== undefined) {
 				const credentialRevision = await repository.storedCredentialRevision(provider, "default", {
@@ -392,12 +422,15 @@ describe("provider-neutral credential accounts", () => {
 				name: _name,
 				source: _source,
 				pinned: _pinned,
+				// The generic listing adds the CLI account fields on top of the block state.
+				store: _store,
+				signIn: _signIn,
 				...block
 			} = account ?? { name: "", source: "", pinned: false };
 			expect(account?.blocked).toBe(!(await laneSelectorAccepts(provider, stored)));
 			expect(block).toEqual(listed);
 			if (provider === "anthropic-subscription")
-				expect(getProviderAccounts(storage, provider, {})).toEqual([account]);
+				expect([account]).toEqual(sameAccounts(getProviderAccounts(storage, provider, {})));
 		},
 	);
 
