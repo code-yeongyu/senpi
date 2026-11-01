@@ -1,7 +1,8 @@
 /**
  * The model-backed widget author of one session: the explicit `jobWidgets.model` setting, then the
- * host's route (`setJobWidgetAuthorResolver`), then the session's current model. The request goes
- * through the session's model runtime, so it uses the session's own credentials and provider hosts.
+ * host's route (`setJobWidgetAuthorResolver`). The session's own model is never used: with neither,
+ * no spec is written. The request goes through the session's model runtime, so it uses the session's
+ * own credentials and provider hosts.
  */
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "../../types.ts";
@@ -30,7 +31,6 @@ export function createSessionJobWidgetAuthor(
 		resolveModel: jobWidgetModelResolver({
 			setting: withContext((ctx) => (settingModel === undefined ? undefined : findSettingModel(ctx, settingModel))),
 			host: withContext((ctx) => jobWidgetHostResolver()?.(ctx)),
-			session: withContext((ctx) => ctx.model),
 		}),
 		complete: (model, request, options) => {
 			const ctx = context();

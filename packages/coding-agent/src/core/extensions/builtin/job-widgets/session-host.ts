@@ -122,8 +122,8 @@ export function getJobWidgetState(sessionId: string): JobWidgetState | undefined
 }
 
 /**
- * Installs the host's model route for every session, ahead of the session's own model and behind an
- * explicit `jobWidgets.model` setting. Returns a function that removes it again (when still current).
+ * Installs the host's model route for every session, behind an explicit `jobWidgets.model` setting.
+ * When the route answers no model, no spec is written; the session's own model is never used. Returns a function that removes it again (when still current).
  */
 export function setJobWidgetAuthorResolver(resolver: JobWidgetHostModelResolver | undefined): () => void {
 	hostResolver = resolver;

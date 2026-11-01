@@ -77,12 +77,12 @@ describe("job widget request controller: answers", () => {
 		// One request per job and one per hour: a model-less answer that spent either would block every later ask.
 		const { controller, advance } = controllerFor(author, { maxRequestsPerJob: 1, maxPerHour: 1 });
 		const job = new FakeJob("bg_1");
-		expect(await controller.maybeRequest(job)).toEqual({ kind: "unavailable" });
+		expect(await controller.maybeRequest(job)).toEqual({ kind: "unavailable", reason: "no_designated_model" });
 		advance(29_999);
 		expect(controller.maybeRequest(job)).toBeUndefined();
 		expect(controller.maybeRequest(new FakeJob("bg_2"))).toBeUndefined();
 		advance(1);
-		expect(await controller.maybeRequest(job)).toEqual({ kind: "unavailable" });
+		expect(await controller.maybeRequest(job)).toEqual({ kind: "unavailable", reason: "no_designated_model" });
 		advance(30_000);
 		expect(await controller.maybeRequest(job)).toMatchObject({ kind: "installed" });
 		expect(controller.maybeRequest(new FakeJob("bg_2"))).toBeUndefined();
