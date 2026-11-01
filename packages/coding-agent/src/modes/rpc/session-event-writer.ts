@@ -1,12 +1,16 @@
 import { SessionConnectionContext } from "./session-connection-context.ts";
+import { SecretInputPresentations } from "./secret-input-presentations.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
+import type { CanonicalControl } from "./compact-canonical-pairing.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { SessionStructuredLanes } from "./session-structured-lanes.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { type MediaPersister, omitNormalInlineMedia } from "./media-placeholders.ts";
 import type {
@@ -17,6 +21,8 @@ import type {
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
 import { RpcSecurityPresentations } from "./security-presentations.ts";
+import type { RecoveryPageRequests } from "./compact-recovery-requests.ts";
+import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
@@ -54,20 +60,16 @@ function compactDelta(value: RpcRecord): { type: CompactDeltaType; contentIndex:
 	if (value.type !== "message_update" || !Object.hasOwn(value, "message")) return undefined;
 	const event = value.assistantMessageEvent;
 	if (typeof event !== "object" || event === null) return undefined;
-	const typedEvent = event as Record<string, unknown>;
+	const { type, contentIndex, delta } = event as Record<string, unknown>;
 	if (
-		typeof typedEvent.type !== "string" ||
-		!COMPACT_DELTA_TYPES.has(typedEvent.type as CompactDeltaType) ||
-		typeof typedEvent.contentIndex !== "number" ||
-		typeof typedEvent.delta !== "string"
+		typeof type !== "string" ||
+		!COMPACT_DELTA_TYPES.has(type as CompactDeltaType) ||
+		typeof contentIndex !== "number" ||
+		typeof delta !== "string"
 	) {
 		return undefined;
 	}
-	return {
-		type: typedEvent.type as CompactDeltaType,
-		contentIndex: typedEvent.contentIndex,
-		delta: typedEvent.delta,
-	};
+	return { type: type as CompactDeltaType, contentIndex, delta };
 }
 
 /** The delta-only form of a compact message_update: cumulative snapshot fields blanked, delta kept. */
@@ -92,7 +94,16 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter {
+	private readonly secretPresentations: SecretInputPresentations;
+	secretInputRoute(sessionId: string): SecretInputRoute {
+		return this.secretPresentations.route(sessionId);
+	}
+	setSoleSecretCapabilities(capabilities: readonly string[]): void {
+		this.secretPresentations.handshake(capabilities);
+	}
 	readonly structuredLanes = new SessionStructuredLanes();
+	/** Records refused at the engine's JSON depth limit on the legacy wire (RULING-68). */
+	readonly legacyRefusals = new LegacyRecordRefusals();
 	private presenterAuthority?: McpPresenterAuthority;
 	private readonly presenterConnections = new Map<string, McpPresenterConnection>();
 	private readonly presenterBindings = new Map<string, McpFormBinding>();
@@ -244,7 +255,14 @@ export class SessionEventWriter {
 		waitOrSchedule?: BackpressureWaiter | FlushScheduler,
 		scheduleFlush?: FlushScheduler,
 	) {
+		this.secretPresentations = new SecretInputPresentations(
+			this.fanout,
+			() => this.currentConnection(),
+			(line) => this.writeRaw(line),
+			() => this.requestFlush(),
+		);
 		this.fanout.onConnectionClosed = (id) => {
+			this.secretPresentations.detach(id);
 			this.securityPresentations.dropConnection(id);
 			const sender = this.presenterConnections.get(id);
 			if (sender) this.presenterAuthority?.detach(sender);
@@ -269,6 +287,26 @@ export class SessionEventWriter {
 
 	isSessionSealed(sessionId: string): boolean {
 		return this.sealedSessions.has(sessionId);
+	}
+
+	/** Legacy views frozen for a peer's baseline and not yet released (R3.C6.4 accounting). */
+	get openLegacyViews(): number {
+		return this.fanout.replay.openCursors;
+	}
+
+	/** The checkpoint tokens frozen for peers' baselines and recoveries (S08a, R3.C1.5). */
+	get recoveryCheckpoints(): RecoveryCheckpoints {
+		return this.fanout.checkpoints;
+	}
+
+	/** The page requests over those tokens (S11b, R4.B3); undefined with the compact-updates flag off. */
+	get recoveryPages(): RecoveryPageRequests | undefined {
+		return this.fanout.pages;
+	}
+
+	/** The peer incarnation a registered connection is: what its tokens and cursors are bound to. */
+	socketEpochOf(id: string): string | undefined {
+		return this.fanout.get(id)?.socketEpoch;
 	}
 
 	registerConnection(
@@ -297,6 +335,7 @@ export class SessionEventWriter {
 	}
 
 	unregisterConnection(id: string): void {
+		this.secretPresentations.detach(id);
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.detach(sender);
 		this.presenterConnections.delete(id);
@@ -319,6 +358,7 @@ export class SessionEventWriter {
 		const binding = this.presenterBindings.get(sessionId);
 		if (sender && binding) this.presenterAuthority?.detach(sender, binding);
 		this.fanout.detachConnectionFromSession(id, sessionId);
+		this.secretPresentations.recheck();
 		this.securityPresentations.detach(id, sessionId);
 	}
 
@@ -328,6 +368,7 @@ export class SessionEventWriter {
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
+		this.secretPresentations.recheck();
 		this.securityPresentations.capabilitiesChanged(id);
 		if (!capabilities.includes("interactive_user") || !capabilities.includes("mcp_form_presenter_v1")) {
 			const sender = this.presenterConnections.get(id);
@@ -339,6 +380,7 @@ export class SessionEventWriter {
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.withdraw(sender);
 		this.fanout.clearConnectionCapabilities(id);
+		this.secretPresentations.recheck();
 		this.securityPresentations.capabilitiesChanged(id);
 	}
 	bindSecurityPresentations(
@@ -387,6 +429,12 @@ export class SessionEventWriter {
 		if (persister === undefined) this.mediaPersisters.delete(sessionId);
 		else this.mediaPersisters.set(sessionId, persister);
 	}
+
+	/** A worker isolate frames a canonical-only unit; an in-process host folds block controls in its own lane. */
+	enqueueCanonical(_sessionId: string, _control: CanonicalControl): void {}
+
+	/** A worker isolate reports a lost canonical record to its host lane; an in-process binding tells its lane directly. */
+	canonicalUnavailable(_sessionId: string, _cause: unknown): void {}
 
 	/** The session's records reach `lane` before `enqueue`; sealing or forgetting the session retires it. */
 	registerAcceptance(sessionId: string, lane: SessionAcceptanceLane): void {
@@ -460,7 +508,7 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
-		this.openTurns.note(sessionId, record.type);
+		this.openTurns.note(sessionId, record.type, (record as { reason?: unknown }).reason);
 		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));
@@ -480,7 +528,7 @@ export class SessionEventWriter {
 			const registered = target === undefined ? undefined : this.fanout.get(target);
 			const wants =
 				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
-			if (registered) {
+			if (registered && target !== undefined) {
 				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
 				registered.actor.enqueue(
 					wants ? placeholderLine : line,
@@ -488,6 +536,9 @@ export class SessionEventWriter {
 					undefined,
 					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
 					isCorrelatedReply(tagged),
+					mirrors.includes(target)
+						? undefined
+						: this.fanout.attachmentOf(target, sessionId, isTargeted, record.type),
 					current,
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
@@ -542,7 +593,8 @@ export class SessionEventWriter {
 		const line = serializeJsonLine({ type: "loaded_surfaces_changed", sessionId });
 		for (const id of this.fanout.attachedConnections(sessionId)) {
 			if (!this.surfaceDedupe.announce(id, sessionId, previous, digest)) continue;
-			this.fanout.get(id)?.actor.enqueue(line);
+			const held = this.fanout.attachmentOf(id, sessionId, false, "loaded_surfaces_changed");
+			this.fanout.get(id)?.actor.enqueue(line, undefined, undefined, undefined, false, held);
 		}
 		this.requestFlush();
 	}

@@ -3,18 +3,17 @@ name: CI
 on:
   push:
     branches: [main]
-  # Every pull request runs CI, whatever its base: a PR stacked on another feature branch must not reach main untested
-  # (senpi#2759).
-  pull_request:
-  # ci-full-label.yml calls this workflow when a PR gets the run-full-ci label (senpi#3957).
+  # No pull_request trigger: merges are decided on a local whole-suite receipt, so hosted PR CI runs only for a PR
+  # labelled run-full-ci, through ci-full-label.yml, which calls this workflow on the label and on every later push of
+  # the labelled PR, whatever its base (senpi#2759, senpi#3957, senpi#4968).
   workflow_call:
 
 # A pull request has one run group (its ref is refs/pull/<n>/merge): a push or restack cancels the run it
 # supersedes. A main push gets its own group per commit, so its run never waits behind another main run and is
 # never cancelled or replaced by a later merge: every main commit ends with its own "Check and test" result, which
 # the release reuses as its test evidence (senpi#2960). After the fixed per-file prefix comes the workflow name, which is
-# the caller's when ci-full-label.yml calls this workflow, so a label-forced full run never cancels the PR's own run, and
-# the label run's other called workflows (their own prefixes) never cancel this one (senpi#3957).
+# the caller's when ci-full-label.yml calls this workflow, so the label run's other called workflows (their own
+# prefixes) never cancel this one (senpi#3957), and a newer push of the labelled PR cancels its superseded run.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -370,8 +369,12 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
-      - name: Normalizer unit tests
-        run: node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs
+      - name: senpi-qa harness unit tests
+        shell: bash
+        run: |
+          # tui-smoke.test.mjs drives the real tmux driver (senpi#4986 regression); make sure tmux exists.
+          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs
 
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
@@ -821,6 +824,12 @@ jobs:
 
       - name: Run RPC host ensure tests
         run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-ensure.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # Exact-version proof invalidates on every Bun bump. Re-run the frozen old-parser
+      # control together with the compiled-runtime pair proof before re-enabling it.
+      - name: Run Windows private descriptor pair proof and compatibility control
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/host-private-fds-pair.test.ts test/suite/host-private-fd-inherit.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC host lifecycle tests
@@ -1310,7 +1319,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $sidecar = "$hostRoot/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py"
           New-Item -ItemType Directory -Force $sidecar | Out-Null
-          Copy-Item packages/senpi-codemode/src/kernels/py/prelude.py "$sidecar/prelude.py"
+          Copy-Item packages/senpi-codemode/src/kernels/py/*.py "$sidecar/"
       - name: Packaged cold and warm Python cells
         shell: pwsh
         run: |
@@ -1456,6 +1465,11 @@ jobs:
         run: |
           command -v cc >/dev/null || { echo "::error::Missing C compiler 'cc' on PATH for POSIX process-exit tests"; exit 1; }
           cc --version
+      # 3044's bun-owner case spawns `bun` as the RPC owner (#4845), so this job needs the pinned bun on PATH.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: Build workspace package entries

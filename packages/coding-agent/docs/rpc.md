@@ -145,6 +145,15 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
 - `seq`, `epoch`, `epochOrigin` (`human` or `automatic`), `humanInputRevision`,
   `selfSettleEligible`, `restoring`, `persisted`, `runPaused`, and `since` (ISO time).
 - `role` (`root` or `child`), `rootSessionId`, and optional `parentSessionId` and `taskId`.
+- Optional `runId` identifies the current or most recent engine run, matching that run's
+  `agent_start.runId` and lifecycle readback (`get_state.lifecycle`, including the shared
+  `open_session` state projection). Every new run gets a new ID even within the same epoch.
+  Snapshots published while idle retain the preceding run's ID; before the first run it is
+  absent. Restore preserves the recorded ID. Compare IDs for equality, never sort them.
+  A snapshot may arrive before its own `agent_start`; associate it only with the turn whose
+  start carries the same ID, not the next observed start. This field is additive and optional:
+  older clients ignore it, and clients talking to older engines without it keep their existing
+  association behavior.
 - Optional `waitingOn`: `{ children, background, human, childSources?, childReports?, childReportsOmitted? }`.
   `children` and each source's `activeCount` are the authoritative counts; every named list below is
   supplemental and may be incomplete, so never derive a count from a list's length. `children` is the
@@ -384,6 +393,10 @@ model context or history.
 
 `get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
 
+`logout` deletes the provider's stored credential. For Anthropic Subscription it first signs every Claude CLI account out of the Claude CLI by its config dir (the same removal as `account_remove`), and its `data` is absent unless one could not be signed out cleanly, in which case it is `{ "notices": string[] }`, one user-facing sentence per account, as for `account_remove`.
+
+`account_remove` answers `success: true` once the account is gone. Its `data` is absent unless something could not be cleaned up, in which case it is `{ "notice": string }`, a user-facing sentence a client should show: a Claude CLI account whose `claude auth logout` could not run or failed (the account and its config dir are removed anyway, but the CLI's stored sign-in may remain), or whose stored account dir is missing, malformed, or a link or file (removed without a sign-out, and a link or file is left untouched).
+
 A blocked account also says why: `blockedReason` is `auth_error` (the provider rejected the key; it is skipped until one request re-probes it at `blockedUntil`, or until a re-login when `blockedUntil` is absent), `rate_limit` (a cooldown that ends at `blockedUntil`) or `disabled` (no end time; replace the credential). Both fields appear only while `blocked` is true, and `blockedReason` is absent when the stored block names no reason. A client choosing an account for a new request should skip `auth_error` accounts rather than send a request that will fail with 401.
 
 Use `/account <provider> rename <id> <display name...>` or the corresponding `/gpt-account` and `/claude-account` commands to name saved accounts; `clear-name <id>` removes only the label. `/gpt-account add` offers optional naming after login is saved, and only when Senpi generated the account ID itself; the Claude lane names accounts through its own login prompt and never asks twice. Blank input or cancellation keeps that login usable. Environment accounts cannot be renamed.
@@ -409,6 +422,22 @@ Set the order, or clear it with `names: null`:
 ```
 
 `names` may name a subset; accounts it leaves out come after it. The command fails without changing anything when a name is not one of the provider's accounts, appears twice, or the list is empty, and when the provider has no stored credential (the order is kept beside the pin in `auth.json`). Removing an account drops it from the order. Success emits `auth_accounts_changed`. Only account names cross RPC, never credential material.
+
+#### test_provider_account
+
+Re-run the sign-in connection test on one Claude subscription account, for example to retry a failed `check`. Hosts that answer it advertise `provider_account_test` in `get_protocol_info`.
+
+```json
+{"id": "t1", "type": "test_provider_account", "provider": "anthropic-subscription", "name": "work"}
+```
+
+```json
+{"id": "t1", "type": "response", "command": "test_provider_account", "success": true, "data": {"check": {"model": "claude-opus-5-5", "outcome": "ok", "at": 1793000000000}}}
+```
+
+The test is one "Reply with OK" turn pinned to that account with account fallback off, on the model the settings' default resolves for `anthropic-subscription` (the default model when the default provider is `anthropic-subscription`, else that provider's default model). The turn runs on that account even while it is blocked (the block is the question the test answers); no other account is tried or re-probed, and the test stores and clears no block, pin or order. Its result is stored as the account's `check` (the same field `get_provider_accounts` reports) and returned; like any turn, it also saves the account's profile when Claude Code reports a changed one. A failed turn answers `success: true` with `outcome: "failed"` and a short `reason` kind such as `auth_error`, `billing` or `timeout`. The command writes `auth.json` and spends one model turn, so like `account_pin` and `account_remove` it needs the session attached and is refused while another client holds it.
+
+Errors: `unsupported_provider` for any provider other than `anthropic-subscription`, `unknown_account` when no stored account has that name, `unsupported_account` for an account that is not a Claude CLI sign-in (an environment token account), and `needs_sign_in` for an account that must sign in again (`signIn: "needs_sign_in"` in `get_provider_accounts`); no turn runs for any of them.
 
 ## Starting RPC Mode
 
@@ -459,6 +488,55 @@ the endpoint no longer waits on it (`question_already_resolved`,
 `unknown_extension_ui_request`), the dialog stays dismissed and the status says why. A
 refused prompt or steer keeps its text in the editor. A width change sends
 `set_client_info {width}`.
+
+### Private secret input
+
+`get_protocol_info.capabilities` advertises `secret_input_v1`. A presenter must
+explicitly send `set_client_info` with both `secret_input_v1` and `interactive_user`
+on its own connection, including classic stdio. Launch options and
+`SENPI_RPC_CLIENT_CAPABILITIES` do not establish secret support.
+
+```json
+{"type":"set_client_info","width":80,"capabilities":["interactive_user","secret_input_v1"]}
+{"type":"extension_ui_request","id":"request-id","method":"input","secret":true,"title":"Credential","timeout":1800000,"deadlineAtMs":1900000000000}
+{"type":"extension_ui_response","id":"reply-id","uiRequestId":"request-id","answerId":"fresh-answer-id","secret":true,"value":"synthetic-example"}
+```
+
+Routed frames also carry `sessionId`. A cancellation replaces `value` with
+`cancelled:true`. Exactly one is required, along with a nonempty opaque `answerId`;
+`confirmed`, `answers`, `comment`, extra payload fields and progress updates are
+refused. The pending host record determines sensitivity even if the incoming
+`secret` marker is missing. Never put a value into an ID or send it as progress.
+
+Requests belong to one immutable presenter and live session incarnation. The
+initiating attached client must itself be eligible; it cannot borrow another
+client's declaration. Background calls choose an eligible attached presenter in
+registration order. Unsupported presentation raises `secret_input_unavailable`
+before emission. Worker isolates negotiate accepted/refused-with-reason with the
+parent before registering a request; a refusal is not user cancellation.
+
+The private transport bypasses replay, observer, transcript and trace-record
+publication. Generic `get_state`/`get_snapshot` and non-owner views contain no
+secret prompt or receipt. The owner can query its bounded, value-free
+`get_state.answeredUiRequests` receipts after acknowledgement loss. Discard the
+value instead of resending or saving it in a reconnect queue. A missing receipt
+after eviction/restart means unknown outcome, not proof the callback did not run.
+
+The owner receives `secret_input_settled` with `id` and
+`outcome: answered | cancelled | timed_out | unavailable`. It must destroy its
+field and editing buffers on that event, disconnect, or unmount. The original
+`deadlineAtMs` is authoritative across resize, snapshots and attach re-offers.
+Late or foreign answers are refused before human-input admission. Responses use
+the existing `extension_ui_response` acknowledgement with fixed errors
+`secret_answer_refused`, `invalid_secret_response` or
+`unknown_extension_ui_request`, and metadata-only dispositions.
+
+Clients must mask before rendering, retain values only in private live state,
+and never record raw response frames, parser inputs, validation actuals or error
+causes. A desktop integration needs its own authenticated, untraced transient
+response route; ordinary persisted question-answer commands are not suitable.
+Advertise the capability only after that route and the renderer support it.
+Role-carrying automated/control connections must omit `secret_input_v1`.
 
 ### RPC client lifecycle
 
@@ -584,6 +662,97 @@ its epoch and its session handles. For each tagged marker, refresh that session 
 run state, and replace its streaming preview from `message`. A read-only request may be
 retried. A closed-handle snapshot retires that session, not the connection.
 Another overflow during recovery produces another gap and a newer snapshot.
+
+#### Compact recovery state limits
+
+Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default), the host also keeps a compact recovery state for
+each session. It has one protocol depth limit, `COMPACT_PROTOCOL_MAX_DEPTH` = 1,024 nested arrays or objects
+(`[[1]]` is 2 deep; the record object itself is the first level), set well below the native JSON limits of Node 24
+(about 6,185 levels) and Bun 1.4 (40,000). A record nested deeper is refused before any compact fold clones or
+serializes it (its canonical projection, its call or component fold, the settled terminal of a `message_end`), with
+`CompactWriteError` reason `unsupported_value` carrying `limit: 1024`. The refusal costs only that session event's
+compact fold, both projections of it: the session's compact state stays available, the legacy record is still
+delivered, the refusal is counted once per session event in the lane's `refusedRecords` status (however many of
+the event's projections exceed the limit) and the host reports it once on stderr as
+`senpi rpc acceptance: compact record refused: unsupported_value (depth above 1024)`. Any other loss of a record
+still ends that session epoch's compact state. Every refused record of the session is counted the same way whether
+or not the compact state is still live: after such a loss, refusals on either projection keep counting.
+
+The legacy JSONL stream has no protocol depth limit: a record deeper than 1,024 levels is delivered unchanged to a
+legacy client. This holds whether or not the client advertises `media_placeholders`: the placeholder transform
+walks a record without recursion. Only a record the runtime's own JSON engine cannot serialize (above about 6,185 levels on Node 24
+or 40,000 on Bun 1.4, less on a deep stack) is refused, as the typed `LegacyRecordDepthError`: it is not delivered,
+the session (and a worker session's isolate) keeps running, and the next record is delivered. The refusal is
+reported once on stderr as
+`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`
+and counted by the writer that refused it. When the host's writer refuses it, the host counts it. When a worker
+session's isolate refuses it first (at the isolate's own engine limit, before the record leaves the isolate), the
+count stays in the isolate's writer and is not added to the host's count; only the stderr line reaches the host,
+through the worker's stderr.
+A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
+reader (which stops near 4,000 levels on Node) never drops it.
+
+#### get_recovery_page
+
+Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
+(senpi#4272, R4.B3). The command is additive: with the flag off it answers exactly as any unknown session command.
+
+```json
+{"type": "get_recovery_page", "sessionId": "rpc-1", "token": "socket-3:7", "admissionId": "attach-9",
+ "componentRef": "c-0000000000000007:003", "requestId": "r-12", "cursor": "p1:1:131072:..."}
+```
+
+- `token` and `admissionId` name a checkpoint this connection holds (its manifest's `token` and `admissionId`);
+  `componentRef` is a catalog ref under that token; `requestId` is the client's own bounded id for this request;
+  `cursor` continues a component from the previous answer and is omitted for a component's first page. Every field
+  is an opaque bounded protocol id (ASCII `[A-Za-z0-9][A-Za-z0-9:_-]*`, at most 128 bytes), parsed before any use.
+- The answer's `data` is `{requestId, token, generation, componentRef, ordinal, offset, length, digest, bytes,
+  cursor, complete}`: `bytes` is the base64 of exactly `length` raw stored bytes of the component at raw byte
+  `offset` (the component's stored UTF-16LE bytes, the representation the catalog's lengths and `leaf` digests
+  describe); `digest` is the catalog's `fragment`-domain SHA-256 over those raw bytes, so a client verifies it
+  AFTER base64 decoding, never over the base64 text; `cursor` is the opaque cursor of the next page or `null` once
+  `complete`. The page budget is `FRAGMENT_MAX_BYTES` = 131,072 raw bytes; its base64 envelope is
+  `FRAGMENT_ENVELOPE_MAX_BYTES` = 174,764 bytes (derived: four characters per three raw bytes), the one page the
+  worker transport's initial credit is also sized from.
+- `ordinal` advances by one per page served under a token, whichever component is paged, and never wraps: at the
+  53-bit bound the request is refused `recovery_ordinal_exhausted` (re-admit for a new token). One request is active
+  per token at a time; a second concurrent one is refused `recovery_busy` (`hint: "retry"`), takes no slot and
+  keeps no memory, and that includes a request whose component is still being verified. At most 8 page requests are
+  outstanding on one socket across its tokens; the ninth is refused `recovery_request_limit`. A connection that
+  closes while a component is still being verified for it stops that verification at the next stored leaf: its slot
+  and its token are freed then, not when the verification would have ended, and nothing is kept.
+- An exact retry (same `requestId`, `token`, `componentRef` and `cursor`) of the token's current page answers the
+  identical bytes from the one page the host keeps per token, without a read; that page is freed when the next
+  request advances the token or the token ends. A different request under the same `requestId` is refused
+  `recovery_request_mismatch`. A `requestId` used before the token advanced is a new request only when it carries
+  no `cursor` (a component's first page); with a cursor behind the token's current ordinal it is refused
+  `recovery_cursor_out_of_range`, never served as a fresh page.
+- A cursor is bound to the peer, routing session, token, generation and component it was minted for and
+  authenticated under a per-process key. It has exactly one encoding (its numbers carry no leading zero), so any
+  re-encoding is an altered cursor. Presented by another connection or session, altered, or minted by a previous
+  host process, it is refused `recovery_invalid_cursor` with `hint: "restart_from_catalog"`; an authentic cursor
+  whose ordinal is not the token's current one is refused `recovery_cursor_out_of_range` with the same hint. A token
+  minted for another connection, session or admission is `recovery_repair_needed` with `reason: "unknown_token"`
+  and nothing else. A token superseded by a newer admission of its stream answers `recovery_repair_needed` with
+  `reason: "superseded_token"` and `newerGeneration` while an operation still holds it, and `unknown_token` once
+  it is reclaimed. The owner's other typed failures arrive as `recovery_repair_needed` or
+  `recovery_storage_unavailable` with `errorData` carrying the failure. Every refusal happens before any byte is read.
+- The loaded transcript base (the entries a session was opened with, named by the catalog's `transcript/base`,
+  `opaque/base` and `source/base` members as `{source: "file", first: 0, count, idFingerprint}`) is paged under the
+  reserved ref `<catalogRoot>:base` (the manifest's `catalogRoot` with the `base` step; it is cut-scoped like every
+  ref, and it is pages only, never a catalog node or component read). Its bytes are one stamped row per base entry in
+  file order,
+  `{index, id, source: "file", parentId, kind, family}` followed by a newline, UTF-16LE like every component, so a
+  page of it is verified exactly like any other page. A client anchors the join to the catalog: the SHA-256 over
+  `kind NUL id LF` of every row, in order, is the catalog's `idFingerprint`. A line the loader parsed that is no
+  session entry is a row too (never dropped): its `kind` and `id` are the string forms of its `type` and `id`
+  (`"undefined"` when absent), its `parentId` null unless a string, and its `family` that of its kind. The host opens
+  the session file only for this route, asynchronously, verifies its identity, count, `idFingerprint` and a content
+  fingerprint the load took over the lines it read before the first page, and re-checks the identity and every row a
+  page re-derives against that open. Any change to the base since the load (replaced, truncated, missing, or any
+  edit to its lines, ids or content, before or after the first page) is `recovery_storage_unavailable` with `reason`
+  `base_file_replaced`, `base_file_truncated`, `base_file_missing` or `base_fingerprint_mismatch`, never stale rows. With a base present, the transcript, opaque and source families are
+  complete: their members are the catalog's rows of this epoch plus the base stream's rows of their family.
 
 #### interactive_user
 
@@ -928,10 +1097,13 @@ bounded wait. No peer is drained and no active turn is interrupted by owner deat
 Reusing a running supervisor cannot inherit another fd. A generation successor launched
 by a process other than the owner also cannot inherit the owner's fd. These paths, and
 launches where opening the inherited pipe fails, compare the recorded PID and OS process
-start identity through the existing process reader (`ps lstart` on POSIX, CIM creation
-FILETIME on Windows). Both capture and probe pin `TZ=UTC` and `LC_ALL=C`; POSIX identities
+start identity through the existing process reader. The supervisor also uses this check
+when its current parent differs from the recorded owner, even if the inherited pipe
+remains open without reporting EOF. Parent change alone never authorizes shutdown.
+The reader uses `ps lstart` on POSIX and CIM creation
+FILETIME on Windows. Both capture and probe pin `TZ=UTC` and `LC_ALL=C`; POSIX identities
 carry an explicit UTC suffix. Parsed milliseconds are compared with the existing process-start
-tolerance, never by raw timestamp spelling. Pipe-less probes back off from one second to a
+tolerance, never by raw timestamp spelling. Identity probes back off from one second to a
 five-second maximum interval, with a one-second query budget. This adds at most that polling
 interval before owner death can be observed; failed or unreadable observations never authorize shutdown.
 Windows handoff remains unsupported, as before. A successor launched by the owner inherits
@@ -1605,8 +1777,9 @@ exactly the failure they exist to catch.
 `senpi host session` is a thin client over the wire commands this document already describes: it attaches to a
 session (or starts the shared host, for `open` only) and relays one request, so an orchestrating agent or script
 can drive a session without writing its own RPC client. It adds no new wire command; it relies on the typed
-`errorCode` the host sets on `prompt` (`streaming`), `set_model` (`model_not_found`) and `get_entries` (`not_found`)
-refusals.
+`errorCode` the host sets on `prompt` (`streaming`, and `provider_credentials_missing`, `provider_credentials_expired`
+or `no_model_selected` when the session cannot start a turn), `set_model` (`model_not_found`) and `get_entries`
+(`not_found`) refusals.
 
 ```
 senpi host session open   --cwd <dir> [--model <provider/id>] [--name <text>] [--prompt <text|@file>]
@@ -2611,7 +2784,7 @@ Every `host_response` is acknowledged under its `id`: `{"type":"response","comma
 
 The agent's tool results are typed in `details`: `{ status: "listed", targets }`, `{ status: "scheduled", target, moveId }`, `{ status: "unavailable", reason, detail }`, or `{ status: "refused", reason, detail }` (the host's own `reason` and `detail` when it declined). Every outcome except `scheduled` leaves the session open and writable here.
 
-**When the move happens.** An accepted request is scheduled; it never interrupts the run that asked for it. The tool result tells the agent the work continues on the target when this turn ends, and the run goes on to its natural end (further tool calls, its closing reply, queued follow-ups). When that run settles (`agent_settled`) and every `prompt` call behind it has returned, the session sends one event:
+**When the move happens.** An accepted request is scheduled; it never interrupts the run that asked for it. The tool result tells the agent the work continues on the target when this turn ends, and the run goes on to its natural end (further tool calls, its closing reply, queued follow-ups). When that run settles and goes idle (`agent_idle`, after its settle-time extension handlers) and every `prompt` call behind it has returned, the session sends one event:
 
 ```json
 {"type":"relocation_due","moveId":"mv-a1","target":"Studio","reason":"heavy build","sessionId":"rpc-1"}
@@ -3243,6 +3416,19 @@ With images:
 
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
 Queued prompts cannot include `thinkingLevel`; wait for the current turn to complete before changing it.
+
+**Model not ready**: A prompt that would start a turn is refused before the model is called when the session
+cannot run one. The `error` text is the same guidance the TUI shows; the `errorCode` says why:
+
+| `errorCode` | Meaning | `errorData` |
+|---|---|---|
+| `provider_credentials_missing` | The selected model's provider has no credentials | `{ provider }` |
+| `provider_credentials_expired` | The provider signs in with OAuth and its credentials could not be refreshed | `{ provider }` |
+| `no_model_selected` | No model is selected | none |
+
+```json
+{"type": "response", "command": "prompt", "success": false, "error": "No API key found for openai. ...", "errorCode": "provider_credentials_missing", "errorData": {"provider": "openai"}}
+```
 
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
@@ -4960,7 +5146,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 |-------|-------------|
 | `agent_start` | Agent begins processing |
 | `agent_end` | One low-level agent run completes (may still be followed by retry, compaction, or queued continuations) |
-| `agent_settled` | Agent run is fully settled; no automatic retry, compaction retry, or queued continuation remains |
+| `agent_settled` | Agent run is fully settled; no automatic retry, compaction retry, or queued continuation remains. Extension `agent_settled` handlers may still be running: wait for `agent_idle` before tearing a session down |
 | `turn_start` | New turn begins |
 | `turn_end` | Turn completes (includes assistant message and tool results) |
 | `message_start` | Message begins |
@@ -5120,6 +5306,12 @@ Emitted when an extension calls `pi.rpc.emit(name, data)` and the client adverti
 the specific event name before applying it. In multi-session mode the record also includes the
 routing `sessionId`; delivery preserves the owning session and per-session event order.
 
+Events are not replayed: a client receives those emitted after it starts receiving extension events
+(by its handshake capabilities or a `set_client_info` that declares `extension_events`). At that
+moment Senpi emits `senpi:extension-rpc-subscribed` (no data) on the in-process `pi.events` bus, so an
+extension that keeps a state snapshot can send it once instead of waiting for its next change; other
+subscribed clients may then receive the same snapshot again.
+
 The terminal builtin emits `terminal_monitor_state` on this path whenever the active monitor set
 changes. `data` is `{ activeCount, monitors }`, where each monitor entry has `id`, `description`,
 `paused`, and `startedAtMs`. The matching in-process `pi.events` channel is unchanged and is not
@@ -5150,7 +5342,9 @@ The `job-widgets` builtin emits `job_widget_state` on the same path: live, displ
 session's long background jobs (bash sessions started with `run_in_background` or auto-detached, and jobs a
 host registers, such as background tasks). Clients receive it only when they advertise `extension_events`;
 the in-process `pi.events` channel carries the same payload. It is sent at most once per second per session
-and only when what a client draws changed, so a timestamp moving alone sends nothing. `jobWidgets.enabled:
+and only when what a client draws changed, so a timestamp moving alone sends nothing. A client that starts
+receiving extension events gets the session's current state once (within a second) when some job is shown,
+so a frozen `done` widget reaches a late client too. `jobWidgets.enabled:
 false` ([settings](settings.md#job-widgets)) turns it off.
 
 `data` is `{ v: 1, sessionId, jobs }`. Each job has `id` (`bash_N` or a task id), `kind` (`bash` or `task`),
@@ -5196,8 +5390,12 @@ routes spec writing to a host-chosen model (behind an explicit `jobWidgets.model
 Emitted when the agent begins processing a prompt.
 
 ```json
-{"type": "agent_start"}
+{"type": "agent_start", "runId": "run-id"}
 ```
+
+`runId` is the same optional engine-run identifier carried by lifecycle snapshots and
+state readback. It is captured at run start, before asynchronous delivery; a later run
+cannot replace the ID on a queued start event. Older engines omit this additive field.
 
 ### agent_end
 
@@ -5652,7 +5850,7 @@ Logins are fire-command-then-subscribe: the command answers as soon as the flow 
 - `login_start` `{provider}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt.
 - `auth_login_url` `{provider, url}`: the URL (or device-code verification URL) the user must open.
 - `auth_login_progress` `{provider, text}`: a status line while the login prepares or runs, for example an extension's `provider_login_start` handler reporting `Downloading Claude Code 2.1.306: 10% of 200 MB`. Zero or more per login, always before `auth_login_end`. Every provider progress and info line is forwarded as written, so `text` may name the local callback address a login listens on (for example `Listening for OpenRouter OAuth callback on http://<host>:<port>/<path>`), the same redirect address the `auth_login_url` already carries; the URL the user must open arrives only in `auth_login_url`. Built-in providers put no authorization code or token in these lines.
-- `auth_login_end` `{provider, success, error?, replaced?, backupPath?}`: exactly one per login; `error` is a non-secret message. When a successful login replaced the provider's credential of the other kind (an OAuth login over a stored API key), `replaced` names that kind (`"api_key"` or `"oauth"`) and `backupPath` is the copy of `auth.json` taken before it (absent when the credential store is not a file). A login of the same kind adds an account and carries neither field.
+- `auth_login_end` `{provider, success, error?, replaced?, backupPath?}`: exactly one per login; `error` is a non-secret message. When a successful login replaced the provider's credential of the other kind (an OAuth login over a stored API key), `replaced` names that kind (`"api_key"` or `"oauth"`) and `backupPath` is the copy of `auth.json` taken before it (absent when the credential store is not a file). A login of the same kind adds an account and carries neither field. A successful `anthropic-subscription` sign-in through the Claude CLI also carries `account` `{name}` (the account it signed in) and `check` `{model, outcome: "ok"|"failed", reason?, at}`, the one-turn connection test run right after sign-in; a failed test keeps the account.
 - `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.
 
 Some providers need input mid-flow (a pasted authorization code, a text or secret value, a choice between accounts). Those prompts reuse the extension UI dialog channel described in the next section:
@@ -5664,15 +5862,17 @@ Answer with `extension_ui_response` `{id, value}`. For `select`, `value` is the 
 
 A client that never answers loses nothing. The browser/callback completion path still finishes the login, and the pending request is released when the login ends or is cancelled, so an open dialog never blocks completion. Secrets don't cross the wire in either direction: only the prompt message, placeholder, and labels are emitted, and the answer is consumed in-process and never echoed.
 
-Example exchange (Anthropic, user pastes the code instead of finishing in the browser):
+Example exchange (Claude subscription through the bundled `claude auth login`, user pastes the code instead of finishing in the browser):
 
 ```jsonl
-{"id": "login-1", "type": "login_start", "provider": "anthropic"}
+{"id": "login-1", "type": "login_start", "provider": "anthropic-subscription"}
 {"id": "login-1", "type": "response", "command": "login_start", "success": true}
-{"type": "auth_login_url", "provider": "anthropic", "url": "https://claude.ai/oauth/authorize?..."}
-{"type": "extension_ui_request", "id": "uuid-7", "method": "input", "title": "Complete login in your browser, or paste the authorization code / redirect URL here:", "placeholder": "http://localhost:53692/callback"}
+{"type": "extension_ui_request", "id": "uuid-6", "method": "select", "title": "Select Anthropic login method:", "options": ["Browser login (default)", "Copy code login (headless)"]}
+{"type": "extension_ui_response", "id": "uuid-6", "value": "Browser login (default)"}
+{"type": "auth_login_url", "provider": "anthropic-subscription", "url": "https://claude.ai/oauth/authorize?..."}
+{"type": "extension_ui_request", "id": "uuid-7", "method": "input", "title": "Paste the code Anthropic shows after you sign in:", "placeholder": "https://claude.ai/oauth/authorize?..."}
 {"type": "extension_ui_response", "id": "uuid-7", "value": "<pasted code>"}
-{"type": "auth_login_end", "provider": "anthropic", "success": true}
+{"type": "auth_login_end", "provider": "anthropic-subscription", "success": true}
 ```
 
 If the user completes the flow in the browser instead, the same `extension_ui_request` is emitted, no response is needed, and `auth_login_end` arrives on its own.
@@ -5698,6 +5898,12 @@ Stores an API key for a provider. The response comes after the model registry ha
 
 ```json
 {"type": "login_api_key", "provider": "openrouter", "key": "<key>"}
+```
+
+A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"global"`) takes it as `region`, and the key is stored with that region exactly as the CLI's `/login` stores it. A region the provider does not offer, a region other than the one the host's environment sets (`KIMI_CODE_REGION` / `KIMI_CODE_OAUTH_HOST`), a provider whose login asks a second select, or a `region` for a provider whose key has none fails the command and stores nothing:
+
+```json
+{"type": "login_api_key", "provider": "kimi-coding", "key": "<key>", "region": "global"}
 ```
 
 A provider holds logins of one kind. If it had an OAuth login, the key replaces it: `auth.json` is backed up first, and the response `data` is `{replaced: "oauth", backupPath?}`, where `backupPath` is absent when the credential store is not a file (a failed backup fails the login instead). A key added over another key has no `data`.

@@ -12,6 +12,7 @@ import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import { answerWarm } from "./host-warm.ts";
 import { pathIdentityResolverStatus } from "./path-identity-status.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
+import { answerRecoveryPage } from "./recovery-page-command.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
@@ -209,7 +210,7 @@ export async function dispatch(
 		if (connection !== undefined) {
 			host.pendingCapabilities.set(connection, command.capabilities ?? []);
 			host.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
-		}
+		} else if (command.capabilities !== undefined) host.writer.setSoleSecretCapabilities(command.capabilities);
 		return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 	}
 	if (command.type === "subscribe_sessions") {
@@ -246,6 +247,9 @@ export async function dispatch(
 	// A receipt of a session this host has not loaded is read from its transcript, never by loading it.
 	if (command.type === "get_effect_status" && !command.sessionId && command.sessionPath !== undefined)
 		return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
+	// The token owner's page route (S11b): host-level, before any session or worker forwarding; absent with the flag off.
+	if (command.type === "get_recovery_page" && host.writer.recoveryPages !== undefined)
+		return answerRecoveryPage(host.writer.recoveryPages, host.writer, command);
 	if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 	const sessionId = command.sessionId;
 	if (host.writer.isSessionSealed(sessionId) && host.registry.peek(sessionId)?.state === "open")

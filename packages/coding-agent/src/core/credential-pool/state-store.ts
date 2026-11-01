@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { extractChatGptSubscriptionAccountId } from "@earendil-works/pi-ai/utils/chatgpt-subscription-auth";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
@@ -10,12 +11,15 @@ export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
 
 const HEX_256_BIT = /^[0-9a-f]{64}$/;
 
-const leaseSchema = z.strictObject({
+// Every object here is loose: the file is shared by every engine version on the machine (the CLI, the
+// desktop app's bundled engine, an older omo), so a field one version adds must be read past by the others,
+// not make them reset the whole document and its installation key (senpi#4090).
+const leaseSchema = z.looseObject({
 	id: z.string().min(1).max(128),
 	expiresAt: z.number().int().positive(),
 });
 
-const slotStateSchema = z.strictObject({
+const slotStateSchema = z.looseObject({
 	stateVersion: z.number().int().nonnegative(),
 	blockedUntil: z.number().int().positive().optional(),
 	blockReason: z.enum(["auth_error", "rate_limit", "account_disabled"]).optional(),
@@ -25,20 +29,43 @@ const slotStateSchema = z.strictObject({
 	lease: leaseSchema.optional(),
 	// Rate limits that bind one model family on this slot, not the slot (senpi#2555).
 	// Absent in files written before; `blockedUntil` keeps meaning "account blocked".
-	modelBlocks: z.record(z.string().min(1), z.strictObject({ blockedUntil: z.number().int().positive() })).optional(),
+	modelBlocks: z.record(z.string().min(1), z.looseObject({ blockedUntil: z.number().int().positive() })).optional(),
 });
 
-export type CredentialSlotState = Readonly<z.infer<typeof slotStateSchema>>;
+/**
+ * The slot fields this engine reads and writes. Declared, not inferred from the loose schema: an inferred
+ * type carries the schema's `[k: string]: unknown` index signature, which turned every writer's
+ * `Omit<CredentialSlotState, "stateVersion">` into an unchecked bag, so a wrong-typed field would be
+ * written and then reset the whole file on the next read. Parsing stays loose; writing stays typed.
+ */
+export type CredentialSlotState = Readonly<{
+	stateVersion: number;
+	blockedUntil?: number;
+	blockReason?: "auth_error" | "rate_limit" | "account_disabled";
+	failureCount?: number;
+	lastSuccessAt?: number;
+	credentialRevision?: string;
+	lease?: { id: string; expiresAt: number };
+	modelBlocks?: Record<string, { blockedUntil: number }>;
+}>;
 
-const documentSchema = z.strictObject({
+// Both directions are compile-time checks that the declared type and the parsing schema agree on
+// every known field.
+type ParsedSlotState = z.infer<typeof slotStateSchema>;
+const parsedSlotsAreDeclaredSlots = (slot: ParsedSlotState): CredentialSlotState => slot;
+const declaredSlotsAreParsedSlots = (slot: CredentialSlotState): ParsedSlotState => slot;
+void parsedSlotsAreDeclaredSlots;
+void declaredSlotsAreParsedSlots;
+
+const documentSchema = z.looseObject({
 	schemaVersion: z.literal(1),
 	installationKey: z.string().regex(HEX_256_BIT),
 	providers: z.record(
 		z.string(),
-		z.strictObject({
+		z.looseObject({
 			lanes: z.record(
 				z.string(),
-				z.strictObject({
+				z.looseObject({
 					slots: z.record(z.string(), slotStateSchema),
 				}),
 			),
@@ -69,6 +96,55 @@ function parseDocument(content: string | undefined): CredentialPoolStateDocument
 	} catch (error) {
 		if (error instanceof SyntaxError) return undefined;
 		throw error;
+	}
+}
+
+/** The two keys a stored slot's health can be recorded under (senpi#4093). */
+export type StoredSlotRevisions = {
+	/** The account: survives a token refresh. Every verdict on the account is recorded under it. */
+	readonly account: string;
+	/** The exact token material: a rejected-token verdict is recorded under it, so new material retires it. */
+	readonly material: string;
+};
+
+/**
+ * The stored health that applies to a slot's current material. A rejected token is a verdict on that
+ * token only, so an `auth_error` entry applies while the material is unchanged. Every other verdict
+ * (a limit, a billing refusal, a failure run) is on the account and survives a refresh. An entry written
+ * before account keys existed is keyed by material and keeps applying until its next write.
+ */
+export function applicableStoredState(
+	persisted: CredentialSlotState | undefined,
+	revisions: StoredSlotRevisions,
+): CredentialSlotState | undefined {
+	if (persisted === undefined) return undefined;
+	if (persisted.credentialRevision === revisions.material) return persisted;
+	if (persisted.blockReason === "auth_error") return undefined;
+	return persisted.credentialRevision === revisions.account ? persisted : undefined;
+}
+
+/**
+ * The account an OAuth access token belongs to, when the token says so: a ChatGPT token carries the
+ * account id and the user (`sub`); two members of one workspace share the account id but not their
+ * quota. Opaque tokens carry nothing, and the slot name alone names the account.
+ */
+function oauthAccountIdentity(access: string | undefined): string {
+	if (access === undefined) return "";
+	const accountId = extractChatGptSubscriptionAccountId(access);
+	if (accountId === undefined) return "";
+	return `${accountId}\0${jwtSubject(access) ?? ""}`;
+}
+
+function jwtSubject(token: string): string | undefined {
+	try {
+		const encoded = token.split(".")[1];
+		if (encoded === undefined) return undefined;
+		const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
+		const payload: unknown = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")));
+		const subject = payload !== null && typeof payload === "object" ? Reflect.get(payload, "sub") : undefined;
+		return typeof subject === "string" && subject.length > 0 ? subject : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -178,6 +254,25 @@ export class CredentialSlotRepository {
 			.digest("hex");
 	}
 
+	/**
+	 * Both keys for a stored slot. The account key binds health to the account (provider, slot, the
+	 * identity the token names, or the API key), so a token refresh keeps it; the material key is
+	 * {@link storedCredentialRevision}. HMAC over the installation key, never raw material.
+	 */
+	async storedSlotRevisions(
+		providerId: string,
+		slotName: string,
+		material: { key?: string; access?: string; refresh?: string },
+	): Promise<StoredSlotRevisions> {
+		const key = await this.installationKey();
+		const account = createHmac("sha256", key)
+			.update(
+				`account\0${providerId}\0${slotName}\0${material.key ?? ""}\0${material.key === undefined ? oauthAccountIdentity(material.access) : ""}`,
+			)
+			.digest("hex");
+		return { account, material: await this.storedCredentialRevision(providerId, slotName, material) };
+	}
+
 	async listSlots(providerId: string, laneId: string): Promise<Record<string, CredentialSlotState>> {
 		const document = await this.readDocument();
 		return { ...document.providers[providerId]?.lanes[laneId]?.slots };
@@ -226,7 +321,8 @@ export class CredentialSlotRepository {
 				...document,
 				providers: {
 					...document.providers,
-					[providerId]: { lanes: { ...provider.lanes, [laneId]: { slots } } },
+					// Spread, not rebuilt: fields another engine wrote on this provider or lane are kept.
+					[providerId]: { ...provider, lanes: { ...provider.lanes, [laneId]: { ...lane, slots } } },
 				},
 			};
 			return { result, next };
