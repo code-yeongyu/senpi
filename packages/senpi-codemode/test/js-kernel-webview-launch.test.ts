@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { retireBunChrome } from "../../coding-agent/src/core/webview/bun-chrome.ts";
 import { bunChromeProfileDir } from "../../coding-agent/src/core/webview/chrome-graceful-close.ts";
-import { mainThreadWebViewClass, type NativeWebViewClass } from "../../coding-agent/src/core/webview/native-webview.ts";
+import {
+	mainThreadWebViewClass,
+	type NativeWebView,
+	type NativeWebViewClass,
+} from "../../coding-agent/src/core/webview/native-webview.ts";
 import { type WebViewClientGrant, WebViewService } from "../../coding-agent/src/core/webview/webview-service.ts";
 import { bunChromeChildren, bunWebViewAvailable } from "./eval/webview-fixtures.ts";
 
@@ -70,6 +74,40 @@ function chromeCommand(pid: number): string {
 	return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).trim();
 }
 
+interface AttributedLaunch {
+	readonly view: NativeWebView;
+	readonly profile: string | undefined;
+	readonly clone: string | undefined;
+}
+
+/**
+ * Launches Chrome and names the code_sign_clone it created: the one entry new in the clone parent across
+ * the launch. No process attribute ties a clone to its browser (lsof lists every Chrome against every
+ * clone), and on a shared host another Chrome can create one in the same window; such a launch is retired
+ * untouched and retried, so a clone this test asserts on or removes is always its own.
+ */
+async function launchAttributed(
+	nativeClass: NativeWebViewClass,
+	cloneParent: string | undefined,
+): Promise<AttributedLaunch> {
+	for (let attempt = 1; attempt <= 3; attempt++) {
+		const before = new Set(entries(cloneParent));
+		const view = new nativeClass({ backend: "chrome" });
+		await view.navigate("about:blank");
+		const created = entries(cloneParent).filter((entry) => !before.has(entry));
+		const pids = await bunChromeChildren();
+		expect(pids).toHaveLength(1);
+		const [pid = 0] = pids;
+		const profile = bunChromeProfileDir(chromeCommand(pid));
+		if (cloneParent === undefined) return { view, profile, clone: undefined };
+		const [own] = created;
+		if (created.length === 1 && own !== undefined) return { view, profile, clone: join(cloneParent, own) };
+		view.close();
+		await retireBunChrome(nativeClass);
+	}
+	throw new Error("no launch could be told apart from a concurrent Chrome's code_sign_clone in 3 attempts");
+}
+
 /** Resolves the paths of `clones` still present once all are gone or `boundMs` passed, watching their parent. */
 async function remainingAfter(parent: string, clones: readonly string[], boundMs: number): Promise<string[]> {
 	const left = (): string[] => clones.filter((clone) => existsSync(clone));
@@ -96,35 +134,26 @@ describe.skipIf(!bunWebViewAvailable)("retiring a real Bun Chrome (senpi#4174)",
 		const nativeClass = mainThreadWebViewClass();
 		if (!nativeClass) throw new Error("expected Bun.WebView on the main thread");
 		const cloneParent = macCloneParent();
-		const before = new Set(entries(cloneParent));
-		const view = new nativeClass({ backend: "chrome" });
-		let launchedClones: string[] = [];
-		let profile: string | undefined;
+		let launch: AttributedLaunch | undefined;
 		try {
-			await view.navigate("about:blank");
-			const pids = await bunChromeChildren();
-			expect(pids).toHaveLength(1);
-			const [pid = 0] = pids;
-			profile = bunChromeProfileDir(chromeCommand(pid));
+			launch = await launchAttributed(nativeClass, cloneParent);
+			const { profile, clone } = launch;
 			expect(profile).toBeDefined();
-			if (cloneParent !== undefined)
-				launchedClones = entries(cloneParent)
-					.filter((entry) => !before.has(entry))
-					.map((entry) => join(cloneParent, entry));
-			view.close();
+			launch.view.close();
 
 			// when
 			await retireBunChrome(nativeClass);
 
-			// then
-			expect(await bunChromeChildren()).toEqual([]);
-			expect(profile !== undefined && existsSync(profile)).toBe(false);
-			if (cloneParent !== undefined) expect(await remainingAfter(cloneParent, launchedClones, 10_000)).toEqual([]);
+			// then: soft, so a regression reports every leftover (process, clone, profile), not only the first
+			expect.soft(await bunChromeChildren(), "Chrome pids of this launch").toEqual([]);
+			if (cloneParent !== undefined && clone !== undefined)
+				expect.soft(await remainingAfter(cloneParent, [clone], 10_000), "code_sign_clone left").toEqual([]);
+			expect.soft(profile !== undefined && existsSync(profile), `profile ${profile} left`).toBe(false);
 		} finally {
 			await retireBunChrome(nativeClass);
 			// Only what this launch created, so a regression here leaks nothing into the host.
-			for (const path of [...launchedClones, ...(profile === undefined ? [] : [profile])])
-				rmSync(path, { recursive: true, force: true });
+			for (const path of [launch?.clone, launch?.profile])
+				if (path !== undefined) rmSync(path, { recursive: true, force: true });
 		}
 	});
 });
