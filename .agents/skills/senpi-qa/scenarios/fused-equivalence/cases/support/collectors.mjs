@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { readJsonl } from "../../../../scripts/lib/common.mjs";
+import { withoutWitnessEntries } from "./witness.mjs";
 
 /** Credential-bearing headers: compared as hashes of their values only (O4). */
 const CREDENTIAL_HEADERS = new Set([
@@ -49,7 +50,8 @@ const isSurfacesEvent = (event) => event.type === "loaded_surfaces_changed";
  */
 const isHostHealthEvent = (event) => event.type === "host_stalled";
 
-const transcript = (file) => (file && existsSync(file) ? readJsonl(readFileSync(file, "utf8")) : []);
+const transcript = (file) =>
+	withoutWitnessEntries(file && existsSync(file) ? readJsonl(readFileSync(file, "utf8")) : []);
 
 /** Provider requests: the fake model server's, or those of the provider fixture a case serves itself (E19 Cursor). */
 const modelRequests = (run) =>

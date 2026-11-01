@@ -2,12 +2,28 @@
 // `witness.pipeline`, asserted on its own.
 //
 // Contract for the seam that will write it: one session entry `{ type: "custom", customType: "execution-pipeline",
-// data: { pipeline: "legacy" | "prepared", toolCallId } }` per dispatched tool call. Before that seam exists no entry is
+// data: { pipeline: "legacy" | "prepared", toolCallId } }` per call entering the selected pipeline. Before that seam exists no entry is
 // written, and every call runs the legacy agent loop, so the reader reports `legacy` with `source: "no-seam"`.
 import { existsSync, readFileSync } from "node:fs";
 import { readJsonl } from "../../../../scripts/lib/common.mjs";
 
 export const WITNESS_CUSTOM_TYPE = "execution-pipeline";
+
+/** Receipt entries do not change behavioral history, including its parent links. */
+export function withoutWitnessEntries(entries) {
+	const parents = new Map(
+		entries
+			.filter((entry) => entry.type === "custom" && entry.customType === WITNESS_CUSTOM_TYPE)
+			.map((entry) => [entry.id, entry.parentId]),
+	);
+	return entries
+		.filter((entry) => !(entry.type === "custom" && entry.customType === WITNESS_CUSTOM_TYPE))
+		.map((entry) => {
+			let parentId = entry.parentId;
+			while (parents.has(parentId)) parentId = parents.get(parentId);
+			return parentId === entry.parentId ? entry : { ...entry, parentId };
+		});
+}
 
 /** @returns {{ pipeline: string, source: "entries" | "no-seam", calls: Array<{ toolCallId: string, pipeline: string }> }} */
 export function readWitness(sessionFile) {
