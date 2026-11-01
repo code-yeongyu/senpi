@@ -98,7 +98,7 @@
 		"hosted-git-info": "10.1.1",
 		"ignore": "7.0.9",
 		"jiti": "2.7.0",
-		"minimatch": "10.2.6",
+		"minimatch": "11.0.3",
 		"proper-lockfile": "4.1.2",
 		"re2js": "2.8.6",
 		"semver": "7.8.5",
