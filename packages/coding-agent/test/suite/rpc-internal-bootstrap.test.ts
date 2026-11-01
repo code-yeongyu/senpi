@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Duplex } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
@@ -42,34 +43,184 @@ function start(runtime: string, args: string[] = [], env: Readonly<Record<string
 	return { child, stderr: () => stderr };
 }
 
-function message(child: ChildProcess): Promise<unknown> {
+// senpi#4737: reject failures at exit, but let clean exits drain IPC through close.
+function message(child: ChildProcess, stderr: () => string): Promise<unknown> {
 	return new Promise((resolve, reject) => {
 		const received = (value: unknown) => {
 			cleanup();
 			resolve(value);
 		};
-		const exited = (code: number | null) => {
+		const exited = (code: number | null, signal: NodeJS.Signals | null, drained = false) => {
+			if (!drained && code === 0 && signal === null) return;
 			cleanup();
-			reject(new Error(`bootstrap exited ${code} before reporting`));
+			const reason = `bootstrap exited ${code} (signal ${signal ?? "none"}) before reporting`;
+			const error = new Error(`${reason}\n${stderr() || "(no stderr)"}`);
+			if (!drained) {
+				child.once("close", () => {
+					error.message = `${reason}\n${stderr() || "(no stderr)"}`;
+				});
+			}
+			reject(error);
+		};
+		const closed = (code: number | null, signal: NodeJS.Signals | null) => exited(code, signal, true);
+		const failed = (cause: Error) => {
+			cleanup();
+			reject(new Error(`bootstrap failed to spawn before reporting\n${stderr() || "(no stderr)"}`, { cause }));
 		};
 		const cleanup = () => {
 			child.off("message", received);
 			child.off("exit", exited);
+			child.off("close", closed);
+			child.off("error", failed);
 		};
 		child.once("message", received);
 		child.once("exit", exited);
+		child.once("close", closed);
+		child.once("error", failed);
 	});
 }
 
 // senpi#3795: real socketpair stdin, on both runtimes; no inherited agent profile.
 describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => {
+	// senpi#4737: exit may precede the last IPC message; close is the clean-exit boundary.
+	it("delivers IPC delayed until after a clean exit", async () => {
+		const child = spawn("node", ["-e", 'process.send({ type: "eof" }); process.exit(0);'], {
+			stdio: ["ignore", "ignore", "pipe", "ipc"],
+		});
+		children.push(child);
+		const emit = child.emit.bind(child);
+		let pending: unknown[] | undefined;
+		let exitDelivered = false;
+		let messageAfterExit = false;
+		// Delay only delivery, not the real child or its IPC bytes. Preserve message-before-close ordering.
+		child.emit = (event: string | symbol, ...args: unknown[]) => {
+			if (event === "message" && !exitDelivered) {
+				pending = args;
+				return true;
+			}
+			if (event === "message") messageAfterExit = exitDelivered;
+			const result = emit(event, ...args);
+			if (event === "exit") {
+				exitDelivered = true;
+				if (pending !== undefined) {
+					messageAfterExit = true;
+					emit("message", ...pending);
+					pending = undefined;
+				}
+			}
+			return result;
+		};
+		const close = once(child, "close");
+		try {
+			await expect(message(child, () => "")).resolves.toEqual({ type: "eof" });
+			expect(messageAfterExit).toBe(true);
+		} finally {
+			await close;
+			child.emit = emit;
+		}
+	});
+
+	it("rejects a clean exit without a report only after close", async () => {
+		const child = spawn("node", ["-e", "process.exit(0);"], {
+			stdio: ["ignore", "ignore", "pipe", "ipc"],
+		});
+		children.push(child);
+		let closed = false;
+		child.once("close", () => {
+			closed = true;
+		});
+		const close = once(child, "close");
+		try {
+			await message(child, () => "").then(
+				() => {
+					throw new Error("missing report accepted");
+				},
+				(error: unknown) => {
+					expect(error).toBeInstanceOf(Error);
+					expect(closed).toBe(true);
+				},
+			);
+		} finally {
+			await close;
+		}
+	});
+
+	// senpi#4737: a descendant owns stderr until explicitly released, independently of its parent's exit.
+	it("rejects on exit while a descendant holds stderr open", async () => {
+		const holder = `
+			const { Socket } = require("node:net");
+			const { writeSync } = require("node:fs");
+			const control = new Socket({ fd: 3, readable: true, writable: false });
+			control.once("data", () => {
+				writeSync(2, "after-exit");
+				process.exit(0);
+			});
+			control.once("end", () => process.exit(0));
+			control.resume();
+			writeSync(2, "before-exit");
+			process.send("ready");
+		`;
+		const child = spawn(
+			"node",
+			[
+				"-e",
+				`
+			const { spawn } = require("node:child_process");
+			const holder = spawn(process.execPath, ["-e", ${JSON.stringify(holder)}], {
+				stdio: ["ignore", "ignore", "inherit", 3, "ipc"],
+			});
+			holder.once("message", () => process.send("ready"));
+			process.once("message", () => process.exit(7));
+		`,
+			],
+			{ stdio: ["ignore", "ignore", "pipe", "pipe", "ipc"] },
+		);
+		children.push(child);
+		const control = child.stdio[3] as Duplex;
+		let stderr = "";
+		child.stderr?.on("data", (data) => {
+			stderr += String(data);
+		});
+		const childStderr = child.stderr;
+		if (childStderr === null) throw new Error("bootstrap child has no stderr pipe");
+		const firstStderr = once(childStderr, "data");
+		let closed = false;
+		const close = once(child, "close").then(() => {
+			closed = true;
+		});
+		try {
+			await once(child, "message");
+			await firstStderr;
+			let failure: Error | undefined;
+			const report = message(child, () => stderr).catch((cause: Error) => {
+				failure = cause;
+			});
+			const exit = once(child, "exit");
+			child.send("exit");
+			await exit;
+			try {
+				// message's exit listener precedes ours, so its rejection handler has already run.
+				expect(failure).toBeInstanceOf(Error);
+				expect(failure?.message).toContain("before-exit");
+				expect(closed).toBe(false);
+			} finally {
+				control.end("release");
+				await close;
+				await report;
+			}
+			expect(failure?.message).toContain("after-exit");
+		} finally {
+			control.destroy();
+		}
+	});
+
 	for (const runtime of ["node", "bun"]) {
 		// senpi#4839: an independent gate holds the real Worker; wait results never fabricate readiness.
 		it.each(["timed-out", "ok"])(
 			`${runtime} rejects unready Worker after %s wait before closing stdin`,
 			async (result) => {
-				const { child } = start(runtime, [`readiness-unready-${result}`]);
-				const report = message(child);
+				const { child, stderr } = start(runtime, [`readiness-unready-${result}`]);
+				const report = message(child, stderr);
 				const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 				child.stdin?.end(Buffer.alloc(32, 7));
 				expect(await report).toMatchObject({
@@ -86,8 +237,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		);
 
 		it.each(["timed-out", "ok"])(`${runtime} accepts actual Worker readiness after %s wait`, async (result) => {
-			const { child } = start(runtime, [`readiness-ready-${result}`]);
-			const report = message(child);
+			const { child, stderr } = start(runtime, [`readiness-ready-${result}`]);
+			const report = message(child, stderr);
 			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 			child.stdin?.write(Buffer.alloc(32, 7));
 			expect(await report).toMatchObject({
@@ -103,8 +254,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		});
 
 		it.each([0, 7])(`${runtime} restores stdin and releases ready Worker after a %i-byte key`, async (length) => {
-			const { child } = start(runtime, ["readiness-ready-ok"]);
-			const report = message(child);
+			const { child, stderr } = start(runtime, ["readiness-ready-ok"]);
+			const report = message(child, stderr);
 			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 			child.stdin?.end(Buffer.alloc(length, 7));
 			expect(await report).toMatchObject({
@@ -120,8 +271,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		});
 
 		it(`${runtime} refuses a null restore failure before application startup`, async () => {
-			const { child } = start(runtime, ["readiness-restore-error"]);
-			const report = message(child);
+			const { child, stderr } = start(runtime, ["readiness-restore-error"]);
+			const report = message(child, stderr);
 			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 			child.stdin?.end(Buffer.alloc(32, 7));
 			expect(await report).toMatchObject({
@@ -138,7 +289,7 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 
 		it(`${runtime} restores null stdin and its inherited-stdin descendant completes while the writer lives`, async () => {
 			const { child, stderr } = start(runtime);
-			const ready = message(child);
+			const ready = message(child, stderr);
 			child.stdin?.write(Buffer.alloc(32, 7));
 			const result = await ready;
 			expect(result).toMatchObject({ type: "ready", key: "07".repeat(32), stdinNull: true, catCode: 0 });
@@ -150,11 +301,11 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		});
 
 		it.skipIf(process.platform !== "darwin")(`${runtime} delivers reopened-stdin EOF`, async () => {
-			const { child } = start(runtime);
-			const ready = message(child);
+			const { child, stderr } = start(runtime);
+			const ready = message(child, stderr);
 			child.stdin?.write(Buffer.alloc(32, 7));
 			await ready;
-			const eof = message(child);
+			const eof = message(child, stderr);
 			const exit = once(child, "exit");
 			child.stdin?.end();
 			expect(await eof).toEqual({ type: "eof" });
@@ -163,7 +314,7 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 
 		it.each(["ENXIO", "ENOENT", "EACCES"])(`${runtime} restores stdin after reopen failure %s`, async (errno) => {
 			const { child, stderr } = start(runtime, ["fail-reopen", errno]);
-			const ready = message(child);
+			const ready = message(child, stderr);
 			child.stdin?.write(Buffer.alloc(32, 7));
 			expect(await ready).toMatchObject({ stdinNull: true, catCode: 0, lifetime: false });
 			expect(stderr()).toContain("identity poll");
@@ -175,8 +326,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		it.skipIf(runtime !== "node")(`${runtime} keeps the deadline worker parked while fd 0 is free`, async () => {
 			const cache = mkdtempSync(join(tmpdir(), "senpi-bootstrap-cache-"));
 			try {
-				const { child } = start(runtime, ["await-worker-io"], { NODE_COMPILE_CACHE: cache });
-				const ready = message(child);
+				const { child, stderr } = start(runtime, ["await-worker-io"], { NODE_COMPILE_CACHE: cache });
+				const ready = message(child, stderr);
 				child.stdin?.write(Buffer.alloc(32, 7));
 				expect(await ready).toMatchObject({ type: "ready", stdinNull: true, workerIoWhileStdinFree: false });
 				const exit = once(child, "exit");
