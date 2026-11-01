@@ -18,6 +18,8 @@ import {
 	recordProducerLoss,
 	runAdmissionProducer,
 } from "./compact-admission-producer.ts";
+import { reserveRow, retainDone } from "./compact-admission-retention.ts";
+import { settleProducedAdmission } from "./compact-admission-settlement.ts";
 export { CompactAdmissionError } from "./compact-admission-error.ts";
 export { ADMISSION_LIMITS } from "./compact-admission-storage.ts";
 
@@ -25,10 +27,21 @@ export { ADMISSION_LIMITS } from "./compact-admission-storage.ts";
 export class CompactAdmissions {
 	private readonly epochs = new Map<string, Epoch>();
 	private readonly limits: Readonly<{ entries: number; bytes: number }>;
+	/** Whether a finished admission still routes a stream of its socket epoch; such a row is never evicted. */
+	private readonly routed: (socketEpoch: string, admissionId: string) => boolean;
 	private readonly losses: ProducerLosses = { abandoned: 0, releaseFailed: 0 };
+	private retiredOverflow = 0;
 
 	status() {
-		return { ...this.losses };
+		return { ...this.losses, retiredOverflow: this.retiredOverflow };
+	}
+
+	/** RULING-113 residual: a forgotten ID is indistinguishable from a fresh open, so the first loss is logged. */
+	private overflowRetired(): void {
+		if (this.retiredOverflow++ === 0)
+			process.stderr.write(
+				`senpi rpc admission retired-ID ring overflowed (${ADMISSION_LIMITS.retired} digests); older IDs are forgotten\n`,
+			);
 	}
 
 	private end(epoch: Epoch): void {
@@ -36,8 +49,12 @@ export class CompactAdmissions {
 		epoch.producer.end(() => recordProducerLoss(this.losses, "abandoned", epoch.hot.size));
 	}
 
-	constructor(limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS) {
+	constructor(
+		limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS,
+		routed: (socketEpoch: string, admissionId: string) => boolean = () => false,
+	) {
 		this.limits = limits;
+		this.routed = routed;
 	}
 
 	private key(id: string): string {
@@ -54,8 +71,9 @@ export class CompactAdmissions {
 				directory: mkdtemp(join(tmpdir(), "senpi-admissions-")),
 				hot: new Map(),
 				failures: new Map(),
+				done: new Map(),
+				retired: new Set(),
 				tail: Promise.resolve(),
-				entries: 0,
 				ended: false,
 				waiting: 0,
 			};
@@ -87,6 +105,7 @@ export class CompactAdmissions {
 			const row = await readAdmissionRow(epoch, key);
 			if (row) {
 				if (row.fingerprint !== identity.fingerprint) throw new CompactAdmissionError("admission_conflict");
+				retainDone(epoch, key, identity.admissionId);
 				switch (row.state) {
 					case "complete":
 						if (row.answer === undefined) throw new CompactAdmissionError("storage_unavailable");
@@ -105,11 +124,13 @@ export class CompactAdmissions {
 					}
 				}
 			}
-			if (epoch.entries >= this.limits.entries || (epoch.entries + 1) * ADMISSION_LIMITS.row > this.limits.bytes)
-				throw new CompactAdmissionError("admission_limit");
+			if (epoch.retired.has(key)) throw new CompactAdmissionError("admission_retired");
 			if (epoch.hot.size >= ADMISSION_LIMITS.hot) throw new CompactAdmissionError("admission_busy");
+			const capacity = Math.min(this.limits.entries, Math.floor(this.limits.bytes / ADMISSION_LIMITS.row));
+			const routed = (admissionId: string) => this.routed(identity.socketEpoch, admissionId);
+			if (!(await reserveRow(epoch, capacity, routed, () => this.overflowRetired())))
+				throw new CompactAdmissionError("admission_limit");
 			await writeAdmissionRow(epoch, key, { state: "pending", fingerprint: identity.fingerprint });
-			epoch.entries++;
 			const pending = Promise.withResolvers<Answer>();
 			void pending.promise.catch(() => {});
 			epoch.hot.set(key, pending);
@@ -131,45 +152,13 @@ export class CompactAdmissions {
 				(value) =>
 					value.release().catch((cause: unknown) => recordProducerLoss(this.losses, "releaseFailed", 1, cause)),
 			);
-			let value = produced.answer;
-			const cancelled = await this.serial(epoch, async () => {
-				const row = await readAdmissionRow(epoch, key);
-				const retired = epoch.ended || row?.state === "cancelled";
-				const persist = async () => {
-					const answer = JSON.stringify(value);
-					if (Buffer.byteLength(answer) > 65_536) throw new CompactAdmissionError("storage_unavailable");
-					await writeAdmissionRow(epoch, key, {
-						state: retired ? "cancelled" : "complete",
-						fingerprint: identity.fingerprint,
-						answer,
-					});
-				};
-				value = produced?.refusal?.() ?? value;
-				await persist();
-				// Overflow during the durable write is a terminal, replayable refusal, not a fresh attempt.
-				const refused = produced?.refusal?.();
-				if (refused && JSON.stringify(refused) !== JSON.stringify(value)) {
-					value = refused;
-					await persist();
-				}
-				if (retired || epoch.ended || refused) return true;
-				// RULING-93: durable terminal row FIRST, synchronous activation SECOND. A crash
-				// between them ends this connection, which retires its subscription and pending buffer.
-				try {
-					produced?.activate?.();
-				} catch (cause) {
-					process.stderr.write(
-						`senpi rpc admission activation failed; releasing subscription: ${cause instanceof Error ? cause.message : String(cause)}\n`,
-					);
-					epoch.failures.set(key, {
-						state: "failed",
-						fingerprint: identity.fingerprint,
-						failure: "storage_unavailable",
-					});
-					throw new CompactAdmissionError("storage_unavailable");
-				}
-				return false;
-			});
+			const { value, cancelled } = await settleProducedAdmission(
+				epoch,
+				key,
+				identity.fingerprint,
+				produced,
+				(action) => this.serial(epoch, action),
+			);
 			if (cancelled) {
 				const release = produced.release;
 				produced = undefined;
@@ -202,6 +191,7 @@ export class CompactAdmissions {
 			throw failure;
 		} finally {
 			epoch.hot.delete(key);
+			retainDone(epoch, key, identity.admissionId);
 		}
 	}
 
@@ -218,7 +208,7 @@ export class CompactAdmissions {
 		if (!epoch) return "unknown";
 		return this.serial(epoch, async () => {
 			const row = await readAdmissionRow(epoch, key);
-			if (!row) return "unknown";
+			if (!row) return epoch.retired.has(key) ? "already_complete" : "unknown";
 			switch (row.state) {
 				case "complete":
 				case "failed":

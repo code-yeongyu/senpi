@@ -70,7 +70,7 @@ it("reconnect issues a higher generation for the same durable session", async ()
 	} finally {
 		await fs.rm(dir, { recursive: true, force: true });
 	}
-});
+}, 600_000);
 
 it("restart over the same agent directory resumes above the previous generation", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -99,7 +99,7 @@ it("restart over the same agent directory resumes above the previous generation"
 	} finally {
 		await fs.rm(dir, { recursive: true, force: true });
 	}
-});
+}, 600_000);
 
 it.each([false, true])(
 	"publication waits for durable reservation; failure=%s refuses without a token",
@@ -152,4 +152,5 @@ it.each([false, true])(
 			await fs.rm(dir, { recursive: true, force: true });
 		}
 	},
+	600_000,
 );

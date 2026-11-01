@@ -6,6 +6,8 @@ import { attachJsonlLineReader } from "../../../src/modes/rpc/jsonl.ts";
 import { RpcClient } from "../../../src/modes/rpc/rpc-client.ts";
 import { socketSink } from "../../../src/modes/rpc/socket-sink.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
+import { maskServerIdentity, replaceRoot } from "./4272-admission-golden-support.ts";
+import { listenOnShortSocket } from "./4272-rpc-client-admission-support.ts";
 
 const FIXTURES = new URL("../../../docs/engine-socket/fixtures/admission-routes/", import.meta.url);
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
@@ -20,12 +22,13 @@ afterEach(() => {
 // frames: fields, ordering, framing and payload bytes otherwise stay untouched.
 function normalize(bytes: string, root: string): string {
 	const ids = new Map<string, string>();
-	const uuid = bytes
-		.replaceAll(root, "<root>")
-		.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
+	const uuid = replaceRoot(bytes, root).replace(
+		/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+		(id) => {
 			if (!ids.has(id)) ids.set(id, `<uuid-${ids.size + 1}>`);
 			return ids.get(id) ?? id;
-		});
+		},
+	);
 	const entries = new Map<string, string>();
 	return uuid
 		.replace(/("(?:id|parentId|leafId)":")([0-9a-f]{8})(")/g, (_all, before: string, id: string, after: string) => {
@@ -39,7 +42,6 @@ function normalize(bytes: string, root: string): string {
 async function record(flag: "0" | "1"): Promise<Record<string, string>> {
 	vi.stubEnv(FLAG, flag);
 	await using host = await statusHost();
-	const socketPath = join(dirname(host.cwd), "golden.sock");
 	const requests: string[] = [];
 	const frames: string[] = [];
 	const handlers: Promise<void>[] = [];
@@ -60,8 +62,8 @@ async function record(flag: "0" | "1"): Promise<Record<string, string>> {
 			void handled.catch((cause: unknown) => failures.push(cause));
 		});
 	});
-	await new Promise<void>((resolve) => server.listen(socketPath, resolve));
-	const client = new RpcClient({ socketPath });
+	const listener = await listenOnShortSocket(server, "golden.sock");
+	const client = new RpcClient({ socketPath: listener.socketPath });
 	const subscriber = host.client("subscriber");
 	try {
 		await client.start();
@@ -88,7 +90,7 @@ async function record(flag: "0" | "1"): Promise<Record<string, string>> {
 		await client.stop();
 		host.writer.unregisterConnection("rpc-client");
 		await host.core.router.releaseConnection("rpc-client");
-		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await listener.close();
 	}
 }
 
@@ -110,12 +112,15 @@ it("T7/X06 golden h: absent admissionId preserves every legacy producer frame an
 	);
 	lines[0] = JSON.stringify(info);
 	absent.rpcClientFrames = lines.join("\n") + "\n";
-	if (process.env.SENPI_PRINT_ADMISSION_GOLDEN === "1") console.log(JSON.stringify({ legacy, absent }));
+	// The fixture pins the frames, not the release's serverVersion or its capability list (see maskServerIdentity).
+	const pinned = Object.fromEntries(Object.entries(legacy).map(([name, bytes]) => [name, maskServerIdentity(bytes)]));
+	if (process.env.SENPI_PRINT_ADMISSION_GOLDEN === "1")
+		console.log(`ADMISSION_GOLDEN_H ${JSON.stringify(pinned)}`, JSON.stringify({ legacy, absent }));
 	expect(absent).toEqual(legacy);
 	expect(Object.values(legacy).every((bytes) => bytes.length > 0)).toBe(true);
 	expect(JSON.stringify(legacy)).not.toContain("admissionId");
 	const fixture = JSON.parse(await readFile(new URL("h-legacy.json", FIXTURES), "utf8")) as unknown;
-	expect(legacy).toEqual(fixture);
+	expect(pinned).toEqual(fixture);
 	const index = JSON.parse(await readFile(new URL("index.json", FIXTURES), "utf8")) as { cases: string[] };
 	expect(index.cases).toContain("h-legacy.json");
 	const manifest = JSON.parse(await readFile(new URL("../../../../package.json", FIXTURES), "utf8")) as {

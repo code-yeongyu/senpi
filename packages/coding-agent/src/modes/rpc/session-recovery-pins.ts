@@ -85,7 +85,7 @@ export class SessionRecoveryPins {
 		const socketEpoch = this.peers.socketEpoch(id);
 		const ordinal = this.peers.ordinals(id)?.get(sessionId);
 		if (socketEpoch !== undefined && ordinal !== undefined)
-			this.checkpoints.retireRoute({ socketEpoch, sessionId }, admissionOf(ordinal));
+			this.checkpoints.retireRoute({ socketEpoch, sessionId }, admissionOf(ordinal), "client_detach");
 	}
 
 	/**

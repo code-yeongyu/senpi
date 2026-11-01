@@ -30,7 +30,15 @@ export interface RawClient {
 const DEADLINE_MS = EVENT_SAFETY_MS;
 
 export async function statusHost(
-	options: { supportsCompact?: (profile?: { cwd: string }) => boolean; capabilities?: string[] } = {},
+	options: {
+		supportsCompact?: (profile?: { cwd: string }) => boolean;
+		capabilities?: string[];
+		/**
+		 * The default bound of every waitFor/request on this host. A suite whose tests run under a shorter budget than
+		 * EVENT_SAFETY_MS passes one below that budget, so a hang fails by naming its predicate, not as a test timeout.
+		 */
+		deadlineMs?: number;
+	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-status-"));
 	const cwd = join(scratch, "cwd");
@@ -108,7 +116,10 @@ export async function statusHost(
 			},
 			waitForBackpressure: async () => {},
 		});
-		const waitFor = (predicate: (record: WireRecord) => boolean, ms = DEADLINE_MS): Promise<WireRecord> => {
+		const waitFor = (
+			predicate: (record: WireRecord) => boolean,
+			ms = options.deadlineMs ?? DEADLINE_MS,
+		): Promise<WireRecord> => {
 			const seen = inbox.find(predicate);
 			if (seen) return Promise.resolve(seen);
 			return new Promise((resolve, reject) => {

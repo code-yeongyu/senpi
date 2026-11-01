@@ -40,6 +40,7 @@ it("RULING-94 RpcClient surfaces local unknown and server-retired admissions as 
 			sessionId: opened.sessionId,
 		},
 		"retired",
+		"client_detach",
 	);
 	host.writer.unregisterAdmission("rpc-client", "retired");
 	const from = frames.length;

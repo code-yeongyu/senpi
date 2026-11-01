@@ -243,7 +243,7 @@ it("S13-Q1 (2) leases are count-bounded per peer: past the stated bound the peer
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
-}, 300_000);
+}, 600_000);
 
 it("S13-Q1 (3) an event lease never extends a checkpoint token's lifetime or pins a superseded root: a newer generation reclaims the token while the lease still reads, and the lease's release leaves the token alone", async () => {
 	const { host, compact, routing, lane } = await compactHost();

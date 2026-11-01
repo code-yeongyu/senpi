@@ -1,4 +1,5 @@
 // Part of #4272, RULING-112: flag off, in process == worker, both lane-free (legacy) even for a session with the lane.
+import { existsSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
@@ -75,7 +76,10 @@ it("in process: flag off, a session with the structured lane owns no acceptance 
 // Node only, like the other real-isolate cases: under the Bun vitest path a real isolate's structured lane sends no frame.
 it.skipIf(process.versions.bun !== undefined)(
 	"worker: flag off, the same session owns no acceptance lane and delivers the in-process legacy records",
-	async () => {
+	async ({ skip }) => {
+		// The isolate loads the built faux provider (packages/ai/dist), which a source-only checkout does not have.
+		if (!existsSync(builtFauxPath))
+			skip(`needs the built faux provider at ${builtFauxPath}: build packages/ai first`);
 		vi.stubEnv(FLAG, "0");
 		const worker = await workerTurn();
 		const inProcess = await inProcessTurn();

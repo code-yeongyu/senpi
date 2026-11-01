@@ -12,7 +12,7 @@
 			"cwd": "<root>/cwd",
 			"sessionPath": "<root>/cwd/golden.jsonl",
 			"admissionId": "golden-b",
-			"id": "peer-3"
+			"id": "peer-4"
 		}
 	],
 	"answers": [
@@ -47,21 +47,37 @@
 					"componentRef": "manifest"
 				}
 			},
-			"id": "peer-3"
+			"id": "peer-4"
 		}
 	],
 	"suffix": [
 		{
 			"type": "agent_idle",
 			"sessionId": "rpc-1",
-			"admissionId": "golden-a",
-			"generation": 1
-		},
-		{
-			"type": "agent_idle",
-			"sessionId": "rpc-1",
 			"admissionId": "golden-b",
 			"generation": 1
 		}
-	]
+	],
+	"retired": {
+		"request": {
+			"type": "reset_stream",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"id": "peer-5"
+		},
+		"answer": {
+			"id": "peer-5",
+			"type": "response",
+			"command": "reset_stream",
+			"success": false,
+			"error": "unknown_admission",
+			"errorCode": "unknown_admission",
+			"errorData": {
+				"code": "unknown_admission",
+				"admissionId": "golden-a"
+			},
+			"code": "unknown_admission",
+			"admissionId": "golden-a"
+		}
+	}
 }

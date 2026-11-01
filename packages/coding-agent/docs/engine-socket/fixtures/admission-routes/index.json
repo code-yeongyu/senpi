@@ -10,6 +10,7 @@
 		"f-subscribe.json",
 		"g-cancelled.json",
 		"h-legacy.json",
-		"i-live-identity.json"
+		"i-live-identity.json",
+		"i-reset-stream.json"
 	]
 }

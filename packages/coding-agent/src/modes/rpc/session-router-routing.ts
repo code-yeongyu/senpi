@@ -59,8 +59,7 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 		const peer = host.writer.currentConnection();
 		if (command.capabilities !== undefined && peer !== undefined)
 			command = { ...command, capabilities: [...(host.pendingCapabilities.get(peer) ?? [])] };
-		if (command.id === undefined && command.capabilities === undefined && compactUpdatesEnabled())
-			return Promise.resolve(undefined);
+		if (command.id === undefined && command.capabilities === undefined) return Promise.resolve(undefined);
 	}
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.
