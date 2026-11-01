@@ -112,16 +112,20 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		const socketEpoch = this.fanout.get(target)?.socketEpoch;
 		if (!events || !lane || admissionId === undefined || socketEpoch === undefined) return { line: line.text };
 		if (!this.fanout.connectionHas(target, COMPACT_EVENTS_CAPABILITY)) return { line: line.text };
-		const materializer = materializerLine(this.fanout, this.required, target, sessionId, record);
+		// RULING-120 (#5331): only this compact peer's copy carries the ids the settled overlay pages for its message.
+		const identity = lane.identities.of(Reflect.get(record, "type"), lane.acceptedSequence);
+		const stamped = identity ? { ...record, ...identity } : record;
+		const stampedLine = identity ? new RecordLine(stamped) : line;
+		const materializer = materializerLine(this.fanout, this.required, target, sessionId, stamped);
 		if (materializer) return materializer;
-		const built = line.built;
+		const built = stampedLine.built;
 		const size =
-			built === undefined ? jsonSize(record) : { bytes: Buffer.byteLength(built) - 1, units: built.length - 1 };
-		if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES) return { line: line.text };
+			built === undefined ? jsonSize(stamped) : { bytes: Buffer.byteLength(built) - 1, units: built.length - 1 };
+		if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES) return { line: stampedLine.text };
 		const at = { sessionEpoch: lane.sessionEpoch, sequence: lane.acceptedSequence };
 		const routes = this.ordinaryRoute(target, sessionId)?.routes ?? [];
 		const owner = routes[0] ?? admissionId;
-		const minted = events.mint({ socketEpoch, sessionId, admissionId: owner }, at, record, built ?? size);
+		const minted = events.mint({ socketEpoch, sessionId, admissionId: owner }, at, stamped, built ?? size);
 		if (minted.ok) {
 			const { id } = minted.value;
 			const held = events.claim({ socketEpoch, sessionId }, id, owner);

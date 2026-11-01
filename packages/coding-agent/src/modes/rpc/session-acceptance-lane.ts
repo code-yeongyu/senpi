@@ -5,6 +5,7 @@ import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import { AcceptedTranscript, type TranscriptRoot } from "./accepted-transcript.ts";
 import type { CanonicalUnit } from "./compact-lane-transitions.ts";
+import { MessageIdentities } from "./compact-message-identity.ts";
 import { CompactSettledMessages, type SettledDiagnostic, type SettledRoot } from "./compact-settled-messages.ts";
 import type { FrozenCompactState } from "./compact-state-view.ts";
 import { CompactContentStore, type CompactContentStoreOptions } from "./compact-content-store.ts";
@@ -76,6 +77,8 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	private turnId: string | null = null;
 	private correlation: AcceptedCorrelation | null = null;
 	private refusedCorrelations = 0;
+	/** RULING-120 (#5331): the settled ids of the record being delivered, read at `acceptedSequence`. */
+	readonly identities = new MessageIdentities();
 	private retiredAs: "close" | "worker_failed" | undefined;
 	private storageRetired = false;
 	private nonce: string = randomUUID();
@@ -164,10 +167,12 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	/** Transcript transitions committed before the record they arrive with; each takes its own sequence (C1.1). */
 	applyTranscript(transitions: readonly TranscriptTransition[]): void {
 		if (this.retired || this.epoch === "") return;
+		this.identities.batch();
 		for (const transition of transitions) {
 			this.sequence += 1;
 			this.transcript.apply(transition);
-			foldCompactTransition(this.compact(), transition, this.transcript.available, this.nonce);
+			const owner = foldCompactTransition(this.compact(), transition, this.transcript.available, this.nonce);
+			this.identities.joined(transition, owner);
 		}
 	}
 
@@ -184,6 +189,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		canonicalRefused = false,
 	): AcceptedRef | undefined {
 		const type = field(record, "type");
+		this.identities.clear();
 		if (this.retired || this.epoch === "" || typeof type !== "string" || !SEQUENCED.has(type)) return undefined;
 		this.beforeAccept?.(record);
 		const folds = !canonicalRefused && this.current.admits(record, type);
@@ -201,16 +207,10 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		if (type === "turn_end" || type === "agent_end") this.turnId = null;
 		const messageId = type.startsWith("message_") && this.settled.valid(carrier) ? carrier.messageId : null;
 		if (type === "message_start") this.activeMessageId = messageId;
-		if (folds)
-			foldCompactRecord(this.compact(), {
-				record,
-				type,
-				carrier,
-				canonical,
-				sequence: this.sequence,
-				turnId,
-				call: call?.projection,
-			});
+		if (folds) {
+			const at = { record, type, carrier, canonical, sequence: this.sequence, turnId, call: call?.projection };
+			this.identities.hold(type, this.sequence, record, foldCompactRecord(this.compact(), at));
+		}
 		if (type === "message_end" && this.activeMessageId === messageId) this.activeMessageId = null;
 		return {
 			sessionEpoch: this.epoch,

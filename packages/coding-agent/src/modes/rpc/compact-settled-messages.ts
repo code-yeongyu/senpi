@@ -1,6 +1,7 @@
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import type { CallProjection } from "./compact-call-model.ts";
+import type { SettledEnd } from "./compact-message-identity.ts";
 import { CompactContentIndex, type FrozenIndex, type IndexCursor } from "./compact-content-index.ts";
 import {
 	COMPACT_LEAF_CODE_UNITS,
@@ -108,7 +109,8 @@ export class CompactSettledMessages {
 	}
 
 	/**
-	 * Returns whether this end joined the message to its durable entry: the only end that settles persistence. `call`:
+	 * Returns the accepted end (undefined when refused): whether it joined the message to its durable entry, the only end
+	 * that settles persistence, and the identity its terminal row records (RULING-120). `call`:
 	 * the projection of the outstanding call this toolResult settles, stored with the terminal (Q2). The terminal is
 	 * serialized from `record`, so a record over the protocol depth limit is refused typed before anything changes
 	 * (RULING-59 C); the lane runs that check, and counts the refusal, before it calls this.
@@ -119,10 +121,11 @@ export class CompactSettledMessages {
 		sequence: number,
 		turnId: string | null,
 		call?: CallProjection,
-	): boolean {
+	): SettledEnd | undefined {
 		assertProtocolDepth(record);
 		if (!this.valid(carrier)) return this.reject("unknown_message");
-		const id = carrier.messageId;
+		const identity = { messageId: carrier.messageId, terminalSequence: sequence };
+		const id = identity.messageId;
 		if (this.keys.has(`end:${id}`) || this.keys.has(`settled:${id}`)) return this.reject("duplicate_end");
 		const owned = this.keys.get(`owner:${id}`);
 		if (carrier.durableEntryId && owned !== undefined && owned !== carrier.durableEntryId)
@@ -135,7 +138,7 @@ export class CompactSettledMessages {
 		}
 		if (this.keys.has(`owner:${id}`)) {
 			this.settle(id);
-			return joined;
+			return { joined, identity };
 		}
 		// The call projection is owned first: a refusal there leaves no payload leaf and no end marker behind.
 		const projection = call ? this.rows.values.own(call) : null;
@@ -157,7 +160,7 @@ export class CompactSettledMessages {
 			kind: "terminal",
 			messageId: id,
 			turnId,
-			terminalSequence: sequence,
+			terminalSequence: identity.terminalSequence,
 			role,
 			runtimeItemKey: call?.runtimeItemKey ?? null,
 			entryId: null,
@@ -169,27 +172,31 @@ export class CompactSettledMessages {
 		for (const leaf of payload) this.store.adjust(leaf, -1, 0);
 		if (projection) this.store.adjust(projection.owner, -1, 0);
 		if (!["user", "assistant", "toolResult", "custom"].includes(role)) this.diagnose("unsupported_role");
-		return false;
+		return { joined: false, identity };
 	}
 
-	private reject(reason: SettledDiagnostic): false {
+	private reject(reason: SettledDiagnostic): undefined {
 		this.diagnose(reason);
-		return false;
+		return undefined;
 	}
 
-	fail(carrier: RecoveryCarrier | undefined, errorMessage: string): void {
+	/** Marks the message's pending terminal failed; returns the `messageId` that row carries, undefined for none. */
+	fail(carrier: RecoveryCarrier | undefined, errorMessage: string): { readonly messageId: string } | undefined {
 		if (!this.valid(carrier) || !this.keys.has(`terminal:${carrier.messageId}`))
-			return this.diagnose("unknown_message");
+			return this.reject("unknown_message");
 		this.rows.patch(`terminal:${carrier.messageId}`, { status: "failed", error: { errorMessage } });
+		return { messageId: carrier.messageId };
 	}
 
-	append(transition: Extract<TranscriptTransition, { kind: "append" }>): void {
+	/** Joins an owned append to its message; returns that message's id, the `messageId` of the join member it made. */
+	append(transition: Extract<TranscriptTransition, { kind: "append" }>): string | undefined {
 		const id = transition.owningMessageId;
-		if (id === undefined) return;
-		if (transition.recoveryEpoch !== this.epoch) return this.diagnose("retired_owner");
+		if (id === undefined) return undefined;
+		if (transition.recoveryEpoch !== this.epoch) return this.reject("retired_owner");
 		if (this.keys.has(`owner:${id}`) || this.keys.has(`settled:${id}`) || this.keys.has(`entry:${transition.id}`))
-			return this.diagnose("conflicting_owner");
+			return this.reject("conflicting_owner");
 		this.join(id, transition.id);
+		return id;
 	}
 
 	private join(messageId: string, entryId: string): void {
