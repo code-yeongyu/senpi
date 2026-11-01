@@ -63,7 +63,7 @@ export function advertisedCompactCapabilities(caps: readonly string[], supported
 	// RULING-111 (LEAK-E): with the flag off the launch capabilities are echoed exactly as on main.
 	if (!compactUpdatesEnabled()) return [...caps];
 	const legacy = caps.filter((cap) => cap !== COMPACT_UPDATES_CAPABILITY && cap !== COMPACT_EVENTS_CAPABILITY);
-	return compactUpdatesEnabled() && supported ? [...new Set([...legacy, ...COMPACT_PAIR])] : legacy;
+	return supported ? [...new Set([...legacy, ...COMPACT_PAIR])] : legacy;
 }
 
 export function declarationReply(record: object, selection: CompactSelection | undefined): object | undefined {
