@@ -772,6 +772,22 @@ synchronous cut requests refuse while that asynchronous reservation is pending.
   `reason: "superseded_token"` and `newerGeneration` while an operation still holds it, and `unknown_token` once
   it is reclaimed. The owner's other typed failures arrive as `recovery_repair_needed` or
   `recovery_storage_unavailable` with `errorData` carrying the failure. Every refusal happens before any byte is read.
+- The loaded transcript base (the entries a session was opened with, named by the catalog's `transcript/base`,
+  `opaque/base` and `source/base` members as `{source: "file", first: 0, count, idFingerprint}`) is paged under the
+  reserved ref `<catalogRoot>:base` (the manifest's `catalogRoot` with the `base` step; it is cut-scoped like every
+  ref, and it is pages only, never a catalog node or component read). Its bytes are one stamped row per base entry in
+  file order,
+  `{index, id, source: "file", parentId, kind, family}` followed by a newline, UTF-16LE like every component, so a
+  page of it is verified exactly like any other page. A client anchors the join to the catalog: the SHA-256 over
+  `kind NUL id LF` of every row, in order, is the catalog's `idFingerprint`. A line the loader parsed that is no
+  session entry is a row too (never dropped): its `kind` and `id` are the string forms of its `type` and `id`
+  (`"undefined"` when absent), its `parentId` null unless a string, and its `family` that of its kind. The host opens
+  the session file only for this route, asynchronously, verifies its identity, count, `idFingerprint` and a content
+  fingerprint the load took over the lines it read before the first page, and re-checks the identity and every row a
+  page re-derives against that open. Any change to the base since the load (replaced, truncated, missing, or any
+  edit to its lines, ids or content, before or after the first page) is `recovery_storage_unavailable` with `reason`
+  `base_file_replaced`, `base_file_truncated`, `base_file_missing` or `base_fingerprint_mismatch`, never stale rows. With a base present, the transcript, opaque and source families are
+  complete: their members are the catalog's rows of this epoch plus the base stream's rows of their family.
 
 **S14 repair policy (RULING-84 and RULING-87).** Success carries `data.repair`; a typed recovery failure carries
 `errorData.repair`, using the same `RecoveryRepairAdviceSchema` as the client package's
@@ -878,6 +894,47 @@ neither has pending nor holds is refused with `unknown_admission` before the com
 complete, not for `sessionId` or no longer on the session's stream is refused with `recovery_unknown_token` and
 `errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
 `recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
+
+**Admission IDs per socket (senpi#5274, RULING-113, RULING-117 and RULING-118).** A socket's admissions are capped by what is
+live, never by how many IDs it has used. At most 16 attempts run at once (`admission_admission_busy` past that). Running
+attempts plus routed admissions share 127 rows (128 rows within 16 MiB of 131,584-byte rows); a fresh attempt past
+them is refused `admission_admission_limit` (`errorData.reason: "admission_limit"`). A completed admission that no
+longer routes a stream stays in a least-recently-used row: an exact retry of a recent ID (C4.4) answers its stored
+result, opens nothing and replaces nothing, and an evicted ID answers `admission_admission_retired` (a 4,096-entry ring;
+an ID older than that is indistinguishable from a fresh one). A completed `open_session` or `attach_session` of a
+session this socket already routes REPLACES that route: the earlier admission receives no record after the new
+admission's baseline, its attachment is released, and `reset_stream` or `cancel_attempt` naming it answers
+`unknown_admission`. An ordinary route has no separate end record; a record already queued for the earlier ID is
+delivered whole. A re-open that is still pending, refused, cancelled or failed leaves the earlier route as it was.
+A detach (`close_session`, `release_attachment`, `detach_connection`) also ends the route: when the detaching request
+names the admission, its reply is tagged with that admission first and the route retires right after it, so the
+records sealed before the reply (a final `session_closed`) keep the tag too; the peer then receives no further records
+for that admission, and the admission no longer counts toward the cap. A route otherwise ends with its session or its
+socket. Routed rows are therefore bounded by the pending attempts plus the distinct live sessions the socket still
+holds, one row each however often it re-opens them: the 128th distinct held session on one socket is refused
+`admission_admission_limit`, re-opens of a routed session never run out, and a socket that attaches to and detaches
+from any number of distinct live sessions in turn is never refused.
+
+**Route retirement (senpi#5274, RULING-119).** The engine never retires a delivering route silently: every retire is
+either the direct result of a client action whose reply the client sees, or announced to that client by a typed record
+before the route stops delivering. Per path:
+
+- A completed re-open of the session by the same socket (RULING-117): a client action; the new open's reply.
+- A detach (`close_session`, `release_attachment`, `reclaim_session`, `detach_connection`; RULING-118): a client action;
+  the detach's reply.
+- An accepted `open_session` or `attach_session` that ends without completing (cancelled, refused or failed after it
+  was accepted, for example when its durable answer row cannot be written): announced by its own final reply,
+  `attempt_cancelled` or the `admission_<reason>` refusal, which then carries `admissionId` and `generation`. That reply
+  is the last record tagged with the admission; records the open delivered before it (`session_opened`, and a rolled-back
+  open's `session_closed` with `reason: "error"`) keep the tag, and the route retires right after it.
+- A mirror admission's route: retired only by `unsubscribe_sessions` or the subscribe's own `cancel_attempt` (client
+  actions), by a subscribe refused before activation, or with the socket. Before activation no mirror record is
+  delivered: the records wait in the subscription's pending buffer until the answer row is durable and activation runs
+  as the last step (`compact-admission-settlement.ts`). A socket's connection is unregistered before its subscriptions
+  drop, so that path retires no delivering route. A mirror therefore needs no end record of its own.
+- A session's close or park: announced by `session_closed` or `session_parked`, tagged with every route the session had
+  on the socket; the session's streams end with it.
+- A socket's end: nothing can be delivered on it any more; its streams end with it.
 
 #### interactive_user
 
@@ -6023,6 +6080,12 @@ Stores an API key for a provider. The response comes after the model registry ha
 
 ```json
 {"type": "login_api_key", "provider": "openrouter", "key": "<key>"}
+```
+
+A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"global"`) takes it as `region`, and the key is stored with that region exactly as the CLI's `/login` stores it. A region the provider does not offer, a region other than the one the host's environment sets (`KIMI_CODE_REGION` / `KIMI_CODE_OAUTH_HOST`), a provider whose login asks a second select, or a `region` for a provider whose key has none fails the command and stores nothing:
+
+```json
+{"type": "login_api_key", "provider": "kimi-coding", "key": "<key>", "region": "global"}
 ```
 
 A provider holds logins of one kind. If it had an OAuth login, the key replaces it: `auth.json` is backed up first, and the response `data` is `{replaced: "oauth", backupPath?}`, where `backupPath` is absent when the credential store is not a file (a failed backup fails the login instead). A key added over another key has no `data`.

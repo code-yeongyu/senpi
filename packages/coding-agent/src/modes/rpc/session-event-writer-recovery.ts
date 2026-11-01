@@ -1,4 +1,5 @@
 import type { EventLeases } from "./compact-event-leases.ts";
+import { captureAdmissionReply } from "./compact-admission-reply.ts";
 import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
 import { CompactRequiredStreams } from "./compact-required-streams.ts";
 import type { LegacyViewCursor } from "./legacy-view-cursor.ts";
@@ -80,7 +81,11 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 		actor.mirrorOwners.delete(subscriptionId);
 		this.unregisterSubscription(peer, subscriptionId);
 		for (const sessionId of this.fanout.acceptance.keys())
-			this.recoveryCheckpoints.retireRoute({ socketEpoch: registered.socketEpoch, sessionId }, admissionId);
+			this.recoveryCheckpoints.retireRoute(
+				{ socketEpoch: registered.socketEpoch, sessionId },
+				admissionId,
+				"mirror_unsubscribed",
+			);
 	}
 	unregisterSubscription(peer: string, subscriptionId: string): void {
 		const registered = this.fanout.get(peer);
@@ -124,9 +129,54 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 	}
 	/** Whether an admission still routes a stream of this peer incarnation: what `reset_stream` resolves (#5274). */
 	routesAdmission(socketEpoch: string, admissionId: string): boolean {
-		for (const sessionId of this.fanout.acceptance.keys())
-			if (this.recoveryCheckpoints.stream({ socketEpoch, sessionId })?.routes.includes(admissionId)) return true;
-		return false;
+		return this.recoveryCheckpoints.routesAdmission(socketEpoch, admissionId);
+	}
+	/**
+	 * RULING-117: a completed open becomes this socket's one route to its session. Answers how to end the open it
+	 * replaces, only while that open still routes the session's stream; a retry of the same id replaces nothing.
+	 */
+	supersedeOpen(
+		peer: string,
+		sessionId: string,
+		admissionId: string,
+		end: () => Promise<void>,
+	): (() => Promise<void>) | undefined {
+		const registered = this.fanout.get(peer);
+		const actor = registered?.actor;
+		if (!registered || !(actor instanceof AdmissionRoutingActor)) return undefined;
+		const previous = actor.opened.get(sessionId);
+		actor.opened.set(sessionId, { admissionId, end });
+		const stream = this.recoveryCheckpoints.stream({ socketEpoch: registered.socketEpoch, sessionId });
+		return previous && previous.admissionId !== admissionId && stream?.routes.includes(previous.admissionId)
+			? previous.end
+			: undefined;
+	}
+	/**
+	 * RULING-118: the socket stops holding the session (a detach), so its open's route retires and stops counting toward
+	 * the admission cap. A detach made by a request naming that admission (`close_session`) retires it only after the
+	 * request's reply is routed, so the reply and the records sealed before it keep the admission's tag.
+	 */
+	override detachConnectionFromSession(id: string, sessionId: string): void {
+		const registered = this.fanout.get(id);
+		const actor = registered?.actor;
+		const opened = actor instanceof AdmissionRoutingActor ? actor.opened.get(sessionId) : undefined;
+		const caller = registered && { socketEpoch: registered.socketEpoch, sessionId };
+		if (caller && actor instanceof AdmissionRoutingActor && opened) actor.opened.delete(sessionId);
+		// An open whose own release already retired its route (then detached) has nothing left to retire.
+		if (caller && actor instanceof AdmissionRoutingActor && opened && this.routesStream(caller, opened.admissionId)) {
+			const retire = () => {
+				this.recoveryCheckpoints.retireRoute(caller, opened.admissionId, "client_detach");
+				actor.admissions.delete(opened.admissionId);
+			};
+			const request = captureAdmissionReply();
+			if (request?.id !== undefined && request.peer === id && request.admissionId === opened.admissionId)
+				actor.deferRetire(request.id, retire);
+			else retire();
+		}
+		super.detachConnectionFromSession(id, sessionId);
+	}
+	private routesStream(caller: { socketEpoch: string; sessionId: string }, admissionId: string): boolean {
+		return this.recoveryCheckpoints.stream(caller)?.routes.includes(admissionId) === true;
 	}
 	/** Legacy views frozen for a peer's baseline and not yet released (R3.C6.4 accounting). */
 	get openLegacyViews(): number {

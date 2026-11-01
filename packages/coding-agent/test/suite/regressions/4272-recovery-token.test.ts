@@ -320,14 +320,14 @@ it("RULING-56 (4) retiring a route is idempotent: the admission's token is recla
 		status: checkpoints.status(),
 		liveRoots: lane.liveRoots,
 	});
-	checkpoints.retireRoute(caller, route.admissionId);
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
 	const once = snapshot();
 	expect(once).toEqual({
 		stream: { sessionEpoch: lane.sessionEpoch, generation: 1, routes: [] },
 		status: { open: 0, streams: 1, frozen: 1, reclaimed: 1, refused: {}, unavailable: {} },
 		liveRoots: 0,
 	});
-	checkpoints.retireRoute(caller, route.admissionId);
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
 	expect(snapshot(), "retire twice = retire once").toEqual(once);
 	expect(await checkpoints.readActive(token, caller)).toEqual(unknownToken);
 	checkpoints.release(token);
@@ -347,8 +347,8 @@ it("RULING-56 (4) an operation in flight on a retired route ends in a typed refu
 	const token = unwrap(checkpoints.freeze(route, lane)).token;
 	const reading = checkpoints.readActive(token, caller);
 	await hold.entered;
-	checkpoints.retireRoute(caller, route.admissionId);
-	checkpoints.retireRoute(caller, route.admissionId);
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
 	expect(lane.liveRoots, "the read in flight defers the reclaim").toBe(1);
 	hold.release();
 	expect(await within(reading)).toEqual({ ok: false, failure: { kind: "repair_needed", reason: "released" } });
