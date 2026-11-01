@@ -1,70 +1,36 @@
 import { checkpointComponents } from "./compact-catalog-families.ts";
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
+import { baseStream, openBaseBytes } from "./compact-recovery-base.ts";
 import { producePage, type RecoveryPage } from "./compact-recovery-bytes.ts";
 import {
 	type CatalogComponent,
 	type CatalogRead,
 	type CatalogRoot,
 	CompactRecoveryCatalog,
+	componentBytes,
 } from "./compact-recovery-catalog.ts";
 import {
-	type BoundedId,
 	catalogRootRef,
 	childRef,
-	type ContentDigest,
 	type ContentRef,
 	parseBoundedId,
 	parseContentRef,
+	parsePageRef,
 	protocolId,
 } from "./compact-recovery-ids.ts";
-import type { CheckpointToken, RecoveryRouteKind } from "./compact-recovery-types.ts";
+import {
+	type ManifestText,
+	type RecoveryManifest,
+	TEXT_FIELDS,
+	type TextField,
+} from "./compact-recovery-manifest-shape.ts";
+import type { CheckpointToken } from "./compact-recovery-types.ts";
 import { CompactValues } from "./compact-values.ts";
 import { VerifiedComponents } from "./compact-verified-components.ts";
 import { manifestPage } from "./compact-manifest-page.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 
-/** A manifest string: inline when it is a bounded protocol id, otherwise a ref to its exact stored value. */
-type ManifestText =
-	| { readonly id: BoundedId }
-	| { readonly ref: ContentRef; readonly length: number; readonly digest: ContentDigest };
-
-/**
- * The compact-v1 manifest (R4.B1): bounded scalar identity of one frozen checkpoint and the root of its catalog;
- * never the checkpoint or a list of its components. Every id is generated and bounded; a session id or transcript
- * id a user chose becomes a ref (RULING-57 Q2 (2)) and reads back exactly through the catalog.
- */
-export interface RecoveryManifest {
-	readonly format: "senpi-recovery-manifest";
-	readonly version: 1;
-	readonly socketEpoch: ManifestText;
-	readonly admissionId: ManifestText;
-	readonly routeKind: RecoveryRouteKind;
-	readonly session: ManifestText;
-	readonly sessionEpoch: ManifestText;
-	readonly generation: number;
-	readonly sequence: number;
-	readonly historyVersion: number;
-	readonly token: ManifestText;
-	readonly leaf: ManifestText | null;
-	readonly activeMessage: ManifestText | null;
-	readonly turn: ManifestText | null;
-	readonly checkpointDigest: ContentDigest;
-	readonly catalogRoot: ContentRef;
-	readonly catalogRootLength: number;
-}
-
-const TEXT_FIELDS = [
-	"socketEpoch",
-	"admissionId",
-	"session",
-	"sessionEpoch",
-	"token",
-	"leaf",
-	"activeMessage",
-	"turn",
-] as const;
-type TextField = (typeof TEXT_FIELDS)[number];
 const MANIFEST = protocolId("manifest");
 
 interface Built {
@@ -129,8 +95,9 @@ export class RecoveryManifests {
 	}
 
 	/**
-	 * One page of a component's bytes at a raw byte offset; a ref that names a node or nothing is `range`. A first open
-	 * verifies the component inside this request under its `signal`; it is cached only while the token still holds it.
+	 * One page of a component's bytes at a raw byte offset, or of the cut's loaded base under its reserved ref (S11c,
+	 * `compact-recovery-base.ts`); a ref that names a node or nothing is `range`. A first open verifies the source
+	 * inside this request under its `signal`; it is cached only while the token still holds it.
 	 */
 	page(
 		token: CheckpointToken,
@@ -146,17 +113,22 @@ export class RecoveryManifests {
 				offset,
 			);
 		const tokenId = token.id;
-		const parsed = parseContentRef(ref);
+		const target = parsePageRef(ref);
 		const built = this.ready.get(tokenId);
-		if (!parsed.ok || !built) throw new CompactReadError("range");
+		if (!target.ok || !built) throw new CompactReadError("range");
 		return lane.cutStorage(root, async (store, valid) => {
 			if (store.health.needsRecovery) await store.repair();
-			let bytes = this.verified.get(root, parsed.value);
+			let bytes = this.verified.get(root, target.value.ref);
 			if (!bytes) {
-				const read = await this.catalogs.read(store, built.root, parsed.value, valid, signal);
-				if (read.kind !== "component") throw new CompactReadError("range");
-				bytes = read.bytes;
-				if (this.ready.get(tokenId) === built) this.verified.set(tokenId, root, read.ref, bytes);
+				bytes =
+					target.value.kind === "base"
+						? await openBaseBytes(
+								baseStream(root.transcript, built.manifest.catalogRoot, target.value.ref),
+								valid,
+								signal,
+							)
+						: componentBytes(await this.catalogs.read(store, built.root, target.value.ref, valid, signal));
+				if (this.ready.get(tokenId) === built) this.verified.set(tokenId, root, target.value.ref, bytes);
 			}
 			return producePage(bytes, offset, valid);
 		});
