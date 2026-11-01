@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import type { JavaScriptKernelOptions } from "../src/kernels/js/local-module-loader.ts";
 import { resolveJavaScriptProcessCommand, runtimeNameOf } from "../src/kernels/js/process-worker.ts";
-import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
+import { PROCESS_STARTUP_DEADLINE_MS } from "../src/kernels/js/worker-startup.ts";
+import { NO_CELL_DEADLINE, parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
 import { kernels, trackedTempRoot } from "./js-process-fixtures.ts";
 
 /** A bun executable to run the kernel child under, when bun is installed: only bun can move fd 0 and fd 1. */
@@ -133,12 +134,12 @@ describe("JavaScriptKernel process isolation", () => {
 		async () => {
 			const root = await trackedTempRoot("senpi-js-process-basic-");
 			const kernel = processKernel({ cwd: root });
-			const first = await runJavaScriptCell(kernel, "const answer = 40 + 2");
+			const first = await runJavaScriptCell(kernel, "const answer = 40 + 2", NO_CELL_DEADLINE);
 			expect(kernel.mode).toBe("process");
 			expect(first.result).toMatchObject({ ok: true });
 			const pid = kernel.processPid;
 			expect(pid).toBeTypeOf("number");
-			const second = await runJavaScriptCell(kernel, "return answer");
+			const second = await runJavaScriptCell(kernel, "return answer", NO_CELL_DEADLINE);
 			expect(second.result).toMatchObject({ ok: true, valueRepr: "42" });
 
 			const toolRun = kernel.run({
@@ -159,7 +160,7 @@ describe("JavaScriptKernel process isolation", () => {
 			const interruption = await kernel.interrupt("test stop", "process-interrupt");
 			await expect(interruption.stateRetained).resolves.toBe(true);
 			await expect(stuck).resolves.toMatchObject({ ok: false });
-			const after = await runJavaScriptCell(kernel, "return 'still alive'");
+			const after = await runJavaScriptCell(kernel, "return 'still alive'", NO_CELL_DEADLINE);
 			expect(after.result).toMatchObject({ ok: true, valueRepr: '"still alive"' });
 
 			await kernel.close();
@@ -182,6 +183,7 @@ describe("JavaScriptKernel process isolation", () => {
 					`console.log("via-console-log");`,
 					`return "done";`,
 				].join("\n"),
+				NO_CELL_DEADLINE,
 			);
 			expect(cell.result).toMatchObject({ ok: true, valueRepr: '"done"' });
 			const text = cell.messages
@@ -192,7 +194,7 @@ describe("JavaScriptKernel process isolation", () => {
 			if (process.versions.bun !== undefined) expect(text).toContain("via-bun-write");
 			expect(text).toContain("via-console-log");
 
-			const next = await runJavaScriptCell(kernel, "return 6 * 7");
+			const next = await runJavaScriptCell(kernel, "return 6 * 7", NO_CELL_DEADLINE);
 			expect(parseJavaScriptResult(next.result)).toBe(42);
 		},
 		30_000,
@@ -203,7 +205,7 @@ describe("JavaScriptKernel process isolation", () => {
 			"survives a SIGSEGV of its child and runs the next cell on a replacement with the restart notice",
 			async () => {
 				const kernel = processKernel();
-				await runJavaScriptCell(kernel, "globalThis.beforeCrash = 'marked'");
+				await runJavaScriptCell(kernel, "globalThis.beforeCrash = 'marked'", NO_CELL_DEADLINE);
 				const pid = kernel.processPid;
 				expect(pid).toBeTypeOf("number");
 
@@ -215,7 +217,7 @@ describe("JavaScriptKernel process isolation", () => {
 				if (pid === undefined) throw new Error("the process-mode child had no pid");
 				await waitFor("crashed child exit", () => !pidAlive(pid));
 
-				const after = await runJavaScriptCell(kernel, "return typeof globalThis.beforeCrash");
+				const after = await runJavaScriptCell(kernel, "return typeof globalThis.beforeCrash", NO_CELL_DEADLINE);
 				expect(after.result).toMatchObject({ ok: true, valueRepr: '"undefined"' });
 				expect(after.result.kernelState).toBe("restarted");
 				expect(after.result.notice).toContain("kernel was restarted");
@@ -232,7 +234,7 @@ describe("JavaScriptKernel process isolation", () => {
 		"When a Linux kernel child crashes with SIGSEGV, then the crash is reported within 2 s and names the signal",
 		async () => {
 			const kernel = processKernel();
-			await runJavaScriptCell(kernel, "return 1");
+			await runJavaScriptCell(kernel, "return 1", NO_CELL_DEADLINE);
 
 			const started = performance.now();
 			const crashed = await runJavaScriptCell(kernel, 'process.kill(process.pid, "SIGSEGV")', 15_000);
@@ -310,7 +312,7 @@ describe("JavaScriptKernel process isolation", () => {
 		"leaves no child or process-group member behind after the session closes",
 		async () => {
 			const kernel = processKernel();
-			await runJavaScriptCell(kernel, "return 1");
+			await runJavaScriptCell(kernel, "return 1", NO_CELL_DEADLINE);
 			const pid = kernel.processPid;
 			if (pid === undefined) throw new Error("expected the kernel to expose its child pid");
 
@@ -413,10 +415,10 @@ return "done";`,
 		"refuses a kernel-tool definition when kernel tools are turned off, exactly as the worker does",
 		async () => {
 			const define = "tool(function add(a, b) { return a + b }); return 'defined'";
-			const off = await runJavaScriptCell(processKernel({ kernelToolsEnabled: false }), define);
+			const off = await runJavaScriptCell(processKernel({ kernelToolsEnabled: false }), define, NO_CELL_DEADLINE);
 			expect(off.result).toMatchObject({ ok: false });
 			if (!off.result.ok) expect(off.result.error.message).toContain("kernelTools.enabled is false");
-			const on = await runJavaScriptCell(processKernel(), define);
+			const on = await runJavaScriptCell(processKernel(), define, NO_CELL_DEADLINE);
 			expect(on.result).toMatchObject({ ok: true });
 			if (on.result.ok) expect(on.result.valueRepr).toContain("defined");
 		},
@@ -434,11 +436,12 @@ return "done";`,
 					'const child = Bun.spawnSync(["head", "-c", "4000000", "/dev/zero"], { stdout: "inherit" });',
 					"return child.exitCode",
 				].join("\n"),
+				NO_CELL_DEADLINE,
 			);
 			expect(cell.result).toMatchObject({ ok: true, valueRepr: "0" });
 			const text = cell.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
 			expect(text.split("\0").length - 1).toBe(4_000_000);
-			const next = await runJavaScriptCell(kernel, "return 1 + 1");
+			const next = await runJavaScriptCell(kernel, "return 1 + 1", NO_CELL_DEADLINE);
 			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
 		},
 		60_000,
@@ -461,19 +464,20 @@ return "done";`,
 				run.messages
 					.flatMap((message) => (message.type === "text" && message.stream === "stderr" ? [message.data] : []))
 					.join("");
-			const first = await runJavaScriptCell(kernel, "return 6 * 7");
+			const first = await runJavaScriptCell(kernel, "return 6 * 7", NO_CELL_DEADLINE);
 			expect(first.result).toMatchObject({ ok: true, valueRepr: "42" });
 			expect(stderrOf(first)).toContain("libc could not be loaded (synthetic dlopen failure)");
-			const next = await runJavaScriptCell(kernel, "globalThis.kept = 1; return kept + 1");
+			const next = await runJavaScriptCell(kernel, "globalThis.kept = 1; return kept + 1", NO_CELL_DEADLINE);
 			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
 			expect(stderrOf(next)).toBe("");
 			const crashed = await runJavaScriptCell(
 				kernel,
 				"setTimeout(() => { throw new Error('boom-in-fallback') }, 0); await new Promise(() => {})",
+				NO_CELL_DEADLINE,
 			);
 			expect(crashed.result).toMatchObject({ ok: false });
 			if (!crashed.result.ok) expect(crashed.result.error.message).toContain("boom-in-fallback");
-			const recovered = await runJavaScriptCell(kernel, "return 5");
+			const recovered = await runJavaScriptCell(kernel, "return 5", NO_CELL_DEADLINE);
 			expect(recovered.result).toMatchObject({ ok: true, valueRepr: "5" });
 		},
 		30_000,
@@ -486,14 +490,28 @@ return "done";`,
 			const pids = join(dir, "pids");
 			const firstStart = join(dir, "first-start");
 			// Named bun so the kernel treats it as the runtime it wraps. The first start never reports ready (as a child
-			// a starved host never schedules); every later start is the real runtime.
+			// a starved host never schedules); every later start is the real runtime, held past the first start's deadline.
 			const wrapper = join(dir, "bun");
 			writeFileSync(
 				wrapper,
-				`#!/bin/sh\necho $$ >> "${pids}"\nif [ ! -e "${firstStart}" ]; then : > "${firstStart}"; exec sleep 600; fi\nexec "${productChild()}" "$@"\n`,
+				`#!/bin/sh\necho $$ >> "${pids}"\nif [ ! -e "${firstStart}" ]; then : > "${firstStart}"; exec sleep 600; fi\nsleep 1.5\nexec "${productChild()}" "$@"\n`,
 				{ mode: 0o755 },
 			);
-			const kernel = processKernel({ processExecPath: wrapper, processStartupDeadlineMs: 1_000 });
+			// Only the first start's deadline is under test: the kernel reads the deadline once per start, so the
+			// replacement start gets the product default instead of the 1 s a loaded host cannot always meet.
+			let starts = 0;
+			const kernel = new JavaScriptKernel({
+				sessionId: `process-${crypto.randomUUID()}`,
+				cwd: process.cwd(),
+				parallelPoolWidth: 2,
+				isolation: "process",
+				processExecPath: wrapper,
+				get processStartupDeadlineMs() {
+					starts += 1;
+					return starts === 1 ? 1_000 : PROCESS_STARTUP_DEADLINE_MS;
+				},
+			});
+			kernels.add(kernel);
 			const started = Date.now();
 			const stuck = await runJavaScriptCell(kernel, "return 1");
 			expect(stuck.result).toMatchObject({ ok: false });
@@ -506,7 +524,7 @@ return "done";`,
 			} finally {
 				if (pidAlive(stuckPid)) process.kill(stuckPid, "SIGKILL");
 			}
-			const next = await runJavaScriptCell(kernel, "return 2");
+			const next = await runJavaScriptCell(kernel, "return 2", NO_CELL_DEADLINE);
 			expect(next.result).toMatchObject({ ok: true, valueRepr: "2" });
 		},
 		30_000,
@@ -516,7 +534,7 @@ return "done";`,
 		"still times out a cell whose kernel process stops being scheduled, replaces the process, and runs the next cell",
 		async () => {
 			const kernel = processKernel();
-			await runJavaScriptCell(kernel, "return 0");
+			await runJavaScriptCell(kernel, "return 0", NO_CELL_DEADLINE);
 			const frozenPid = kernel.processPid;
 			if (frozenPid === undefined) throw new Error("process kernel has no pid");
 			const started = Date.now();
@@ -535,7 +553,7 @@ return "done";`,
 			} finally {
 				if (pidAlive(frozenPid)) process.kill(frozenPid, "SIGKILL");
 			}
-			const next = await runJavaScriptCell(kernel, "return 3");
+			const next = await runJavaScriptCell(kernel, "return 3", NO_CELL_DEADLINE);
 			expect(next.result).toMatchObject({ ok: true, valueRepr: "3" });
 			expect(kernel.processPid).not.toBe(frozenPid);
 		},
@@ -554,7 +572,7 @@ return "done";`,
 				if (typeof address !== "object" || address === null) throw new Error("the probe server is not bound");
 				const url = `http://127.0.0.1:${address.port}/`;
 				const kernel = processKernel();
-				await runJavaScriptCell(kernel, "globalThis.keep = 41; return 1");
+				await runJavaScriptCell(kernel, "globalThis.keep = 41; return 1", NO_CELL_DEADLINE);
 				const pid = kernel.processPid;
 				const run = kernel.run({
 					cellId: "floating-fetch",
@@ -568,6 +586,7 @@ return "done";`,
 				const after = await runJavaScriptCell(
 					kernel,
 					"await new Promise((r) => setTimeout(r, 100)); return keep + 1",
+					NO_CELL_DEADLINE,
 				);
 				expect(after.result).toMatchObject({ ok: true, valueRepr: "42" });
 				expect(kernel.processPid).toBe(pid);
@@ -600,6 +619,7 @@ return "done";`,
 			const after = await runJavaScriptCell(
 				kernel,
 				"const before = ticks; await new Promise((r) => setTimeout(r, 150)); return [keep, ticks === before]",
+				NO_CELL_DEADLINE,
 			);
 			expect(after.result).toMatchObject({ ok: true, valueRepr: "[41,true]" });
 		},
@@ -610,10 +630,10 @@ return "done";`,
 		"settles a cell whose value is undefined, the way worker mode does",
 		async () => {
 			const kernel = processKernel();
-			const cell = await runJavaScriptCell(kernel, "await Promise.resolve()");
+			const cell = await runJavaScriptCell(kernel, "await Promise.resolve()", NO_CELL_DEADLINE);
 			expect(cell.result.ok ? "ok" : cell.result.error.message).toBe("ok");
 			if (cell.result.ok) expect(cell.result.valueRepr).toBeUndefined();
-			const next = await runJavaScriptCell(kernel, "return 4");
+			const next = await runJavaScriptCell(kernel, "return 4", NO_CELL_DEADLINE);
 			expect(next.result).toMatchObject({ ok: true, valueRepr: "4" });
 		},
 		20_000,
@@ -644,7 +664,7 @@ return "done";`,
 					},
 				},
 			});
-			const cell = await runJavaScriptCell(kernel, "return 1");
+			const cell = await runJavaScriptCell(kernel, "return 1", NO_CELL_DEADLINE);
 			expect(cell.result).toMatchObject({ ok: true });
 			expect(reads).toContain(kernel.processPid);
 			expect(cell.result.memory).toMatchObject({ measure: "footprint", liveBytes: 12 * 1024 * 1024 });
@@ -662,7 +682,7 @@ return "done";`,
 		kernels.add(kernel);
 		try {
 			expect(kernel.mode).toBe("worker");
-			const cell = await runJavaScriptCell(kernel, "return 7 * 6");
+			const cell = await runJavaScriptCell(kernel, "return 7 * 6", NO_CELL_DEADLINE);
 			expect(cell.result).toMatchObject({ ok: true, valueRepr: "42" });
 			expect(kernel.mode).toBe("worker");
 		} finally {
@@ -1063,7 +1083,7 @@ return "done";`,
 			const pending = kernel.run({
 				cellId: "burst",
 				code: `(await import("node:child_process")).execSync("head -c ${size} /dev/zero | tr '\\\\0' b", { stdio: "inherit" }); return "settled"`,
-				timeoutMs: 60_000,
+				timeoutMs: NO_CELL_DEADLINE,
 				onMessage: (message) => {
 					if (message.type === "text") bytes += message.data.length;
 				},
