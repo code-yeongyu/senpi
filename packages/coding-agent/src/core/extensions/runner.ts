@@ -134,7 +134,52 @@ import type {
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.ts";
-import { RUNTIME_EXTENSION_PATH } from "./types.ts";
+import { type ExtensionRuntimeContext, RUNTIME_EXTENSION_PATH } from "./types.ts";
+
+const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
+	"offload",
+	"ui",
+	"mode",
+	"hasUI",
+	"cwd",
+	"agentDir",
+	"loadedExtensionPaths",
+	"modelRegistry",
+	"isProjectTrusted",
+	"kernelTools",
+	"evalHandleHost",
+	"shutdown",
+	"getLookAtSettings",
+	"getAskUserSettings",
+	"getImageSettings",
+	"getRegisteredMcpServers",
+	"extensionConnectsMcpServers",
+]);
+
+/** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
+const SESSION_IDENTITY_MEMBERS = new Set(["sessionManager", "goalStoreFile"]);
+
+function loopSideUnbound(member: string): Error {
+	return new Error(`${member} is loop-side and not bound: this extension runtime has no session`);
+}
+
+/** Narrow a context of a runner without a session to its runtime members (senpi#5223). */
+function withoutSession(context: ExtensionContext): void {
+	for (const key of Reflect.ownKeys(context)) {
+		if (typeof key !== "string" || RUNTIME_CONTEXT_MEMBERS.has(key)) continue;
+		if (SESSION_IDENTITY_MEMBERS.has(key)) {
+			Reflect.deleteProperty(context, key);
+			continue;
+		}
+		Object.defineProperty(context, key, {
+			configurable: true,
+			enumerable: true,
+			get() {
+				throw loopSideUnbound(key);
+			},
+		});
+	}
+}
 
 export { ExtensionRpcRequestNotFoundError } from "./rpc-request.ts";
 
@@ -546,7 +591,7 @@ export class ExtensionRunner {
 	private uiContext: ExtensionUIContext;
 	private mode: ExtensionMode = "print";
 	private cwd: string;
-	private sessionManager: SessionManager;
+	private sessionManager: SessionManager | undefined;
 	private modelRegistry: ModelRegistry;
 	private eventBus: EventBus;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
@@ -657,7 +702,7 @@ export class ExtensionRunner {
 		extensions: Extension[],
 		runtime: ExtensionRuntime,
 		cwd: string,
-		sessionManager: SessionManager,
+		sessionManager: SessionManager | undefined,
 		modelRegistry: ModelRegistry,
 		eventBus: EventBus = createEventBus(),
 	) {
@@ -1515,7 +1560,14 @@ export class ExtensionRunner {
 
 	getActiveTools(): string[] {
 		this.assertActive();
+		// The active set belongs to the loop; a runner without a session has none to report.
+		if (this.sessionManager === undefined) return [];
 		return this.runtime.getActiveTools();
+	}
+
+	private boundSessionManager(): SessionManager {
+		if (this.sessionManager === undefined) throw loopSideUnbound("sessionManager");
+		return this.sessionManager;
 	}
 
 	/**
@@ -1562,11 +1614,11 @@ export class ExtensionRunner {
 			},
 			get sessionManager() {
 				runner.assertActive();
-				return runner.sessionManager;
+				return runner.boundSessionManager();
 			},
 			get goalStoreFile() {
 				runner.assertActive();
-				return goalFilePath(goalStoreRef(runner.sessionManager, runner.cwd));
+				return goalFilePath(goalStoreRef(runner.boundSessionManager(), runner.cwd));
 			},
 			get browserEngine() {
 				runner.assertActive();
@@ -1644,7 +1696,7 @@ export class ExtensionRunner {
 						return tools.invoke(request, {
 							...(options && ("aborted" in options ? { signal: options } : options)),
 							invoker: kernelToolInvokerStorage.getStore() ?? {
-								sessionId: runner.sessionManager.getSessionId(),
+								sessionId: runner.boundSessionManager().getSessionId(),
 							},
 						});
 					},
@@ -1818,6 +1870,7 @@ export class ExtensionRunner {
 				runner.questionInput?.();
 			});
 		}
+		if (this.sessionManager === undefined) withoutSession(context);
 		return context;
 	}
 
