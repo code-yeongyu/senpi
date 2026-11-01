@@ -5,8 +5,8 @@ import {
 	type PrivateFdEntry,
 	type PrivateFdForward,
 	takePrivateDescriptors,
-	UNPARSEABLE_TABLE,
 } from "./private-fds.ts";
+import { UNPARSEABLE_TABLE } from "./private-fd-table.ts";
 
 const TABLE_ENV = "SENPI_PRIVATE_FDS";
 

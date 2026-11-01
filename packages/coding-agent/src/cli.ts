@@ -24,7 +24,8 @@ import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
 import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
-import { releaseInheritedStartupFillers, STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
+import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
+import { releaseInheritedStartupFillers } from "./private-fd-startup-fillers.ts";
 
 /**
  * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable

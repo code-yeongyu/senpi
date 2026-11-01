@@ -20,13 +20,8 @@ import {
 	type StartupOutcome,
 	startStartupController,
 } from "./host-startup-policy.ts";
-import {
-	encodeStartupHandOff,
-	releaseStartupFillers,
-	STARTUP_EVENT_FD,
-	type StartupBinding,
-	withStartupPipe,
-} from "./host-startup-wire.ts";
+import { releaseStartupFillers, withStartupPipe } from "../../private-fd-startup-fillers.ts";
+import { encodeStartupHandOff, STARTUP_EVENT_FD, type StartupBinding } from "./host-startup-wire.ts";
 
 /** The launcher's monotonic clock: never the wall clock, never another process's timestamps. */
 export function monotonicStartupClock(): StartupClock {

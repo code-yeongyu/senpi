@@ -12,7 +12,8 @@ import { Readable } from "node:stream";
 import { relayHostStartupEvents, reportStartupMilestone, startupHandOff } from "./host-startup-beacon.ts";
 import { waitForListener } from "./host-lifecycle-proxy.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
-import { STARTUP_ATTEMPT_FILE, STARTUP_EVENT_FD, withStartupPipe } from "./host-startup-wire.ts";
+import { withStartupPipe } from "../../private-fd-startup-fillers.ts";
+import { STARTUP_ATTEMPT_FILE, STARTUP_EVENT_FD } from "./host-startup-wire.ts";
 
 const UNCOORDINATED_LISTENER_TIMEOUT_MS = 30_000;
 const OBSERVER_RETRY_DELAY_MS = 250;

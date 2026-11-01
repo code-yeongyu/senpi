@@ -26,6 +26,7 @@ import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.js";
 import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.js";
 import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.js";
+import { releaseInheritedStartupFillers } from "./private-fd-startup-fillers.js";
 /**
  * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
  * is still unread here, and the process that loads cli-main reports on the same descriptor.
@@ -116,6 +117,8 @@ function reexecUnderBunIfNeeded() {
     process.exitCode = result.status ?? 1;
     return true;
 }
+// A coordinated host start's filler pipes are released before anything can spawn or re-execute (senpi#4602).
+releaseInheritedStartupFillers(process.env);
 if (reexecUnderBunIfNeeded()) {
     process.exit();
 }
