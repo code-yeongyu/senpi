@@ -11,6 +11,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { roleConnection } from "./connection-roles.ts";
 import { answeredUiRequestId, refusedExtensionUiResponse } from "./extension-ui-response.ts";
+import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
 import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
@@ -479,7 +480,7 @@ export class SessionWorkerClient {
 						...message.activity,
 						state: { ...this.snapshot.state, isStreaming: message.activity.streaming },
 					};
-				const record = message.record;
+				const record: object = message.recordText === undefined ? message.record : JSON.parse(message.recordText);
 				if (
 					"type" in record &&
 					record.type === "security_grant_settled" &&
@@ -530,9 +531,9 @@ export class SessionWorkerClient {
 					if (message.bootstrap) lane?.bootstrap(message.bootstrap);
 					else {
 						lane?.applyTranscript(message.transitions ?? []);
-						lane?.accept(message.record, message.recovery, frameUnit(message), message.canonicalRefused === true);
+						lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
 					}
-					if (!writer.enqueue(sessionId, message.record)) {
+					if (!enqueueLegacyRecord(writer, sessionId, record)) {
 						acknowledge(message.signal, false);
 						this.fail("session_output_overflow_or_closed");
 						return Promise.reject(new Error("session_output_overflow_or_closed"));

@@ -57,6 +57,8 @@ it("T1 T5 a cut frozen after an accepted end and before its append keeps that re
 			{
 				kind: "append",
 				id: "e1",
+				type: "message",
+				parentId: null,
 				entry: JSON.stringify({ type: "message", id: "e1", message: first.record.message }),
 				owningMessageId: first.carrier.messageId,
 				recoveryEpoch: rig.lane.recoveryEpoch,
