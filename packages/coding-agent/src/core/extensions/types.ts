@@ -66,6 +66,7 @@ import type {
 	KeyId,
 	OverlayHandle,
 	OverlayOptions,
+	ProgramStatus,
 	TUI,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
@@ -131,7 +132,7 @@ export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
 export * from "./session-control-types.ts";
-export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
+export type { AgentToolResult, AgentToolUpdateCallback, ProgramStatus, ToolExecutionMode };
 
 export type ServiceTier = "auto" | "flex" | "priority" | "ultrafast";
 // biome-ignore format: keep literal union alias consistent with nearby ServiceTier style.
@@ -331,6 +332,9 @@ export interface ExtensionUIContext {
 
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;
+
+	/** Report the program's state to the terminal (OSC 7501 Program Status); `undefined` clears it. */
+	setProgramStatus(status: ProgramStatus | undefined): void;
 
 	/** Show a custom component with keyboard focus. */
 	custom<T>(

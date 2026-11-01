@@ -1352,7 +1352,7 @@ Current run mode: `"tui"`, `"rpc"`, `"json"`, or `"print"`. Use `ctx.mode === "t
 
 ### ctx.hasUI
 
-`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) that work in both TUI and RPC modes. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
+`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setProgramStatus`, `setEditorText`) that work in both TUI and RPC modes. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
 
 ### ctx.cwd
 
@@ -1377,6 +1377,8 @@ export default function (pi: ExtensionAPI) {
 Optional read-only list of resolved paths for every successfully loaded extension, including event-only extensions. Builtin and inline factories retain synthetic identifiers such as `<builtin:herdr>`. The runner resolves file paths against the session working directory and provides this list to event, command, and tool contexts; older hosts and hand-built contexts may omit it.
 
 The builtin `herdr` reporter reads this list at session start. Inside a herdr TUI pane it reports pending questions and host dialogs as `blocked`, active turns/subagents/monitors as `working`, and otherwise `idle`, using source `custom:senpi`. It reports session titles and releases the pane only on quit, not reload or session navigation.
+
+In every TUI session, herdr pane or not, the same reporter also publishes that state through `ctx.ui.setProgramStatus` (OSC 7501), so terminals that read the Program Status Protocol, such as herdr-core panes, see it too. A built-in question is reported with `kind: "question"`; other dialogs carry no kind. The status is cleared on quit. Deferring to a user reporter affects only the herdr socket, not this status.
 
 To avoid competing lifecycle reporters, it defers to a loaded user-authored `herdr-*.ts`, `.js`, or `.mjs` file. A managed file whose first 400 bytes contain `HERDR_INTEGRATION_ID=` does not trigger deferral: herdr's managed `herdr-agent-state.ts` can remain installed. Remove your own reporter from the loaded extensions if you want the builtin to take over; no user files are changed automatically.
 
@@ -3749,6 +3751,11 @@ ctx.ui.setFooter(undefined);  // Restore built-in footer
 
 // Terminal title
 ctx.ui.setTitle("pi - my-project");
+
+// Program status (OSC 7501): state is idle, working, blocked, done or error; kind is sent only with blocked.
+// The TUI writes it to the terminal with the app name (senpi, or omo under OmO); identical reports are not repeated.
+ctx.ui.setProgramStatus({ state: "blocked", kind: "question", message: "Which flow?" });
+ctx.ui.setProgramStatus(undefined);  // Clear; the TUI also clears an active status when it exits
 
 // Editor text
 ctx.ui.setEditorText("Prefill text");

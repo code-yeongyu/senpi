@@ -52,6 +52,14 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		]);
 		expect(f.requests.filter((r) => r.method === "pane.release_agent")).toHaveLength(1);
 		expect(f.requests.at(-1)?.method).toBe("pane.release_agent");
+		expect(f.setProgramStatus.mock.calls.map(([status]) => status?.state)).toEqual([
+			"idle",
+			"working",
+			"blocked",
+			"working",
+			"idle",
+			undefined,
+		]);
 		for (const [index, request] of f.requests.entries()) {
 			expect(request.params).toMatchObject({ pane_id: "pane-test", source: "custom:senpi" });
 			if (index > 0) expect(request.params.seq).toBeGreaterThan(f.requests[index - 1]!.params.seq);
@@ -88,6 +96,7 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		await f.start();
 		await f.emit("agent_start");
 		expect(f.connect).not.toHaveBeenCalled();
+		expect(f.setProgramStatus).not.toHaveBeenCalled();
 	});
 
 	it("defers once to loaded user reporters, including Windows paths", async () => {
@@ -97,9 +106,12 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		});
 		await f.start();
 		await f.start();
+		f.setIdle(false);
 		await f.emit("agent_start");
 		expect(f.connect).not.toHaveBeenCalled();
 		expect(f.debug).toHaveBeenCalledTimes(1);
+		// Deferral hands only the herdr socket to the user reporter; program status still reaches the terminal.
+		expect(f.setProgramStatus.mock.calls).toEqual([[{ state: "idle" }], [{ state: "working" }]]);
 	});
 
 	it("coexists with the managed integration and ignores unrelated files", async () => {
@@ -249,6 +261,46 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		await f.emit("agent_settled");
 		expect(transport.requests.at(-1)?.params.state).toBe("idle");
 		expect(transport.connect).toHaveBeenCalledTimes(7);
+	});
+});
+
+describe("herdr program status without a herdr socket (senpi#5321)", () => {
+	it("reports idle, working, blocked and clear through ctx.ui and opens no socket", async () => {
+		const f = await herdrReporterFixture();
+		for (const name of ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID"]) vi.stubEnv(name, undefined);
+		await f.start();
+		await f.bus("terminal_monitor_state", { activeCount: 0 });
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.bus("herdr:blocked", { active: true, id: "d1", label: "Pick a model" });
+		await f.bus("herdr:blocked", { active: false, id: "d1" });
+		await f.bus("ask-user:asked", { request: { requestId: "q1" } });
+		await f.bus("herdr:blocked", { active: true, id: "q1", label: "Auth - Which flow?" });
+		await f.bus("herdr:blocked", { active: false, id: "q1" });
+		f.setIdle(true);
+		await f.emit("agent_settled");
+		await f.emit("session_shutdown", { reason: "quit" });
+		expect(f.setProgramStatus.mock.calls).toEqual([
+			[{ state: "idle" }],
+			[{ state: "working" }],
+			[{ state: "blocked", message: "Pick a model" }],
+			[{ state: "working" }],
+			[{ state: "blocked", kind: "question", message: "Auth - Which flow?" }],
+			[{ state: "working" }],
+			[{ state: "idle" }],
+			[undefined],
+		]);
+		expect(f.connect).not.toHaveBeenCalled();
+		expect(f.requests).toHaveLength(0);
+	});
+
+	it("keeps the status on reload so the successor runtime reports over it", async () => {
+		const f = await herdrReporterFixture();
+		vi.stubEnv("HERDR_ENV", undefined);
+		await f.start();
+		await f.emit("session_shutdown", { reason: "reload" });
+		await f.emit("agent_start");
+		expect(f.setProgramStatus.mock.calls).toEqual([[{ state: "idle" }]]);
 	});
 });
 

@@ -783,6 +783,16 @@ export function createRpcConnectionHandler(
 			} as RpcExtensionUIRequest);
 		},
 
+		setProgramStatus(status): void {
+			// Fire and forget, like setTitle: a client attached to a terminal can emit it there.
+			output({
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				method: "setProgramStatus",
+				programStatus: status,
+			} as RpcExtensionUIRequest);
+		},
+
 		async custom() {
 			// Custom UI cannot be rendered in RPC mode. By default this returns
 			// undefined synchronously with NO wire message — byte-identical to the

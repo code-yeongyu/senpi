@@ -79,6 +79,7 @@ function createUi(notices: string[], choices: string[]): ExtensionUIContext {
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		custom: async <T>(): Promise<T> => {
 			throw new Error("Fallback command tests do not render custom UI");
 		},
