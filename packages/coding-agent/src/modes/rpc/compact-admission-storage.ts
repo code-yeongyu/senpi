@@ -3,18 +3,31 @@ import { join } from "node:path";
 import { z } from "zod";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 
-/** Per socket epoch: 128 IDs, 16 MiB reserved disk bytes, 16 live producers. No retired ID is evicted. */
-export const ADMISSION_LIMITS = { entries: 128, bytes: 16 * 1024 * 1024, hot: 16, row: 131_584 } as const;
+/**
+ * Per socket epoch (RULING-113): 16 live producers; terminal rows in an LRU of 128 rows / 16 MiB reserved disk
+ * bytes; an evicted ID keeps only its digest in a 4,096-entry ring that answers admission_retired.
+ */
+export const ADMISSION_LIMITS = {
+	entries: 128,
+	bytes: 16 * 1024 * 1024,
+	hot: 16,
+	row: 131_584,
+	retired: 4096,
+} as const;
 const rowSchema = z.object({
 	fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
 	state: z.enum(["pending", "complete", "cancelled", "failed"]),
+	failure: z.literal("storage_unavailable").optional(),
 	answer: z.string().max(65_536).optional(),
 });
 export type AdmissionRow = z.infer<typeof rowSchema>;
+type Directory = { readonly directory: Promise<string>; readonly failures?: ReadonlyMap<string, AdmissionRow> };
 
-export async function readAdmissionRow(directory: Promise<string>, key: string): Promise<AdmissionRow | undefined> {
+export async function readAdmissionRow(epoch: Directory, key: string): Promise<AdmissionRow | undefined> {
+	const failure = epoch.failures?.get(key);
+	if (failure) return failure;
 	try {
-		const text = await readFile(join(await directory, key), "utf8");
+		const text = await readFile(join(await epoch.directory, key), "utf8");
 		if (Buffer.byteLength(text) > ADMISSION_LIMITS.row) throw new CompactAdmissionError("storage_unavailable");
 		return rowSchema.parse(JSON.parse(text));
 	} catch (cause) {
@@ -24,11 +37,11 @@ export async function readAdmissionRow(directory: Promise<string>, key: string):
 	}
 }
 
-export async function writeAdmissionRow(directory: Promise<string>, key: string, row: AdmissionRow): Promise<void> {
+export async function writeAdmissionRow(epoch: Directory, key: string, row: AdmissionRow): Promise<void> {
 	const text = JSON.stringify(row);
 	if (Buffer.byteLength(text) > ADMISSION_LIMITS.row) throw new CompactAdmissionError("storage_unavailable");
 	try {
-		await writeFile(join(await directory, key), text, { mode: 0o600 });
+		await writeFile(join(await epoch.directory, key), text, { mode: 0o600, flush: true });
 	} catch (cause) {
 		if (!(cause instanceof Error)) throw cause;
 		throw new CompactAdmissionError("storage_unavailable");

@@ -198,6 +198,7 @@ type RpcCommandBody =
 			 * capability `session_status`.
 			 */
 			type: "subscribe_sessions";
+			admissionId?: string;
 			/** `"all"` (default), routing/durable ids or paths, or the children of one durable session id. */
 			sessions?: "all" | { ids: string[] } | { childrenOf: string };
 			/** Include `kind: "worker"` sessions (default: true for `childrenOf`, false otherwise). */

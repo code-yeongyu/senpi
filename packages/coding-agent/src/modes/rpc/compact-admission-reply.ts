@@ -2,7 +2,24 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import type { RpcCommand } from "./rpc-types.ts";
 
-const requests = new AsyncLocalStorage<{ readonly command: RpcCommand; readonly peer: string | undefined }>();
+export interface AdmissionReplyScope {
+	readonly id?: string;
+	readonly admissionId?: string;
+	readonly peer?: string;
+}
+const requests = new AsyncLocalStorage<{
+	readonly command: Pick<RpcCommand, "id" | "admissionId">;
+	readonly peer: string | undefined;
+}>();
+
+/** Bounded reply identity, not the command body or a retained request index, crosses an isolate. */
+export function captureAdmissionReply(): AdmissionReplyScope | undefined {
+	const scope = requests.getStore();
+	return scope && { id: scope.command.id, admissionId: scope.command.admissionId, peer: scope.peer };
+}
+export function withAdmissionReply<T>(scope: AdmissionReplyScope | undefined, action: () => T): T {
+	return scope === undefined ? action() : requests.run({ command: scope, peer: scope.peer }, action);
+}
 
 /** Request scope, not a retained request index: async session replies keep their caller's route. */
 export function withAdmissionRequest<T>(command: RpcCommand, peer: string | undefined, action: () => T): T {

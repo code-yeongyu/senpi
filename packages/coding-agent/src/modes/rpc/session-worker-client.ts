@@ -1,10 +1,13 @@
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { StructuredLaneUnavailableError } from "../../core/structured-session-lane.ts";
 import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
+import { workerCapabilities } from "./worker-client-capabilities.ts";
+import { captureAdmissionReply, withAdmissionReply } from "./compact-admission-reply.ts";
 import { roleConnection } from "./connection-roles.ts";
 import { answeredUiRequestId, isGrantSelectRequest, refusedExtensionUiResponse } from "./extension-ui-response.ts";
 import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
@@ -28,6 +31,7 @@ import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import { recoveryAgentDir } from "./compact-storage-health.ts";
 import type { SessionWorkerCallbacks } from "./session-worker-callbacks.ts";
 import { startSessionWorker } from "./session-worker-start.ts";
+import { reconcileWorkerReplacement } from "./session-worker-replacement.ts";
 
 export class SessionWorkerClient {
 	private secretRoute?: SecretInputRoute;
@@ -61,18 +65,18 @@ export class SessionWorkerClient {
 	private cancelUiPending = false;
 	private terminalFailure?: string;
 	private stopLimitMirror: () => void = () => {};
-	/** The host's ordered acceptance lane for this worker incarnation, present only while the flag is on. */
-	readonly acceptance: SessionAcceptanceLane | undefined;
-	/** The host half of this incarnation's payload transport: permits, physical frame order, fragment staging (S12b). */
-	readonly intake: WorkerIntake | undefined;
+	/** The host's ordered acceptance lane for this worker incarnation, present only once `commit()` negotiated it. */
+	acceptance: SessionAcceptanceLane | undefined;
+	/** The host half of the negotiated payload transport: permits, physical frame order, fragment staging (S12b). */
+	intake: WorkerIntake | undefined;
 	private readonly owners = new WorkerOwnerGates();
 
 	private readonly callbacks: SessionWorkerCallbacks;
+	private readonly agentDir: string;
 
 	constructor(callbacks: SessionWorkerCallbacks, agentDir = recoveryAgentDir) {
 		this.callbacks = callbacks;
-		this.acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane(undefined, undefined, agentDir) : undefined;
-		this.intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
+		this.agentDir = agentDir;
 		// Spawned here, with nothing between it and the exit listener that owns its cleanup (senpi#4728).
 		this.spawned = startSessionWorker(this.webviewBroker);
 		this.worker = this.spawned.result;
@@ -147,19 +151,44 @@ export class SessionWorkerClient {
 	}
 
 	async commit(): Promise<WorkerSnapshot> {
-		const nonce = randomUUID();
-		const result = await this.request({
-			type: "commit",
-			...(this.intake ? { acceptance: true, recoveryEpoch: nonce, permits: this.intake.permits.block } : {}),
-		});
-		if (result.type !== "ready") throw new Error("Invalid worker commit response");
-		if (this.acceptance) {
-			// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
-			if (!result.bootstrap) throw new Error("Invalid worker commit response");
-			this.acceptance.bootstrap(result.bootstrap, nonce);
+		if (!compactUpdatesEnabled()) {
+			// Flag off: a plain commit with no acceptance lane and no permit transport, as before S17 (RULING-112).
+			const result = await this.request({ type: "commit" });
+			if (result.type !== "ready") throw new Error("Invalid worker commit response");
+			this.snapshot = result.snapshot;
+			return result.snapshot;
 		}
-		this.snapshot = result.snapshot;
-		return result.snapshot;
+		const nonce = randomUUID();
+		// Offered here, never earlier: until commit the incarnation holds no permit and its frames are unordered. The offer
+		// needs both halves up front, since a bootstrap `ready` is permit-paid and may arrive as staged fragments.
+		const acceptance = new SessionAcceptanceLane(undefined, undefined, this.agentDir);
+		const intake = new WorkerIntake(acceptance.staging, (error) => this.fail(error));
+		this.acceptance = acceptance;
+		this.intake = intake;
+		let negotiated = false;
+		try {
+			const result = await this.request({
+				type: "commit",
+				acceptance: true,
+				recoveryEpoch: nonce,
+				permits: intake.permits.block,
+			});
+			if (result.type !== "ready") throw new Error("Invalid worker commit response");
+			// RULING-106: a worker that cannot bootstrap acceptance has no structured lane to offer.
+			if (!result.bootstrap) throw new StructuredLaneUnavailableError();
+			// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
+			acceptance.bootstrap(result.bootstrap, nonce);
+			negotiated = true;
+			this.snapshot = result.snapshot;
+			return result.snapshot;
+		} finally {
+			// A refused or failed commit withdraws the offer, leaving no lane and no permit behind.
+			if (!negotiated) {
+				intake.permits.close();
+				acceptance.retire("close");
+				this.acceptance = this.intake = undefined;
+			}
+		}
 	}
 
 	async bind(
@@ -172,6 +201,11 @@ export class SessionWorkerClient {
 		this.writer = writer;
 		this.secretRoute = writer.secretInputRoute(sessionId);
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
+		// RULING-111 (LEAK-D): a diagnostic of the compact path; with the flag off the stderr stays as on main.
+		if (compactUpdatesEnabled())
+			process.stderr.write(
+				`senpi rpc worker ${sessionId}: bound mode=${this.acceptance ? "acceptance" : "legacy"}\n`,
+			);
 		this.requestClose = requestClose;
 		this.options = options;
 		await this.request({
@@ -202,6 +236,7 @@ export class SessionWorkerClient {
 				}
 				await this.request({
 					type: "command",
+					admissionReply: captureAdmissionReply(),
 					command,
 					connection,
 					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
@@ -474,23 +509,22 @@ export class SessionWorkerClient {
 					}
 					outputConnection = target.connection;
 				}
-				const enqueue = () => {
-					// Applied before routing, and so before this frame's credit returns.
-					if (message.bootstrap) lane?.bootstrap(message.bootstrap);
-					else {
-						lane?.applyTranscript(message.transitions ?? []);
-						lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
-					}
-					if (!enqueueLegacyRecord(writer, sessionId, record)) {
-						acknowledge(message.signal, false);
-						this.fail("session_output_overflow_or_closed");
-						return Promise.reject(new Error("session_output_overflow_or_closed"));
-					}
-					return writer.waitForSessionBackpressure(sessionId);
-				};
-				const consumed = Promise.resolve(
-					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
-				).then(() => {
+				const enqueue = () =>
+					withAdmissionReply(message.admissionReply, () => {
+						// Applied before routing, and so before this frame's credit returns.
+						if (message.bootstrap) lane?.bootstrap(message.bootstrap);
+						else {
+							lane?.applyTranscript(message.transitions ?? []);
+							lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
+						}
+						if (!enqueueLegacyRecord(writer, sessionId, record)) {
+							acknowledge(message.signal, false);
+							this.fail("session_output_overflow_or_closed");
+							return Promise.reject(new Error("session_output_overflow_or_closed"));
+						}
+						return writer.waitForSessionBackpressure(sessionId);
+					});
+				const consumed = reconcileWorkerReplacement(message, lane, this.callbacks).then(() => {
 					// Resolved after reconciliation: a retired or replaced destination consumes the frame normally.
 					if (outputConnection === undefined) return enqueue();
 					return message.owner === undefined || outputConnection !== message.connection
@@ -520,17 +554,7 @@ export class SessionWorkerClient {
 				acknowledge(message.signal, true);
 				return;
 			case "capabilities":
-				if (message.connection === undefined)
-					this.options = { ...this.options, capabilities: message.capabilities };
-				// The isolate already refused a changed role; a refusal here means the two registries drifted.
-				if (
-					this.options.connectionRoles?.declare(roleConnection(message.connection), message.capabilities) === false
-				)
-					process.stderr.write(
-						`senpi rpc worker role drift: connection ${roleConnection(message.connection)} declared a changed role\n`,
-					);
-				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
-				acknowledge(message.signal, true);
+				this.options = workerCapabilities(this.options, message, this.writer);
 				return;
 			case "loaded_surfaces": {
 				// The host owns the per-(connection, session) dedupe on both runtimes (#3198 review, L5).

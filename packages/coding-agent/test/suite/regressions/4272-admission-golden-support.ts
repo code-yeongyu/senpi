@@ -1,9 +1,36 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { expect } from "vitest";
 import { catalogDigest } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 
 export const admissionFixtures = new URL("../../../docs/engine-socket/fixtures/admission-routes/", import.meta.url);
+
+/** Every spelling of the temp root a trace can carry: as given, its realpath, each without macOS's `/private` prefix. */
+export function rootSpellings(root: string): string[] {
+	const spellings = [root, realpathSync(root)].flatMap((path) => [path, path.replace(/^\/private(?=\/)/, "")]);
+	return [...new Set(spellings)].sort((a, b) => b.length - a.length);
+}
+
+export function replaceRoot(value: string, root: string): string {
+	return rootSpellings(root).reduce((result, path) => result.replaceAll(path, "<root>"), value);
+}
+
+export const SERVER_VERSION = "<server-version>";
+export const CAPABILITIES = "<capabilities>";
+export const ENGINE_ORDINAL = "<engine-ordinal>";
+
+/**
+ * A get_protocol_info answer's serverVersion, engineVersion/engineOrdinal and capability list change with every release
+ * and every added capability. A golden pins the frame around them, not them: the tests that negotiate a capability
+ * assert it themselves.
+ */
+export function maskServerIdentity(bytes: string): string {
+	return bytes
+		.replace(/("serverVersion":")[^"]*(","capabilities":\[)[^\]]*(\])/g, `$1${SERVER_VERSION}$2"${CAPABILITIES}"$3`)
+		.replace(/("engineVersion":")[^"]*(")/g, `$1${SERVER_VERSION}$2`)
+		.replace(/("engineOrdinal":)\[[0-9,]*\]/g, `$1"${ENGINE_ORDINAL}"`);
+}
 
 /** Normalize run paths/identities, not routing fields or frame kinds. Pages stay decodable and digest-valid:
  * verify the REAL producer digest first, normalize the UTF-16 JSON content, then update its length/digest.
@@ -15,8 +42,7 @@ export function normalizedTrace(input: unknown, root: string): unknown {
 	const entries = new Map<string, string>();
 	const pages = new Map<string, Buffer>();
 	const text = (value: string): string =>
-		value
-			.replaceAll(root, "<root>")
+		maskServerIdentity(replaceRoot(value, root))
 			.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
 				if (!ids.has(id)) ids.set(id, `00000000-0000-4000-8000-${String(ids.size + 1).padStart(12, "0")}`);
 				return ids.get(id) ?? id;
@@ -38,6 +64,14 @@ export function normalizedTrace(input: unknown, root: string): unknown {
 		if (Array.isArray(value)) return value.map((item: unknown) => visit(item));
 		if (typeof value !== "object" || value === null) return value;
 		const record = value as Record<string, unknown>;
+		if (typeof record.serverVersion === "string" && record.serverVersion !== SERVER_VERSION)
+			return visit({
+				...record,
+				serverVersion: SERVER_VERSION,
+				...(Array.isArray(record.capabilities) ? { capabilities: [CAPABILITIES] } : {}),
+				...("engineVersion" in record ? { engineVersion: SERVER_VERSION } : {}),
+				...("engineOrdinal" in record ? { engineOrdinal: ENGINE_ORDINAL } : {}),
+			});
 		if (typeof record.bytes === "string" && typeof record.digest === "string" && typeof record.length === "number") {
 			const raw = Buffer.from(record.bytes, "base64");
 			expect(raw.length).toBe(record.length);

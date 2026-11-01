@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { catalogDigest } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { compareAdmissionGoldens } from "./4272-admission-golden-support.ts";
@@ -35,6 +36,20 @@ it("T2 golden a-e: real request, identity, paged baseline, before-answer suffix 
 	});
 	expect(page).toMatchObject({ success: true, sessionId: answer.sessionId, admissionId: "golden-a", generation: 1 });
 	const pageRequest: unknown = JSON.parse(peer.sent[1] ?? "");
+	// #4272: the leased startup entry contains cwd; normalize its verified bytes, not its raw path-dependent length.
+	// It is read while golden-a still routes the session, so its reply carries golden-a's tag.
+	const entryFrame = early.find((frame) => frame.type === "entry_appended");
+	const entryLease = entryFrame?.eventLease as { kind: "event"; id: string; length: number; digest: string };
+	expect(entryLease).toBeDefined();
+	const entryPage = await peer.request({
+		type: "get_recovery_page",
+		sessionId: answer.sessionId,
+		admissionId: "golden-a",
+		lease: { kind: entryLease.kind, id: entryLease.id },
+		componentRef: "record",
+		requestId: "golden-entry",
+	});
+	// RULING-117: a completed re-open by the same socket supersedes golden-a's route; golden-b is the only route left.
 	const second = await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: "golden-b" });
 	await peer.waitFor((frame) => frame.type === "recovery_manifest" && frame.admissionId === "golden-b");
 	expect(second).toMatchObject({ sessionId: answer.sessionId, generation: 1 });
@@ -42,17 +57,26 @@ it("T2 golden a-e: real request, identity, paged baseline, before-answer suffix 
 	host.writer.enqueue(String(answer.sessionId), { type: "agent_idle" });
 	await host.writer.flush();
 	const suffix = peer.inbox.slice(from).filter((frame) => frame.type === "agent_idle");
-	expect(suffix.map((frame) => frame.admissionId)).toEqual(["golden-a", "golden-b"]);
+	expect(suffix.map((frame) => frame.admissionId)).toEqual(["golden-b"]);
+	// golden-a's route is retired: an admission-ledger request naming it is refused unknown_admission.
+	const retired = await peer.request({ type: "reset_stream", sessionId: answer.sessionId, admissionId: "golden-a" });
+	expect(retired).toMatchObject({ success: false, code: "unknown_admission", admissionId: "golden-a" });
+	const entryData = dataOf(entryPage);
+	expect(entryData).toMatchObject({ offset: 0, complete: true, length: entryLease.length });
+	const entryBytes = Buffer.from(String(entryData.bytes), "base64");
+	expect(entryBytes.length).toBe(entryLease.length);
+	expect(catalogDigest("leaf", entryBytes)).toBe(entryLease.digest);
 	await compareAdmissionGoldens(
 		{
 			"a-request.json": { request: JSON.parse(peer.sent[0] ?? "") as unknown },
 			"b-answer.json": { answer },
 			"c-baseline.json": { baseline, request: pageRequest, page },
-			"d-before-answer.json": { frames: early, answer },
+			"d-before-answer.json": { frames: early, answer, entryPage },
 			"e-overlap.json": {
-				requests: [JSON.parse(peer.sent[0] ?? ""), JSON.parse(peer.sent[2] ?? "")] as unknown[],
+				requests: [JSON.parse(peer.sent[0] ?? ""), JSON.parse(peer.sent[3] ?? "")] as unknown[],
 				answers: [answer, second],
 				suffix,
+				retired: { request: JSON.parse(peer.sent[4] ?? "") as unknown, answer: retired },
 			},
 		},
 		dirname(host.cwd),

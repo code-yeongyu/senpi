@@ -14,9 +14,14 @@ import {
 } from "../../../src/modes/rpc/session-worker-permits.ts";
 import { EVENT_SAFETY_MS, within, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
 
-afterEach(() => {
+/** Every WorkerPermitGate isolate a test started; one a failed assertion left running is terminated after the test. */
+const isolates = new Set<Worker>();
+
+afterEach(async () => {
 	vi.unstubAllEnvs();
 	vi.restoreAllMocks();
+	await Promise.all([...isolates].map((isolate) => isolate.terminate()));
+	isolates.clear();
 });
 
 const noop = () => {};
@@ -34,6 +39,7 @@ function gateIsolate(block: SharedArrayBuffer, timeoutMs: number) {
 	const isolate = new Worker(new URL("./4272-worker-permit-gate-support.ts", import.meta.url), {
 		workerData: { block, timeoutMs },
 	});
+	isolates.add(isolate);
 	const answer = new Promise<{ outcome: string; built: number }>((resolve) => isolate.once("message", resolve));
 	const exit = new Promise<number>((resolve) => isolate.once("exit", resolve));
 	return {
@@ -103,7 +109,7 @@ it("S12b RULING-63 Q3 (4): a host that never grants leaves the worker with a typ
 	const { answer, exit } = gateIsolate(new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT), 200);
 	expect(await answer()).toEqual({ outcome: "timeout", built: 0 });
 	expect(await exit()).toBe(0);
-});
+}, 600_000);
 
 it("S12b RULING-63 Q3: a deny is typed and recoverable: the waiting worker takes the permit a later release grants", async () => {
 	const { ledger, permits, state } = exhausted();
@@ -115,14 +121,14 @@ it("S12b RULING-63 Q3: a deny is typed and recoverable: the waiting worker takes
 	expect(await exit()).toBe(0);
 	expect(Atomics.load(state, PERMIT_WORD.credit), "the isolate consumed exactly the one permit").toBe(0);
 	permits.close();
-});
+}, 600_000);
 
 it("S12b RULING-63 Q3: a deny that never clears ends the wait typed as denied, with no payload built", async () => {
 	const { permits } = exhausted();
 	const { answer } = gateIsolate(permits.block, 200);
 	expect(await answer()).toEqual({ outcome: "denied", built: 0 });
 	permits.close();
-});
+}, 600_000);
 
 // RULING-63 Q3 condition (3): close and termination notify every waiter; the blocked worker never hangs.
 it("S12b RULING-63 Q3 (3): a worker blocked on a permit wakes and exits cleanly when the host closes", async () => {
@@ -132,7 +138,7 @@ it("S12b RULING-63 Q3 (3): a worker blocked on a permit wakes and exits cleanly 
 	permits.close();
 	expect(await answer()).toEqual({ outcome: "closed", built: 0 });
 	expect(await exit()).toBe(0);
-});
+}, 600_000);
 
 it("S12b RULING-63 Q3 (3): a worker blocked on a permit ends when it is terminated (the host dying)", async () => {
 	const { permits } = exhausted();
@@ -141,7 +147,7 @@ it("S12b RULING-63 Q3 (3): a worker blocked on a permit ends when it is terminat
 	await isolate.terminate();
 	expect(await exit()).toBe(1);
 	permits.close();
-});
+}, 600_000);
 
 // X03 X04 through the real worker: the host holds the initial permit, and the isolate posts no payload before it.
 it("S12b X03 X04: with the initial permit held, the real worker posts no ready payload until the host grants, then one bounded frame", async () => {

@@ -1,5 +1,6 @@
 import { serializeJsonLine } from "./jsonl.ts";
 import { GeneratedFramesCursor } from "./legacy-view-cursor.ts";
+import type { EventLease } from "./compact-recovery-types.ts";
 
 /** Identity first, then a pageable checkpoint identity, in one installed actor barrier. */
 export function admissionBaseline(
@@ -8,7 +9,9 @@ export function admissionBaseline(
 		readonly sessionId: string;
 		readonly admissionId: string;
 		readonly generation: number;
-		readonly token: string;
+		readonly token?: string;
+		readonly eventLease?: EventLease;
+		readonly componentRef?: string;
 	},
 	live: () => boolean,
 	routes?: readonly string[],
@@ -25,7 +28,7 @@ export function admissionBaseline(
 						type: "recovery_manifest",
 						...identity,
 						admissionId,
-						componentRef: "manifest",
+						componentRef: identity.componentRef ?? "manifest",
 					});
 		},
 		() => {},

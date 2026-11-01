@@ -2,6 +2,8 @@ import type { TranscriptRoot } from "./accepted-transcript.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
 import { RecoveryManifests } from "./compact-recovery-manifest.ts";
 import { RecoveryStreams } from "./compact-recovery-streams.ts";
+import type { RouteRetirement } from "./route-retire-reasons.ts";
+import { retiredTokenFailure, tokenStaleness } from "./compact-recovery-staleness.ts";
 import type { FrozenCheckpoint } from "./compact-recovery-checkpoint-types.ts";
 export type { FrozenCheckpoint, RetainedRoot } from "./compact-recovery-checkpoint-types.ts";
 import {
@@ -63,6 +65,11 @@ export class RecoveryCheckpoints {
 		return this.streams.describe(caller);
 	}
 
+	/** Whether any stream of this peer incarnation still routes the admission: one indexed lookup (#5274). */
+	routesAdmission(socketEpoch: string, admissionId: string): boolean {
+		return this.streams.routes(socketEpoch, admissionId);
+	}
+
 	/** Runs once per token when its lease ends, however it ended (a release, a reclaim, its peer's end). */
 	onTokenEnd(listener: (tokenId: string) => void): void {
 		this.ended.add(listener);
@@ -92,10 +99,15 @@ export class RecoveryCheckpoints {
 			lane.release(root);
 			return this.refuse(storageUnavailable("compact_state_unavailable"));
 		}
+		const generation = lane.generations.next();
+		if (generation === undefined) {
+			lane.release(root);
+			return this.refuse(storageUnavailable("unavailable"));
+		}
 		const id = `${route.socketEpoch}:${++this.minted}`;
 		// One token per root (RULING-69 (2)): a root already pinned is a broken invariant, thrown before any stream moves.
 		this.manifests.pin(id, root);
-		const { generation, retired } = this.streams.next(route, root.sessionEpoch, id);
+		const { retired } = this.streams.next(route, root.sessionEpoch, id, generation);
 		const admission: RecoveryAdmission = Object.freeze({ ...route, sessionEpoch: root.sessionEpoch, generation });
 		const token: CheckpointToken = Object.freeze({
 			kind: "checkpoint",
@@ -165,8 +177,9 @@ export class RecoveryCheckpoints {
 	/**
 	 * An admission ended (a detach today; S14 extends this): its route leaves the stream, the counter stays, and the
 	 * token it minted is reclaimed like a superseded one (RULING-56 (4)), with or without its stream record. Idempotent.
+	 * `_retirement` is RULING-119's compile-time proof: a client action, or a `RouteAnnouncement` already emitted.
 	 */
-	retireRoute(caller: RecoveryCaller, admissionId: string): void {
+	retireRoute(caller: RecoveryCaller, admissionId: string, _retirement: RouteRetirement): void {
 		const current = this.streams.get(caller)?.current;
 		this.streams.retireRoute(caller, admissionId);
 		if ((this.streams.get(caller)?.routes.size ?? 0) > 0) return;
@@ -275,7 +288,7 @@ export class RecoveryCheckpoints {
 		if (admission?.socketEpoch !== caller.socketEpoch || admission.sessionId !== caller.sessionId)
 			return this.refuse(repairNeeded("unknown_token"));
 		const checkpoint = this.checkpoints.get(token.id);
-		if (!checkpoint) return this.refuse(this.describe(admission));
+		if (!checkpoint) return this.refuse(retiredTokenFailure(this.streams.get(admission), admission));
 		try {
 			checkpoint.lease.assert();
 		} catch (cause) {
@@ -284,27 +297,9 @@ export class RecoveryCheckpoints {
 		return recovered(checkpoint);
 	}
 
-	/** What the asker's stream says about its own token no longer owned here: the bounded description it gets. */
-	private describe(admission: RecoveryAdmission): RecoveryFailure {
-		const stream = this.streams.get(admission);
-		if (!stream) return { kind: "repair_needed", reason: "unknown_token" };
-		if (stream.sessionEpoch !== admission.sessionEpoch) return { kind: "repair_needed", reason: "stale_epoch" };
-		if (stream.generation !== admission.generation)
-			return { kind: "repair_needed", reason: "superseded_token", newerGeneration: stream.generation };
-		return { kind: "repair_needed", reason: "unknown_token" };
-	}
-
-	/** Why a once-valid token no longer names a readable cut; undefined while it still does. */
+	/** Why a once-valid token no longer names a readable cut (`compact-recovery-staleness.ts`). */
 	private staleness(token: CheckpointToken, lane: SessionAcceptanceLane): RecoveryFailure | undefined {
-		const stream = this.streams.get(token.admission);
-		if (!stream && lane.retirement === "close") return { kind: "repair_needed", reason: "session_closed" };
-		if (lane.retired) return { kind: "repair_needed", reason: "lane_retired" };
-		if (!stream) return { kind: "repair_needed", reason: "peer_gone" };
-		if (lane.sessionEpoch !== token.cut.sessionEpoch || stream.sessionEpoch !== token.admission.sessionEpoch)
-			return { kind: "repair_needed", reason: "stale_epoch" };
-		if (stream.generation !== token.admission.generation)
-			return { kind: "repair_needed", reason: "superseded_token", newerGeneration: stream.generation };
-		return undefined;
+		return tokenStaleness(this.streams.get(token.admission), token, lane);
 	}
 
 	/** A refused operation names the cut's staleness first; a store that could not serve it is storage_unavailable. */

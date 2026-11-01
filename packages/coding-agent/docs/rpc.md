@@ -697,6 +697,17 @@ reader (which stops near 4,000 levels on Node) never drops it.
 Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
 (senpi#4272, R4.B3). The command is additive: with the flag off it answers exactly as any unknown session command.
 
+Compact generations are allocated per durable session, not per socket or accepted-state epoch (RULING-99).
+A reconnect receives a higher generation; a host restart resumes above the persisted reservation ceiling in
+the agent directory. Generations may have gaps. The engine reserves ranges asynchronously before synchronous
+cut issuance; no token, manifest or event can name an unreserved generation. Exhaustion or storage failure
+refuses a new cut as `storage_unavailable`, never by resetting the counter. A concurrent owner cannot reserve
+the same session while its kernel ownership lock is held. Materializers continue to refuse lower generations
+as `stale_generation`.
+On new-session, switch and fork replacements, the owner rebinds before publishing the replacement's first cut.
+Its new range starts above both the lane's previous reservation ceiling and the target session's persisted floor;
+synchronous cut requests refuse while that asynchronous reservation is pending.
+
 ```json
 {"type": "get_recovery_page", "sessionId": "rpc-1", "token": "socket-3:7", "admissionId": "attach-9",
  "componentRef": "c-0000000000000007:003", "requestId": "r-12", "cursor": "p1:1:131072:..."}
@@ -826,20 +837,20 @@ With the flag off it answers as any unknown session command.
 #### cancel_attempt
 
 Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default), cancels this connection's pending admission attempt
-(senpi#4272, S15a). The `admissionId` is the client's own id for an `open_session`, `attach_session` or
-`subscribe_sessions` that carried it; the attempt belongs to the socket that sent it, so another connection's id
-is never found.
+(senpi#4272, S15a). The `admissionId` is the client's own id for an `open_session` or `subscribe_sessions` that
+carried it, or (S17) an `attach_session` with an `admissionId`; the attempt belongs to the socket that sent it, so
+another connection's id is never found.
 
 ```json
-{"type": "cancel_attempt", "admissionId": "attach-9"}
+{"type": "cancel_attempt", "admissionId": "open-9"}
 ```
 
 The host first checks the id against this connection's admissions: an id that is neither a pending attempt nor an
 admission this connection currently holds (never used, already cancelled, or completed and released) is refused with
 `unknown_admission`. Otherwise the answer's `data` is `{outcome}`: `cancelled` for a pending attempt (its late result
-is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). A
-connection with no socket epoch (stdio) is refused with `unsupported_transport`, and a malformed `admissionId` with
-`admission_malformed_request`. With the flag off it answers as any unknown command.
+is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). Only a
+socket connection has admissions, so on any other transport the id is unknown. A malformed `admissionId` is refused
+with `admission_malformed_request`. With the flag off it answers as any unknown command.
 
 #### reset_stream
 
@@ -854,9 +865,56 @@ open or attachment: `admissionId` must name a completed admission of this socket
 The host freezes a new recovery checkpoint for that admission and answers it as the stream's new baseline:
 `{"type": "response", "command": "reset_stream", "success": true, "sessionId", "admissionId", "generation",
 "data": {"recovery": {"token", "componentRef": "manifest"}}}`, ordered before any later compact frame of the
-admission. Read the checkpoint with `get_recovery_page`. An admission that is unknown, not yet complete, of another
-connection or for another session is `recovery_repair_needed` with `reason: "unknown_token"`; a checkpoint that
-cannot be frozen answers its own `recovery_*` failure. With the flag off it answers as any unknown command.
+admission. Read the checkpoint with `get_recovery_page`. An `admissionId` this connection does not hold is refused with
+`unknown_admission` before the command runs. A held admission that is not
+complete, not for `sessionId` or no longer on the session's stream is refused with `recovery_unknown_token` and
+`errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
+`recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
+
+**Admission IDs per socket (senpi#5274, RULING-113, RULING-117 and RULING-118).** A socket's admissions are capped by what is
+live, never by how many IDs it has used. At most 16 attempts run at once (`admission_admission_busy` past that). Running
+attempts plus routed admissions share 127 rows (128 rows within 16 MiB of 131,584-byte rows); a fresh attempt past
+them is refused `admission_admission_limit` (`errorData.reason: "admission_limit"`). A completed admission that no
+longer routes a stream stays in a least-recently-used row: an exact retry of a recent ID (C4.4) answers its stored
+result, opens nothing and replaces nothing, and an evicted ID answers `admission_admission_retired` (a 4,096-entry ring;
+an ID older than that is indistinguishable from a fresh one). A completed `open_session` or `attach_session` of a
+session this socket already routes REPLACES that route: the earlier admission receives no record after the new
+admission's baseline, its attachment is released, and `reset_stream` or `cancel_attempt` naming it answers
+`unknown_admission`. An ordinary route has no separate end record; a record already queued for the earlier ID is
+delivered whole. A re-open that is still pending, refused, cancelled or failed leaves the earlier route as it was.
+A detach (`close_session`, `release_attachment`, `detach_connection`) also ends the route: when the detaching request
+names the admission, its reply is tagged with that admission first and the route retires right after it, so the
+records sealed before the reply (a final `session_closed`) keep the tag too; the peer then receives no further records
+for that admission, and the admission no longer counts toward the cap. A route otherwise ends with its session or its
+socket. Routed rows are therefore bounded by the pending attempts plus the distinct live sessions the socket still
+holds, one row each however often it re-opens them: the 128th distinct held session on one socket is refused
+`admission_admission_limit`, re-opens of a routed session never run out, and a socket that attaches to and detaches
+from any number of distinct live sessions in turn is never refused.
+Lifecycle broadcasts (`agent_start`, `agent_settled`, `agent_idle`, `session_opened`, `session_closed`,
+`session_parked`, `session_lifecycle`) are socket-wide and untagged, and they continue regardless of attach or detach;
+they are not route records. They reach every socket, except under I4: a worker session's (or an `attachedOnly` seal's)
+`session_closed` and `session_parked` reach attached connections only.
+
+**Route retirement (senpi#5274, RULING-119).** The engine never retires a delivering route silently: every retire is
+either the direct result of a client action whose reply the client sees, or announced to that client by a typed record
+before the route stops delivering. Per path:
+
+- A completed re-open of the session by the same socket (RULING-117): a client action; the new open's reply.
+- A detach (`close_session`, `release_attachment`, `reclaim_session`, `detach_connection`; RULING-118): a client action;
+  the detach's reply.
+- An accepted `open_session` or `attach_session` that ends without completing (cancelled, refused or failed after it
+  was accepted, for example when its durable answer row cannot be written): announced by its own final reply,
+  `attempt_cancelled` or the `admission_<reason>` refusal, which then carries `admissionId` and `generation`. That reply
+  is the last record tagged with the admission; records the open delivered before it (`session_opened`, and a rolled-back
+  open's `session_closed` with `reason: "error"`) keep the tag, and the route retires right after it.
+- A mirror admission's route: retired only by `unsubscribe_sessions` or the subscribe's own `cancel_attempt` (client
+  actions), by a subscribe refused before activation, or with the socket. Before activation no mirror record is
+  delivered: the records wait in the subscription's pending buffer until the answer row is durable and activation runs
+  as the last step (`compact-admission-settlement.ts`). A socket's connection is unregistered before its subscriptions
+  drop, so that path retires no delivering route. A mirror therefore needs no end record of its own.
+- A session's close or park: announced by `session_closed` or `session_parked`, tagged with every route the session had
+  on the socket; the session's streams end with it.
+- A socket's end: nothing can be delivered on it any more; its streams end with it.
 
 #### interactive_user
 

@@ -25,6 +25,7 @@ export interface RecoveryPeers {
 	/** Per attached session, the ordinal of the attach that holds it for `id`; undefined for an unknown peer. */
 	ordinals(id: string): ReadonlyMap<string, number> | undefined;
 	has(id: string, capability: string): boolean;
+	required?(id: string): readonly string[];
 }
 
 export const admissionOf = (ordinal: number): string => `attach-${ordinal}`;
@@ -60,11 +61,14 @@ export class SessionRecoveryPins {
 		return sessionIds.flatMap((sessionId) => {
 			const lane = this.acceptance.get(sessionId);
 			const ordinal = this.peers.ordinals(id)?.get(sessionId);
-			if (!lane || ordinal === undefined || socketEpoch === undefined) return [];
+			if (!lane || socketEpoch === undefined) return [];
+			const mirror = this.checkpoints.stream({ socketEpoch, sessionId })?.routes[0];
+			const admissionId = mirror ?? (ordinal === undefined ? undefined : admissionOf(ordinal));
+			if (admissionId === undefined) return [];
 			const route = {
 				socketEpoch,
-				admissionId: admissionOf(ordinal),
-				routeKind: "ordinary" as const,
+				admissionId,
+				routeKind: ordinal === undefined ? ("mirror" as const) : ("ordinary" as const),
 				peer: id,
 				sessionId,
 			};
@@ -81,7 +85,7 @@ export class SessionRecoveryPins {
 		const socketEpoch = this.peers.socketEpoch(id);
 		const ordinal = this.peers.ordinals(id)?.get(sessionId);
 		if (socketEpoch !== undefined && ordinal !== undefined)
-			this.checkpoints.retireRoute({ socketEpoch, sessionId }, admissionOf(ordinal));
+			this.checkpoints.retireRoute({ socketEpoch, sessionId }, admissionOf(ordinal), "client_detach");
 	}
 
 	/**
@@ -91,7 +95,8 @@ export class SessionRecoveryPins {
 	 */
 	resync(id: string, reason: ResyncReason, carried: readonly string[] = []): ResyncCut {
 		const capture = this.shedMode === "capture";
-		const attached = [...(this.peers.ordinals(id)?.keys() ?? [])];
+		const required = capture ? (this.peers.required?.(id) ?? []) : [];
+		const attached = [...new Set([...(this.peers.ordinals(id)?.keys() ?? []), ...required])];
 		const ordinals = new Map(this.peers.ordinals(id));
 		const pinned = this.pin(id, attached);
 		const roots = new Map(
@@ -103,7 +108,10 @@ export class SessionRecoveryPins {
 			// Capture: closed once the attachment held at the shed is gone (carry 30); drop: today's rule.
 			closedNow: (sessionId: string) =>
 				capture
-					? this.peers.ordinals(id)?.get(sessionId) !== ordinals.get(sessionId) || !ordinals.has(sessionId)
+					? !(
+							this.peers.required?.(id)?.includes(sessionId) ||
+							(ordinals.has(sessionId) && this.peers.ordinals(id)?.get(sessionId) === ordinals.get(sessionId))
+						)
 					: !(this.peers.ordinals(id)?.has(sessionId) ?? false),
 			onRelease: () => {
 				for (const root of roots.values()) if (root.ok) root.value.end();

@@ -133,6 +133,10 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 		return this.fanout.hasRegisteredConnectionCapabilities(id);
 	}
 
+	compactSelection(id: string) {
+		return this.fanout.get(id)?.selection;
+	}
+
 	getConnectionCapabilities(id: string): readonly string[] | undefined {
 		return this.fanout.getConnectionCapabilities(id);
 	}
@@ -157,7 +161,10 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	/** The session's records reach `lane` before `enqueue`; sealing or forgetting the session retires it. */
 	registerAcceptance(sessionId: string, lane: SessionAcceptanceLane): void {
 		if (!this.sealedSessions.has(sessionId)) this.fanout.acceptance.set(sessionId, lane);
+		if (this.fanout.events) lane.beforeAccept = (record) => this.prepareDelivery(sessionId, record);
 	}
+
+	protected abstract prepareDelivery(sessionId: string, record?: object): void;
 
 	setSessionKind(sessionId: string, kind: SessionKind): void {
 		if (kind === "worker") this.workerSessions.add(sessionId);

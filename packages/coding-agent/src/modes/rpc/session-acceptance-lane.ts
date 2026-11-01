@@ -19,6 +19,7 @@ import {
 import { foldCompactRecord, foldCompactTransition } from "./session-acceptance-compact.ts";
 import { AcceptedRootReads } from "./session-acceptance-reads.ts";
 import { recoveryAgentDir, RecoveryStorageHealth } from "./compact-storage-health.ts";
+import { SessionGenerations } from "./compact-session-generations.ts";
 
 /** Where one accepted recovery record sits in its runtime incarnation (R3.C1.1). */
 interface AcceptedRef {
@@ -62,6 +63,7 @@ const RETIRED_SETTLED: SettledRoot = Object.freeze({ base: undefined, overrides:
  * with another epoch's.
  */
 export class SessionAcceptanceLane extends AcceptedRootReads {
+	readonly generations: SessionGenerations;
 	private epoch = "";
 	private sequence = 0;
 	/**
@@ -89,6 +91,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		agentDir = recoveryAgentDir,
 	) {
 		super();
+		this.generations = new SessionGenerations(agentDir);
 		this.storage = {
 			...storage,
 			dir: storage?.dir ?? tmpdir(),
@@ -182,6 +185,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	): AcceptedRef | undefined {
 		const type = field(record, "type");
 		if (this.retired || this.epoch === "" || typeof type !== "string" || !SEQUENCED.has(type)) return undefined;
+		this.beforeAccept?.(record);
 		const folds = !canonicalRefused && this.current.admits(record, type);
 		// The calls component decides first, before the lane commits anything for this record, its correlation change
 		// included (RULING-13 Q9); a correlation change takes the sequence just before its record.
@@ -220,6 +224,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	/** A block control has no legacy record; it is a unit of its own at the next sequence. */
 	acceptControl(unit: CanonicalUnit | undefined): number | undefined {
 		if (this.retired || this.epoch === "" || !unit) return undefined;
+		this.beforeAccept?.({ type: "materializer_control" });
 		this.sequence += 1;
 		this.current.fold(unit, this.sequence);
 		return this.sequence;
@@ -273,6 +278,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	private compact = () => ({ settled: this.settled, current: this.current });
 
 	async idle(): Promise<void> {
+		await this.generations.idle();
 		await this.cleanup;
 		await this.settled.idle();
 		await this.current.idle();
@@ -293,6 +299,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	 */
 	retire(reason: "close" | "worker_failed", keep: ReadonlySet<FrozenAcceptedRoot> = new Set()): void {
 		this.retiredAs ??= reason;
+		this.generations.close();
 		this.transcript = new AcceptedTranscript(this.staging);
 		for (const root of this.live) if (!keep.has(root)) this.release(root);
 		this.retireStorage();

@@ -58,6 +58,12 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	)
 		return undefined;
 	if (
+		host.writer.recoveryPages !== undefined &&
+		command.type === "reset_stream" &&
+		host.writer.isCompactSubscription(owner, command.admissionId, command.sessionId)
+	)
+		return undefined;
+	if (
 		command.type === "close_session" ||
 		command.type === "set_session_context" ||
 		command.type === "release_attachment"

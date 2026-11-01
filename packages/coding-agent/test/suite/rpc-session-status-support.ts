@@ -29,7 +29,17 @@ export interface RawClient {
 
 const DEADLINE_MS = EVENT_SAFETY_MS;
 
-export async function statusHost() {
+export async function statusHost(
+	options: {
+		supportsCompact?: (profile?: { cwd: string }) => boolean;
+		capabilities?: string[];
+		/**
+		 * The default bound of every waitFor/request on this host. A suite whose tests run under a shorter budget than
+		 * EVENT_SAFETY_MS passes one below that budget, so a hang fails by naming its predicate, not as a test timeout.
+		 */
+		deadlineMs?: number;
+	} = {},
+) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-status-"));
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
@@ -75,8 +85,9 @@ export async function statusHost() {
 		},
 	);
 	const clock = { now: 1_000_000 };
+	if (options.supportsCompact) Object.assign(createRuntime, { supportsCompact: options.supportsCompact });
 	const writer = new SessionEventWriter(() => {});
-	const core = createHostCore({ agentDir, createRuntime, cwd }, writer, [], {
+	const core = createHostCore({ agentDir, createRuntime, cwd }, writer, options.capabilities ?? [], {
 		now: () => clock.now,
 		idleEvictionMs: 1e12,
 		emptyExitMs: 1e12,
@@ -105,7 +116,10 @@ export async function statusHost() {
 			},
 			waitForBackpressure: async () => {},
 		});
-		const waitFor = (predicate: (record: WireRecord) => boolean, ms = DEADLINE_MS): Promise<WireRecord> => {
+		const waitFor = (
+			predicate: (record: WireRecord) => boolean,
+			ms = options.deadlineMs ?? DEADLINE_MS,
+		): Promise<WireRecord> => {
 			const seen = inbox.find(predicate);
 			if (seen) return Promise.resolve(seen);
 			return new Promise((resolve, reject) => {
@@ -131,6 +145,27 @@ export async function statusHost() {
 			received,
 			waitFor,
 			async request(command) {
+				// Admission fixtures select first; C8.3 forbids upgrading an admitted legacy peer for a token request.
+				if (
+					command.admissionId !== undefined &&
+					process.env.SENPI_ENGINE_SOCKET_COMPACT_UPDATES === "1" &&
+					!writer.compactSelection(name)?.admitted &&
+					!writer.compactSelection(name)?.selected
+				) {
+					const selected = await writer.withConnection(name, () =>
+						core.router.handle({
+							type: "set_client_info",
+							width: 100,
+							capabilities: ["compact_message_updates_v1", "event_resync"],
+							id: "compact-prelude",
+						}),
+					);
+					if (!selected?.success) throw new Error("compact fixture prelude refused: " + JSON.stringify(selected));
+					if (!writer.getConnectionCapabilities(name)?.includes("compact_events"))
+						throw new Error(
+							"missing compact transport: " + JSON.stringify(writer.getConnectionCapabilities(name)),
+						);
+				}
 				const id = `${name}-${++serial}`;
 				const answered = waitFor((record) => record.type === "response" && record.id === id);
 				const line = JSON.stringify({ ...command, id });

@@ -2,7 +2,8 @@ import { subscriptionLimits } from "../../core/subscription-limits/limit-store.t
 
 import { ConnectionRoles } from "./connection-roles.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
-import { CompactAdmissions } from "./compact-admissions.ts";
+import { ADMISSION_LIMITS, CompactAdmissions } from "./compact-admissions.ts";
+import { advertisedCompactCapabilities } from "./compact-negotiation.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 
 import type { RpcHostKernelMemory } from "./rpc-types.ts";
@@ -20,7 +21,11 @@ import { sweepIdleSessions } from "./session-router-occupancy.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 import { registryStatusSource } from "./session-status-source.ts";
 export class RouterContext {
-	readonly admissions = compactUpdatesEnabled() ? new CompactAdmissions() : undefined;
+	readonly admissions = compactUpdatesEnabled()
+		? new CompactAdmissions(ADMISSION_LIMITS, (socketEpoch, admissionId) =>
+				this.writer.routesAdmission(socketEpoch, admissionId),
+			)
+		: undefined;
 	readonly bindings = new Map<string, RpcSessionBinding>();
 
 	readonly stopLimitBroadcast: () => void;
@@ -41,7 +46,7 @@ export class RouterContext {
 		RpcSessionRegistry,
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 	> &
-		Partial<Pick<RpcSessionRegistry, "holderPids" | "attachSession" | "agentDir">>;
+		Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>;
 
 	readonly writer: SessionEventWriter;
 
@@ -112,7 +117,7 @@ export class RouterContext {
 			RpcSessionRegistry,
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 		> &
-			Partial<Pick<RpcSessionRegistry, "holderPids" | "attachSession" | "agentDir">>,
+			Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
@@ -127,7 +132,11 @@ export class RouterContext {
 		this.writer = writer;
 		this.defaults = defaults;
 		this.createBinding = createBinding;
-		this.connectionOptions = connectionOptions;
+		this.connectionOptions = {
+			...connectionOptions,
+			capabilities:
+				connectionOptions.capabilities && advertisedCompactCapabilities(connectionOptions.capabilities, false),
+		};
 		this.idleNow = idle?.now ?? Date.now;
 		this.idleEvictionMs = idle?.idleEvictionMs ?? Number.POSITIVE_INFINITY;
 		this.emptyExitMs = idle?.emptyExitMs ?? Number.POSITIVE_INFINITY;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
+import type { AdmissionIdentity, Answer, Epoch, Produced } from "./compact-admission-types.ts";
 import {
 	ADMISSION_LIMITS,
 	type AdmissionRow as Row,
@@ -17,30 +18,30 @@ import {
 	recordProducerLoss,
 	runAdmissionProducer,
 } from "./compact-admission-producer.ts";
+import { reserveRow, retainDone } from "./compact-admission-retention.ts";
+import { settleProducedAdmission } from "./compact-admission-settlement.ts";
 export { CompactAdmissionError } from "./compact-admission-error.ts";
 export { ADMISSION_LIMITS } from "./compact-admission-storage.ts";
-type Answer = Readonly<Record<string, unknown>>;
-type Produced = { readonly answer: Answer; readonly release: () => Promise<void> };
-type Pending = ReturnType<typeof Promise.withResolvers<Answer>>;
-type Epoch = {
-	readonly producer: AdmissionProducerLifetime;
-	readonly peer: string;
-	readonly directory: Promise<string>;
-	readonly hot: Map<string, Pending>;
-	tail: Promise<void>;
-	entries: number;
-	ended: boolean;
-	waiting: number;
-};
 
 /** Host-owned epoch index. Hash-file lookup is bounded by one <=131,584-byte row; hot results are never history. */
 export class CompactAdmissions {
 	private readonly epochs = new Map<string, Epoch>();
 	private readonly limits: Readonly<{ entries: number; bytes: number }>;
+	/** Whether a finished admission still routes a stream of its socket epoch; such a row is never evicted. */
+	private readonly routed: (socketEpoch: string, admissionId: string) => boolean;
 	private readonly losses: ProducerLosses = { abandoned: 0, releaseFailed: 0 };
+	private retiredOverflow = 0;
 
 	status() {
-		return { ...this.losses };
+		return { ...this.losses, retiredOverflow: this.retiredOverflow };
+	}
+
+	/** RULING-113 residual: a forgotten ID is indistinguishable from a fresh open, so the first loss is logged. */
+	private overflowRetired(): void {
+		if (this.retiredOverflow++ === 0)
+			process.stderr.write(
+				`senpi rpc admission retired-ID ring overflowed (${ADMISSION_LIMITS.retired} digests); older IDs are forgotten\n`,
+			);
 	}
 
 	private end(epoch: Epoch): void {
@@ -48,8 +49,12 @@ export class CompactAdmissions {
 		epoch.producer.end(() => recordProducerLoss(this.losses, "abandoned", epoch.hot.size));
 	}
 
-	constructor(limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS) {
+	constructor(
+		limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS,
+		routed: (socketEpoch: string, admissionId: string) => boolean = () => false,
+	) {
 		this.limits = limits;
+		this.routed = routed;
 	}
 
 	private key(id: string): string {
@@ -65,8 +70,10 @@ export class CompactAdmissions {
 				peer,
 				directory: mkdtemp(join(tmpdir(), "senpi-admissions-")),
 				hot: new Map(),
+				failures: new Map(),
+				done: new Map(),
+				retired: new Set(),
 				tail: Promise.resolve(),
-				entries: 0,
 				ended: false,
 				waiting: 0,
 			};
@@ -90,30 +97,15 @@ export class CompactAdmissions {
 		}
 	}
 
-	private async read(epoch: Epoch, key: string): Promise<Row | undefined> {
-		return readAdmissionRow(epoch.directory, key);
-	}
-
-	private async write(epoch: Epoch, key: string, row: Row): Promise<void> {
-		return writeAdmissionRow(epoch.directory, key, row);
-	}
-
-	async run(
-		identity: {
-			readonly socketEpoch: string;
-			readonly peer: string;
-			readonly admissionId: string;
-			readonly fingerprint: string;
-		},
-		produce: (signal: AbortSignal) => Promise<Produced>,
-	): Promise<Answer> {
+	async run(identity: AdmissionIdentity, produce: (signal: AbortSignal) => Promise<Produced>): Promise<Answer> {
 		const key = this.key(identity.admissionId);
 		const epoch = this.epoch(identity.socketEpoch, identity.peer);
 		const registered = await this.serial(epoch, async () => {
 			if (epoch.ended) throw new CompactAdmissionError("admission_retired");
-			const row = await this.read(epoch, key);
+			const row = await readAdmissionRow(epoch, key);
 			if (row) {
 				if (row.fingerprint !== identity.fingerprint) throw new CompactAdmissionError("admission_conflict");
+				retainDone(epoch, key, identity.admissionId);
 				switch (row.state) {
 					case "complete":
 						if (row.answer === undefined) throw new CompactAdmissionError("storage_unavailable");
@@ -122,8 +114,9 @@ export class CompactAdmissions {
 							answer: z.record(z.string(), z.unknown()).parse(JSON.parse(row.answer)),
 						} as const;
 					case "cancelled":
-					case "failed":
 						throw new CompactAdmissionError("admission_retired");
+					case "failed":
+						throw new CompactAdmissionError(row.failure ?? "admission_retired");
 					case "pending": {
 						const pending = epoch.hot.get(key);
 						if (!pending) throw new CompactAdmissionError("storage_unavailable");
@@ -131,11 +124,13 @@ export class CompactAdmissions {
 					}
 				}
 			}
-			if (epoch.entries >= this.limits.entries || (epoch.entries + 1) * ADMISSION_LIMITS.row > this.limits.bytes)
-				throw new CompactAdmissionError("admission_limit");
+			if (epoch.retired.has(key)) throw new CompactAdmissionError("admission_retired");
 			if (epoch.hot.size >= ADMISSION_LIMITS.hot) throw new CompactAdmissionError("admission_busy");
-			await this.write(epoch, key, { state: "pending", fingerprint: identity.fingerprint });
-			epoch.entries++;
+			const capacity = Math.min(this.limits.entries, Math.floor(this.limits.bytes / ADMISSION_LIMITS.row));
+			const routed = (admissionId: string) => this.routed(identity.socketEpoch, admissionId);
+			if (!(await reserveRow(epoch, capacity, routed, () => this.overflowRetired())))
+				throw new CompactAdmissionError("admission_limit");
+			await writeAdmissionRow(epoch, key, { state: "pending", fingerprint: identity.fingerprint });
 			const pending = Promise.withResolvers<Answer>();
 			void pending.promise.catch(() => {});
 			epoch.hot.set(key, pending);
@@ -157,19 +152,13 @@ export class CompactAdmissions {
 				(value) =>
 					value.release().catch((cause: unknown) => recordProducerLoss(this.losses, "releaseFailed", 1, cause)),
 			);
-			const value = produced.answer;
-			const answer = JSON.stringify(produced.answer);
-			if (Buffer.byteLength(answer) > 65_536) throw new CompactAdmissionError("storage_unavailable");
-			const cancelled = await this.serial(epoch, async () => {
-				const row = await this.read(epoch, key);
-				const retired = epoch.ended || row?.state === "cancelled";
-				await this.write(epoch, key, {
-					state: retired ? "cancelled" : "complete",
-					fingerprint: identity.fingerprint,
-					answer,
-				});
-				return retired;
-			});
+			const { value, cancelled } = await settleProducedAdmission(
+				epoch,
+				key,
+				identity.fingerprint,
+				produced,
+				(action) => this.serial(epoch, action),
+			);
 			if (cancelled) {
 				const release = produced.release;
 				produced = undefined;
@@ -178,17 +167,31 @@ export class CompactAdmissions {
 			registered.pending.resolve(value);
 			return value;
 		} catch (cause) {
+			let failure = cause;
+			const row: Row = {
+				state: "failed",
+				fingerprint: identity.fingerprint,
+				...(cause instanceof CompactAdmissionError && cause.reason === "storage_unavailable"
+					? { failure: "storage_unavailable" as const }
+					: {}),
+			};
+			if (row.failure) epoch.failures.set(key, row);
 			if (produced) await produced.release();
 			try {
-				await this.serial(epoch, () =>
-					this.write(epoch, key, { state: "failed", fingerprint: identity.fingerprint }),
+				await this.serial(epoch, () => writeAdmissionRow(epoch, key, row));
+			} catch (storageCause) {
+				process.stderr.write(
+					`senpi rpc admission failure row write failed: ${storageCause instanceof Error ? storageCause.message : String(storageCause)}\n`,
 				);
+				epoch.failures.set(key, { ...row, failure: "storage_unavailable" });
+				failure = new CompactAdmissionError("storage_unavailable");
 			} finally {
-				registered.pending.reject(cause);
+				registered.pending.reject(failure);
 			}
-			throw cause;
+			throw failure;
 		} finally {
 			epoch.hot.delete(key);
+			retainDone(epoch, key, identity.admissionId);
 		}
 	}
 
@@ -196,7 +199,7 @@ export class CompactAdmissions {
 		const key = this.key(admissionId);
 		const epoch = this.epochs.get(socketEpoch);
 		if (!epoch || epoch.ended) return false;
-		return this.serial(epoch, async () => (await this.read(epoch, key))?.state === "pending");
+		return this.serial(epoch, async () => (await readAdmissionRow(epoch, key))?.state === "pending");
 	}
 
 	async cancel(socketEpoch: string, admissionId: string): Promise<"cancelled" | "already_complete" | "unknown"> {
@@ -204,8 +207,8 @@ export class CompactAdmissions {
 		const epoch = this.epochs.get(socketEpoch);
 		if (!epoch) return "unknown";
 		return this.serial(epoch, async () => {
-			const row = await this.read(epoch, key);
-			if (!row) return "unknown";
+			const row = await readAdmissionRow(epoch, key);
+			if (!row) return epoch.retired.has(key) ? "already_complete" : "unknown";
 			switch (row.state) {
 				case "complete":
 				case "failed":
@@ -213,7 +216,7 @@ export class CompactAdmissions {
 				case "cancelled":
 					return "cancelled";
 				case "pending":
-					await this.write(epoch, key, { ...row, state: "cancelled" });
+					await writeAdmissionRow(epoch, key, { ...row, state: "cancelled" });
 					return "cancelled";
 			}
 		});
@@ -228,7 +231,7 @@ export class CompactAdmissions {
 		const epoch = this.epochs.get(socketEpoch);
 		if (!epoch) return undefined;
 		return this.serial(epoch, async () => {
-			const row = await this.read(epoch, key);
+			const row = await readAdmissionRow(epoch, key);
 			if (row?.answer === undefined) return undefined;
 			return { state: row.state, answer: z.record(z.string(), z.unknown()).parse(JSON.parse(row.answer)) };
 		});

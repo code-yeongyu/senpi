@@ -16,22 +16,26 @@ const identity = (admissionId: string, socketEpoch = "epoch-1") => ({
 it.each([
 	{ name: "entries", entries: 2, bytes: ADMISSION_LIMITS.row * 3 },
 	{ name: "reserved bytes", entries: 3, bytes: ADMISSION_LIMITS.row * 2 },
-])("T2/T5 refuses above the $name bound without forgetting old IDs", async ({ entries, bytes }) => {
-	const index = new CompactAdmissions({ entries, bytes });
-	const produce = vi.fn(async () => ({ answer: { sessionId: "session-1" }, release: async () => {} }));
-	try {
-		for (let id = 0; id < 2; id++) await index.run(identity(`id-${id}`), produce);
-		await expect(index.run(identity("above-bound"), produce)).rejects.toMatchObject({ reason: "admission_limit" });
-		expect(produce).toHaveBeenCalledTimes(2);
-		await expect(index.run(identity("id-0"), produce)).resolves.toEqual({ sessionId: "session-1" });
-		expect(produce).toHaveBeenCalledTimes(2);
-		await expect(index.cancel("epoch-1", "id-0")).resolves.toBe("already_complete");
-	} finally {
-		await index.dispose();
-	}
-});
+])(
+	"T2/T5 #5274 above the $name bound evicts the oldest terminal ID instead of refusing",
+	async ({ entries, bytes }) => {
+		const index = new CompactAdmissions({ entries, bytes });
+		const produce = vi.fn(async () => ({ answer: { sessionId: "session-1" }, release: async () => {} }));
+		try {
+			for (let id = 0; id < 2; id++) await index.run(identity(`id-${id}`), produce);
+			await expect(index.run(identity("above-bound"), produce)).resolves.toEqual({ sessionId: "session-1" });
+			expect(produce).toHaveBeenCalledTimes(3);
+			await expect(index.run(identity("id-0"), produce)).rejects.toMatchObject({ reason: "admission_retired" });
+			await expect(index.run(identity("id-1"), produce)).resolves.toEqual({ sessionId: "session-1" });
+			expect(produce).toHaveBeenCalledTimes(3);
+			await expect(index.cancel("epoch-1", "id-0")).resolves.toBe("already_complete");
+		} finally {
+			await index.dispose();
+		}
+	},
+);
 
-it("T2/T5 retired IDs keep their reservation and cannot allocate a fresh producer", async () => {
+it("T2/T5 #5274 a cancelled ID stays retired after a fresh attempt evicts its row", async () => {
 	const index = new CompactAdmissions({ entries: 1, bytes: ADMISSION_LIMITS.row });
 	const entered = Promise.withResolvers<void>();
 	const finish = Promise.withResolvers<void>();
@@ -49,8 +53,9 @@ it("T2/T5 retired IDs keep their reservation and cannot allocate a fresh produce
 		await pending;
 		const produce = vi.fn(async () => ({ answer: {}, release }));
 		await expect(index.run(identity("retired"), produce)).rejects.toMatchObject({ reason: "admission_retired" });
-		await expect(index.run(identity("fresh"), produce)).rejects.toMatchObject({ reason: "admission_limit" });
-		expect(produce).not.toHaveBeenCalled();
+		await expect(index.run(identity("fresh"), produce)).resolves.toEqual({});
+		await expect(index.run(identity("retired"), produce)).rejects.toMatchObject({ reason: "admission_retired" });
+		expect(produce).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
 	} finally {
 		finish.resolve();
@@ -81,21 +86,6 @@ it("T2/T5 deletes only the ended epoch's on-disk index and allows reuse in a new
 	} finally {
 		await index.dispose();
 		await rm(root, { recursive: true, force: true });
-	}
-});
-
-it("T2/T5 the default reservation never exceeds either epoch bound", async () => {
-	const index = new CompactAdmissions();
-	const capacity = Math.min(ADMISSION_LIMITS.entries, Math.floor(ADMISSION_LIMITS.bytes / ADMISSION_LIMITS.row));
-	const produce = vi.fn(async () => ({ answer: {}, release: async () => {} }));
-	try {
-		for (let id = 0; id < capacity; id++) await index.run(identity(`id-${id}`), produce);
-		await expect(index.run(identity("full"), produce)).rejects.toMatchObject({ reason: "admission_limit" });
-		expect(produce).toHaveBeenCalledTimes(capacity);
-		await index.run(identity("id-0"), produce);
-		expect(produce).toHaveBeenCalledTimes(capacity);
-	} finally {
-		await index.dispose();
 	}
 });
 

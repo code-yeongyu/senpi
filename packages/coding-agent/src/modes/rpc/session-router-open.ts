@@ -1,6 +1,7 @@
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
+import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { runAdmissionProducer } from "./compact-admission-producer.ts";
 
 import { clearHandoverParkedSession, type HandoverParkedEntry } from "./host-handover-parked.ts";
@@ -286,6 +287,7 @@ export async function open(
 			}
 			if (!opened.attached || !compactUpdatesEnabled()) host.writer.forgetSession(opened.sessionId);
 		}
+		if (cause instanceof CompactAdmissionError) throw cause;
 		return error(command.id, "open_session", code(cause), detail(cause));
 	}
 }

@@ -1,4 +1,5 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { CompactSelection } from "./compact-negotiation.ts";
 import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
 import { tmpdir } from "node:os";
 import { startRecoveryCleanup } from "./compact-recovery-cleanup.ts";
@@ -6,7 +7,7 @@ import { EventLeases } from "./compact-event-leases.ts";
 import { legacyAttachView } from "./compact-legacy-view.ts";
 import { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import { RecoveryCheckpoints } from "./compact-recovery-state.ts";
-import { COMPACT_EVENTS_CAPABILITY, MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { ExtensionTransportOwner } from "./extension-owner.ts";
 import { LegacyReplayStore } from "./legacy-replay-store.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -43,10 +44,13 @@ type RegisteredConnection = {
 	readonly actor: SocketEventSinkActor;
 	/** This registration's incarnation of the peer: the owner every checkpoint it freezes is bound to. */
 	readonly socketEpoch: string;
+	readonly selection: CompactSelection;
 	readonly owner: ExtensionTransportOwner;
 };
 
 export class SessionEventFanout {
+	requiredSessions?: (peer: string) => readonly string[];
+	onSessionForgotten?: (sessionId: string) => void;
 	readonly startupCleanup = compactUpdatesEnabled() ? startRecoveryCleanup(tmpdir()) : undefined;
 	onConnectionClosed?: (id: string) => void;
 	/** Each routing session's acceptance lane; retired when the session is sealed or forgotten. */
@@ -79,6 +83,7 @@ export class SessionEventFanout {
 		{
 			socketEpoch: (id) => this.connections.get(id)?.socketEpoch,
 			ordinals: (id) => this.connectionSessions.get(id),
+			required: (id) => this.requiredSessions?.(id) ?? [],
 			has: (id, capability) => this.connectionHas(id, capability),
 		},
 		this.shedMode,
@@ -117,7 +122,7 @@ export class SessionEventFanout {
 			this.shedMode,
 		);
 		if (actor instanceof AdmissionRoutingActor) actor.bind(this.checkpoints, socketEpoch, id);
-		this.connections.set(id, { connection, actor, socketEpoch, owner });
+		this.connections.set(id, { connection, actor, socketEpoch, owner, selection: new CompactSelection() });
 		this.connectionCapabilities.set(id, new Set());
 		this.connectionSessions.set(id, new Map());
 	}
@@ -182,7 +187,7 @@ export class SessionEventFanout {
 		const registered = this.connections.get(id);
 		if (!registered) return;
 		// RULING-81 Q-B: the compact-events opt-in is accepted only behind the engine-socket flag.
-		const accepted = this.events ? capabilities : capabilities.filter((each) => each !== COMPACT_EVENTS_CAPABILITY);
+		const accepted = registered.selection.wireCapabilities(capabilities, this.events !== undefined);
 		this.connectionCapabilities.set(id, new Set(accepted));
 		this.registeredCapabilityConnections.add(id);
 		if (capabilities.includes(EVENT_RESYNC_CAPABILITY))
@@ -277,7 +282,8 @@ export class SessionEventFanout {
 	deliverToSession(sessionId: string, line: string): void {
 		for (const [id, { actor }] of this.connections) {
 			const held = this.attachment(id, sessionId);
-			if (held) actor.enqueue(line, undefined, undefined, undefined, false, held);
+			if (held || this.requiredSessions?.(id).includes(sessionId))
+				actor.enqueue(line, undefined, undefined, undefined, false, held);
 		}
 	}
 
@@ -291,6 +297,7 @@ export class SessionEventFanout {
 	 * (a queued attach view keeps its root) and the session's stream records go on every peer (RULING-56 (2)).
 	 */
 	forgetSession(sessionId: string): void {
+		this.onSessionForgotten?.(sessionId);
 		for (const { actor, socketEpoch } of this.connections.values())
 			if (actor instanceof AdmissionRoutingActor) actor.remember(sessionId, this.checkpoints, socketEpoch);
 		this.checkpoints.forgetSession(sessionId);

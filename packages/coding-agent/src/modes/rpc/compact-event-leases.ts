@@ -5,7 +5,8 @@ import { CompactContentStore, CompactWriteError } from "./compact-content-store.
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
 import { FRAGMENT_MAX_BYTES, type FrozenBytes, producePage, type RecoveryPage } from "./compact-recovery-bytes.ts";
 import { protocolId } from "./compact-recovery-ids.ts";
-import { jsonChunks } from "./json-pieces.ts";
+import { stageRecord, type RecordContent } from "./compact-record-staging.ts";
+export type { RecordContent } from "./compact-record-staging.ts";
 import {
 	type EventLease,
 	type RecoveryCaller,
@@ -32,22 +33,6 @@ const EVENT_RECORD_COMPONENT = "record";
 
 export type EventLeaseRefusal = "lease_limit" | "storage_unavailable";
 /** The record's legacy line when a destination already built it, else its stored size to stream it at (RULING-81 X06). */
-export type RecordContent = string | { readonly units: number };
-
-/** Stages the record's JSON text: the built line without its newline, or streamed in D-byte chunks, never joined whole. */
-function stageRecord(staging: TransferStaging, record: object, content: RecordContent): StagedContent {
-	const kind = protocolId("event");
-	const id = protocolId(EVENT_RECORD_COMPONENT);
-	if (typeof content === "string") return staging.stage(kind, id, content.slice(0, -1));
-	const transfer = staging.begin(kind, id, content.units * 2);
-	try {
-		for (const chunk of jsonChunks(record, FRAGMENT_MAX_BYTES / 2)) transfer.append(chunk);
-		return transfer.commit();
-	} catch (cause) {
-		transfer.abort();
-		throw cause;
-	}
-}
 export type ReleaseOutcome = "released" | "held" | "duplicate";
 
 export interface ReleaseReceipt {
@@ -229,6 +214,14 @@ export class EventLeases {
 		const held = this.peers.get(socketEpoch)?.held.get(leaseId);
 		if (!held || !held.reads.release()) return;
 		this.abandoned += 1;
+	}
+
+	/** A retired admission can no longer send receipts; drop only its references, preserving other holders. */
+	forgetAdmission(caller: RecoveryCaller, admissionId: string): void {
+		for (const held of this.peers.get(caller.socketEpoch)?.held.values() ?? []) {
+			if (held.sessionId !== caller.sessionId || !held.admissions.delete(admissionId)) continue;
+			if (held.admissions.size === 0) this.abandon(caller.socketEpoch, held.lease.id);
+		}
 	}
 
 	/** A peer incarnation is gone: every lease it holds ends once the reads in flight on it unwind. */

@@ -1,6 +1,7 @@
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
+import { declarationReply } from "./compact-negotiation.ts";
 import type { RpcHostLifecycleEvent, RpcOpenQueuedEvent } from "./rpc-types.ts";
 import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { RpcRecord } from "./session-event-writer-compaction.ts";
@@ -71,6 +72,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 
 	/** Queue a session record. Content events target connections attached to the session. */
 	enqueue(sessionId: string, value: object): boolean {
+		if (declarationReply(value, undefined) === undefined) return true;
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
 		const record = normalizeJsonValue(value).value as RpcRecord;
@@ -144,6 +146,10 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 
 	/** Queue one untagged host-control response for the given connection (defaults to the current one). */
 	enqueueControl(value: object, targetOverride?: string): Promise<void> {
+		const peer = targetOverride ?? this.currentConnection();
+		const reply = declarationReply(value, peer === undefined ? undefined : this.compactSelection(peer));
+		if (reply === undefined) return Promise.resolve();
+		value = reply;
 		if (this.failure !== undefined) return Promise.reject(this.failure);
 		const targetId = targetOverride ?? this.connectionContext.getStore();
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);

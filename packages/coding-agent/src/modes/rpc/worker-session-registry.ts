@@ -31,6 +31,7 @@ export interface WorkerSessionRegistryOptions {
 
 /** Transport-side lifecycle owner. Caller paths are never inspected on this event loop. */
 export class WorkerSessionRegistry {
+	readonly supportsCompact = () => true;
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new SessionPathReservations();
 	private readonly claims = new Map<string, WorkerSessionClaims>();
