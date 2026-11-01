@@ -6,6 +6,8 @@ mod owner_dacl;
 pub mod presence;
 #[cfg(windows)]
 pub mod presence_windows;
+pub mod process_handle;
+pub mod process_identity;
 pub mod publish;
 pub mod session;
 pub mod volume;
@@ -16,6 +18,10 @@ pub use answers::{
 };
 pub use classify::{
     classify, DriverPath, Locality, NotLocalReason, RemoteDevice, RemoteProtocol, VolumeFacts,
+};
+pub use process_handle::{observe_pid, ExitWait, OpenError, RetainedProcess};
+pub use process_identity::{
+    observe, GoneReason, Liveness, Observation, ProcessFacts, ProcessRecord, UnknownReason,
 };
 pub use publish::{publish_no_replace, Publication, PublishError, PublishOutcome};
 pub use session::{read_kernel_session_identity, SessionIdentity, UnverifiedReason};
