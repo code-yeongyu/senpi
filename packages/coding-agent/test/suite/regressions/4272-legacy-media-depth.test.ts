@@ -169,7 +169,7 @@ async function writerDelivers(depth: number, expectedDelivered?: boolean): Promi
 		expect(details).toBe(new Date(0).toISOString());
 		expect(ends[0]).toMatchObject({ isError: false });
 	}
-	expect(refusals, "refusals counted exactly").toBe(delivered ? 0 : 1);
+	expect(refusals ?? 0, "refusals counted exactly").toBe(delivered ? 0 : 1);
 	expect(
 		stderr.filter((line) => REFUSED.test(line)),
 		"refusals reported exactly",
