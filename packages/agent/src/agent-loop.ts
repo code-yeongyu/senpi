@@ -53,6 +53,7 @@ import type {
 	AgentToolCall,
 	AgentToolCallOutcome,
 	AgentToolResult,
+	ToolHost,
 	PrepareNextTurnContext,
 	StreamFn,
 } from "./types.ts";
@@ -1242,6 +1243,7 @@ async function executeToolCallsSequential(
 				preparation,
 				signal,
 				emitToolExecutionUpdate(preparation.toolCall, emit),
+				config.toolHost,
 			);
 			finalized = await finalizeExecutedToolCall(
 				currentContext,
@@ -1376,6 +1378,7 @@ async function runPreparedToolCall(
 		preparation,
 		signal,
 		emitToolExecutionUpdate(preparation.toolCall, emit),
+		config.toolHost,
 	);
 	return finalizeExecutedToolCall(currentContext, assistantMessage, preparation, executed, config, signal);
 }
@@ -1571,10 +1574,20 @@ function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink):
 		});
 }
 
+/** The fused mode: run the tool in this process, as the loop always did. */
+export const localToolHost: ToolHost = {
+	execute: (call, signal, onUpdate, local) => {
+		if (!local) throw new Error(`localToolHost needs the in-process tool for "${call.toolName}"`);
+		return local.tool.execute(call.toolCallId, call.args as never, signal, onUpdate);
+	},
+};
+
 /** Options for {@link runToolCall}. */
 export interface RunToolCallOptions extends ToolCallHooks {
 	/** Tools the call resolves against. */
 	tools: readonly AgentTool<any>[];
+	/** Where the prepared call executes; defaults to {@link localToolHost} (in-process). */
+	toolHost?: ToolHost;
 	/** Passed to the hooks as the message that issued the call. */
 	assistantMessage: AssistantMessage;
 	/** Passed to the hooks as the current agent context. */
@@ -1599,7 +1612,12 @@ export async function runToolCall(toolCall: AgentToolCall, options: RunToolCallO
 	if (preparation.kind === "immediate") {
 		return { toolCall, result: preparation.result, isError: preparation.isError };
 	}
-	const executed = await executePreparedToolCall(preparation, signal, options.onUpdate ?? (() => {}));
+	const executed = await executePreparedToolCall(
+		preparation,
+		signal,
+		options.onUpdate ?? (() => {}),
+		options.toolHost,
+	);
 	return finalizeExecutedToolCall(context, assistantMessage, preparation, executed, options, signal);
 }
 
@@ -1607,15 +1625,21 @@ async function executePreparedToolCall(
 	prepared: PreparedToolCall,
 	signal: AbortSignal | undefined,
 	onUpdate: ToolUpdateSink,
+	toolHost: ToolHost = localToolHost,
 ): Promise<ExecutedToolCallOutcome> {
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
 
 	try {
-		const execution = prepared.tool.execute(prepared.toolCall.id, prepared.args as never, signal, (partialResult) => {
-			if (!acceptingUpdates) return;
-			updateEvents.push(Promise.resolve(onUpdate(partialResult)));
-		});
+		const execution = toolHost.execute(
+			{ toolCallId: prepared.toolCall.id, toolName: prepared.tool.name, args: prepared.args },
+			signal,
+			(partialResult) => {
+				if (!acceptingUpdates) return;
+				updateEvents.push(Promise.resolve(onUpdate(partialResult)));
+			},
+			{ tool: prepared.tool },
+		);
 		const abortRelease = abortReleasePromise(signal);
 		const settled = abortRelease ? await Promise.race([execution, abortRelease]) : await execution;
 		if (settled === ABORTED) {

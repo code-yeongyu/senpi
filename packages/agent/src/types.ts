@@ -202,6 +202,8 @@ export type PrepareRequest = (
 export interface PrepareNextTurnContext extends AgentTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
+	/** Where prepared tool calls execute (senpi#4360). Defaults to the in-process local host. */
+	toolHost?: ToolHost;
 	model: Model<any>;
 
 	/**
@@ -645,3 +647,30 @@ export type AgentEvent =
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
 	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: any; partialResult: any }
 	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean };
+
+/**
+ * One prepared, validated tool call handed to a {@link ToolHost}. Serializable: it can cross a process or machine
+ * boundary unchanged (a remote hand resolves `toolName` in its own registry).
+ */
+export interface ToolHostCall {
+	toolCallId: string;
+	toolName: string;
+	args: unknown;
+}
+/** In-process only: the resolved tool for a host running in the loop's own process. A remote host ignores it. */
+export interface LocalToolBinding {
+	tool: AgentTool;
+}
+/**
+ * The hand side of the brain/hand split (senpi#4360). The loop keeps name resolution, argument preparation, schema
+ * validation, the before/after hooks, events and abort handling; the host only executes the prepared call. A host
+ * that throws is reported as an error result, exactly like a throwing tool.
+ */
+export interface ToolHost {
+	execute(
+		call: ToolHostCall,
+		signal: AbortSignal | undefined,
+		onUpdate: (partialResult: AgentToolResult<unknown>) => void,
+		local?: LocalToolBinding,
+	): Promise<AgentToolResult<unknown>>;
+}
