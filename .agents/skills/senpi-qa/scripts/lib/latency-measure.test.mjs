@@ -4,11 +4,13 @@ import {
 	bandOf,
 	barrierClock,
 	compareToBand,
+	frameIntervals,
 	iterationSamples,
 	machineClass,
 	minOfRuns,
 	percentile,
 	runMetrics,
+	streamedAnswer,
 } from "./latency-measure.mjs";
 
 test("percentile is nearest-rank over the sorted samples and refuses an empty list", () => {
@@ -50,11 +52,14 @@ const iteration = (start, tail) => ({
 	bodies: [{ id: "a", readyAt: 0, startAt: start, endAt: 10 }],
 });
 
-test("run metrics pool every workload and keep a per-workload copy of each metric", () => {
-	const metrics = runMetrics({
-		E01: [iteration(1, 5), iteration(3, 7)],
-		E02: [iteration(2, 6)],
-	});
+test("run metrics pool every workload, keep a per-workload copy of each metric, and carry the TUI frame time", () => {
+	const metrics = runMetrics(
+		{
+			E01: [iteration(1, 5), iteration(3, 7)],
+			E02: [iteration(2, 6)],
+		},
+		[16, 17, 33],
+	);
 	assert.deepEqual(Object.keys(metrics).sort(), [
 		"E01.body_to_next_request_ms",
 		"E01.dispatch_to_body_ms",
@@ -62,10 +67,29 @@ test("run metrics pool every workload and keep a per-workload copy of each metri
 		"E02.dispatch_to_body_ms",
 		"body_to_next_request_ms",
 		"dispatch_to_body_ms",
+		"tui_frame_ms",
 	]);
+	assert.deepEqual(metrics.tui_frame_ms, { p50: 17, p95: 33, n: 3 });
 	assert.deepEqual(metrics.dispatch_to_body_ms, { p50: 2, p95: 3, n: 3 });
 	assert.deepEqual(metrics["E01.dispatch_to_body_ms"], { p50: 1, p95: 3, n: 2 });
 	assert.deepEqual(metrics["E02.body_to_next_request_ms"], { p50: 6, p95: 6, n: 1 });
+});
+
+test("a run without TUI frame samples is an error, never a run without the metric", () => {
+	assert.throws(() => runMetrics({ E01: [iteration(1, 5)] }), /tui_frame_ms samples/);
+	assert.throws(() => runMetrics({ E01: [iteration(1, 5)] }, []), /tui_frame_ms samples/);
+});
+
+test("frame intervals run between FRAME_END markers, so a frame split over chunks far apart is still one frame", () => {
+	const chunk = (at, frameEnds) => ({ at, bytes: 64, frameEnds });
+	// The second frame arrives in two chunks 6 ms apart (a loaded PTY read); only its marker chunk ends it.
+	const split = [chunk(100, 1), chunk(110, 0), chunk(116, 1), chunk(133, 1)];
+	assert.deepEqual(frameIntervals(split), [16, 17]);
+	// Two frames coalesced into one read both end at that read's arrival.
+	assert.deepEqual(frameIntervals([chunk(100, 1), chunk(120, 2)]), [20, 0]);
+	assert.throws(() => frameIntervals([chunk(100, 0), chunk(140, 1)]), /at least two frames, got 1/);
+	assert.throws(() => frameIntervals([]), /at least two frames, got 0/);
+	assert.throws(() => frameIntervals([{ at: 1 }, chunk(2, 1)]), /no arrival time or frame-end count/);
 });
 
 const run = (p50, p95) => ({ metrics: { dispatch_to_body_ms: { p50, p95, n: 9 } } });
@@ -131,4 +155,32 @@ test("the barrier clock releases a barrier the moment it is reached and refuses 
 	assert.deepEqual(released, ["reached"]);
 	assert.equal(typeof clock.read("reached"), "number");
 	assert.throws(() => clock.read("never"), /barrier never was never reached/);
+});
+
+/**
+ * The TTSR repetitive-turns detector's view of a turn (packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/
+ * repetitive-turns.ts): lowercased, hex-like runs and digit runs collapsed to `#`, compared as word-trigram Jaccard. It
+ * interrupts the third consecutive turn whose similarity reaches 0.55, which sends an unscripted provider request.
+ */
+function detectorTrigrams(text) {
+	const normalized = text
+		.toLowerCase()
+		.replace(/\b[0-9a-f]{7,}\b/gi, "#")
+		.replace(/\d[\d.,:/-]*/g, "#");
+	const words = normalized.match(/[\p{L}\p{N}#]+/gu) ?? [];
+	const grams = new Set();
+	for (let i = 0; i + 3 <= words.length; i++) grams.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+	return grams;
+}
+
+test("consecutive streamed answers stay far from the TTSR repetitive-turns threshold (senpi#5270)", () => {
+	const iterations = 20;
+	for (let i = 1; i < iterations; i++) {
+		const a = detectorTrigrams(streamedAnswer(i - 1));
+		const b = detectorTrigrams(streamedAnswer(i));
+		const shared = [...a].filter((gram) => b.has(gram)).length;
+		const jaccard = shared / (a.size + b.size - shared);
+		assert.ok(jaccard < 0.1, `iterations ${i - 1} and ${i}: trigram Jaccard ${jaccard.toFixed(2)}`);
+		assert.ok(streamedAnswer(i).endsWith(`E01-STREAMED-${i}`));
+	}
 });
