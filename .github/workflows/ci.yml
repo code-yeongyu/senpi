@@ -825,7 +825,7 @@ jobs:
       # Exact-version proof invalidates on every Bun bump. Re-run the frozen old-parser
       # control together with the compiled-runtime pair proof before re-enabling it.
       - name: Run Windows private descriptor pair proof and compatibility control
-        run: node ../../scripts/run-tests.mjs vitest run test/suite/host-private-fds-pair.test.ts test/suite/host-private-fds-proof-gate.test.ts test/suite/host-private-fd-inherit.test.ts --reporter=verbose
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/host-private-fds-pair.test.ts test/suite/host-private-fds-pair-inherit.test.ts test/suite/host-private-fds-proof-gate.test.ts test/suite/host-private-fd-inherit.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC host lifecycle tests
