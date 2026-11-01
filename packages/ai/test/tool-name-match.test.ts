@@ -95,4 +95,22 @@ describe("resolveToolNameMatch with a stray word prefix (omo#12065)", () => {
 	it("refuses a prefixed name whose suffix names no tool", () => {
 		expect(resolveToolNameMatch("foo_bar_baz", tools)).toBeUndefined();
 	});
+
+	it.each([
+		["delete_write", "a destructive verb"],
+		["force_bash", "a destructive verb"],
+		["rm_eval", "a destructive verb"],
+		["Force_Delete_write", "a destructive verb in any case or position"],
+		["drop_todo", "a destructive verb"],
+		["read_write", "a registered tool name"],
+		["Bash_eval", "a registered tool name in another case"],
+		["stray_read_todo", "a registered tool name among its words"],
+	])("refuses %s: its prefix is %s", (requested) => {
+		expect(resolveToolNameMatch(requested, tools)).toBeUndefined();
+	});
+
+	it("leaves mcp-namespaced names to the namespace rules", () => {
+		expect(resolveToolNameMatch("mcp__srv__trophy_eval", tools)).toBeUndefined();
+		expect(resolveToolNameMatch("mcp_github_eval", tools)).toBe("eval");
+	});
 });
