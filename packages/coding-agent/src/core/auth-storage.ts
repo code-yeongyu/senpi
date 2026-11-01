@@ -46,7 +46,10 @@ import {
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/provider-id.ts";
 import type { AnthropicSubscriptionCredential } from "./extensions/builtin/anthropic-subscription/accounts.ts";
-import { signInAgainMessage, signInRequiredNames } from "./extensions/builtin/anthropic-subscription/sign-in-again.ts";
+import {
+	signInRequiredAccounts,
+	signInRequiredMessage,
+} from "./extensions/builtin/anthropic-subscription/sign-in-again.ts";
 import { lockWithLossHandling } from "./file-lock.ts";
 import {
 	CredentialStoreBusyError,
@@ -122,13 +125,14 @@ function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
 function signInRequiredNotices(data: AuthStorageData): AuthNotice[] {
 	const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
 	const accounts = Array.isArray(subscription?.accounts) ? subscription.accounts : [];
-	const names = signInRequiredNames(accounts);
+	const required = signInRequiredAccounts(accounts);
+	const names = required.map((entry) => entry.name);
 	if (names.length === 0) return [];
 	return [
 		{
 			id: `${ANTHROPIC_SUBSCRIPTION_PROVIDER_ID}:sign-in-required:${names.join(",")}`,
 			provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
-			message: signInAgainMessage(names),
+			message: signInRequiredMessage(required),
 			repeats: true,
 		},
 	];

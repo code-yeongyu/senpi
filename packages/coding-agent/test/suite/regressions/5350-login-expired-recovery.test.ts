@@ -5,7 +5,8 @@
  * `unreadable`, `rejected` and a thrown probe keep today's 15-min re-block.
  *
  * Guard tests (already green on main, kept as regression guards for the new union member): "not yet due",
- * "legacy_sign_in_retired", "legacy text", "signedInSlot", "needs_sign_in" and "unblock".
+ * "legacy_sign_in_retired", "legacy text", "signedInSlot", "needs_sign_in" and "unblock". "thrown status probe"
+ * guards today's behaviour; it fails on main only because the status callback was renamed.
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +21,7 @@ import { registerClaudeAccountCommand } from "../../../src/core/extensions/built
 import { unblockProviderAccount } from "../../../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
 import {
 	type AccountSlot,
+	type AnthropicSubscriptionCredential,
 	addAccount,
 	type ClaudeCliAccountSlot,
 	emptyCredential,
@@ -73,7 +75,11 @@ function memoryStore(accounts: AccountSlot[]): CredentialStore & { accounts: () 
 	} as unknown as CredentialStore & { accounts: () => AccountSlot[] };
 }
 
-async function recover(accounts: AccountSlot[], status: (slot: ClaudeCliAccountSlot) => Promise<State>) {
+async function recover(
+	accounts: AccountSlot[],
+	status: (slot: ClaudeCliAccountSlot) => Promise<State>,
+	isUsable: (account: AccountSlot) => boolean = (account) => !isBlockedFor(account, NOW),
+) {
 	overrideContinuityObservabilityBoundary({ log: (event, data) => events.push({ event, data }) });
 	const store = memoryStore(accounts);
 	const probed: string[] = [];
@@ -83,7 +89,7 @@ async function recover(accounts: AccountSlot[], status: (slot: ClaudeCliAccountS
 		accounts,
 		signal: new AbortController().signal,
 		reload: async () => store.accounts(),
-		isUsable: (account) => !isBlockedFor(account, NOW),
+		isUsable,
 		now: NOW,
 		transientError: () => new Error("transient re-probe failure"),
 		claudeCliStatus: async (slot) => {
@@ -120,12 +126,15 @@ describe("senpi#5350 a confirmed signed-out CLI login becomes login_expired and 
 		},
 	);
 
-	it("RED: a thrown status probe on a plain auth_error slot leaves it unchanged and surfaces transientError", async () => {
-		await expect(
-			recover([cliSlot("alice", DUE)], async () => {
-				throw new Error("spawn failed");
-			}),
-		).rejects.toThrow("transient re-probe failure");
+	it("guard: a thrown status probe leaves the slot unchanged; with no usable account it surfaces transientError", async () => {
+		const thrown = async (): Promise<State> => {
+			throw new Error("spawn failed");
+		};
+		const { slot, probed } = await recover([cliSlot("alice", DUE)], thrown);
+		expect(probed).toEqual(["alice"]);
+		expect(slot("alice")).toEqual(cliSlot("alice", DUE));
+		expect(loginEvents()).toEqual([]);
+		await expect(recover([cliSlot("alice", DUE)], thrown, () => false)).rejects.toThrow("transient re-probe failure");
 	});
 
 	it("RED: a due login_expired slot is re-probed; signed_in clears the flag and the block and logs restored", async () => {
@@ -140,7 +149,10 @@ describe("senpi#5350 a confirmed signed-out CLI login becomes login_expired and 
 
 	it("RED: a due login_expired slot that probes signed_out again stays expired and logs no second transition", async () => {
 		const { slot } = await recover([cliSlot("alice", EXPIRED)], async () => "signed_out");
-		expect(slot("alice")).toMatchObject({ signInRequired: "login_expired", blockedUntil: NOW + AUTH_BLOCK_REPROBE_MS });
+		expect(slot("alice")).toMatchObject({
+			signInRequired: "login_expired",
+			blockedUntil: NOW + AUTH_BLOCK_REPROBE_MS,
+		});
 		expect(loginEvents()).toEqual([]);
 	});
 
@@ -192,7 +204,7 @@ describe("senpi#5350 the login_expired surfaces", () => {
 		const pending = { ...EXPIRED, blockedUntil: Date.now() + AUTH_BLOCK_REPROBE_MS };
 		await storage.modify(PROVIDER, async () => addAccount(emptyCredential(), cliSlot("alice", pending)));
 		expect(await unblockProviderAccount(storage, PROVIDER, "alice", {})).toBe(false);
-		const stored = (storage.get(PROVIDER) as { accounts: AccountSlot[] }).accounts[0];
+		const stored = (storage.get(PROVIDER) as AnthropicSubscriptionCredential).accounts?.[0];
 		expect(stored).toMatchObject({ signInRequired: "login_expired", blockReason: "auth_error" });
 	});
 

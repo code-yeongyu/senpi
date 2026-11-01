@@ -57,7 +57,11 @@ export type ClaudeCliAccountSlot = SlotBlockState & {
 	signedInAt?: number;
 	profile?: ClaudeCliAccountProfile;
 	check?: ClaudeCliAccountCheck;
-	signInRequired?: "legacy_sign_in_retired";
+	/**
+	 * Never selected for a turn. `login_expired`: a due auth re-probe found the CLI signed out (senpi#5350); the slot
+	 * keeps its `auth_error` block so the probe keeps running, and a `signed_in` probe or `/login` clears it.
+	 */
+	signInRequired?: "legacy_sign_in_retired" | "login_expired";
 	/** A CLI slot never holds token material; declared so reads on an `AccountSlot` see `undefined`, not a missing field. */
 	access?: never;
 	refresh?: never;

@@ -127,9 +127,12 @@ describe("senpi#5350 login_expired on the auth lane", () => {
 
 	it("RED: with every account expired the turn fails with the expired sign-in message naming them", async () => {
 		const until = START + AUTH_BLOCK_REPROBE_MS;
-		const lane = await installLane([cliSlot("alpha", expired(until)), cliSlot("bravo", expired(until))], async () => ({
-			state: "signed_out",
-		}));
+		const lane = await installLane(
+			[cliSlot("alpha", expired(until)), cliSlot("bravo", expired(until))],
+			async () => ({
+				state: "signed_out",
+			}),
+		);
 		const result = await runTurn();
 		expect(lane.spawned).toEqual([]);
 		expect(result.errorMessage).toContain(`${EXPIRED_TEXT}alpha, bravo.`);
