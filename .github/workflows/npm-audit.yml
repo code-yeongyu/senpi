@@ -25,7 +25,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Audit production vulnerabilities
-        run: npm audit --omit=dev --audit-level=moderate
+        # Same gate the release runs before publishing (senpi#2941); accepted risks live in scripts/audit-exceptions.json.
+        run: node scripts/audit-production.mjs
 
       - name: Verify registry signatures
         run: npm audit signatures --omit=dev

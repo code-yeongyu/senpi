@@ -120,6 +120,12 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
+      # senpi#2941: fail closed on any moderate-or-worse advisory in the shipped tree this job builds, before anything is
+      # published. Accepted risks are exact entries in scripts/audit-exceptions.json (advisory, package, installed node, reason,
+      # tracking issue, expiry); the scheduled npm-audit workflow runs the same script.
+      - name: Audit shipped dependencies
+        run: node scripts/audit-production.mjs
+
       - name: Download native prebuilds
         if: inputs.publish-only == true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
