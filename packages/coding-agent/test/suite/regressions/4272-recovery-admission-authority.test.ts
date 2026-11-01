@@ -25,6 +25,7 @@ for (const kind of ["checkpoint", "event"] as const) {
 			host.writer.recoveryCheckpoints.retireRoute(
 				{ socketEpoch: host.writer.socketEpochOf("peer") ?? "", sessionId: String(retired.sessionId) },
 				"retired",
+				"client_detach",
 			);
 			host.writer.unregisterAdmission("peer", "retired");
 			expect(host.writer.holdsAdmission("peer", "retired")).toBe(false);

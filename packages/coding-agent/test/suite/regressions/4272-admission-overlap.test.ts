@@ -70,7 +70,7 @@ it("T2/T5 overlapping ordinary admissions share a cut and a surviving route can 
 	expect(dataOf(b).recovery).toEqual(first);
 	const sessionId = String(a.sessionId);
 	const socketEpoch = host.writer.socketEpochOf("peer") ?? "";
-	host.writer.recoveryCheckpoints.retireRoute({ socketEpoch, sessionId }, "a");
+	host.writer.recoveryCheckpoints.retireRoute({ socketEpoch, sessionId }, "a", "client_detach");
 	const page = await peer.request({
 		type: "get_recovery_page",
 		sessionId,
@@ -81,7 +81,7 @@ it("T2/T5 overlapping ordinary admissions share a cut and a surviving route can 
 	});
 	expect(page).toMatchObject({ success: true, sessionId, admissionId: "b", generation: 1 });
 	expect(host.writer.recoveryCheckpoints.status().open).toBe(1);
-	host.writer.recoveryCheckpoints.retireRoute({ socketEpoch, sessionId }, "b");
+	host.writer.recoveryCheckpoints.retireRoute({ socketEpoch, sessionId }, "b", "client_detach");
 	expect(host.writer.recoveryCheckpoints.status().open).toBe(0);
 }, 600_000);
 

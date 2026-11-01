@@ -2,6 +2,7 @@ import type { TranscriptRoot } from "./accepted-transcript.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
 import { RecoveryManifests } from "./compact-recovery-manifest.ts";
 import { RecoveryStreams } from "./compact-recovery-streams.ts";
+import type { RouteRetirement } from "./route-retire-reasons.ts";
 import { retiredTokenFailure, tokenStaleness } from "./compact-recovery-staleness.ts";
 import type { FrozenCheckpoint } from "./compact-recovery-checkpoint-types.ts";
 export type { FrozenCheckpoint, RetainedRoot } from "./compact-recovery-checkpoint-types.ts";
@@ -176,8 +177,9 @@ export class RecoveryCheckpoints {
 	/**
 	 * An admission ended (a detach today; S14 extends this): its route leaves the stream, the counter stays, and the
 	 * token it minted is reclaimed like a superseded one (RULING-56 (4)), with or without its stream record. Idempotent.
+	 * `_retirement` is RULING-119's compile-time proof: a client action, or a `RouteAnnouncement` already emitted.
 	 */
-	retireRoute(caller: RecoveryCaller, admissionId: string): void {
+	retireRoute(caller: RecoveryCaller, admissionId: string, _retirement: RouteRetirement): void {
 		const current = this.streams.get(caller)?.current;
 		this.streams.retireRoute(caller, admissionId);
 		if ((this.streams.get(caller)?.routes.size ?? 0) > 0) return;

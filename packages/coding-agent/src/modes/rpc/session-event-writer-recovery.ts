@@ -81,7 +81,11 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 		actor.mirrorOwners.delete(subscriptionId);
 		this.unregisterSubscription(peer, subscriptionId);
 		for (const sessionId of this.fanout.acceptance.keys())
-			this.recoveryCheckpoints.retireRoute({ socketEpoch: registered.socketEpoch, sessionId }, admissionId);
+			this.recoveryCheckpoints.retireRoute(
+				{ socketEpoch: registered.socketEpoch, sessionId },
+				admissionId,
+				"mirror_unsubscribed",
+			);
 	}
 	unregisterSubscription(peer: string, subscriptionId: string): void {
 		const registered = this.fanout.get(peer);
@@ -161,7 +165,7 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 		// An open whose own release already retired its route (then detached) has nothing left to retire.
 		if (caller && actor instanceof AdmissionRoutingActor && opened && this.routesStream(caller, opened.admissionId)) {
 			const retire = () => {
-				this.recoveryCheckpoints.retireRoute(caller, opened.admissionId);
+				this.recoveryCheckpoints.retireRoute(caller, opened.admissionId, "client_detach");
 				actor.admissions.delete(opened.admissionId);
 			};
 			const request = captureAdmissionReply();

@@ -25,7 +25,12 @@ const open = (peer: RawClient, cwd: string, file: string, admissionId: string) =
 const taggedWith = (peer: RawClient, admissionId: string): WireRecord[] =>
 	peer.inbox.filter((frame) => frame.admissionId === admissionId);
 
-async function nothingAfter(host: Awaited<ReturnType<typeof statusHost>>, peer: RawClient, sessionId: string, id: string) {
+async function nothingAfter(
+	host: Awaited<ReturnType<typeof statusHost>>,
+	peer: RawClient,
+	sessionId: string,
+	id: string,
+) {
 	await host.writer.flush();
 	const before = taggedWith(peer, id).length;
 	for (const type of ["agent_start", "agent_idle"]) host.writer.enqueue(sessionId, { type });
