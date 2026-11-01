@@ -213,13 +213,23 @@ describe("K8: every record local clients send today is accepted (X14 corpus)", (
 		}
 		const answerRecords = ["extension_ui_progress", "extension_ui_response", "host_response"];
 		expect([...Object.keys(TODAY), ...answerRecords].sort()).toEqual(Object.keys(RPC_METHOD_CLASS).sort());
-		expect(serial).toBe(107);
+		expect(serial).toBe(109);
 		// X14 probes set_retry_fallback with an empty profile only to reach the host's "single-session only" refusal;
 		// the one path that accepts the method refuses that profile with the same check (connection-handler.ts).
 		const emptyProfile = corpusRequest("set_retry_fallback", TODAY.set_retry_fallback, opened, tmp).record;
 		expect(emptyProfile.retryFallback).toEqual({});
 		expect(sessionRetryFallbackError(emptyProfile.retryFallback)).toBeDefined();
+		// X14 probes get_recovery_page bare only to reach the flag-off "Unknown command" answer; with the flag on, the token
+		// owner refuses the same record as malformed_request, since every required field must be a bounded id.
 		expect(Object.entries(outcomes).filter(([, outcome]) => !outcome.ok)).toEqual([
+			[
+				"get_recovery_page",
+				{
+					ok: false,
+					reason:
+						"get_recovery_page: does not match its schema: must have required properties token, admissionId, componentRef, requestId.",
+				},
+			],
 			[
 				"set_retry_fallback",
 				{
@@ -229,7 +239,9 @@ describe("K8: every record local clients send today is accepted (X14 corpus)", (
 				},
 			],
 		]);
-		expect(Object.keys(outcomes)).toHaveLength(108);
+		expect(Object.keys(outcomes)).toHaveLength(110);
+		const page = { type: "get_recovery_page", sessionId: NO_ID, token: "t", admissionId: "a", componentRef: "c" };
+		expect(validateRpcInboundRecord({ ...page, requestId: "r", cursor: "k" })).toEqual(ACCEPTED);
 		const wellFormed = { ...emptyProfile, retryFallback: { modelFallback: true, fallbackChains: { main: ["p/m"] } } };
 		expect(sessionRetryFallbackError(wellFormed.retryFallback)).toBeUndefined();
 		expect(validateRpcInboundRecord(wellFormed)).toEqual(ACCEPTED);

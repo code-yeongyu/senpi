@@ -25,7 +25,13 @@ import {
 
 const move = <const P extends TProperties>(properties: P) => command("move_session", properties);
 
-const uiResponseFrame = { type: Type.Literal("extension_ui_response"), id: Id, uiRequestId: OptId, answerId: OptId };
+const uiResponseFrame = {
+	secret: OptBool,
+	type: Type.Literal("extension_ui_response"),
+	id: Id,
+	uiRequestId: OptId,
+	answerId: OptId,
+};
 
 export const HOST_RECORD_SCHEMAS = {
 	get_protocol_info: command("get_protocol_info", {
