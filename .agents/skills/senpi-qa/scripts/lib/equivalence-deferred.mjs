@@ -86,15 +86,17 @@ export function finishRecord({ dir, results, leaveUnrecorded, manifest }) {
 }
 
 /**
- * The run's summary line and exit code. DEFERRED cells are counted on their own and do not fail the run; a failed
- * case, a stale deferred entry or a golden a record run left unrecorded does, and so does a run with nothing selected.
+ * The run's summary line and exit code. DEFERRED and SKIPPED (host-capability, senpi#5265) cells are counted on their own
+ * and do not fail the run, unless every selected case was skipped (nothing ran); a failed case, a stale deferred entry or
+ * a golden a record run left unrecorded does, and so does a run with nothing selected.
  */
 export function summarizeRun(results, staleEntries, mode, unrecorded = []) {
 	const passed = results.filter((r) => r.pass).length;
 	const deferred = results.filter((r) => r.deferred).length;
-	const failed = results.length - passed - deferred + staleEntries.length + unrecorded.length;
+	const skipped = results.filter((r) => r.skipped).length;
+	const failed = results.length - passed - deferred - skipped + staleEntries.length + unrecorded.length;
 	return {
-		line: `fused-equivalence-qa ${mode}: ${passed}/${results.length} passed, ${deferred} deferred, ${failed} failed`,
-		exitCode: failed === 0 && results.length > 0 ? 0 : 1,
+		line: `fused-equivalence-qa ${mode}: ${passed}/${results.length} passed, ${deferred} deferred, ${failed} failed${skipped ? `, ${skipped} skipped` : ""}`,
+		exitCode: failed === 0 && results.length > skipped ? 0 : 1,
 	};
 }
