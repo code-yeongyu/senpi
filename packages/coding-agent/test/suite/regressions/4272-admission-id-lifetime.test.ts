@@ -38,6 +38,12 @@ it("#5274 a long-lived socket admits its 10,000th open with bounded rows and a c
 		expect(produce).toHaveBeenCalledTimes(10_000);
 		expect(await rowFiles(root)).toBe(capacity);
 		expect(index.status().retiredOverflow).toBe(10_000 - capacity - ADMISSION_LIMITS.retired);
+		// The ring still holds exactly the newest ADMISSION_LIMITS.retired evicted IDs.
+		const oldestRetired = 10_000 - capacity - ADMISSION_LIMITS.retired;
+		await expect(index.run(identity(`id-${oldestRetired}`), produce)).rejects.toMatchObject({
+			reason: "admission_retired",
+		});
+		expect(produce).toHaveBeenCalledTimes(10_000);
 		// Documented fallback: an ID older than the ring is indistinguishable from a fresh open.
 		await index.run(identity("id-0"), produce);
 		expect(produce).toHaveBeenCalledTimes(10_001);
