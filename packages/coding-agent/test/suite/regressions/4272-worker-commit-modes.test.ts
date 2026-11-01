@@ -72,34 +72,30 @@ it.each([
 	{ bootstrap: true, flag: "1", mode: "acceptance" },
 	{ bootstrap: false, flag: "0", mode: "legacy" },
 	{ bootstrap: false, flag: "1", mode: "refused" },
-])(
-	"commit with bootstrap=$bootstrap and flag=$flag binds $mode",
-	async ({ bootstrap, flag, mode }) => {
-		vi.stubEnv(FLAG, flag);
-		commitReply.bootstrap = bootstrap;
-		const permitsBefore = hostWorkerPermits.status();
-		const host = worker();
+])("commit with bootstrap=$bootstrap and flag=$flag binds $mode", async ({ bootstrap, flag, mode }) => {
+	vi.stubEnv(FLAG, flag);
+	commitReply.bootstrap = bootstrap;
+	const permitsBefore = hostWorkerPermits.status();
+	const host = worker();
 
-		const committed = host.client.commit();
+	const committed = host.client.commit();
 
-		if (mode === "refused") {
-			const refusal = committed.catch((error: unknown) => error);
-			expect(await refusal).toBeInstanceOf(StructuredLaneUnavailableError);
-			expect(String(await refusal)).toContain(
-				"construct the session via the session layer, or turn the engine-socket compact-updates flag off",
-			);
-			expect(host.client.acceptance).toBeUndefined();
-			expect(hostWorkerPermits.status()).toEqual(permitsBefore);
-			return;
-		}
-		await committed;
-		await host.client.bind("session", host.writer, () => {}, { capabilities: [] });
-		expect(host.boundModes()).toEqual(flag === "1" ? [mode] : []);
-		expect(host.client.acceptance !== undefined).toBe(mode === "acceptance");
-		if (mode === "legacy") expect(hostWorkerPermits.status()).toEqual(permitsBefore);
-	},
-	600_000,
-);
+	if (mode === "refused") {
+		const refusal = committed.catch((error: unknown) => error);
+		expect(await refusal).toBeInstanceOf(StructuredLaneUnavailableError);
+		expect(String(await refusal)).toContain(
+			"construct the session via the session layer, or turn the engine-socket compact-updates flag off",
+		);
+		expect(host.client.acceptance).toBeUndefined();
+		expect(hostWorkerPermits.status()).toEqual(permitsBefore);
+		return;
+	}
+	await committed;
+	await host.client.bind("session", host.writer, () => {}, { capabilities: [] });
+	expect(host.boundModes()).toEqual(flag === "1" ? [mode] : []);
+	expect(host.client.acceptance !== undefined).toBe(mode === "acceptance");
+	if (mode === "legacy") expect(hostWorkerPermits.status()).toEqual(permitsBefore);
+});
 
 it("delivers unordered output frames before commit() negotiates acceptance", async () => {
 	vi.stubEnv(FLAG, "1");
@@ -119,4 +115,4 @@ it("delivers unordered output frames before commit() negotiates acceptance", asy
 	expect(host.delivered.map((line) => JSON.parse(line))).toContainEqual(
 		expect.objectContaining({ type: "agent_start" }),
 	);
-}, 600_000);
+});

@@ -18,6 +18,7 @@ export function replaceRoot(value: string, root: string): string {
 
 export const SERVER_VERSION = "<server-version>";
 export const CAPABILITIES = "<capabilities>";
+export const ENGINE_ORDINAL = "<engine-ordinal>";
 
 /**
  * A get_protocol_info answer's serverVersion, engineVersion/engineOrdinal and capability list change with every release
@@ -28,7 +29,7 @@ export function maskServerIdentity(bytes: string): string {
 	return bytes
 		.replace(/("serverVersion":")[^"]*(","capabilities":\[)[^\]]*(\])/g, `$1${SERVER_VERSION}$2"${CAPABILITIES}"$3`)
 		.replace(/("engineVersion":")[^"]*(")/g, `$1${SERVER_VERSION}$2`)
-		.replace(/("engineOrdinal":)\[[0-9,]*\]/g, `$1"${SERVER_VERSION}"`);
+		.replace(/("engineOrdinal":)\[[0-9,]*\]/g, `$1"${ENGINE_ORDINAL}"`);
 }
 
 /** Normalize run paths/identities, not routing fields or frame kinds. Pages stay decodable and digest-valid:
@@ -63,13 +64,13 @@ export function normalizedTrace(input: unknown, root: string): unknown {
 		if (Array.isArray(value)) return value.map((item: unknown) => visit(item));
 		if (typeof value !== "object" || value === null) return value;
 		const record = value as Record<string, unknown>;
-		if (typeof record.serverVersion === "string")
+		if (typeof record.serverVersion === "string" && record.serverVersion !== SERVER_VERSION)
 			return visit({
 				...record,
 				serverVersion: SERVER_VERSION,
 				...(Array.isArray(record.capabilities) ? { capabilities: [CAPABILITIES] } : {}),
 				...("engineVersion" in record ? { engineVersion: SERVER_VERSION } : {}),
-				...("engineOrdinal" in record ? { engineOrdinal: SERVER_VERSION } : {}),
+				...("engineOrdinal" in record ? { engineOrdinal: ENGINE_ORDINAL } : {}),
 			});
 		if (typeof record.bytes === "string" && typeof record.digest === "string" && typeof record.length === "number") {
 			const raw = Buffer.from(record.bytes, "base64");
