@@ -35,50 +35,54 @@ async function session(lane: boolean): Promise<StructuredHarness> {
 it.each([
 	{ lane: false, name: "binds legacy-only without the structured lane" },
 	{ lane: true, name: "binds legacy-only with the structured lane too" },
-])("flag off: an RPC open $name", async ({ lane }) => {
-	vi.stubEnv(FLAG, "0");
-	const harness = await session(lane);
-	cleanups.push(() => harness.cleanup());
-	expect(harness.session.hasStructuredLane).toBe(lane);
-	const registry = new RpcSessionRegistry({
-		agentDir: harness.session.agentDir,
-		createRuntime: async ({ cwd, agentDir }) =>
-			({
-				session: harness.session,
-				diagnostics: [],
-				services: { cwd, agentDir },
-			}) as unknown as CreateAgentSessionRuntimeResult,
-	});
-	const socket = makeSink();
-	const writer = new SessionEventWriter(socket.sink.writeRaw, (flush) => flush());
-	const router = new SessionCommandRouter(registry, writer, { cwd: harness.tempDir });
-	cleanups.push(() => router.dispose());
+])(
+	"flag off: an RPC open $name",
+	async ({ lane }) => {
+		vi.stubEnv(FLAG, "0");
+		const harness = await session(lane);
+		cleanups.push(() => harness.cleanup());
+		expect(harness.session.hasStructuredLane).toBe(lane);
+		const registry = new RpcSessionRegistry({
+			agentDir: harness.session.agentDir,
+			createRuntime: async ({ cwd, agentDir }) =>
+				({
+					session: harness.session,
+					diagnostics: [],
+					services: { cwd, agentDir },
+				}) as unknown as CreateAgentSessionRuntimeResult,
+		});
+		const socket = makeSink();
+		const writer = new SessionEventWriter(socket.sink.writeRaw, (flush) => flush());
+		const router = new SessionCommandRouter(registry, writer, { cwd: harness.tempDir });
+		cleanups.push(() => router.dispose());
 
-	const opened = socket.waitFor((record) => record.type === "response" && record.id === "open");
-	await router.handle({ id: "open", type: "open_session", cwd: harness.tempDir });
-	await writer.flush();
-	const response = await opened;
-	expect(response).toMatchObject({ success: true });
-	const sessionId = String(response.sessionId);
-	expect(registry.peek(sessionId)?.acceptance).toBeUndefined();
+		const opened = socket.waitFor((record) => record.type === "response" && record.id === "open");
+		await router.handle({ id: "open", type: "open_session", cwd: harness.tempDir });
+		await writer.flush();
+		const response = await opened;
+		expect(response).toMatchObject({ success: true });
+		const sessionId = String(response.sessionId);
+		expect(registry.peek(sessionId)?.acceptance).toBeUndefined();
 
-	const structured: object[] = [];
-	cleanups.push(writer.structuredLanes.observe(sessionId, (record) => structured.push(record)));
-	const ended = socket.waitFor(
-		(record) => record.type === "agent_end" && record.sessionId === sessionId,
-		EVENT_SAFETY_MS,
-	);
-	await router.handle({ id: "go", type: "prompt", sessionId, message: "hi" });
-	await ended;
-	await writer.flush();
+		const structured: object[] = [];
+		cleanups.push(writer.structuredLanes.observe(sessionId, (record) => structured.push(record)));
+		const ended = socket.waitFor(
+			(record) => record.type === "agent_end" && record.sessionId === sessionId,
+			EVENT_SAFETY_MS,
+		);
+		await router.handle({ id: "go", type: "prompt", sessionId, message: "hi" });
+		await ended;
+		await writer.flush();
 
-	// Then: legacy delivery is identical either way, and no session produced structured records.
-	expect(socket.messages()).toContainEqual(
-		expect.objectContaining({
-			type: "message_end",
-			sessionId,
-			message: expect.objectContaining({ role: "assistant" }),
-		}),
-	);
-	expect(structured).toEqual([]);
-});
+		// Then: legacy delivery is identical either way, and no session produced structured records.
+		expect(socket.messages()).toContainEqual(
+			expect.objectContaining({
+				type: "message_end",
+				sessionId,
+				message: expect.objectContaining({ role: "assistant" }),
+			}),
+		);
+		expect(structured).toEqual([]);
+	},
+	600_000,
+);

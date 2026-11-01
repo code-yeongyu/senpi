@@ -160,8 +160,13 @@ export async function workerAcceptanceHost(
 	const request = (command: { readonly type: string } & WireRecord, ms?: number): Promise<WireRecord> => {
 		const id = `t-${++serial}`;
 		const response = next(`response ${command.type}`, (record) => record.type === "response" && record.id === id, ms);
-		void writer.withConnection("c", () => router.handle({ ...command, id } as RpcCommand));
-		return response;
+		// Like the host's socket loop, a response the router returns (a refusal, a failed open) is the caller's to write,
+		// and a handler that throws fails the request at once: neither waits for the deadline.
+		const handled = writer.withConnection("c", async () => {
+			const direct = await router.handle({ ...command, id } as RpcCommand);
+			if (direct) await writer.enqueueControl(direct);
+		});
+		return Promise.race([response, handled.then(() => response)]);
 	};
 	return {
 		dir,
