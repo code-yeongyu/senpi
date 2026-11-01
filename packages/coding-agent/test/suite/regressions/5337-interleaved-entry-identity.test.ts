@@ -84,7 +84,9 @@ it("RULING-122 (#5337) once the evicted ring overflows, every unmatched entry of
 		});
 		expect(stampOf(identities, joins - 1)).toEqual({ owningMessageId: `m${joins - 1}` });
 		expect(identities.status()).toEqual({ ownerJoinsEvicted: MAX_EVICTED_JOINS + 2, ownerJoinsOverflowed: 2 });
-		const lines = writes.mock.calls.map(([line]) => String(line)).filter((line) => line.includes("unvouched-owner ring overflowed"));
+		const lines = writes.mock.calls
+			.map(([line]) => String(line))
+			.filter((line) => line.includes("unvouched-owner ring overflowed"));
 		expect(lines, "one stderr line per epoch, at the first overflow").toHaveLength(1);
 	} finally {
 		writes.mockRestore();
