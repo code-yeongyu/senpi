@@ -33,7 +33,8 @@ export class RecordLine {
 
 /**
  * A destination's line, and for an event-lease envelope the release that runs if the actor never writes it. `record`:
- * the stamped record an inline compact line was built from, so its delta-only demotion keeps the stamp (RULING-123).
+ * the stamped record a compact line (inline or an `eventLease` envelope) was built from, so its delta-only demotion
+ * keeps the stamp (RULING-123).
  */
 interface EventLine {
 	readonly line: string;
@@ -139,6 +140,7 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 			if (held.ok) for (const route of routes) held.value.admissions.add(route);
 			return {
 				line: serializeJsonLine({ type: Reflect.get(record, "type"), sessionId, eventLease: minted.value }),
+				...(identity ? { record: stamped } : {}),
 				// The lease lives only if its envelope is written: every drop path of the socket actor ends it unseen.
 				undelivered: (written) => {
 					if (!written) events.abandon(socketEpoch, id);
