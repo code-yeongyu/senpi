@@ -54,10 +54,6 @@ if _permission_spec is None or _permission_spec.loader is None:
 _permission_module = importlib.util.module_from_spec(_permission_spec)
 exec(compile(_permission_path.read_bytes(), str(_permission_path), "exec"), _permission_module.__dict__)
 initialize_permissions = _permission_module.initialize
-_kill_guard_path = Path(__file__).with_name("kill_guard.py")
-_kill_guard_namespace: dict[str, Any] = {"__builtins__": __builtins__, "__file__": str(_kill_guard_path)}
-exec(compile(_kill_guard_path.read_bytes(), str(_kill_guard_path), "exec"), _kill_guard_namespace)
-install_kill_guard = _kill_guard_namespace["install"]
 # The kernel's own signals (parent watch, retirement) keep these originals: the kill guard wraps the cell-visible ones.
 _SIGNAL_PROCESS = os.kill
 _SIGNAL_GROUP = getattr(os, "killpg", None)
@@ -2341,7 +2337,11 @@ def _install_kill_guard(port: int) -> None:
     protected = os.environ.get("SENPI_KILL_GUARD_PROTECTED")
     if protected is None:
         return
-    install_kill_guard(port, [int(pid) for pid in protected.split(",") if pid.isdigit()])
+    # Loaded only when the guard is on, so a kernel without it starts exactly as before.
+    _kill_guard_path = Path(__file__).with_name("kill_guard.py")
+    namespace: dict[str, Any] = {"__builtins__": __builtins__, "__file__": str(_kill_guard_path)}
+    exec(compile(_kill_guard_path.read_bytes(), str(_kill_guard_path), "exec"), namespace)
+    namespace["install"](port, [int(pid) for pid in protected.split(",") if pid.isdigit()])
 
 
 def _handle_message(message: dict[str, Any]) -> bool:
