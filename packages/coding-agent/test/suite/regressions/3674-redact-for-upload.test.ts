@@ -24,14 +24,15 @@ describe("#3674 pi.redactForUpload", () => {
 	it("removes credentials and this machine's home path from text an extension uploads, and counts them", async () => {
 		// Given
 		const pi = await extensionApi();
-		const text = `cd ${homedir()}/work && export OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwx1234`;
+		const openAiKey = ["sk-proj", "abcdefghijklmnopqrstuvwx1234"].join("-");
+		const text = `cd ${homedir()}/work && export OPENAI_API_KEY=${openAiKey}`;
 
 		// When
 		const result = pi.redactForUpload(text);
 
 		// Then
 		expect(result.text).not.toContain(homedir());
-		expect(result.text).not.toContain("sk-proj-abcdefghijklmnopqrstuvwx1234");
+		expect(result.text).not.toContain(openAiKey);
 		expect(result.counts["home path"]).toBe(1);
 		expect(result.counts.credential).toBeGreaterThanOrEqual(1);
 	});

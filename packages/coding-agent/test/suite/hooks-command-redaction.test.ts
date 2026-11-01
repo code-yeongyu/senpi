@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { formatHookDiagnostics } from "../../src/core/extensions/builtin/hooks/command.ts";
 import { cleanupHooksCommandHarnesses, createHooksCommandHarness, lastNotification } from "./hooks-command-harness.ts";
 
-const GITHUB_CLASSIC_PAT = "ghp_0123456789abcdef0123456789abcdef0123";
-const GITHUB_FINE_GRAINED_PAT = "github_pat_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+// Built from parts so no credential-shaped literal sits in the source for secret scanners (senpi#5308).
+const GITHUB_CLASSIC_PAT = ["ghp", "0123456789abcdef0123456789abcdef0123"].join("_");
+const GITHUB_FINE_GRAINED_PAT = ["github_pat", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"].join(
+	"_",
+);
 
 afterEach(() => {
 	cleanupHooksCommandHarnesses();
