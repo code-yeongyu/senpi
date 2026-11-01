@@ -178,7 +178,7 @@ export async function workerAcceptanceHost(
 			};
 			return { reached: within("reconcile held", reached.promise), release: () => release.resolve() };
 		},
-		async open(): Promise<{ sessionId: string; worker: SessionWorkerClient }> {
+		async open(openMs = OPEN_MS): Promise<{ sessionId: string; worker: SessionWorkerClient }> {
 			// Carry 13: a worker spawn under heavy host load can take past 30 s; the open gets most of a test's own budget.
 			const opened = await request(
 				{
@@ -188,7 +188,7 @@ export async function workerAcceptanceHost(
 					provider: "faux",
 					modelId: "faux-1",
 				},
-				OPEN_MS,
+				openMs,
 			);
 			if (opened.success !== true) throw new Error(`open failed: ${JSON.stringify(opened)}`);
 			const sessionId = String((opened.data as { sessionId: string }).sessionId);
