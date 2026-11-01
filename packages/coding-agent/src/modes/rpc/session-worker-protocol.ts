@@ -22,6 +22,15 @@ export const SESSION_WORKER_LIMITS = {
 	reservations: 64,
 	openMs: 30_000,
 	controlMs: 5_000,
+	// Secret frames ride the control exchange, outside `outputBytes`, so the host bounds them itself (senpi#5192).
+	// One `secret_frame` record: a secret prompt's title and placeholder are a few hundred bytes, so 64 KiB is
+	// generous for any real prompt yet keeps the side channel far below the 16 MiB payload frame.
+	secretFrameBytes: 64 * 1024,
+	// Unsettled secret inputs per worker: one per waiting tool call or command, so the same 64 as `requests`.
+	secretInputs: 64,
+	// Every secret id the host tracks per worker: the 1024 settled receipts `SecretInputRequests` keeps for
+	// answer replay, plus `secretInputs` open ones.
+	secretIds: 1024 + 64,
 } as const;
 
 /** The bytes a transition carries: its entry, plus the owned message copies of the flow it journals (senpi#4460). */
