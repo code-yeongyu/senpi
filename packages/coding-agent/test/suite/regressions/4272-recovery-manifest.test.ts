@@ -10,6 +10,7 @@ import { serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
+import { componentText } from "./4272-frozen-bytes-support.ts";
 import { cutStructuredBytes, recoveryRig, streaming } from "./4272-recovery-support.ts";
 
 // Part of #4272 (S09, R4.B1, X03/X04/T5): the manifest names a frozen checkpoint and its catalog root with bounded
@@ -84,7 +85,7 @@ it("T1 X03 X04 the manifest names the cut and its catalog root with bounded ids;
 	expect(manifest.session.length).toBe(Buffer.byteLength(huge, "utf16le"));
 	expect(manifest.session.digest).toBe(specDigest("leaf", Buffer.from(huge, "utf16le")));
 	const text = component(unwrap(await rig.checkpoints.readCatalog(token, caller, manifest.session.ref)));
-	expect(text.text).toBe(huge);
+	expect(await componentText(text)).toBe(huge);
 	expect(text.entry).toMatchObject({ kind: "manifest", id: "session" });
 	const root = node(unwrap(await rig.checkpoints.readCatalog(token, caller, manifest.catalogRoot)));
 	expect(root.entries.map((entry) => [entry.kind, entry.id])).toEqual([
@@ -106,12 +107,13 @@ it("T1 X03 X04 the manifest names the cut and its catalog root with bounded ids;
 	expect(manifest.catalogRootLength).toBe(root.length);
 	expect(root.digest).toBe(manifest.checkpointDigest);
 	const active = component(unwrap(await rig.checkpoints.readCatalog(token, caller, `${manifest.catalogRoot}:007`)));
-	expect(active.entry.length).toBe(Buffer.byteLength(active.text, "utf16le"));
-	expect(JSON.parse(active.text), "the live message as canonical JSON, no storage id inside").toMatchObject({
+	const activeText = await componentText(active);
+	expect(active.entry.length).toBe(Buffer.byteLength(activeText, "utf16le"));
+	expect(JSON.parse(activeText), "the live message as canonical JSON, no storage id inside").toMatchObject({
 		messageId: "message-1",
 		blocks: [{ contentIndex: 0, kind: "text" }],
 	});
-	expect(active.text).not.toMatch(/"owner"/);
+	expect(activeText).not.toMatch(/"owner"/);
 	expect(unwrap(await rig.checkpoints.catalog(token, caller)), "built once per token").toBe(manifest);
 	rig.checkpoints.release(token);
 	expect(rig.lane.liveRoots).toBe(0);
