@@ -40,6 +40,7 @@ import {
 	machineClass,
 	minOfRuns,
 	runMetrics,
+	streamedAnswer,
 	TUI_FRAME_METRIC,
 	wrapExtension,
 } from "../lib/latency-measure.mjs";
@@ -188,9 +189,6 @@ async function measureWorkload(workload, iterations, retries) {
 	}
 }
 
-/** The streamed answer of TUI iteration `i`; its closing marker is on screen only once the last delta rendered. */
-const streamText = (i) => `${Array.from({ length: 30 }, (_, k) => `word${k}`).join(" ")} E01-STREAMED-${i}`;
-
 function within(promise, label) {
 	let timer;
 	const timeout = new Promise((_resolve, reject) => {
@@ -209,7 +207,7 @@ async function measureTuiFrames(iterations) {
 	for (let i = 0; i < iterations; i++)
 		turns.push(
 			{ toolCalls: e01.calls(i) },
-			{ holdUntil: `perf-stream-${i}`, text: streamText(i), ...STREAM },
+			{ holdUntil: `perf-stream-${i}`, text: streamedAnswer(i), ...STREAM },
 		);
 	const run = await startCaseRun({ label: "perf-tui-e01", turns, files: e01.files, extensions: [HELD_TOOLS] });
 	try {
