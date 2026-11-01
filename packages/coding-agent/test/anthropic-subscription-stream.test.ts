@@ -911,13 +911,10 @@ describe("Claude SDK OAuth stream events", () => {
 			return query;
 		});
 		const sessionId = "resident-admission-wait-delta";
-		const first: Context = { messages: [{ role: "user", content: "first", timestamp: 1 }] };
+		const firstMessage: Context["messages"][number] = { role: "user", content: "first", timestamp: 1 };
+		const first: Context = { messages: [firstMessage] };
 		const second: Context = {
-			messages: [
-				first.messages[0]!,
-				assistant("first answer", 2),
-				{ role: "user", content: "second", timestamp: 3 },
-			],
+			messages: [firstMessage, assistant("first answer", 2), { role: "user", content: "second", timestamp: 3 }],
 		};
 		// The second turn starts its bounded admission wait by scheduling the admission deadline: that call is the
 		// event the test waits for before releasing the first turn's terminal result.
@@ -954,7 +951,7 @@ describe("Claude SDK OAuth stream events", () => {
 		}
 
 		expect(queries).toHaveLength(1);
-		expect(queries[0]!.submitted.map(textFrom)).toEqual([expect.stringContaining("first"), "second"]);
+		expect(queries[0]?.submitted.map(textFrom)).toEqual([expect.stringContaining("first"), "second"]);
 	});
 
 	it("resumes and forks at an assistant boundary when tree navigation is a strict sent-stream prefix", async () => {
