@@ -10,6 +10,7 @@ import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { SessionStructuredLanes } from "./session-structured-lanes.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { type MediaPersister, omitNormalInlineMedia } from "./media-placeholders.ts";
 import type {
@@ -20,6 +21,7 @@ import type {
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
 import { RpcSecurityPresentations } from "./security-presentations.ts";
+import type { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
@@ -100,6 +102,8 @@ export class SessionEventWriter {
 		this.secretPresentations.handshake(capabilities);
 	}
 	readonly structuredLanes = new SessionStructuredLanes();
+	/** Records refused at the engine's JSON depth limit on the legacy wire (RULING-68). */
+	readonly legacyRefusals = new LegacyRecordRefusals();
 	private presenterAuthority?: McpPresenterAuthority;
 	private readonly presenterConnections = new Map<string, McpPresenterConnection>();
 	private readonly presenterBindings = new Map<string, McpFormBinding>();
@@ -293,6 +297,16 @@ export class SessionEventWriter {
 	/** The checkpoint tokens frozen for peers' baselines and recoveries (S08a, R3.C1.5). */
 	get recoveryCheckpoints(): RecoveryCheckpoints {
 		return this.fanout.checkpoints;
+	}
+
+	/** The page requests over those tokens (S11b, R4.B3); undefined with the compact-updates flag off. */
+	get recoveryPages(): RecoveryPageRequests | undefined {
+		return this.fanout.pages;
+	}
+
+	/** The peer incarnation a registered connection is: what its tokens and cursors are bound to. */
+	socketEpochOf(id: string): string | undefined {
+		return this.fanout.get(id)?.socketEpoch;
 	}
 
 	registerConnection(
