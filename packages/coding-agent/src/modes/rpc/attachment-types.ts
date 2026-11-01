@@ -3,6 +3,7 @@ export type RpcAttachmentCommand =
 	| {
 			readonly id?: string;
 			readonly type: "attach_session";
+			readonly admissionId?: string;
 			readonly sessionId: string;
 			readonly durableSessionId: string;
 			readonly expectedHostInstance?: string;
