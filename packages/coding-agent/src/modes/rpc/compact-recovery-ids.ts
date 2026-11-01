@@ -15,8 +15,20 @@ export type BoundedId = string & { readonly [identity]: "BoundedId" };
 export type ContentDigest = string & { readonly [identity]: "ContentDigest" };
 /** A catalog ref: a 16-digit catalog counter root and at most `CATALOG_REF_MAX_STEPS` three-digit child steps. */
 export type ContentRef = string & { readonly [identity]: "ContentRef" };
+/**
+ * The reserved ref of a cut's loaded transcript base (S11c, RULING-70 (1)): the catalog root with the `base` step.
+ * It is a bounded id like every ref (RULING-71 (1)); the `base` step is reserved, so the component grammar refuses it
+ * by name and no catalog node or component is ever minted with it. It names the stamped-row stream of the base the cut
+ * captured, served by the page route only, and like every ref it is cut-scoped: another cut's base ref names nothing
+ * under this token.
+ */
+export type BaseRef = string & { readonly [identity]: "BaseRef" };
+/** What the page route addresses: a catalog component, or the cut's base stream. */
+export type PageRef =
+	| { readonly kind: "catalog"; readonly ref: ContentRef }
+	| { readonly kind: "base"; readonly ref: BaseRef };
 
-type IdentityRefusal = "empty" | "overlong" | "forbidden_character" | "malformed" | "too_deep";
+type IdentityRefusal = "empty" | "overlong" | "forbidden_character" | "malformed" | "too_deep" | "reserved";
 type IdentityOutcome<T> =
 	| { readonly ok: true; readonly value: T }
 	| { readonly ok: false; readonly reason: IdentityRefusal };
@@ -34,6 +46,9 @@ const REF_STEP_LENGTH = ":".length + STEP_DIGITS;
 const BOUNDED_ID = /^[A-Za-z0-9][A-Za-z0-9:_-]*$/;
 const CONTENT_DIGEST = /^[0-9a-f]{64}$/;
 const CONTENT_REF = /^c-[0-9]{16}(?::[0-9]{3})*$/;
+const BASE_REF = /^c-[0-9]{16}:base$/;
+/** The base step at any position of a ref: reserved, never a component step (RULING-71 (1)). */
+const RESERVED_STEP = /:base(?::|$)/;
 
 const refused = (reason: IdentityRefusal): IdentityOutcome<never> => ({ ok: false, reason });
 
@@ -54,9 +69,25 @@ export function parseContentDigest(value: string): IdentityOutcome<ContentDigest
 export function parseContentRef(value: string): IdentityOutcome<ContentRef> {
 	const bounded = parseBoundedId(value);
 	if (!bounded.ok) return bounded;
+	if (RESERVED_STEP.test(value)) return refused("reserved");
 	if (!CONTENT_REF.test(value)) return refused("malformed");
 	if ((value.length - REF_ROOT_LENGTH) / REF_STEP_LENGTH > CATALOG_REF_MAX_STEPS) return refused("too_deep");
 	return { ok: true, value: value as ContentRef };
+}
+
+function parseBaseRef(value: string): IdentityOutcome<BaseRef> {
+	const bounded = parseBoundedId(value);
+	if (!bounded.ok) return bounded;
+	if (!BASE_REF.test(value)) return refused("malformed");
+	return { ok: true, value: value as BaseRef };
+}
+
+/** Either grammar, checked before any use; the two never overlap (`base` is not three digits). */
+export function parsePageRef(value: string): IdentityOutcome<PageRef> {
+	const base = parseBaseRef(value);
+	if (base.ok) return { ok: true, value: { kind: "base", ref: base.value } };
+	const content = parseContentRef(value);
+	return content.ok ? { ok: true, value: { kind: "catalog", ref: content.value } } : content;
 }
 
 /** A literal or generated protocol identifier; a refusal is a programming error, never input. */
@@ -72,6 +103,7 @@ function fixed(value: number, digits: number, bound: number, what: string): stri
 	return String(value).padStart(digits, "0");
 }
 
+/** Every component ref is minted through the component grammar, so a reserved step can never be minted. */
 function minted(value: string): ContentRef {
 	const parsed = parseContentRef(value);
 	if (!parsed.ok) throw new RangeError(`catalog ref ${parsed.reason}`);
@@ -83,6 +115,13 @@ export const catalogRootRef = (counter: number): ContentRef =>
 
 export const childRef = (parent: ContentRef, index: number): ContentRef =>
 	minted(`${parent}:${fixed(index, STEP_DIGITS, CATALOG_NODE_MAX_ENTRIES, "catalog child index")}`);
+
+/** The one base ref under a catalog root; a ref with steps is a programming error. */
+export function baseRef(root: ContentRef): BaseRef {
+	const parsed = parseBaseRef(`${root}:base`);
+	if (!parsed.ok) throw new RangeError(`base ref ${parsed.reason}`);
+	return parsed.value;
+}
 
 /** The child indexes from the catalog root to the ref. */
 export const refSteps = (ref: ContentRef): readonly number[] => ref.split(":").slice(1).map(Number);

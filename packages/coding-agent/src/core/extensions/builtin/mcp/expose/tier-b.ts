@@ -113,7 +113,10 @@ export function registerMcpTierBTools(
 	const stubSwap = input.searchMode && input.settings.stubSwap === true;
 	const stubbed = new Set<string>();
 	const registeredNames = new Set(fullDefs.map((def) => def.name));
-	const catalogNames = new Set(toolSearchService.getCatalog().map((doc) => doc.name));
+	// MCP-owned names sort by name like shared-catalog members: in direct mode they are not
+	// in the search catalog, and keeping their reference order made the tool list follow
+	// which server finished connecting first (#5289).
+	const catalogNames = new Set([...toolSearchService.getCatalog().map((doc) => doc.name), ...managedNames]);
 
 	const activate = (names: readonly string[]): void => {
 		const known = [...new Set(names.filter((name) => registeredNames.has(name)))];

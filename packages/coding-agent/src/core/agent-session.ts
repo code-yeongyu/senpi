@@ -16,8 +16,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
 import type {
 	Agent,
 	AgentContinuationOptions,
@@ -90,11 +91,11 @@ import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oaut
 import { retryTransientCall } from "@earendil-works/pi-ai/utils/retry";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
-import { type ToolRuntimeKind, ToolRuntimeUnsupportedHostError, toolRuntimeHostRefusal } from "../cli/tool-runtime.ts";
+import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import {
-	SessionToolChild,
+	type SessionToolChild,
 	type SessionToolChildRow,
 	toolChildModuleRoots,
 } from "../modes/rpc/tool-child/session-child.ts";
@@ -240,9 +241,10 @@ import {
 	ExecuteToolError,
 	type ExecuteToolOptions,
 	type ExtensionCommandContextActions,
+	type ExtensionContext,
 	type ExtensionErrorListener,
 	type ExtensionMode,
-	ExtensionRunner,
+	type ExtensionRunner,
 	type ExtensionToolHookLifecycleEvent,
 	type ExtensionUIContext,
 	type InputAttribution,
@@ -266,7 +268,6 @@ import {
 	type ToolInfo,
 	type TreePreparation,
 	type TurnStartEvent,
-	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
@@ -430,7 +431,13 @@ import {
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import type { Skill } from "./skills.ts";
-import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+import {
+	bootstrapRuntime,
+	buildToolRegistry,
+	isBuiltinExtensionPath,
+	type ToolDefinitionEntry,
+} from "./runtime/bootstrap.ts";
+import type { SourceInfo } from "./source-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
@@ -445,18 +452,12 @@ import {
 import { resetTimings, time } from "./timings.ts";
 import { ToolBarrier, type ToolBarrierSpec, toolBarrierSpecError } from "./tool-barrier.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
-import {
-	createSessionHostCallHandler,
-	type HostCallTarget,
-	type RegisteredHostCallKind,
-} from "./tool-child-host-calls.ts";
+import type { HostCallTarget, RegisteredHostCallKind } from "./tool-child-host-calls.ts";
 import type { StuckModuleNotice } from "./tool-dispatch/in-process-module.ts";
 import { childModuleRoots, offload } from "./tool-dispatch/offload.ts";
-import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
+import { createToolChildRuntime } from "./tool-dispatch/tool-child-runtime.ts";
+import type { ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
-import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
-import { createAllToolDefinitions } from "./tools/index.ts";
-import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
 import {
 	AgentDeadlineTracker,
@@ -1297,9 +1298,43 @@ export interface SessionStats {
 	failures?: SessionFailureReport;
 }
 
-interface ToolDefinitionEntry {
-	definition: ToolDefinition;
-	sourceInfo: SourceInfo;
+/** Where a tool call learns that steering was queued (senpi#5236). */
+export interface InvocationSteering {
+	/** Whether steering is already queued when the call starts. */
+	pending(): boolean;
+	/** Call `onSteer` when steering is queued; returns the unsubscribe. */
+	subscribe(onSteer: () => void): () => void;
+}
+
+/**
+ * Bind a tool call's invocation signals onto `context`: `steeringSignal` fires when `steering` reports steering and is
+ * never a cancellation. The subscription ends when the call's signal (else the context's) aborts or on `dispose`;
+ * `track`, when given, holds the dispose while the binding is live.
+ */
+export function bindInvocationSignals(
+	context: ExtensionContext,
+	signal: AbortSignal | undefined,
+	steering: InvocationSteering,
+	track?: Set<() => void>,
+): { context: ExtensionContext; dispose: () => void } {
+	const controller = new AbortController();
+	const cancellation = signal ?? context.signal;
+	const unsubscribe = steering.subscribe(() => controller.abort());
+	const dispose = () => {
+		unsubscribe();
+		cancellation?.removeEventListener("abort", dispose);
+		track?.delete(dispose);
+	};
+	track?.add(dispose);
+	cancellation?.addEventListener("abort", dispose, { once: true });
+	if (cancellation?.aborted) {
+		dispose();
+	} else if (steering.pending()) {
+		// Subscribe before checking, without yielding: queued steering cannot fall in a gap.
+		controller.abort();
+	}
+	Object.defineProperty(context, "steeringSignal", { value: controller.signal, enumerable: true });
+	return { context, dispose };
 }
 
 function estimateMessagesTokens(messages: AgentMessage[]): number {
@@ -1742,6 +1777,8 @@ export class AgentSession {
 	});
 	/** Created on the first `ctx.executeTool()` call. */
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
+	/** The issuing assistant message of each model-issued call while it runs, for its nested calls (senpi#5234). */
+	private readonly _toolCallIssuers = new Map<string, AssistantMessage>();
 	private readonly _toolBarrier = new ToolBarrier((spec) => this._emit({ type: "tool_barrier_expired", ...spec }));
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
@@ -1845,43 +1882,32 @@ export class AgentSession {
 				model: this.model?.id,
 			}),
 		});
-		const toolRuntime = config.toolRuntime ?? "in-process";
-		const hostRefusal = toolRuntimeHostRefusal(toolRuntime);
-		if (hostRefusal !== undefined) throw new ToolRuntimeUnsupportedHostError(hostRefusal);
-		// One host-call handler for both runtimes: the child's reverse bridge and an in-process ctx.offload module.
-		const hostCalls = createSessionHostCallHandler({
+		const toolChildRuntime = createToolChildRuntime({
+			toolRuntime: config.toolRuntime ?? "in-process",
+			agentDir: this._agentDir,
+			scopeId: this.sessionManager.getSessionId(),
 			cwd: this._cwd,
-			executeNested: (parentToolCallId, name, args, signal) =>
-				this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
-			callableToolNames: () => this._callableToolNames(),
-			target: (kind) => this._toolChildHostTargets.get(kind),
-			filesystemPolicy: () => this._filesystemPolicy,
-		});
-		this._toolChild =
-			toolRuntime === "child"
-				? new SessionToolChild({
-						dir: join(this._agentDir, "tool-children", this.sessionManager.getSessionId()),
-						cwd: this._cwd,
-						moduleRoots: () => [
-							...toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
-							...childModuleRoots(this._extensionRunner.getAllChildModules()),
-						],
-						onRecord: (record) => {
-							this._emit({ type: "session_tool_child", ...record });
-							if (record.state === "exited")
-								for (const job of this._childJobs()) job.childExited?.(record.generation);
-						},
-						onHostCall: hostCalls,
-						onWake: (wake) => {
-							for (const job of this._childJobs())
-								if (job.kind === wake.source) job.wake?.(wake.value, wake.generation);
-						},
-					})
-				: undefined;
-		this._toolDispatcher = createToolDispatcher({
-			runtime: toolRuntime,
+			moduleRoots: () => [
+				...toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
+				...childModuleRoots(this._extensionRunner.getAllChildModules()),
+			],
+			hostCallDeps: {
+				cwd: this._cwd,
+				executeNested: (parentToolCallId, name, args, signal) =>
+					this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
+				callableToolNames: () => this._callableToolNames(),
+				target: (kind) => this._toolChildHostTargets.get(kind),
+				filesystemPolicy: () => this._filesystemPolicy,
+			},
+			onRecord: (record) => {
+				this._emit({ type: "session_tool_child", ...record });
+				if (record.state === "exited")
+					for (const job of this._childJobs()) job.childExited?.(record.generation);
+			},
+			onWake: (wake) => {
+				for (const job of this._childJobs()) if (job.kind === wake.source) job.wake?.(wake.value, wake.generation);
+			},
 			notify: (event, data) => this._sessionLogger.info(event, data),
-			hostCalls,
 			onModuleStuck: (notice) => {
 				this._sessionLogger.warn("offload_module_stuck", {
 					modulePath: notice.modulePath,
@@ -1891,10 +1917,9 @@ export class AgentSession {
 				});
 				this._emit({ type: "offload_module_stuck", ...notice });
 			},
-			...(this._toolChild === undefined
-				? {}
-				: { childRunner: this._toolChild.runner, childKindRunner: this._toolChild.kindRunner }),
 		});
+		this._toolChild = toolChildRuntime.toolChild;
+		this._toolDispatcher = toolChildRuntime.dispatcher;
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
 			this._modelRegistry,
@@ -2334,6 +2359,7 @@ export class AgentSession {
 	}
 
 	private _installAgentToolHooks(): void {
+		bindPipelineWitness(this.agent, this.sessionManager, () => this._cwd);
 		this.agent.resolveUnknownToolCall = (toolName) => {
 			const resolvedName = resolveToolNameAlias(toolName, this._callableToolNames());
 			if (resolvedName === undefined || !this._activateLazyTool(resolvedName)) return undefined;
@@ -2341,16 +2367,19 @@ export class AgentSession {
 		};
 		this._bindToolSearchRemovedHints();
 
-		this.agent.beforeToolCall = async ({ toolCall, args }, signal) => {
+		this.agent.beforeToolCall = async ({ toolCall, args, assistantMessage }, signal) => {
 			this._toolExecutionDepth++;
+			this._toolCallIssuers.set(toolCall.id, assistantMessage);
 			try {
 				const result = await this.preflightToolCall(toolCall, args, { signal });
 				if (result?.block) {
 					this._toolExecutionDepth--;
+					this._toolCallIssuers.delete(toolCall.id);
 				}
 				return result;
 			} catch (err) {
 				this._toolExecutionDepth--;
+				this._toolCallIssuers.delete(toolCall.id);
 				throw err;
 			}
 		};
@@ -2361,6 +2390,7 @@ export class AgentSession {
 				return markInterrupted(this._stopInterrupt, isError, result.details, override);
 			} finally {
 				this._toolExecutionDepth--;
+				this._toolCallIssuers.delete(toolCall.id);
 			}
 		};
 	}
@@ -2470,8 +2500,10 @@ export class AgentSession {
 		this._nestedToolCalls ??= new NestedToolCallRunner({
 			getTools: () => this._getCallableTools(),
 			isSequential: () => this.agent.toolExecution === "sequential",
-			runToolCall: (toolCall, parentId, signal, onUpdate) => {
-				const assistantMessage = this._findLastAssistantMessage();
+			issuerOf: (rootToolCallId) => this._toolCallIssuers.get(rootToolCallId),
+			runToolCall: (toolCall, parentId, signal, onUpdate, issuedBy) => {
+				// Work that outlives its model-issued call has no recorded issuer and keeps today's transcript lookup.
+				const assistantMessage = issuedBy ?? this._findLastAssistantMessage();
 				if (!assistantMessage) {
 					return Promise.resolve({
 						toolCall,
@@ -3101,27 +3133,18 @@ export class AgentSession {
 	}
 
 	private _createToolContext(signal: AbortSignal | undefined) {
-		const context = this._extensionRunner.createContext();
-		const controller = new AbortController();
-		const cancellation = signal ?? context.signal;
-		const unsubscribe = this.subscribe((event) => {
-			if (event.type === "queue_update" && event.steering.length > 0) controller.abort();
-		});
-		const dispose = () => {
-			unsubscribe();
-			cancellation?.removeEventListener("abort", dispose);
-			this._toolContextDisposers.delete(dispose);
-		};
-		this._toolContextDisposers.add(dispose);
-		cancellation?.addEventListener("abort", dispose, { once: true });
-		if (cancellation?.aborted) {
-			dispose();
-		} else if (this._steeringMessages.length > 0) {
-			// Subscribe before checking, without yielding: queued steering cannot fall in a gap.
-			controller.abort();
-		}
-		Object.defineProperty(context, "steeringSignal", { value: controller.signal, enumerable: true });
-		return { context, dispose };
+		return bindInvocationSignals(
+			this._extensionRunner.createContext(),
+			signal,
+			{
+				pending: () => this._steeringMessages.length > 0,
+				subscribe: (onSteer) =>
+					this.subscribe((event) => {
+						if (event.type === "queue_update" && event.steering.length > 0) onSteer();
+					}),
+			},
+			this._toolContextDisposers,
+		);
 	}
 
 	private _emitQueueUpdate(): void {
@@ -12188,9 +12211,7 @@ export class AgentSession {
 	}
 
 	private _isBuiltinExtensionPath(path: string): boolean {
-		return (
-			path.startsWith("<builtin:") || path.startsWith(BUILTIN_PATH_PREFIX) || /[\\/]senpi-codemode[\\/]/u.test(path)
-		);
+		return isBuiltinExtensionPath(path);
 	}
 
 	private _enforceConfiguredDefaultTools(): void {
@@ -12219,44 +12240,18 @@ export class AgentSession {
 		const previousRegistryNames = new Set(this._toolRegistry.keys());
 		const previousActiveToolNames = this.getActiveToolNames();
 		const allowedToolNames = this._allowedToolNames;
-		const excludedToolNames = this._excludedToolNames;
-		const isAllowedTool = (name: string): boolean =>
-			(!allowedToolNames || allowedToolNames.has(name)) && !excludedToolNames?.has(name);
-
-		const registeredTools = this._extensionRunner.getAllRegisteredTools();
-		const defaultToolNames = this._defaultToolNames;
-		const isConfiguredBuiltinTool = (tool: (typeof registeredTools)[number]): boolean =>
-			(tool.sourceInfo.source !== "builtin" && !this._isBuiltinExtensionPath(tool.sourceInfo.path)) ||
-			defaultToolNames === undefined ||
-			defaultToolNames.has(tool.definition.name);
-		const allCustomTools = [
-			...registeredTools.filter(isConfiguredBuiltinTool),
-			...this._customTools.map((definition) => ({
-				definition,
-				sourceInfo: createSyntheticSourceInfo(`<sdk:${definition.name}>`, {
-					source: "sdk",
-				}),
-			})),
-		].filter((tool) => isAllowedTool(tool.definition.name));
-		const definitionRegistry = new Map<string, ToolDefinitionEntry>(
-			Array.from(this._baseToolDefinitions.entries())
-				.filter(([name]) => isAllowedTool(name))
-				.map(([name, definition]) => [
-					name,
-					{
-						definition,
-						sourceInfo: createSyntheticSourceInfo(`${BUILTIN_PATH_PREFIX}${name}`, {
-							source: "builtin",
-						}),
-					},
-				]),
-		);
-		for (const tool of allCustomTools) {
-			definitionRegistry.set(tool.definition.name, {
-				definition: tool.definition,
-				sourceInfo: tool.sourceInfo,
-			});
-		}
+		const registry = buildToolRegistry({
+			baseToolDefinitions: this._baseToolDefinitions,
+			runner: this._extensionRunner,
+			customTools: this._customTools,
+			defaultToolNames: this._defaultToolNames,
+			allowedToolNames,
+			excludedToolNames: this._excludedToolNames,
+			createToolContext: (signal) => this._createToolContext(signal),
+			dispatcher: this._toolDispatcher,
+		});
+		const { isAllowedTool } = registry;
+		const definitionRegistry = registry.definitions;
 		this._toolDefinitions = definitionRegistry;
 		this._toolPromptSnippets = new Map(
 			Array.from(definitionRegistry.values())
@@ -12274,33 +12269,8 @@ export class AgentSession {
 				})
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
-		const runner = this._extensionRunner;
-		const createToolContext = (signal: AbortSignal | undefined) => this._createToolContext(signal);
-		const wrappedExtensionTools = wrapRegisteredTools(
-			allCustomTools,
-			runner,
-			createToolContext,
-			this._toolDispatcher,
-		);
-		const wrappedBuiltInTools = wrapRegisteredTools(
-			Array.from(this._baseToolDefinitions.values())
-				.filter((definition) => isAllowedTool(definition.name))
-				.map((definition) => ({
-					definition,
-					sourceInfo: createSyntheticSourceInfo(`${BUILTIN_PATH_PREFIX}${definition.name}`, {
-						source: "builtin",
-					}),
-				})),
-			runner,
-			createToolContext,
-			this._toolDispatcher,
-		);
-
-		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));
-		for (const tool of wrappedExtensionTools as AgentTool[]) {
-			toolRegistry.set(tool.name, tool);
-		}
-		this._toolRegistry = toolRegistry;
+		const wrappedExtensionTools = registry.extensionTools;
+		this._toolRegistry = registry.toolRegistry;
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
 		this._publishEvalOnlyToolHints();
 		const isDirectlyExposed = (name: string): boolean => this._isActivatedOnRegistration(name);
@@ -12400,57 +12370,20 @@ export class AgentSession {
 	}): void {
 		this._delegatedCompactionKey = undefined;
 		this._lazyToolActivation.reset();
-		const autoResizeImages = this.settingsManager.getImageAutoResize();
-		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
-		const shellPath = this.settingsManager.getShellPath();
 		const extensionsResult = this._resourceLoader.getExtensions();
-		const filesystemPolicy = composeFilesystemPolicies(
-			extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
-		);
-		this._filesystemPolicy = filesystemPolicy;
-		const baseToolDefinitions = this._baseToolsOverride
-			? Object.fromEntries(
-					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
-						name,
-						createToolDefinitionFromAgentTool(tool),
-					]),
-				)
-			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages, filesystemPolicy },
-					// The core bash tool's process work goes through the dispatcher's operations: the same
-					// local operations under in-process, and the tool child's user.bash job under child
-					// (senpi#3566 todo 9), while truncation and rendering stay on the server.
-					bash: {
-						commandPrefix: shellCommandPrefix,
-						redactSecretsInOutput: this.settingsManager.getBashRedactSecretsInOutput(),
-						shellPath,
-						operations: this._toolDispatcher.bashOperations({ shellPath }),
-					},
-					write: { filesystemPolicy },
-					edit: { filesystemPolicy },
-					grep: { filesystemPolicy },
-					find: { filesystemPolicy },
-					glob: { filesystemPolicy },
-					ls: { filesystemPolicy },
-				});
-
-		this._baseToolDefinitions = new Map(
-			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
-		);
-		if (options.flagValues) {
-			for (const [name, value] of options.flagValues) {
-				extensionsResult.runtime.flagValues.set(name, value);
-			}
-		}
-
-		this._extensionRunner = new ExtensionRunner(
-			extensionsResult.extensions,
-			extensionsResult.runtime,
-			this._cwd,
-			this.sessionManager,
-			this._modelRegistry,
-			extensionsResult.eventBus,
-		);
+		const runtime = bootstrapRuntime({
+			cwd: this._cwd,
+			settingsManager: this.settingsManager,
+			extensionsResult,
+			modelRegistry: this._modelRegistry,
+			sessionManager: this.sessionManager,
+			toolDispatcher: this._toolDispatcher,
+			...(this._baseToolsOverride ? { baseToolsOverride: this._baseToolsOverride } : {}),
+			...(options.flagValues ? { flagValues: options.flagValues } : {}),
+		});
+		this._filesystemPolicy = runtime.filesystemPolicy;
+		this._baseToolDefinitions = runtime.baseToolDefinitions;
+		this._extensionRunner = runtime.extensionRunner;
 		this._adoptToolSearchService(extensionsResult.runtime);
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
