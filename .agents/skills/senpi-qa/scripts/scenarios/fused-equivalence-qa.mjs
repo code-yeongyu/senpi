@@ -129,6 +129,12 @@ async function main() {
 	const cell = { platform: goldenPlatform(), mode: tui ? "tui" : "rpc" };
 	const results = [];
 	for (const testCase of selected) {
+		const skipped = testCase.skip?.();
+		if (skipped) {
+			results.push({ id: testCase.id, title: testCase.title, pass: false, skipped });
+			process.stdout.write(`[SKIPPED] ${testCase.id} ${testCase.title} - SKIPPED(${skipped})\n`);
+			continue;
+		}
 		const verdict =
 			options.mode === "compare" ? goldenCellVerdict(deferredGoldens, { ...cell, case: testCase.id }) : undefined;
 		if (verdict?.kind === "deferred") {
