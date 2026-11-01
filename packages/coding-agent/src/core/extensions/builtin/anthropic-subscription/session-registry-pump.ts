@@ -210,14 +210,51 @@ async function runPump(
 }
 
 /**
+ * Waits for `settled`, bounded by SESSION_TURN_ADMISSION_WAIT_MS: "admitted" once it settles, "aborted" when
+ * `signal` aborts first, and a ConcurrentSessionTurnAdmissionError when the bound passes, so a stuck pump cannot
+ * hold the session's callers forever.
+ */
+export function waitForTurnAdmission(
+	sessionId: string,
+	settled: Promise<unknown>,
+	signal: AbortSignal | undefined,
+	schedule: (callback: () => void, delayMs: number) => () => void = scheduleAbort,
+): Promise<"admitted" | "aborted"> {
+	return new Promise((resolve, reject) => {
+		let done = false;
+		let cancelTimer: (() => void) | undefined;
+		const finish = (run: () => void): void => {
+			if (done) return;
+			done = true;
+			cancelTimer?.();
+			signal?.removeEventListener("abort", onAbort);
+			run();
+		};
+		const onAbort = (): void => finish(() => resolve("aborted"));
+		if (signal?.aborted) {
+			onAbort();
+			return;
+		}
+		// The scheduler may fire synchronously (tests inject one); `done` then stops every later step.
+		cancelTimer = schedule(
+			() => finish(() => reject(new ConcurrentSessionTurnAdmissionError(sessionId))),
+			SESSION_TURN_ADMISSION_WAIT_MS,
+		);
+		if (done) return;
+		signal?.addEventListener("abort", onAbort, { once: true });
+		const admitted = (): void => finish(() => resolve("admitted"));
+		void settled.then(admitted, admitted);
+	});
+}
+
+/**
  * A turn submitted while the session's previous turn is still active waits for that turn to settle, bounded by
  * SESSION_TURN_ADMISSION_WAIT_MS, then submits. One SDK session runs one turn at a time, so the second request is
  * logically after the first; refusing it (the behavior before this guard) surfaced as a provider failure and moved
  * the session to a fallback model for no reason of the provider's. An abort of the waiting request resolves it as
- * an aborted turn; a previous turn that does not settle in time keeps the refusal, so a stuck pump cannot hold the
- * session's callers forever.
+ * an aborted turn; a previous turn that does not settle in time keeps the refusal.
  */
-function admitAfter(
+async function admitAfter(
 	registry: AnthropicSubscriptionSessionRegistry,
 	entry: AnthropicSubscriptionSessionEntry,
 	active: ActiveTurn,
@@ -226,43 +263,13 @@ function admitAfter(
 	limits: PreReplayBufferLimits,
 ): Promise<SessionTurnResult> {
 	const generation = entry.generation;
-	return new Promise<SessionTurnResult>((resolve, reject) => {
-		let done = false;
-		let cancelTimer: (() => void) | undefined;
-		const finish = (run: () => void): void => {
-			if (done) return;
-			done = true;
-			cancelTimer?.();
-			request.signal?.removeEventListener("abort", onAbort);
-			run();
-		};
-		const onAbort = (): void => finish(() => resolve({ uuid: createSessionUuid(), messages: [], aborted: true }));
-		if (request.signal?.aborted) {
-			onAbort();
-			return;
-		}
-		// The scheduler may fire synchronously (tests inject one); `done` then stops every later step.
-		cancelTimer = (request.scheduleAbort ?? scheduleAbort)(
-			() => finish(() => reject(new ConcurrentSessionTurnAdmissionError(entry.senpiSessionId))),
-			SESSION_TURN_ADMISSION_WAIT_MS,
-		);
-		if (done) return;
-		request.signal?.addEventListener("abort", onAbort, { once: true });
-		void settled.then(() =>
-			finish(() => {
-				if (!registry.isCurrentGeneration(entry.senpiSessionId, generation)) {
-					reject(new Error("Anthropic Subscription session closed while a turn waited for admission"));
-					return;
-				}
-				if (currentTurn(entry) === active) entry.activeTurn = null;
-				try {
-					resolve(submitSessionTurn(registry, entry, request, limits));
-				} catch (error) {
-					reject(error instanceof Error ? error : new Error(String(error)));
-				}
-			}),
-		);
-	});
+	const outcome = await waitForTurnAdmission(entry.senpiSessionId, settled, request.signal, request.scheduleAbort);
+	if (outcome === "aborted") return { uuid: createSessionUuid(), messages: [], aborted: true };
+	if (!registry.isCurrentGeneration(entry.senpiSessionId, generation)) {
+		throw new Error("Anthropic Subscription session closed while a turn waited for admission");
+	}
+	if (currentTurn(entry) === active) entry.activeTurn = null;
+	return submitSessionTurn(registry, entry, request, limits);
 }
 
 export function submitSessionTurn(

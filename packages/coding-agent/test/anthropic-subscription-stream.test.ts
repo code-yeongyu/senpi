@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type Options,
 	overrideSdkBoundary,
@@ -18,7 +18,10 @@ import {
 	recordBranchInfo,
 	resetSessionRegistryBoundary,
 } from "../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
-import { submitSessionTurn } from "../src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts";
+import {
+	SESSION_TURN_ADMISSION_WAIT_MS,
+	submitSessionTurn,
+} from "../src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts";
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
 
 const model: Model<Api> = {
@@ -282,6 +285,8 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 		else this.queued.push(message);
 	}
 
+	protected beforeResult(_submittedCount: number): Promise<void> | void {}
+
 	private async consume(prompt: AsyncIterable<SDKUserMessage>): Promise<void> {
 		for await (const message of prompt) {
 			this.submitted.push(message);
@@ -302,6 +307,7 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 					session_id: sessionId,
 				}),
 			);
+			await this.beforeResult(this.submitted.length);
 			this.emit(
 				sdkMessage({
 					type: "result",
@@ -313,6 +319,33 @@ class ResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage> {
 				}),
 			);
 		}
+	}
+}
+
+/** Holds the first turn's terminal result until the test releases it, so a second turn overlaps the first. */
+class HeldFirstResultQuery extends ResidentQuery {
+	readonly firstSubmitted: Promise<void>;
+	readonly release: () => void;
+	private markFirstSubmitted!: () => void;
+	private readonly held: Promise<void>;
+
+	constructor(prompt: AsyncIterable<SDKUserMessage>, options: Options) {
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		super(prompt, options);
+		this.held = held;
+		this.release = release;
+		this.firstSubmitted = new Promise((resolve) => {
+			this.markFirstSubmitted = resolve;
+		});
+	}
+
+	protected override async beforeResult(submittedCount: number): Promise<void> {
+		if (submittedCount !== 1) return;
+		this.markFirstSubmitted();
+		await this.held;
 	}
 }
 
@@ -865,6 +898,63 @@ describe("Claude SDK OAuth stream events", () => {
 		expect(textFrom(queries[0]!.submitted[1]!)).toBe("second");
 		expect(textFrom(queries[0]!.submitted[1]!)).not.toContain("first");
 		expect(queries[0]?.closes).toBe(0);
+	});
+
+	it("computes a turn's delta after the turn it waited behind settles, so the earlier message is not sent again", async () => {
+		let residentCreated!: (query: HeldFirstResultQuery) => void;
+		const created = new Promise<HeldFirstResultQuery>((resolve) => {
+			residentCreated = resolve;
+		});
+		const queries = residentBoundary(new Set(), (prompt, options) => {
+			const query = new HeldFirstResultQuery(prompt, options);
+			residentCreated(query);
+			return query;
+		});
+		const sessionId = "resident-admission-wait-delta";
+		const first: Context = { messages: [{ role: "user", content: "first", timestamp: 1 }] };
+		const second: Context = {
+			messages: [
+				first.messages[0]!,
+				assistant("first answer", 2),
+				{ role: "user", content: "second", timestamp: 3 },
+			],
+		};
+		// The second turn starts its bounded admission wait by scheduling the admission deadline: that call is the
+		// event the test waits for before releasing the first turn's terminal result.
+		const realSetTimeout = globalThis.setTimeout;
+		let admissionWaitStarted!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			admissionWaitStarted = resolve;
+		});
+		const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+			callback: () => void,
+			delayMs?: number,
+		) => {
+			if (delayMs !== SESSION_TURN_ADMISSION_WAIT_MS) return realSetTimeout(callback, delayMs);
+			admissionWaitStarted();
+			return { unref: () => undefined } as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout);
+		try {
+			const firstResult = streamAnthropicSubscription(model, first, {
+				cwd: process.cwd(),
+				...mainOptions(sessionId),
+			}).result();
+			const resident = await created;
+			await resident.firstSubmitted;
+			const secondResult = streamAnthropicSubscription(model, second, {
+				cwd: process.cwd(),
+				...mainOptions(sessionId),
+			}).result();
+			await waiting;
+			resident.release();
+			expect((await firstResult).stopReason).toBe("stop");
+			expect((await secondResult).stopReason).toBe("stop");
+		} finally {
+			timers.mockRestore();
+		}
+
+		expect(queries).toHaveLength(1);
+		expect(queries[0]!.submitted.map(textFrom)).toEqual([expect.stringContaining("first"), "second"]);
 	});
 
 	it("resumes and forks at an assistant boundary when tree navigation is a strict sent-stream prefix", async () => {
