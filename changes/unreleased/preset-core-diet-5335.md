@@ -4,7 +4,8 @@
 ### What changed
 
 - `claude-opus-5-5.ts`, `claude-fable-5-1.ts`: Scope no longer names `ask_user_question`; the tool's own description says when to use it. `claude-fable-5-5` renders the 5.1 core and moves with it.
-- `test/suite/prompt-presets-native-baseline.json`: the 18 `claude-opus-5-5:*`, `claude-fable-5-1:*`, `claude-fable-5-5:*` hashes are recaptured; no other hash changes.
+- `claude-opus-5-5.ts`, `claude-fable-5-1.ts`: the core's own lines (identity, Intent Gate, Scope, Working the Task, Verification, claim audit, Hard Limits, Style) are reworded tersely with the same rules: article-free imperative clauses, `=` and `->` for definitions and conditions. The routing-line template, execution tooling, test discipline, Handoff and skills intro are unchanged here.
+- `test/suite/prompt-presets-native-baseline.json`: the 18 `claude-opus-5-5:*`, `claude-fable-5-1:*`, `claude-fable-5-5:*` hashes are recaptured for each change; no other hash changes.
 - The Opus 5.5 and Fable 5.1 preset tests assert that the prompt names `ask_user_question` only when the session has the tool.
 
 ### Why
@@ -21,4 +22,4 @@
 
 <!-- changes-log: packages/coding-agent/CHANGELOG.md -->
 ### Changed
-- The Claude Opus 5.5 and Fable 5.1 system prompts no longer repeat when to use `ask_user_question`; the tool's own description covers it ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))
+- The Claude Opus 5.5 and Fable 5.1 system prompts no longer repeat when to use `ask_user_question` (the tool's own description covers it) and word their own rules more tersely ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))
