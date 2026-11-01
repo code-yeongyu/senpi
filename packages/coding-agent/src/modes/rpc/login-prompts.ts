@@ -9,8 +9,8 @@
  * Cancellation has two independent sources and both must release the dialog:
  * the login-wide signal (login_cancel, or the login having settled) and the
  * per-prompt `AuthPrompt.signal` a provider aborts when an out-of-band step
- * wins the race — e.g. `loginAnthropic` racing a manual-code prompt against
- * its local callback server. A released dialog rejects with "Login cancelled",
+ * wins the race — e.g. the chatgpt-subscription login racing a manual-code
+ * prompt against its local callback server. A released dialog rejects with "Login cancelled",
  * matching the interactive TUI.
  *
  * Only the prompt text, placeholder, and option labels cross the wire; the
@@ -23,7 +23,7 @@ import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 type RpcLoginPromptCallbacks = Pick<OAuthLoginCallbacks, "onPrompt" | "onSelect">;
 
 export function createRpcLoginPromptCallbacks(
-	ui: Pick<ExtensionUIContext, "input" | "select">,
+	ui: Pick<ExtensionUIContext, "input" | "select" | "capabilities">,
 	signal: AbortSignal,
 ): RpcLoginPromptCallbacks {
 	const dialogSignalFor = (promptSignal: AbortSignal | undefined): AbortSignal =>
@@ -33,7 +33,10 @@ export function createRpcLoginPromptCallbacks(
 		async onPrompt(prompt) {
 			const dialogSignal = dialogSignalFor(prompt.signal);
 			if (dialogSignal.aborted) throw new Error("Login cancelled");
-			const value = await ui.input(prompt.message, prompt.placeholder, { signal: dialogSignal });
+			const value = await ui.input(prompt.message, prompt.placeholder, {
+				signal: dialogSignal,
+				...(prompt.type === "secret" && ui.capabilities?.secretInput === true ? { secret: true } : {}),
+			});
 			if (dialogSignal.aborted || value === undefined) throw new Error("Login cancelled");
 			return value;
 		},

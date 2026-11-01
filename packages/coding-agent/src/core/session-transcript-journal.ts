@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { parseSessionEntryLine, SESSION_READ_BUFFER_SIZE, SessionLineSplitter } from "./session-entry-file.ts";
 import type { FileEntry } from "./session-manager.ts";
@@ -21,12 +22,27 @@ export type TranscriptUnavailableReason =
 	| "transition_over_worker_frame_limit"
 	| "transcript_file_identity_unavailable"
 	| "transcript_tail_trimmed"
-	| "transcript_tail_over_byte_limit";
+	| "transcript_tail_over_byte_limit"
+	| "transcript_ancestry_over_byte_limit";
 
 export interface TranscriptPersistence {
 	readonly fileIdentity: FileIdentity;
 	readonly count: number;
 }
+
+/**
+ * A committed change that removes, replaces or reinstalls whole messages of the active path, named by entry id
+ * (RULING-33 condition 2). Messages are owned JSON, the public message each entry contributes.
+ */
+export type TranscriptFlow =
+	| { readonly kind: "edit"; readonly targetId: string; readonly message: AgentMessage }
+	| { readonly kind: "context_edit_removal"; readonly targetId: string }
+	| { readonly kind: "compaction"; readonly removedIds: readonly string[] }
+	| {
+			readonly kind: "branch";
+			readonly removedIds: readonly string[];
+			readonly installed: readonly { readonly id: string; readonly message: AgentMessage }[];
+	  };
 
 /**
  * One committed change of a manager's transcript, recorded after the commit and never before persistence.
@@ -37,13 +53,17 @@ export type TranscriptTransition =
 	| {
 			readonly kind: "append";
 			readonly id: string;
+			/** The entry's engine kind and parent link: what a cut keeps of the entry once persistence released its text. */
+			readonly type: string;
+			readonly parentId: string | null;
 			readonly entry?: string;
 			readonly persistence?: TranscriptPersistence;
 			readonly owningMessageId?: string;
 			readonly recoveryEpoch?: string;
+			readonly flow?: TranscriptFlow;
 	  }
 	| { readonly kind: "persisted"; readonly persistence: TranscriptPersistence }
-	| { readonly kind: "leaf"; readonly leafId: string | null }
+	| { readonly kind: "leaf"; readonly leafId: string | null; readonly flow?: TranscriptFlow }
 	| { readonly kind: "unavailable"; readonly reason: TranscriptUnavailableReason };
 
 export type PersistedBaseError =
@@ -76,6 +96,9 @@ function fingerprint(entries: readonly FileEntry[]): string {
 	for (const entry of entries) hash.update(`${entry.type}\u0000${entry.id}\n`);
 	return hash.digest("hex");
 }
+
+/** The parent link of a file entry; the session header has none. */
+const entryParent = (entry: FileEntry): string | null => (entry.type === "session" ? null : entry.parentId);
 
 /** Describe the loaded/written entries now; the owning descriptor supplies their identity asynchronously. */
 export function captureTranscriptBase(entries: readonly FileEntry[]): {
@@ -149,6 +172,8 @@ export function snapshotTranscript(state: {
 		...state.unpersisted.map((entry): TranscriptTransition => ({
 			kind: "append",
 			id: entry.id,
+			type: entry.type,
+			parentId: entryParent(entry),
 			...(state.persistence ? { persistence: state.persistence } : { entry: state.own(entry) }),
 		})),
 		{ kind: "leaf", leafId: state.leafId },

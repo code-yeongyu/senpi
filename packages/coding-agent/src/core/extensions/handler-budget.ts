@@ -19,28 +19,33 @@ export interface ExtensionHandlerStall {
 	readonly error?: string;
 }
 
-export type HandlerStopVerdict = "timed_out" | "released";
+/**
+ * Why the host stopped waiting on a handler: its hard cap ran out, the turn was stopped (deadline or Esc), or a person's
+ * next input moved on from a settled run whose notification-only handler was still running (omo#11419).
+ */
+export type HandlerStopVerdict = "timed_out" | "released" | "yielded";
 
 export type BudgetedHandlerOutcome<T> =
 	| { readonly kind: "settled"; readonly value: T }
 	| { readonly kind: "failed"; readonly error: unknown }
 	| { readonly kind: "timed_out" }
-	| { readonly kind: "released" };
+	| { readonly kind: "released" }
+	| { readonly kind: "yielded" };
 
 /** Waits on running handlers, tagged with the turn that owns them so a deadline releases only its own turn's waits. */
 export class HeldHandlerWaits {
-	private readonly releases = new Map<() => void, number>();
+	private readonly releases = new Map<(verdict: HandlerStopVerdict) => void, number>();
 
-	hold(scope: number, release: () => void): () => void {
+	hold(scope: number, release: (verdict: HandlerStopVerdict) => void): () => void {
 		this.releases.set(release, scope);
 		return () => this.releases.delete(release);
 	}
 
-	release(scope: number): number {
+	release(scope: number, verdict: HandlerStopVerdict = "released"): number {
 		const owned = [...this.releases].filter(([, owner]) => owner === scope).map(([release]) => release);
 		for (const release of owned) {
 			this.releases.delete(release);
-			release();
+			release(verdict);
 		}
 		return owned.length;
 	}
@@ -80,7 +85,7 @@ function watchHandler(
 	};
 	const warnTimer = budget.warnMs > 0 ? setTimeout(() => stall("warn"), budget.warnMs) : undefined;
 	const capTimer = budget.timeoutMs > 0 ? setTimeout(() => end("timed_out"), budget.timeoutMs) : undefined;
-	const unhold = held?.waits.hold(held.scope(), () => end("released"));
+	const unhold = held?.waits.hold(held.scope(), (verdict) => end(verdict));
 	function disarm(): void {
 		clearTimeout(warnTimer);
 		clearTimeout(capTimer);

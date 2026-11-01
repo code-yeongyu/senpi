@@ -826,6 +826,12 @@ jobs:
         run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-ensure.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
+      # Exact-version proof invalidates on every Bun bump. Re-run the frozen old-parser
+      # control together with the compiled-runtime pair proof before re-enabling it.
+      - name: Run Windows private descriptor pair proof and compatibility control
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/host-private-fds-pair.test.ts test/suite/host-private-fd-inherit.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
       - name: Run RPC host lifecycle tests
         run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
         working-directory: packages/coding-agent
@@ -1313,7 +1319,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $sidecar = "$hostRoot/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py"
           New-Item -ItemType Directory -Force $sidecar | Out-Null
-          Copy-Item packages/senpi-codemode/src/kernels/py/prelude.py "$sidecar/prelude.py"
+          Copy-Item packages/senpi-codemode/src/kernels/py/*.py "$sidecar/"
       - name: Packaged cold and warm Python cells
         shell: pwsh
         run: |

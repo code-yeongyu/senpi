@@ -1,3 +1,57 @@
+## 2026-10-29 - Bun SQLite host for the durable-core conformance suite (senpi#4744, fixes #4740)
+
+### What changed
+
+- `packages/agent/vitest.config.ts`: aliases `@earendil-works/pi-agent-core/conformance` to `src/conformance/index.ts`, so the `bun-sqlite` conformance host (`packages/session-backends/sqlite-bun`) and the STORE/KILL-STORE cases load one copy of the store contract and its `DurableStoreError`.
+
+### Why
+
+- `packages/agent/vitest.config.ts`: the Bun SQLite backend imports the contract through the package's public `./conformance` subpath; without the alias Vitest resolves it to the unbuilt `dist/`, and the cases would not recognize the backend's errors.
+
+### Why an extension could not handle it
+
+- `packages/agent/vitest.config.ts`: test module resolution is configured before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `resolve.alias` list in `packages/agent/vitest.config.ts`.
+
+## 2026-10-29 - Conformance suite export for the durable core (senpi#4727, fixes #4726)
+
+### What changed
+
+- `packages/agent/package.json`: adds the `./conformance` export (`dist/conformance/index.{js,d.ts}`): the durable-core conformance case registry, mapping validation, manifest export, suite hash and suite runner from `src/conformance/`.
+
+### Why
+
+- `packages/agent/package.json`: every host of the durable core (a Durable Object host and a Bun host) runs one conformance suite, and hosts outside this package load it through a public subpath (packages/agent/docs/durable-core-adr.md).
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json`: the package loader resolves exports before extensions run, and the suite is consumed by hosts, not by sessions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/package.json` exports map.
+
+## 2026-10-27 - Export the win32 simulation profile for tests (senpi#4510)
+
+### What changed
+
+- `packages/agent/package.json`: adds the `./testing/win32-sim` export (`dist/testing/win32-sim.{js,d.ts}`), a test-support subpath that product code does not import.
+
+### Why
+
+- `packages/agent/package.json`: suites in other packages (session backends, transport, headless host, hand recovery) need one shared, code-level simulation of Windows behavior that runs on any host.
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json`: package subpaths resolve before extensions load; test suites in other workspaces import the profile through the package manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/package.json` exports map.
+
 ## 2026-10-26 - Remove the internal channel subpath (senpi#4349, part of #4272)
 
 ### What changed
