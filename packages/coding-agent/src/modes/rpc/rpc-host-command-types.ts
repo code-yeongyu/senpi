@@ -15,7 +15,7 @@ import type { RpcSessionCommand } from "./rpc-session-command-types.ts";
 import type { RpcMoveSessionCommand } from "./session-move-wire.ts";
 
 /** Every established command accepts an additive routing envelope. */
-export type RpcCommand =
+type RpcCommandBody =
 	| RpcAttachmentCommand
 	| (RpcSessionCommand & { sessionId?: string })
 	| {
@@ -29,6 +29,7 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			admissionId?: string;
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
 			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
@@ -197,6 +198,7 @@ export type RpcCommand =
 			 * capability `session_status`.
 			 */
 			type: "subscribe_sessions";
+			admissionId?: string;
 			/** `"all"` (default), routing/durable ids or paths, or the children of one durable session id. */
 			sessions?: "all" | { ids: string[] } | { childrenOf: string };
 			/** Include `kind: "worker"` sessions (default: true for `childrenOf`, false otherwise). */
@@ -240,6 +242,9 @@ export type RpcCommand =
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  };
+
+/** Compact callers may identify their own admission on any correlated session request. */
+export type RpcCommand = RpcCommandBody & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
 export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;
