@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { expect } from "vitest";
 import { catalogDigest } from "../../../src/modes/rpc/compact-catalog-codec.ts";
@@ -10,13 +11,14 @@ export const admissionFixtures = new URL("../../../docs/engine-socket/fixtures/a
  * Digests naming unshipped catalog components are stable opaque aliases, not fabricated component payloads.
  */
 export function normalizedTrace(input: unknown, root: string): unknown {
+	const roots = [realpathSync(root), root].sort((a, b) => b.length - a.length);
 	const ids = new Map<string, string>();
 	const digests = new Map<string, string>();
 	const entries = new Map<string, string>();
 	const pages = new Map<string, Buffer>();
 	const text = (value: string): string =>
-		value
-			.replaceAll(root, "<root>")
+		roots
+			.reduce((result, path) => result.replaceAll(path, "<root>"), value)
 			.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
 				if (!ids.has(id)) ids.set(id, `00000000-0000-4000-8000-${String(ids.size + 1).padStart(12, "0")}`);
 				return ids.get(id) ?? id;
