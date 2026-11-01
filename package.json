@@ -109,7 +109,11 @@
 			"rimraf": "6.1.3"
 		},
 		"@earendil-works/gondolin": {
-			"undici": "6.28.1"
+			"node-forge": "1.4.2",
+			"undici": "6.29.1"
+		},
+		"@anthropic-ai/sandbox-runtime": {
+			"node-forge": "1.4.2"
 		},
 		"@anthropic-ai/sdk": "0.127.0"
 	},
