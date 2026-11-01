@@ -125,6 +125,58 @@ describe("anthropic-subscription cold seed keeps the cached history across turn 
 		expect(rewrites).toHaveLength(MAX_REPLAYED_HISTORY_IMAGES / REPLAYED_UPLOAD_DROP_STEP);
 	});
 
+	it("a current-turn tool image matching a dropped upload is sent without making that upload replayable again", () => {
+		let transcript: Message[] = earlierTurns(1);
+		for (let n = 1; n <= MAX_REPLAYED_HISTORY_IMAGES + 1; n++) {
+			transcript = [
+				...transcript,
+				{ role: "user", content: [{ type: "text", text: `screen ${n}` }, screenshot(n)], timestamp: 100 + n * 2 },
+				assistant([{ type: "text", text: `noted ${n}` }], 101 + n * 2),
+			];
+		}
+		const ask: Message = { role: "user", content: "Open the first screen again", timestamp: 200 };
+		const before = rebuild([...transcript, ask]);
+		const during = rebuild([...transcript, ask, ...screenshotCall("reopen-1", screenshot(1), 201)]);
+
+		expect(firstDivergence(before, during)).toBeGreaterThan(breakpointIndex(before));
+		const current = during.slice(
+			during.findIndex((block) => block.type === "text" && block.text.includes("<current_turn_tool_images>")),
+		);
+		expect(
+			current.some(
+				(block) =>
+					block.type === "image" && block.source.type === "base64" && block.source.data === screenshot(1).data,
+			),
+		).toBe(true);
+	});
+
+	it("re-uploading an image whose entry was already dropped replays the new upload without rewriting history", () => {
+		let transcript: Message[] = earlierTurns(1);
+		const uploadTurn = (n: number, image: ImageContent): Message[] => [
+			{ role: "user", content: [{ type: "text", text: `screen ${n}` }, image], timestamp: 100 + n * 2 },
+			assistant([{ type: "text", text: `noted ${n}` }], 101 + n * 2),
+		];
+		for (let n = 1; n <= MAX_REPLAYED_HISTORY_IMAGES + 1; n++)
+			transcript = [...transcript, ...uploadTurn(n, screenshot(n))];
+		const withReupload = [...transcript, ...uploadTurn(100, screenshot(1))];
+		const before = rebuild([...withReupload, { role: "user", content: "Same as the first?", timestamp: 400 }]);
+		const after = rebuild([
+			...withReupload,
+			{ role: "user", content: "Same as the first?", timestamp: 400 },
+			assistant([{ type: "text", text: "Yes." }], 401),
+			{ role: "user", content: "Thanks", timestamp: 402 },
+		]);
+
+		const replayed = before.filter((block) => block.type === "image" && block.source.type === "base64");
+		expect(
+			replayed.some(
+				(block) =>
+					block.type === "image" && block.source.type === "base64" && block.source.data === screenshot(1).data,
+			),
+		).toBe(true);
+		expect(firstDivergence(before, after)).toBeGreaterThan(breakpointIndex(before));
+	});
+
 	it("a turn the user opened with an upload keeps that upload's history bytes when it closes", () => {
 		const { last, next, usage } = measure(imageToolTurn({ screenshots: 1, userUpload: true }));
 
