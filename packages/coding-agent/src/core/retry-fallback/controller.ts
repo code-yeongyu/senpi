@@ -11,6 +11,7 @@ import {
 	resolveChainKey,
 	rungSelector,
 } from "./chains.ts";
+import { subscribeProviderAccountEvents } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import { CircuitProbes } from "./circuit-probes.ts";
 import type {
 	ActiveFallbackState,
@@ -120,9 +121,11 @@ export class RetryFallbackController {
 	 * suppressed and is still usable; pinned state and the "never" policy hold the
 	 * fallback model. One exception outranks both the cooldown and the policy: a
 	 * fallback that is itself known unusable (billing or an account limit) while the
-	 * original is not is never where the session rests (senpi#2376). At a turn boundary, a
-	 * changed credential on the original's provider first releases its billing pin and parks
-	 * (senpi#4099).
+	 * original is not is never where the session rests (senpi#2376). An original that is
+	 * itself still held (an account usage limit with the reset it named, which can outlast
+	 * the circuit's 30-minute ceiling) is not restored before that hold ends (senpi#3347).
+	 * At a turn boundary, a changed credential on the original's provider first releases
+	 * its billing pin and parks (senpi#4099).
 	 */
 	async maybeRestorePrimary(
 		revertPolicy: "cooldown-expiry" | "never",
@@ -139,7 +142,11 @@ export class RetryFallbackController {
 		if (boundary === "turn") await releaseOnCredentialChange(state, model, this.deps, this.unusable);
 		if (state.pinned || !this.deps.isAuthAvailable(model.provider)) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
-		if (!stranded && (heldForNetworkBlip || !this.originalRecovered(state, revertPolicy))) return false;
+		if (
+			!stranded &&
+			(heldForNetworkBlip || this.unusable.isUnusable(model) || !this.originalRecovered(state, revertPolicy))
+		)
+			return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -220,6 +227,14 @@ export class RetryFallbackController {
 		this.unusable.clear(model);
 		this.probes.release();
 		this.deps.circuits?.close(formatSelector(model));
+	}
+
+	/**
+	 * A login or an explicit block reset on `provider` makes the account and
+	 * model holds it earned stale, so the restore guard stops waiting out a reset that may no longer apply.
+	 */
+	noteProviderAccountsChanged(provider: string): void {
+		this.unusable.clearProvider(provider, this.deps.registry.getAll());
 	}
 
 	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
@@ -443,4 +458,14 @@ export class RetryFallbackController {
 	private skip(candidate: string, skipReason: string): void {
 		this.deps.logger.debug("candidate_skipped", { candidate, skipReason });
 	}
+}
+
+/** Only explicit account remedies invalidate holds; health and listing notices do not. */
+export function followProviderAccountChanges(
+	controller: Pick<RetryFallbackController, "noteProviderAccountsChanged">,
+): () => void {
+	return subscribeProviderAccountEvents((event) => {
+		if (event.type === "accounts_changed" && event.remedy !== undefined)
+			controller.noteProviderAccountsChanged(event.provider);
+	});
 }

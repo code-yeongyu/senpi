@@ -66,7 +66,6 @@ import {
 } from "@earendil-works/pi-ai";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
-import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
 import { setOAuthPageBrand } from "@earendil-works/pi-ai/utils/oauth-page";
 import {
 	assertChatModel,
@@ -81,6 +80,7 @@ import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
 import { signOutClaudeCliSlotsForLogout } from "./credential-accounts-logout.lazy.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
@@ -143,19 +143,6 @@ interface ModelRuntimeSnapshot {
 	configuredProviders: ReadonlySet<string>;
 	storedProviders: ReadonlySet<string>;
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
-}
-
-/**
- * The Claude Code version the Anthropic OAuth fingerprint advertises is cached beside
- * models.json, so every runtime on this agent directory shares one background lookup per
- * six hours. An in-memory runtime (`modelsPath: null`) keeps pi-ai's bundled floor.
- */
-function installClaudeCodeVersionCache(modelsPath: string | undefined): void {
-	if (modelsPath === undefined) return;
-	installClaudeCodeVersionFileStore({
-		path: join(dirname(modelsPath), "claude-code-version.json"),
-		offline: envValue("OFFLINE") !== undefined,
-	});
 }
 
 export interface ProviderRegistrationOptions {
@@ -370,7 +357,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -425,7 +411,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = ModelConfig.loadSync(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -1420,6 +1405,8 @@ export class ModelRuntime implements Models {
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
+			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
+			emitProviderAccountsChanged(providerId, "login");
 			return credential;
 		});
 	}

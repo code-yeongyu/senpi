@@ -805,10 +805,15 @@ class ModelsImpl implements MutableModels {
 				mutationStarted = true;
 				markMutationStarted?.();
 				return stampLogin(
-					appendLoginSlot(current, credential, (name, origin) => {
-						committedName = name;
-						committedOrigin = origin;
-					}),
+					appendLoginSlot(
+						current,
+						credential,
+						(name, origin) => {
+							committedName = name;
+							committedOrigin = origin;
+						},
+						{ accountIdentity: provider.auth.oauth?.accountIdentity },
+					),
 				);
 			},
 			{ signal },

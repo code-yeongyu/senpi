@@ -755,7 +755,11 @@ export class AuthStorage implements CredentialStore {
 		return this.writeLocked((content) => {
 			const currentData = this.parseStorageData(content);
 			const replacement = this.noteReplacement(provider, currentData[provider], credential, content);
-			const next = stampLogin(appendLoginSlot(currentData[provider], credential));
+			const next = stampLogin(
+				appendLoginSlot(currentData[provider], credential, undefined, {
+					accountIdentity: this.oauthAuth(provider)?.accountIdentity,
+				}),
+			);
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: replacement, next: JSON.stringify(nextData, null, 2) };
@@ -1108,10 +1112,15 @@ export class AuthStorage implements CredentialStore {
 		return [...dynamic, ...builtin];
 	}
 
-	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
-		const oauth =
+	private oauthAuth(providerId: string): OAuthAuth | undefined {
+		return (
 			this.extensionOAuthProviders.get(providerId) ??
-			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth;
+			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth
+		);
+	}
+
+	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+		const oauth = this.oauthAuth(providerId);
 		if (!oauth) throw new Error(`Unknown OAuth provider: ${providerId}`);
 		const signal = callbacks.signal ?? new AbortController().signal;
 		const interaction: AuthInteraction & { signal: AbortSignal } = {

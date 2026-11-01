@@ -1,19 +1,25 @@
 {
  "repo": {
-  "head": "51e3aba974464cdc180276e99799455777a3ff67",
-  "dirty": true
+  "head": "e82491e19bd6941d7bb3ad92a177fe72aebe7da2",
+  "dirty": false
  },
  "platform": "darwin-arm64",
  "runtimes": {
-  "harness": "node@24.22.2",
+  "harness": "node@24.19.0",
   "child": "bun@1.4.4"
  },
  "hashes": {
   "harness": "sha256:9094e2ffd705a59e0c74b038a4dd00096173c2eecc393ed1f782d96e4fdae69d",
   "normalizer": "sha256:84514c2fcc12276a4ff77acbbee2903ab61a040de09f87bf7650ca74d1c5fa7e",
   "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
-  "cases": "sha256:23b83840d6861e611c34dcf2af655c983dd7b9023b8b69566cc79b5776eb2c44",
+  "cases": "sha256:76f40a54fbff42b6e0653d760f283c9408e5d4f566b63a1ca03ecfd54e415831",
   "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --cases E25 --repeat 3 --pipeline legacy --placement fused --surface rpc --evidence runid2-darwin-rec-e25"
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --cases E01,E02,E03,E04,E05,E06,E07,E08,E09,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E25,E26,E27,E28,E30 --repeat 3 --pipeline legacy --placement fused --evidence g5189-darwin-rec1",
+ "hostPin": {
+  "cpuModel": "Apple EQ-Synthetic CPU",
+  "cores": 997,
+  "kernel": "Darwin 0.0.0-eq-synthetic",
+  "repoRoot": "/eq-synthetic/checkout"
+ }
 }
