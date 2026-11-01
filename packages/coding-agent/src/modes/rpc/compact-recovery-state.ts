@@ -65,6 +65,7 @@ export class RecoveryCheckpoints {
 	private readonly manifests = new RecoveryManifests();
 	private readonly refusals = new Map<RefusalReason, number>();
 	private readonly unavailable = new Map<StorageUnavailableReason, number>();
+	private readonly ended = new Set<(tokenId: string) => void>();
 	private minted = 0;
 	private frozen = 0;
 	private reclaimed = 0;
@@ -80,6 +81,11 @@ export class RecoveryCheckpoints {
 	/** The stream a caller's admissions share, as a bounded description; undefined once its peer or session ended. */
 	stream(caller: RecoveryCaller): RecoveryStreamState | undefined {
 		return this.streams.describe(caller);
+	}
+
+	/** Runs once per token when its lease ends, however it ended (a release, a reclaim, its peer's end). */
+	onTokenEnd(listener: (tokenId: string) => void): void {
+		this.ended.add(listener);
 	}
 
 	status(): RecoveryCounters {
@@ -124,6 +130,7 @@ export class RecoveryCheckpoints {
 				this.manifests.release(token.id);
 				lane.release(root);
 				this.checkpoints.delete(token.id);
+				for (const listener of this.ended) listener(token.id);
 			},
 			() => {
 				const stale = this.staleness(token, lane);
@@ -181,6 +188,15 @@ export class RecoveryCheckpoints {
 			if (socketEpoch === caller.socketEpoch && sessionId === caller.sessionId && minter === admissionId)
 				this.reclaim(token.id);
 		}
+	}
+
+	/**
+	 * The caller's claim on a token it named by id, before any request state is touched: a token superseded while an
+	 * operation still holds it answers `superseded_token` with the newer generation (RULING-70 (3), RULING-50 (2)).
+	 */
+	check(token: RecoveryToken, caller: RecoveryCaller): RecoveryOutcome<RecoveryToken> {
+		const claimed = this.claim(token, caller);
+		return claimed.ok ? recovered(token) : claimed;
 	}
 
 	/** The pinned transcript root (version, leaf, accepted ids, base identity); its bytes are read by S11's page route. */

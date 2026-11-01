@@ -5,13 +5,20 @@ import type { ContentDigest } from "./compact-recovery-ids.ts";
 
 /** D (R4.B3): the most raw bytes one fragment carries; its base64 (174,764) plus H (16,384) fits F (262,144). */
 export const FRAGMENT_MAX_BYTES = 131_072;
+/**
+ * The page budget on the wire (RULING-69 (1)): the base64 envelope of a full fragment, derived from D (four characters
+ * per three raw bytes, the last group padded); S12's initial worker credit is one such envelope (RULING-63).
+ */
+export const FRAGMENT_ENVELOPE_MAX_BYTES = Math.ceil(FRAGMENT_MAX_BYTES / 3) * 4;
 
 /**
  * One frozen component as the byte stream the recovery pages address (S11a, RULING-46 item 2: the one byte
  * representation S11b, S12a and S13 reuse): its EXACT stored UTF-16LE bytes in leaf order (RULING-58 (1)), addressed by
- * raw byte offset, never by code unit or base64 character. `digest` is the catalog entry's `leaf` digest of the whole
- * stream, verified against the stored bytes before this exists (RULING-57 Q1 (3)); a range is served from the same
- * immutable leaves with at most one stored leaf resident beside the result.
+ * raw byte offset, never by code unit or base64 character. For a catalog component, `digest` is the catalog entry's
+ * `leaf` digest of the whole stream, verified against the stored bytes before this exists (RULING-57 Q1 (3)); a range
+ * is served from the same immutable leaves with at most one stored leaf resident beside the result. For the loaded
+ * base stream (`compact-recovery-base.ts`) it is the cut's `idFingerprint` (RULING-71 (4)), the anchor a client
+ * re-derives from the rows' `kind` and `id`, never a digest of the stream's bytes.
  */
 export interface FrozenBytes {
 	readonly length: number;
@@ -35,6 +42,25 @@ type ReadLeaf = (leaf: LeafId) => Promise<string>;
 
 const isIndex = (value: number): boolean => Number.isSafeInteger(value) && value >= 0;
 
+/** The checks every `FrozenBytes.range` makes before touching a byte: shape, the D bound, then the stream's end. */
+export function assertRange(offset: number, length: number, total: number): void {
+	if (!isIndex(offset) || !isIndex(length)) throw new CompactReadError("range");
+	if (length > FRAGMENT_MAX_BYTES) throw new CompactReadError("size_limit");
+	if (offset + length > total) throw new CompactReadError("range");
+}
+
+/** The index of the last of `count` ascending starts at or before `offset`: the unit whose byte range holds it. */
+export function startAtOrBefore(starts: ArrayLike<number>, count: number, offset: number): number {
+	let low = 0;
+	let high = count - 1;
+	while (low < high) {
+		const middle = (low + high + 1) >> 1;
+		if ((starts[middle] ?? Number.POSITIVE_INFINITY) <= offset) low = middle;
+		else high = middle - 1;
+	}
+	return low;
+}
+
 class FrozenLeafBytes implements FrozenBytes {
 	readonly length: number;
 	readonly digest: ContentDigest;
@@ -54,12 +80,10 @@ class FrozenLeafBytes implements FrozenBytes {
 	}
 
 	async range(offset: number, length: number, valid?: () => void): Promise<Buffer> {
-		if (!isIndex(offset) || !isIndex(length)) throw new CompactReadError("range");
-		if (length > FRAGMENT_MAX_BYTES) throw new CompactReadError("size_limit");
-		if (offset + length > this.length) throw new CompactReadError("range");
+		assertRange(offset, length, this.length);
 		const out = Buffer.allocUnsafe(length);
 		let written = 0;
-		for (let index = this.leafAt(offset); written < length; index++) {
+		for (let index = startAtOrBefore(this.starts, this.leaves.length, offset); written < length; index++) {
 			const leaf = this.leaves[index];
 			const start = this.starts[index];
 			if (leaf === undefined || start === undefined) throw new CompactReadError("integrity");
@@ -74,18 +98,6 @@ class FrozenLeafBytes implements FrozenBytes {
 			}
 		}
 		return out;
-	}
-
-	/** The leaf whose byte range holds `offset`: the last start at or before it. */
-	private leafAt(offset: number): number {
-		let low = 0;
-		let high = this.leaves.length - 1;
-		while (low < high) {
-			const middle = (low + high + 1) >> 1;
-			if ((this.starts[middle] ?? Number.POSITIVE_INFINITY) <= offset) low = middle;
-			else high = middle - 1;
-		}
-		return low;
 	}
 }
 
