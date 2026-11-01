@@ -58,7 +58,7 @@ export async function createRpcSessionBinding(
 	// The manager whose journal the lane follows; a replacement's bootstrap moves the lane to the new one.
 	let journaled = lane ? entry.runtime.session.sessionManager : undefined;
 	// One acceptance unit per legacy record or block control (RULING-26 Q2); a worker frames it, in process the lane folds it.
-	const structured = structuredLaneEnabled(entry.runtime.session);
+	const structured = structuredLaneEnabled();
 	const pairing = structured ? new CanonicalPairing() : undefined;
 	const stamp = new CompactProducerStamp();
 	const unit = (

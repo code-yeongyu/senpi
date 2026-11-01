@@ -30,11 +30,11 @@ async function session(lane: boolean): Promise<StructuredHarness> {
 	return harness;
 }
 
-// Part of #4272 (option B): with the rollout flag off, a session without a structured lane opens and binds legacy-only,
-// as before S17; a session with the lane keeps internal capture and acceptance.
+// Part of #4272 (RULING-112): with the rollout flag off, every session opens and binds legacy-only, as before S17,
+// whether or not its Agent has a structured lane.
 it.each([
 	{ lane: false, name: "binds legacy-only without the structured lane" },
-	{ lane: true, name: "keeps internal capture and acceptance with the structured lane" },
+	{ lane: true, name: "binds legacy-only with the structured lane too" },
 ])("flag off: an RPC open $name", async ({ lane }) => {
 	vi.stubEnv(FLAG, "0");
 	const harness = await session(lane);
@@ -60,7 +60,7 @@ it.each([
 	const response = await opened;
 	expect(response).toMatchObject({ success: true });
 	const sessionId = String(response.sessionId);
-	expect(registry.peek(sessionId)?.acceptance !== undefined).toBe(lane);
+	expect(registry.peek(sessionId)?.acceptance).toBeUndefined();
 
 	const structured: object[] = [];
 	cleanups.push(writer.structuredLanes.observe(sessionId, (record) => structured.push(record)));
@@ -72,7 +72,7 @@ it.each([
 	await ended;
 	await writer.flush();
 
-	// Then: legacy delivery is identical either way; only a session with the lane produced structured records.
+	// Then: legacy delivery is identical either way, and no session produced structured records.
 	expect(socket.messages()).toContainEqual(
 		expect.objectContaining({
 			type: "message_end",
@@ -80,5 +80,5 @@ it.each([
 			message: expect.objectContaining({ role: "assistant" }),
 		}),
 	);
-	expect(structured.length > 0).toBe(lane);
+	expect(structured).toEqual([]);
 });

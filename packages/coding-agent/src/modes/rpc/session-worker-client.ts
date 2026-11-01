@@ -149,6 +149,13 @@ export class SessionWorkerClient {
 	}
 
 	async commit(): Promise<WorkerSnapshot> {
+		if (!compactUpdatesEnabled()) {
+			// Flag off: a plain commit with no acceptance lane and no permit transport, as before S17 (RULING-112).
+			const result = await this.request({ type: "commit" });
+			if (result.type !== "ready") throw new Error("Invalid worker commit response");
+			this.snapshot = result.snapshot;
+			return result.snapshot;
+		}
 		const nonce = randomUUID();
 		// Offered here, never earlier: until commit the incarnation holds no permit and its frames are unordered. The offer
 		// needs both halves up front, since a bootstrap `ready` is permit-paid and may arrive as staged fragments.
@@ -165,17 +172,15 @@ export class SessionWorkerClient {
 				permits: intake.permits.block,
 			});
 			if (result.type !== "ready") throw new Error("Invalid worker commit response");
-			// RULING-106: flag on, a worker that cannot bootstrap acceptance has no structured lane to offer.
-			if (!result.bootstrap && compactUpdatesEnabled()) throw new StructuredLaneUnavailableError();
+			// RULING-106: a worker that cannot bootstrap acceptance has no structured lane to offer.
+			if (!result.bootstrap) throw new StructuredLaneUnavailableError();
 			// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
-			if (result.bootstrap) {
-				acceptance.bootstrap(result.bootstrap, nonce);
-				negotiated = true;
-			}
+			acceptance.bootstrap(result.bootstrap, nonce);
+			negotiated = true;
 			this.snapshot = result.snapshot;
 			return result.snapshot;
 		} finally {
-			// Flag off, a session with no structured lane declines (legacy-only, as before S17); a failed commit withdraws too.
+			// A refused or failed commit withdraws the offer, leaving no lane and no permit behind.
 			if (!negotiated) {
 				intake.permits.close();
 				acceptance.retire("close");
