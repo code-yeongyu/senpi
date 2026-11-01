@@ -90,6 +90,13 @@ function reexecUnderBunIfNeeded(): boolean {
 	return true;
 }
 
+// The kill guard's runtime shims ask this executable to judge a signal (senpi#5349). Hidden and never in help; it
+// loads only the judge, so it answers before any runtime re-exec or engine import.
+if (process.argv[2] === "__kill-guard") {
+	const { runKillGuardCheckCommand } = await import("./core/kill-guard/check-command.ts");
+	process.exit(runKillGuardCheckCommand());
+}
+
 if (reexecUnderBunIfNeeded()) {
 	process.exit();
 }

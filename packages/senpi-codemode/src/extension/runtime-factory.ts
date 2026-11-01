@@ -1,4 +1,9 @@
-import { type ExtensionContext, readKillGuardSetting, withBundledBunCommands } from "@code-yeongyu/senpi";
+import {
+	activeKillGuardEnvironment,
+	type ExtensionContext,
+	readKillGuardSetting,
+	withBundledBunCommands,
+} from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
@@ -89,7 +94,12 @@ export async function createRuntime(
 	const executeTool = createExecuteTool(pi, activeTools);
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
 	const sessionId = sessionIdFrom(event);
-	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...bundledBunPathEntry() };
+	const killGuard = readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on";
+	const pathEntry = bundledBunPathEntry();
+	// The kill guard's runtime layer (senpi#5349): kernels and their children get the shims first on PATH and
+	// bash's BASH_ENV wrapper, as the bash tool does.
+	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...pathEntry }) : {};
+	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...pathEntry, ...killGuardEnv };
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const pythonEnvironments =
@@ -106,7 +116,7 @@ export async function createRuntime(
 		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
 		sessionEnv,
-		killGuard: readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on",
+		killGuard,
 		settings,
 		availability,
 		artifactsDir: artifacts.dir,

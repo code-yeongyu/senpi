@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-agent-core/node";
 import { spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
+import { withKillGuardRuntime } from "../core/kill-guard/runtime.ts";
 import { withBundledBunCommands } from "./bundled-bun.ts";
 
 /** Family of a resolved shell executable, used to pick invocation arguments. */
@@ -201,10 +202,13 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 	const hasBinDir = pathEntries.includes(binDir);
 	const updatedPath = hasBinDir ? currentPath : [binDir, currentPath].filter(Boolean).join(delimiter);
 
-	return withBundledBunCommands({
-		...process.env,
-		[pathKey]: updatedPath,
-	});
+	// The kill guard's runtime shims go first on PATH while the host has them active (senpi#5349).
+	return withKillGuardRuntime(
+		withBundledBunCommands({
+			...process.env,
+			[pathKey]: updatedPath,
+		}),
+	);
 }
 
 /**
