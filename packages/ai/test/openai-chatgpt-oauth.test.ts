@@ -1,11 +1,45 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { createOpenAIChatGPTOAuth, openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
+import { OpenAIIdTokenValidationError } from "../src/auth/oauth/openai-id-token.ts";
 import type { OAuthCredential, ProviderAuthInteraction } from "../src/auth/types.ts";
 
 const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
 const REQUIRED_SCOPE = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const neverAbortedSignal = new AbortController().signal;
 const DEVICE_ID = "e61bbe28-07ef-466d-8e5d-a344f94ab305";
+const ISSUER = "https://auth.openai.com";
+const JWKS_URL = `${ISSUER}/test-jwks`;
+let signingKey: CryptoKey;
+let publicKey: JsonWebKey;
+let pendingNonce = "";
+
+beforeAll(async () => {
+	const pair = await crypto.subtle.generateKey(
+		{ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+		true,
+		["sign", "verify"],
+	);
+	signingKey = pair.privateKey;
+	publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey);
+});
+
+async function signedIdToken(claims: Record<string, unknown> = {}, badSignature = false): Promise<string> {
+	const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+	const input = `${encode({ alg: "RS256", kid: "test-key" })}.${encode({
+		iss: ISSUER,
+		aud: "oaiapp_issued",
+		exp: Math.floor(Date.now() / 1000) + 3600,
+		nonce: pendingNonce,
+		sub: "test-subject",
+		email: "user@example.test",
+		...claims,
+	})}`;
+	const signature = new Uint8Array(
+		await crypto.subtle.sign("RSASSA-PKCS1-v1_5", signingKey, new TextEncoder().encode(input)),
+	);
+	if (badSignature) signature[0] ^= 1;
+	return `${input}.${Buffer.from(signature).toString("base64url")}`;
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -21,10 +55,21 @@ function tokenResponse(scope = REQUIRED_SCOPE) {
 	};
 }
 
-function stubTokenEndpoint(response: unknown, inspect?: (body: URLSearchParams) => void) {
+function stubTokenEndpoint(
+	response: unknown,
+	inspect?: (body: URLSearchParams) => void,
+	claims?: Record<string, unknown>,
+	badSignature = false,
+) {
 	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-		expect(input instanceof Request ? input.url : String(input)).toBe(TOKEN_URL);
+		const url = input instanceof Request ? input.url : String(input);
+		if (url === `${ISSUER}/.well-known/openid-configuration`) return jsonResponse({ jwks_uri: JWKS_URL });
+		if (url === JWKS_URL) return jsonResponse({ keys: [{ ...publicKey, kid: "test-key", alg: "RS256" }] });
+		expect(url).toBe(TOKEN_URL);
 		inspect?.(new URLSearchParams(String(init?.body)));
+		if (typeof response === "object" && response !== null && "id_token" in response) {
+			return jsonResponse({ ...response, id_token: await signedIdToken(claims, badSignature) });
+		}
 		return jsonResponse(response);
 	});
 	vi.stubGlobal("fetch", fetchMock);
@@ -41,6 +86,7 @@ function loginInteraction(options?: {
 		notify: (event) => {
 			if (event.type !== "auth_url") return;
 			authorizeUrl = new URL(event.url);
+			pendingNonce = authorizeUrl.searchParams.get("nonce") ?? "";
 			options?.onAuthorize?.(authorizeUrl);
 		},
 		prompt: async (prompt) => {
@@ -105,8 +151,120 @@ describe("OpenAI ChatGPT OAuth", () => {
 			refresh: "refresh-token",
 			clientId: "oaiapp_issued",
 			scopes: REQUIRED_SCOPE.split(" "),
+			subject: "test-subject",
+			email: "user@example.test",
+			issuer: ISSUER,
 		});
+		expect(credential.idToken).toEqual(expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/));
 	});
+
+	it.each([
+		["bad signature", {}, true],
+		["wrong issuer", { iss: "https://other.example.test" }, false],
+		["wrong audience", { aud: "oaiapp_other" }, false],
+		["wrong audience array", { aud: ["oaiapp_other"] }, false],
+		["expired token", { exp: 0 }, false],
+		["missing expiration", { exp: undefined }, false],
+		["wrong nonce", { nonce: "another-attempt" }, false],
+		["missing subject", { sub: "" }, false],
+	] as const)("rejects an ID token with %s before returning credentials", async (_name, claims, badSignature) => {
+		stubTokenEndpoint(tokenResponse(), undefined, claims, badSignature);
+		await expect(
+			openaiChatGPTOAuth.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), {
+				getDeviceId: () => DEVICE_ID,
+			}),
+		).rejects.toMatchObject({ name: "OpenAIIdTokenValidationError" });
+	});
+
+	it("uses injected fetch and clock, accepts audience arrays, and expires its discovery and JWKS cache", async () => {
+		let now = 1_900_000_000_000;
+		let rawIdToken = "";
+		const fetchMock = vi.fn(async (url: string) => {
+			if (url === `${ISSUER}/.well-known/openid-configuration`) return jsonResponse({ jwks_uri: JWKS_URL });
+			if (url === JWKS_URL) return jsonResponse({ keys: [{ ...publicKey, kid: "test-key", alg: "RS256" }] });
+			expect(url).toBe(TOKEN_URL);
+			rawIdToken = await signedIdToken({ aud: ["other-client", "oaiapp_issued"], exp: now / 1000 + 3600 });
+			return jsonResponse({ ...tokenResponse(), id_token: rawIdToken });
+		});
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchMock, now: () => now });
+		const login = () =>
+			flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID });
+		const credential = await login();
+		expect(credential).toMatchObject({
+			subject: "test-subject",
+			email: "user@example.test",
+			issuer: ISSUER,
+			clientId: "oaiapp_issued",
+			idToken: rawIdToken,
+			expires: now + (3600 - 180) * 1000,
+		});
+		await login();
+		expect(fetchMock.mock.calls.filter(([url]) => url === JWKS_URL)).toHaveLength(1);
+		expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("openid-configuration"))).toHaveLength(1);
+		now += 5 * 60 * 1000;
+		await login();
+		expect(fetchMock.mock.calls.filter(([url]) => url === JWKS_URL)).toHaveLength(2);
+		expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("openid-configuration"))).toHaveLength(2);
+	});
+
+	it("rejects expiration at the injected clock boundary", async () => {
+		const now = 1_900_000_000_000;
+		const fetchMock = stubTokenEndpoint(tokenResponse(), undefined, { exp: now / 1000 });
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchMock, now: () => now });
+		await expect(
+			flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID }),
+		).rejects.toBeInstanceOf(OpenAIIdTokenValidationError);
+	});
+
+	it("reloads JWKS once for an unfamiliar signing key", async () => {
+		let keyRequests = 0;
+		const flow = createOpenAIChatGPTOAuth({
+			fetch: async (url) => {
+				if (url.endsWith("openid-configuration")) return jsonResponse({ jwks_uri: JWKS_URL });
+				if (url === JWKS_URL) {
+					keyRequests++;
+					return jsonResponse({ keys: keyRequests === 1 ? [] : [{ ...publicKey, kid: "test-key" }] });
+				}
+				expect(url).toBe(TOKEN_URL);
+				return jsonResponse({ ...tokenResponse(), id_token: await signedIdToken() });
+			},
+		});
+		await expect(
+			flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID }),
+		).resolves.toMatchObject({ subject: "test-subject" });
+		expect(keyRequests).toBe(2);
+	});
+
+	it.each(["discovery failure", "JWKS failure", "unknown key"])(
+		"rejects %s without returning credentials",
+		async (failure) => {
+			const flow = createOpenAIChatGPTOAuth({
+				fetch: async (url) => {
+					if (url.endsWith("openid-configuration")) {
+						return failure === "discovery failure" ? jsonResponse({}, 503) : jsonResponse({ jwks_uri: JWKS_URL });
+					}
+					if (url === JWKS_URL) return jsonResponse({ keys: [] }, failure === "JWKS failure" ? 503 : 200);
+					expect(url).toBe(TOKEN_URL);
+					return jsonResponse({ ...tokenResponse(), id_token: await signedIdToken() });
+				},
+			});
+			await expect(
+				flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID }),
+			).rejects.toBeInstanceOf(OpenAIIdTokenValidationError);
+		},
+	);
+
+	it.each(["", "not-a-jwt", "e30.e30.e30", "%%%.e30.e30"])(
+		"rejects malformed ID token %j with a typed error",
+		async (idToken) => {
+			const flow = createOpenAIChatGPTOAuth({
+				fetch: async () => jsonResponse({ ...tokenResponse(), id_token: idToken }),
+			});
+			await expect(
+				flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID }),
+			).rejects.toBeInstanceOf(OpenAIIdTokenValidationError);
+		},
+	);
 
 	it("rejects registration without an issued client ID", async () => {
 		const fetchMock = stubTokenEndpoint(tokenResponse());
@@ -174,6 +332,23 @@ describe("OpenAI ChatGPT OAuth", () => {
 			refresh: "new-refresh",
 			clientId: "oaiapp_existing",
 			scopes: REQUIRED_SCOPE.split(" "),
+		});
+	});
+
+	it("preserves the validated identity and retained ID token across refresh", async () => {
+		stubTokenEndpoint(tokenResponse());
+		const credential = {
+			...connectedCredential(),
+			subject: "existing-subject",
+			email: "existing@example.test",
+			issuer: ISSUER,
+			idToken: "previous-validated-id-token",
+		};
+		expect(await openaiChatGPTOAuth.refresh(credential, neverAbortedSignal)).toMatchObject({
+			subject: credential.subject,
+			email: credential.email,
+			issuer: credential.issuer,
+			idToken: credential.idToken,
 		});
 	});
 });

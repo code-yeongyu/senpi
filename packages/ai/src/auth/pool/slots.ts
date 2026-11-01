@@ -461,7 +461,36 @@ export function appendLoginSlot(
 		// shape because the provider's accounts already carry this login.
 		return storedAccounts ? mergeProvidedPool(current, storedAccounts, provided) : flat;
 	}
-	const replaced = replaceSameAccount(current, flat, options?.accountIdentity, onAllocated);
+	if (flat.type === "oauth" && flat.route === "siwc") {
+		const existing = listSlots(current);
+		const matched = existing.find(
+			(slot) =>
+				slot.route === "siwc" &&
+				(["issuer", "subject", "clientId"] as const).every(
+					(field) => typeof flat[field] === "string" && flat[field].trim() !== "" && flat[field] === slot[field],
+				),
+		);
+		if (matched) {
+			const replacement = {
+				...slotFromFlatCredentialNamed(flat, matched.name),
+				...(matched.displayName === undefined ? {} : { displayName: matched.displayName }),
+			};
+			const next = slotMirrorsFlat(current, matched) ? projectFlatFields(current, replacement) : current;
+			onAllocated?.(matched.name, "generated");
+			if (!storedAccounts) return next;
+			const pooled: PooledCredential = {
+				...next,
+				accounts: existing.map((slot) => (slot === matched ? replacement : slot)),
+			};
+			return pooled;
+		}
+	}
+	// Sign in with ChatGPT names an account by its issuer, subject and issued client ID (matched above). Without
+	// that tuple, a shared ChatGPT token identity is not the same SIWC sign-in, so the login is appended.
+	const replaced =
+		flat.type === "oauth" && flat.route === "siwc"
+			? undefined
+			: replaceSameAccount(current, flat, options?.accountIdentity, onAllocated);
 	if (replaced) return replaced;
 	const name = nextLoginSlotName(current);
 	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
