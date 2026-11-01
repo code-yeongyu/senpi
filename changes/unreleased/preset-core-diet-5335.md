@@ -1,0 +1,24 @@
+<!-- changes-log: packages/coding-agent/src/core/extensions/builtin/prompt-preset/changes.md -->
+## 2026-11-01 - Opus 5.5 and Fable 5.1 cores drop schema-duplicated text (senpi#5335 part B)
+
+### What changed
+
+- `claude-opus-5-5.ts`, `claude-fable-5-1.ts`: Scope no longer names `ask_user_question`; the tool's own description says when to use it. `claude-fable-5-5` renders the 5.1 core and moves with it.
+- `test/suite/prompt-presets-native-baseline.json`: the 18 `claude-opus-5-5:*`, `claude-fable-5-1:*`, `claude-fable-5-5:*` hashes are recaptured; no other hash changes.
+- The Opus 5.5 and Fable 5.1 preset tests assert that the prompt names `ask_user_question` only when the session has the tool.
+
+### Why
+
+- senpi#5335: a line the tool schema already states costs tokens on every request and gives the rule two homes.
+
+### Why an extension could not handle it
+
+- Preset prompts are builtin extension code.
+
+### Expected merge conflict zones
+
+- LOW: `claude-opus-5-5.ts`, `claude-fable-5-1.ts`, and their native-baseline lines (stacked on senpi#5199).
+
+<!-- changes-log: packages/coding-agent/CHANGELOG.md -->
+### Changed
+- The Claude Opus 5.5 and Fable 5.1 system prompts no longer repeat when to use `ask_user_question`; the tool's own description covers it ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))

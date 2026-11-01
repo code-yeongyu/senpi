@@ -97,13 +97,26 @@ describe("Claude Opus 5.5 prompt preset", () => {
 		expect(preset?.name).toBe("claude-opus-5-5");
 	});
 
-	it("routes user questions through ask_user_question when it is available", () => {
+	it("names ask_user_question only through the tool list, so a session without it never sees it", () => {
+		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
 		const model = createModel("claude-opus-5-5", "anthropic");
+		const context = (selectedTools: string[]) => ({
+			cwd: "/repo",
+			selectedTools,
+			toolSnippets: Object.fromEntries(selectedTools.map((name) => [name, `${name} snippet`])),
+			promptGuidelines: [],
+			contextFiles: [],
+			skills: [],
+		});
 
-		const preset = resolvePreset(model, settings);
+		// when
+		const withTool = resolvePreset(model, settings, context(["read", "ask_user_question"]));
+		const withoutTool = resolvePreset(model, settings, context(["read"]));
 
-		expect(preset?.prompt).toContain("ask_user_question");
+		// then
+		expect(withTool?.prompt).toContain("ask_user_question");
+		expect(withoutTool?.prompt).not.toContain("ask_user_question");
 	});
 
 	it("does not include GPT tuning in the claude-opus-5-5 preset", () => {
