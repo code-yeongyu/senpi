@@ -1,6 +1,6 @@
 import { LEGACY_PROVIDER_IDS } from "../../legacy-provider-ids.ts";
 import type { ProviderEnv } from "../../types.ts";
-import type { Credential } from "../types.ts";
+import type { Credential, OAuthCredentials } from "../types.ts";
 
 export type { Credential };
 
@@ -8,7 +8,7 @@ export const DEFAULT_SLOT_NAME = "default";
 
 export type CredentialSlotSource = "login" | "import" | "env";
 
-export type CredentialSlot = {
+export type CredentialSlot = Partial<OAuthCredentials> & {
 	/** Immutable operational identity. */
 	name: string;
 	/** Optional presentation metadata; never used for credential selection. */
@@ -21,6 +21,28 @@ export type CredentialSlot = {
 	/** Provider-scoped values this account carries (a Kimi region, a Cloudflare account id). */
 	env?: ProviderEnv;
 };
+
+const OAUTH_ACCOUNT_FIELDS = [
+	"route",
+	"issuer",
+	"subject",
+	"clientId",
+	"email",
+	"idToken",
+	"scopes",
+	"planUsageEnabled",
+	"signedOut",
+] as const;
+
+/** Replace account metadata as a unit; an absent field must not inherit a sibling's identity. */
+function withOAuthAccountFields<T extends object>(target: T, source: OAuthCredentials | CredentialSlot): T {
+	const next = { ...target };
+	for (const field of OAUTH_ACCOUNT_FIELDS) {
+		if (source[field] === undefined) Reflect.deleteProperty(next, field);
+		else Reflect.set(next, field, source[field]);
+	}
+	return next;
+}
 
 export type PooledCredential = Credential & {
 	accounts?: CredentialSlot[];
@@ -230,7 +252,10 @@ function projectFlatFields(credential: PooledCredential, slot: CredentialSlot): 
 	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (credential.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return credential;
-		return { ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
+		return withOAuthAccountFields(
+			{ ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env },
+			slot,
+		);
 	}
 	return { ...credential, key: slot.key, ...env };
 }
@@ -278,21 +303,27 @@ export function projectSlot(credential: PooledCredential | undefined, name: stri
 	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (flat.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return undefined;
-		return { ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
+		return withOAuthAccountFields(
+			{ ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env },
+			slot,
+		);
 	}
 	return { ...flat, key: slot.key, ...env };
 }
 
 function slotFromFlatCredentialNamed(credential: Credential, name: string): CredentialSlot {
 	if (credential.type === "oauth") {
-		return {
-			name,
-			source: "login",
-			access: credential.access,
-			refresh: credential.refresh,
-			expires: credential.expires,
-			...credentialSlotEnv(credential),
-		};
+		return withOAuthAccountFields(
+			{
+				name,
+				source: "login" as const,
+				access: credential.access,
+				refresh: credential.refresh,
+				expires: credential.expires,
+				...credentialSlotEnv(credential),
+			},
+			credential,
+		);
 	}
 	return { name, source: "login", key: credential.key, ...credentialSlotEnv(credential) };
 }
@@ -469,9 +500,15 @@ function replaceSameAccount(
 	const identity = accountIdentity(flat);
 	if (identity === undefined) return undefined;
 	const slots = listSlots(current);
+	// A token identity names a ChatGPT account, not a sign-in: the legacy Codex route and Sign in with ChatGPT
+	// hold separate grants for one person, so a login replaces only a slot on its own route (#5003).
+	const route = flat.route ?? "codex";
 	const matches = slots.filter(
 		(slot) =>
-			slot.source !== "env" && slot.access !== undefined && accountIdentity({ access: slot.access }) === identity,
+			slot.source !== "env" &&
+			(slot.route ?? "codex") === route &&
+			slot.access !== undefined &&
+			accountIdentity({ access: slot.access }) === identity,
 	);
 	const kept = matches[0];
 	if (!kept) return undefined;
@@ -479,14 +516,12 @@ function replaceSameAccount(
 		onAllocated?.(kept.name, "generated");
 		return flat;
 	}
+	// Built through the account-field projection so the login's route, issued client, issuer, subject, ID token
+	// and scopes reach the slot; a hand-copied token triple dropped them (#5003).
 	const fresh: CredentialSlot = {
-		name: kept.name,
+		...slotFromFlatCredentialNamed(flat, kept.name),
 		...(kept.displayName === undefined ? {} : { displayName: kept.displayName }),
 		...(kept.source === undefined ? {} : { source: kept.source }),
-		access: flat.access,
-		refresh: flat.refresh,
-		expires: flat.expires,
-		...credentialSlotEnv(flat),
 	};
 	const dropped = new Set(matches.slice(1).map((slot) => slot.name));
 	const accounts = slots.flatMap((slot) => (slot === kept ? [fresh] : dropped.has(slot.name) ? [] : [slot]));
@@ -576,7 +611,10 @@ export function mergeRefreshedSlot(current: PooledCredential, name: string, refr
 	if (!Array.isArray(current.accounts) || current.accounts.length === 0) return mergeRefreshed(current, refreshed);
 	const target = current.accounts.find((slot) => slot.name === name);
 	if (!target) return current;
-	const rotated = { access: refreshed.access, refresh: refreshed.refresh, expires: refreshed.expires };
+	const rotated = withOAuthAccountFields(
+		{ access: refreshed.access, refresh: refreshed.refresh, expires: refreshed.expires },
+		refreshed,
+	);
 	const accounts = current.accounts.map((slot) => (slot === target ? { ...slot, ...rotated } : slot));
 	const mirrorsFlat = target.access === current.access || target.refresh === current.refresh;
 	return mirrorsFlat ? { ...current, ...rotated, accounts } : { ...current, accounts };
@@ -588,11 +626,14 @@ export function mergeRefreshed(current: PooledCredential, refreshed: Credential)
 	}
 	if (refreshed.type !== "oauth" || current.type !== "oauth") return refreshed;
 	const target = current.accounts.find((slot) => slot.access === current.access || slot.refresh === current.refresh);
-	const rotated = {
-		access: refreshed.access,
-		refresh: refreshed.refresh,
-		expires: refreshed.expires,
-	};
+	const rotated = withOAuthAccountFields(
+		{
+			access: refreshed.access,
+			refresh: refreshed.refresh,
+			expires: refreshed.expires,
+		},
+		refreshed,
+	);
 	const accounts = target
 		? current.accounts.map((slot) => (slot === target ? { ...slot, ...rotated } : slot))
 		: current.accounts;
