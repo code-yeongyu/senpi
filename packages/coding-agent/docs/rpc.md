@@ -914,6 +914,9 @@ socket. Routed rows are therefore bounded by the pending attempts plus the disti
 holds, one row each however often it re-opens them: the 128th distinct held session on one socket is refused
 `admission_admission_limit`, re-opens of a routed session never run out, and a socket that attaches to and detaches
 from any number of distinct live sessions in turn is never refused.
+Lifecycle broadcasts (`agent_start`, `agent_settled`, `agent_idle`, `session_opened`, `session_closed`,
+`session_lifecycle`) are socket-wide, untagged, and reach every socket whether or not it is attached, so they continue
+regardless of attach or detach; they are not route records.
 
 **Route retirement (senpi#5274, RULING-119).** The engine never retires a delivering route silently: every retire is
 either the direct result of a client action whose reply the client sees, or announced to that client by a typed record
