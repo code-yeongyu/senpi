@@ -23,7 +23,7 @@ import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
-import { ProjectTrustStore } from "./trust-manager.ts";
+import { getSavedProjectTrust, ProjectTrustStore } from "./trust-manager.ts";
 
 /**
  * Result returned by runtime creation.
@@ -250,24 +250,48 @@ export class AgentSessionRuntime {
 	 * access withdraws it, unless the user has since saved "trust"; going back restores it, unless the
 	 * user saved "do not trust". Either way the session's runtime is rebuilt so project extensions,
 	 * skills, hooks and MCP servers load or unload, and nothing can cancel that rebuild. The trust is
-	 * never saved. Returns the rebuild, or undefined when the trust did not change.
+	 * never saved. The saved decision includes the one a linked git worktree inherits from its main
+	 * checkout (senpi#4388), which is read asynchronously, so each sync runs after the previous one and
+	 * becomes `projectTrustChange` at once. A sync that fails (an unreadable trust store) is recorded as a
+	 * diagnostic and never blocks the next one. Returns when the sync, and any rebuild it started, has settled.
 	 */
-	private syncFullAccessTrust(session: AgentSession, preset: string): Promise<void> | undefined {
+	private syncFullAccessTrust(session: AgentSession, preset: string): Promise<void> {
 		const settings = session.settingsManager;
-		// The session's own project: a replacement can belong to another project than the retired one (#3420 review).
-		const saved = new ProjectTrustStore(this.services.agentDir).get(session.sessionManager.getCwd());
-		if (preset !== "full-access" && settings.isTrustFromFullAccess() && saved !== true)
-			settings.setProjectTrusted(false);
-		else if (preset === "full-access" && settings.canRestoreFullAccessTrust() && saved !== false)
-			settings.setProjectTrusted(true);
-		else return undefined;
-		this._projectTrustChange = session.applyProjectTrustChange().catch((error: unknown) => {
-			this._trustChangeDiagnostics = [
-				...this._trustChangeDiagnostics,
-				{ type: "error", message: `Updating project code after a Full access change failed: ${String(error)}` },
-			];
-		});
-		return this._projectTrustChange;
+		const change = this._projectTrustChange
+			.then(async () => {
+				// The session's own project: a replacement can belong to another project than the retired one (#3420 review).
+				const saved = await getSavedProjectTrust(
+					new ProjectTrustStore(this.services.agentDir),
+					session.sessionManager.getCwd(),
+				);
+				// The session may have been retired while the decision was read; a retired session is never rebuilt.
+				if (session === this._disposedSession) return;
+				if (preset !== "full-access" && settings.isTrustFromFullAccess() && saved !== true)
+					settings.setProjectTrusted(false);
+				else if (preset === "full-access" && settings.canRestoreFullAccessTrust() && saved !== false)
+					settings.setProjectTrusted(true);
+				else return;
+				await session.applyProjectTrustChange().catch((error: unknown) => {
+					this._trustChangeDiagnostics = [
+						...this._trustChangeDiagnostics,
+						{
+							type: "error",
+							message: `Updating project code after a Full access change failed: ${String(error)}`,
+						},
+					];
+				});
+			})
+			.catch((error: unknown) => {
+				this._trustChangeDiagnostics = [
+					...this._trustChangeDiagnostics,
+					{
+						type: "error",
+						message: `Reading the project trust after a Full access change failed: ${String(error)}`,
+					},
+				];
+			});
+		this._projectTrustChange = change;
+		return change;
 	}
 
 	/** Settles when the rebuild that followed a Full-access trust change has finished. */

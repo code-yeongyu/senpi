@@ -1108,7 +1108,7 @@
     "typescript/no-non-null-assertion": 10
   },
   "packages/coding-agent/test/interactive-mode-anthropic-warning.test.ts": {
-    "typescript/no-explicit-any": 9
+    "typescript/no-explicit-any": 8
   },
   "packages/coding-agent/test/interactive-mode-clipboard-paste.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -1438,7 +1438,7 @@
     "typescript/no-non-null-assertion": 2
   },
   "packages/coding-agent/test/suite/regressions/308-skill-composition.test.ts": {
-    "typescript/no-non-null-assertion": 28
+    "typescript/no-non-null-assertion": 19
   },
   "packages/coding-agent/test/suite/regressions/3459-queued-input-expected-revision.test.ts": {
     "typescript/no-non-null-assertion": 18

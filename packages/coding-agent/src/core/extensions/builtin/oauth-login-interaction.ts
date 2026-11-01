@@ -99,9 +99,14 @@ async function answerPrompt(
 			return prompt.options.find((option) => option.label === label)?.id;
 		}
 		case "text":
-		case "secret":
 		case "manual_code":
 			return ctx.ui.input(prompt.message, prompt.placeholder, dialogOptions);
+		case "secret":
+			return ctx.ui.input(
+				prompt.message,
+				prompt.placeholder,
+				ctx.ui.capabilities?.secretInput === true ? { ...dialogOptions, secret: true } : dialogOptions,
+			);
 	}
 }
 
