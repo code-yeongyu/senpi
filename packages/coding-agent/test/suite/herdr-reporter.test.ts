@@ -35,8 +35,10 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		expect(f.requests[1]?.params).toMatchObject({ agent_session_path: "/sessions/root.jsonl" });
 		f.setIdle(false);
 		await f.emit("agent_start");
-		await f.bus("herdr:blocked", { active: true, id: "q1", label: "Auth - Which flow?" });
+		await f.bus("herdr:blocked", { active: true, id: "q1", label: "Auth - Which flow?", kind: "question" });
 		expect(f.requests.at(-1)?.params).toMatchObject({ state: "blocked", message: "Auth - Which flow?" });
+		// The kind is OSC 7501 only; the herdr socket request keeps its shape.
+		expect(f.requests.at(-1)?.params).not.toHaveProperty("kind");
 		await f.bus("herdr:blocked", { active: false, id: "q1" });
 		await f.bus("herdr:blocked", { active: false, id: "q1" });
 		f.setIdle(true);
@@ -274,9 +276,10 @@ describe("herdr program status without a herdr socket (senpi#5321)", () => {
 		await f.emit("agent_start");
 		await f.bus("herdr:blocked", { active: true, id: "d1", label: "Pick a model" });
 		await f.bus("herdr:blocked", { active: false, id: "d1" });
-		await f.bus("ask-user:asked", { request: { requestId: "q1" } });
-		await f.bus("herdr:blocked", { active: true, id: "q1", label: "Auth - Which flow?" });
+		await f.bus("herdr:blocked", { active: true, id: "q1", label: "Auth - Which flow?", kind: "question" });
 		await f.bus("herdr:blocked", { active: false, id: "q1" });
+		await f.bus("herdr:blocked", { active: true, id: "p1", label: "Allow bash?", kind: "permission" });
+		await f.bus("herdr:blocked", { active: false, id: "p1" });
 		f.setIdle(true);
 		await f.emit("agent_settled");
 		await f.emit("session_shutdown", { reason: "quit" });
@@ -286,6 +289,8 @@ describe("herdr program status without a herdr socket (senpi#5321)", () => {
 			[{ state: "blocked", message: "Pick a model" }],
 			[{ state: "working" }],
 			[{ state: "blocked", kind: "question", message: "Auth - Which flow?" }],
+			[{ state: "working" }],
+			[{ state: "blocked", kind: "permission", message: "Allow bash?" }],
 			[{ state: "working" }],
 			[{ state: "idle" }],
 			[undefined],

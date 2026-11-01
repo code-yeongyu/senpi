@@ -3124,7 +3124,9 @@ export class InteractiveMode {
 			if (opts.signal?.aborted) return undefined as T;
 			return await show();
 		}
-		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
+		// A dialog about a tool call is a permission request (ExtensionUIDialogOptions.toolCallId).
+		const kind = opts?.toolCallId === undefined ? {} : { kind: "permission" as const };
+		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id, ...kind });
 		try {
 			return await show();
 		} finally {

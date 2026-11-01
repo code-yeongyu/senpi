@@ -891,7 +891,7 @@ These additive events use `pi.events.on(...)`, not `pi.on(...)`:
 | `ask-user:asked` | `{ ctx, request, variant }` | One fresh runtime registration of a built-in question, in either `waitForAnswer` mode. The hooks builtin dispatches a `Notification` with `kind: "ask-user-asked"`, the request ID and question headers. |
 | `ask-user:settled` | `{ ctx, request, response, variant }` | The existing answer notification, still skipped for `cancelled`. `response.resolvedBy` identifies the answering surface when present. |
 | `ask-user:closed` | `{ requestId, status, resolvedBy? }` | Exactly one terminal outcome per question, including cancellation, timeout, orphaned restart recovery and unavailable UI. |
-| `herdr:blocked` | `{ active: true, label, id }` or `{ active: false, id }` | A built-in question or host select/confirm/input/editor dialog opens or settles. Question labels are `<header> — <question>`; dialog labels are their titles. |
+| `herdr:blocked` | `{ active: true, label, id, kind? }` or `{ active: false, id }` | A built-in question or host select/confirm/input/editor dialog opens or settles. Question labels are `<header> — <question>`; dialog labels are their titles. `kind` is `"question"` for a built-in question and `"permission"` for a dialog opened with `toolCallId` (a permission request); other dialogs carry none. |
 
 Track blocked IDs as a set, not a boolean: requests can overlap. Each question registration emits one active/inactive pair, including cancellation, timeout, abort and orphaned restart recovery. A dangling disk call recovered after restart gets one new runtime registration; its persisted recovery marker prevents registering it again. Reconnect replay and UI hydration reuse an existing registration and do not repeat arrival events or the terminal bell. The builtin owns question events, so UI integrations must not emit a second pair when resolving the question.
 
@@ -1352,7 +1352,7 @@ Current run mode: `"tui"`, `"rpc"`, `"json"`, or `"print"`. Use `ctx.mode === "t
 
 ### ctx.hasUI
 
-`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setProgramStatus`, `setEditorText`) that work in both TUI and RPC modes. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
+`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) that work in both TUI and RPC modes. `setProgramStatus` reaches the terminal only in TUI mode; RPC, print and JSON modes own no terminal and ignore it. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
 
 ### ctx.cwd
 
@@ -1378,7 +1378,7 @@ Optional read-only list of resolved paths for every successfully loaded extensio
 
 The builtin `herdr` reporter reads this list at session start. Inside a herdr TUI pane it reports pending questions and host dialogs as `blocked`, active turns/subagents/monitors as `working`, and otherwise `idle`, using source `custom:senpi`. It reports session titles and releases the pane only on quit, not reload or session navigation.
 
-In every TUI session, herdr pane or not, the same reporter also publishes that state through `ctx.ui.setProgramStatus` (OSC 7501), so terminals that read the Program Status Protocol, such as herdr-core panes, see it too. A built-in question is reported with `kind: "question"`; other dialogs carry no kind. The status is cleared on quit. Deferring to a user reporter affects only the herdr socket, not this status.
+In every TUI session, herdr pane or not, the same reporter also publishes that state through `ctx.ui.setProgramStatus` (OSC 7501), so terminals that read the Program Status Protocol, such as herdr-core panes, see it too. A built-in question is reported with `kind: "question"` and a permission prompt with `kind: "permission"`; other dialogs carry no kind. The status is cleared on quit. Deferring to a user reporter affects only the herdr socket, not this status.
 
 To avoid competing lifecycle reporters, it defers to a loaded user-authored `herdr-*.ts`, `.js`, or `.mjs` file. A managed file whose first 400 bytes contain `HERDR_INTEGRATION_ID=` does not trigger deferral: herdr's managed `herdr-agent-state.ts` can remain installed. Remove your own reporter from the loaded extensions if you want the builtin to take over; no user files are changed automatically.
 
@@ -3754,6 +3754,7 @@ ctx.ui.setTitle("pi - my-project");
 
 // Program status (OSC 7501): state is idle, working, blocked, done or error; kind is sent only with blocked.
 // The TUI writes it to the terminal with the app name (senpi, or omo under OmO); identical reports are not repeated.
+// RPC, print and JSON modes own no terminal and ignore it.
 ctx.ui.setProgramStatus({ state: "blocked", kind: "question", message: "Which flow?" });
 ctx.ui.setProgramStatus(undefined);  // Clear; the TUI also clears an active status when it exits
 

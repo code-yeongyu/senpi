@@ -783,14 +783,8 @@ export function createRpcConnectionHandler(
 			} as RpcExtensionUIRequest);
 		},
 
-		setProgramStatus(status): void {
-			// Fire and forget, like setTitle: a client attached to a terminal can emit it there.
-			output({
-				type: "extension_ui_request",
-				id: crypto.randomUUID(),
-				method: "setProgramStatus",
-				programStatus: status,
-			} as RpcExtensionUIRequest);
+		setProgramStatus(): void {
+			// OSC 7501 is a terminal report; an RPC session owns no terminal, so it sends no frame.
 		},
 
 		async custom() {

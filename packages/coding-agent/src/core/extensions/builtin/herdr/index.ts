@@ -11,7 +11,13 @@ import {
 	WAKE_SOURCE_STATE_EVENT,
 } from "../monitor-state-event.ts";
 import { HerdrClient, type HerdrMethod } from "./herdr-client.ts";
-import { initialHerdrState, isHerdrBlockedEvent, reduceHerdrState, selectHerdrReport } from "./herdr-state.ts";
+import {
+	initialHerdrState,
+	isHerdrBlockedEvent,
+	reduceHerdrState,
+	selectHerdrBlockedKind,
+	selectHerdrReport,
+} from "./herdr-state.ts";
 
 export interface HerdrDependencies {
 	getLoadedExtensionPaths: (ctx: ExtensionContext) => readonly string[];
@@ -47,7 +53,6 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 		let bound: ExtensionContext["sessionManager"] | undefined;
 		let boundCtx: ExtensionContext | undefined;
 		let lastProgramStatus: string | undefined;
-		const questionIds = new Set<string>();
 		let state = initialHerdrState();
 		let stopped = false;
 		let deferred = false;
@@ -75,10 +80,10 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			return work;
 		}
 		function reportProgramStatus(report: ReturnType<typeof selectHerdrReport>): void {
-			const firstBlocked = state.blocked.keys().next().value;
+			const kind = report.state === "blocked" ? selectHerdrBlockedKind(state) : undefined;
 			const status: ProgramStatus = {
 				state: report.state,
-				...(firstBlocked !== undefined && questionIds.has(firstBlocked) ? { kind: "question" as const } : {}),
+				...(kind === undefined ? {} : { kind }),
 				...(report.message === undefined ? {} : { message: report.message }),
 			};
 			const key = JSON.stringify(status);
@@ -126,17 +131,9 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			state = reduceHerdrState(state, { type: "turn", active: !ctx.isIdle() });
 			refreshChildren(ctx);
 			subscriptions.push(
-				// ask-user announces each question under the request id its herdr:blocked pair carries.
-				pi.events.on("ask-user:asked", (data) => {
-					const requestId = askedRequestId(data);
-					if (!stopped && requestId !== undefined) questionIds.add(requestId);
-				}),
-			);
-			subscriptions.push(
 				pi.events.on("herdr:blocked", (data) => {
 					if (stopped || !isHerdrBlockedEvent(data)) return;
 					state = reduceHerdrState(state, { type: "blocked", ...data });
-					if (!data.active) questionIds.delete(data.id);
 					return publish();
 				}),
 			);
@@ -194,13 +191,6 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			if (event.reason === "quit") await send("pane.release_agent", { agent: "pi" });
 		});
 	};
-}
-
-function askedRequestId(data: unknown): string | undefined {
-	if (typeof data !== "object" || data === null || !("request" in data)) return undefined;
-	const request = data.request;
-	if (typeof request !== "object" || request === null || !("requestId" in request)) return undefined;
-	return typeof request.requestId === "string" && request.requestId.length > 0 ? request.requestId : undefined;
 }
 
 function hasUserReporter(deps: HerdrDependencies, ctx: ExtensionContext, debug: (message: string) => void): boolean {
