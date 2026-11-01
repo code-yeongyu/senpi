@@ -65,6 +65,18 @@ export {
 	engineBuildIdentityFrom,
 } from "./core/engine-build-identity.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+export {
+	decideKillGuardRequest,
+	KILL_GUARD_TAG,
+	type KillGuardRequest,
+	type KillGuardVerdict,
+} from "./core/kill-guard/index.ts";
+export {
+	KILL_GUARD_MODULE_URL,
+	type KillGuardSetting,
+	killGuardProtectedPids,
+	readKillGuardSetting,
+} from "./core/kill-guard/host.ts";
 // Job widgets: hosts register background jobs and their widget-author model route
 export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {

@@ -10,6 +10,9 @@
 
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { judgeCommand } from "../../../kill-guard/command.ts";
+import { hostKillGuardContext } from "../../../kill-guard/host.ts";
+import type { KillGuardVerdict } from "../../../kill-guard/types.ts";
 import type { MonitorRegistry } from "./monitor-registry.ts";
 import { ensureMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
 import { formatElapsedSeconds } from "./monitor-status.ts";
@@ -44,7 +47,13 @@ export interface RestartableCommandDeps {
 	readonly onRestored?: (monitorId: string, runtimeId: string) => void;
 	readonly graceMs?: number;
 	readonly reapOrphan?: (runtime: ChildProcessIdentity, monitorId: string) => Promise<ReapResult>;
+	/** Whether the kill guard is on (user settings); a restored command is judged again unless it is off (senpi#5349). */
+	readonly killGuardOn?: () => boolean;
+	readonly judge?: (command: string) => KillGuardVerdict;
 }
+
+const judgeRestored = (command: string): KillGuardVerdict =>
+	judgeCommand(command, hostKillGuardContext({ kind: "fresh-session" }, "bash"));
 
 const MAX_REASON_OUTPUT_CHARS = 200;
 
@@ -127,6 +136,7 @@ export function createRestartableCommandHandler(deps: RestartableCommandDeps): R
 	const directoryExists = deps.directoryExists ?? defaultDirectoryExists;
 	const reapOrphan = deps.reapOrphan ?? reapBeforeRespawn;
 	const graceMs = deps.graceMs ?? RESTORE_GRACE_MS;
+	const judge = deps.judge ?? judgeRestored;
 	return async (monitor: ManifestMonitor, context: RestoreContext): Promise<RestoreHandlerResult> => {
 		const ephemeralTimeLeft = monitor.persistent ? undefined : context.remainingMs;
 		if (monitor.runtimeKind !== "command" || (!monitor.persistent && ephemeralTimeLeft === undefined)) {
@@ -139,6 +149,11 @@ export function createRestartableCommandHandler(deps: RestartableCommandDeps): R
 
 		const reap = monitor.runtime === undefined ? undefined : await reapOrphan(monitor.runtime, monitor.monitorId);
 		const orphan = orphanOf(monitor.runtime, reap);
+		// The manifest carries no guard state: a watch saved before the guard, or while it was off, was never judged (A5).
+		if (deps.killGuardOn?.() ?? true) {
+			const verdict = judge(command);
+			if (verdict.action === "refuse") return lost(verdict.message, orphan);
+		}
 
 		let spawned: Awaited<ReturnType<typeof spawnCommandSession>>;
 		try {

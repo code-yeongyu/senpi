@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
-import { readProcessFootprint } from "@code-yeongyu/senpi";
+import {
+	decideKillGuardRequest,
+	KILL_GUARD_MODULE_URL,
+	killGuardProtectedPids,
+	readProcessFootprint,
+} from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
@@ -95,6 +100,12 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			onCall: async (request) => await this.#call(request),
 			onEmit: async () => undefined,
 			onCompletion: async (request) => await dispatchBridgeCompletion(this.#options, request, dispatch),
+			...(this.#options.killGuard === true
+				? {
+						onKillGuardCheck: (request: unknown) =>
+							decideKillGuardRequest(request, { agentPid: process.pid, agentPpid: process.ppid }),
+					}
+				: {}),
 		});
 	}
 
@@ -285,6 +296,9 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
+				...(this.#options.killGuard === true
+					? { killGuard: { moduleUrl: KILL_GUARD_MODULE_URL, agentPid: process.pid } }
+					: {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 			});
@@ -307,6 +321,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			sessionId: this.#options.sessionId,
 			cwd: this.#options.cwd,
 			...(sessionEnv ? { sessionEnv } : {}),
+			...(this.#options.killGuard === true ? { killGuard: { protectedPids: killGuardProtectedPids() } } : {}),
 			connection,
 			onMessage,
 			...lifecycle,

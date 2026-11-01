@@ -20,6 +20,8 @@ export interface PythonKernelStartOptions extends KernelLifecycle {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The kill guard (senpi#5349): the host's protected pids; absent = the guard is off for this kernel. */
+	readonly killGuard?: { readonly protectedPids: readonly number[] };
 	/** How long a starting interpreter may show no stage change, output or CPU use before startup fails. */
 	readonly startupTimeoutMs?: number;
 	/** Total startup backstop for an interpreter that stays busy but never becomes ready. */

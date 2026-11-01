@@ -1,4 +1,4 @@
-import { type ExtensionContext, withBundledBunCommands } from "@code-yeongyu/senpi";
+import { type ExtensionContext, readKillGuardSetting, withBundledBunCommands } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
@@ -106,6 +106,7 @@ export async function createRuntime(
 		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
 		sessionEnv,
+		killGuard: readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on",
 		settings,
 		availability,
 		artifactsDir: artifacts.dir,

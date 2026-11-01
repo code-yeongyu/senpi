@@ -216,6 +216,7 @@ Configure the suite under `terminal` in `settings.json` (global
 - `maxSessions` — concurrent sessions before least-recently-used exited sessions are pruned (default 32).
 - `timeoutAction` — fate of a foreground timeout (default `background`).
 - `notify` — async completion behavior: `wake` (wake an idle interactive agent once), `next-turn`, or `off` (default `wake`). Non-interactive `-p` / `--print` / `--mode json` runs never wake.
+- `killGuard` — `on` (default) or `off`, read from the global settings file only (a project value is ignored). While on, an agent command or eval cell that would signal every process (`kill -1`, a `pkill` pattern such as `a||b`, `.*` or one letter), a protected process (pid 1, the agent, its ancestors, the user's service manager) or a process group holding one is refused before it runs with a `[senpi:kill-guard]` message naming the rule and a narrow alternative. Narrow kills by pid, exact name (`pkill -x`) or anchored pattern run as before. `off` restores the unguarded behavior and shows one notice per session.
 
 ## Windows
 

@@ -10,6 +10,8 @@ const EXIT_POLL_MS = 25;
 // A hung `ps` must not hold a cell's retirement; empty output then means nothing is signalled.
 const PS_LOOKUP_TIMEOUT_MS = 2_000;
 const ZOMBIE_CHECK_INTERVAL_MS = 250;
+// Captured at load, before the kill guard wraps the cell-visible process.kill: retiring owned work is never judged.
+const signal = process.kill.bind(process);
 let cleanupExecFile = execFile;
 let initializedCleanup = false;
 
@@ -22,17 +24,17 @@ export function initializeProcessCleanup(original) {
 export function isProcessAlive(pid) {
 	if (!Number.isInteger(pid) || pid <= 0) return false;
 	try {
-		process.kill(pid, 0);
+		signal(pid, 0);
 		return true;
 	} catch (error) {
 		return isRecord(error) && error.code === "EPERM";
 	}
 }
 
-export function signalProcess(pid, signal) {
+export function signalProcess(pid, signalName) {
 	if (!Number.isInteger(pid) || pid <= 0) return false;
 	try {
-		process.kill(pid, signal);
+		signal(pid, signalName);
 		return true;
 	} catch {
 		return false;
@@ -136,16 +138,16 @@ export async function terminateProcessGroups(groups, options) {
 
 function groupHasMembers(pgid) {
 	try {
-		process.kill(-pgid, 0);
+		signal(-pgid, 0);
 		return true;
 	} catch (error) {
 		return isRecord(error) && error.code === "EPERM";
 	}
 }
 
-function signalGroup(pgid, signal) {
+function signalGroup(pgid, signalName) {
 	try {
-		process.kill(-pgid, signal);
+		signal(-pgid, signalName);
 	} catch {
 		// The group emptied between the check and the signal.
 	}
