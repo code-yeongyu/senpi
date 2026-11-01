@@ -7,7 +7,8 @@ import { AcceptedTranscript, type TranscriptRoot } from "./accepted-transcript.t
 import type { CanonicalUnit } from "./compact-lane-transitions.ts";
 import { CompactSettledMessages, type SettledDiagnostic, type SettledRoot } from "./compact-settled-messages.ts";
 import type { FrozenCompactState } from "./compact-state-view.ts";
-import type { CompactContentStoreOptions } from "./compact-content-store.ts";
+import { CompactContentStore, type CompactContentStoreOptions } from "./compact-content-store.ts";
+import { TransferStaging } from "./compact-transfer-staging.ts";
 import {
 	type AcceptedCorrelation,
 	admitRecord,
@@ -62,7 +63,12 @@ const RETIRED_SETTLED: SettledRoot = Object.freeze({ base: undefined, overrides:
 export class SessionAcceptanceLane extends AcceptedRootReads {
 	private epoch = "";
 	private sequence = 0;
-	private transcript = new AcceptedTranscript();
+	/**
+	 * The lane's one staging store: accepted transcript tails of every epoch, spilled like any payload leaf (S12a), and
+	 * its worker's fragments before their message is whole (S12b); retiring the lane aborts what is still staged.
+	 */
+	readonly staging: TransferStaging;
+	private transcript: AcceptedTranscript;
 	private activeMessageId: string | null = null;
 	private turnId: string | null = null;
 	private correlation: AcceptedCorrelation | null = null;
@@ -83,6 +89,9 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		super();
 		this.storage = storage;
 		this.diagnose = diagnose;
+		const dir = join(storage?.dir ?? tmpdir(), `senpi-transcript-${randomUUID()}`);
+		this.staging = new TransferStaging(new CompactContentStore({ ...storage, dir }));
+		this.transcript = new AcceptedTranscript(this.staging);
 	}
 
 	get recoveryEpoch(): string {
@@ -128,8 +137,10 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 			sessionEpoch: this.epoch,
 		});
 		this.sequence = 0;
-		this.transcript = new AcceptedTranscript();
-		for (const transition of input.transcript) this.transcript.apply(transition);
+		// Every root of the previous epoch was released above, so its tail content goes with it.
+		this.transcript.release();
+		this.transcript = new AcceptedTranscript(this.staging);
+		this.transcript.bootstrap(input.transcript);
 		this.activeMessageId = null;
 		this.turnId = null;
 		this.correlation = null;
@@ -227,18 +238,25 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		if (this.retired) return root;
 		this.rootOwners.set(root, this.settled);
 		this.live.add(root);
+		// The cut keeps the tail segments it names until it is released (RULING-78 (1)).
+		root.transcript.tail.retainCut(root.transcript.count);
 		return root;
 	}
 
 	release(root: FrozenAcceptedRoot): void {
 		if (!this.live.delete(root)) return;
+		root.transcript.tail.releaseCut(root.transcript.count);
 		this.rootOwners.get(root)?.release(root.settled);
 		this.current.release(root.current);
 		if (this.retired) this.retireStorage();
 	}
 
 	storageStatus() {
-		return { ...this.settled.storageStatus(), refusedRecords: this.current.refusedRecords };
+		return {
+			...this.settled.storageStatus(),
+			refusedRecords: this.current.refusedRecords,
+			transcript: this.staging.status(),
+		};
 	}
 
 	private compact = () => ({ settled: this.settled, current: this.current });
@@ -247,6 +265,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		await this.cleanup;
 		await this.settled.idle();
 		await this.current.idle();
+		await this.staging.idle();
 	}
 
 	private retireSettled(): void {
@@ -263,7 +282,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	 */
 	retire(reason: "close" | "worker_failed", keep: ReadonlySet<FrozenAcceptedRoot> = new Set()): void {
 		this.retiredAs ??= reason;
-		this.transcript = new AcceptedTranscript();
+		this.transcript = new AcceptedTranscript(this.staging);
 		for (const root of this.live) if (!keep.has(root)) this.release(root);
 		this.retireStorage();
 	}
@@ -273,5 +292,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		this.storageRetired = true;
 		if (this.settled) this.retireSettled();
 		this.current.retire();
+		this.cleanup = Promise.all([this.cleanup, this.staging.close()]).then(() => {});
+		void this.cleanup.catch(() => this.diagnose("retired_owner"));
 	}
 }
