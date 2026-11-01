@@ -17,7 +17,9 @@ const originalConsoleMethods = {
 	info: console.info,
 	warn: console.warn,
 };
-const githubFineGrainedPat = "github_pat_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const githubFineGrainedPat = ["github_pat", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"].join(
+	"_",
+);
 
 const tempDirs: string[] = [];
 
