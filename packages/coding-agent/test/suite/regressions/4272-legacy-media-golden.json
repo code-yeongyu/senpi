@@ -1,0 +1,211 @@
+[
+	{
+		"name": "message_end toolResult with two images, details kept",
+		"json": "{\"type\":\"message_end\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_1\",\"contentIndex\":1},\"path\":\"/media/call_1-1\"},{\"type\":\"image_ref\",\"mimeType\":\"application/octet-stream\",\"byteLength\":13,\"ref\":{\"toolCallId\":\"call_1\",\"contentIndex\":2},\"path\":\"/media/call_1-2\"}],\"details\":{\"rows\":[[1,2],{\"deep\":{\"deeper\":[true,null,\"x\"]}}]},\"isError\":false,\"timestamp\":1}}",
+		"bare": "{\"type\":\"message_end\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_1\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_1\",\"contentIndex\":1}},{\"type\":\"image_ref\",\"mimeType\":\"application/octet-stream\",\"byteLength\":13,\"ref\":{\"toolCallId\":\"call_1\",\"contentIndex\":2}}],\"details\":{\"rows\":[[1,2],{\"deep\":{\"deeper\":[true,null,\"x\"]}}]},\"isError\":false,\"timestamp\":1}}",
+		"same": false,
+		"kept": [
+			"$.message.details",
+			"$.message.content.0"
+		],
+		"calls": [
+			"call_1#1:image/png:16",
+			"call_1#2:-:20"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "turn_end assistant message and toolResults",
+		"json": "{\"type\":\"turn_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"usage\":{\"input\":1,\"output\":2}},\"toolResults\":[{\"role\":\"toolResult\",\"toolCallId\":\"call_2\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/gif\",\"byteLength\":14,\"ref\":{\"toolCallId\":\"call_2\",\"contentIndex\":0},\"unavailableReason\":\"image_too_large\"}],\"isError\":false,\"timestamp\":1},{\"role\":\"toolResult\",\"toolCallId\":\"call_3\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"no image\"}],\"isError\":false,\"timestamp\":1}]}",
+		"bare": "{\"type\":\"turn_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"usage\":{\"input\":1,\"output\":2}},\"toolResults\":[{\"role\":\"toolResult\",\"toolCallId\":\"call_2\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/gif\",\"byteLength\":14,\"ref\":{\"toolCallId\":\"call_2\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1},{\"role\":\"toolResult\",\"toolCallId\":\"call_3\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"no image\"}],\"isError\":false,\"timestamp\":1}]}",
+		"same": false,
+		"kept": [
+			"$.message",
+			"$.toolResults.1"
+		],
+		"calls": [
+			"call_2#0:image/gif:20"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "agent_end user image kept, tool image replaced",
+		"json": "{\"type\":\"agent_end\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"look\"},{\"type\":\"image\",\"data\":\"aGVsbG8gd29ybGQh\",\"mimeType\":\"image/png\"}]},{\"role\":\"toolResult\",\"toolCallId\":\"call_4\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_4\",\"contentIndex\":0},\"path\":\"/media/call_4-0\"}],\"isError\":false,\"timestamp\":1},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"seen\"}]}]}",
+		"bare": "{\"type\":\"agent_end\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"look\"},{\"type\":\"image\",\"data\":\"aGVsbG8gd29ybGQh\",\"mimeType\":\"image/png\"}]},{\"role\":\"toolResult\",\"toolCallId\":\"call_4\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_4\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"seen\"}]}]}",
+		"same": false,
+		"kept": [
+			"$.messages.0",
+			"$.messages.2"
+		],
+		"calls": [
+			"call_4#0:image/png:16"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "scrubbed toolResult skips its content, walks its other keys",
+		"json": "{\"type\":\"message_start\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_5\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_5\",\"contentIndex\":0},\"path\":\"/media/call_5-0\"},{\"type\":\"custom\",\"inner\":{\"role\":\"toolResult\",\"toolCallId\":\"inner_a\",\"toolName\":\"read\",\"content\":[{\"type\":\"image\",\"data\":\"/9j/4AAQSkZJRgABAQ==\",\"mimeType\":\"image/jpeg\"}],\"isError\":false,\"timestamp\":1}}],\"details\":{\"nested\":{\"role\":\"toolResult\",\"toolCallId\":\"inner_b\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/gif\",\"byteLength\":14,\"ref\":{\"toolCallId\":\"inner_b\",\"contentIndex\":0},\"unavailableReason\":\"image_too_large\"}],\"isError\":false,\"timestamp\":1}},\"isError\":false,\"timestamp\":1}}",
+		"bare": "{\"type\":\"message_start\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_5\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_5\",\"contentIndex\":0}},{\"type\":\"custom\",\"inner\":{\"role\":\"toolResult\",\"toolCallId\":\"inner_a\",\"toolName\":\"read\",\"content\":[{\"type\":\"image\",\"data\":\"/9j/4AAQSkZJRgABAQ==\",\"mimeType\":\"image/jpeg\"}],\"isError\":false,\"timestamp\":1}}],\"details\":{\"nested\":{\"role\":\"toolResult\",\"toolCallId\":\"inner_b\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/gif\",\"byteLength\":14,\"ref\":{\"toolCallId\":\"inner_b\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}},\"isError\":false,\"timestamp\":1}}",
+		"same": false,
+		"kept": [
+			"$.message.content.1"
+		],
+		"calls": [
+			"call_5#0:image/png:16",
+			"inner_b#0:image/gif:20"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "unscrubbed toolResult walks its content",
+		"json": "{\"type\":\"message_end\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_6\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"plain\"},{\"type\":\"custom\",\"inner\":{\"role\":\"toolResult\",\"toolCallId\":\"inner_c\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"inner_c\",\"contentIndex\":0},\"path\":\"/media/inner_c-0\"}],\"isError\":false,\"timestamp\":1}}],\"isError\":false,\"timestamp\":1}}",
+		"bare": "{\"type\":\"message_end\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_6\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"plain\"},{\"type\":\"custom\",\"inner\":{\"role\":\"toolResult\",\"toolCallId\":\"inner_c\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"inner_c\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}}],\"isError\":false,\"timestamp\":1}}",
+		"same": false,
+		"kept": [
+			"$.message.content.0"
+		],
+		"calls": [
+			"inner_c#0:image/png:16"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "get_messages response",
+		"json": "{\"type\":\"response\",\"command\":\"get_messages\",\"success\":true,\"id\":\"r1\",\"data\":{\"messages\":[{\"role\":\"toolResult\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"application/octet-stream\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"\",\"contentIndex\":0},\"path\":\"/media/-0\"}],\"isError\":false,\"timestamp\":1},{\"role\":\"toolResult\",\"toolCallId\":\"call_7\",\"toolName\":\"read\",\"content\":\"not an array\",\"isError\":false,\"timestamp\":1}]}}",
+		"bare": "{\"type\":\"response\",\"command\":\"get_messages\",\"success\":true,\"id\":\"r1\",\"data\":{\"messages\":[{\"role\":\"toolResult\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"application/octet-stream\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1},{\"role\":\"toolResult\",\"toolCallId\":\"call_7\",\"toolName\":\"read\",\"content\":\"not an array\",\"isError\":false,\"timestamp\":1}]}}",
+		"same": false,
+		"kept": [
+			"$.data.messages.1"
+		],
+		"calls": [
+			"#0:-:16"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "get_tree response, nested nodes",
+		"json": "{\"type\":\"response\",\"command\":\"get_tree\",\"success\":true,\"data\":{\"tree\":[{\"entry\":{\"id\":\"e1\",\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_8\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_8\",\"contentIndex\":0},\"path\":\"/media/call_8-0\"}],\"isError\":false,\"timestamp\":1}},\"children\":[{\"entry\":{\"id\":\"e2\",\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}},\"children\":[{\"entry\":{\"id\":\"e3\",\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_9\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/jpeg\",\"byteLength\":13,\"ref\":{\"toolCallId\":\"call_9\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}},\"children\":[]}]}]}]}}",
+		"bare": "{\"type\":\"response\",\"command\":\"get_tree\",\"success\":true,\"data\":{\"tree\":[{\"entry\":{\"id\":\"e1\",\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_8\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_8\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}},\"children\":[{\"entry\":{\"id\":\"e2\",\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}},\"children\":[{\"entry\":{\"id\":\"e3\",\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_9\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/jpeg\",\"byteLength\":13,\"ref\":{\"toolCallId\":\"call_9\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}},\"children\":[]}]}]}]}}",
+		"same": false,
+		"kept": [
+			"$.data.tree.0.children.0.entry",
+			"$.data.tree.0.children.0.children.0.children"
+		],
+		"calls": [
+			"call_8#0:image/png:16",
+			"call_9#0:image/jpeg:20"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "get_state response, state.entries",
+		"json": "{\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{\"state\":{\"entries\":[{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_10\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_10\",\"contentIndex\":0},\"path\":\"/media/call_10-0\"}],\"isError\":false,\"timestamp\":1}}],\"model\":{\"id\":\"m\"}}}}",
+		"bare": "{\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{\"state\":{\"entries\":[{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_10\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_10\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}}],\"model\":{\"id\":\"m\"}}}}",
+		"same": false,
+		"kept": [
+			"$.data.state.model"
+		],
+		"calls": [
+			"call_10#0:image/png:16"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "open_session response without media",
+		"json": "{\"type\":\"response\",\"command\":\"open_session\",\"success\":true,\"data\":{\"sessionId\":\"s\",\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}}",
+		"bare": "{\"type\":\"response\",\"command\":\"open_session\",\"success\":true,\"data\":{\"sessionId\":\"s\",\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}}",
+		"same": true,
+		"kept": [
+			"$"
+		],
+		"calls": [],
+		"inputUnchanged": true
+	},
+	{
+		"name": "tool_execution_end result content and a toolResult inside details",
+		"json": "{\"type\":\"tool_execution_end\",\"toolCallId\":\"call_11\",\"toolName\":\"read\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"t\"},{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_11\",\"contentIndex\":1},\"path\":\"/media/call_11-1\"}],\"details\":{\"echo\":{\"role\":\"toolResult\",\"toolCallId\":\"call_12\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/gif\",\"byteLength\":14,\"ref\":{\"toolCallId\":\"call_12\",\"contentIndex\":0},\"unavailableReason\":\"image_too_large\"}],\"isError\":false,\"timestamp\":1}}},\"isError\":false}",
+		"bare": "{\"type\":\"tool_execution_end\",\"toolCallId\":\"call_11\",\"toolName\":\"read\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"t\"},{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_11\",\"contentIndex\":1}}],\"details\":{\"echo\":{\"role\":\"toolResult\",\"toolCallId\":\"call_12\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/gif\",\"byteLength\":14,\"ref\":{\"toolCallId\":\"call_12\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}}},\"isError\":false}",
+		"same": false,
+		"kept": [
+			"$.result.content.0"
+		],
+		"calls": [
+			"call_11#1:image/png:16",
+			"call_12#0:image/gif:20"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "tool_execution_end without media",
+		"json": "{\"type\":\"tool_execution_end\",\"toolCallId\":\"call_13\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"t\"}],\"details\":{\"a\":[1,[2,[3]]]}}}",
+		"bare": "{\"type\":\"tool_execution_end\",\"toolCallId\":\"call_13\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"t\"}],\"details\":{\"a\":[1,[2,[3]]]}}}",
+		"same": true,
+		"kept": [
+			"$"
+		],
+		"calls": [],
+		"inputUnchanged": true
+	},
+	{
+		"name": "entry_appended",
+		"json": "{\"type\":\"entry_appended\",\"entry\":{\"id\":\"e9\",\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_14\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_14\",\"contentIndex\":0},\"path\":\"/media/call_14-0\"}],\"isError\":false,\"timestamp\":1}}}",
+		"bare": "{\"type\":\"entry_appended\",\"entry\":{\"id\":\"e9\",\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_14\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_14\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}}}",
+		"same": false,
+		"kept": [],
+		"calls": [
+			"call_14#0:image/png:16"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "shared toolResult referenced twice",
+		"json": "{\"type\":\"agent_end\",\"messages\":[{\"role\":\"toolResult\",\"toolCallId\":\"shared\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"twice\"},{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"shared\",\"contentIndex\":1},\"path\":\"/media/shared-1\"}],\"isError\":false,\"timestamp\":1},{\"role\":\"assistant\",\"content\":[]},{\"role\":\"toolResult\",\"toolCallId\":\"shared\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"twice\"},{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"shared\",\"contentIndex\":1},\"path\":\"/media/shared-1\"}],\"isError\":false,\"timestamp\":1}]}",
+		"bare": "{\"type\":\"agent_end\",\"messages\":[{\"role\":\"toolResult\",\"toolCallId\":\"shared\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"twice\"},{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"shared\",\"contentIndex\":1}}],\"isError\":false,\"timestamp\":1},{\"role\":\"assistant\",\"content\":[]},{\"role\":\"toolResult\",\"toolCallId\":\"shared\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"twice\"},{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"shared\",\"contentIndex\":1}}],\"isError\":false,\"timestamp\":1}]}",
+		"same": false,
+		"kept": [
+			"$.messages.1",
+			"$.messages.0.content.0",
+			"$.messages.2.content.0"
+		],
+		"calls": [
+			"shared#1:image/png:16",
+			"shared#1:image/png:16"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "arrays of arrays around a toolResult",
+		"json": "{\"type\":\"entry_appended\",\"entry\":{\"batches\":[[[{\"role\":\"toolResult\",\"toolCallId\":\"call_15\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_15\",\"contentIndex\":0},\"path\":\"/media/call_15-0\"}],\"isError\":false,\"timestamp\":1}]],[[{\"k\":1}]]]}}",
+		"bare": "{\"type\":\"entry_appended\",\"entry\":{\"batches\":[[[{\"role\":\"toolResult\",\"toolCallId\":\"call_15\",\"toolName\":\"read\",\"content\":[{\"type\":\"image_ref\",\"mimeType\":\"image/png\",\"byteLength\":12,\"ref\":{\"toolCallId\":\"call_15\",\"contentIndex\":0}}],\"isError\":false,\"timestamp\":1}]],[[{\"k\":1}]]]}}",
+		"same": false,
+		"kept": [
+			"$.entry.batches.1"
+		],
+		"calls": [
+			"call_15#0:image/png:16"
+		],
+		"inputUnchanged": true
+	},
+	{
+		"name": "message_update is not walked",
+		"json": "{\"type\":\"message_update\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_16\",\"toolName\":\"read\",\"content\":[{\"type\":\"image\",\"data\":\"aGVsbG8gd29ybGQh\",\"mimeType\":\"image/png\"}],\"isError\":false,\"timestamp\":1}}",
+		"bare": "{\"type\":\"message_update\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_16\",\"toolName\":\"read\",\"content\":[{\"type\":\"image\",\"data\":\"aGVsbG8gd29ybGQh\",\"mimeType\":\"image/png\"}],\"isError\":false,\"timestamp\":1}}",
+		"same": true,
+		"kept": [
+			"$"
+		],
+		"calls": [],
+		"inputUnchanged": true
+	},
+	{
+		"name": "response for another command is not walked",
+		"json": "{\"type\":\"response\",\"command\":\"prompt\",\"data\":{\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_17\",\"toolName\":\"read\",\"content\":[{\"type\":\"image\",\"data\":\"aGVsbG8gd29ybGQh\"}],\"isError\":false,\"timestamp\":1}}}",
+		"bare": "{\"type\":\"response\",\"command\":\"prompt\",\"data\":{\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"call_17\",\"toolName\":\"read\",\"content\":[{\"type\":\"image\",\"data\":\"aGVsbG8gd29ybGQh\"}],\"isError\":false,\"timestamp\":1}}}",
+		"same": true,
+		"kept": [
+			"$"
+		],
+		"calls": [],
+		"inputUnchanged": true
+	}
+]

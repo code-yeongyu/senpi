@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { catalogDigest } from "../src/modes/rpc/compact-catalog-codec.ts";
 
 export const FRAGMENT_LIMITS = { D: 131_072, F: 262_144, H: 16_384 } as const;
 
@@ -20,8 +20,8 @@ export interface FragmentRecord {
 	data?: string;
 }
 
-export function sha256Hex(bytes: Uint8Array): string {
-	return createHash("sha256").update(bytes).digest("hex");
+export function fixtureDigest(bytes: Uint8Array, domain: "leaf" | "fragment" = "leaf"): string {
+	return catalogDigest(domain, Buffer.from(bytes));
 }
 
 function xorshift32Bytes(seed: number, length: number): Uint8Array {
@@ -73,7 +73,7 @@ export function fragmentRecords(value: Uint8Array, withData: boolean): FragmentR
 		records.push({
 			offset,
 			length,
-			digest: sha256Hex(slice),
+			digest: fixtureDigest(slice, "fragment"),
 			next: complete ? null : offset + length,
 			complete,
 			...(withData ? { data: Buffer.from(slice).toString("base64") } : {}),

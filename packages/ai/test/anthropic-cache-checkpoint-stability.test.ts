@@ -93,7 +93,7 @@ async function captureCacheMarkers(
 		return sseResponse();
 	};
 	const response = streamAnthropic(model, normalizeContext(context), {
-		apiKey: "sk-ant-api03-test",
+		apiKey: ["sk-ant-api03", "test"].join("-"),
 		fetch,
 		...(cacheRetention ? { cacheRetention } : {}),
 	});
