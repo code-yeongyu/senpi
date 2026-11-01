@@ -18,6 +18,7 @@ import {
 	recordProducerLoss,
 	runAdmissionProducer,
 } from "./compact-admission-producer.ts";
+import { reserveRow, retainDone } from "./compact-admission-retention.ts";
 export { CompactAdmissionError } from "./compact-admission-error.ts";
 export { ADMISSION_LIMITS } from "./compact-admission-storage.ts";
 
@@ -26,9 +27,18 @@ export class CompactAdmissions {
 	private readonly epochs = new Map<string, Epoch>();
 	private readonly limits: Readonly<{ entries: number; bytes: number }>;
 	private readonly losses: ProducerLosses = { abandoned: 0, releaseFailed: 0 };
+	private retiredOverflow = 0;
 
 	status() {
-		return { ...this.losses };
+		return { ...this.losses, retiredOverflow: this.retiredOverflow };
+	}
+
+	/** RULING-113 residual: a forgotten ID is indistinguishable from a fresh open, so the first loss is logged. */
+	private overflowRetired(): void {
+		if (this.retiredOverflow++ === 0)
+			process.stderr.write(
+				`senpi rpc admission retired-ID ring overflowed (${ADMISSION_LIMITS.retired} digests); older IDs are forgotten\n`,
+			);
 	}
 
 	private end(epoch: Epoch): void {
@@ -54,8 +64,9 @@ export class CompactAdmissions {
 				directory: mkdtemp(join(tmpdir(), "senpi-admissions-")),
 				hot: new Map(),
 				failures: new Map(),
+				done: new Set(),
+				retired: new Set(),
 				tail: Promise.resolve(),
-				entries: 0,
 				ended: false,
 				waiting: 0,
 			};
@@ -87,6 +98,7 @@ export class CompactAdmissions {
 			const row = await readAdmissionRow(epoch, key);
 			if (row) {
 				if (row.fingerprint !== identity.fingerprint) throw new CompactAdmissionError("admission_conflict");
+				retainDone(epoch, key);
 				switch (row.state) {
 					case "complete":
 						if (row.answer === undefined) throw new CompactAdmissionError("storage_unavailable");
@@ -105,11 +117,12 @@ export class CompactAdmissions {
 					}
 				}
 			}
-			if (epoch.entries >= this.limits.entries || (epoch.entries + 1) * ADMISSION_LIMITS.row > this.limits.bytes)
-				throw new CompactAdmissionError("admission_limit");
+			if (epoch.retired.has(key)) throw new CompactAdmissionError("admission_retired");
 			if (epoch.hot.size >= ADMISSION_LIMITS.hot) throw new CompactAdmissionError("admission_busy");
+			const capacity = Math.min(this.limits.entries, Math.floor(this.limits.bytes / ADMISSION_LIMITS.row));
+			if (!(await reserveRow(epoch, capacity, () => this.overflowRetired())))
+				throw new CompactAdmissionError("admission_limit");
 			await writeAdmissionRow(epoch, key, { state: "pending", fingerprint: identity.fingerprint });
-			epoch.entries++;
 			const pending = Promise.withResolvers<Answer>();
 			void pending.promise.catch(() => {});
 			epoch.hot.set(key, pending);
@@ -202,6 +215,7 @@ export class CompactAdmissions {
 			throw failure;
 		} finally {
 			epoch.hot.delete(key);
+			retainDone(epoch, key);
 		}
 	}
 
@@ -218,7 +232,7 @@ export class CompactAdmissions {
 		if (!epoch) return "unknown";
 		return this.serial(epoch, async () => {
 			const row = await readAdmissionRow(epoch, key);
-			if (!row) return "unknown";
+			if (!row) return epoch.retired.has(key) ? "already_complete" : "unknown";
 			switch (row.state) {
 				case "complete":
 				case "failed":

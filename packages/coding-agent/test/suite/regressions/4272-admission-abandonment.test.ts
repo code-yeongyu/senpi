@@ -104,7 +104,7 @@ it("T2/X04 counts and logs a failed late release after the abort", async () => {
 		await nextTurn();
 		await nextTurn();
 		expect(release).toHaveBeenCalledTimes(1);
-		expect(index.status()).toEqual({ abandoned: 1, releaseFailed: 1 });
+		expect(index.status()).toEqual({ abandoned: 1, releaseFailed: 1, retiredOverflow: 0 });
 		expect(stderr.mock.calls.map(([line]) => String(line))).toContain(
 			"senpi rpc admission producer releaseFailed 1: close failed\n",
 		);

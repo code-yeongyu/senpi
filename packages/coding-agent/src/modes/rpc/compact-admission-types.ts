@@ -20,8 +20,11 @@ export type Epoch = {
 	readonly directory: Promise<string>;
 	readonly hot: Map<string, ReturnType<typeof Promise.withResolvers<Answer>>>;
 	readonly failures: Map<string, AdmissionRow>;
+	/** Terminal row keys, least recently used first. */
+	readonly done: Set<string>;
+	/** Digests of evicted IDs, oldest first. */
+	readonly retired: Set<string>;
 	tail: Promise<void>;
-	entries: number;
 	ended: boolean;
 	waiting: number;
 };
