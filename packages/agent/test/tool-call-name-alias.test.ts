@@ -227,6 +227,25 @@ describe("tool-call name alias resolution", () => {
 		expect(textOf(result)).toContain("[auto-corrected]");
 	});
 
+	it("runs the unique tool behind a stray word prefix and reports the correction (omo#12065)", async () => {
+		const execute = vi.fn();
+
+		const { result, startToolNames } = await callOnce("trophy_eval", [
+			weatherTool("eval", execute),
+			weatherTool("read"),
+		]);
+
+		expect(execute).toHaveBeenCalledOnce();
+		expect(result.isError).toBe(false);
+		expect(result.toolName).toBe("eval");
+		expect(startToolNames).toEqual(["eval"]);
+		expect(result.content[0]).toEqual({
+			type: "text",
+			text: '[auto-corrected] no tool is named "trophy_eval"; ran "eval". Call tools by their exact listed name.',
+			audience: "model",
+		});
+	});
+
 	it("leaves exact-name calls untouched", async () => {
 		const execute = vi.fn();
 

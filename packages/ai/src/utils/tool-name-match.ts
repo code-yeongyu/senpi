@@ -53,6 +53,18 @@ function uniqueMatch(names: readonly string[], matches: (name: string) => boolea
 	return found.length === 1 ? found[0] : undefined;
 }
 
+/**
+ * Last resort for a plain name carrying a stray word prefix (`trophy_eval` for
+ * `eval`, omo#12065): the one registered tool whose exact name is a
+ * `_`-separated suffix of the requested name. Namespaced names are excluded so
+ * `mcp__sandbox__run_bash` still never falls through to a local `bash`, and two
+ * suffix matches (`x_read_file` against `read_file` and `file`) refuse.
+ */
+function strayPrefixMatch(requested: string, names: readonly string[]): string | undefined {
+	if (toolNameForms(requested).length > 1) return undefined;
+	return uniqueMatch(names, (name) => requested.length > name.length + 1 && requested.endsWith(`_${name}`));
+}
+
 /** Resolve `requested` to the one available tool it names, or `undefined` when none or several match. */
 export function resolveToolNameMatch(requested: string, available: Iterable<string>): string | undefined {
 	const names = [...new Set(available)];
@@ -68,5 +80,5 @@ export function resolveToolNameMatch(requested: string, available: Iterable<stri
 		);
 		if (unprefixed !== undefined) return unprefixed;
 	}
-	return undefined;
+	return strayPrefixMatch(requested, names);
 }
