@@ -39,8 +39,12 @@ export type ClaudeCliLogin = {
 
 const LOGIN_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const KILL_GRACE_MS = 5_000;
-const MANUAL_URL_LINE = /If the browser didn't open, visit: (https:\/\/\S+)\r?\n/;
-const SUCCESS_LINE = /^Login successful\.$/m;
+// The CLI wraps the URL in an OSC 8 hyperlink (ESC]8;;<url>BEL<url>ESC]8;;BEL) even with NO_COLOR=1; group 1 is that
+// form, group 2 the plain one. Each needs its terminator, so a URL split across stdout chunks is never read early.
+const MANUAL_URL_LINE =
+	/If the browser didn't open, visit: (?:\x1b\]8;;(https:\/\/[^\s\x07\x1b]+)(?:\x07|\x1b\\)|(https:\/\/\S+)\r?\n)/;
+// Not anchored at line start: the CLI writes it on the line of its unterminated "Paste code here if prompted > " prompt.
+const SUCCESS_LINE = /Login successful\.\r?$/m;
 
 /** Accepts `code#state`, a bare code, a query string, or the full callback URL; returns the line the CLI reads. */
 export function normalizePastedCode(input: string): string | undefined {
@@ -118,9 +122,10 @@ export function startClaudeCliLogin(options: ClaudeCliLoginOptions): ClaudeCliLo
 			stdout += chunk;
 			capture.flush();
 			const manual = manualSeen ? null : MANUAL_URL_LINE.exec(stdout);
-			if (manual?.[1] !== undefined) {
+			const manualUrl = manual?.[1] ?? manual?.[2];
+			if (manualUrl !== undefined) {
 				manualSeen = true;
-				options.onManualUrl?.(manual[1]);
+				options.onManualUrl?.(manualUrl);
 			}
 		});
 		child.stderr?.setEncoding("utf8");

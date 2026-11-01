@@ -64,14 +64,16 @@ if (group !== "auth" || command !== "login") process.exit(2);
 
 if (mode === "login-hang") process.on("SIGTERM", () => record({ sigterm: true }));
 process.stdout.write("Opening browser to sign in…\n");
-process.stdout.write(`If the browser didn't open, visit: ${MANUAL_URL}\n`);
+// The CLI prints the copy-code URL as an OSC 8 hyperlink even with NO_COLOR=1.
+process.stdout.write(`If the browser didn't open, visit: \u001b]8;;${MANUAL_URL}\u0007${MANUAL_URL}\u001b]8;;\u0007\n`);
 if (process.env.BROWSER) spawnSync(process.env.BROWSER, [AUTOMATIC_URL], { stdio: "ignore" });
 process.stdout.write("Paste code here if prompted > ");
 
 if (mode === "login-hang") {
 	setInterval(() => {}, 1 << 30);
 } else if (mode === "login-auto") {
-	process.stdout.write("\nLogin successful.\n");
+	// No newline before it: the CLI writes this on the unterminated "Paste code here if prompted > " line.
+	process.stdout.write("Login successful.\n");
 	process.exit(0);
 } else if (mode === "login-org-denied") {
 	process.stderr.write("OAuth login failed: cli_auth_login_org_not_allowed\n");
@@ -81,7 +83,7 @@ if (mode === "login-hang") {
 	lines.once("line", (line) => {
 		record({ stdin: line });
 		if (mode === "login-exit0-silent") process.exit(0);
-		process.stdout.write("\nLogin successful.\n");
+		process.stdout.write("Login successful.\n");
 		process.exit(0);
 	});
 }
