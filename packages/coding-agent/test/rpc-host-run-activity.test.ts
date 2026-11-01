@@ -3,7 +3,8 @@ import { IdleExitDecider } from "../src/modes/rpc/host-lifecycle-policy.ts";
 import { SessionRunActivity } from "../src/modes/rpc/host-run-activity.ts";
 
 // A run emits `agent_start` on every loop iteration (a provider retry, a post-compaction continue, a
-// follow-up) but `agent_settled` once, and a session can close before its settle arrives (#2713).
+// follow-up) but `agent_settled` once, and a session can close before its settle arrives (#2713). A settled run is
+// quiet only at `agent_idle`, after its extension agent_settled handlers (omo#11419).
 
 const WINDOW_MS = 600;
 
@@ -24,9 +25,14 @@ function decisionAfterIdleWindow(lines: readonly string[]): string {
 
 describe("host idle exit from the child's run events", () => {
 	it("exits after a run that continued: two starts, one settle", () => {
-		expect(decisionAfterIdleWindow([event("agent_start"), event("agent_start"), event("agent_settled")])).toBe(
-			"exit",
-		);
+		expect(
+			decisionAfterIdleWindow([
+				event("agent_start"),
+				event("agent_start"),
+				event("agent_settled"),
+				event("agent_idle"),
+			]),
+		).toBe("exit");
 	});
 
 	it("exits after a session closed mid-run without its settle", () => {
@@ -38,8 +44,10 @@ describe("host idle exit from the child's run events", () => {
 			decisionAfterIdleWindow([
 				event("agent_start"),
 				event("agent_settled"),
+				event("agent_idle"),
 				event("agent_start"),
 				event("agent_settled"),
+				event("agent_idle"),
 			]),
 		).toBe("exit");
 	});

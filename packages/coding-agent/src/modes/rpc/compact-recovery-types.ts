@@ -1,3 +1,5 @@
+import type { TranscriptUnavailableReason } from "../../core/session-transcript-journal.ts";
+
 /** How a peer reaches a routing session: its own attachment, or (S16) a mirror of another destination's stream. */
 export type RecoveryRouteKind = "ordinary" | "mirror";
 
@@ -39,14 +41,17 @@ export interface CheckpointToken {
 
 export type RecoveryToken = CheckpointToken;
 
+/**
+ * Why a token needs repair. A token minted for another peer or session is `unknown_token` (RULING-56 (1)): the
+ * asker learns nothing about a stream that is not its own.
+ */
 export type RepairReason =
 	| "unknown_token"
 	| "released"
-	| "foreign_peer"
-	| "foreign_session"
 	| "lane_retired"
 	| "stale_epoch"
-	| "peer_gone";
+	| "peer_gone"
+	| "session_closed";
 
 /** A token of an older generation of its stream (RULING-50 (2)): `newerGeneration` is the stream's current one. */
 export interface SupersededToken {
@@ -56,6 +61,24 @@ export interface SupersededToken {
 }
 
 /**
+ * Why the host could not serve a pinned cut: a closed union (RULING-58 (2)), never a free string. `integrity` is the
+ * corruption signal (stored bytes no longer match their recorded digest, refused before any decode) and `range` a
+ * ref that names nothing under the token; the owner counts each detail apart. The rest are the cut's own store
+ * reasons and the transcript component's. A refusal carries this detail and nothing else: no stored bytes, no
+ * partial decode.
+ */
+export type StorageUnavailableReason =
+	| "compact_state_unavailable"
+	| TranscriptUnavailableReason
+	| "retired"
+	| "range"
+	| "size_limit"
+	| "count_limit"
+	| "ownership"
+	| "unavailable"
+	| "integrity";
+
+/**
  * The typed failure of every token operation (S14-Q2 shape): `repair_needed` when the consumer must admit again
  * (its token is retired, foreign, superseded or its peer is gone), `storage_unavailable` when the host could not
  * serve the pinned cut.
@@ -63,20 +86,58 @@ export interface SupersededToken {
 export type RecoveryFailure =
 	| { readonly kind: "repair_needed"; readonly reason: RepairReason }
 	| SupersededToken
-	| { readonly kind: "storage_unavailable"; readonly reason: string };
+	| { readonly kind: "storage_unavailable"; readonly reason: StorageUnavailableReason };
+
+/** Every reason a token operation is refused with: a repair reason, a superseded token, or unavailable storage. */
+export type RefusalReason = RepairReason | SupersededToken["reason"] | "storage_unavailable";
+
+function assertNever(value: never): never {
+	throw new Error(`unexpected recovery failure: ${JSON.stringify(value)}`);
+}
+
+export function refusalReason(failure: RecoveryFailure): RefusalReason {
+	switch (failure.kind) {
+		case "storage_unavailable":
+			return failure.kind;
+		case "repair_needed":
+			return failure.reason;
+		default:
+			return assertNever(failure);
+	}
+}
 
 export type RecoveryOutcome<T> =
 	| { readonly ok: true; readonly value: T }
 	| { readonly ok: false; readonly failure: RecoveryFailure };
 
+/**
+ * One peer + session stream as a holder may read it (RULING-42 Q2 A): the session incarnation it materializes, its
+ * generation (the number every token of it carries) and the admissions routed through it.
+ */
+export interface RecoveryStreamState {
+	readonly sessionEpoch: string;
+	readonly generation: number;
+	readonly routes: readonly string[];
+}
+
+/**
+ * The owner's counters: open tokens, live streams, tokens frozen, roots reclaimed without a release, refusals by
+ * reason, and the `storage_unavailable` refusals again by their detail (`integrity` apart from `range`).
+ */
+export interface RecoveryCounters {
+	readonly open: number;
+	readonly streams: number;
+	readonly frozen: number;
+	readonly reclaimed: number;
+	readonly refused: Readonly<Partial<Record<RefusalReason, number>>>;
+	readonly unavailable: Readonly<Partial<Record<StorageUnavailableReason, number>>>;
+}
+
 export const recovered = <T>(value: T): RecoveryOutcome<T> => ({ ok: true, value });
-export const repairNeeded = (reason: RepairReason): RecoveryOutcome<never> => ({
-	ok: false,
-	failure: { kind: "repair_needed", reason },
-});
-export const storageUnavailable = (reason: string): RecoveryOutcome<never> => ({
-	ok: false,
-	failure: { kind: "storage_unavailable", reason },
+export const repairNeeded = (reason: RepairReason): RecoveryFailure => ({ kind: "repair_needed", reason });
+export const storageUnavailable = (reason: StorageUnavailableReason): RecoveryFailure => ({
+	kind: "storage_unavailable",
+	reason,
 });
 
 /** Thrown inside a token's operation lease when the cut stopped being valid; mapped to its failure by the owner. */
