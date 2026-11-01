@@ -1,10 +1,6 @@
 import { judgeCommand } from "../../../kill-guard/command.ts";
 import { hostKillGuardContext, killGuardProtectedPids, readKillGuardSetting } from "../../../kill-guard/host.ts";
-import {
-	activateKillGuardRuntime,
-	deactivateKillGuardRuntime,
-	releaseKillGuardRuntime,
-} from "../../../kill-guard/runtime.ts";
+import { activateKillGuardRuntime, releaseKillGuardRuntime } from "../../../kill-guard/runtime.ts";
 import type { ExtensionAPI, ToolCallEventResult } from "../../types.ts";
 import { bashInputStream, typeInto } from "./typed-lines.ts";
 
@@ -46,7 +42,8 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 		pendingLines.clear();
 		enabled = readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on";
 		if (!enabled) {
-			deactivateKillGuardRuntime();
+			// Only this session's hold: another session in the process keeps its own until it reads the setting.
+			releaseKillGuardRuntime(holder);
 			ctx.ui.notify(
 				'kill guard off: agent commands may signal any process ("terminal.killGuard": "off")',
 				"warning",

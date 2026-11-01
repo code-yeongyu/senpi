@@ -112,7 +112,13 @@ export function createShimFixture(version = "test-fast", deadlineSeconds = 1): S
 		run(shell, script, env) {
 			rmSync(realLog, { force: true });
 			rmSync(judgeLog, { force: true });
-			const result = spawnSync(shell, ["-c", script], { env, encoding: "utf8", timeout: 30_000 });
+			// No stdin: Node's default stdin pipe is a socket, and the socket case has its own test (shims-bash-env).
+			const result = spawnSync(shell, ["-c", script], {
+				env,
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+				timeout: 30_000,
+			});
 			return {
 				status: result.status,
 				stdout: result.stdout,

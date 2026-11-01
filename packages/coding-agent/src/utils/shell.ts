@@ -194,7 +194,17 @@ export function getPowerShellConfig(): ShellConfig {
 	return { shell, args: [...POWERSHELL_ARGS] };
 }
 
+/** The environment agent-spawned shells get: the user's shell environment plus the kill guard's runtime layer. */
 export function getShellEnv(): NodeJS.ProcessEnv {
+	// The kill guard's runtime shims go first on PATH while the host has them active (senpi#5349).
+	return withKillGuardRuntime(getUserShellEnv());
+}
+
+/**
+ * The environment for a command the user typed (`!cmd`): no kill guard runtime layer, which judges only what the agent
+ * runs (senpi#5349).
+ */
+export function getUserShellEnv(): NodeJS.ProcessEnv {
 	const binDir = getBinDir();
 	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const currentPath = process.env[pathKey] ?? "";
@@ -202,13 +212,10 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 	const hasBinDir = pathEntries.includes(binDir);
 	const updatedPath = hasBinDir ? currentPath : [binDir, currentPath].filter(Boolean).join(delimiter);
 
-	// The kill guard's runtime shims go first on PATH while the host has them active (senpi#5349).
-	return withKillGuardRuntime(
-		withBundledBunCommands({
-			...process.env,
-			[pathKey]: updatedPath,
-		}),
-	);
+	return withBundledBunCommands({
+		...process.env,
+		[pathKey]: updatedPath,
+	});
 }
 
 /**

@@ -30,9 +30,22 @@ describe("killGuardEnvironment", () => {
 			SENPI_KILL_GUARD_EXEC: f.fakeJudge,
 			SENPI_KILL_GUARD_EXEC_ENTRY: "/opt/senpi/kill-guard-check.js",
 			SENPI_KILL_GUARD_AGENT_PID: "99999999",
+			SHLVL: "1",
 		});
 		const again = killGuardEnvironment(base({ PATH: `/usr/bin:${f.shims}:/bin` }), f.runtime());
 		expect(again.PATH).toBe(`${f.shims}:/usr/bin:/bin`);
+	});
+
+	it.each([
+		["2", undefined],
+		["998", undefined],
+		["0", "1"],
+		["", "1"],
+		["-3", "1"],
+		["x", "1"],
+		["999", "1"],
+	])("keeps a nested SHLVL and sets 1 for an unusable one: %j -> %j", (level, expected) => {
+		expect(killGuardEnvironment(base({ SHLVL: level }), f.runtime()).SHLVL).toBe(expected);
 	});
 
 	it("chains a user's BASH_ENV, and keeps it when the environment already carries a kill-guard BASH_ENV", () => {

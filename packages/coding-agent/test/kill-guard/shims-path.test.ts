@@ -1,6 +1,6 @@
 // senpi#5349 / code-yeongyu/oh-my-openagent#12096 (L2): the PATH shims judge `kill`, `pkill` and `killall` on their
 // real, expanded argv before the real binary runs (DESIGN-12096 §4' L2, amendment A8).
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { KILL_GUARD_SHIM_MARKER } from "../../src/core/kill-guard/runtime.ts";
@@ -123,6 +123,18 @@ describe.runIf(posix)("PATH shims", () => {
 		writeFileSync(join(other, KILL_GUARD_SHIM_MARKER), "");
 		writeExecutable(join(other, "pkill"), '#!/bin/sh\necho shadow >> "$LOG"\nexit 0\n');
 		const path = `${f.shims}:${other}:${f.realDir}:${SYSTEM_PATH}`;
+		const result = f.run("/bin/sh", "pkill -x node", f.env({}, {}, path));
+		expect(result.status).toBe(0);
+		expect(result.real).toBe("pkill [-x] [node]\n");
+	});
+
+	it("ends when PATH holds symlinks to a shim, and runs the real binary once", () => {
+		const links = [join(f.root, "links-a"), join(f.root, "links-b")];
+		for (const dir of links) {
+			mkdirSync(dir);
+			symlinkSync(join(f.shims, "pkill"), join(dir, "pkill"));
+		}
+		const path = [f.shims, ...links, f.realDir, SYSTEM_PATH].join(":");
 		const result = f.run("/bin/sh", "pkill -x node", f.env({}, {}, path));
 		expect(result.status).toBe(0);
 		expect(result.real).toBe("pkill [-x] [node]\n");

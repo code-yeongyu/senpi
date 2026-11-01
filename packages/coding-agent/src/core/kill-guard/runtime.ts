@@ -95,9 +95,19 @@ function isKillGuardBashEnv(path: string | undefined): boolean {
 }
 
 /**
+ * Whether bash started with this inherited SHLVL counts as nested (level >= 2 after its own increment). A top-level
+ * non-interactive bash skips BASH_ENV when its stdin is a socket (bash's rshd rule) or sshd started it, and SHLVL >= 999
+ * makes bash reset the level to 1.
+ */
+function nestedShellLevel(level: string | undefined): boolean {
+	return level !== undefined && /^[1-9]\d{0,2}$/.test(level) && Number(level) < 999;
+}
+
+/**
  * The variables that carry `runtime` into a process started with `base`: the shim directory first on PATH (once),
  * BASH_ENV on the wrapper with the user's own BASH_ENV kept in `SENPI_KILL_GUARD_USER_BASH_ENV` (also when `base`
- * already carries a kill-guard BASH_ENV from an outer agent), and the judge exports.
+ * already carries a kill-guard BASH_ENV from an outer agent), the judge exports, and `SHLVL=1` when `base` has no
+ * usable level, so bash reads BASH_ENV whatever its stdin is.
  */
 export function killGuardEnvironment(base: NodeJS.ProcessEnv, runtime: KillGuardRuntime): Record<string, string> {
 	const pathKey = Object.keys(base).find((key) => key.toLowerCase() === "path") ?? "PATH";
@@ -111,6 +121,7 @@ export function killGuardEnvironment(base: NodeJS.ProcessEnv, runtime: KillGuard
 		SENPI_KILL_GUARD_EXEC: runtime.exec,
 		SENPI_KILL_GUARD_EXEC_ENTRY: runtime.entry ?? "",
 		SENPI_KILL_GUARD_AGENT_PID: String(runtime.agentPid),
+		...(nestedShellLevel(base.SHLVL) ? {} : { SHLVL: "1" }),
 	};
 }
 
@@ -129,8 +140,8 @@ function judgeEntry(): string | undefined {
 }
 
 const installed = new Map<string, KillGuardRuntime>();
-const holders = new Set<object>();
-let active: KillGuardRuntime | undefined;
+/** Each holder's runtime, in activation order: the most recently activated remaining holder's runtime is active. */
+const holders = new Map<object, KillGuardRuntime>();
 
 export interface ActivateKillGuardRuntimeOptions {
 	/** Whoever keeps the runtime active (one per session); the runtime stays active until every holder releases. */
@@ -157,32 +168,32 @@ export function activateKillGuardRuntime(options: ActivateKillGuardRuntimeOption
 		};
 		installed.set(options.agentDir, runtime);
 	}
-	holders.add(options.holder);
-	active = runtime;
+	holders.delete(options.holder);
+	holders.set(options.holder, runtime);
 	return runtime;
 }
 
-/** Drops one holder; the runtime layer stops reaching new processes once none is left. */
+/**
+ * Drops one holder (its session ended, or its user switched the guard off); the other holders keep theirs, and the
+ * runtime layer stops reaching new processes once none is left.
+ */
 export function releaseKillGuardRuntime(holder: object): void {
 	holders.delete(holder);
-	if (holders.size === 0) active = undefined;
-}
-
-/** The user switched the guard off: no new process gets the runtime layer, whoever held it. */
-export function deactivateKillGuardRuntime(): void {
-	holders.clear();
-	active = undefined;
 }
 
 export function activeKillGuardRuntime(): KillGuardRuntime | undefined {
+	let active: KillGuardRuntime | undefined;
+	for (const runtime of holders.values()) active = runtime;
 	return active;
 }
 
 export function withKillGuardRuntime(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const active = activeKillGuardRuntime();
 	return active === undefined ? env : { ...env, ...killGuardEnvironment(env, active) };
 }
 
 /** The runtime layer's variables for a kernel session environment built on `base`; empty when none is active. */
 export function activeKillGuardEnvironment(base: NodeJS.ProcessEnv): Record<string, string> {
+	const active = activeKillGuardRuntime();
 	return active === undefined ? {} : killGuardEnvironment(base, active);
 }

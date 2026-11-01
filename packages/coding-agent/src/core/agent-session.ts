@@ -101,6 +101,7 @@ import {
 } from "../modes/rpc/tool-child/session-child.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
+import { getUserShellEnv } from "../utils/shell.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
@@ -13540,6 +13541,8 @@ export class AgentSession {
 					},
 					signal: abortController.signal,
 					redactSecretsInOutput: this.settingsManager.getBashRedactSecretsInOutput(),
+					// The user's own command: no kill guard runtime layer, which judges only agent commands (senpi#5349).
+					env: getUserShellEnv(),
 				},
 			);
 

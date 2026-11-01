@@ -81,7 +81,6 @@ export {
 	type ActivateKillGuardRuntimeOptions,
 	activateKillGuardRuntime,
 	activeKillGuardEnvironment,
-	deactivateKillGuardRuntime,
 	type KillGuardRuntime,
 	releaseKillGuardRuntime,
 } from "./core/kill-guard/runtime.ts";

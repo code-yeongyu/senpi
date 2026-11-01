@@ -1,7 +1,8 @@
 // senpi#5349 / code-yeongyu/oh-my-openagent#12096 (L2): bash's builtin `kill` is judged through the BASH_ENV wrapper.
 // The prelude below stops before any `kill` when the wrapper is missing and shadows `builtin` with a recorder, so no
 // test here sends a signal even if the wrapper is broken.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,6 +13,19 @@ const PRELUDE = [
 	`builtin() { printf 'builtin' >> "$LOG"; for a do printf ' [%s]' "$a" >> "$LOG"; done; printf '\\n' >> "$LOG"; }`,
 	'if [ "$(type -t kill)" != function ]; then echo NOT-WRAPPED; exit 99; fi',
 ].join("\n");
+
+/** `bash -c script` with a piped stdin, as the bash tool's stdin transport spawns it: libuv makes that pipe a socket. */
+async function runWithPipedStdin(script: string, env: NodeJS.ProcessEnv): Promise<string> {
+	const child = spawn("bash", ["-c", script], { env, stdio: ["pipe", "pipe", "ignore"] });
+	let stdout = "";
+	child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+		stdout += chunk;
+	});
+	const closed = once(child, "close");
+	child.stdin.end();
+	await closed;
+	return stdout;
+}
 
 let f: ShimFixture;
 beforeAll(() => {
@@ -65,6 +79,12 @@ describe.runIf(bashAvailable)("bash's builtin kill through BASH_ENV", () => {
 		writeFileSync(userEnv, "USER_ENV_LOADED=yes\n");
 		const result = f.run("bash", 'echo "$USER_ENV_LOADED"; type -t kill', f.env({ BASH_ENV: userEnv }));
 		expect(result.stdout).toBe("yes\nfunction\n");
+	});
+
+	it("wraps kill when stdin is a socket and the environment had no SHLVL (bash's rshd rule)", async () => {
+		const env = f.env();
+		const stdout = await runWithPipedStdin("[ -S /dev/stdin ] && echo socket; type -t kill", env);
+		expect(stdout).toBe("socket\nfunction\n");
 	});
 
 	it("does not reach a POSIX-mode /bin/sh, whose builtin kill stays unwrapped (residual 1)", () => {

@@ -4,7 +4,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { activateKillGuardRuntime, deactivateKillGuardRuntime } from "@code-yeongyu/senpi";
+import { activateKillGuardRuntime, releaseKillGuardRuntime } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime } from "../src/extension/runtime-factory.ts";
 import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from "../src/extension/session-manager.ts";
@@ -12,9 +12,10 @@ import { fakeExtensionContext } from "./eval/fakes.ts";
 
 const posix = process.platform !== "win32";
 const directories: string[] = [];
+const holders: object[] = [];
 
 afterEach(async () => {
-	deactivateKillGuardRuntime();
+	for (const holder of holders.splice(0)) releaseKillGuardRuntime(holder);
 	await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -65,7 +66,9 @@ async function kernelSessionEnv(agentDir: string): Promise<Readonly<Record<strin
 describe.runIf(posix)("kernel session environment and the kill guard's runtime layer", () => {
 	it("hands kernels the shim PATH entry, BASH_ENV and the judge exports while the guard is on", async () => {
 		const agentDir = await temporaryDirectory("senpi-kill-guard-kernel-agent-");
-		const runtime = activateKillGuardRuntime({ holder: {}, agentDir, protectedPids: () => [1, process.pid] });
+		const holder = {};
+		holders.push(holder);
+		const runtime = activateKillGuardRuntime({ holder, agentDir, protectedPids: () => [1, process.pid] });
 		expect(runtime).toBeDefined();
 		const env = await kernelSessionEnv(agentDir);
 		expect(env?.PATH?.split(delimiter)[0]).toBe(runtime?.dir);
@@ -78,7 +81,9 @@ describe.runIf(posix)("kernel session environment and the kill guard's runtime l
 	it("keeps the runtime layer out of kernels while terminal.killGuard is off in user settings (C23)", async () => {
 		const agentDir = await temporaryDirectory("senpi-kill-guard-kernel-off-");
 		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ terminal: { killGuard: "off" } }));
-		const runtime = activateKillGuardRuntime({ holder: {}, agentDir, protectedPids: () => [1] });
+		const holder = {};
+		holders.push(holder);
+		const runtime = activateKillGuardRuntime({ holder, agentDir, protectedPids: () => [1] });
 		const env = await kernelSessionEnv(agentDir);
 		expect(env?.BASH_ENV).toBeUndefined();
 		expect(env?.SENPI_KILL_GUARD_EXEC).toBeUndefined();

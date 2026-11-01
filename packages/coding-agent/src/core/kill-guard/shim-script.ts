@@ -142,13 +142,18 @@ function shim(dir: string, name: KillGuardShimName, deadlineSeconds: number): st
 __senpi_kg_dir=${quote(dir)}
 __senpi_kg_name=${name}
 ${library(deadlineSeconds)}
-# The real binary: the first PATH match outside every kill-guard shim directory.
+# The real binary: the first PATH match outside every kill-guard shim directory that no outer shim already ran. A
+# symlink to a shim elsewhere on PATH re-enters a shim, so each shim lists what it execs in SENPI_KILL_GUARD_VISITED and
+# skips every listed path: each re-entry removes one candidate, so the walk ends.
 __senpi_kg_find() (
 	set -f
 	IFS=:
 	for __senpi_kg_d in \${PATH-}; do
 		if [ -z "$__senpi_kg_d" ]; then __senpi_kg_d=.; fi
 		if [ "$__senpi_kg_d" = "$__senpi_kg_dir" ] || [ -f "$__senpi_kg_d/${KILL_GUARD_SHIM_MARKER}" ]; then continue; fi
+		case :\${SENPI_KILL_GUARD_VISITED-}: in
+		*:"$__senpi_kg_d/$1":*) continue ;;
+		esac
 		if [ -f "$__senpi_kg_d/$1" ] && [ -x "$__senpi_kg_d/$1" ]; then
 			printf '%s\\n' "$__senpi_kg_d/$1"
 			exit 0
@@ -160,7 +165,11 @@ __senpi_kg_find() (
 __senpi_kg_s=0
 __senpi_kg_decide "$$" "$__senpi_kg_name" "$@" || __senpi_kg_s=$?
 if [ "$__senpi_kg_s" -ne 0 ]; then exit "$__senpi_kg_s"; fi
-if __senpi_kg_real=$(__senpi_kg_find "$__senpi_kg_name"); then exec "$__senpi_kg_real" "$@"; fi
+if __senpi_kg_real=$(__senpi_kg_find "$__senpi_kg_name"); then
+	SENPI_KILL_GUARD_VISITED=\${SENPI_KILL_GUARD_VISITED:+$SENPI_KILL_GUARD_VISITED:}$__senpi_kg_real
+	export SENPI_KILL_GUARD_VISITED
+	exec "$__senpi_kg_real" "$@"
+fi
 printf '%s: command not found\\n' "$__senpi_kg_name" >&2
 exit 127
 `;
