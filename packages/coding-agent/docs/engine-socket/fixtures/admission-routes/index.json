@@ -9,6 +9,7 @@
 		"e-overlap.json",
 		"f-subscribe.json",
 		"g-cancelled.json",
-		"h-legacy.json"
+		"h-legacy.json",
+		"i-live-identity.json"
 	]
 }

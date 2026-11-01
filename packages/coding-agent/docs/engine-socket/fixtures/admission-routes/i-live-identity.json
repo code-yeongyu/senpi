@@ -1,0 +1,716 @@
+{
+	"compact": [
+		{
+			"type": "message_end",
+			"message": {
+				"role": "custom",
+				"customType": "environment-context",
+				"content": "<environment_context>\n  <cwd><root>/cwd</cwd>\n  <current_date>2026-11-01</current_date>\n</environment_context>",
+				"display": false,
+				"details": {
+					"cwd": "<root>/cwd",
+					"currentDate": "2026-11-01"
+				},
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000001",
+			"terminalSequence": 1
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "first"
+					}
+				],
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000002",
+			"terminalSequence": 2
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000001",
+				"parentId": "00000002",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": [
+						{
+							"type": "text",
+							"text": "first"
+						}
+					],
+					"timestamp": 1793491200000
+				},
+				"inputSource": "rpc"
+			},
+			"sessionId": "rpc-1",
+			"owningMessageId": "00000000-0000-4000-8000-000000000002"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "custom",
+				"customType": "senpi.todo-first-turn",
+				"content": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
+				"display": false,
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000003",
+			"terminalSequence": 3
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "persisted answer"
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": 13491,
+					"output": 4,
+					"cacheRead": 0,
+					"cacheWrite": 13491,
+					"totalTokens": 26986,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "stop",
+				"timestamp": 1,
+				"thinkingLevel": "off",
+				"timing": {
+					"requestedAt": 1793491200000,
+					"firstTokenAt": 1793491200000,
+					"lastTokenAt": 1793491200000,
+					"endedAt": 1793491200000
+				}
+			},
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000004",
+			"terminalSequence": 4
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000003",
+				"parentId": "00000004",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "persisted answer"
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": 13491,
+						"output": 4,
+						"cacheRead": 0,
+						"cacheWrite": 13491,
+						"totalTokens": 26986,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "stop",
+					"timestamp": 1,
+					"thinkingLevel": "off",
+					"timing": {
+						"requestedAt": 1793491200000,
+						"firstTokenAt": 1793491200000,
+						"lastTokenAt": 1793491200000,
+						"endedAt": 1793491200000
+					}
+				}
+			},
+			"sessionId": "rpc-1",
+			"owningMessageId": "00000000-0000-4000-8000-000000000004"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "second"
+					}
+				],
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000005",
+			"terminalSequence": 5
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000005",
+				"parentId": "00000006",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": [
+						{
+							"type": "text",
+							"text": "second"
+						}
+					],
+					"timestamp": 1793491200000
+				},
+				"inputSource": "rpc"
+			},
+			"sessionId": "rpc-1",
+			"owningMessageId": "00000000-0000-4000-8000-000000000005"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "refused answer"
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": 10,
+					"output": 4,
+					"cacheRead": 13491,
+					"cacheWrite": 11,
+					"totalTokens": 13516,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "stop",
+				"timestamp": 1,
+				"thinkingLevel": "off",
+				"timing": {
+					"requestedAt": 1793491200000,
+					"firstTokenAt": 1793491200000,
+					"lastTokenAt": 1793491200000,
+					"endedAt": 1793491200000
+				}
+			},
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000006",
+			"terminalSequence": 6
+		},
+		{
+			"type": "transcript_write_failed",
+			"role": "assistant",
+			"errorMessage": "EACCES: injected transcript failure",
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000006"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "third"
+					}
+				],
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000007",
+			"terminalSequence": 7
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000007",
+				"parentId": "00000008",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": [
+						{
+							"type": "text",
+							"text": "third"
+						}
+					],
+					"timestamp": 1793491200000
+				},
+				"inputSource": "rpc"
+			},
+			"sessionId": "rpc-1",
+			"owningMessageId": "00000000-0000-4000-8000-000000000007"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "after the failure"
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": 3,
+					"output": 5,
+					"cacheRead": 13501,
+					"cacheWrite": 3,
+					"totalTokens": 13512,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "stop",
+				"timestamp": 1,
+				"thinkingLevel": "off",
+				"timing": {
+					"requestedAt": 1793491200000,
+					"firstTokenAt": 1793491200000,
+					"lastTokenAt": 1793491200000,
+					"endedAt": 1793491200000
+				}
+			},
+			"sessionId": "rpc-1",
+			"messageId": "00000000-0000-4000-8000-000000000008",
+			"terminalSequence": 8
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000009",
+				"parentId": "00000007",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "after the failure"
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": 3,
+						"output": 5,
+						"cacheRead": 13501,
+						"cacheWrite": 3,
+						"totalTokens": 13512,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "stop",
+					"timestamp": 1,
+					"thinkingLevel": "off",
+					"timing": {
+						"requestedAt": 1793491200000,
+						"firstTokenAt": 1793491200000,
+						"lastTokenAt": 1793491200000,
+						"endedAt": 1793491200000
+					}
+				}
+			},
+			"sessionId": "rpc-1",
+			"owningMessageId": "00000000-0000-4000-8000-000000000008"
+		}
+	],
+	"legacy": [
+		{
+			"type": "message_end",
+			"message": {
+				"role": "custom",
+				"customType": "environment-context",
+				"content": "<environment_context>\n  <cwd><root>/cwd</cwd>\n  <current_date>2026-11-01</current_date>\n</environment_context>",
+				"display": false,
+				"details": {
+					"cwd": "<root>/cwd",
+					"currentDate": "2026-11-01"
+				},
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "first"
+					}
+				],
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000001",
+				"parentId": "00000002",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": [
+						{
+							"type": "text",
+							"text": "first"
+						}
+					],
+					"timestamp": 1793491200000
+				},
+				"inputSource": "rpc"
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "custom",
+				"customType": "senpi.todo-first-turn",
+				"content": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
+				"display": false,
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "persisted answer"
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": 13491,
+					"output": 4,
+					"cacheRead": 0,
+					"cacheWrite": 13491,
+					"totalTokens": 26986,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "stop",
+				"timestamp": 1,
+				"thinkingLevel": "off",
+				"timing": {
+					"requestedAt": 1793491200000,
+					"firstTokenAt": 1793491200000,
+					"lastTokenAt": 1793491200000,
+					"endedAt": 1793491200000
+				}
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000003",
+				"parentId": "00000004",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "persisted answer"
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": 13491,
+						"output": 4,
+						"cacheRead": 0,
+						"cacheWrite": 13491,
+						"totalTokens": 26986,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "stop",
+					"timestamp": 1,
+					"thinkingLevel": "off",
+					"timing": {
+						"requestedAt": 1793491200000,
+						"firstTokenAt": 1793491200000,
+						"lastTokenAt": 1793491200000,
+						"endedAt": 1793491200000
+					}
+				}
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "second"
+					}
+				],
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000005",
+				"parentId": "00000006",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": [
+						{
+							"type": "text",
+							"text": "second"
+						}
+					],
+					"timestamp": 1793491200000
+				},
+				"inputSource": "rpc"
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "refused answer"
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": 10,
+					"output": 4,
+					"cacheRead": 13491,
+					"cacheWrite": 11,
+					"totalTokens": 13516,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "stop",
+				"timestamp": 1,
+				"thinkingLevel": "off",
+				"timing": {
+					"requestedAt": 1793491200000,
+					"firstTokenAt": 1793491200000,
+					"lastTokenAt": 1793491200000,
+					"endedAt": 1793491200000
+				}
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "transcript_write_failed",
+			"role": "assistant",
+			"errorMessage": "EACCES: injected transcript failure",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "third"
+					}
+				],
+				"timestamp": 1793491200000
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000007",
+				"parentId": "00000008",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": [
+						{
+							"type": "text",
+							"text": "third"
+						}
+					],
+					"timestamp": 1793491200000
+				},
+				"inputSource": "rpc"
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_end",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "after the failure"
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": 3,
+					"output": 5,
+					"cacheRead": 13501,
+					"cacheWrite": 3,
+					"totalTokens": 13512,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "stop",
+				"timestamp": 1,
+				"thinkingLevel": "off",
+				"timing": {
+					"requestedAt": 1793491200000,
+					"firstTokenAt": 1793491200000,
+					"lastTokenAt": 1793491200000,
+					"endedAt": 1793491200000
+				}
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "message",
+				"id": "00000009",
+				"parentId": "00000007",
+				"timestamp": "2026-11-01T00:00:00.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "after the failure"
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": 3,
+						"output": 5,
+						"cacheRead": 13501,
+						"cacheWrite": 3,
+						"totalTokens": 13512,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "stop",
+					"timestamp": 1,
+					"thinkingLevel": "off",
+					"timing": {
+						"requestedAt": 1793491200000,
+						"firstTokenAt": 1793491200000,
+						"lastTokenAt": 1793491200000,
+						"endedAt": 1793491200000
+					}
+				}
+			},
+			"sessionId": "rpc-1"
+		}
+	]
+}
