@@ -807,6 +807,22 @@ a consumer may retry a receipt after a rollback. A lease of another connection o
 `recovery_repair_needed` with `reason: "unknown_token"`; a malformed request is `recovery_malformed_request`.
 With the flag off it answers as any unknown session command.
 
+#### cancel_attempt
+
+Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default), cancels this connection's pending admission attempt
+(senpi#4272, S15a). The `admissionId` is the client's own id for an `open_session`, `attach_session` or
+`subscribe_sessions` that carried it; the attempt belongs to the socket that sent it, so another connection's id
+is never found.
+
+```json
+{"type": "cancel_attempt", "admissionId": "attach-9"}
+```
+
+The answer's `data` is `{outcome}`: `cancelled` when the attempt was still pending or was already cancelled,
+`already_complete` when the admission had completed or failed (cancel does not undo it), and `unknown` for an id
+this socket never used. A connection with no socket epoch (stdio) is refused with `unsupported_transport`. A malformed
+`admissionId` is refused with `admission_malformed_request`. With the flag off it answers as any unknown command.
+
 #### interactive_user
 
 A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's
