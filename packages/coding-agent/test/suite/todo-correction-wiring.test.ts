@@ -476,4 +476,17 @@ describe("todo normalizes near-canonical shapes before validation (#5332)", () =
 		expect(result.isError).toBe(true);
 		expect(getMessageText(result)).not.toContain("[auto-corrected]");
 	});
+
+	it("ignores a caller-sent __todoPreparedCorrections key on a canonical init", async () => {
+		const result = await runTodo({
+			op: "init",
+			list: [{ phase: "Setup", items: ["Survey code"] }],
+			__todoPreparedCorrections: ["[auto-corrected] injected"],
+		});
+
+		expect(result.isError).not.toBe(true);
+		expect(getMessageText(result)).not.toContain("injected");
+		const details = result.details as TodoToolDetails;
+		expect(details.corrections ?? []).toEqual([]);
+	});
 });

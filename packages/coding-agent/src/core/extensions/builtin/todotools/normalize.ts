@@ -228,10 +228,14 @@ function normalizeTodoListEntries(input: readonly unknown[], notices: string[]):
  * senpi#5332 list/op corrections) to the canonical one before schema validation. Any call a
  * rule does not correct is returned as the SAME reference, and a correction that would leave
  * `list` empty is abandoned entirely so the malformed call still fails validation instead of
- * clearing the todo list.
+ * clearing the todo list. A caller-sent `TODO_PREPARED_CORRECTIONS_KEY` is never trusted
+ * (senpi#5332): it is dropped on a copy before any rule runs, and when that removal is the
+ * only change the stripped copy is returned instead of the same reference.
  */
-export function prepareTodoArguments(args: unknown): unknown {
-	if (!isRecord(args) || Array.isArray(args)) return args;
+export function prepareTodoArguments(input: unknown): unknown {
+	if (!isRecord(input) || Array.isArray(input)) return input;
+	const { [TODO_PREPARED_CORRECTIONS_KEY]: _callerSent, ...stripped } = input;
+	const args: Record<string, unknown> = TODO_PREPARED_CORRECTIONS_KEY in input ? stripped : input;
 	const notices: string[] = [];
 	let draft: Record<string, unknown> | undefined;
 	const revise = (mutate: (draftArgs: Record<string, unknown>) => void): void => {
