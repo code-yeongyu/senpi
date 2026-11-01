@@ -7,10 +7,7 @@ import { delimiter, join } from "node:path";
 import { activateKillGuardRuntime, deactivateKillGuardRuntime } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime } from "../src/extension/runtime-factory.ts";
-import type {
-	CodemodeSessionManager,
-	CreateCodemodeSessionManagerOptions,
-} from "../src/extension/session-manager.ts";
+import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from "../src/extension/session-manager.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
 
 const posix = process.platform !== "win32";

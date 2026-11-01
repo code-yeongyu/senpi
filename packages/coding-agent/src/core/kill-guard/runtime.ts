@@ -88,7 +88,9 @@ function place(staged: string, dir: string, files: KillGuardShimFiles): void {
 
 function isKillGuardBashEnv(path: string | undefined): boolean {
 	return (
-		path !== undefined && basename(path) === KILL_GUARD_BASH_ENV && existsSync(join(dirname(path), KILL_GUARD_SHIM_MARKER))
+		path !== undefined &&
+		basename(path) === KILL_GUARD_BASH_ENV &&
+		existsSync(join(dirname(path), KILL_GUARD_SHIM_MARKER))
 	);
 }
 

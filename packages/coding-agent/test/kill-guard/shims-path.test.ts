@@ -4,7 +4,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { KILL_GUARD_SHIM_MARKER } from "../../src/core/kill-guard/runtime.ts";
-import { createShimFixture, PROTECTED, posix, type ShimFixture, SYSTEM_PATH, TAG, writeExecutable } from "./shim-fixtures.ts";
+import {
+	createShimFixture,
+	PROTECTED,
+	posix,
+	type ShimFixture,
+	SYSTEM_PATH,
+	TAG,
+	writeExecutable,
+} from "./shim-fixtures.ts";
 
 let f: ShimFixture;
 beforeAll(() => {
@@ -15,7 +23,7 @@ afterAll(() => f.cleanup());
 const missingJudge = () => ({ exec: join(f.root, "uninstalled-senpi") });
 
 describe.runIf(posix)("PATH shims", () => {
-	it("judges the expanded pattern of `pkill -f \"$P\"` and runs the real pkill with the argv unchanged (C10)", () => {
+	it('judges the expanded pattern of `pkill -f "$P"` and runs the real pkill with the argv unchanged (C10)', () => {
 		const result = f.run("/bin/sh", `P='vite --port 5173'; pkill -f "$P"`, f.env());
 		expect(result.status).toBe(0);
 		expect(result.judge).toMatch(/^fake-judge \[__kill-guard\] \[check\] \[--vantage\] \[\d+\] \[--\] /);
