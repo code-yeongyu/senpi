@@ -278,6 +278,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * Adapter support is explicit; unsupported adapters do not invoke it.
 	 */
 	onProviderStreamEvent?: (data: unknown, model: Model<Api>) => void | Promise<void>;
+	/**
+	 * Called whenever the response body delivers bytes, keep-alives included (SSE `ping` events, `:` comments).
+	 * Liveness only: it says the connection is alive, not that the model produced anything. Adapter support is
+	 * explicit; unsupported adapters do not invoke it.
+	 */
+	onTransportActivity?: () => void;
 	temperature?: number;
 	/**
 	 * Arbitrary sampling parameters merged into the request body as-is, after the named request
@@ -708,6 +714,14 @@ export interface SystemMessage {
 	 * the original. Avoid integer-like names; JSON objects reorder those.
 	 */
 	sections?: Record<string, string | null>;
+	/**
+	 * Leading message only: the start of the rendered prompt that is the same across sessions in the same
+	 * working directory. Providers with block-level prompt caching (Anthropic) send it as its own block
+	 * holding the system cache breakpoint when the rendered prompt still starts with it, so another session
+	 * reads it from cache even when the rest differs; a rewrite that no longer starts with it sends one block.
+	 * Request-time only; rendered text is unchanged (senpi#4447).
+	 */
+	stablePrefix?: string;
 	/** Complete definitions of tools that become available at this point. */
 	toolsAdded?: Tool[];
 	/** Tools that stop being available at this point. */
@@ -990,6 +1004,12 @@ export interface ToolReference {
  */
 export interface Context {
 	systemPrompt?: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions in the same working directory; the rest
+	 * changes between sessions (memory, MCP instructions). Folded into the leading system message as
+	 * `stablePrefix` when `systemPrompt` starts with it (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	messages: Message[];
 	tools?: Tool[];
 	/**
@@ -1137,6 +1157,8 @@ export interface OpenAICompletionsCompat {
 	supportsMidConvoToolAdditions?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: false; generated capable models enable it explicitly. */
 	supportsStrictMode?: boolean;
+	/** Whether function tools may mix strict and non-strict sampling in one request. Default: true. */
+	mixedStrictTools?: boolean;
 	/**
 	 * Provider-specific JSON Schema flavor for tool parameters. `"moonshot-mfjs"`
 	 * normalizes schemas for Moonshot / Kimi backends that enforce a stricter subset.

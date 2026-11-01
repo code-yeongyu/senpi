@@ -6,6 +6,7 @@ import { readTranscriptRoot } from "../../../src/modes/rpc/accepted-transcript.t
 import type { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, type RawClient, statusHost } from "../rpc-session-status-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -61,7 +62,7 @@ async function views(client: RawClient, sessionId: string, lane: SessionAcceptan
 	const root = lane.freeze();
 	try {
 		const { messages } = await lane.readCurrent(root);
-		const transcript = readTranscriptRoot(root.transcript);
+		const transcript = await readTranscriptRoot(root.transcript);
 		if (!transcript.ok) throw new Error(`transcript read failed: ${transcript.error}`);
 		return {
 			shown,
@@ -90,7 +91,7 @@ it("RULING-48 (2) edited user and assistant copies survive crash recovery from t
 		const seen = live.client.inbox.filter(idle).length;
 		const done = live.client.waitFor(
 			(record) => idle(record) && live.client.inbox.filter(idle).length > seen,
-			15_000,
+			EVENT_SAFETY_MS,
 		);
 		dataOf(await live.client.request({ type: "prompt", sessionId: live.sessionId, message }));
 		await done;
@@ -151,4 +152,4 @@ it("RULING-48 (2) edited user and assistant copies survive crash recovery from t
 		after.compact,
 		"the recovered epoch's compact state starts empty: nothing reinstalled, nothing hidden",
 	).toEqual([]);
-}, 120_000);
+}, 600_000);

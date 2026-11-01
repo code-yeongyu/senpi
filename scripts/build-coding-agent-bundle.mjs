@@ -200,7 +200,6 @@ async function buildBundle() {
 		join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 		join(codingAgentDistDir, "core", "extensions", "builtin", "permission-system", "path-identity-worker.js"),
 		join(aiDistDir, "api", "bedrock-converse-stream.js"),
-		join(aiDistDir, "auth", "oauth", "anthropic.js"),
 	]) {
 		if (!existsSync(entry)) {
 			throw new Error(`Bundle input is missing: ${relative(repoRoot, entry)}. Build the workspace packages first.`);
@@ -294,7 +293,6 @@ function buildSupervisor() {
  */
 export function lazyEntryPoints({ codingAgentDistDir, aiDistDir }) {
 	return {
-		anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
 		"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
 		cursor: join(aiDistDir, "auth", "oauth", "cursor.js"),
 		"cursor-agent": join(aiDistDir, "api", "cursor-agent.js"),

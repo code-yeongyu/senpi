@@ -129,8 +129,25 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			(event: SessionStartEvent, ctx: ExtensionContext) => attach(event, ctx),
 			sink,
 		);
+		// Boot point (senpi#5229): a session attaches at session_start and binds its UI before each turn; a runtime
+		// with no session attaches at the first tool call of a context and binds elicitation to that context's UI
+		// (the runtime's UI broker). Each context attaches once; a context with no session manager is the runtime.
+		const attachedContexts = new WeakSet<object>();
+		const runtimeKey = {};
+		const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
+		// A session drops this hook at session_start, so its tool calls emit no tool_hook_status for it (senpi#5320).
+		const dropFirstUseAttach = pi.on("tool_call", (_event, ctx) => {
+			const key = contextKey(ctx);
+			if (attachedContexts.has(key)) return undefined;
+			attachedContexts.add(key);
+			service.setMcpElicitationUiProvider(() => (ctx.hasUI ? ctx.ui : undefined));
+			void onSessionStart({ type: "session_start", reason: "startup" }, ctx);
+			return undefined;
+		});
 		pi.on("session_start", (event, ctx) => {
+			dropFirstUseAttach();
 			if (event.sizesOnly) return;
+			attachedContexts.add(contextKey(ctx));
 			const work = onSessionStart(event, ctx);
 			// First paint does not wait for attach; prompt preparation reuses its promise.
 			void work;
@@ -169,14 +186,14 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				// Use the known instructions now. Deferred catalog registration refreshes
 				// the service for subsequent turns instead of gating this provider request.
 				const systemPrompt = injectMcpInstructions(service, event.systemPrompt);
-				return systemPrompt === undefined ? undefined : { systemPrompt };
+				return systemPrompt === undefined ? undefined : { systemPrompt, systemPromptCache: "volatile" };
 			} catch (error) {
 				if (!(error instanceof Error)) throw error;
 				await reportMcpAsyncError("mcp.before_agent_start", error, sink);
 				return undefined;
 			}
 		};
-		pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
+		pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true, runLast: true });
 		pi.on(
 			"session_shutdown",
 			wrapAsync(

@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
 import { recoveryCarrier, SessionRecoveryIdentity } from "../../../src/core/session-recovery-identity.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
+import { DEFAULT_TRANSCRIPT_ANCESTRY_BYTES } from "../../../src/modes/rpc/accepted-transcript.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { createRpcSessionBinding } from "../../../src/modes/rpc/session-binding.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
@@ -14,6 +15,7 @@ import { createStructuredHarness } from "../structured-lane-sdk-harness.ts";
 import { scriptProvider, textReply } from "../structured-lane-support.ts";
 import { expectSameBytesExceptDeliveryStamp } from "../../helpers/rpc-delivery-stamp.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -106,7 +108,7 @@ it("T5 sequences in-process records in producer order, correlation before its co
 		await writer.withConnection("client", () =>
 			binding.handle({ type: "prompt", id: "p1", message: "question", clientMessageId: "c-1" }),
 		);
-		const deadline = setTimeout(() => ended.reject(new Error("no agent_end")), 20_000);
+		const deadline = setTimeout(() => ended.reject(new Error("no agent_end")), EVENT_SAFETY_MS);
 		await ended.promise.finally(() => clearTimeout(deadline));
 		await writer.flush();
 
@@ -158,7 +160,7 @@ it("T5 sequences in-process records in producer order, correlation before its co
 		harness.cleanup();
 		await scope.close();
 	}
-}, 60_000);
+}, 600_000);
 
 // Part of #4272, ruling 12 Q1: ids are minted at the start, or at a terminal with no start, and never invented.
 it("mints opaque message and turn ids at their start, at a start-less terminal, and never for an ownerless record", () => {
@@ -196,8 +198,39 @@ it("mints opaque message and turn ids at their start, at a start-less terminal, 
 	});
 });
 
-// Part of #4272, review MEDIUM-2: the host keeps each accepted append's id, never a serialized copy of its content.
-it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entry ids only, no stringify on the host loop", async () => {
+/** A retained record's slots (id, kind, parent) with array growth slack, as `accepted-transcript.ts` charges it. */
+const ANCESTRY_RECORD_BYTES = 40;
+/** A kind's first row in the epoch's kind table, before its interned string. */
+const KIND_NAME_BYTES = 64;
+/** An ASCII string's heap: a 16-byte header and one byte per code unit, 8-aligned. */
+const asciiStringBytes = (value: string): number => (value === "" ? 0 : Math.ceil((16 + value.length) / 8) * 8);
+
+/**
+ * Every string reachable from `start` through own properties (symbol-keyed and non-enumerable ones included), array
+ * slots, Map keys/values and Set members: an outside-in view that trusts no accessor or iterator of the walked objects.
+ */
+function reachableStrings(start: unknown): string[] {
+	const seen = new Set<object>();
+	const strings: string[] = [];
+	const pending: unknown[] = [start];
+	while (pending.length > 0) {
+		const value = pending.pop();
+		if (typeof value === "string") strings.push(value);
+		if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value)) continue;
+		seen.add(value);
+		if (value instanceof Map) for (const [key, item] of value) pending.push(key, item);
+		if (value instanceof Set) for (const item of value) pending.push(item);
+		for (const key of Reflect.ownKeys(value)) {
+			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+			if (descriptor && "value" in descriptor) pending.push(descriptor.value);
+		}
+	}
+	return strings;
+}
+
+// Part of #4272, review MEDIUM-2 + RULING-61 Q1 = C: the host keeps each accepted append's id, its interned kind and
+// its parent link (the previous entry's own id string), never a serialized copy of its content.
+it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entry ids, interned kinds and shared parent links only, no stringify on the host loop", async () => {
 	vi.stubEnv(FLAG, "1");
 	const dir = await mkdtemp(join(tmpdir(), "senpi-4272-ids-"));
 	const manager = SessionManager.create(dir, dir);
@@ -246,8 +279,33 @@ it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entr
 	expect(root.transcript.count).toBe(appends + 1);
 	expect(root.transcript.leafId).toBe(manager.getLeafId());
 	expect(root.transcript.tail.retainedBytes).toBe(0);
-	const retained = JSON.stringify(root.transcript).length;
-	expect(retained, "retention is the ids, independent of entry size").toBeLessThan(appends * 16 + 1024);
+	// RULING-61 Q1 = C: each append retains its id, its kind and its parent link, nothing of the entry's content.
+	const records = [...root.transcript.accepted];
+	const appended = records.slice(-appends);
+	for (const [index, record] of appended.entries()) {
+		expect(Object.keys(record).sort()).toEqual(["id", "index", "kind", "parentId"]);
+		expect(record.kind).toBe("custom");
+		// The first tree entry has no parent (the session header is not a tree node); every later one links its predecessor.
+		expect(record.parentId, "the parent link is the previous accepted entry").toBe(appended[index - 1]?.id ?? null);
+	}
+	// The charge is exactly one record's slots plus its id per append and one kind row for the epoch: no content term,
+	// no per-append kind or parent string (the kind is interned, the parent shares the previous id), within the budget.
+	const kindIsNew = ![...before.transcript.accepted].some((record) => record.kind === "custom");
+	const expectedCharge =
+		appended.reduce((sum, record) => sum + ANCESTRY_RECORD_BYTES + asciiStringBytes(record.id), 0) +
+		(kindIsNew ? KIND_NAME_BYTES + asciiStringBytes("custom") : 0);
+	const charged = root.transcript.ancestryBytes - before.transcript.ancestryBytes;
+	expect(charged, "retention is the ids, kinds and parents, independent of entry size").toBe(expectedCharge);
+	expect(charged).toBeLessThanOrEqual(appends * (ANCESTRY_RECORD_BYTES + 24) + KIND_NAME_BYTES + 24);
+	expect(root.transcript.ancestryBytes).toBeLessThan(DEFAULT_TRANSCRIPT_ANCESTRY_BYTES);
+	// Outside in (carry 55): the checks above read production's own charge and the records `AcceptedEntries` builds
+	// fresh, so a hidden retained field would pass them. Walk what the frozen root itself holds instead: everything but
+	// the shared tail (its retained bytes are 0 above) is ids, kinds and parent links, never any entry content.
+	const { tail: _tail, ...retained } = root.transcript;
+	const strings = reachableStrings(retained);
+	const longest = strings.reduce((max, value) => Math.max(max, value.length), 0);
+	expect(longest, "no string reachable from the frozen root outside its tail is entry-sized").toBeLessThan(64);
+	expect(strings.filter((value) => value.includes(content.slice(0, 64)))).toEqual([]);
 	lane.release(root);
 	manager.dispose();
 	await rm(dir, { recursive: true, force: true });

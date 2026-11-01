@@ -8,6 +8,7 @@ import {
 } from "./compact-storage-io.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { CompactTextRoots } from "./compact-text-roots.ts";
+import type { RecoveryStorageHealth } from "./compact-storage-health.ts";
 
 /**
  * Owned bounded leaves for compact current state (senpi#4272, R3.C6.4 / R3.C2.4).
@@ -26,18 +27,15 @@ const VALUE_FLUSH_BATCH = 128;
 export type LeafId = number;
 
 export class CompactWriteError extends Error {
-	readonly reason:
-		| "size_limit"
-		| "storage_unavailable"
-		| "depth_limit"
-		| "count_limit"
-		| "cycle"
-		| "unsupported_value";
+	readonly reason: "size_limit" | "storage_unavailable" | "cycle" | "unsupported_value";
+	/** Set only on a record refused at the protocol depth limit (`compact-protocol-depth.ts`): that limit. */
+	readonly limit: number | undefined;
 
-	constructor(reason: CompactWriteError["reason"]) {
-		super(`compact write refused (${reason})`);
+	constructor(reason: CompactWriteError["reason"], limit?: number) {
+		super(`compact write refused (${reason}${limit === undefined ? "" : `: depth above ${limit}`})`);
 		this.name = "CompactWriteError";
 		this.reason = reason;
+		this.limit = limit;
 	}
 }
 
@@ -56,6 +54,7 @@ export interface CompactStorageStatus {
 }
 
 export interface CompactContentStoreOptions {
+	readonly health?: RecoveryStorageHealth;
 	/** Private epoch spool directory the store creates itself (0700, never an existing one; files 0600). Not a transcript. */
 	readonly dir: string;
 	readonly io?: CompactStorageIo;
@@ -106,7 +105,7 @@ export class CompactContentStore extends CompactSegmentStorage {
 	}
 
 	constructor(options: CompactContentStoreOptions) {
-		super(options.dir, options.io ?? nodeCompactStorageIo);
+		super(options.dir, options.io ?? nodeCompactStorageIo, options.health);
 		this.spillAboveBytes = options.spillAboveBytes ?? 4 * 1024 * 1024;
 		this.spillTargetBytes = options.spillTargetBytes ?? 2 * 1024 * 1024;
 	}

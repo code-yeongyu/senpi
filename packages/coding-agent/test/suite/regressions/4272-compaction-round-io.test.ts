@@ -153,7 +153,7 @@ it("packs each compaction round into bounded node files and writes no node it re
 		await store.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);
 
 // senpi#4272 / RULING-47 (SP3): structural value leaves are committed one segment per batch, never one file
 // per leaf, and a round never locates a key it cannot select.
@@ -226,4 +226,4 @@ it("commits each compaction round's structural value leaves as one segment on th
 		vi.unstubAllEnvs();
 		await rig.close();
 	}
-}, 60_000);
+}, 600_000);

@@ -10,21 +10,24 @@ import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
 import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { WorkerSessionRegistry } from "../../../src/modes/rpc/worker-session-registry.ts";
+import { EVENT_SAFETY_MS } from "../event-safety-bound.ts";
 
 const fauxPath = fileURLToPath(new URL("../../../../ai/src/providers/faux.ts", import.meta.url));
 /** The isolate's own build of the faux provider, so its provider capture is the one the isolate's session reads. */
 export const builtFauxPath = fileURLToPath(new URL("../../../../ai/dist/providers/faux.js", import.meta.url));
-const extensionSource = (faux: string, prelude: string) => `
-import { fauxProvider, fauxAssistantMessage } from ${JSON.stringify(faux)};
+const extensionSource = (faux: string, prelude: string, responses: string) => `
+import { fauxProvider, fauxAssistantMessage, fauxToolCall } from ${JSON.stringify(faux)};
 ${prelude}
 export default function (pi) {
 	const faux = fauxProvider({ tokenSize: { min: 4, max: 4 } });
 	const answer = () => fauxAssistantMessage("an answer streamed in a few deltas", { timestamp: 1 });
-	faux.setResponses([answer(), answer(), answer()]);
+	faux.setResponses(${responses});
 	pi.registerProvider(faux.provider);
 }`;
 
 export type WireRecord = Record<string, unknown>;
+/** How long an open (a worker spawn) or the final worker exits may take before the fixture fails typed. */
+const OPEN_MS = 75_000;
 export type OutputFrame = Extract<SessionWorkerToHost, { type: "output" }>;
 
 /** An output frame as the host received it, with the lane's root read as the frame arrived (before its own apply). */
@@ -35,7 +38,9 @@ export interface ObservedFrame {
 	readonly previousCredit: number | undefined;
 }
 
-export function within<T>(name: string, promise: Promise<T>, ms = 30_000): Promise<T> {
+export { EVENT_SAFETY_MS };
+
+export function within<T>(name: string, promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	return Promise.race([
 		promise,
@@ -47,8 +52,8 @@ export function within<T>(name: string, promise: Promise<T>, ms = 30_000): Promi
 
 export async function creditOf(signal: SharedArrayBuffer): Promise<number> {
 	const state = new Int32Array(signal);
-	const waited = Atomics.waitAsync(state, 0, 0, 10_000);
-	if (waited.async) await waited.value;
+	const waited = Atomics.waitAsync(state, 0, 0, EVENT_SAFETY_MS);
+	if (waited.async && (await waited.value) === "timed-out") throw new Error("deadline: credit");
 	return Atomics.load(state, 0);
 }
 
@@ -56,10 +61,15 @@ export async function creditOf(signal: SharedArrayBuffer): Promise<number> {
  * Real session workers, the production router and writer, and the registry's own reconcile callback, which a
  * test may hold for one frame through `holdReconcile`. Only the connection sink is in memory.
  */
-export async function workerAcceptanceHost(fauxModule = fauxPath, isolatePrelude = "") {
+export async function workerAcceptanceHost(
+	fauxModule = fauxPath,
+	isolatePrelude = "",
+	/** The isolate's faux responses, as source: `answer`, `fauxAssistantMessage` and `fauxToolCall` are in scope. */
+	responses = "[answer(), answer(), answer()]",
+) {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-4272-worker-"));
 	const extensionPath = join(dir, "faux-extension.ts");
-	await writeFile(extensionPath, extensionSource(fauxModule, isolatePrelude));
+	await writeFile(extensionPath, extensionSource(fauxModule, isolatePrelude, responses));
 	const writer = new SessionEventWriter(() => {});
 	const workers: SessionWorkerClient[] = [];
 	const frames: ObservedFrame[] = [];
@@ -128,7 +138,7 @@ export async function workerAcceptanceHost(fauxModule = fauxPath, isolatePrelude
 		},
 		waitForBackpressure: async () => {},
 	});
-	const next = (name: string, predicate: (record: WireRecord) => boolean): Promise<WireRecord> => {
+	const next = (name: string, predicate: (record: WireRecord) => boolean, ms?: number): Promise<WireRecord> => {
 		const found = Promise.withResolvers<WireRecord>();
 		const listener = (record: WireRecord) => {
 			if (!predicate(record)) return;
@@ -136,12 +146,12 @@ export async function workerAcceptanceHost(fauxModule = fauxPath, isolatePrelude
 			found.resolve(record);
 		};
 		listeners.add(listener);
-		return within(name, found.promise);
+		return within(name, found.promise, ms);
 	};
 	let serial = 0;
-	const request = (command: { readonly type: string } & WireRecord): Promise<WireRecord> => {
+	const request = (command: { readonly type: string } & WireRecord, ms?: number): Promise<WireRecord> => {
 		const id = `t-${++serial}`;
-		const response = next(`response ${command.type}`, (record) => record.type === "response" && record.id === id);
+		const response = next(`response ${command.type}`, (record) => record.type === "response" && record.id === id, ms);
 		void writer.withConnection("c", () => router.handle({ ...command, id } as RpcCommand));
 		return response;
 	};
@@ -169,13 +179,17 @@ export async function workerAcceptanceHost(fauxModule = fauxPath, isolatePrelude
 			return { reached: within("reconcile held", reached.promise), release: () => release.resolve() };
 		},
 		async open(): Promise<{ sessionId: string; worker: SessionWorkerClient }> {
-			const opened = await request({
-				type: "open_session",
-				cwd: dir,
-				sessionPath: join(dir, `s-${serial}.jsonl`),
-				provider: "faux",
-				modelId: "faux-1",
-			});
+			// Carry 13: a worker spawn under heavy host load can take past 30 s; the open gets most of a test's own budget.
+			const opened = await request(
+				{
+					type: "open_session",
+					cwd: dir,
+					sessionPath: join(dir, `s-${serial}.jsonl`),
+					provider: "faux",
+					modelId: "faux-1",
+				},
+				OPEN_MS,
+			);
 			if (opened.success !== true) throw new Error(`open failed: ${JSON.stringify(opened)}`);
 			const sessionId = String((opened.data as { sessionId: string }).sessionId);
 			const worker = registry.peek(sessionId)?.worker;
@@ -184,7 +198,7 @@ export async function workerAcceptanceHost(fauxModule = fauxPath, isolatePrelude
 		},
 		async dispose() {
 			for (const worker of workers) worker.quarantine();
-			await within("workers exit", Promise.all(workers.map((worker) => worker.exited)));
+			await within("workers exit", Promise.all(workers.map((worker) => worker.exited)), OPEN_MS);
 			await router.dispose();
 			writer.unregisterConnection("c");
 			await rm(dir, { recursive: true, force: true });

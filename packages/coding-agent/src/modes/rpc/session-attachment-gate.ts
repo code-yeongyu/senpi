@@ -51,6 +51,12 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	const owner = host.writer.currentConnection();
 	if (owner === undefined || ATTACH_GATE_EXEMPT.has(command.type)) return undefined;
 	if (!("sessionId" in command) || command.sessionId === undefined) return undefined;
+	// RULING-96: compact recovery proves token/lease authority, not an ordinary session attachment.
+	if (
+		host.writer.recoveryPages !== undefined &&
+		(command.type === "get_recovery_page" || command.type === "release_recovery")
+	)
+		return undefined;
 	if (
 		command.type === "close_session" ||
 		command.type === "set_session_context" ||

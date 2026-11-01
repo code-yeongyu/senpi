@@ -22,19 +22,8 @@ import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
-
-/** A command the host refused; `errorCode` carries the typed code when the command defines one. */
-export class RpcCommandError extends Error {
-	readonly errorCode: string | undefined;
-	readonly errorData: unknown;
-
-	constructor(message: string, errorCode: string | undefined, errorData: unknown) {
-		super(message);
-		this.name = "RpcCommandError";
-		this.errorCode = errorCode;
-		this.errorData = errorData;
-	}
-}
+import { RpcCommandError } from "./rpc-command-error.ts";
+export { RpcCommandError } from "./rpc-command-error.ts";
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
@@ -68,6 +57,7 @@ import type {
 	RpcOpenQueuedEvent,
 	RpcProviderAccount,
 	RpcResponse,
+	RpcSecretInputSettledEvent,
 	RpcSessionModelEntry,
 	RpcSessionParkedEvent,
 	RpcSessionReplacedEvent,
@@ -129,6 +119,7 @@ type PromptOptions = ClientMessageIdentity & {
 
 export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
 export type RpcClientEvent =
+	| RpcSecretInputSettledEvent
 	| (JsonAgentSessionEvent & ClientMessageIdentity & { readonly clientMessages?: readonly ClientMessageIdentity[] })
 	| RpcProviderAccountEvent
 	| RpcExtensionEvent
@@ -1283,6 +1274,15 @@ export class RpcClient {
 		return this.getData<{ accounts: RpcProviderAccount[] }>(response).accounts;
 	}
 
+	/**
+	 * Re-run the sign-in connection test on one Claude subscription account and return the stored `check`. Hosts
+	 * advertising `provider_account_test` answer it; other providers fail with `unsupported_provider`.
+	 */
+	async testProviderAccount(provider: string, name: string): Promise<NonNullable<RpcProviderAccount["check"]>> {
+		const response = await this.send({ type: "test_provider_account", provider, name });
+		return this.getData<{ check: NonNullable<RpcProviderAccount["check"]> }>(response).check;
+	}
+
 	/** Pin a provider account for future session-affine requests, or clear the pin. */
 	async pinProviderAccount(provider: string, name: string | null): Promise<void> {
 		await this.send({ type: "account_pin", provider, name });
@@ -1293,9 +1293,15 @@ export class RpcClient {
 		await this.send({ type: "account_order", provider, names });
 	}
 
-	/** Remove a persisted provider account slot. Environment slots are read-only. */
-	async removeProviderAccount(provider: string, name: string): Promise<void> {
-		await this.send({ type: "account_remove", provider, name });
+	/**
+	 * Remove a persisted provider account slot. Environment slots are read-only. `notice` is set when the account was
+	 * removed but something could not be cleaned up (a Claude CLI sign-out that could not run, a malformed slot).
+	 */
+	async removeProviderAccount(provider: string, name: string): Promise<{ notice?: string }> {
+		const data = this.getData<{ notice: string } | undefined>(
+			await this.send({ type: "account_remove", provider, name }),
+		);
+		return data === undefined ? {} : { notice: data.notice };
 	}
 
 	// =========================================================================
@@ -1304,7 +1310,7 @@ export class RpcClient {
 
 	/**
 	 * Wait for agent to become idle (no streaming).
-	 * Resolves when agent_settled event is received.
+	 * Resolves on agent_idle: agent_settled can arrive while extension agent_settled handlers still run (omo#11419).
 	 */
 	waitForIdle(timeout = 60000): Promise<void> {
 		return new Promise((resolve, reject) => {
@@ -1314,7 +1320,7 @@ export class RpcClient {
 			}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_settled") {
+				if (event.type === "agent_idle") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve();
@@ -1341,6 +1347,7 @@ export class RpcClient {
 					event.type === "bash_start" ||
 					event.type === "bash_end" ||
 					event.type === "extension_ui_request" ||
+					event.type === "secret_input_settled" ||
 					// Connection-level, not part of the agent's event stream.
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
@@ -1348,7 +1355,7 @@ export class RpcClient {
 				)
 					return;
 				events.push(event);
-				if (event.type === "agent_settled") {
+				if (event.type === "agent_idle") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve(events);
