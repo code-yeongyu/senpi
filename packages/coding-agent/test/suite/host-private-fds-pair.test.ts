@@ -286,6 +286,12 @@ describe("Windows private descriptor pairs (#4859)", () => {
 			"../private-fds.ts",
 		]);
 	});
+
+	it("releases inherited fillers before the npm entry adopts the private table (senpi#4602)", () => {
+		const source = readFileSync(join(import.meta.dirname, "../../src/cli.ts"), "utf8");
+		const imports = [...source.matchAll(/^import .*?["']([^"']+)["'];/gm)].map((match) => match[1]);
+		expect(imports.slice(0, 3)).toEqual(["./valid-cwd.ts", "./private-fd-startup-release.ts", "./private-fds.ts"]);
+	});
 });
 
 describe.skipIf(process.platform !== "win32")("compiled Bun Windows pair", () => {

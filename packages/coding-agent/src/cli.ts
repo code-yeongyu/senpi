@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
-// Second: capture the private descriptor table before anything can spawn (senpi#4749).
+// Release a coordinated start's filler pipes while the private table is still in the environment (senpi#4602).
+import "./private-fd-startup-release.ts";
+// Then: capture the private descriptor table before anything can spawn (senpi#4749).
 import "./private-fds.ts";
 import "./internal-role.ts";
 import { spawn, spawnSync, type StdioOptions } from "node:child_process";
@@ -25,7 +27,6 @@ import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
 import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
 import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
-import { releaseInheritedStartupFillers } from "./private-fd-startup-fillers.ts";
 
 /**
  * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
@@ -111,9 +112,6 @@ function reexecUnderBunIfNeeded(): boolean {
 	process.exitCode = result.status ?? 1;
 	return true;
 }
-
-// A coordinated host start's filler pipes are released before anything can spawn or re-execute (senpi#4602).
-releaseInheritedStartupFillers(process.env);
 
 if (reexecUnderBunIfNeeded()) {
 	process.exit();
