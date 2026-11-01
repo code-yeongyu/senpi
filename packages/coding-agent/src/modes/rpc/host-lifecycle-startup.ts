@@ -17,13 +17,13 @@ import type { SupervisorLaunch } from "./host-lifecycle-launch.ts";
 import { relayHostStartupEvents, reportStartupMilestone, startupHandOff } from "./host-startup-beacon.ts";
 import { listen, prepareSocketPath, waitForListener } from "./host-lifecycle-proxy.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
+import { withStartupPipe } from "../../private-fd-startup-fillers.ts";
 import {
 	ADOPTION_GRANT_FILE,
 	MAX_STARTUP_EVENT_BYTES,
 	STARTUP_ATTEMPT_FILE,
 	STARTUP_EVENT_FD,
 	startupGrantLine,
-	withStartupPipe,
 } from "./host-startup-wire.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 

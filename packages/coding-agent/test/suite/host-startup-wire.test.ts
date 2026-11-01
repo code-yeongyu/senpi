@@ -11,13 +11,13 @@ import { type StartupClock, startStartupController } from "../../src/modes/rpc/h
 import {
 	encodeStartupHandOff,
 	parseStartupHandOff,
-	releaseInheritedStartupFillers,
 	relayStartupLine,
 	STARTUP_EVENT_FD,
 	type StartupBinding,
 	startupEventLine,
-	withStartupPipe,
 } from "../../src/modes/rpc/host-startup-wire.ts";
+import { releaseInheritedStartupFillers, withStartupPipe } from "../../src/private-fd-startup-fillers.ts";
+import { UNPARSEABLE_TABLE } from "../../src/private-fd-table.ts";
 
 const fillerFixture = join(import.meta.dirname, "..", "fixtures", "startup-pipe-filler-spawn.ts");
 const frozenClock: StartupClock = { now: () => 0, scheduleAt: () => undefined, cancel: () => {} };
@@ -63,6 +63,7 @@ describe("startup event wire (senpi#4602)", () => {
 				expect(report.startup).toContain('"milestone":"supervisor_bootstrap"');
 				// Node on Linux holds descriptors 3..17 itself, so the fixture can only place a private descriptor below
 				// the pipe where the runtime leaves a slot free (macOS, Bun); every other slot below the pipe is a filler.
+				if (process.platform === "darwin") expect(report.privateFd).not.toBeNull();
 				const carried: number[] = report.privateFd === null ? [] : [report.privateFd];
 				if (report.privateFd !== null) {
 					expect(report.privateWrote).toBe("private-ok");
@@ -124,6 +125,32 @@ describe("startup event wire (senpi#4602)", () => {
 			}
 		},
 	);
+
+	it.skipIf(process.platform === "win32").each([
+		["the unparseable marker", UNPARSEABLE_TABLE],
+		["a truncated table", '{"channel": '],
+		["an oversized table", JSON.stringify({ channel: 7, padding: "x".repeat(4096) })],
+	])("closes no inherited filler when the private table is %s, and still strips the list", (_label, table) => {
+		const filler = openSync("/dev/null", "r");
+		const env: NodeJS.ProcessEnv = {
+			SENPI_PRIVATE_FDS: table,
+			SENPI_RPC_HOST_STARTUP_EVENTS: encodeStartupHandOff({
+				binding: binding(),
+				role: "supervisor",
+				budgetMs: 180_000,
+				fillers: [filler],
+			}),
+		};
+		try {
+			// Node on Linux holds 3..17 itself, so only there can the opened descriptor fall outside the filler range.
+			if (process.platform === "darwin") expect(filler).toBeLessThan(STARTUP_EVENT_FD);
+			releaseInheritedStartupFillers(env);
+			expect(() => fstatSync(filler)).not.toThrow();
+			expect(parseStartupHandOff(env.SENPI_RPC_HOST_STARTUP_EVENTS)?.fillers).toEqual([]);
+		} finally {
+			closeSync(filler);
+		}
+	});
 
 	it("feeds relayed host records to the host ingress and the supervisor's own to the supervisor ingress", () => {
 		const attempt = binding();

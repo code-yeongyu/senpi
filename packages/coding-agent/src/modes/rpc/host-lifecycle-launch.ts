@@ -14,7 +14,7 @@ import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV, HOST_STARTUP_EVENTS_ENV, INTERNAL_KEY_STDIN_ENV } from "./host-identity-env.ts";
 import { hostChildStartupHandOff } from "./host-startup-beacon.ts";
 import { hostChildStdio } from "./host-lifecycle-startup.ts";
-import { releaseStartupFillers } from "./host-startup-wire.ts";
+import { releaseStartupFillers } from "../../private-fd-startup-fillers.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
 	HOST_PUBLIC_SOCKET_ENV,

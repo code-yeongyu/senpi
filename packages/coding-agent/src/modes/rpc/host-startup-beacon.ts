@@ -1,7 +1,9 @@
 /**
- * The startup stub of a coordinated launch (senpi#4602, A-amended section 2). Imported FIRST by every
- * supervisor and host-child entry, so its bootstrap milestone is written before the entry's lifecycle or
- * application graph is evaluated. It consumes its hand-off variable at load, so nothing this process
+ * The startup stub of a coordinated launch (senpi#4602, A-amended section 2). Every supervisor and host-child
+ * entry imports it before the private descriptor table (`private-fds.ts`) and its lifecycle or application
+ * graph, after only the entry's own environment guard (`valid-cwd` in cli-main, `sandbox-env-setup` in
+ * bun/cli), so its bootstrap milestone is written before that graph is evaluated and its fillers are released
+ * before the table is adopted. It consumes its hand-off variable at load, so nothing this process
  * spawns later inherits it; without the variable, or without a pipe at the startup descriptor, it is inert.
  */
 import { fstatSync, writeSync } from "node:fs";
@@ -12,13 +14,13 @@ import {
 	encodeStartupHandOff,
 	MAX_STARTUP_EVENT_BYTES,
 	parseStartupHandOff,
-	releaseInheritedStartupFillers,
 	relayStartupLine,
 	STARTUP_EVENT_FD,
 	type StartupHandOff,
 	type StartupMilestone,
 	startupEventLine,
 } from "./host-startup-wire.ts";
+import { releaseInheritedStartupFillers } from "../../private-fd-startup-fillers.ts";
 
 const STATE = Symbol.for("senpi.startup-beacon.v1");
 

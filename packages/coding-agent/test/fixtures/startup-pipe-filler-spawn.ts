@@ -9,12 +9,8 @@ import { closeSync, fstatSync, openSync, readdirSync, readFileSync } from "node:
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { preparePrivateFdSpawn } from "../../src/private-fd-spawn.ts";
-import {
-	encodeStartupHandOff,
-	releaseStartupFillers,
-	STARTUP_EVENT_FD,
-	withStartupPipe,
-} from "../../src/modes/rpc/host-startup-wire.ts";
+import { encodeStartupHandOff, STARTUP_EVENT_FD } from "../../src/modes/rpc/host-startup-wire.ts";
+import { releaseStartupFillers, withStartupPipe } from "../../src/private-fd-startup-fillers.ts";
 
 const childScript = join(import.meta.dirname, "startup-pipe-fd-child.ts");
 const [privateFile] = process.argv.slice(2);
