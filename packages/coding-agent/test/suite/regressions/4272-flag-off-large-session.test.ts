@@ -12,7 +12,7 @@ import type { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-
 import { SessionWorkerRequests } from "../../../src/modes/rpc/session-worker-requests.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 import { FLAG, laneOwned, type WireRecord } from "./4272-construction-host-support.ts";
-import { workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { EVENT_SAFETY_MS, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
 
 // Part of #4272, RULING-112: with the flag off, a session past the compact store's 4 MiB spill threshold
 // (`compact-content-store.ts`, `spillAboveBytes`) stays on main's legacy path in process and in a worker: a late attach
@@ -99,7 +99,7 @@ async function workerHost(): Promise<LargeHost> {
 		writer: host.writer,
 		records: host.records,
 		async open() {
-			const { sessionId, worker } = await host.open();
+			const { sessionId, worker } = await host.open(EVENT_SAFETY_MS);
 			const opened = host.records.find(
 				(record) => record.type === "response" && (record.data as { sessionId?: string })?.sessionId === sessionId,
 			);
