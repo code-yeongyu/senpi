@@ -19,7 +19,6 @@ import { daemonEnvironment, daemonEnvOverrides } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
-import { HANDOFF_LOCK_HOLD_MS } from "./host-handoff.ts";
 import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { BEGIN_HANDOVER_COMMAND } from "./host-handover-wire.ts";
 import { defaultHostLaunch } from "./host-launch.ts";
@@ -33,6 +32,8 @@ import {
 	refusal,
 } from "./host-outcome.ts";
 import { probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
+import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
+import { startupEnvelope } from "./host-startup-policy.ts";
 import { RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./runtime-build-id.ts";
 
 export interface IdleHandoverTerms {
@@ -43,9 +44,6 @@ export interface IdleHandoverTerms {
 }
 
 const PROBE_TIMEOUT_MS = 10_000;
-
-/** A host idle at once hands over before answering: its ensure-lock wait plus the handoff itself. */
-const BEGIN_HANDOVER_TIMEOUT_MS = 2 * HANDOFF_LOCK_HOLD_MS + 20_000;
 
 export async function idleHandoverOutcome(
 	target: { readonly socket: string; readonly agentDir: string },
@@ -82,7 +80,9 @@ export async function idleHandoverOutcome(
 	const reply = await requestOnSocket(
 		socket,
 		beginHandoverCommand(target, spec, terms, mcpPresenterEnforcement),
-		BEGIN_HANDOVER_TIMEOUT_MS,
+		// I: a host idle at once hands over before answering, so the reply covers its lock wait W, the
+		// handoff it then holds (H) and a reply margin (senpi#4602).
+		startupEnvelope(childStalledStopMaxMs()).handoverReply,
 	);
 	if (!isRecord(reply)) return reconcileLostReply(target, terms, before);
 	if (typeof reply.refused === "string") {

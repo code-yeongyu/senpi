@@ -1,17 +1,13 @@
 import { closeSync, fstatSync } from "node:fs";
 import type { Duplex } from "node:stream";
 import { isMainThread } from "node:worker_threads";
+import { decodePrivateFdTable, PRIVATE_FDS_TABLE_ENV } from "./private-fd-table.ts";
 import { inheritedDuplex, isFifoMode } from "./utils/inherited-duplex.ts";
 import { clearPrivateFdInherit } from "./utils/private-fd-inherit.ts";
 
-const TABLE_ENV = "SENPI_PRIVATE_FDS";
 /** Set only on the supervisor-to-engine hop: the engine claims its channels and never forwards them. */
 export const PRIVATE_FDS_FINAL_ENV = "SENPI_PRIVATE_FDS_FINAL";
-/** Forwarded in place of a table that was present but yielded no names, so every hop reads the same state. */
-export const UNPARSEABLE_TABLE = "unparseable";
 const STATE = Symbol.for("senpi.private-fds.v3");
-const NAME = /^[a-z][a-z0-9-]{0,63}$/;
-const QUOTED_NAME = /"([a-z][a-z0-9-]{0,63})"\s*:/g;
 
 /** A name maps to a descriptor, or to null when the launcher declared it without a usable one. */
 export type PrivateFdEntry = number | readonly [number, number] | null;
@@ -64,7 +60,7 @@ function isState(value: unknown): value is PrivateFdState {
  * at least 21 close-on-exec at startup, while Node on Linux leaks 24 and above into every child it
  * spawns. POSIX adopts only 5..15; Windows pairs instead clear inheritance explicitly at receipt.
  */
-const ADOPTABLE_MAX = 15;
+export const ADOPTABLE_MAX = 15;
 
 /**
  * The runtime's own IPC channel is an AF_UNIX socketpair too. Node names its descriptor; Bun exposes the
@@ -148,21 +144,13 @@ export function parseTable(
 	readonly parsed: boolean;
 	readonly discard: ReadonlySet<number>;
 } {
-	let value: unknown;
-	try {
-		value = encoded.length > 4096 ? undefined : JSON.parse(encoded);
-	} catch {
-		value = undefined;
-	}
+	const table = decodePrivateFdTable(encoded);
 	const entries = new Map<string, PrivateFdEntry>();
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		for (const match of encoded.slice(0, 4096).matchAll(QUOTED_NAME)) {
-			const name = match[1];
-			if (name !== undefined) entries.set(name, null);
-		}
+	if (!table.parsed) {
+		for (const name of table.names) entries.set(name, null);
 		return { entries, parsed: false, discard: new Set() };
 	}
-	const raw = Object.entries(value).filter(([name]) => NAME.test(name));
+	const raw = table.entries;
 	const runtime: PrivateFdInspection = {
 		platform: process.platform,
 		bun: process.versions.bun,
@@ -176,7 +164,7 @@ export function parseTable(
 	const cleared = new Map<number, boolean>();
 	if (runtime.platform === "win32") {
 		// Protect refused handles too, before any shape, alias, IPC, proof or type decision.
-		for (const fd of Object.values(value)) {
+		for (const fd of table.values) {
 			for (const number of Array.isArray(fd) ? fd : [fd]) {
 				if (inRange(number) && !cleared.has(number)) cleared.set(number, runtime.clearInherit(number));
 			}
@@ -216,10 +204,10 @@ export function closeDiscarded(fd: number, close: (fd: number) => void = closeSy
 function capturedState(): PrivateFdState {
 	const previous: unknown = Reflect.get(globalThis, STATE);
 	if (isState(previous)) return previous;
-	const encoded = isMainThread ? process.env[TABLE_ENV] : undefined;
+	const encoded = isMainThread ? process.env[PRIVATE_FDS_TABLE_ENV] : undefined;
 	const final = isMainThread && process.env[PRIVATE_FDS_FINAL_ENV] === "1";
 	if (isMainThread) {
-		delete process.env[TABLE_ENV];
+		delete process.env[PRIVATE_FDS_TABLE_ENV];
 		delete process.env[PRIVATE_FDS_FINAL_ENV];
 	}
 	const { entries, parsed, discard } = encoded

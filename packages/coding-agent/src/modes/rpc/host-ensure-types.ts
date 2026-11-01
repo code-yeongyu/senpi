@@ -32,13 +32,19 @@ export interface EnsureHostOptions {
 	/** Maximum wait for an already-stopping generation; capped by the normal stop budget. */
 	readonly stoppingTimeoutMs?: number;
 	readonly _test?: {
+		/** Lowers this start's decision budget G (senpi#4602); every phase deadline is clipped to it. */
 		readonly readinessTimeoutMs?: number;
 		/** How long the existing-host probe waits for get_protocol_info; tests shorten it. */
 		readonly existingHostProbeTimeoutMs?: number;
 		readonly stopTimeoutMs?: number;
 		readonly spawn?: { readonly command: string; readonly args: readonly string[] };
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */
-		readonly launch?: (args: readonly string[]) => { readonly command: string; readonly args: readonly string[] };
+		readonly launch?: (args: readonly string[]) => {
+			readonly command: string;
+			readonly args: readonly string[];
+			/** The command is the engine's own supervisor, which reports startup progress (senpi#4602). */
+			readonly reportsStartup?: boolean;
+		};
 		/** Runs after endpoint ownership is locked; deterministic concurrency-test gate. */
 		readonly afterLockAcquired?: () => Promise<void>;
 		/**

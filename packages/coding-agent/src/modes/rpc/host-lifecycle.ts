@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// First: report the coordinated start before the lifecycle graph loads (senpi#4602).
+import "./host-startup-beacon.ts";
 import "../../private-fds.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
@@ -26,12 +28,18 @@ import {
 } from "./host-lifecycle-launch.ts";
 import { resolveHostPolicy } from "./host-lifecycle-policy.ts";
 import {
+	awaitInternalStartup,
+	declareHostChild,
+	hostChildReportsStartup,
+	hostChildSpawned,
+	supervisorPublished,
+} from "./host-lifecycle-startup.ts";
+import {
 	adoptPublicSocket,
 	createPublicProxy,
 	ensurePublicSocketSecret,
 	listen,
 	prepareSocketPath,
-	waitForListener,
 } from "./host-lifecycle-proxy.ts";
 import { readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
 import {
@@ -136,8 +144,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	});
 	const watchers: Array<() => void> = [];
 
+	declareHostChild(launch.childCommand);
 	const child = spawnHostChild({
 		launch,
+		reportsStartup: hostChildReportsStartup(launch.childCommand),
 		internalSocket,
 		internal,
 		...hop.transport,
@@ -156,6 +166,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		publicSocket,
 	});
 	const childStartedAt = Date.now();
+	await hostChildSpawned(child, generation.dir, hop.supervisorStart?.time);
 	// Nothing is ever written; the pipe exists purely so its EOF is a reliable
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
@@ -253,8 +264,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
 			await owner.start(launch.ownerFd);
 		}
-		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
-		await activity.openObserver();
+		await awaitInternalStartup({
+			internalSocket,
+			internalSecret,
+			internalKey,
+			openObserver: () => activity.openObserver(),
+		});
 		if (state.shuttingDown) return;
 		// Shutdown stops the child immediately, but joins these writes before removing their directories.
 		state.startupComplete = (async () => {
@@ -283,6 +298,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			watchers.push(await drain.acceptRequests(generation));
 		})();
 		await state.startupComplete;
+		supervisorPublished();
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}

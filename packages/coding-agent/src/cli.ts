@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
-// Second: capture the private descriptor table before anything can spawn (senpi#4749).
+// Release a coordinated start's filler pipes while the private table is still in the environment (senpi#4602).
+import "./private-fd-startup-release.ts";
+// Then: capture the private descriptor table before anything can spawn (senpi#4749).
 import "./private-fds.ts";
 import "./internal-role.ts";
 import { spawn, spawnSync, type StdioOptions } from "node:child_process";
@@ -8,6 +10,7 @@ import { existsSync, fstatSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
+import { isFifoMode } from "./utils/inherited-duplex.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
@@ -23,9 +26,30 @@ import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
+import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
+import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
+
+/**
+ * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
+ * is still unread here, and the process that loads cli-main reports on the same descriptor.
+ */
+function reexecStdio(): StdioOptions {
+	const base = channelStdio();
+	if (!process.env[HOST_STARTUP_EVENTS_ENV]) return base;
+	try {
+		const stat = fstatSync(STARTUP_EVENT_FD);
+		if (!stat.isSocket() && !isFifoMode(stat.mode)) return base;
+	} catch {
+		return base;
+	}
+	const slots: StdioOptions = typeof base === "string" ? [base, base, base] : [...base];
+	while (slots.length < STARTUP_EVENT_FD) slots.push("ignore");
+	slots[STARTUP_EVENT_FD] = STARTUP_EVENT_FD;
+	return slots;
+}
 
 /** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
-function reexecStdio(): StdioOptions {
+function channelStdio(): StdioOptions {
 	const argv = process.argv.slice(2);
 	const presenter = argv.indexOf("--mcp-presenter-fd");
 	if (presenter < 0 || argv[presenter + 1] !== "4") return "inherit";

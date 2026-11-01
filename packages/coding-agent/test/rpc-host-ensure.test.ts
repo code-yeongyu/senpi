@@ -394,7 +394,9 @@ describe("ensureHost", () => {
 					args: [readinessDiagnosticFixture, qa.root],
 				},
 			}),
-		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
+		).rejects.toThrow(
+			/RPC host startup timed out: phase=public_verified; limit=overall;.*fixture readiness diagnostic/s,
+		);
 		await expect(access(daemonPaths(qa).pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
 		await expect(access(qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
 	}, 10_000);
@@ -419,7 +421,9 @@ describe("ensureHost", () => {
 					args: [readinessDiagnosticFixture, qa.root],
 				},
 			}),
-		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
+		).rejects.toThrow(
+			/RPC host startup timed out: phase=public_verified; limit=overall;.*fixture readiness diagnostic/s,
+		);
 		await expect(access(daemonPaths(qa).pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
 		await expect(access(qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
 	}, 10_000);
@@ -444,7 +448,9 @@ describe("ensureHost", () => {
 					args: [readinessDiagnosticFixture, qa.root],
 				},
 			}),
-		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
+		).rejects.toThrow(
+			/RPC host startup timed out: phase=public_verified; limit=overall;.*fixture readiness diagnostic/s,
+		);
 		await expect(access(daemonPaths(qa).pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
 	}, 10_000);
 

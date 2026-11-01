@@ -327,7 +327,19 @@ describe("Windows private descriptor pairs (#4859)", () => {
 	it("captures and clears before the compiled entry can spawn (spike item 9)", () => {
 		const source = readFileSync(join(import.meta.dirname, "../../src/bun/cli.ts"), "utf8");
 		const imports = [...source.matchAll(/^import .*?["']([^"']+)["'];/gm)].map((match) => match[1]);
-		expect(imports.slice(0, 2)).toEqual(["./sandbox-env-setup.ts", "../private-fds.ts"]);
+		// The startup stub sits between them: it spawns nothing, and it must release its filler pipes before the
+		// table is adopted (senpi#4602).
+		expect(imports.slice(0, 3)).toEqual([
+			"./sandbox-env-setup.ts",
+			"../modes/rpc/host-startup-beacon.ts",
+			"../private-fds.ts",
+		]);
+	});
+
+	it("releases inherited fillers before the npm entry adopts the private table (senpi#4602)", () => {
+		const source = readFileSync(join(import.meta.dirname, "../../src/cli.ts"), "utf8");
+		const imports = [...source.matchAll(/^import .*?["']([^"']+)["'];/gm)].map((match) => match[1]);
+		expect(imports.slice(0, 3)).toEqual(["./valid-cwd.ts", "./private-fd-startup-release.ts", "./private-fds.ts"]);
 	});
 });
 

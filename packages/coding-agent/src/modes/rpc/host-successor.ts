@@ -61,9 +61,6 @@ const DEFAULT_HANDOFF_READINESS_MS = 30_000;
 /** How long a refused handoff waits for the successor it killed to exit before releasing its record. */
 const SUCCESSOR_EXIT_WAIT_MS = 5_000;
 
-/** The longest `startSuccessor` runs: its start-time read, the readiness window, one last probe and a refusal's exit wait. */
-export const SUCCESSOR_START_BUDGET_MS = 10_000 + DEFAULT_HANDOFF_READINESS_MS + 2_000 + SUCCESSOR_EXIT_WAIT_MS;
-
 export async function startSuccessor(context: {
 	options: HandoffHostOptions;
 	paths: HostDaemonPaths;
