@@ -6,6 +6,14 @@
 const { promisify } = process.getBuiltinModule("node:util");
 const childProcess = process.getBuiltinModule("node:child_process");
 
+// The cell-visible process.kill the guard replaced; senpi's own retirement signals go through it, never the guard.
+let unguardedProcessKill;
+
+/** Senpi-internal signalling (retiring a cell's own work): the process.kill that was there before the guard. */
+export function signalUnjudged(pid, signal) {
+	return (unguardedProcessKill ?? process.kill).call(process, pid, signal);
+}
+
 // The permission runtime hands over the engine's own spawnSync (never a cell-facing wrapper) before any cell runs.
 let engineSpawnSync;
 
@@ -98,12 +106,14 @@ export function installKillGuardWrappers(guard) {
 		childProcess[name] = guarded;
 	}
 	const originalKill = process.kill;
+	unguardedProcessKill = originalKill;
 	process.kill = function killGuardedSignal(pid, signal) {
 		guard.signal(pid, signal);
 		return originalKill.call(process, pid, signal);
 	};
 	return () => {
 		process.kill = originalKill;
+		unguardedProcessKill = undefined;
 		for (const [name, original] of originals) childProcess[name] = original;
 	};
 }

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { killWindowsTree, listWindowsRows } from "./windows-tree-kill.js";
+import { signalUnjudged as signal } from "./worker-kill-guard.js";
 
 // Plain JS (with process-tree.d.ts) because the worker runtime imports it and
 // worker files cannot import TypeScript; the host imports the same module so a
@@ -10,8 +11,6 @@ const EXIT_POLL_MS = 25;
 // A hung `ps` must not hold a cell's retirement; empty output then means nothing is signalled.
 const PS_LOOKUP_TIMEOUT_MS = 2_000;
 const ZOMBIE_CHECK_INTERVAL_MS = 250;
-// Captured at load, before the kill guard wraps the cell-visible process.kill: retiring owned work is never judged.
-const signal = process.kill.bind(process);
 let cleanupExecFile = execFile;
 let initializedCleanup = false;
 
