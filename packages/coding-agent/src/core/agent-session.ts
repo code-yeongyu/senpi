@@ -5732,7 +5732,7 @@ export class AgentSession {
 		if (!evalOnlyArmed) return prompt;
 		const helpers: string[] = [];
 		const shellHelpers = ["bash", "powershell"].filter((name) => registered.has(name)).map(evalHelperCall);
-		if (shellHelpers.length > 0) helpers.push(`${shellHelpers.join(" or ")} for shell commands`);
+		if (shellHelpers.length > 0) helpers.push(`${shellHelpers.join(" / ")} shell`);
 		if (registered.has("workflow")) helpers.push(evalHelperCall("workflow"));
 		// Declared tools and SDK overrides outside the built-in groups still need eval guidance.
 		helpers.push(
@@ -5745,16 +5745,16 @@ export class AgentSession {
 		);
 		if (registered.has("glob")) {
 			helpers.push(
-				`${evalHelperCall("glob")} for file-name search (matches a glob such as **/*.ts, respects .gitignore - prefer it over find/ls in tool.bash)`,
+				`${evalHelperCall("glob")} file-name search (glob like **/*.ts, respects .gitignore; over find/ls)`,
 			);
 		}
 		if (registered.has("grep")) {
 			helpers.push(
-				`${evalHelperCall("grep")} for text search (structured matches, respects .gitignore - prefer it over rg/grep in tool.bash; paginate with skip, narrow with glob/path when a page is full)`,
+				`${evalHelperCall("grep")} text search (structured, respects .gitignore; over rg/grep; page full -> skip, narrow with glob/path)`,
 			);
 		}
 		return helpers.length > 0
-			? `${prompt}\n\nThese tools exist ONLY inside eval cells, with hooks and permissions still applied: ${helpers.join("; ")}.`
+			? `${prompt}\n\nEval-only tools (hooks + permissions still apply): ${helpers.join("; ")}.`
 			: prompt;
 	}
 

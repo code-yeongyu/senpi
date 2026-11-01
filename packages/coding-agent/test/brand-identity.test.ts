@@ -56,7 +56,7 @@ const PRESET_BUILDERS = [
 describe("agent identity", () => {
 	test("names the running product instead of a hardcoded brand", () => {
 		expect(buildIdentitySection()).toBe(
-			`You are ${APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.`,
+			`You are ${APP_NAME}, a coding agent. Work indistinguishable from a careful senior engineer's.`,
 		);
 	});
 });

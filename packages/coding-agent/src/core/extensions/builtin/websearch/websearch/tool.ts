@@ -68,7 +68,7 @@ export interface WebSearchToolOptions {
 }
 
 /** The one Tool Guidelines bullet; the server-search `## Web Search` section states it instead (senpi#5335). */
-export const WEB_SEARCH_CITE_GUIDELINE = "After using web_search, cite relevant returned URLs in the final answer.";
+export const WEB_SEARCH_CITE_GUIDELINE = "web_search used -> cite returned URLs in final answer.";
 
 export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearchToolOptions = {}): WebSearchTool {
 	let routingState: SearchRoutingState | undefined;

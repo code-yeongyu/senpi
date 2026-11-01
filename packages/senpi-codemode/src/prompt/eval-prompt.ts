@@ -120,9 +120,7 @@ export function buildEvalPrompt(
 		description,
 		promptSnippet: "Run one incremental code cell in a persistent language kernel.",
 		// Batching guidance lives in the per-style description above; the guideline keeps only what no schema states.
-		promptGuidelines: [
-			"A bracketed kernel memory notice in an eval result names the globals holding the most memory; drop the ones you no longer need.",
-		],
+		promptGuidelines: ["Bracketed kernel memory notice in eval result names biggest globals -> drop unneeded ones."],
 	};
 }
 

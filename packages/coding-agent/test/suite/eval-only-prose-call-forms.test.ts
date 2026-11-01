@@ -73,7 +73,7 @@ describe("eval-only prose call forms", () => {
 				defaultTimeoutSeconds: 7,
 			});
 
-			expect(section).toContain("about 25s");
+			expect(section).toContain("25s");
 			expect(section).toContain("default 7)");
 			expect(section).toContain("process kill deadline");
 		});

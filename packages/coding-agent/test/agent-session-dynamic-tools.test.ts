@@ -75,7 +75,7 @@ describe("AgentSession dynamic tool registration", () => {
 		// Eval-only routing keeps `bash` out of the model-visible tool array; it stays
 		// reachable through the registry, which is the path an eval cell uses.
 		const bashTool = session.getRegisteredTool("bash")!;
-		expect(session.systemPrompt).toContain("PI_* environment variables carry the current model and session details.");
+		expect(session.systemPrompt).toContain("PI_* env vars = current model + session details.");
 		await bashTool.execute("bash-env", { command: "printf ok" });
 		expect(sessionEnv).toMatchObject({
 			PI_SESSION_ID: session.sessionId,

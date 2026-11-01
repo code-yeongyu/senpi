@@ -163,7 +163,7 @@ export default function (pi: ExtensionAPI): void {
 				systemPrompt: `${systemPrompt}\n## Web Search\n${
 					failed
 						? "Use the standalone web_search tool when current information is needed. Native search failed for this session model."
-						: "web_search is the provider's server-side search: use it when current information is needed and cite the returned URLs in the final answer."
+						: "web_search = provider server-side search. Use when current info needed; cite returned URLs in final answer."
 				}`,
 			};
 		},

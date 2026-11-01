@@ -32,25 +32,25 @@ export function buildTerminalPromptSection(options: TerminalPromptOptions): stri
 	const evalOnlyReach = !options.evalOnly
 		? ""
 		: ptyBash
-			? '`bash` and `monitor` are reachable only inside eval cells as `tool.bash({ command })` and `tool.monitor(...)`; `tool_schema("bash")` and `tool_schema("monitor")` return their parameters. '
-			: '`monitor` is reachable only inside eval cells as `tool.monitor(...)`; `tool_schema("monitor")` returns its parameters. ';
+			? '`bash`, `monitor`: eval-only, call as `tool.bash({ command })` / `tool.monitor(...)`; params via `tool_schema("bash")` / `tool_schema("monitor")`. '
+			: '`monitor`: eval-only, call as `tool.monitor(...)`; params via `tool_schema("monitor")`. ';
 	const bashGuidance = ptyBash
-		? `\`bash\` is PTY-backed: never background work with tmux, a plain \`&\` job or \`nohup\` - the call's PTY hangup or timeout kills them; only \`${bash}({ command, run_in_background: true })\` creates a session that outlives the call and returns a \`bash_id\`. A foreground call blocks for about ${window}s, then auto-detaches alive to a background session; its \`timeout\` (seconds, default ${defaultTimeout}) is the process kill deadline, not how long you wait for output, and background sessions ignore it.`
+		? `\`bash\` = PTY. Never tmux, plain \`&\`, or \`nohup\` (PTY hangup or call timeout kills them). Only \`${bash}({ command, run_in_background: true })\` -> session outliving the call, returns \`bash_id\`. Foreground call blocks ~${window}s then auto-detaches alive to background. \`timeout\` (seconds, default ${defaultTimeout}) = process kill deadline, not output wait; background sessions ignore it.`
 		: "";
 	const opening = `${evalOnlyReach}${bashGuidance}`.trimEnd();
 	const longerJob = ptyBash
-		? "so start a longer job with `run_in_background` and only watch it"
-		: "so for a longer job set `persistent: true` and stop it with `kill_bash`";
+		? "longer job: `run_in_background` + watch only"
+		: "longer job: `persistent: true` + stop via `kill_bash`";
 	return `
 ## Persistent terminal sessions
 
-${opening ? `${opening}\n\n` : ""}- \`bash_output({ bash_id, filter, view })\` peeks without blocking (new output, the status line, or \`view: "screen"\` for a TUI); completion arrives as a notification with the exit code and output tail, so peeking is for steering, never for waiting.
-- To wait on observable state (CI checks, builds, log patterns, deploys, files, other sessions), register \`${monitor}\` and keep working instead of sleeping, polling, or repeatedly calling \`bash_output\`; sleep loops belong inside the monitor command. Pass exactly one source per call:
-  - \`${monitor}({ description, command, filter?, timeout_ms?, persistent? })\`: output lines matching \`filter\` arrive as events while you work and exit always delivers a summary. \`timeout_ms\` KILLS the watched command when it fires, ${longerJob}. One-shot gate: \`until <cond>; do sleep 1; done; printf 'READY\\n'\` with \`filter: "^READY$"\`. Stream: \`tail -n 0 -F <log> | grep --line-buffered <pat>\` with \`persistent: true\`. Filter noise at the source; stop with \`kill_bash\`.
-  - \`${monitor}({ description, path, event?, persistent? })\`: one regular file whose parent directory already exists, fires once, takes no \`filter\`; \`"create"\` (the default) fires only for a file that appears after registration, so use \`event: "modify"\` for an existing file and a \`command\` poll when the run creates the directory too.
-  - \`${monitor}({ type: "rpc", target, description, events?, exclude?, filter?, persistent? })\`: \`target\` is \`"children"\`, \`"all"\`, or one session id, path or \`st_\` task id; status changes and effect receipts arrive as events, \`events: "all"\` adds content, \`exclude\` drops kinds.
-- \`persistent: true\` is a standing watch: no deadline, survives a session restart (a command watch is re-run with \`SENPI_MONITOR_RESTORED=1\`, a file rescanned), expires 7 days after creation. Keep any baseline in \`$SENPI_MONITOR_STATE_DIR\` so a move during downtime (at most \`$SENPI_MONITOR_DOWNTIME_MS\` ms) is still reported, and keep failures inside the loop non-fatal: a watch whose command exits is not restarted.
-- Repeated monitor-only wakes pause the noisy monitor, not all of them; \`${monitor}({ action: "rearm", bash_id })\` resumes one, \`${monitor}({ action: "rearm" })\` all; completion and real user input also resume them.
-- \`bash_input({ bash_id, input, keys, submit })\` sends stdin or named keys (\`["ctrl+c"]\`, \`["enter"]\`) to a REPL or process; \`bash_resize({ bash_id, cols, rows })\` reflows a full-screen program; \`kill_bash({ bash_id })\` or \`{ all: true }\` tears the session tree down.
+${opening ? `${opening}\n\n` : ""}- \`bash_output({ bash_id, filter, view })\`: non-blocking peek (new output / status line / \`view: "screen"\` for TUI). Completion = notification with exit code + tail. Peek to steer, never to wait.
+- Waiting on observable state (CI, build, log pattern, deploy, file, other session): register \`${monitor}\`, keep working. No sleep/poll in cells, no repeated \`bash_output\`; sleep loops live inside monitor command. Exactly one source per call:
+  - \`${monitor}({ description, command, filter?, timeout_ms?, persistent? })\`: lines matching \`filter\` -> events; exit -> summary. \`timeout_ms\` KILLS watched command; ${longerJob}. One-shot gate: \`until <cond>; do sleep 1; done; printf 'READY\\n'\` + \`filter: "^READY$"\`. Stream: \`tail -n 0 -F <log> | grep --line-buffered <pat>\` + \`persistent: true\`. Filter noise at source; stop via \`kill_bash\`.
+  - \`${monitor}({ description, path, event?, persistent? })\`: one regular file, parent dir must exist, fires once, no \`filter\`. \`"create"\` (default) fires only for a file that appears after registration; existing file -> \`event: "modify"\`; run creates the dir too -> \`command\` poll.
+  - \`${monitor}({ type: "rpc", target, description, events?, exclude?, filter?, persistent? })\`: \`target\` = \`"children"\` / \`"all"\` / one session id, path, \`st_\` id. Status changes + effect receipts -> events; \`events: "all"\` adds content; \`exclude\` drops kinds.
+- \`persistent: true\`: no deadline, survives restart (command re-run with \`SENPI_MONITOR_RESTORED=1\`, file rescanned), expires 7 days. Baseline in \`$SENPI_MONITOR_STATE_DIR\` so a move during downtime (<= \`$SENPI_MONITOR_DOWNTIME_MS\` ms) still reported. Loop failures non-fatal: exited watch not restarted.
+- Repeated monitor-only wakes pause that noisy monitor only. \`${monitor}({ action: "rearm", bash_id })\` resumes one; \`${monitor}({ action: "rearm" })\` all. Completion and real user input also resume.
+- \`bash_input({ bash_id, input, keys, submit })\`: stdin or keys (\`["ctrl+c"]\`, \`["enter"]\`). \`bash_resize({ bash_id, cols, rows })\`: reflow TUI. \`kill_bash({ bash_id })\` / \`{ all: true }\`: tear down session tree.
 `;
 }

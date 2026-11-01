@@ -43,7 +43,7 @@ const editSchema = Type.Object(
 
 export const editToolSystemPromptContribution = {
 	snippet: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
-	guidelines: ["Put every change to one file into a single edit call."],
+	guidelines: ["All changes to one file -> one edit call."],
 } as const;
 
 export type EditToolInput = Static<typeof editSchema>;

@@ -48,11 +48,11 @@ export const TASK_MANAGEMENT_SECTION = `
 <Task_Management>
 ## Todo Management
 
-A request with three or more distinct steps gets a phased todo before the first edit - investigation, implementation, verification, final report - in the todo tool.
+Request with 3+ distinct steps -> phased todo in the todo tool before first edit: investigation, implementation, verification, final report.
 
 ## Evidence
-- File edit: inspect the changed files and diagnostics.
-- Build command: require exit code 0.
-- Test run: require passing output, or state the pre-existing failure.
+- File edit: inspect changed files + diagnostics.
+- Build: exit code 0.
+- Test run: passing output, or state the pre-existing failure.
 </Task_Management>
 `;
