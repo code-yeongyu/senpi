@@ -27,6 +27,7 @@ on:
       - 'Cargo.lock'
       - 'crates/senpi-pty/**'
       - 'crates/senpi-grep/**'
+      - 'crates/senpi-socket-secret/**'
       - 'packages/pty/**'
       - 'packages/coding-agent/native/**'
       - 'scripts/probe-native-grep*.mjs'
@@ -39,6 +40,7 @@ on:
       - 'Cargo.lock'
       - 'crates/senpi-pty/**'
       - 'crates/senpi-grep/**'
+      - 'crates/senpi-socket-secret/**'
       - 'packages/pty/**'
       - 'packages/coding-agent/native/**'
       - 'scripts/probe-native-grep*.mjs'
@@ -220,6 +222,10 @@ jobs:
           target_dir="${RUNNER_TEMP}/native-prebuild-target"
           # Each matrix row builds both native crates into a shared target-dir/output-dir.
           native_package_dirs=(crates/senpi-pty crates/senpi-grep)
+          # The socket-secret bridge is Windows-only (sisyphuslabs/omo-desktop-app#4199).
+          if [[ "${NODE_PLATFORM}" == "win32" ]]; then
+            native_package_dirs+=(crates/senpi-socket-secret)
+          fi
 
           # @napi-rs/cli 3.7.2 resolves the built artifact from
           # <target-dir>/<napi-target>/release, but cargo-zigbuild strips the glibc-version suffix
@@ -285,6 +291,11 @@ jobs:
 
           node scripts/probe-native-pty-lifecycle.mjs "${pty_file}"
           node scripts/probe-native-grep.mjs "${grep_file}"
+          if [[ "${NODE_PLATFORM}" == "win32" ]]; then
+            secret_file="$(find "${output_dir}" -type f -name 'senpi_socket_secret.*.node' | head -1)"
+            test -n "${secret_file}" || { echo "::error::expected a senpi_socket_secret.*.node file"; exit 1; }
+            node -e 'const b = require(process.argv[1]); if (b.__senpiSocketSecretAbi1() !== "1") throw new Error("socket-secret ABI mismatch"); console.log(JSON.stringify(b.kernelSessionIdentity()));' "${secret_file}"
+          fi
 
       - name: Stage artifact
         run: |
@@ -303,8 +314,10 @@ jobs:
             node_files+=("${node_file}")
           done < <(find "${output_dir}" -type f -name '*.node' | sort)
 
-          if [[ "${#node_files[@]}" -ne 2 ]]; then
-            echo "::error::expected two .node files for ${NAPI_TARGET}, found ${#node_files[@]}"
+          expected_node_files=2
+          if [[ "${NODE_PLATFORM}" == "win32" ]]; then expected_node_files=3; fi
+          if [[ "${#node_files[@]}" -ne "${expected_node_files}" ]]; then
+            echo "::error::expected ${expected_node_files} .node files for ${NAPI_TARGET}, found ${#node_files[@]}"
             printf '%s\n' "${node_files[@]}"
             exit 1
           fi
@@ -329,6 +342,18 @@ jobs:
           # straight into packages/pty; the grep addon stays flat for its own consumers.
           cp "${pty_file}" "${prebuild_dir}/senpi_pty.${host}.node"
           cp "${grep_file}" "${artifact_dir}/"
+          secret_line=""
+          if [[ "${NODE_PLATFORM}" == "win32" ]]; then
+            secret_file=""
+            for node_file in "${node_files[@]}"; do
+              case "$(basename "${node_file}")" in senpi_socket_secret.*) secret_file="${node_file}" ;; esac
+            done
+            test -n "${secret_file}" || { echo "::error::expected senpi_socket_secret.*.node for ${NAPI_TARGET}"; exit 1; }
+            secret_dir="${artifact_dir}/native/socket-secret/prebuilds/${host}"
+            mkdir -p "${secret_dir}"
+            cp "${secret_file}" "${secret_dir}/senpi_socket_secret.${host}.node"
+            secret_line="file_senpi_socket_secret=$(basename "${secret_file}")"
+          fi
           {
             echo "artifact=${{ matrix.artifact }}"
             echo "napi_target=${NAPI_TARGET}"
@@ -337,6 +362,7 @@ jobs:
             echo "node_arch=${NODE_ARCH}"
             echo "file_senpi_pty=$(basename "${pty_file}")"
             echo "file_senpi_grep=$(basename "${grep_file}")"
+            if [[ -n "${secret_line}" ]]; then echo "${secret_line}"; fi
           } > "${artifact_dir}/manifest.txt"
 
       - name: Upload native prebuild

@@ -116,8 +116,25 @@ export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, opt
 
 const vendoredRequiredFiles = ["vendor/pi-client/index.js", "vendor/pi-client/index.d.ts", "vendor/pi-protocol/index.js", "vendor/pi-protocol/index.d.ts"];
 
-export function assertSenpiPackedWorkspaceFiles(packed, manifest) {
+// The Windows socket-secret bridge has no fallback (sisyphuslabs/omo-desktop-app#4199): a publish that names its
+// targets must ship every one of them, the best-effort arm64 build included.
+export const SOCKET_SECRET_BRIDGE_TARGETS = ["win32-arm64", "win32-x64"];
+
+export function socketSecretBridgeFile(target) {
+	if (!SOCKET_SECRET_BRIDGE_TARGETS.includes(target)) {
+		throw new Error(`Unsupported socket-secret bridge target: ${target}`);
+	}
+	return `native/socket-secret/prebuilds/${target}/senpi_socket_secret.${target}.node`;
+}
+
+export function assertSenpiPackedWorkspaceFiles(packed, manifest, options = {}) {
 	const filePaths = packedFilePaths(packed);
+	const missingBridges = (options.requiredSocketSecretTargets ?? [])
+		.map((target) => socketSecretBridgeFile(target))
+		.filter((path) => !filePaths.has(path));
+	if (missingBridges.length > 0) {
+		throw new Error(`senpi package tarball is missing the socket-secret bridge: ${missingBridges.join(", ")}. Stage packages/coding-agent/native/socket-secret/prebuilds/<target>/ before publishing.`);
+	}
 	// The tarball ships no dependency tree: every runtime dependency is a registry edge.
 	const shippedNodeModules = [...filePaths].find((path) => path === "node_modules" || path.startsWith("node_modules/") || path.includes("/node_modules/"));
 	if (shippedNodeModules) {
