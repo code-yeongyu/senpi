@@ -1,7 +1,7 @@
 import { catalogDigest } from "./compact-catalog-codec.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import type { RecoveryPage } from "./compact-recovery-bytes.ts";
-import type { RecoveryManifest } from "./compact-recovery-manifest.ts";
+import type { RecoveryManifest } from "./compact-recovery-manifest-shape.ts";
 
 /** The bounded manifest itself is discoverable under its token on the one S11 page route. */
 export async function manifestPage(manifest: Promise<RecoveryManifest>, offset: number): Promise<RecoveryPage> {
