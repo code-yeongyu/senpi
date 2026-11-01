@@ -4,6 +4,7 @@ import {
 	toolRuntimeCapabilities,
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
 import type { ExtensionOwner } from "./extension-owner.ts";
@@ -78,7 +79,8 @@ import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.
 import { ClientAdmissions } from "./client-admissions.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
-import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
+import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
+import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import {
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
@@ -1269,7 +1271,7 @@ export function createRpcConnectionHandler(
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
-								...(options.capabilities ?? []).filter(
+								...advertisedCompactCapabilities(options.capabilities ?? [], false).filter(
 									(capability) =>
 										capability !== SESSION_HELD_CAPABILITY && !isHostOwnedToolRuntimeCapability(capability),
 								),
@@ -1517,20 +1519,21 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_client_info": {
-				const wasGrantCapable = clientCapabilities?.includes("grant_select") === true;
+				const next = sessionDeclaration(
+					options,
+					command,
+					clientCapabilities,
+					(caps) => connectionRoles.declare(currentConnectionId(), caps),
+					replaceClientCapabilities,
+				);
+				if (next.refusal) return error(id, "set_client_info", next.refusal);
+				clientCapabilities = next.capabilities;
 				if (command.capabilities !== undefined) {
-					if (!connectionRoles.declare(currentConnectionId(), command.capabilities))
-						return error(id, "set_client_info", CONNECTION_ROLE_FIXED);
-					if (!options.clientInfo) replaceClientCapabilities(command.capabilities);
-					else {
-						clientCapabilities = command.capabilities;
-						options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
-					}
 					secretHandshake = true;
 					secretRoute.handshake?.(command.capabilities);
 					secretInputs.recheck();
 				}
-				if (wasGrantCapable !== (clientCapabilities?.includes("grant_select") === true)) refreshGrantPresentation();
+				if (next.grantChanged) refreshGrantPresentation();
 				return success(id, "set_client_info");
 			}
 
@@ -2166,10 +2169,12 @@ export function createRpcConnectionHandler(
 			}
 
 			case "login_api_key": {
-				const replacement = session.modelRegistry.authStorage.set(command.provider, {
-					type: "api_key",
-					key: command.key,
-				});
+				const credential = await apiKeyLoginCredential(
+					session.modelRuntime.getProvider(command.provider),
+					command.key,
+					command.region,
+				);
+				const replacement = session.modelRegistry.authStorage.set(command.provider, credential);
 				// The response carries what this key replaced (senpi#3448). Consume the record before the
 				// await below, so no record is pending across it and a concurrent OAuth login keeps its own (#3952).
 				session.modelRegistry.authStorage.takeReplacement(command.provider);
