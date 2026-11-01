@@ -63,16 +63,23 @@ if (group === "auth" && command === "logout" && mode === "logout-hang") {
 if (group !== "auth" || command !== "login") process.exit(2);
 
 if (mode === "login-hang") process.on("SIGTERM", () => record({ sigterm: true }));
+const terminalOutput = mode.endsWith("-terminal");
+const manualUrl = terminalOutput ? `\x1b]8;;${MANUAL_URL}\x1b\\${MANUAL_URL}\x1b]8;;\x1b\\` : MANUAL_URL;
+const successOutput = terminalOutput
+	? "\x1b[32mLogin successful.\x1b[0m\r\n"
+	: mode.endsWith("-inline")
+		? "Login successful.\n"
+		: "\nLogin successful.\n";
 process.stdout.write("Opening browser to sign in…\n");
-process.stdout.write(`If the browser didn't open, visit: ${MANUAL_URL}\n`);
+process.stdout.write(`If the browser didn't open, visit: ${manualUrl}\n`);
 if (process.env.BROWSER) spawnSync(process.env.BROWSER, [AUTOMATIC_URL], { stdio: "ignore" });
 process.stdout.write("Paste code here if prompted > ");
 
 if (mode === "login-hang") {
 	setInterval(() => {}, 1 << 30);
-} else if (mode === "login-auto") {
-	process.stdout.write("\nLogin successful.\n");
-	process.exit(0);
+} else if (mode.startsWith("login-auto") || mode === "login-exit1-success") {
+	process.stdout.write(successOutput);
+	process.exit(mode === "login-exit1-success" ? 1 : 0);
 } else if (mode === "login-org-denied") {
 	process.stderr.write("OAuth login failed: cli_auth_login_org_not_allowed\n");
 	process.exit(1);
@@ -81,7 +88,7 @@ if (mode === "login-hang") {
 	lines.once("line", (line) => {
 		record({ stdin: line });
 		if (mode === "login-exit0-silent") process.exit(0);
-		process.stdout.write("\nLogin successful.\n");
+		process.stdout.write(successOutput);
 		process.exit(0);
 	});
 }

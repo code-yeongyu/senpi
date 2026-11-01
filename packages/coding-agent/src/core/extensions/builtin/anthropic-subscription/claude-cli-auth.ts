@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { stripVTControlCharacters } from "node:util";
 import { createClaudeCliBrowserCapture } from "./claude-cli-browser-capture.ts";
 import { type ClaudeCliRun, spawnClaudeCli, stopClaudeCli } from "./claude-cli-process.ts";
 
@@ -40,7 +41,7 @@ export type ClaudeCliLogin = {
 const LOGIN_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const KILL_GRACE_MS = 5_000;
 const MANUAL_URL_LINE = /If the browser didn't open, visit: (https:\/\/\S+)\r?\n/;
-const SUCCESS_LINE = /^Login successful\.$/m;
+const SUCCESS_LINE = /^(?:Paste code here if prompted > )?Login successful\.\r?$/m;
 
 /** Accepts `code#state`, a bare code, a query string, or the full callback URL; returns the line the CLI reads. */
 export function normalizePastedCode(input: string): string | undefined {
@@ -117,7 +118,7 @@ export function startClaudeCliLogin(options: ClaudeCliLoginOptions): ClaudeCliLo
 		child.stdout?.on("data", (chunk: string) => {
 			stdout += chunk;
 			capture.flush();
-			const manual = manualSeen ? null : MANUAL_URL_LINE.exec(stdout);
+			const manual = manualSeen ? null : MANUAL_URL_LINE.exec(stripVTControlCharacters(stdout));
 			if (manual?.[1] !== undefined) {
 				manualSeen = true;
 				options.onManualUrl?.(manual[1]);
@@ -134,7 +135,7 @@ export function startClaudeCliLogin(options: ClaudeCliLoginOptions): ClaudeCliLo
 		child.once("close", (exitCode: number | null) => {
 			capture.flush();
 			if (ending !== undefined) settle({ outcome: ending });
-			else if (exitCode === 0 && SUCCESS_LINE.test(stdout)) settle({ outcome: "success" });
+			else if (exitCode === 0 && SUCCESS_LINE.test(stripVTControlCharacters(stdout))) settle({ outcome: "success" });
 			else settle({ outcome: "failed", reason: exitCode === 0 ? "unexpected_exit" : failureReason(stderr) });
 		});
 		options.signal?.addEventListener("abort", onAbort, { once: true });
