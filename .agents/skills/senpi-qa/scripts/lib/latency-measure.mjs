@@ -13,6 +13,8 @@ import { pathToFileURL } from "node:url";
 
 /** The two dispatch metrics (§6.5). Each is reported over all workloads and per workload (`E01.<metric>`). */
 const DISPATCH_METRICS = ["dispatch_to_body_ms", "body_to_next_request_ms"];
+/** TUI frame time (§6.5): the interval between consecutive rendered frames while E01's answer streams. */
+export const TUI_FRAME_METRIC = "tui_frame_ms";
 
 const QUANTILES = { p50: 0.5, p95: 0.95 };
 const round = (ms) => Math.round(ms * 100) / 100;
@@ -44,8 +46,53 @@ export function iterationSamples({ callAt, nextAt, bodies }) {
 	};
 }
 
-/** One run's metrics from `{ <workload id>: iteration[] }`: aggregate and per-workload p50/p95 with sample counts. */
-export function runMetrics(workloads) {
+/** Words per streamed answer before its marker. */
+const ANSWER_WORDS = 30;
+const LETTERS = "abcdefghijklmnopqrstuvwxyz";
+
+/** A letter-only word for `n` (bijective base 26: a..z, aa..): digit runs would all collapse to one token below. */
+function letterWord(n) {
+	let word = "";
+	for (let rest = n + 1; rest > 0; rest = Math.floor((rest - 1) / 26)) word = LETTERS[(rest - 1) % 26] + word;
+	return word;
+}
+
+/**
+ * The answer TUI frame iteration `i` streams. Its closing marker `E01-STREAMED-<i>` is on screen only once the last delta
+ * rendered. The TTSR repetitive-turns rule collapses digit runs and interrupts the third near-identical turn in a row,
+ * which sends an unscripted provider request that takes the next iteration's scripted turn (senpi#5270), so every
+ * iteration's words are letter-only and unique to it: no two answers share a word trigram before the marker.
+ */
+export function streamedAnswer(i) {
+	const words = Array.from({ length: ANSWER_WORDS }, (_, k) => `q${letterWord(i * ANSWER_WORDS + k)}`);
+	return `${words.join(" ")} E01-STREAMED-${i}`;
+}
+
+/**
+ * Frame-time samples of one streaming window. `chunks` are the EQ.tui capture's output chunks (`{ at, frameEnds }`, the
+ * capture's `frames`) from the stream's release through the chunk whose frame shows its last delta. A frame ends where
+ * the renderer's synchronized-output FRAME_END marker arrives, so a frame split over several PTY reads is one frame
+ * however far apart its pieces land; each interval between consecutive frame ends is one sample. A window with fewer
+ * than two frame ends is an error, never an empty or zero sample.
+ */
+export function frameIntervals(chunks) {
+	const ends = [];
+	for (const { at, frameEnds } of chunks) {
+		if (typeof at !== "number" || !Number.isInteger(frameEnds))
+			throw new Error("a frame chunk has no arrival time or frame-end count");
+		for (let k = 0; k < frameEnds; k++) ends.push(at);
+	}
+	if (ends.length < 2) throw new Error(`a streaming window needs at least two frames, got ${ends.length}`);
+	return ends.slice(1).map((at, index) => at - ends[index]);
+}
+
+/**
+ * One run's metrics from `{ <workload id>: iteration[] }` and the run's TUI frame-time samples: aggregate and
+ * per-workload dispatch p50/p95, plus `tui_frame_ms`, each with its sample count.
+ */
+export function runMetrics(workloads, frameSamples) {
+	if (!Array.isArray(frameSamples) || frameSamples.length === 0)
+		throw new Error(`a run needs ${TUI_FRAME_METRIC} samples`);
 	const pooled = Object.fromEntries(DISPATCH_METRICS.map((metric) => [metric, []]));
 	const metrics = {};
 	for (const [id, iterations] of Object.entries(workloads)) {
@@ -60,6 +107,7 @@ export function runMetrics(workloads) {
 		}
 	}
 	for (const metric of DISPATCH_METRICS) metrics[metric] = summarize(pooled[metric]);
+	metrics[TUI_FRAME_METRIC] = summarize(frameSamples);
 	return metrics;
 }
 
