@@ -1,11 +1,14 @@
 import { checkpointComponents } from "./compact-catalog-families.ts";
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
+import { baseStream, openBaseBytes } from "./compact-recovery-base.ts";
+import { producePage, type RecoveryPage } from "./compact-recovery-bytes.ts";
 import {
 	type CatalogComponent,
 	type CatalogRead,
 	type CatalogRoot,
 	CompactRecoveryCatalog,
+	componentBytes,
 } from "./compact-recovery-catalog.ts";
 import {
 	type BoundedId,
@@ -15,10 +18,12 @@ import {
 	type ContentRef,
 	parseBoundedId,
 	parseContentRef,
+	parsePageRef,
 	protocolId,
 } from "./compact-recovery-ids.ts";
 import type { CheckpointToken, RecoveryRouteKind } from "./compact-recovery-types.ts";
 import { CompactValues } from "./compact-values.ts";
+import { VerifiedComponents } from "./compact-verified-components.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 
 /** A manifest string: inline when it is a bounded protocol id, otherwise a ref to its exact stored value. */
@@ -77,11 +82,17 @@ const chunks = (value: string): string[] => {
 	return parts;
 };
 
-/** One manifest and catalog per token, built once from the pinned root and released with the token. */
+/**
+ * One manifest and catalog per token, built once from the pinned root and released with the token. A component is
+ * verified once per frozen root (RULING-69 (2)): every later page or re-open on that root reuses the verified source,
+ * and the root's entries are dropped with the lease of the one token that pins it (`VerifiedComponents`). A source
+ * holds leaf positions, never bytes; S11b owns the current-page retry cache.
+ */
 export class RecoveryManifests {
 	private readonly catalogs = new CompactRecoveryCatalog();
 	private readonly building = new Map<string, Promise<Built>>();
 	private readonly ready = new Map<string, Built>();
+	private readonly verified = new VerifiedComponents();
 	private counter = 0;
 
 	manifest(
@@ -107,13 +118,56 @@ export class RecoveryManifests {
 		const parsed = parseContentRef(ref);
 		const built = this.ready.get(tokenId);
 		if (!parsed.ok || !built) throw new CompactReadError("range");
-		return lane.cutStorage(root, (store) => this.catalogs.read(store, built.root, parsed.value));
+		return lane.cutStorage(root, (store, valid) => this.catalogs.read(store, built.root, parsed.value, valid));
+	}
+
+	get verifiedComponents(): number {
+		return this.verified.size;
+	}
+
+	/** `tokenId` pins `root` for the cache; a root another live token pins is a `FrozenRootPinnedError`. */
+	pin(tokenId: string, root: FrozenAcceptedRoot): void {
+		this.verified.pin(tokenId, root);
+	}
+
+	/**
+	 * One page of a component's bytes at a raw byte offset, or of the cut's loaded base under its reserved ref (S11c,
+	 * `compact-recovery-base.ts`); a ref that names a node or nothing is `range`. A first open verifies the source
+	 * inside this request under its `signal`; it is cached only while the token still holds it.
+	 */
+	page(
+		tokenId: string,
+		lane: SessionAcceptanceLane,
+		root: FrozenAcceptedRoot,
+		ref: string,
+		offset: number,
+		signal?: AbortSignal,
+	): Promise<RecoveryPage> {
+		const target = parsePageRef(ref);
+		const built = this.ready.get(tokenId);
+		if (!target.ok || !built) throw new CompactReadError("range");
+		return lane.cutStorage(root, async (store, valid) => {
+			let bytes = this.verified.get(root, target.value.ref);
+			if (!bytes) {
+				bytes =
+					target.value.kind === "base"
+						? await openBaseBytes(
+								baseStream(root.transcript, built.manifest.catalogRoot, target.value.ref),
+								valid,
+								signal,
+							)
+						: componentBytes(await this.catalogs.read(store, built.root, target.value.ref, valid, signal));
+				if (this.ready.get(tokenId) === built) this.verified.set(tokenId, root, target.value.ref, bytes);
+			}
+			return producePage(bytes, offset, valid);
+		});
 	}
 
 	release(tokenId: string): void {
 		const built = this.ready.get(tokenId);
 		this.ready.delete(tokenId);
 		this.building.delete(tokenId);
+		this.verified.drop(tokenId);
 		if (built) this.catalogs.release(built.store, built.root);
 	}
 
