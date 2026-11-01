@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { BaseContentHash } from "../../core/session-file-identity.ts";
 import type { FileEntry } from "../../core/session-manager.ts";
 import {
 	type PersistedBase,
@@ -251,6 +252,7 @@ export async function readTranscriptRoot(root: TranscriptRoot): Promise<Transcri
 					fileIdentity: persistence.fileIdentity,
 					count: 0,
 					idFingerprint: createHash("sha256").digest("hex"),
+					contentFingerprint: new BaseContentHash().digest(),
 				});
 		const persisted = base
 			? readPersistedBase(base, root.accepted.idsBefore(hold.fileCount))

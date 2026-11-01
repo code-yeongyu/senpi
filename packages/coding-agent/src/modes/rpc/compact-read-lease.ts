@@ -1,6 +1,12 @@
+import type { PersistedBaseError } from "../../core/session-transcript-journal.ts";
+
 export class CompactReadError extends Error {
-	/** `integrity`: stored bytes no longer match their recorded digest (S09); refused before any decode. */
+	/**
+	 * `integrity`: stored bytes no longer match their recorded digest (S09); refused before any decode. A
+	 * `PersistedBaseError`: the loaded base's file no longer is, or holds, what the cut captured (S11c).
+	 */
 	readonly reason:
+		| PersistedBaseError
 		| "released"
 		| "retired"
 		| "range"
