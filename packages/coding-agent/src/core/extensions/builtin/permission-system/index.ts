@@ -157,13 +157,38 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		type: "string",
 	});
 
+	// Boot point (senpi#5218): a session attaches at session_start; a runtime with no session attaches at
+	// the first tool call a context sees. Each context attaches once.
+	const attachedContexts = new WeakSet<object>();
+	// A context with no session manager is the runtime itself: one attach per runtime, keyed here.
+	const runtimeKey = {};
+	const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
+
 	pi.on("session_start", async (_event, ctx) => {
-		cellSession = ctx.sessionManager;
-		retireCellAuthorizers.get(ctx.sessionManager)?.();
+		attachedContexts.add(contextKey(ctx));
+		attach(ctx);
+		applyToolDenials();
+	});
+
+	// The active set is the session's tool projection, so a context with no session start skips that
+	// trim; its denied calls are still refused at tool_call.
+	const attachWithoutSession = (ctx: ExtensionContext): void => {
+		if (attachedContexts.has(contextKey(ctx))) return;
+		attachedContexts.add(contextKey(ctx));
+		try {
+			attach(ctx);
+		} catch {
+			// attach recorded the failure in setupError, which refuses this call and every later one.
+		}
+	};
+
+	const attach = (ctx: ExtensionContext): void => {
+		cellSession = contextKey(ctx);
+		retireCellAuthorizers.get(contextKey(ctx))?.();
 		retireCellAuthorizers.set(
-			ctx.sessionManager,
+			contextKey(ctx),
 			registerCellAuthorizer(
-				ctx.sessionManager,
+				contextKey(ctx),
 				createCellDecision(
 					() => {
 						followPresetFlag(ctx.cwd, ctx.agentDir);
@@ -180,10 +205,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			),
 		);
 		// Registered before loading, so a failed load reports no preset instead of an older load's.
-		retirePresetReaders.get(ctx.sessionManager)?.();
+		retirePresetReaders.get(contextKey(ctx))?.();
 		retirePresetReaders.set(
-			ctx.sessionManager,
-			registerPermissionPresetReader(ctx.sessionManager, () => {
+			contextKey(ctx),
+			registerPermissionPresetReader(contextKey(ctx), () => {
 				followPresetFlag(ctx.cwd, ctx.agentDir);
 				return setupError === null ? (activePreset ?? undefined) : undefined;
 			}),
@@ -198,10 +223,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			if (cellSession) updateCellEnforcement(cellSession, staticRuleset, activePreset, true);
 			throw error;
 		}
-		retireAuthorizers.get(ctx.sessionManager)?.();
-		retireAuthorizers.set(ctx.sessionManager, registerDispatchAuthorizer(ctx.sessionManager, dispatchAuthorizer));
-		applyToolDenials();
-	});
+		retireAuthorizers.get(contextKey(ctx))?.();
+		retireAuthorizers.set(contextKey(ctx), registerDispatchAuthorizer(contextKey(ctx), dispatchAuthorizer));
+	};
 
 	// `sessionApproved` carries this session's "Always" answers, not yet written to disk, across a reload.
 	const loadPermissionRules = (cwd: string, sessionApproved: Ruleset = [], agentDir?: string): void => {
@@ -279,6 +303,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const dispatchAuthorizer = createDispatchAuthorizer(
 		pi,
 		(ctx) => {
+			attachWithoutSession(ctx);
 			followPresetFlag(ctx.cwd, ctx.agentDir);
 			return { service, parsers: parserRegistry, preset: activePreset, setupError };
 		},
@@ -290,6 +315,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		signal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
+		attachWithoutSession(ctx);
 		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {
 			return { block: true, reason: `Permission setup failed: ${setupError}` };
@@ -319,8 +345,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 		const permissionRequests = permissionRequestsFor(getTools, parserRegistry, event.toolName, event.input, ctx.cwd);
-		const sessionID = ctx.sessionManager.getSessionId();
-		const approve = prepareMcpDispatchApproval(pi, event, ctx, dispatchAuthorizer);
+		const sessionID = ctx.sessionManager === undefined ? "" : ctx.sessionManager.getSessionId();
+		// The MCP dispatch approval is keyed by the session; a runtime with no session decides MCP calls here only.
+		const approve =
+			ctx.sessionManager === undefined ? undefined : prepareMcpDispatchApproval(pi, event, ctx, dispatchAuthorizer);
 
 		for (const permissionRequest of permissionRequests) {
 			const request: Request = {
