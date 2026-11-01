@@ -117,8 +117,19 @@ const PRIVATE_FD_LEAVES = new Set([
 // The filler slots and their release then moved out of the wire into private-fd-startup-fillers (4,018 source
 // bytes, 47 code lines), over the table decoder private-fds now shares, private-fd-table (1,781 / 32): moved code,
 // node:fs and modules already in the graph only, and the wire shrank to 3,631 source bytes.
+// The successor path (senpi#4602, second PR) adds exactly two more: host-endpoint-owner 7,689 source / 6,417 built
+// bytes, 130 code lines (the endpoint owner token and the mutation fence every public-entry rename/remove runs under;
+// Node builtins, socket-ownership and ownership-safe-lock, both already in the graph) and host-ensure-lock 2,633 /
+// 2,605, 31 (the canonical endpoint key the fence shares with the ensure lock; its imports were already in the graph).
+// Measured: 75 modules.
 const STARTUP_EVENT_LEAVES = new Set(
-	["host-startup-beacon", "host-startup-wire", "host-lifecycle-startup"]
+	[
+		"host-startup-beacon",
+		"host-startup-wire",
+		"host-lifecycle-startup",
+		"host-endpoint-owner",
+		"host-ensure-lock",
+	]
 		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
 		.concat(
 			"packages/coding-agent/dist/private-fd-startup-fillers.js",

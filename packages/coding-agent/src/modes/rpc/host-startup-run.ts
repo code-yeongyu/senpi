@@ -54,16 +54,19 @@ export function beginStartupAttempt(options: {
 	readonly clock?: StartupClock;
 	/** The attempt nonce, allocated before the startup intent that names it is written. */
 	readonly attempt: string;
+	/** A successor generation: its own phase path (presenter before publication) and the instance it replaces. */
+	readonly successorOf?: string | null;
 }): StartupAttempt {
-	const launchKind: StartupLaunchKind = options.coordinated ? "initial" : "legacy";
+	const successor = options.successorOf !== undefined;
+	const launchKind: StartupLaunchKind = !options.coordinated ? "legacy" : successor ? "successor" : "initial";
 	const budgetMs = options.decisionBudgetMs ?? STARTUP_DECISION_BUDGET_MS;
 	const binding: StartupBinding = {
 		attempt: options.attempt,
 		endpoint: options.socket,
 		instanceId: options.instanceId,
 		generation: options.generation,
-		launchKind: "initial",
-		predecessor: null,
+		launchKind: successor ? "successor" : "initial",
+		predecessor: options.successorOf ?? null,
 	};
 	const controller = startStartupController({
 		launchKind,
@@ -115,7 +118,7 @@ export async function driveStartupToReady(options: {
 	readonly attempt: StartupAttempt;
 	readonly socket: string;
 	readonly childExit: Promise<ChildExit>;
-	readonly presenterEnrollment: Promise<void> | undefined;
+	readonly presenterEnrollment: Promise<unknown> | undefined;
 	readonly isCompatible: (protocol: HostProtocolInfo | undefined) => boolean;
 }): Promise<StartupResult> {
 	const { controller } = options.attempt;
