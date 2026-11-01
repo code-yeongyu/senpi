@@ -23,6 +23,7 @@ const HOST_METHODS = new Set(
  * keys, or `no:<errorCode>:<error>`. A method added to or removed from `RpcCommand` fails tsc here.
  */
 export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
+	get_recovery_page: "no::Unknown command: get_recovery_page",
 	get_protocol_info:
 		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,mode,path_identity_resolver,protocolVersion,serverVersion}",
 	open_session: "ok{sessionId,state}",
@@ -140,6 +141,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	account_pin: '{"provider":"x14-none","name":null} => no::No stored credential for provider: x14-none',
 	account_remove: '{"provider":"x14-none","name":"x14"} => no::Provider account not found: x14',
 	account_order: '{"provider":"x14-none","names":null} => no::No stored credential for provider: x14-none',
+	test_provider_account: '{"provider":"x14-none","name":"x14"} => no::unsupported_provider',
 	set_client_info: '{"width":80} => ok',
 };
 

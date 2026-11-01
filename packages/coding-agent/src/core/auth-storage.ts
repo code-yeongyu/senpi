@@ -36,7 +36,7 @@ import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { migrateAnthropicOAuthToSubscription } from "./anthropic-oauth-migration.ts";
+import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
 import {
 	resolveReadOnlyCredential,
 	resolveStoredCredential,
@@ -44,6 +44,9 @@ import {
 	validateReadOnlyAuthData,
 } from "./auth-credential-values.ts";
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/provider-id.ts";
+import type { AnthropicSubscriptionCredential } from "./extensions/builtin/anthropic-subscription/accounts.ts";
+import { signInAgainMessage, signInRequiredNames } from "./extensions/builtin/anthropic-subscription/sign-in-again.ts";
 import { lockWithLossHandling } from "./file-lock.ts";
 import {
 	CredentialStoreBusyError,
@@ -80,7 +83,13 @@ function repairPoisonedPoolSlots(data: AuthStorageData): { data: AuthStorageData
 const KIND_LABEL: Readonly<Record<CredentialKind, string>> = { oauth: "OAuth login", api_key: "API key" };
 
 /** A credential problem the user should see once per change: `id` changes when the problem does. */
-export type AuthNotice = { readonly id: string; readonly provider: string; readonly message: string };
+export type AuthNotice = {
+	readonly id: string;
+	readonly provider: string;
+	readonly message: string;
+	/** Shown at every start while the problem lasts, instead of once per change. */
+	readonly repeats?: boolean;
+};
 
 /**
  * One notice per provider whose stored credential holds slots its type cannot use (senpi#3448).
@@ -104,6 +113,25 @@ function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
 		}
 	}
 	return notices;
+}
+
+/**
+ * One notice, at every start, while Claude subscription accounts from the retired sign-in still need a sign-in again
+ * (senpi#4436); it repeats until they are signed in again or removed, so it is never marked seen.
+ */
+function signInRequiredNotices(data: AuthStorageData): AuthNotice[] {
+	const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
+	const accounts = Array.isArray(subscription?.accounts) ? subscription.accounts : [];
+	const names = signInRequiredNames(accounts);
+	if (names.length === 0) return [];
+	return [
+		{
+			id: `${ANTHROPIC_SUBSCRIPTION_PROVIDER_ID}:sign-in-required:${names.join(",")}`,
+			provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+			message: signInAgainMessage(names),
+			repeats: true,
+		},
+	];
 }
 
 export type CredentialReplacement = { readonly replaced: CredentialKind; readonly backupPath?: string };
@@ -537,16 +565,16 @@ export class AuthStorage implements CredentialStore {
 		}
 		const repaired = repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData);
 		const migrated = migrateLegacyProviderKeys(repaired.data);
-		const moved = migrateAnthropicOAuthToSubscription(migrated.data);
+		const moved = signOutLegacyClaudeLogins(migrated.data);
 		if (moved.skipped && !this.reportedMigrationSkips.has(moved.skipped)) {
 			this.reportedMigrationSkips.add(moved.skipped);
 			this.recordError(
 				new Error(
-					`The Anthropic Claude subscription login in auth.json was not moved to Anthropic Subscription because ${moved.skipped}. It was left unchanged; sign in again with /login and choose "Anthropic Subscription (Claude Pro/Max)".`,
+					`A Claude login in auth.json was left unchanged because ${moved.skipped}. Claude logins from the old sign-in are no longer used; sign in again with Claude: run /login anthropic-subscription.`,
 				),
 			);
 		}
-		this.notices = unusedLoginNotices(moved.data);
+		this.notices = [...unusedLoginNotices(moved.data), ...signInRequiredNotices(moved.data)];
 		return {
 			data: moved.data,
 			repaired: repaired.repaired,
@@ -667,7 +695,9 @@ export class AuthStorage implements CredentialStore {
 		return this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
 			const replacement = this.noteReplacement(provider, currentData[provider], credential, content);
-			const next = appendLoginSlot(currentData[provider], credential);
+			const next = appendLoginSlot(currentData[provider], credential, undefined, {
+				accountIdentity: this.oauthAuth(provider)?.accountIdentity,
+			});
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: replacement, next: JSON.stringify(nextData, null, 2) };
@@ -684,7 +714,7 @@ export class AuthStorage implements CredentialStore {
 	/** Credential notices not yet marked seen; a changed problem gets a new id and shows again. */
 	pendingNotices(): ReadonlyArray<AuthNotice> {
 		const seen = this.seenNoticeIds();
-		return this.notices.filter((notice) => !seen.has(notice.id));
+		return this.notices.filter((notice) => notice.repeats === true || !seen.has(notice.id));
 	}
 
 	/**
@@ -998,10 +1028,15 @@ export class AuthStorage implements CredentialStore {
 		return [...dynamic, ...builtin];
 	}
 
-	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
-		const oauth =
+	private oauthAuth(providerId: string): OAuthAuth | undefined {
+		return (
 			this.extensionOAuthProviders.get(providerId) ??
-			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth;
+			builtinProviders().find((provider) => provider.id === providerId)?.auth.oauth
+		);
+	}
+
+	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+		const oauth = this.oauthAuth(providerId);
 		if (!oauth) throw new Error(`Unknown OAuth provider: ${providerId}`);
 		const signal = callbacks.signal ?? new AbortController().signal;
 		const interaction: AuthInteraction & { signal: AbortSignal } = {
@@ -1009,8 +1044,19 @@ export class AuthStorage implements CredentialStore {
 			prompt: (prompt) => this.handleLegacyPrompt(prompt, callbacks),
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
+		const before = this.get(providerId);
 		const credential = await oauth.login(interaction);
 		this.set(providerId, credential);
+		if (this.authPath === undefined) return;
+		// Lazy like ModelRuntime.loadCredentialPool: the pool store pulls zod, which must stay out of the
+		// model-runtime import graph that every auth-storage importer shares.
+		const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+		await retireLoginSlotHealth(
+			join(dirname(this.authPath), "credential-pool-state.json"),
+			providerId,
+			before,
+			this.get(providerId),
+		);
 	}
 
 	logout(provider: string): void {

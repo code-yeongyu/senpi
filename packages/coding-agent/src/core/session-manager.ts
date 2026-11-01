@@ -52,7 +52,13 @@ import {
 	terminateFinalSessionLine,
 } from "./session-entry-file.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
-import { captureAndCloseFileIdentity, captureFileIdentity, loadedFileIdentities } from "./session-file-identity.ts";
+import {
+	BaseContentHash,
+	captureAndCloseFileIdentity,
+	captureFileIdentity,
+	loadedContentFingerprints,
+	loadedFileIdentities,
+} from "./session-file-identity.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import type { SpawnedBy } from "./session-lifecycle-types.ts";
@@ -62,9 +68,11 @@ import {
 	type FileIdentity,
 	snapshotTranscript,
 	TranscriptJournal,
+	type TranscriptFlow,
 	type TranscriptPersistence,
 	type TranscriptTransition,
 } from "./session-transcript-journal.ts";
+import { branchFlow, compactionFlow, contextEditFlow, ownedFlowMessage } from "./session-transcript-flows.ts";
 import { TranscriptFile } from "./session-transcript-file.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
@@ -1702,11 +1710,14 @@ export class SessionManager {
 	}
 
 	private *_serializedFileEntries(): Generator<string> {
+		const content = this.capturesTranscriptBase ? new BaseContentHash() : undefined;
 		for (const entry of this.fileEntries) {
 			const bytes = this._transcriptEntryBytes(entry);
 			if (this.capturesTranscriptBase && !this.transcriptFile.unavailable) this.transcriptBytes.set(entry, bytes);
+			content?.line(bytes);
 			yield `${bytes}\n`;
 		}
+		if (content) loadedContentFingerprints.set(this.fileEntries, content.digest());
 	}
 
 	isPersisted(): boolean {
@@ -1924,7 +1935,12 @@ export class SessionManager {
 		return bytes;
 	}
 
-	private _appendEntry(entry: SessionEntry, shareable?: object, recoveryOwner?: RecoveryCarrier): void {
+	private _appendEntry(
+		entry: SessionEntry,
+		shareable?: object,
+		recoveryOwner?: RecoveryCarrier,
+		flow?: () => TranscriptFlow | undefined,
+	): void {
 		const residentEntry = this.residentStore.externalize(entry);
 		const bytes = this._persist(residentEntry);
 		const committed = this._shareMessage(residentEntry, shareable);
@@ -1933,12 +1949,16 @@ export class SessionManager {
 			const serialized = bytes ?? this._transcriptEntryBytes(residentEntry);
 			if (this.persist && !this.transcriptFile.unavailable && (!this.flushed || !this.transcriptFile.identity))
 				this.transcriptBytes.set(committed, serialized);
+			const change = flow?.();
 			this.transcriptJournal.record({
 				kind: "append",
 				id: residentEntry.id,
+				type: residentEntry.type,
+				parentId: residentEntry.parentId,
 				entry: serialized,
 				persistence: this._transcriptPersistence(),
 				...(recoveryOwner ? { owningMessageId: recoveryOwner.messageId, recoveryEpoch: recoveryOwner.epoch } : {}),
+				...(change ? { flow: change } : {}),
 			});
 		}
 	}
@@ -2207,7 +2227,8 @@ export class SessionManager {
 		usage?: Usage,
 	): string {
 		const timestamp = new Date().toISOString();
-		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
+		const from = this.buildSessionProjection();
+		const systemMessage = getCurrentSystemMessage(from.messages);
 		const id = generateId(this.idsInUse);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
@@ -2222,7 +2243,9 @@ export class SessionManager {
 			fromHook,
 			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, undefined, undefined, () =>
+			compactionFlow(from.entries, this.buildSessionProjection().entries),
+		);
 		this._trimMirrorAfterCompaction(entry);
 		return entry.id;
 	}
@@ -2397,7 +2420,10 @@ export class SessionManager {
 			targetId,
 			replacement: normalizedReplacement,
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, undefined, undefined, () => {
+			const edited = this.getEntry(targetId);
+			return contextEditFlow(entry, edited && ownedFlowMessage(projectContextEntry(edited, entry)[0]));
+		});
 		return entry.id;
 	}
 
@@ -2942,9 +2968,10 @@ export class SessionManager {
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
+		const from = this.transcriptJournal && this.buildSessionProjection().entries;
 		this.leafId = branchFromId;
 		this.mutationCount++;
-		this.transcriptJournal?.record({ kind: "leaf", leafId: branchFromId });
+		this.transcriptJournal?.record({ kind: "leaf", leafId: branchFromId, ...this._branchFlow(from) });
 	}
 
 	/**
@@ -2953,9 +2980,10 @@ export class SessionManager {
 	 * Use this when navigating to re-edit the first user message.
 	 */
 	resetLeaf(): void {
+		const from = this.transcriptJournal && this.buildSessionProjection().entries;
 		this.leafId = null;
 		this.mutationCount++;
-		this.transcriptJournal?.record({ kind: "leaf", leafId: null });
+		this.transcriptJournal?.record({ kind: "leaf", leafId: null, ...this._branchFlow(from) });
 	}
 
 	/**
@@ -2986,8 +3014,14 @@ export class SessionManager {
 			usage,
 			fromHook,
 		};
-		this._appendEntry(entry);
+		const from = this.transcriptJournal && this.buildSessionProjection().entries;
+		this._appendEntry(entry, undefined, undefined, () => this._branchFlow(from).flow);
 		return entry.id;
+	}
+
+	/** The messages a leaf move took off and put on the active path, when a consumer journals the transcript. */
+	private _branchFlow(from: readonly ProjectedSessionEntry[] | undefined): { flow?: TranscriptFlow } {
+		return from ? { flow: branchFlow(from, this.buildSessionProjection().entries) } : {};
 	}
 
 	/**

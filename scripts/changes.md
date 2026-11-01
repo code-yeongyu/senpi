@@ -1,3 +1,40 @@
+## 2026-10-30 - The coding-agent bundle no longer requires the removed Anthropic OAuth flow (senpi#4436, S7)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `packages/ai/dist/auth/oauth/anthropic.js` is gone from the required bundle inputs and from `lazyEntryPoints`.
+
+### Why
+
+- senpi#4436 (R7) deleted `packages/ai/src/auth/oauth/anthropic.ts`, so `npm run build` failed with `Bundle input is missing: packages/ai/dist/auth/oauth/anthropic.js` and emitted no `dist/bundle`. `load.ts` no longer lazily imports `./anthropic.ts`, so the load.ts cross-check needs no lazy entry for it.
+
+### Why an extension could not handle it
+
+- The release bundle's input list is build tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs list in `buildBundle` and the `lazyEntryPoints` map; an upstream re-add of an `anthropic` lazy entry lands on deleted source and must stay removed.
+
+## 2026-10-28 - Ship the path identity worker in the bundle, the binaries and the source archive (senpi#4391)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` emits `path-identity-worker` as a lazy entry beside the permission host's chunk, checks that the two share a directory (as it does for the image-resize worker), and lists the built worker in its input check.
+- `scripts/build-binaries.sh` (both platform branches) and `scripts/create-source-archive.sh` pass `src/core/extensions/builtin/permission-system/path-identity-worker.ts` as an explicit compile entry, mirroring `image-resize-worker`.
+
+### Why
+
+- The permission system resolves path identity in a worker started from a file beside its host module; without these entries the npm bundle and the compiled binaries would not contain the worker.
+
+### Why an extension could not handle it
+
+- The bundle, binary and source-archive builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyEntryPoints` list and the compile entry lists next to `image-resize-worker`.
+
 ## 2026-10-27 - Account for the capture responsibility split (part of #4272)
 
 ### What changed

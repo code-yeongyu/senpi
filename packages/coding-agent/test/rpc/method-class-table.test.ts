@@ -244,6 +244,7 @@ describe("RPC method classes (senpi#4319)", () => {
 			{ type: "set_fast_mode", enabled: true },
 			{ type: "get_auth_providers" },
 			{ type: "get_provider_accounts" },
+			{ type: "test_provider_account", provider: "p", name: "n" },
 		])
 			expect([record.type, classifyRpcMethod(record)]).toEqual([record.type, "device_admin"]);
 		expect(classifyRpcMethod({ type: "set_auto_compaction", enabled: true })).toBe("drive");

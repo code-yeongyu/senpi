@@ -26,18 +26,15 @@ const VALUE_FLUSH_BATCH = 128;
 export type LeafId = number;
 
 export class CompactWriteError extends Error {
-	readonly reason:
-		| "size_limit"
-		| "storage_unavailable"
-		| "depth_limit"
-		| "count_limit"
-		| "cycle"
-		| "unsupported_value";
+	readonly reason: "size_limit" | "storage_unavailable" | "cycle" | "unsupported_value";
+	/** Set only on a record refused at the protocol depth limit (`compact-protocol-depth.ts`): that limit. */
+	readonly limit: number | undefined;
 
-	constructor(reason: CompactWriteError["reason"]) {
-		super(`compact write refused (${reason})`);
+	constructor(reason: CompactWriteError["reason"], limit?: number) {
+		super(`compact write refused (${reason}${limit === undefined ? "" : `: depth above ${limit}`})`);
 		this.name = "CompactWriteError";
 		this.reason = reason;
+		this.limit = limit;
 	}
 }
 
@@ -232,7 +229,7 @@ export class CompactContentStore extends CompactSegmentStorage {
 		}
 	}
 
-	/** Commits at most one batch of structural leaves, in page-bounded segments, ahead of a cold-index rewrite. */
+	/** Commits one page-bounded batch of structural leaves ahead of a cold-index rewrite. */
 	async flushValues(): Promise<void> {
 		// Amortize a cold-index rewrite across a bounded batch, without waiting for every pending owner.
 		if (this.spillStopped) return;
@@ -241,8 +238,8 @@ export class CompactContentStore extends CompactSegmentStorage {
 			batch.push([id, this.leafUnits(id) * 2]);
 			if (batch.length === VALUE_FLUSH_BATCH) break;
 		}
-		// A failed run halts spilling, so flushLeaves leaves the later runs resident.
-		for (const run of this.segmentRuns(batch)) await this.flushLeaves(run);
+		// Count alone does not bound bytes; later runs stay resident for the next serial job.
+		await this.flushLeaves(this.segmentRuns(batch)[0] ?? []);
 	}
 
 	/** Serial storage jobs can flush one newly built structural page without waiting on their own queue. */
