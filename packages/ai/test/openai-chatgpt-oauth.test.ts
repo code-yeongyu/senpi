@@ -1,7 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { createOpenAIChatGPTOAuth, openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
 import { OpenAIIdTokenValidationError } from "../src/auth/oauth/openai-id-token.ts";
 import type { OAuthCredential, ProviderAuthInteraction } from "../src/auth/types.ts";
+import { createModels, createProvider } from "../src/models.ts";
 
 const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
 const REQUIRED_SCOPE = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
@@ -9,6 +11,7 @@ const neverAbortedSignal = new AbortController().signal;
 const DEVICE_ID = "e61bbe28-07ef-466d-8e5d-a344f94ab305";
 const ISSUER = "https://auth.openai.com";
 const JWKS_URL = `${ISSUER}/test-jwks`;
+const loopbackFetch = fetch;
 let signingKey: CryptoKey;
 let publicKey: JsonWebKey;
 let pendingNonce = "";
@@ -80,7 +83,7 @@ function loginInteraction(options?: {
 	callbackClientId?: string;
 	callbackError?: string;
 	callbackState?: string;
-	callbackTransport?: "loopback";
+	callbackTransport?: "manual" | "loopback";
 	onAuthorize?: (url: URL) => void;
 }): ProviderAuthInteraction {
 	let authorizeUrl: URL | undefined;
@@ -112,11 +115,11 @@ function loginInteraction(options?: {
 					prompt.signal?.addEventListener("abort", () => reject(new Error("Prompt cancelled")), { once: true });
 					void (async () => {
 						if (options.callbackState) {
-							const invalid = await fetch(callback);
+							const invalid = await loopbackFetch(callback);
 							expect(invalid.status).toBe(400);
 							callback.searchParams.set("state", expectedState);
 						}
-						await fetch(callback);
+						await loopbackFetch(callback);
 					})().catch(reject);
 				});
 			}
@@ -200,6 +203,128 @@ describe("OpenAI ChatGPT OAuth", () => {
 				getDeviceId: () => DEVICE_ID,
 			}),
 		).rejects.toMatchObject({ name: "OpenAIIdTokenValidationError" });
+	});
+
+	// #5003 W3: the selected registration, not email, binds a returning sign-in.
+	it.each([
+		[undefined, "manual"],
+		["oaiapp_existing", "manual"],
+		[undefined, "loopback"],
+		["oaiapp_existing", "loopback"],
+	] as const)("reauthorizes with callback client %s over %s", async (callbackClientId, callbackTransport) => {
+		const existing = {
+			...connectedCredential(),
+			subject: "test-subject",
+			email: "saved@example.test",
+			idToken: "retained-id-token",
+		};
+		let authorizeUrl: URL | undefined;
+		let exchangeBody: URLSearchParams | undefined;
+		stubTokenEndpoint(
+			tokenResponse(),
+			(body) => {
+				exchangeBody = body;
+			},
+			{ aud: existing.clientId },
+		);
+		const options = { getDeviceId: () => DEVICE_ID, reauthorize: existing };
+		const credential = await openaiChatGPTOAuth.login(
+			loginInteraction({
+				callbackClientId,
+				callbackTransport,
+				onAuthorize: (url) => {
+					authorizeUrl = url;
+				},
+			}),
+			options,
+		);
+		expect(authorizeUrl?.searchParams.get("client_id")).toBe(existing.clientId);
+		expect(authorizeUrl?.searchParams.get("id_token_hint")).toBe(existing.idToken);
+		expect(authorizeUrl?.searchParams.get("login_hint")).toBe(existing.email);
+		expect(authorizeUrl?.searchParams.get("ext_agent_host_id")).toBe(`urn:uuid:${DEVICE_ID}`);
+		expect(authorizeUrl?.searchParams.has("agent_name_hint")).toBe(false);
+		expect(exchangeBody?.get("client_id")).toBe(existing.clientId);
+		expect(credential).toMatchObject({ clientId: existing.clientId, subject: existing.subject });
+	});
+
+	it.each(["manual", "loopback"] as const)(
+		"rejects another callback client over %s before exchange",
+		async (callbackTransport) => {
+			const fetchMock = stubTokenEndpoint(tokenResponse());
+			const options = {
+				getDeviceId: () => DEVICE_ID,
+				reauthorize: { ...connectedCredential(), subject: "test-subject" },
+			};
+			await expect(
+				openaiChatGPTOAuth.login(
+					loginInteraction({ callbackClientId: "oaiapp_other", callbackTransport }),
+					options,
+				),
+			).rejects.toMatchObject({ name: "OpenAIReauthorizationError", code: "client_mismatch" });
+			expect(fetchMock).not.toHaveBeenCalled();
+		},
+	);
+
+	it("keeps the stored account untouched when the newly verified subject differs", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const existing = { ...connectedCredential(), subject: "selected-subject", email: "user@example.test" };
+		await credentials.modify("test-siwc", async () => existing);
+		const before = structuredClone(await credentials.read("test-siwc"));
+		const models = createModels({ credentials });
+		models.setProvider(
+			createProvider({
+				id: "test-siwc",
+				auth: { oauth: openaiChatGPTOAuth },
+				models: [],
+				api: {
+					stream: () => {
+						throw new Error("No inference in OAuth tests");
+					},
+					streamSimple: () => {
+						throw new Error("No inference in OAuth tests");
+					},
+				},
+			}),
+		);
+		stubTokenEndpoint(tokenResponse(), undefined, { aud: existing.clientId, sub: "other-subject" });
+		const options = { getDeviceId: () => DEVICE_ID, reauthorize: existing };
+		await expect(
+			models.login("test-siwc", "oauth", loginInteraction({ callbackClientId: existing.clientId }), options),
+		).rejects.toMatchObject({ name: "OpenAIReauthorizationError", code: "subject_mismatch" });
+		expect(await credentials.read("test-siwc")).toEqual(before);
+	});
+
+	it("reauthorizes a signed-out registration without retained hints", async () => {
+		const existing = { ...connectedCredential(), subject: "test-subject" };
+		stubTokenEndpoint(tokenResponse(), undefined, { aud: existing.clientId });
+		const options = { getDeviceId: () => DEVICE_ID, reauthorize: existing };
+		await expect(
+			openaiChatGPTOAuth.login(
+				loginInteraction({
+					onAuthorize: (url) => {
+						expect(url.searchParams.get("client_id")).toBe(existing.clientId);
+						expect(url.searchParams.has("id_token_hint")).toBe(false);
+						expect(url.searchParams.has("login_hint")).toBe(false);
+						expect(url.searchParams.has("agent_name_hint")).toBe(false);
+					},
+				}),
+				options,
+			),
+		).resolves.toMatchObject({ subject: existing.subject });
+	});
+
+	it.each([
+		{ clientId: undefined, subject: "test-subject" },
+		{ clientId: "dynamic_agent_client", subject: "test-subject" },
+		{ clientId: "oaiapp_existing", subject: undefined },
+	])("rejects an incomplete saved identity before authorization", async (identity) => {
+		const notify = vi.fn();
+		const options = { getDeviceId: () => DEVICE_ID, reauthorize: { ...connectedCredential(), ...identity } };
+		await expect(openaiChatGPTOAuth.login({ ...loginInteraction(), notify }, options)).rejects.toMatchObject({
+			name: "OpenAIReauthorizationError",
+			code: "invalid_account",
+		});
+		expect(notify).not.toHaveBeenCalled();
 	});
 
 	it("uses injected fetch and clock, accepts audience arrays, and expires its discovery and JWKS cache", async () => {

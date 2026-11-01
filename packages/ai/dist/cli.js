@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { builtinProviders } from "./providers/all.js";
+import { redactOAuthUrl } from "./utils/oauth-url.js";
 const AUTH_FILE = "auth.json";
 const PROVIDERS = builtinProviders().filter((provider) => provider.auth.oauth !== undefined);
 function prompt(rl, question) {
@@ -48,7 +49,7 @@ async function login(providerId) {
             notify: (event) => {
                 switch (event.type) {
                     case "auth_url":
-                        console.log(`\nOpen this URL in your browser:\n${event.url}`);
+                        console.log(`\nOpen this URL in your browser:\n${redactOAuthUrl(event.url)}`);
                         if (event.instructions)
                             console.log(event.instructions);
                         break;
