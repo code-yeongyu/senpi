@@ -1,5 +1,14 @@
 import type { ActiveBlock } from "./compact-active-block.ts";
-import type { CallCorrelation, CallProjection, CallRaw, CallScope } from "./compact-call-model.ts";
+import { CALL_NAMED_RECORDS } from "./compact-call-identity.ts";
+import {
+	type CallCorrelation,
+	type CallIdentity,
+	callIdentity,
+	type CallProjection,
+	type CallRaw,
+	type CallScope,
+	type OutstandingCall,
+} from "./compact-call-model.ts";
 import type { CallStep, CompactSessionCalls } from "./compact-session-calls.ts";
 import type { SeededMessage } from "./compact-seeded-messages.ts";
 import type { CompactTransition } from "./compact-transition.ts";
@@ -7,6 +16,8 @@ import type { CompactTransition } from "./compact-transition.ts";
 export interface CallFold {
 	readonly changed: boolean;
 	readonly projection?: CallProjection;
+	/** An execution or hook record's call (RULING-123): the one it changed, or `callUnknown` when it changed none. */
+	readonly identity?: CallIdentity;
 }
 
 type SeededBlockTransition = Extract<CompactTransition, { type: "seeded_block" }>;
@@ -87,10 +98,12 @@ export function foldCallRecord(
 	const step = { sequence, scope };
 	const before = calls.table.counters.replacements;
 	let projection: CallProjection | undefined;
-	switch (field(record, "type")) {
+	let call: OutstandingCall | undefined;
+	const type = field(record, "type");
+	switch (type) {
 		case "tool_execution_start": {
 			const parentToolCallId = field(record, "parentToolCallId");
-			calls.executionStart(step, {
+			call = calls.executionStart(step, {
 				toolCallId: text(record, "toolCallId"),
 				toolName: text(record, "toolName"),
 				args: field(record, "args") ?? null,
@@ -99,7 +112,7 @@ export function foldCallRecord(
 			break;
 		}
 		case "tool_execution_update":
-			calls.executionUpdate(
+			call = calls.executionUpdate(
 				step,
 				text(record, "toolCallId"),
 				field(record, "args") ?? null,
@@ -107,7 +120,7 @@ export function foldCallRecord(
 			);
 			break;
 		case "tool_execution_end":
-			calls.executionEnd(
+			call = calls.executionEnd(
 				step,
 				text(record, "toolCallId"),
 				field(record, "result") ?? null,
@@ -115,7 +128,7 @@ export function foldCallRecord(
 			);
 			break;
 		case "tool_hook_status":
-			calls.hook(step, text(record, "toolCallId"), record);
+			call = calls.hook(step, text(record, "toolCallId"), record);
 			break;
 		case "turn_end":
 			calls.turnEnd(step);
@@ -130,5 +143,10 @@ export function foldCallRecord(
 			break;
 		}
 	}
-	return { changed: calls.table.counters.replacements !== before, ...(projection ? { projection } : {}) };
+	const named = CALL_NAMED_RECORDS.has(String(type));
+	return {
+		changed: calls.table.counters.replacements !== before,
+		...(projection ? { projection } : {}),
+		...(named ? { identity: callIdentity(call) } : {}),
+	};
 }

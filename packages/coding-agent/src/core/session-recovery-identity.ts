@@ -7,7 +7,10 @@ import { randomUUID } from "node:crypto";
  * `message_end` (`messageId`, `terminalSequence`), `entry_appended` (`owningMessageId`) and `transcript_write_failed`
  * (`messageId`) with the ids the settled store recorded for that message, so that peer can join the live record to its
  * settled `message-<terminalSequence>` and `join-<n>` rows across a reconnect or recovery cut. The ids are opaque,
- * stable for the message's lifetime and never reused in the session; nothing else carries them.
+ * stable for the message's lifetime and never reused in the session; nothing else carries them. The same copy of a live
+ * call record (`toolcall_*` updates, `tool_execution_*`, `tool_hook_status`) carries the `runtimeItemKey` of the call
+ * the host changed with it, or `callUnknown: true` when it changed none (RULING-123, senpi#5346): that key comes from
+ * the calls component (`compact-call-model.ts`), not from this carrier.
  */
 export interface RecoveryCarrier {
 	readonly messageId: string;

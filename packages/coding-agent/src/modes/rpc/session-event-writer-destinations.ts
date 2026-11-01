@@ -8,6 +8,7 @@ import { SessionEventWriterRecovery } from "./session-event-writer-recovery.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 import { materializerLine } from "./compact-materializer-line.ts";
 import { declarationReply } from "./compact-negotiation.ts";
+import { unvouchedCall } from "./compact-call-identity.ts";
 
 /** A record's legacy line, encoded on first use: a record no legacy destination needs never builds it (RULING-81 X06). */
 export class RecordLine {
@@ -30,9 +31,13 @@ export class RecordLine {
 	}
 }
 
-/** A destination's line, and for an event-lease envelope the release that runs if the actor never writes it. */
+/**
+ * A destination's line, and for an event-lease envelope the release that runs if the actor never writes it. `record`:
+ * the stamped record an inline compact line was built from, so its delta-only demotion keeps the stamp (RULING-123).
+ */
 interface EventLine {
 	readonly line: string;
+	readonly record?: RpcRecord;
 	readonly undelivered?: (written: boolean) => void;
 	readonly atomic?: boolean;
 }
@@ -75,7 +80,7 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 					out.line,
 					keyed ? MESSAGE_KEY : undefined,
 					out.undelivered,
-					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
+					keyed ? serializeJsonLine(demoteToDeltaOnly(out.record ?? tagged)) : undefined,
 					isCorrelatedReply(tagged),
 					mirrors.includes(target)
 						? undefined
@@ -93,7 +98,7 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 	 * other destination gets the legacy line. Past the peer's lease bound, or when the record cannot be staged, the peer
 	 * gets a typed refusal and its connection closes (fail closed, like a plain peer's overflow).
 	 */
-	private eventLine(target: string, sessionId: string, record: object, line: RecordLine): EventLine {
+	private eventLine(target: string, sessionId: string, record: RpcRecord, line: RecordLine): EventLine {
 		const reply = declarationReply(record, this.compactSelection(target));
 		if (reply !== undefined && reply !== record) return { line: serializeJsonLine(reply) };
 		const events = this.fanout.events;
@@ -112,8 +117,9 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		const socketEpoch = this.fanout.get(target)?.socketEpoch;
 		if (!events || !lane || admissionId === undefined || socketEpoch === undefined) return { line: line.text };
 		if (!this.fanout.connectionHas(target, COMPACT_EVENTS_CAPABILITY)) return { line: line.text };
-		// RULING-120 (#5331): only this compact peer's copy carries the ids the settled overlay pages for its message.
-		const identity = lane.identities.of(Reflect.get(record, "type"), lane.acceptedSequence);
+		// RULING-120 (#5331): only this compact peer's copy carries the ids the settled overlay pages for its message;
+		// RULING-123 (#5346): and a live call record's snapshot key, or `callUnknown` when the lane vouched for none.
+		const identity = lane.identities.of(record.type, lane.acceptedSequence) ?? unvouchedCall(record);
 		const stamped = identity ? { ...record, ...identity } : record;
 		const stampedLine = identity ? new RecordLine(stamped) : line;
 		const materializer = materializerLine(this.fanout, this.required, target, sessionId, stamped);
@@ -121,7 +127,8 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		const built = stampedLine.built;
 		const size =
 			built === undefined ? jsonSize(stamped) : { bytes: Buffer.byteLength(built) - 1, units: built.length - 1 };
-		if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES) return { line: stampedLine.text };
+		if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES)
+			return { line: stampedLine.text, ...(identity ? { record: stamped } : {}) };
 		const at = { sessionEpoch: lane.sessionEpoch, sequence: lane.acceptedSequence };
 		const routes = this.ordinaryRoute(target, sessionId)?.routes ?? [];
 		const owner = routes[0] ?? admissionId;
