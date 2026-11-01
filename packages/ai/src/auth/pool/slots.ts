@@ -485,7 +485,12 @@ export function appendLoginSlot(
 			return pooled;
 		}
 	}
-	const replaced = replaceSameAccount(current, flat, options?.accountIdentity, onAllocated);
+	// Sign in with ChatGPT names an account by its issuer, subject and issued client ID (matched above). Without
+	// that tuple, a shared ChatGPT token identity is not the same SIWC sign-in, so the login is appended.
+	const replaced =
+		flat.type === "oauth" && flat.route === "siwc"
+			? undefined
+			: replaceSameAccount(current, flat, options?.accountIdentity, onAllocated);
 	if (replaced) return replaced;
 	const name = nextLoginSlotName(current);
 	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
@@ -524,9 +529,15 @@ function replaceSameAccount(
 	const identity = accountIdentity(flat);
 	if (identity === undefined) return undefined;
 	const slots = listSlots(current);
+	// A token identity names a ChatGPT account, not a sign-in: the legacy Codex route and Sign in with ChatGPT
+	// hold separate grants for one person, so a login replaces only a slot on its own route (#5003).
+	const route = flat.route ?? "codex";
 	const matches = slots.filter(
 		(slot) =>
-			slot.source !== "env" && slot.access !== undefined && accountIdentity({ access: slot.access }) === identity,
+			slot.source !== "env" &&
+			(slot.route ?? "codex") === route &&
+			slot.access !== undefined &&
+			accountIdentity({ access: slot.access }) === identity,
 	);
 	const kept = matches[0];
 	if (!kept) return undefined;
@@ -534,14 +545,12 @@ function replaceSameAccount(
 		onAllocated?.(kept.name, "generated");
 		return flat;
 	}
+	// Built through the account-field projection so the login's route, issued client, issuer, subject, ID token
+	// and scopes reach the slot; a hand-copied token triple dropped them (#5003).
 	const fresh: CredentialSlot = {
-		name: kept.name,
+		...slotFromFlatCredentialNamed(flat, kept.name),
 		...(kept.displayName === undefined ? {} : { displayName: kept.displayName }),
 		...(kept.source === undefined ? {} : { source: kept.source }),
-		access: flat.access,
-		refresh: flat.refresh,
-		expires: flat.expires,
-		...credentialSlotEnv(flat),
 	};
 	const dropped = new Set(matches.slice(1).map((slot) => slot.name));
 	const accounts = slots.flatMap((slot) => (slot === kept ? [fresh] : dropped.has(slot.name) ? [] : [slot]));
