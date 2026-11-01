@@ -9,7 +9,7 @@ import { CredentialSlotRepository } from "./state-store.ts";
  * step to repair an account, or it puts another account under a slot name a removed or signed-out one used (an opaque
  * token's account key is its slot name). Neither may inherit the verdicts recorded before it.
  */
-export function slotsStartedByLogin(before: Credential | undefined, after: Credential | undefined): string[] {
+function slotsStartedByLogin(before: Credential | undefined, after: Credential | undefined): string[] {
 	const previous = new Map(listSlots(before as PooledCredential | undefined).map((slot) => [slot.name, slot]));
 	return listSlots(after as PooledCredential | undefined)
 		.filter((slot) => {
