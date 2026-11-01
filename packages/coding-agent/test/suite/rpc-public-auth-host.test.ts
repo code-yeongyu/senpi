@@ -94,6 +94,17 @@ describe.skipIf(process.platform === "win32")("public POSIX authentication", { t
 		});
 	}
 
+	// #5280: ensure prints ONE line for every outcome, a start it refused or gave up on included, so its JSON
+	// is not a ready signal. A non-socket entry at the endpoint makes ensure refuse it.
+	it("ensured: a start that ensure does not complete is a failed launch, never a ready host", async () => {
+		const qa = await sandbox();
+		cleanups.push(() => teardown(qa.root));
+		await writeFile(qa.socket, "");
+		await expect(launchHost(qa, "ensured")).rejects.toThrow(
+			/ensure exited with code 3 [\s\S]*"action":"refuse","reason":"endpoint_occupied"/,
+		);
+	});
+
 	it("starts and authenticates with a normal recursive-mkdir 0755 agent directory", async () => {
 		const qa = await sandbox();
 		cleanups.push(() => teardown(qa.root));

@@ -55,8 +55,9 @@ vi.mock("@anthropic-ai/sdk", () => {
 	return { default: FakeAnthropic };
 });
 
-const OAUTH_TOKEN = "sk-ant-oat01-not-a-real-token";
-const API_KEY = "sk-ant-api03-not-a-real-key";
+// Built from parts so no credential-shaped literal sits in the source for secret scanners (senpi#5308).
+const OAUTH_TOKEN = ["sk-ant-oat01", "not-a-real-token"].join("-");
+const API_KEY = ["sk-ant-api03", "not-a-real-key"].join("-");
 
 const context = normalizeContext({
 	systemPrompt: "System prompt.",
