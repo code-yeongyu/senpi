@@ -9,12 +9,30 @@ import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { activeModelBlockUntil } from "./model-scope.ts";
 import {
 	acquireHalfOpenLease,
+	applicableStoredState,
 	type CredentialSlotRepository,
 	type CredentialSlotState,
 	type HalfOpenLease,
 } from "./state-store.ts";
 
 export type RotationLane = "stored" | "env";
+
+/** Hands a half-open probe lease back, if the slot still holds that exact lease. */
+export async function releaseProbeLease(
+	repository: CredentialSlotRepository,
+	providerId: string,
+	lane: RotationLane,
+	slotName: string,
+	leaseId: string,
+): Promise<void> {
+	await writeHealthUnlessStoreBusy(`lease release on ${slotName}`, () =>
+		repository.mutateSlotState(providerId, lane, slotName, (current) => {
+			if (current?.lease?.id !== leaseId) return current;
+			const { lease: _released, ...rest } = current;
+			return rest;
+		}),
+	);
+}
 
 /**
  * A model block found after taking the half-open probe lease hands the lease
@@ -29,14 +47,30 @@ async function releaseLeaseIfModelBlocked(
 	until: number | undefined,
 ): Promise<void> {
 	if (until === undefined) return;
-	await writeHealthUnlessStoreBusy(`lease release on ${slotName}`, () =>
-		repository.mutateSlotState(providerId, lane, slotName, (current) => {
-			if (current?.lease?.id !== leaseId) return current;
-			const { lease: _released, ...rest } = current;
-			return rest;
-		}),
-	);
+	await releaseProbeLease(repository, providerId, lane, slotName, leaseId);
 }
+
+/**
+ * A slot whose half-open probe another request is running. It stays listed, blocked until that
+ * probe's lease expires, so a refusal can name when to retry instead of reporting no slot at all
+ * (senpi#4094). Its reason is not `rate_limit`, so the all-cooling probe never sends a second
+ * request to it while the first is in flight.
+ */
+async function probeInFlight<TSlot extends RotationSlot>(
+	repository: CredentialSlotRepository,
+	providerId: string,
+	lane: RotationLane,
+	slot: TSlot,
+	isApplicable: (state: CredentialSlotState | undefined) => boolean,
+	now: number,
+): Promise<TSlot | undefined> {
+	const state = (await repository.listSlots(providerId, lane))[slot.name];
+	const lease = isApplicable(state) ? state?.lease : undefined;
+	if (lease === undefined || lease.expiresAt <= now) return undefined;
+	return { ...slot, blockedUntil: lease.expiresAt, blockReason: PROBE_IN_FLIGHT };
+}
+
+const PROBE_IN_FLIGHT = "probe_in_flight";
 
 /**
  * The half-open probe lease for a slot whose cooldown elapsed. When the state
@@ -61,8 +95,15 @@ export type RotationSlot = RunSlot & {
 	/** Env-lane key material for the attempt; never serialized or persisted. */
 	envKey?: string;
 	envVarName?: string;
-	/** Stored-lane material revision binding sidecar health to the current credential; never serialized. */
+	/** Stored-lane account revision: the key account-level health is recorded under; never serialized. */
 	storedRevision?: string;
+	/** Stored-lane material revision: the key a rejected-token block is recorded under; never serialized. */
+	materialRevision?: string;
+	/**
+	 * The half-open probe lease THIS listing took for the attempt; never serialized. `lease` is copied
+	 * from the shared file and may be another request's, so only this id may be handed back.
+	 */
+	heldLeaseId?: string;
 };
 
 export type RotationSources = {
@@ -168,13 +209,15 @@ export async function listRotationSlots(
 		// A slot of the other kind cannot project, so a session must never be handed it (senpi#3486).
 		for (const slot of slotsOfOwnKind(credential)) {
 			const persisted = state[slot.name];
-			const storedRevision = await repository.storedCredentialRevision(providerId, slot.name, {
+			const revisions = await repository.storedSlotRevisions(providerId, slot.name, {
 				key: slot.key,
 				access: slot.access,
 				refresh: slot.refresh,
 			});
-			// A block belongs to the material that earned it; a re-login starts clean.
-			const applicable = persisted?.credentialRevision === storedRevision ? persisted : undefined;
+			const storedRevision = revisions.account;
+			const materialRevision = revisions.material;
+			// A verdict on the account survives a token refresh; a rejected token retires with its material (senpi#4093).
+			const applicable = applicableStoredState(persisted, revisions);
 			const modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
 			// A slot still blocked for this model never takes the half-open probe lease:
 			// it cannot run, and holding the lease would starve other models' requests.
@@ -186,12 +229,28 @@ export async function listRotationSlots(
 				applicable.blockedUntil <= now()
 			) {
 				lease = await probeLease(repository, providerId, "stored", slot.name, now());
-				if (lease === undefined) continue;
+				if (lease === undefined) {
+					const inFlight = await probeInFlight(
+						repository,
+						providerId,
+						"stored",
+						{
+							name: slot.name,
+							lane: "stored" as const,
+							pinned: (credential as PooledCredential).pinned === slot.name,
+							storedRevision,
+						},
+						(state) => state?.credentialRevision === storedRevision,
+						now(),
+					);
+					if (inFlight !== undefined) slots.push(inFlight);
+					continue;
+				}
 			}
 			if (lease !== undefined && lease !== STORE_BUSY) {
 				const leased = await repository.listSlots(providerId, "stored");
 				const leasedState = leased[slot.name];
-				const leasedApplicable = leasedState?.credentialRevision === storedRevision ? leasedState : undefined;
+				const leasedApplicable = applicableStoredState(leasedState, revisions);
 				// Re-read after the awaits: a concurrent request may have blocked this model meanwhile.
 				const leasedModelUntil = activeModelBlockUntil(leasedApplicable?.modelBlocks, modelId, now());
 				await releaseLeaseIfModelBlocked(
@@ -210,6 +269,8 @@ export async function listRotationSlots(
 								lane: "stored",
 								pinned: (credential as PooledCredential).pinned === slot.name,
 								storedRevision,
+								materialRevision,
+								...(leasedModelUntil === undefined ? { heldLeaseId: lease.leaseId } : {}),
 							},
 							leasedApplicable,
 						),
@@ -226,6 +287,7 @@ export async function listRotationSlots(
 							lane: "stored",
 							pinned: (credential as PooledCredential).pinned === slot.name,
 							storedRevision,
+							materialRevision,
 						},
 						applicable,
 					),
@@ -266,6 +328,7 @@ async function listEnvRotationSlots(
 		const revision = await repository.envCredentialRevision(slot.envVarName, slot.key);
 		let applicable = persisted?.credentialRevision === revision ? persisted : undefined;
 		let modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
+		let heldLeaseId: string | undefined;
 		if (
 			acquireLeases &&
 			modelUntil === undefined &&
@@ -273,13 +336,25 @@ async function listEnvRotationSlots(
 			applicable.blockedUntil <= now()
 		) {
 			const lease = await probeLease(repository, providerId, "env", slot.name, now());
-			if (lease === undefined) continue;
+			if (lease === undefined) {
+				const inFlight = await probeInFlight(
+					repository,
+					providerId,
+					"env",
+					{ name: slot.name, lane: "env" as const, envKey: slot.key, envVarName: slot.envVarName },
+					(state) => state?.credentialRevision === revision,
+					now(),
+				);
+				if (inFlight !== undefined) slots.push(inFlight);
+				continue;
+			}
 			if (lease !== STORE_BUSY) {
 				const leased = await repository.listSlots(providerId, "env");
 				const leasedState = leased[slot.name];
 				applicable = leasedState?.credentialRevision === revision ? leasedState : undefined;
 				modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
 				await releaseLeaseIfModelBlocked(repository, providerId, "env", slot.name, lease.leaseId, modelUntil);
+				if (modelUntil === undefined) heldLeaseId = lease.leaseId;
 			}
 		}
 		slots.push(
@@ -290,6 +365,7 @@ async function listEnvRotationSlots(
 						lane: "env",
 						envKey: slot.key,
 						envVarName: slot.envVarName,
+						...(heldLeaseId === undefined ? {} : { heldLeaseId }),
 					},
 					applicable,
 				),

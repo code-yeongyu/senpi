@@ -394,8 +394,13 @@ describe("credential rotation over a pooled provider", () => {
 		const sources = { providerId: "openai", credential: undefined, env, repository, now: () => NOW };
 		const first = await listRotationSlots(sources);
 		const second = await listRotationSlots(sources);
-		expect(first.find((slot) => slot.name === "env")?.lease).toBeDefined();
-		expect(second.some((slot) => slot.name === "env")).toBe(false);
+		const lease = first.find((slot) => slot.name === "env")?.lease;
+		expect(lease).toBeDefined();
+		// The second caller is not admitted to probe; it sees the slot blocked until the probe's lease expires.
+		const waiting = second.find((slot) => slot.name === "env");
+		expect(waiting?.blockReason).toBe("probe_in_flight");
+		expect(waiting?.blockedUntil).toBe(lease?.expiresAt);
+		expect(waiting?.lease).toBeUndefined();
 	});
 
 	test("policy cooldown base controls the first rate limit cooldown", async () => {
