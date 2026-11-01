@@ -6,6 +6,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
+import { annotateShellTrust, type ShellTrust } from "../../engine-trust/shell-trust.ts";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
 	getShellConfig,
@@ -74,6 +75,7 @@ export type BashToolOutput = Static<typeof bashOutputSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	trust?: ShellTrust;
 }
 
 /**
@@ -540,10 +542,19 @@ export function createShellToolDefinition(
 					wall_time_seconds: wallTimeSeconds,
 				};
 				if (exitCode !== 0) {
+					const text = appendStatus(outputText, `Command exited with code ${exitCode}`);
+					// The engine trust annotation (omo#10762) rides only on error results, so the success
+					// `outputSchema` (and the prompt bytes it costs) stays unchanged.
+					const annotation = annotateShellTrust({ exitCode, output: fullOutput.content });
+					if (annotation === undefined) {
+						return { content: [{ type: "text", text }], details, structuredContent, isError: true };
+					}
 					return {
-						content: [{ type: "text", text: appendStatus(outputText, `Command exited with code ${exitCode}`) }],
-						details,
-						structuredContent,
+						content: [
+							{ type: "text", text: annotation.text === undefined ? text : `${text}\n\n${annotation.text}` },
+						],
+						details: { ...details, trust: annotation.trust },
+						structuredContent: { ...structuredContent, trust: annotation.trust },
 						isError: true,
 					};
 				}
