@@ -8,8 +8,10 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { startBridgeServer } from "../../../src/bridge/http-server.ts";
 import { type BridgeMessage, decodeBridgeFrame } from "../../../src/bridge/protocol.ts";
+import { resolveCommandPath } from "../../../src/interpreters/resolve-command.ts";
 import { JuliaKernel, type JuliaKernelStartOptions } from "../../../src/kernels/jl/kernel.ts";
 
+const julia = resolveCommandPath("julia");
 const execute = promisify(execFile);
 const assets = fileURLToPath(new URL("../../../src/kernels/jl/", import.meta.url));
 const counters = `
@@ -90,7 +92,7 @@ async function value(kernel: JuliaKernel, code: string): Promise<unknown> {
 	return JSON.parse(result.valueRepr ?? "null");
 }
 
-describe("Julia lazy handles (Refs senpi#3048)", () => {
+describe.skipIf(julia === undefined)("Julia lazy handles (Refs senpi#3048)", () => {
 	it.each(["missing", "invalid"])("returns empty globals when the sizing asset is %s", async (asset) => {
 		await fixture(async (root) => {
 			if (asset === "invalid") await writeFile(join(root, "globals.jl"), "function broken(");

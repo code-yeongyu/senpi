@@ -8,7 +8,7 @@
      "label": "ask call_by_client",
      "lines": [
       "",
-      " senpi v2026.10.27-2                                                                                ",
+      " senpi v2026.10.31-1                                                                                ",
       " esc interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more                       ",
       " Press ctrl+o to show full startup help and loaded resources.                                       ",
       "                                                                                                    ",
@@ -21,11 +21,12 @@
       "[Extensions]                                                                                        ",
       "  held-tools.mjs                                                                                    ",
       "",
+      "",
+      " Settings: settings.json (JSON)                                                                     ",
+      "",
       "                                                                                                    ",
       " write two files                                                                                    ",
       "                                                                                                    ",
-      "",
-      " Settings: settings.json (JSON)                                                                     ",
       "",
       "                                                                                                    ",
       " eq_write path=\"out/client.txt\" text=\"call_by_client\\n\" barrier=\"open-call_by_client\"               ",
@@ -118,18 +119,21 @@
        "0-99 0/-1 0/-1 000000"
       ],
       [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
        "0-0 0/-1 0/-1 000000",
        "1-30 0/-1 0/-1 010000",
        "31-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
       ],
       [
        "0-99 0/-1 0/-1 000000"
@@ -253,7 +257,7 @@
      "label": "ask call_by_other",
      "lines": [
       "",
-      " senpi v2026.10.27-2                                                                                ",
+      " senpi v2026.10.31-1                                                                                ",
       " esc interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more                       ",
       " Press ctrl+o to show full startup help and loaded resources.                                       ",
       "                                                                                                    ",
@@ -266,11 +270,12 @@
       "[Extensions]                                                                                        ",
       "  held-tools.mjs                                                                                    ",
       "",
+      "",
+      " Settings: settings.json (JSON)                                                                     ",
+      "",
       "                                                                                                    ",
       " write two files                                                                                    ",
       "                                                                                                    ",
-      "",
-      " Settings: settings.json (JSON)                                                                     ",
       "",
       "                                                                                                    ",
       " eq_write path=\"out/client.txt\" text=\"call_by_client\\n\" barrier=\"open-call_by_client\"               ",
@@ -368,18 +373,21 @@
        "0-99 0/-1 0/-1 000000"
       ],
       [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
        "0-0 0/-1 0/-1 000000",
        "1-30 0/-1 0/-1 010000",
        "31-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
       ],
       [
        "0-99 0/-1 0/-1 000000"
@@ -524,7 +532,7 @@
      "label": "final",
      "lines": [
       "",
-      " senpi v2026.10.27-2                                                                                ",
+      " senpi v2026.10.31-1                                                                                ",
       " esc interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more                       ",
       " Press ctrl+o to show full startup help and loaded resources.                                       ",
       "                                                                                                    ",
@@ -537,11 +545,12 @@
       "[Extensions]                                                                                        ",
       "  held-tools.mjs                                                                                    ",
       "",
+      "",
+      " Settings: settings.json (JSON)                                                                     ",
+      "",
       "                                                                                                    ",
       " write two files                                                                                    ",
       "                                                                                                    ",
-      "",
-      " Settings: settings.json (JSON)                                                                     ",
       "",
       "                                                                                                    ",
       " eq_write path=\"out/client.txt\" text=\"call_by_client\\n\" barrier=\"open-call_by_client\"               ",
@@ -625,18 +634,21 @@
        "0-99 0/-1 0/-1 000000"
       ],
       [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
-       "0-99 0/-1 0/-1 000000"
-      ],
-      [
        "0-0 0/-1 0/-1 000000",
        "1-30 0/-1 0/-1 010000",
        "31-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
+      ],
+      [
+       "0-99 0/-1 0/-1 000000"
       ],
       [
        "0-99 0/-1 0/-1 000000"
