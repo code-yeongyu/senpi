@@ -55,6 +55,7 @@ These are separate controls and must not be conflated:
 - npm OIDC trusted publishing: the npm-side trusted publishing path used by the job.
 - npm lifecycle-script review: the `npm approve-scripts --allow-scripts-pending` trust review, which is not publish approval.
 - Protected-main authorization: the authenticated push path for protected `main`, which is distinct from publish approval.
+- Shipped-dependency audit: the release job runs `node scripts/audit-production.mjs` (`npm audit --omit=dev`) right after installing and fails before any publish on a moderate-or-worse advisory that is not excepted. An exception is one entry in `scripts/audit-exceptions.json` naming the GHSA id, the package, the exact installed node (`node_modules/...` path from the audit's `nodes`), the reason, the senpi tracking issue and an `expires` date; an expired entry fails the gate and an entry that no longer matches is printed as stale. Entries need the maintainer's approval; fix the dependency first. The scheduled `npm-audit` workflow runs the same script, so a red scheduled run means the next release will refuse too.
 
 ## Hazards and hard rules
 
