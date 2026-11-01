@@ -849,8 +849,8 @@ open or attachment: `admissionId` must name a completed admission of this socket
 The host freezes a new recovery checkpoint for that admission and answers it as the stream's new baseline:
 `{"type": "response", "command": "reset_stream", "success": true, "sessionId", "admissionId", "generation",
 "data": {"recovery": {"token", "componentRef": "manifest"}}}`, ordered before any later compact frame of the
-admission. Read the checkpoint with `get_recovery_page`. Like `cancel_attempt`, an `admissionId` this connection
-neither has pending nor holds is refused with `unknown_admission` before the command runs. A held admission that is not
+admission. Read the checkpoint with `get_recovery_page`. An `admissionId` this connection does not hold is refused with
+`unknown_admission` before the command runs. A held admission that is not
 complete, not for `sessionId` or no longer on the session's stream is refused with `recovery_unknown_token` and
 `errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
 `recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
