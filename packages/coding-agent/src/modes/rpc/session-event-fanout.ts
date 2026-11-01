@@ -1,5 +1,6 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { legacyAttachView } from "./compact-legacy-view.ts";
+import { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { ExtensionTransportOwner } from "./extension-owner.ts";
@@ -49,6 +50,8 @@ export class SessionEventFanout {
 	readonly replay = new LegacyReplayStore();
 	/** The checkpoint tokens this host froze for its peers' baselines and recoveries (S08a). */
 	readonly checkpoints = new RecoveryCheckpoints();
+	/** The page route over those tokens (S11b); absent with the flag off, so the command answers as before. */
+	readonly pages = compactUpdatesEnabled() ? new RecoveryPageRequests(this.checkpoints) : undefined;
 	private socketEpochs = 0;
 	/** Today's shed path with the compact-updates flag off; the cut frozen at the shed with it on. */
 	private readonly shedMode: ShedMode = compactUpdatesEnabled() ? "capture" : "drop";
@@ -89,6 +92,7 @@ export class SessionEventFanout {
 					this.connectionCapabilities.delete(id);
 					this.connectionSessions.delete(id);
 					this.registeredCapabilityConnections.delete(id);
+					this.pages?.forgetPeer(socketEpoch);
 					this.checkpoints.forgetPeer(socketEpoch);
 					this.onConnectionClosed?.(id);
 				}
@@ -111,6 +115,7 @@ export class SessionEventFanout {
 		if (!registered) return;
 		registered.owner.retire();
 		registered.actor.close();
+		this.pages?.forgetPeer(registered.socketEpoch);
 		this.checkpoints.forgetPeer(registered.socketEpoch);
 		this.connections.delete(id);
 		this.connectionCapabilities.delete(id);
