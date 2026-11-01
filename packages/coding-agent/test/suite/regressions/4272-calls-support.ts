@@ -1,6 +1,7 @@
 import { type AssistantMessage, fauxAssistantMessage, fauxToolCall, type ToolCall } from "@earendil-works/pi-ai";
 import type { RecoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
 import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
+import type { CompactContentStoreOptions } from "../../../src/modes/rpc/compact-content-store.ts";
 import type { CanonicalUnit } from "../../../src/modes/rpc/compact-lane-transitions.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { settledRig } from "./4272-settled-support.ts";
@@ -11,8 +12,8 @@ const usage = fauxAssistantMessage("", { timestamp: 1 }).usage;
 const CORRELATED = { clientMessageId: "c1" } as const;
 
 /** Drives the real acceptance lane with hand-built canonical units the way the structured lane projects them. */
-export async function callsRig() {
-	const rig = await settledRig();
+export async function callsRig(options: Partial<CompactContentStoreOptions> = {}) {
+	const rig = await settledRig(options);
 	let ordinal = 0;
 	const open = new Map<string, { readonly carrier: RecoveryCarrier; readonly firstOrdinal: number }>();
 	const unit = (carrier: RecoveryCarrier, record: CanonicalUnit["record"], first?: number): CanonicalUnit => {
