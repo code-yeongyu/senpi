@@ -48,16 +48,17 @@ function isBunRuntime(bun) {
 	return bun !== null && typeof bun === "object" && typeof bun.$ === "function" && typeof bun.spawn === "function";
 }
 
-function capturedShell(originalShell, options, guard) {
+function capturedShell(originalShell, options, guard, escape = originalShell.escape) {
 	const shell = (strings, ...expressions) => {
 		assertCellLive();
-		guard?.command(renderShellTemplate(strings, expressions, originalShell.escape), "bun");
+		guard?.command(renderShellTemplate(strings, expressions, escape), "bun");
 		if (!options.isActive()) return originalShell(strings, ...expressions);
 		if (signalsProcessGroup(shellCommandText(strings, expressions))) options.emitText("stderr", groupSignalNotice("Bun.$"));
 		const promise = originalShell(isolateStdin(strings), ...expressions);
 		return captureShellPromise(promise, options);
 	};
 	for (const key of Object.keys(originalShell)) shell[key] = originalShell[key];
+	if (typeof originalShell.Shell === "function") shell.Shell = capturedShellClass(originalShell.Shell, options, guard, escape);
 	for (const method of SHELL_CONFIG_METHODS) {
 		shell[method] = (...args) => {
 			originalShell[method](...args);
@@ -65,6 +66,14 @@ function capturedShell(originalShell, options, guard) {
 		};
 	}
 	return shell;
+}
+
+// `new Bun.$.Shell()` builds an independent `$` with its own env and cwd; each instance is judged and captured
+// exactly like `Bun.$` itself, so it is no way around the kill guard.
+function capturedShellClass(OriginalShell, options, guard, escape) {
+	return function Shell(...args) {
+		return capturedShell(new OriginalShell(...args), options, guard, escape);
+	};
 }
 
 function isolateStdin(strings) {

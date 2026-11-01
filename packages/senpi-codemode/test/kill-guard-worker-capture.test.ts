@@ -89,5 +89,42 @@ describe.runIf((process.platform === "darwin" || process.platform === "linux") &
 			expect(() => bun.spawnSync(["pkill", "-f", ".*"])).toThrow("[senpi:kill-guard]");
 			expect(originalCalls).toEqual([]);
 		});
+
+		it("judges every shell a cell builds with new Bun.$.Shell()", async () => {
+			const ran: string[] = [];
+			const escape = (value: string) => value;
+			function Shell() {
+				return Object.assign(
+					(strings: TemplateStringsArray) => {
+						ran.push(strings.join(""));
+						return Promise.resolve();
+					},
+					{ escape },
+				);
+			}
+			Object.defineProperty(globalThis, "Bun", {
+				configurable: true,
+				value: {
+					$: Object.assign(() => Promise.resolve(), { escape, Shell }),
+					spawn: () => ({}),
+					spawnSync: () => ({ success: true, exitCode: 0, stdout: encode(""), stderr: encode("") }),
+				},
+			});
+			const capture: { installShellCapture: (options: unknown) => () => void } = await import(captureUrl);
+			const judge: unknown = await import(String(KILL_GUARD_MODULE_URL));
+			restore = capture.installShellCapture({
+				isActive: () => false,
+				emitText: () => {},
+				killGuard: { judge, agentPid: process.pid },
+			});
+			const bun = Reflect.get(globalThis, "Bun") as {
+				$: { Shell: new () => (strings: TemplateStringsArray) => Promise<void> };
+			};
+			const shell = new bun.$.Shell();
+
+			expect(() => shell`pkill -f 'a||b'`).toThrow("[senpi:kill-guard]");
+			await shell`echo fine`;
+			expect(ran).toEqual(["echo fine"]);
+		});
 	},
 );

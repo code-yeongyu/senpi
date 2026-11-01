@@ -1,13 +1,13 @@
 // senpi#5349 / code-yeongyu/oh-my-openagent#12096: eval cells reach a signal through the kill guard in every kernel.
-// `pkill`, `kill`, `killall` and `sudo` resolve to recording fakes on PATH, so no test here can signal anything (or
-// elevate) even without the guard.
-import { spawnSync } from "node:child_process";
+// `pkill`, `kill`, `killall` and `sudo` resolve to recording fakes on PATH, and the protected pid every direct signal
+// targets is a sleeper the test owns, so no test here can signal anything else (or elevate) even without the guard.
+import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { decideKillGuardRequest, KILL_GUARD_MODULE_URL } from "@code-yeongyu/senpi";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import { startBridgeServer } from "../src/bridge/http-server.ts";
 import { JavaScriptKernel, type JavaScriptKernelMode } from "../src/kernels/js/context-manager.ts";
 import { PythonKernel } from "../src/kernels/py/kernel.ts";
@@ -47,6 +47,24 @@ function errorText(result: { ok: boolean; error?: { message: string } }): string
 	return result.ok ? "" : (result.error?.message ?? "");
 }
 
+type Sleeper = { readonly pid: number; readonly alive: () => boolean; readonly stop: () => void };
+
+/** A test-owned sleeper in its own process group, made protected by the test; it stands in for pid 1. */
+function startSleeper(): Sleeper {
+	const child = spawn("sleep", ["600"], { detached: true, stdio: "ignore" });
+	const pid = child.pid;
+	if (pid === undefined) throw new Error("the sleeper did not start");
+	return {
+		pid,
+		// A signalled sleeper is gone or a zombie until the runner reaps it.
+		alive: () => {
+			const stat = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
+			return stat !== "" && !stat.startsWith("Z");
+		},
+		stop: () => child.kill("SIGKILL"),
+	};
+}
+
 describe.runIf(posix)("JavaScript kernel cells (E4, E5, E6, A8)", () => {
 	const kernels: readonly { name: string; mode: JavaScriptKernelMode; entry?: URL }[] = [
 		{ name: "worker", mode: "worker" },
@@ -60,11 +78,14 @@ describe.runIf(posix)("JavaScript kernel cells (E4, E5, E6, A8)", () => {
 	it.each(kernels)(
 		"refuses the reporter's command and a protected pid in the $name kernel",
 		async ({ mode, entry }) => {
+			const sleeper = startSleeper();
+			onTestFinished(sleeper.stop);
+			// The sleeper is the guard's agent here, so it is protected (R2) without a process-table read.
 			const kernel = new JavaScriptKernel({
 				sessionId: `kill-guard-${crypto.randomUUID()}`,
 				cwd: process.cwd(),
 				parallelPoolWidth: 1,
-				killGuard: { moduleUrl: KILL_GUARD_MODULE_URL, agentPid: process.pid },
+				killGuard: { moduleUrl: KILL_GUARD_MODULE_URL, agentPid: sleeper.pid },
 				...(entry === undefined ? {} : { workerEntryUrl: entry }),
 			});
 			try {
@@ -76,8 +97,13 @@ describe.runIf(posix)("JavaScript kernel cells (E4, E5, E6, A8)", () => {
 				expect(kernel.mode).toBe(mode);
 				expect(errorText(shell.result)).toContain(TAG);
 
-				const pid = await runJavaScriptCell(kernel, `process.kill(1, "SIGTERM"); return "sent";`, 20_000);
+				const pid = await runJavaScriptCell(
+					kernel,
+					`process.kill(${sleeper.pid}, "SIGTERM"); return "sent";`,
+					20_000,
+				);
 				expect(errorText(pid.result)).toContain(TAG);
+				expect(sleeper.alive()).toBe(true);
 
 				const narrow = await runJavaScriptCell(kernel, `process.kill(${process.pid}, 0); return "probed";`, 20_000);
 				expect(narrow.result.ok).toBe(true);
@@ -134,6 +160,8 @@ describe.runIf(posix && bunAvailable)("JavaScript kernel cells under Bun (E4, C3
 			"return await globalThis.late;",
 			'Bun.spawnSync(["pkill", "-f", "a||b"]); return "ran";',
 			'await Bun.$`echo fine`.quiet(); return "ok";',
+			'const guarded = new Bun.$.Shell(); await guarded`pkill -f ".*"`; return "ran";',
+			"const plain = new Bun.$.Shell(); return (await plain`echo fine`.text()).trim();",
 		]);
 
 		expect(report.results[0]?.error).toContain(TAG);
@@ -141,12 +169,16 @@ describe.runIf(posix && bunAvailable)("JavaScript kernel cells under Bun (E4, C3
 		expect(report.results[3]?.value).toContain(TAG);
 		expect(report.results[4]?.error).toContain(TAG);
 		expect(report.results[5]).toEqual({ ok: true, value: JSON.stringify("ok") });
+		expect(report.results[6]?.error).toContain(TAG);
+		expect(report.results[7]).toEqual({ ok: true, value: JSON.stringify("fine") });
 		expect(await ran()).toBe("");
 	});
 });
 
 describe.runIf(posix && (await hasPython3()))("Python kernel cells (E7, E8, A4, C20b)", () => {
 	it("refuses the reporter's command through os.system and subprocess, and os.kill of a protected pid", async () => {
+		const sleeper = startSleeper();
+		onTestFinished(sleeper.stop);
 		const requests: unknown[] = [];
 		const bridge = await startBridgeServer({
 			onCall: async () => undefined,
@@ -154,7 +186,8 @@ describe.runIf(posix && (await hasPython3()))("Python kernel cells (E7, E8, A4, 
 			onCompletion: async () => undefined,
 			onKillGuardCheck: async (request) => {
 				requests.push(request);
-				return decideKillGuardRequest(request, { agentPid: process.pid, view: () => undefined });
+				// The sleeper is the judge's agent here, so it is protected (R2) without a process-table read.
+				return decideKillGuardRequest(request, { agentPid: sleeper.pid, view: () => undefined });
 			},
 		});
 		const kernel = await PythonKernel.start({
@@ -162,7 +195,7 @@ describe.runIf(posix && (await hasPython3()))("Python kernel cells (E7, E8, A4, 
 			sessionId: "kill-guard-py",
 			cwd: process.cwd(),
 			connection: { port: bridge.port, token: bridge.token },
-			killGuard: { protectedPids: [1, process.pid] },
+			killGuard: { protectedPids: [1, sleeper.pid, process.pid] },
 		});
 		try {
 			const system = await runCell(kernel, `import os\nos.system(${JSON.stringify(REPORTER)})`);
@@ -172,30 +205,51 @@ describe.runIf(posix && (await hasPython3()))("Python kernel cells (E7, E8, A4, 
 				`import subprocess\nsubprocess.run(["sh", "-c", ${JSON.stringify(REPORTER)}])`,
 			);
 			expect(errorText(popen)).toContain(TAG);
-			const signal = await runCell(kernel, "import os, signal\nos.kill(1, signal.SIGTERM)");
+			const signal = await runCell(kernel, `import os, signal\nos.kill(${sleeper.pid}, signal.SIGTERM)`);
 			expect(errorText(signal)).toContain(TAG);
+			expect(sleeper.alive()).toBe(true);
 
 			const before = requests.length;
 			const quiet = await runCell(
 				kernel,
-				'import os, subprocess\nsubprocess.run(["echo", "hi"], capture_output=True)\nos.kill(os.getpid(), 0)\n"quiet"',
+				[
+					"import os, subprocess",
+					'subprocess.run(["echo", "hi"], capture_output=True)',
+					"try:",
+					'    subprocess.run(["git", "status"], capture_output=True)',
+					"except OSError:",
+					"    pass",
+					"os.kill(os.getpid(), 0)",
+					'"quiet"',
+				].join("\n"),
 			);
 			expect(quiet).toMatchObject({ ok: true });
 			expect(requests.length).toBe(before);
 
-			const argvShapes = [
-				'["sudo", "pkill", "-f", "x"]',
-				'["env", "FOO=1", "pkill", "-f", "x"]',
-				'["timeout", "5", "pkill", "-f", "x"]',
-				'["xargs", "-r", "kill"]',
+			// A kill-family command or a shell anywhere in argv, behind any wrapper or path (A4); fakes on PATH or the
+			// judge's refusal keep each one from running, and the final empty log proves none ran.
+			const argvShapes: readonly (readonly string[])[] = [
+				["sudo", "pkill", "-f", "x"],
+				["env", "FOO=1", "pkill", "-f", "x"],
+				["timeout", "5", "pkill", "-f", "x"],
+				["xargs", "-r", "kill"],
+				["/bin/sh", "-c", REPORTER],
+				["env", "sh", "-c", REPORTER],
+				["/usr/bin/env", "bash", "-c", REPORTER],
+				["sudo", "-n", "sh", "-c", REPORTER],
+				["timeout", "5", "bash", "-c", REPORTER],
+				["nice", "sh", "-c", REPORTER],
+				["/usr/bin/nice", "-n", "5", "/bin/sh", "-c", REPORTER],
+				["nohup", "sh", "-c", REPORTER],
+				["xargs", "sh", "-c", REPORTER],
 			];
 			for (const argv of argvShapes) {
 				const sent = requests.length;
 				await runCell(
 					kernel,
-					`import subprocess\ntry:\n    subprocess.run(${argv}, input=b"", capture_output=True)\nexcept PermissionError:\n    pass`,
+					`import subprocess\ntry:\n    subprocess.run(${JSON.stringify(argv)}, input=b"", capture_output=True)\nexcept PermissionError:\n    pass`,
 				);
-				expect(requests.length).toBe(sent + 1);
+				expect({ argv, sent: requests.length - sent }).toEqual({ argv, sent: 1 });
 			}
 
 			const ownGroup = await runCell(kernel, "import os\nos.killpg(0, 0)\n'own group'");
