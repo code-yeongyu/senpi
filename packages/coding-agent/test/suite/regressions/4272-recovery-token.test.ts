@@ -43,10 +43,10 @@ function unwrap<T>(outcome: RecoveryOutcome<T>): T {
 const unknownToken = { ok: false, failure: { kind: "repair_needed", reason: "unknown_token" } };
 
 /** Settles `promise`, or fails after `ms`: an operation that never ends is a failure of this test, not a hang. */
-async function within<T>(promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
+async function within<T>(name: string, promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<never>((_, reject) => {
-		timer = setTimeout(() => reject(new Error(`still pending after ${ms} ms`)), ms);
+		timer = setTimeout(() => reject(new Error(`deadline: ${name} still pending after ${ms} ms`)), ms);
 	});
 	try {
 		return await Promise.race([promise, deadline]);
@@ -351,7 +351,10 @@ it("RULING-56 (4) an operation in flight on a retired route ends in a typed refu
 	checkpoints.retireRoute(caller, route.admissionId);
 	expect(lane.liveRoots, "the read in flight defers the reclaim").toBe(1);
 	hold.release();
-	expect(await within(reading)).toEqual({ ok: false, failure: { kind: "repair_needed", reason: "released" } });
+	expect(await within("the retired route's read", reading)).toEqual({
+		ok: false,
+		failure: { kind: "repair_needed", reason: "released" },
+	});
 	expect(lane.liveRoots, "reclaimed once the read unwound").toBe(0);
 	expect(checkpoints.status()).toMatchObject({ open: 0, reclaimed: 1 });
 	lane.retire("close");
@@ -376,7 +379,7 @@ it("review LOW the reclaimed counter counts only roots reclaimed without their h
 		reclaimed: 0,
 	});
 	hold.release();
-	expect(await within(reading)).toEqual({
+	expect(await within("the superseded token's read", reading)).toEqual({
 		ok: false,
 		failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 2 },
 	});
