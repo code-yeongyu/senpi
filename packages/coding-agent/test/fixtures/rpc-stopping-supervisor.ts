@@ -104,8 +104,13 @@ if (mode === "host" || mode === "successor-host") {
 				if (request.type === "get_protocol_info") process.send?.({ type: "public-probe" });
 			});
 		});
-		server.once("listening", () => process.send?.({ type: "ready" }));
 		return server;
+	});
+	const link = fs.link;
+	// The endpoint exists once the supervisor links its bound socket into place, not at "listening" (#5319).
+	mock.method(fs, "link", async (...args: Parameters<typeof link>) => {
+		await link(...args);
+		if (args[1] === socket) process.send?.({ type: "ready" });
 	});
 	syncBuiltinESMExports();
 	process.on("message", (message) => {

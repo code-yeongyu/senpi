@@ -11,7 +11,7 @@
  * unlink only while the path still stat-matches that identity.
  */
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { dirname } from "node:path";
 import { resolveSocketTransportAddress } from "./socket-transport.ts";
@@ -129,10 +129,14 @@ export async function socketEntryListenerState(
 	return { verdict: "dead", evidence: "connect ECONNREFUSED, held by nobody" };
 }
 
-/** Reads the current identity of a socket path entry; `undefined` once absent. */
+/**
+ * Reads the current identity of the entry AT a socket path; `undefined` once absent. Read with `lstat`: a symlink
+ * is never followed and answers with its own identity, which can never match a bound socket's, so every
+ * ownership check reads it as somebody else's entry rather than as the socket it names.
+ */
 export async function statSocketIdentity(socketPath: string): Promise<SocketFileIdentity | undefined> {
 	try {
-		const { dev, ino } = await stat(socketPath);
+		const { dev, ino } = await lstat(socketPath);
 		return { dev, ino };
 	} catch (cause) {
 		if (isNodeErrorCode(cause, "ENOENT")) return undefined;
