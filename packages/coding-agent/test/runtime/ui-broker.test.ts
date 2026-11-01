@@ -3,6 +3,7 @@ import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ExtensionRunner, noOpUIContext } from "../../src/core/extensions/runner.ts";
 import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
 import type { RpcExtensionUIRequest } from "../../src/modes/rpc/rpc-types.ts";
+import { SecretInputUnavailableError } from "../../src/core/extensions/secret-input.ts";
 import { createRpcUiPresenter, RuntimeUiBroker } from "../../src/core/runtime/ui-broker.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
@@ -180,6 +181,18 @@ describe("the RPC presenter for a runtime with no session (RT7)", () => {
 		p.dispose();
 		expect(await confirmed).toBe(false);
 		expect(await picked).toBeUndefined();
+	});
+
+	it("refuses a secret input with the typed error and sends no frame", async () => {
+		// Given the RPC presenter, which a caller reads as secret-capable.
+		const { frames, presenter: p } = rpc();
+		expect(p.ui.capabilities?.secretInput).toBe(true);
+		// When a caller asks for a secret.
+		const asked = p.ui.input("API key", undefined, { secret: true });
+		// Then it is refused with the typed error, and nothing goes over the wire.
+		await expect(asked).rejects.toBeInstanceOf(SecretInputUnavailableError);
+		await expect(asked).rejects.toMatchObject({ reason: "client_unsupported" });
+		expect(frames).toEqual([]);
 	});
 
 	it("ignores a response for an unknown request", () => {
