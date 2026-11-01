@@ -823,6 +823,23 @@ The answer's `data` is `{outcome}`: `cancelled` when the attempt was still pendi
 this socket never used. A connection with no socket epoch (stdio) is refused with `unsupported_transport`. A malformed
 `admissionId` is refused with `admission_malformed_request`. With the flag off it answers as any unknown command.
 
+#### reset_stream
+
+Behind the same flag, restarts the compact stream of an admission this connection already holds (senpi#4272,
+S15a-1), when the client has lost its place in it. It operates on existing admission authority, never as a fresh
+open or attachment: `admissionId` must name a completed admission of this socket for `sessionId`.
+
+```json
+{"type": "reset_stream", "sessionId": "rpc-1", "admissionId": "attach-9"}
+```
+
+The host freezes a new recovery checkpoint for that admission and answers it as the stream's new baseline:
+`{"type": "response", "command": "reset_stream", "success": true, "sessionId", "admissionId", "generation",
+"data": {"recovery": {"token", "componentRef": "manifest"}}}`, ordered before any later compact frame of the
+admission. Read the checkpoint with `get_recovery_page`. An admission that is unknown, not yet complete, of another
+connection or for another session is `recovery_repair_needed` with `reason: "unknown_token"`; a checkpoint that
+cannot be frozen answers its own `recovery_*` failure. With the flag off it answers as any unknown command.
+
 #### interactive_user
 
 A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's
