@@ -234,26 +234,30 @@ it.skipIf(BUN_NO_STRUCTURED_FRAMES).each([
 	600_000,
 );
 
-// #4272 RULING-66 S17-Q1: internal worker transport is unconditional; public output remains legacy.
-it("S12b golden: flag OFF, bounded worker fragments reconstruct the complete legacy 150 KB record", async () => {
+// #4272 RULING-112 (replaces RULING-66 S17-Q1 here): flag off, the host offers no acceptance and no permits, so the
+// worker has no fragment transport; the 150 KB record crosses whole and the legacy reader still gets it complete, in order.
+it("S12b golden: flag OFF, a plain commit and the complete legacy 150 KB record, start before end", async () => {
 	vi.stubEnv(FLAG, "0");
 	const sent = vi.spyOn(Worker.prototype, "postMessage");
-	const { host, worker, posted } = await promptedWorker(PROMPT);
+	const { host, worker, posted, lane } = await promptedWorker(PROMPT);
 	try {
-		expect(worker.intake).toBeDefined();
+		expect(lane, "flag off: no acceptance lane").toBeUndefined();
+		expect(worker.intake, "flag off: no permit transport").toBeUndefined();
 		const commit = sent.mock.calls.map(([message]) => message).find((message) => message?.type === "commit");
-		expect(commit).toEqual({
-			type: "commit",
-			request: expect.any(Number),
-			acceptance: true,
-			recoveryEpoch: expect.any(String),
-			permits: expect.any(SharedArrayBuffer),
+		expect(commit, "a plain commit, as before S17").toEqual({ type: "commit", request: expect.any(Number) });
+		expect(posted.filter(isFragment), "no fragment transport without permits").toEqual([]);
+		const whole = posted.find(
+			(each) => each.type === "output" && textOf(Object(Reflect.get(each, "record"))) === PROMPT,
+		);
+		expect(whole, "the whole record in one frame").toMatchObject({
+			type: "output",
+			record: { type: "message_start" },
 		});
-		const fragments = posted.filter(isFragment);
-		expect(fragments.length).toBeGreaterThan(2);
-		for (const fragment of fragments) expect(fragment.text.length * 2).toBeLessThanOrEqual(FRAGMENT_MAX_BYTES);
-		expect(host.records.find((record) => record.type === "message_start" && textOf(record) === PROMPT)).toBeDefined();
-		expect(host.records.find((record) => record.type === "message_end" && textOf(record) === PROMPT)).toBeDefined();
+		expect(whole, "no capture: the frame carries no ordinal").not.toHaveProperty("ordinal");
+		const start = host.records.findIndex((record) => record.type === "message_start" && textOf(record) === PROMPT);
+		const end = host.records.findIndex((record) => record.type === "message_end" && textOf(record) === PROMPT);
+		expect(start, "the legacy reader receives the whole 150 KB user message start").toBeGreaterThanOrEqual(0);
+		expect(end, "and its whole end, after the start").toBeGreaterThan(start);
 		expect(host.failures).toEqual([]);
 	} finally {
 		await host.dispose();
