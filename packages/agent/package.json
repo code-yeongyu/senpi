@@ -59,6 +59,8 @@
 		"generate-telemetry-docs": "node scripts/generate-telemetry-docs.ts",
 		"check:telemetry-docs": "node scripts/generate-telemetry-docs.ts --check",
 		"build": "tsc -p tsconfig.build.json",
+		"pack:conformance": "bun scripts/pack-conformance-archive.ts",
+		"check:conformance-archive": "tsc --noEmit -p scripts/tsconfig.json",
 		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
 		"bench:session:memory": "tsx --tsconfig benchmark/tsconfig.json benchmark/session/loaded-footprint.ts",
 		"bench:session:allocations": "tsx --tsconfig benchmark/tsconfig.json benchmark/session/allocation-profile.ts",
@@ -96,6 +98,7 @@
 		"node": ">=24.0.0"
 	},
 	"devDependencies": {
+		"@types/bun": "1.4.4",
 		"@types/node": "26.6.2",
 		"@vscode/tree-sitter-wasm": "0.3.1",
 		"@vitest/coverage-v8": "5.0.1",
