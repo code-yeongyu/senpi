@@ -831,7 +831,7 @@ the settled overlay it pages after a reconnect or a recovery cut without a secon
   - `ownerUnknown: true`: the host cannot vouch for the entry's ownership. At most 1,024 joins wait for their
     `entry_appended` at once; a join dropped at that bound is remembered by entry id (up to 4,096 per epoch), and once
     that memory itself overflows, every entry of the epoch with no join carries `ownerUnknown` until the next
-    bootstrap. Resolve such an entry through recovery's `identity` member `join-<n>` for that entry id.
+    bootstrap, including entries no message owns (conservative by design: never a false "not owned"). Resolve such an entry through recovery's `identity` member `join-<n>` for that entry id.
   - both absent: the entry is not message-owned, never a lost or pending join. This absence is normative only because
     the host marks every entry it cannot vouch for with `ownerUnknown`.
 
