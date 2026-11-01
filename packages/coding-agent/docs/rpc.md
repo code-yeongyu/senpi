@@ -824,10 +824,19 @@ the settled overlay it pages after a reconnect or a recovery cut without a secon
 - `message_end` gains `messageId` and `terminalSequence`: the `messageId` and `terminalSequence` of the message's
   settled row, which a pending or failed terminal pages as the `settled` member `message-<terminalSequence>`
   (sixteen digits) and a joined message pages as the `messageId` of its `identity` member `join-<n>`.
-- `entry_appended` gains `owningMessageId` when the entry joined a message: that join member's `messageId`. Its absence
-  means the entry is not message-owned, never a lost or pending join: the owner is captured when the append is
-  applied and kept for that entry, so transcript batches applied before its `entry_appended` cannot drop it
-  (senpi#5337).
+- `entry_appended` carries the entry's ownership as a tri-state (senpi#5337, RULING-122):
+  - `owningMessageId` present: the entry joined a message, and this is that join member's `messageId`. The owner is
+    captured when the append is applied and kept for that entry, so transcript batches applied before its
+    `entry_appended` cannot drop it.
+  - `ownerUnknown: true`: the host cannot vouch for the entry's ownership. At most 1,024 joins wait for their
+    `entry_appended` at once; a join dropped at that bound is remembered by entry id (up to 4,096 per epoch), and once
+    that memory itself overflows, every entry of the epoch with no join carries `ownerUnknown` until the next
+    bootstrap. Resolve such an entry through recovery's `identity` member `join-<n>` for that entry id.
+  - both absent: the entry is not message-owned, never a lost or pending join. This absence is normative only because
+    the host marks every entry it cannot vouch for with `ownerUnknown`.
+
+  The lane's status counts dropped joins (`ownerJoinsEvicted`) and ids dropped from that memory
+  (`ownerJoinsOverflowed`), and the host writes one stderr line at an epoch's first overflow.
 - `transcript_write_failed` gains `messageId`: the failed terminal row's `messageId`.
 
 The host appends the fields after the record's own (`{"type": "message_end", ..., "sessionId": "rpc-1", "messageId":
@@ -835,7 +844,8 @@ The host appends the fields after the record's own (`{"type": "message_end", ...
 settled store that writes those rows, not a parallel derivation. `messageId` is an opaque id with no message content,
 the same live and after recovery for the message's lifetime, and never reused in the session; `terminalSequence` is
 the record's accepted sequence in its `sessionEpoch`. A record with no settled row (an end the store refused, an entry
-no message owns) carries none of them.
+no message owns) carries none of them; an entry whose ownership the host cannot vouch for carries `ownerUnknown: true`
+instead.
 
 #### release_recovery
 

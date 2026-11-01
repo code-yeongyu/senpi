@@ -1,6 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
-import { MAX_EVICTED_JOINS, MAX_PENDING_JOINS, MessageIdentities } from "../../../src/modes/rpc/compact-message-identity.ts";
+import {
+	MAX_EVICTED_JOINS,
+	MAX_PENDING_JOINS,
+	MessageIdentities,
+} from "../../../src/modes/rpc/compact-message-identity.ts";
 import { settledRig } from "./4272-settled-support.ts";
 
 // senpi#5337, RULING-121: an entry's owning message is captured when its append is applied, keyed to that entry, so
@@ -75,7 +79,9 @@ it("RULING-122 (#5337) once the evicted ring overflows, every unmatched entry of
 		const joins = MAX_PENDING_JOINS + MAX_EVICTED_JOINS + 2;
 		for (let n = 0; n < joins; n++) identities.joined(append(n), `m${n}`);
 		expect(stampOf(identities, 0), "evicted out of the ring too").toEqual({ ownerUnknown: true });
-		expect(stampOf(identities, joins + 5), "never joined, but the engine cannot vouch").toEqual({ ownerUnknown: true });
+		expect(stampOf(identities, joins + 5), "never joined, but the engine cannot vouch").toEqual({
+			ownerUnknown: true,
+		});
 		expect(stampOf(identities, joins - 1)).toEqual({ owningMessageId: `m${joins - 1}` });
 		expect(identities.status()).toEqual({ ownerJoinsEvicted: MAX_EVICTED_JOINS + 2, ownerJoinsOverflowed: 2 });
 		const lines = writes.mock.calls.map(([line]) => String(line)).filter((line) => line.includes("owner join"));

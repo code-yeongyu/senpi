@@ -271,6 +271,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		return {
 			...this.settled.storageStatus(),
 			refusedRecords: this.current.refusedRecords,
+			...this.identities.status(),
 			transcript: this.staging.status(),
 		};
 	}
