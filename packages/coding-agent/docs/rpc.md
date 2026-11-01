@@ -825,7 +825,9 @@ the settled overlay it pages after a reconnect or a recovery cut without a secon
   settled row, which a pending or failed terminal pages as the `settled` member `message-<terminalSequence>`
   (sixteen digits) and a joined message pages as the `messageId` of its `identity` member `join-<n>`.
 - `entry_appended` gains `owningMessageId` when the entry joined a message: that join member's `messageId`. Its absence
-  means the entry is not message-owned, never a lost or pending join.
+  means the entry is not message-owned, never a lost or pending join: the owner is captured when the append is
+  applied and kept for that entry, so transcript batches applied before its `entry_appended` cannot drop it
+  (senpi#5337).
 - `transcript_write_failed` gains `messageId`: the failed terminal row's `messageId`.
 
 The host appends the fields after the record's own (`{"type": "message_end", ..., "sessionId": "rpc-1", "messageId":

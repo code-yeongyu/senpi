@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
+import { MAX_PENDING_JOINS, MessageIdentities } from "../../../src/modes/rpc/compact-message-identity.ts";
 import { settledRig } from "./4272-settled-support.ts";
 
 // senpi#5337, RULING-121: an entry's owning message is captured when its append is applied, keyed to that entry, so
@@ -45,6 +46,31 @@ it("RULING-121 (#5337) two transcript batches between an append and its entry_ap
 			entryId: first.entry.id,
 		});
 		expect(entryAppended(rig, first.entry), "a join is consumed by its entry_appended").toBeUndefined();
+	} finally {
+		await rig.close();
+	}
+});
+
+it("RULING-121 (#5337) joins waiting for their entry_appended are bounded, oldest dropped first", () => {
+	const identities = new MessageIdentities();
+	const append = (n: number) => ({ kind: "append" as const, id: `e${n}`, type: "message", parentId: null });
+	for (let n = 0; n <= MAX_PENDING_JOINS; n++) identities.joined(append(n), `m${n}`);
+	const owner = (n: number) => {
+		identities.hold("entry_appended", n, { entry: { id: `e${n}` } }, undefined);
+		return identities.of("entry_appended", n);
+	};
+	expect(owner(0), "the oldest join went over the bound").toBeUndefined();
+	expect(owner(1)).toEqual({ owningMessageId: "m1" });
+	expect(owner(MAX_PENDING_JOINS)).toEqual({ owningMessageId: `m${MAX_PENDING_JOINS}` });
+});
+
+it("RULING-121 (#5337) a join from an ended epoch never stamps a record of the next one", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	const rig = await settledRig();
+	try {
+		const first = ownedAppend(rig, "first");
+		rig.lane.bootstrap({ transcript: rig.manager.beginTranscriptJournal() });
+		expect(entryAppended(rig, first.entry)).toBeUndefined();
 	} finally {
 		await rig.close();
 	}

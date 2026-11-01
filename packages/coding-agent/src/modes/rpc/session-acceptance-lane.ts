@@ -136,6 +136,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	bootstrap(input: SessionBootstrap, nonce: string = randomUUID()): void {
 		if (this.retired) return;
 		if (this.settled) this.retireSettled();
+		this.identities.reset();
 		this.nonce = nonce;
 		if (input.epochSignal) Buffer.from(nonce, "ascii").copy(Buffer.from(input.epochSignal));
 		this.settled = new CompactSettledMessages(
@@ -167,7 +168,6 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	/** Transcript transitions committed before the record they arrive with; each takes its own sequence (C1.1). */
 	applyTranscript(transitions: readonly TranscriptTransition[]): void {
 		if (this.retired || this.epoch === "") return;
-		this.identities.batch();
 		for (const transition of transitions) {
 			this.sequence += 1;
 			this.transcript.apply(transition);
@@ -299,6 +299,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	 */
 	retire(reason: "close" | "worker_failed", keep: ReadonlySet<FrozenAcceptedRoot> = new Set()): void {
 		this.retiredAs ??= reason;
+		this.identities.reset();
 		this.generations.close();
 		this.transcript = new AcceptedTranscript(this.staging);
 		for (const root of this.live) if (!keep.has(root)) this.release(root);
