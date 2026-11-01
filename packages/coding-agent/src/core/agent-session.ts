@@ -286,6 +286,7 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
+import { extensionFailureFields } from "./extensions/user-facing-error.ts";
 import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admission.ts";
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
@@ -6543,7 +6544,7 @@ export class AgentSession {
 			this._extensionRunner.emitError({
 				extensionPath: `command:${commandName}`,
 				event: "command",
-				error: err instanceof Error ? err.message : String(err),
+				...extensionFailureFields(err),
 			});
 			return true;
 		}
@@ -6637,7 +6638,7 @@ export class AgentSession {
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
-					error: err instanceof Error ? err.message : String(err),
+					...extensionFailureFields(err),
 				});
 				return text; // Return the original prompt when any skill file cannot be read.
 			}
@@ -11850,7 +11851,7 @@ export class AgentSession {
 						runner.emitError({
 							extensionPath: RUNTIME_EXTENSION_PATH,
 							event: "send_message",
-							error: err instanceof Error ? err.message : String(err),
+							...extensionFailureFields(err),
 						});
 					};
 					if (options?.triggerTurn === true) {
@@ -11876,7 +11877,7 @@ export class AgentSession {
 						runner.emitError({
 							extensionPath: RUNTIME_EXTENSION_PATH,
 							event: "send_user_message",
-							error: err instanceof Error ? err.message : String(err),
+							...extensionFailureFields(err),
 						});
 					};
 					// sendUserMessage always triggers a turn; register a settlement-deferred
@@ -12624,7 +12625,7 @@ export class AgentSession {
 					this._extensionRunner.emitError({
 						extensionPath: "<session-control>",
 						event: "reload",
-						error: error instanceof Error ? error.message : String(error),
+						...extensionFailureFields(error),
 					});
 				});
 				oldExtensionRunner.invalidate("stale extension generation after reload");

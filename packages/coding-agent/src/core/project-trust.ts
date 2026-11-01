@@ -1,4 +1,5 @@
 import { APP_NAME, CONFIG_DIR_NAME } from "../config.ts";
+import { reportExtensionFailureLine } from "./extensions/error-notice.ts";
 import { emitProjectTrustEvent } from "./extensions/runner.ts";
 import type { LoadExtensionsResult, ProjectTrustContext } from "./extensions/types.ts";
 import type { DefaultProjectTrust } from "./settings-manager.ts";
@@ -71,7 +72,7 @@ export async function resolveProjectTrusted(options: ResolveProjectTrustedOption
 			options.projectTrustContext,
 		);
 		for (const error of errors) {
-			options.onExtensionError?.(`Extension "${error.extensionPath}" project_trust error: ${error.error}`);
+			options.onExtensionError?.(reportExtensionFailureLine(error));
 		}
 		if (result) {
 			const trusted = result.trusted === "yes";

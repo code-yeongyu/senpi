@@ -117,6 +117,11 @@ import type {
 	UserBashEventResult,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
+import {
+	describeExtensionError,
+	displayDebugLogPath,
+	type ExtensionFailure,
+} from "../../core/extensions/error-notice.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
 import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
 import { emitUserActivity } from "../../core/extensions/user-activity.ts";
@@ -263,7 +268,7 @@ import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { insertProgrammaticComposerInput, observeComposerActivity } from "./composer-user-activity.ts";
 import { expandEditorSubmission, expandSubmittedText, transferEditorContent } from "./editor-paste-transfer.ts";
-import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
+import { extensionErrorNoticeSpec, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
 import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./grok/chrome.ts";
 import {
@@ -4662,26 +4667,11 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Show an extension error in the UI.
+	 * Show an extension failure as a calm notice: what happened and what to do, or "Something went
+	 * wrong" plus where the details are. The stack is in the debug log (senpi#4990), never on screen.
 	 */
-	private showExtensionError(error: {
-		readonly extensionPath: string;
-		readonly event?: string;
-		readonly error: string;
-		readonly stack?: string;
-	}): void {
-		const errorMsg = formatExtensionErrorHeadline(error);
-		const errorText = new ThemedText(() => theme.fg("error", errorMsg), 1, 0);
-		this.chatContainer.addChild(errorText);
-		if (error.stack) {
-			// Show stack trace in dim color, indented
-			const stackLines = error.stack.split("\n").slice(1); // Skip first line (duplicates error message)
-			if (stackLines.length > 0) {
-				const renderStack = () => stackLines.map((line) => theme.fg("dim", `  ${line.trim()}`)).join("\n");
-				this.chatContainer.addChild(new ThemedText(renderStack, 1, 0));
-			}
-		}
-		this.ui.requestRender();
+	private showExtensionError(error: ExtensionFailure): void {
+		this.showNoticeBox(extensionErrorNoticeSpec(describeExtensionError(error, { logPath: displayDebugLogPath() })));
 	}
 
 	// =========================================================================

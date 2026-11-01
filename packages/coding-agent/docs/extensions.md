@@ -4045,6 +4045,21 @@ const highlighted = highlightCode(code, lang, theme);
 ## Error Handling
 
 - Extension errors are logged, agent continues
+- A handler failure reaches the person as a short notice, never as a stack trace or a file path: the TUI shows a notice box, print mode writes the same lines to stderr, and RPC clients get them as `notice` on `extension_error`. The stack goes to the debug log (`<agent dir>/senpi-debug.log`)
+- A failure the user can act on should carry a code, what happened, and what to do. Throw `UserFacingError`, or set a `userFacing` property on any thrown object (no senpi import needed, so bundled extensions can do it too). The notice then shows `message` and `action` instead of the raw error message; without it, the notice is "Something went wrong in <extension>" with the first line of the message, paths cut to file names, and where the details are:
+
+```typescript
+import { UserFacingError } from "@code-yeongyu/senpi";
+
+pi.on("tool_activated", async () => {
+  throw new UserFacingError({
+    code: "QUOTA_EXHAUSTED", // letters, digits, _ . - (max 64)
+    message: "The image quota for today is used up.",
+    action: "Try again after 09:00, or switch to another image model with /model.",
+    docsUrl: "https://example.com/quota", // optional, http(s) only
+  });
+});
+```
 - `tool_call` errors block the tool (fail-safe)
 - Tool `execute` errors are signaled by throwing or by returning a result with `isError: true`; either way the result reaches the LLM with `isError: true` and execution continues (a returned result keeps its `content` and `details`)
 
