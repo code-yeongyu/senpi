@@ -3,6 +3,7 @@
  */
 
 import { basename } from "node:path";
+import { SecretInputUnavailableError } from "./secret-input.ts";
 import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
 import { requestExtensionRpc } from "./rpc-request.ts";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
@@ -213,6 +214,17 @@ function isUserBashEventResult(value: unknown): value is UserBashEventResult {
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
 	systemPrompt?: string;
+	/** Leading part of `systemPrompt` no volatile handler changed; absent when every change was stable (senpi#4447). */
+	systemPromptStablePrefix?: string;
+}
+
+/** Characters at the start of `before` that `after` keeps. */
+function sharedPrefixLength(before: string, after: string): number {
+	if (after.startsWith(before)) return before.length;
+	const limit = Math.min(before.length, after.length);
+	let index = 0;
+	while (index < limit && before.charCodeAt(index) === after.charCodeAt(index)) index++;
+	return index;
 }
 
 /**
@@ -490,9 +502,14 @@ function createNoOpSessionSettings(): ExtensionContextActions["sessionSettings"]
 }
 
 const noOpUIContext: ExtensionUIContext = {
+	capabilities: { secretInput: true },
 	select: async () => undefined,
 	confirm: async () => false,
-	input: async () => undefined,
+	input: async (_title, _placeholder, opts) => {
+		if (opts?.signal?.aborted) return undefined;
+		if (opts?.secret) throw new SecretInputUnavailableError("headless");
+		return undefined;
+	},
 	notify: () => {},
 	onTerminalInput: () => () => {},
 	setStatus: () => {},
@@ -593,6 +610,7 @@ export class ExtensionRunner {
 		reason: "rejected",
 	});
 	private getSystemPromptFn: () => string = () => "";
+	private getSystemPromptStablePrefixFn: () => string | undefined = () => undefined;
 	private getLoadedHookSourcesFn: ExtensionContextActions["getLoadedHookSources"] = () => ({
 		agentDir: "",
 		cwd: this.cwd,
@@ -761,6 +779,7 @@ export class ExtensionRunner {
 		this.getMessageRevisionFn = contextActions.getMessageRevision;
 		this.applyCompactionFn = contextActions.applyCompaction;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
+		this.getSystemPromptStablePrefixFn = contextActions.getSystemPromptStablePrefix ?? (() => undefined);
 		this.getLoadedHookSourcesFn = contextActions.getLoadedHookSources;
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
@@ -920,7 +939,7 @@ export class ExtensionRunner {
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
 			input: (title, placeholder, opts) =>
-				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
+				this.withUIPrompt("input", opts?.secret ? undefined : title, () => ui.input(title, placeholder, opts)),
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 			...(questionFn
@@ -1767,6 +1786,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			getSystemPromptStablePrefix: () => {
+				runner.assertActive();
+				return runner.getSystemPromptStablePrefixFn();
+			},
 			getSystemPromptOptions: () => {
 				runner.assertActive();
 				return runner.getSystemPromptOptionsFn();
@@ -2495,6 +2518,7 @@ export class ExtensionRunner {
 		let currentSystemPrompt = systemPrompt;
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
+		let stableLength = systemPrompt.length;
 
 		dispatch: for (const { ext, handlers } of beforeAgentStartDispatchOrder(this.extensions)) {
 			for (const handler of handlers) {
@@ -2531,6 +2555,12 @@ export class ExtensionRunner {
 							messages.push(result.message);
 						}
 						if (result.systemPrompt !== undefined) {
+							const cache =
+								result.systemPromptCache ?? (ext.path.startsWith("<builtin:") ? "stable" : "volatile");
+							stableLength =
+								cache === "stable" && stableLength === currentSystemPrompt.length
+									? result.systemPrompt.length
+									: Math.min(stableLength, sharedPrefixLength(currentSystemPrompt, result.systemPrompt));
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
 							parts = result.systemPromptParts;
@@ -2561,6 +2591,9 @@ export class ExtensionRunner {
 			return {
 				messages: messages.length > 0 ? messages : undefined,
 				systemPrompt: systemPromptModified ? currentSystemPrompt : undefined,
+				...(systemPromptModified && stableLength < currentSystemPrompt.length
+					? { systemPromptStablePrefix: currentSystemPrompt.slice(0, stableLength) }
+					: {}),
 			};
 		}
 

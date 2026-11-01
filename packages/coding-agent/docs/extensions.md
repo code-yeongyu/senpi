@@ -838,7 +838,9 @@ pi.on(
 
 Opt in only when the handler has no side effects in a preview: it returns the same `systemPrompt` a real turn would get and consumes no one-shot state, starts no work, and changes nothing a later turn observes (the builtin `compaction`, `hooks`, and `prompt-url-widget` handlers return early; `rules` and `openai-image-gen` compose without committing state). A handler registered without the option is never called for a preview. While any registered `before_agent_start` handler lacks it, senpi skips the preview entirely, because a prefix composed without that handler's additions would not match the first turn; the prewarm then appends a `prompt-cache-prewarm` custom entry with `phase: "skipped"` and a `reason` naming the extensions.
 
-Register with `{ runLast: true }` to run after every `before_agent_start` handler registered without it, whatever order the extensions loaded in; run-last handlers keep their registration order among themselves, on real turns and previews alike. Builtin run-last handlers run after every other extension's run-last handlers: the builtin MCP extension uses this so `<mcp_instructions>` always closes the system prompt, even after your own run-last addition (senpi#4448).
+Set `systemPromptCache` on the result to say whether your change to `systemPrompt` is the same in every session (`"stable"`) or differs between sessions, turns or commits (`"volatile"`, e.g. a memory block or per-prompt hook output). Builtin extensions default to `"stable"`, every other extension to `"volatile"`. senpi sends the prompt up to the first volatile change as its own cached prefix where the provider supports it (Anthropic: a separate `system` block holding the system cache breakpoint), so a new session in the same working directory reads tools and that prefix from cache even when its tail differs (the base prompt names the cwd, so sessions in different directories do not share it); the rendered prompt text is unchanged (senpi#4447). Extensions that build their own provider request from `ctx.getSystemPrompt()` pass `ctx.getSystemPromptStablePrefix()` as `systemPromptStablePrefix` so that request splits the prompt the same way.
+
+Register with `{ runLast: true }` to run after every `before_agent_start` handler registered without it, whatever order the extensions loaded in; run-last handlers keep their registration order among themselves, on real turns and previews alike. Builtin run-last handlers run after every other extension's run-last handlers: the builtin MCP extension uses this so `<mcp_instructions>` always closes the system prompt, even after your own run-last addition (senpi#4448). Because those instructions are also declared `"volatile"`, every stable addition, including one from an extension that loads after MCP, lands before them inside the cached prefix.
 
 `ctx.getPromptCachePrefixRequest({ signal })` resolves `{ status: "ready", request }` or `{ status: "skipped", reason }`. It is skipped when a handler is not preview-safe, when no model is selected, when `signal` aborts, and when a user prompt starts its turn first: senpi cancels every in-flight preview before a real turn dispatches `before_agent_start`, so the two passes never run the same handlers concurrently.
 
@@ -3582,6 +3584,64 @@ const text = await ctx.ui.editor("Edit:", "prefilled text");
 // Notification (non-blocking)
 ctx.ui.notify("Done!", "info");  // "info" | "warning" | "error"
 ```
+
+#### Private secret input
+
+`ctx.ui.input(title, placeholder, { secret: true })` collects a single-line secret
+without putting it into model messages, session history, ordinary answer ledgers,
+or replay buffers. The string goes only to the requesting extension. The TUI masks
+it; RPC requires the presenting connection's explicit `secret_input_v1` and
+`interactive_user` handshake. Ordinary input is unchanged.
+
+Check the descriptor first: older JavaScript hosts silently ignore unknown options.
+The descriptor promises the guarded contract, not a currently connected presenter.
+
+```typescript
+if (ctx.ui.capabilities?.secretInput !== true) {
+  return { applied: false, reason: "host_unsupported" };
+}
+let value: string | undefined;
+try {
+  value = await ctx.ui.input("Credential", undefined, { secret: true });
+} catch (error: unknown) {
+  if (typeof error === "object" && error !== null &&
+      "code" in error && error.code === "secret_input_unavailable" &&
+      "reason" in error &&
+      (error.reason === "headless" || error.reason === "client_unsupported" ||
+       error.reason === "no_presenter")) {
+    return { applied: false, reason: error.reason };
+  }
+  throw error;
+}
+if (value === undefined) return { applied: false, reason: "cancelled" };
+// Consume value privately here. Never log, notify, throw, or return the value.
+return { applied: true, length: value.length };
+```
+
+Empty strings, Unicode and leading/trailing spaces are preserved. Control characters
+and multiline input are refused, never normalized. Cancellation, abort and timeout
+return `undefined`. Secret input defaults to a 30-minute deadline; a supplied timeout
+must be finite and positive. Repainting, progress or re-presentation cannot renew it.
+An already-aborted signal returns `undefined` without opening a dialog.
+
+Print/JSON mode throws `SecretInputUnavailableError` with code
+`secret_input_unavailable` and reason `headless`, while `ctx.hasUI` remains false.
+An unsupported RPC client gets `client_unsupported`; an ownerless call with no
+eligible presenter gets `no_presenter`. There is no plaintext or stdin fallback.
+The `ephemeral` option does not weaken secret privacy.
+
+Typed-secret login prompts use this API on supporting contexts. A new host refuses
+API-key `/login` from an old external client or attach binary, with fixed guidance:
+“This client cannot collect a secret; use the TUI or the host's settings route.”
+Older contexts without the descriptor retain their existing plain login call, an
+explicit legacy gap. Text, manual-code and select prompts retain their behavior.
+
+This is not taint tracking or a sandbox for extensions. Trusted extension code can
+leak the returned string. Keep labels and placeholders non-secret. File staging,
+if needed, belongs to the extension on the agent host, with private permissions,
+exclusive creation and explicit cleanup. The engine creates no secret file and
+cannot promise erasure of immutable JavaScript strings or protection from OS-level
+terminal recording, debuggers or a malicious client.
 
 #### Timed Dialogs with Countdown
 

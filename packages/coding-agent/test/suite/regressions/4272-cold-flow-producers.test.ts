@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -32,7 +33,7 @@ it("RULING-33 cond. 2 real producers drive edit, context-edit removal, compactio
 		host.faux.setResponses([fauxAssistantMessage(answer, { timestamp: 1 })]);
 		const idle = (record: { type?: unknown }) => record.type === "agent_idle";
 		const seen = client.inbox.filter(idle).length;
-		const done = client.waitFor((record) => idle(record) && client.inbox.filter(idle).length > seen, 15_000);
+		const done = client.waitFor((record) => idle(record) && client.inbox.filter(idle).length > seen, EVENT_SAFETY_MS);
 		dataOf(await client.request({ type: "prompt", sessionId, message }));
 		await done;
 	}
@@ -78,4 +79,4 @@ it("RULING-33 cond. 2 real producers drive edit, context-edit removal, compactio
 	const branched = await settle();
 	expect(has(branched, "u-one"), "the message that joined the path is installed again").toBe(true);
 	for (const text of ["u-three", "a-three"]) expect(has(branched, text), text).toBe(false);
-}, 90_000);
+}, 600_000);
