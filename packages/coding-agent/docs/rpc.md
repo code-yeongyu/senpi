@@ -818,10 +818,12 @@ is never found.
 {"type": "cancel_attempt", "admissionId": "attach-9"}
 ```
 
-The answer's `data` is `{outcome}`: `cancelled` when the attempt was still pending or was already cancelled,
-`already_complete` when the admission had completed or failed (cancel does not undo it), and `unknown` for an id
-this socket never used. A connection with no socket epoch (stdio) is refused with `unsupported_transport`. A malformed
-`admissionId` is refused with `admission_malformed_request`. With the flag off it answers as any unknown command.
+The host first checks the id against this connection's admissions: an id that is neither a pending attempt nor an
+admission this connection currently holds (never used, already cancelled, or completed and released) is refused with
+`unknown_admission`. Otherwise the answer's `data` is `{outcome}`: `cancelled` for a pending attempt (its late result
+is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). A
+connection with no socket epoch (stdio) is refused with `unsupported_transport`, and a malformed `admissionId` with
+`admission_malformed_request`. With the flag off it answers as any unknown command.
 
 #### reset_stream
 
