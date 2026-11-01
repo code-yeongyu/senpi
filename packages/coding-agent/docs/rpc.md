@@ -647,6 +647,30 @@ in the same synchronous step that reopens admission, and delivered before subseq
 deltas. They replace the client's partial-message
 baseline; they are not text to append a second time. Media placeholders still apply.
 
+With compact socket updates enabled, a snapshot's tool calls carry only their parsed
+`arguments`, never the raw argument text streamed so far. For every tool call still open
+in the snapshot, the session's `resync_required` record is followed by a
+`message_tool_arguments_reset` record. That reset comes before any later `toolcall_delta`
+of that call. A tool call that had already ended at the cut gets no reset.
+
+```json
+{"type":"message_tool_arguments_reset","sessionId":"rpc-1","contentIndex":1,"rawArgumentPrefix":"","parsedThrough":0}
+{"type":"message_update","sessionId":"rpc-1","usage":{...},"assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"{\"command\":\"ec"}}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `contentIndex` | The tool call's block index in the snapshot's `content` |
+| `rawArgumentPrefix` | The raw argument text that replaces the client's buffer; `""` at a cut |
+| `parsedThrough` | How much of `rawArgumentPrefix` has been parsed into `arguments`; `0` at a cut |
+
+Replace that call's buffered raw arguments with `rawArgumentPrefix` and keep its parsed
+`arguments` from the snapshot. The call's next `toolcall_delta` starts at offset 0 and
+carries the whole raw prefix accumulated before the cut. Later deltas append to it as usual,
+and `toolcall_end.toolCall` stays authoritative. A client that renders tool arguments only
+from `toolcall_end` may ignore the reset. None of the in-repo clients advertises `event_resync`
+yet; handling the reset before one does is tracked in senpi#5300.
+
 Every untagged marker requires connection-wide reconciliation: unsubscribe the previous
 `subscribe_sessions` subscription and subscribe again, replacing the status snapshot and
 restarting its sequence at zero; re-read `list_sessions` and lifecycle state; and re-read
