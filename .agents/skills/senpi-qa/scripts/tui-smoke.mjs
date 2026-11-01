@@ -22,7 +22,11 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { connect, createServer } from "node:net";
+import { fileURLToPath } from "node:url";
+import { observeFrames } from "./lib/tui-frames.mjs";
 import {
+	childRuntime,
 	cliEntry,
 	createChecks,
 	evidenceDir,
@@ -35,11 +39,24 @@ import {
 } from "./lib/common.mjs";
 
 const TYPED = "SENPIQATYPED1234";
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const timeoutIndex = process.argv.indexOf("--timeout-ms");
+const timeoutMs = timeoutIndex < 0 ? 60000 : Number(process.argv[timeoutIndex + 1]);
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("--timeout-ms must be positive");
 
 /** Args that make the TUI boot minimal, trusted, offline, and isolated. */
 function tuiArgs() {
 	return ["--no-context-files", "--no-skills", "--no-extensions", "--approve"];
+}
+
+function launchArgs() {
+	const root = repoRoot();
+	const runtime = childRuntime();
+	return {
+		command: runtime.command,
+		args: runtime.kind === "binary" ? tuiArgs() : runtime.kind === "bun"
+			? [cliEntry(root), ...tuiArgs()]
+			: [tsxEntry(root), "--tsconfig", join(root, "tsconfig.json"), cliEntry(root), ...tuiArgs()],
+	};
 }
 
 function nonEmptyLineCount(text) {
@@ -91,9 +108,18 @@ async function resolveDriver(requested) {
 // ---------------------------------------------------------------------------
 
 async function smokeTmux(box) {
-	const root = repoRoot();
+	const launch = launchArgs();
 	const session = `senpi-qa-tui-${process.pid}`;
-	const tmux = (...args) => execFileSync("tmux", args, { encoding: "utf8" });
+	// A private server inherits the scrubbed sandbox env, not a pre-existing tmux server's env.
+	// Name it with -L so the socket lives in tmux's own short dir: a socket under a long TMPDIR
+	// overflows the ~104-byte Unix socket path limit. Dropping TMUX_TMPDIR pins that dir to tmux's
+	// default (/tmp/tmux-<uid>) for this process and the in-session launch gate alike.
+	const socketName = session;
+	const env = { ...box.env };
+	delete env.TMUX_TMPDIR;
+	const tmux = (...args) => execFileSync("tmux", ["-L", socketName, ...args], {
+		encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"],
+	});
 	const capture = () => {
 		try {
 			return tmux("capture-pane", "-t", session, "-p");
@@ -103,55 +129,68 @@ async function smokeTmux(box) {
 	};
 	const alive = () => {
 		try {
-			execFileSync("tmux", ["has-session", "-t", session], { stdio: "ignore" });
+			tmux("has-session", "-t", session);
 			return true;
 		} catch {
 			return false;
 		}
 	};
 
+	const frames = observeFrames();
+	let stream;
+	let connectionTimer;
+	const server = createServer();
+	await new Promise((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
+	const connected = new Promise((resolve, reject) => {
+		connectionTimer = setTimeout(() => reject(new Error("TUI output pipe connection timed out")), timeoutMs);
+		server.once("connection", connection => {
+			clearTimeout(connectionTimer);
+			stream = connection;
+			stream.setEncoding("utf8");
+			stream.on("data", data => frames.push(data));
+			stream.on("error", error => frames.fail(error));
+			stream.on("end", () => frames.fail(new Error("TUI output closed before the requested render")));
+			resolve();
+		});
+	});
+	let rendered = false;
+	let acceptedInput = false;
+	let survived = false;
+	let screen = "";
+	let renderError = "";
 	try {
-		execFileSync("tmux", ["kill-session", "-t", session], { stdio: "ignore" });
-	} catch {}
-
-	const cmd = [
-		`cd ${shq(box.cwd)}`,
-		`export SENPI_CODING_AGENT_DIR=${shq(box.agentDir)} SENPI_CODING_AGENT_SESSION_DIR=${shq(box.sessionDir)} PI_OFFLINE=1 PI_TELEMETRY=0`,
-		`exec ${shq(process.execPath)} ${shq(tsxEntry(root))} --tsconfig ${shq(join(root, "tsconfig.json"))} ${shq(cliEntry(root))} ${tuiArgs().join(" ")}`,
-	].join("; ");
-
-	tmux("new-session", "-d", "-s", session, "-x", "120", "-y", "34", cmd);
-
-	let booted = "";
-	for (let i = 0; i < 25 && alive(); i++) {
-		await sleep(1000);
-		booted = capture();
-		if (nonEmptyLineCount(booted) >= 2) break;
-	}
-	const rendered = nonEmptyLineCount(booted) >= 2;
-	const survived = alive();
-
-	// Type a marker and confirm it reaches the composer.
-	if (survived) {
+		const gate = `tmux -L ${shq(socketName)} wait-for start`;
+		const cmd = `${gate}; exec ${shq(launch.command)} ${launch.args.map(shq).join(" ")}`;
+		tmux("new-session", "-d", "-s", session, "-x", "120", "-y", "34", "-c", box.cwd, cmd);
+		tmux("pipe-pane", "-O", "-t", session,
+			`${shq(process.execPath)} ${shq(fileURLToPath(import.meta.url))} --forward ${server.address().port}`);
+		await connected;
+		// Subscribe before releasing the launch gate; the first frame cannot be missed.
+		const firstFrame = frames.waitFor(text => text.trim().length > 0, "render", timeoutMs);
+		tmux("wait-for", "-S", "start");
+		await firstFrame;
+		screen = capture();
+		rendered = nonEmptyLineCount(screen) > 0;
+		if (!rendered) throw new Error("TUI completed a render but tmux captured an empty screen");
+		const inputFrame = frames.waitFor(text => text.includes(TYPED), "input render", timeoutMs);
 		tmux("send-keys", "-t", session, "-l", TYPED);
-		await sleep(800);
+		await inputFrame;
+		screen = capture();
+		acceptedInput = screen.includes(TYPED);
+	} catch (error) {
+		renderError = error.message;
+		screen = capture();
+	} finally {
+		clearTimeout(connectionTimer);
+		survived = alive();
+		try { tmux("kill-server"); } catch {}
+		stream?.destroy();
+		server.close();
 	}
-	const afterType = capture();
-	const acceptedInput = afterType.includes(TYPED);
-
-	// Tear down: try graceful exit, then force.
-	try {
-		tmux("send-keys", "-t", session, "C-c");
-		await sleep(200);
-		tmux("send-keys", "-t", session, "C-c");
-		await sleep(400);
-	} catch {}
-	try {
-		execFileSync("tmux", ["kill-session", "-t", session], { stdio: "ignore" });
-	} catch {}
-	const cleanedUp = !alive();
-
-	return { driver: "tmux", rendered, survived, acceptedInput, cleanedUp, capture: afterType || booted };
+	return { driver: "tmux", rendered, survived, acceptedInput, cleanedUp: !alive(), capture: screen, renderError };
 }
 
 /** POSIX shell single-quote escaping. */
@@ -164,50 +203,51 @@ function shq(s) {
 // ---------------------------------------------------------------------------
 
 async function smokePty(box) {
-	const root = repoRoot();
+	const launch = launchArgs();
 	const pty = (await import("node-pty")).default ?? (await import("node-pty"));
 	const term = pty.spawn(
-		process.execPath,
-		[tsxEntry(root), "--tsconfig", join(root, "tsconfig.json"), cliEntry(root), ...tuiArgs()],
+		launch.command,
+		launch.args,
 		{ name: "xterm-color", cols: 120, rows: 34, cwd: box.cwd, env: box.env },
 	);
 
 	let buf = "";
 	let exited = false;
+	const frames = observeFrames();
 	term.onData((d) => {
 		buf += d;
+		frames.push(d);
 	});
+	let resolveExit;
+	const exit = new Promise(resolve => { resolveExit = resolve; });
 	term.onExit(() => {
 		exited = true;
+		frames.fail(new Error("TUI exited before the requested render"));
+		resolveExit();
 	});
 
 	let rendered = false;
-	for (let i = 0; i < 25 && !exited; i++) {
-		await sleep(1000);
-		if (nonEmptyLineCount(stripAnsi(buf)) >= 2) {
-			rendered = true;
-			break;
-		}
+	let acceptedInput = false;
+	let renderError = "";
+	try {
+		await frames.waitFor(text => text.trim().length > 0, "render", timeoutMs);
+		rendered = true;
+		const inputFrame = frames.waitFor(text => text.includes(TYPED), "input render", timeoutMs);
+		term.write(TYPED);
+		await inputFrame;
+		acceptedInput = true;
+	} catch (error) {
+		renderError = error.message;
 	}
 	const survived = !exited;
-	if (survived) {
-		term.write(TYPED);
-		await sleep(800);
-	}
-	const acceptedInput = stripAnsi(buf).includes(TYPED);
-
-	try {
-		term.write("\x03"); // Ctrl+C
-		await sleep(200);
-		term.write("\x03");
-		await sleep(400);
-	} catch {}
 	try {
 		term.kill();
 	} catch {}
-	await sleep(300);
+	let exitTimer;
+	await Promise.race([exit, new Promise(resolve => { exitTimer = setTimeout(resolve, timeoutMs); })]);
+	clearTimeout(exitTimer);
 
-	return { driver: "pty", rendered, survived, acceptedInput, cleanedUp: true, capture: stripAnsi(buf) };
+	return { driver: "pty", rendered, survived, acceptedInput, cleanedUp: exited, capture: stripAnsi(buf), renderError };
 }
 
 // ---------------------------------------------------------------------------
@@ -235,9 +275,9 @@ async function selfTest(requestedDriver, slug) {
 	await checks.run(`TUI boots and survives via ${driver}`, async () => {
 		res = driver === "tmux" ? await smokeTmux(box) : await smokePty(box);
 		if (!res.survived) throw new Error("TUI exited during boot");
-		return `nonEmptyLines after boot`;
+		return `observed completed render via ${driver}`;
 	});
-	checks.ok("TUI rendered a non-empty screen", !!res && res.rendered);
+	checks.ok("TUI rendered a non-empty screen", !!res && res.rendered, res?.renderError);
 	checks.ok("keystroke reached the composer", !!res && res.acceptedInput, res ? `looked for ${TYPED}` : "");
 	checks.ok("TUI torn down (no leaked session/process)", !!res && res.cleanedUp);
 	checks.ok("real auth unchanged", (() => {
@@ -262,7 +302,11 @@ async function selfTest(requestedDriver, slug) {
 }
 
 const argv = process.argv.slice(2);
-if (argv[0] === "--self-test") {
+if (argv[0] === "--forward") {
+	const socket = connect(Number(argv[1]), "127.0.0.1");
+	socket.on("error", () => process.exit(1));
+	process.stdin.pipe(socket);
+} else if (argv[0] === "--self-test") {
 	const di = argv.indexOf("--driver");
 	const ei = argv.indexOf("--evidence");
 	selfTest(di >= 0 ? argv[di + 1] : "auto", ei >= 0 ? argv[ei + 1] : undefined).catch((e) => {
