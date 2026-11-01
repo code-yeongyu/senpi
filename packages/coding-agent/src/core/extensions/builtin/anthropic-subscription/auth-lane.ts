@@ -30,7 +30,7 @@ import { refreshFailure } from "./refresh-failure.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
-import { ClaudeSignInRequiredError, signInRequiredNames } from "./sign-in-again.ts";
+import { ClaudeSignInRequiredError, signInRequiredAccounts } from "./sign-in-again.ts";
 
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 export { overrideAuthLaneBoundary, resetAuthLaneBoundary } from "./auth-lane-boundary.ts";
@@ -237,14 +237,14 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			isUsable: (account) => !isBlockedFor(account, activeBoundary.now(), input.model),
 			now: activeBoundary.now(),
 			transientError: (error) => (error instanceof CredentialStoreBusyError ? error : refreshFailure(error)),
-			claudeCliSignedIn: async (slot) => {
+			claudeCliStatus: async (slot) => {
 				const configDir = accountDirFor(activeBoundary.getAgentDir(), slot.dirId);
-				return (await activeBoundary.claudeCliAuthStatus(configDir, pool.environment)).state === "signed_in";
+				return (await activeBoundary.claudeCliAuthStatus(configDir, pool.environment)).state;
 			},
 		});
 	}
 	// A slot that must sign in again is never selected, like a removed one; with none left the turn names them.
-	const signedOut = signInRequiredNames(pool.accounts);
+	const signedOut = signInRequiredAccounts(pool.accounts);
 	pool.accounts = pool.accounts.filter((account) => account.store !== "claude-cli" || !account.signInRequired);
 	if (pool.accounts.length === 0) throw new ClaudeSignInRequiredError(signedOut);
 	let askedLegacyLongContext = false;
