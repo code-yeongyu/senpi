@@ -16,7 +16,11 @@ import { getAgentDir } from "../config.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { isAvailable } from "./credential-pool/failover.ts";
 import { type ModelBlocks, pruneModelBlocks } from "./credential-pool/model-scope.ts";
-import { CredentialSlotRepository, type CredentialSlotState } from "./credential-pool/state-store.ts";
+import {
+	applicableStoredState,
+	CredentialSlotRepository,
+	type CredentialSlotState,
+} from "./credential-pool/state-store.ts";
 import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import { isListedStoredSlot, SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscription/accounts.ts";
 import { isAccountBlocked } from "./extensions/builtin/anthropic-subscription/affinity.ts";
@@ -304,13 +308,13 @@ async function summarizeInStoredOrder(
 		for (const slot of storedAccounts) {
 			const displayName = accountDisplayName(slot.displayName);
 			const persisted = state[slot.name];
-			const revision = await repository.storedCredentialRevision(provider, slot.name, {
+			const revisions = await repository.storedSlotRevisions(provider, slot.name, {
 				key: slot.key,
 				access: slot.access,
 				refresh: slot.refresh,
 			});
-			// A block belongs to the material that earned it; a re-login starts clean.
-			const applicable = persisted?.credentialRevision === revision ? persisted : undefined;
+			// The same rule the pool selects by: an account's block survives a token refresh (senpi#4093).
+			const applicable = applicableStoredState(persisted, revisions);
 			summaries.push({
 				name: slot.name,
 				...(normalizeProviderId(provider) === "chatgpt-subscription" && credential.type === "oauth"
