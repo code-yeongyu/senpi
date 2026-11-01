@@ -227,13 +227,36 @@ export function resolveChainKey(
 	currentModel: Model<Api>,
 	currentThinking: ThinkingLevel | undefined,
 	chains: FallbackChains,
-	_options?: { allowWildcard?: boolean },
+	options?: { allowWildcard?: boolean; fastSibling?: Model<Api> },
 ): string | undefined {
-	const base = formatSelector(currentModel);
-	const exact = currentThinking ? `${base}:${currentThinking}` : base;
+	return (
+		ownChainKey(currentModel, currentThinking, chains) ??
+		siblingChainKey(currentModel, currentThinking, chains, options?.fastSibling)
+	);
+}
+
+function ownChainKey(
+	model: Model<Api>,
+	thinking: ThinkingLevel | undefined,
+	chains: FallbackChains,
+): string | undefined {
+	const base = formatSelector(model);
+	const exact = thinking ? `${base}:${thinking}` : base;
 	if (Object.hasOwn(chains, exact)) return exact;
 	if (Object.hasOwn(chains, base)) return base;
 	return undefined;
+}
+
+// A session started on a `-fast` alias runs on its base model (service-tier swaps them), so a chain
+// keyed by that alias still governs it (omo#12063). Only the catalog-paired same-provider sibling counts.
+function siblingChainKey(
+	model: Model<Api>,
+	thinking: ThinkingLevel | undefined,
+	chains: FallbackChains,
+	sibling: Model<Api> | undefined,
+): string | undefined {
+	if (!sibling || sibling.provider !== model.provider) return undefined;
+	return ownChainKey(sibling, thinking, chains);
 }
 
 function formatParsedSelector(selector: FallbackSelector): string {
