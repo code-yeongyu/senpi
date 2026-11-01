@@ -53,6 +53,51 @@ function uniqueMatch(names: readonly string[], matches: (name: string) => boolea
 	return found.length === 1 ? found[0] : undefined;
 }
 
+/**
+ * Words that turn a stray prefix into an instruction rather than noise: a call
+ * named `delete_write` or `force_bash` is refused, never run as `write` or
+ * `bash`.
+ */
+const DESTRUCTIVE_PREFIX_WORDS: ReadonlySet<string> = new Set([
+	"delete",
+	"remove",
+	"rm",
+	"force",
+	"drop",
+	"purge",
+	"wipe",
+	"kill",
+	"reset",
+	"overwrite",
+	"truncate",
+	"destroy",
+]);
+
+/**
+ * Last resort for a plain name carrying a stray word prefix (`trophy_eval` for
+ * `eval`, omo#12065). The prefixes models emit there are arbitrary words a
+ * namespacing proxy invented (`trophy`, `fringe`, `board`, `column`), so the
+ * prefix cannot be allowlisted; instead it is refused when it carries meaning.
+ * Resolves to the one registered tool whose exact name is a `_`-separated
+ * suffix of the requested name, unless any word of the stripped prefix is a
+ * destructive verb (`delete_write`) or itself names a registered tool
+ * (`read_write`). Namespaced names are excluded so `mcp__sandbox__run_bash`
+ * still never falls through to a local `bash`, and two suffix matches
+ * (`x_read_file` against `read_file` and `file`) refuse.
+ */
+function strayPrefixMatch(requested: string, names: readonly string[]): string | undefined {
+	if (toolNameForms(requested).length > 1) return undefined;
+	const match = uniqueMatch(names, (name) => requested.length > name.length + 1 && requested.endsWith(`_${name}`));
+	if (match === undefined) return undefined;
+	const prefix = requested.slice(0, requested.length - match.length - 1);
+	const registered = new Set(names.map(foldToolName));
+	const meaningful = [prefix, ...prefix.split(/[-_]+/)].some((word) => {
+		const key = foldToolName(word);
+		return DESTRUCTIVE_PREFIX_WORDS.has(key) || registered.has(key);
+	});
+	return meaningful ? undefined : match;
+}
+
 /** Resolve `requested` to the one available tool it names, or `undefined` when none or several match. */
 export function resolveToolNameMatch(requested: string, available: Iterable<string>): string | undefined {
 	const names = [...new Set(available)];
@@ -68,5 +113,5 @@ export function resolveToolNameMatch(requested: string, available: Iterable<stri
 		);
 		if (unprefixed !== undefined) return unprefixed;
 	}
-	return undefined;
+	return strayPrefixMatch(requested, names);
 }

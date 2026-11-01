@@ -3,6 +3,7 @@
  * accepts at the public path, and whether the generation is alive but stalled (senpi#2566, IS-5). Split
  * out of `host-ensure.ts`; neither check ever signals anything.
  */
+import { lstat } from "node:fs/promises";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import type { RegisteredHost } from "./host-daemon-registration.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
@@ -96,14 +97,20 @@ export async function publicEndpointAccepts(socket: string): Promise<boolean> {
  * refuses only because its backlog is full (`socketEntryListenerState`), because a start there
  * could only lose the bind; the registered paths keep `publicEndpointAccepts`, whose "not
  * accepting" leads to the stall check (IS-5).
+ *
+ * An entry that is not a socket is held too (#5280): the start's `prepareSocketPath` never removes one, so
+ * a start there could only fail. The connect probe cannot tell: macOS answers ENOTSOCK, but Linux answers
+ * ECONNREFUSED, which reads as a dead listener there. The entry is read with `lstat` and never followed: a
+ * symlink, dangling or not, is held too (#5294 class), so a planted link can neither read as a missing entry
+ * nor steer the probe to the path it names.
  */
 export async function unregisteredEndpointHeld(socket: string): Promise<boolean> {
 	if (process.platform === "win32" || socket.startsWith("\0")) return false;
-	const entry = await statSocketIdentity(socket).then(
-		(identity) => (identity === undefined ? "absent" : "present"),
-		() => "unknown",
+	const entry = await lstat(socket).then(
+		(found) => (found.isSocket() ? "socket" : "not-socket"),
+		(cause: unknown) => (cause instanceof Error && "code" in cause && cause.code === "ENOENT" ? "absent" : "unknown"),
 	);
 	if (entry === "absent") return false;
-	if (entry === "unknown") return true;
+	if (entry !== "socket") return true;
 	return (await socketEntryListenerState(socket)).verdict === "live";
 }
