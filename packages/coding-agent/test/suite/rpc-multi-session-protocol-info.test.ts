@@ -26,6 +26,7 @@ describe("multi-session RPC protocol info", () => {
 					"multi_session",
 					"snapshot_cursor",
 					"ui_answer_ledger",
+					"secret_input_v1", // senpi#5108: hosts advertise guarded private input.
 					"dialog_observer",
 					"session_lifecycle",
 					"expected_host_instance",
@@ -43,6 +44,7 @@ describe("multi-session RPC protocol info", () => {
 					"continue_from_leaf",
 					"eval_cells",
 					"auth_key_verify",
+					"provider_account_test",
 					"queued_message_revision",
 					"tool_barrier",
 					"user_activity",
