@@ -107,11 +107,12 @@ it("RULING-68 a record over the protocol depth limit but under the engine limit 
 }, 600_000);
 
 /** One real delivery per probe, including the refusal/reporting and two-turn survival contract. */
-async function writerDelivers(depth: number): Promise<boolean> {
+async function writerDelivers(depth: number, expectedDelivered?: boolean): Promise<boolean> {
 	const { records, refusals, stderr } = await inProcess(depth, new Date(0));
 	const updates = records.filter(isUpdate);
 	const delivered = updates.length === 1;
-	expect(updates).toHaveLength(delivered ? 1 : 0);
+	if (expectedDelivered !== undefined) expect(updates).toHaveLength(expectedDelivered ? 1 : 0);
+	else expect(updates.length).toBeLessThanOrEqual(1);
 	if (delivered) {
 		let details = (updates[0]?.partialResult as { details?: unknown } | undefined)?.details;
 		let levels = 0;
@@ -156,8 +157,9 @@ it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typ
 	);
 	const depth = Math.floor(Math.min(LIMIT, low) / 2);
 	console.log(`RULING-105 engine Lw=${low} P=${LIMIT} far=${depth}`);
-	for (let repeat = 0; repeat < 3; repeat++) expect(await writerDelivers(depth), "far depth delivered").toBe(true);
-	expect(await writerDelivers(OVER_ENGINE), "over-engine refused").toBe(false);
+	for (let repeat = 0; repeat < 3; repeat++)
+		expect(await writerDelivers(depth, true), "far depth delivered").toBe(true);
+	expect(await writerDelivers(OVER_ENGINE, false), "over-engine refused").toBe(false);
 }, 300_000);
 
 const isolatePrelude = `

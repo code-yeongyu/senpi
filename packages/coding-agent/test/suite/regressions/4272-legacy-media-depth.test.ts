@@ -146,7 +146,7 @@ it("in process: a media-placeholder client receives a 4,000-deep tool result unc
 }, 600_000);
 
 /** One real placeholder-writer delivery, with exact refusal/reporting and two-turn survival assertions. */
-async function writerDelivers(depth: number): Promise<boolean> {
+async function writerDelivers(depth: number, expectedDelivered?: boolean): Promise<boolean> {
 	let accepted: boolean | undefined;
 	const { records, refusals, stderr } = await inProcess((host, sessionId) => {
 		accepted = enqueueLegacyRecord(host.writer, sessionId, deepToolEnd(depth, new Date(0)));
@@ -154,7 +154,8 @@ async function writerDelivers(depth: number): Promise<boolean> {
 	expect(accepted, "consumed, not an overflow or a closed session").toBe(true);
 	const ends = records.filter(isDeepEnd);
 	const delivered = ends.length === 1;
-	expect(ends).toHaveLength(delivered ? 1 : 0);
+	if (expectedDelivered !== undefined) expect(ends).toHaveLength(expectedDelivered ? 1 : 0);
+	else expect(ends.length).toBeLessThanOrEqual(1);
 	if (delivered) {
 		expect(blockOf(ends[0])).toMatchObject({ type: "image_ref", ref: { toolCallId: "call_deep", contentIndex: 1 } });
 		let details = detailsOf(ends[0]);
@@ -197,8 +198,9 @@ it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typ
 	);
 	const depth = Math.floor(Math.min(LIMIT, low) / 2);
 	console.log(`RULING-105 media Lw=${low} P=${LIMIT} far=${depth}`);
-	for (let repeat = 0; repeat < 3; repeat++) expect(await writerDelivers(depth), "far depth delivered").toBe(true);
-	expect(await writerDelivers(OVER_ENGINE), "over-engine refused").toBe(false);
+	for (let repeat = 0; repeat < 3; repeat++)
+		expect(await writerDelivers(depth, true), "far depth delivered").toBe(true);
+	expect(await writerDelivers(OVER_ENGINE, false), "over-engine refused").toBe(false);
 }, 300_000);
 
 const isolatePrelude = `
