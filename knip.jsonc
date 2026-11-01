@@ -1157,8 +1157,6 @@
       "packages/coding-agent/src/modes/rpc/protocol-identity.ts": ["HOST_GENERATION_ENV", "HOST_INSTANCE_ID_ENV"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_SESSION_IDENTITY_MISMATCH, RPC_ERROR_SESSION_BUSY_LIFECYCLE, RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_SESSION_PATH_IN_USE, RPC_ERROR_SESSION_RESERVATION_LIMIT, RPC_ERROR_SESSION_NOT_HELD (+7 more)
       "packages/coding-agent/src/modes/rpc/rpc-error-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STALE_LEAF", "RPC_ERROR_STREAMING"],
-      // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_LIMITS
-      "packages/coding-agent/src/modes/rpc/rpc-input-validation.ts": ["SESSION_CONTEXT_LIMITS"],
       // pre-existing at origin main aceb1cc1d9: unused exports checkRpcKeyDirectory
       "packages/coding-agent/src/modes/rpc/rpc-public-key.ts": ["checkRpcKeyDirectory"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+7 more)
@@ -1317,8 +1315,8 @@
       "packages/senpi-codemode/src/kernels/js/worker-host.ts": ["errorFromBridge"],
       // pre-existing at origin main aceb1cc1d9: unused exports resolvePackage
       "packages/senpi-codemode/src/kernels/js/worker-package-resolve.js": ["resolvePackage"],
-      // pre-existing at origin main aceb1cc1d9: unused exports PROCESS_STARTUP_DEADLINE_MS, ProcessKernelStartupTimeoutError
-      "packages/senpi-codemode/src/kernels/js/worker-startup.ts": ["PROCESS_STARTUP_DEADLINE_MS", "ProcessKernelStartupTimeoutError"],
+      // pre-existing at origin main aceb1cc1d9: unused export ProcessKernelStartupTimeoutError (PROCESS_STARTUP_DEADLINE_MS gained its first consumer in senpi#5183)
+      "packages/senpi-codemode/src/kernels/js/worker-startup.ts": ["ProcessKernelStartupTimeoutError"],
       // pre-existing at origin main aceb1cc1d9: unused exports PythonKernelStartupError
       "packages/senpi-codemode/src/kernels/py/startup.ts": ["PythonKernelStartupError"],
       // vendored from earendil-works/pi v1.0.1 with senpi changes; pre-existing exports at origin main aceb1cc1d9: unused exports MAX_STORE_VALUE_CHARS, MAX_STORE_TOTAL_CHARS
