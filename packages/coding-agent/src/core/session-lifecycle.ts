@@ -150,11 +150,13 @@ export class SessionLifecycleController {
 		this.liveness = undefined;
 		this.stopFacts = undefined;
 		this.deadlineStop = undefined;
-		const interruptedRun = this.ledger.interrupted ? this.ledger.runId : undefined;
+		// Settle whatever the previous run consumed, however it ended: idle() settles only a run that reaches it, and a
+		// run cut short by crash recovery or by a provider error that auto-retry replaces never does.
+		const previousRun = this.ledger.runId;
 		this.ledger.interrupted = false;
 		this.ledger.startRun(origin ?? (this.pendingHuman ? "human" : "automatic"));
 		this.pendingHuman = false;
-		if (interruptedRun) this.obligations.settleRun(interruptedRun);
+		if (previousRun) this.obligations.settleRun(previousRun);
 		this.recompute();
 		this.ledger.publishUnwritten();
 	}

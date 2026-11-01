@@ -2,7 +2,7 @@ import { closeSync, fstatSync } from "node:fs";
 import type { Duplex } from "node:stream";
 import { isMainThread } from "node:worker_threads";
 import { decodePrivateFdTable, PRIVATE_FDS_TABLE_ENV } from "./private-fd-table.ts";
-import { inheritedDuplex } from "./utils/inherited-duplex.ts";
+import { inheritedDuplex, isFifoMode } from "./utils/inherited-duplex.ts";
 import { clearPrivateFdInherit } from "./utils/private-fd-inherit.ts";
 
 /** Set only on the supervisor-to-engine hop: the engine claims its channels and never forwards them. */
@@ -83,7 +83,7 @@ function isSocket(fd: number): boolean {
 
 function isPipe(fd: number): boolean {
 	try {
-		return fstatSync(fd).isFIFO();
+		return isFifoMode(fstatSync(fd).mode);
 	} catch {
 		return false;
 	}

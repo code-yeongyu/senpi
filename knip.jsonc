@@ -1319,8 +1319,8 @@
       "packages/senpi-codemode/src/kernels/js/worker-host.ts": ["errorFromBridge"],
       // pre-existing at origin main aceb1cc1d9: unused exports resolvePackage
       "packages/senpi-codemode/src/kernels/js/worker-package-resolve.js": ["resolvePackage"],
-      // pre-existing at origin main aceb1cc1d9: unused exports PROCESS_STARTUP_DEADLINE_MS, ProcessKernelStartupTimeoutError
-      "packages/senpi-codemode/src/kernels/js/worker-startup.ts": ["PROCESS_STARTUP_DEADLINE_MS", "ProcessKernelStartupTimeoutError"],
+      // pre-existing at origin main aceb1cc1d9: unused export ProcessKernelStartupTimeoutError (PROCESS_STARTUP_DEADLINE_MS gained its first consumer in senpi#5183)
+      "packages/senpi-codemode/src/kernels/js/worker-startup.ts": ["ProcessKernelStartupTimeoutError"],
       // pre-existing at origin main aceb1cc1d9: unused exports PythonKernelStartupError
       "packages/senpi-codemode/src/kernels/py/startup.ts": ["PythonKernelStartupError"],
       // vendored from earendil-works/pi v1.0.1 with senpi changes; pre-existing exports at origin main aceb1cc1d9: unused exports MAX_STORE_VALUE_CHARS, MAX_STORE_TOTAL_CHARS
