@@ -6,6 +6,7 @@ import { attachJsonlLineReader } from "../../../src/modes/rpc/jsonl.ts";
 import { RpcClient } from "../../../src/modes/rpc/rpc-client.ts";
 import { socketSink } from "../../../src/modes/rpc/socket-sink.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
+import { listenOnShortSocket } from "./4272-rpc-client-admission-support.ts";
 
 const FIXTURES = new URL("../../../docs/engine-socket/fixtures/admission-routes/", import.meta.url);
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
@@ -39,7 +40,6 @@ function normalize(bytes: string, root: string): string {
 async function record(flag: "0" | "1"): Promise<Record<string, string>> {
 	vi.stubEnv(FLAG, flag);
 	await using host = await statusHost();
-	const socketPath = join(dirname(host.cwd), "golden.sock");
 	const requests: string[] = [];
 	const frames: string[] = [];
 	const handlers: Promise<void>[] = [];
@@ -60,8 +60,8 @@ async function record(flag: "0" | "1"): Promise<Record<string, string>> {
 			void handled.catch((cause: unknown) => failures.push(cause));
 		});
 	});
-	await new Promise<void>((resolve) => server.listen(socketPath, resolve));
-	const client = new RpcClient({ socketPath });
+	const listener = await listenOnShortSocket(server, "golden.sock");
+	const client = new RpcClient({ socketPath: listener.socketPath });
 	const subscriber = host.client("subscriber");
 	try {
 		await client.start();
@@ -88,7 +88,7 @@ async function record(flag: "0" | "1"): Promise<Record<string, string>> {
 		await client.stop();
 		host.writer.unregisterConnection("rpc-client");
 		await host.core.router.releaseConnection("rpc-client");
-		await new Promise<void>((resolve) => server.close(() => resolve()));
+		await listener.close();
 	}
 }
 
