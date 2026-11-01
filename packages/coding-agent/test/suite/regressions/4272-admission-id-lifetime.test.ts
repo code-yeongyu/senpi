@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { ADMISSION_LIMITS, CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts";
+import { statusHost } from "../rpc-session-status-support.ts";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -86,6 +87,23 @@ it("#5274 an evicted ID frees its row and answers admission_retired", async () =
 		await index.dispose();
 		await rm(root, { recursive: true, force: true });
 	}
+}, 600_000);
+
+it("#5274 a completed admission whose route is still live is never evicted", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	await using host = await statusHost();
+	const peer = host.client("peer");
+	const sessionPath = join(host.cwd, "pinned.jsonl");
+	const opened = await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: "kept" });
+	const sessionId = String(opened.sessionId);
+	const socketEpoch = host.writer.socketEpochOf("peer") ?? "";
+	// Every later admission finishes and leaves its route, so only "kept" stays live through the turnover.
+	for (let id = 0; id < capacity; id++) {
+		await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: `later-${id}` });
+		host.writer.recoveryCheckpoints.retireRoute({ socketEpoch, sessionId }, `later-${id}`);
+	}
+	const reset = await peer.request({ type: "reset_stream", sessionId, admissionId: "kept" });
+	expect(reset).toMatchObject({ success: true, sessionId, admissionId: "kept" });
 }, 600_000);
 
 it("#5274 live attempts, not lifetime IDs, reach the cap", async () => {
