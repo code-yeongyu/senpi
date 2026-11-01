@@ -24,9 +24,11 @@ function summaryLine(details: RuleActivationDetails): string {
 			return `${details.rules.length} ${noun} matched and injected for this tool result.`;
 		}
 		case "ttsr":
-			return details.remediation === "nudge"
-				? "Output interrupted; a corrective nudge was queued."
-				: "Corrupted generation discarded; bounded provider retry started.";
+			if (details.remediation !== "nudge") return "Corrupted generation discarded; bounded provider retry started.";
+			// repetitive-turns judges a completed reply and never cuts it off (senpi#4537).
+			return details.owner === "repetitive-turns"
+				? "Reply repeated the previous one; a corrective nudge was queued."
+				: "Output interrupted; a corrective nudge was queued.";
 	}
 }
 
