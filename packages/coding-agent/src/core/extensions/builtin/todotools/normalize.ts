@@ -247,9 +247,10 @@ export function prepareTodoArguments(input: unknown): unknown {
 	const rawOp = args.op;
 	let op = rawOp;
 	if (typeof rawOp === "string" && !isOperation(rawOp)) {
-		// Only stray characters around the op are stripped ("view}", " done."); the middle
-		// must already be exactly a known operation, so "re-move" stays invalid.
-		const stripped = rawOp.replace(/^[^a-z]+|[^a-z]+$/gi, "");
+		// Only stray leading/trailing characters that are neither letters nor digits are
+		// stripped ("view}", " done."); digits survive, so "rm 2" and " 2rm" stay invalid
+		// ops, and the middle must already be exactly a known operation ("re-move").
+		const stripped = rawOp.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "");
 		// A corrected rm/done/drop/start without a non-blank "task"/"phase" would act on every
 		// task (senpi#5332 review): leave such a call for validation to reject unchanged.
 		const carriesTarget = nonBlank(args.task) !== undefined || nonBlank(args.phase) !== undefined;
@@ -260,7 +261,7 @@ export function prepareTodoArguments(input: unknown): unknown {
 				draftArgs.op = stripped;
 			});
 			notices.push(
-				`[auto-corrected] "op" ${JSON.stringify(rawOp)} is not a known operation; used "${stripped}" after stripping stray leading or trailing non-letter characters. Pass "op" exactly: init, start, done, rm, drop, append, view.`,
+				`[auto-corrected] "op" ${JSON.stringify(rawOp)} is not a known operation; used "${stripped}" after stripping stray leading or trailing non-alphanumeric characters. Pass "op" exactly: init, start, done, rm, drop, append, view.`,
 			);
 		}
 	}

@@ -534,6 +534,8 @@ describe("todo normalizes near-canonical shapes before validation (#5332)", () =
 
 	it.each([
 		["an op with a task number inside it", { op: "rm 2" }, { error: true }],
+		["an op with a task number after it naming a phase", { op: "rm 2", phase: "Setup" }, { error: true }],
+		["an op with a task number before it naming a task", { op: " 2rm", task: "A" }, { error: true }],
 		["an op with a task selector inside it", { op: "done #1" }, { error: true }],
 		["a punctuated destructive op with no target", { op: "drop!" }, { error: true }],
 		["a punctuated targeting op with no target", { op: "start?" }, { error: true }],
