@@ -4,7 +4,7 @@ import { createRegistryWarm, type HostWarm } from "./host-warm.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
 import { attachLiveSession, markPathAttached } from "./session-live-attachment.ts";
-import { type PendingClaims, syncRuntimeMetadata } from "./session-registry-claims.ts";
+import { beginPendingClaim, type PendingClaims, syncRuntimeMetadata } from "./session-registry-claims.ts";
 import { openRegistrySession } from "./session-registry-open.ts";
 
 import {
@@ -75,8 +75,16 @@ export class RpcSessionRegistry {
 				return deleted;
 			},
 			releaseReservation: async (key) => {
-				await this.options.pathReservations?.release(key);
-				this.reservations.delete(key);
+				// Close may finish at its grace deadline before removal settles. Keep
+				// that work visible to reopen even after the closing entry is gone. A failed removal
+				// still gives the path back: no entry is left to ever release it later.
+				const settle = beginPendingClaim(this.pendingClaims, key);
+				try {
+					await this.options.pathReservations?.release(key);
+				} finally {
+					this.reservations.delete(key);
+					settle();
+				}
 			},
 			markDetached: (key) => this.options.pathReservations?.setAttached(key, false),
 			now: () => this.now(),

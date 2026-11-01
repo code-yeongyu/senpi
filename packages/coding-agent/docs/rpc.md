@@ -3229,6 +3229,11 @@ Strict FIFO per session; one total stdout order; cross-session order unspecified
 
 ### Duplicate/idempotency
 
+If claim removal outlives an in-process close's grace deadline, a reopen waits for that
+in-flight removal even after the closing entry has been deleted. This wait uses the
+existing bounded pending-claim wait; a stuck removal still refuses with
+`session_path_in_use` and `errorData.reason: "claim_in_progress"`.
+
 Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle), including when that session is retained with zero attachments; while held by an `opening` entry (or an internally quarantined one) → `session_path_in_use`. A `closing` entry is a session that is ENDING, not one in use: on the in-process runtime (the `--listen` socket host default) the open WAITS for that teardown - bounded by the close grace window that bounds the teardown itself - and then opens the file fresh, so reopening a path after a close never depends on how long disposal takes. The worker runtime still answers `session_path_in_use` there, because a worker's teardown ends with an OS thread exit that no host deadline bounds. A path whose owner has already replaced it with another session file is no longer held: that open allocates a new worker and resumes the file. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error, and so is a `close_session` from a connection that never attached to that handle — it releases nothing and leaves the session untouched. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
 
 ## Protocol Overview
