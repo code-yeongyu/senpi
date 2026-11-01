@@ -10,8 +10,6 @@
 
 ### Fixed
 
-- Bump the bundled `minimatch` to 11.0.3 so the shipped package no longer carries GHSA-g3hv-75wg-m249; model-scope and resource-filter globs select the same models and files as before ([#4820](https://github.com/code-yeongyu/senpi/issues/4820))
-
 ### Removed
 
 ## [2026.10.31-2] - 2026-10-31
