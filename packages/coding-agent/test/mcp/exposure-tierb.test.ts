@@ -331,7 +331,12 @@ describe("direct-mode MCP tools keep one order whichever server connects first (
 			connected.push(entry(server));
 			registerMcpTierBTools(
 				pi,
-				{ registeredEntries: [...connected], activeEntries: [...connected], searchMode: false, settings: defaultSettings },
+				{
+					registeredEntries: [...connected],
+					activeEntries: [...connected],
+					searchMode: false,
+					settings: defaultSettings,
+				},
 				toolSearchService,
 			);
 		}
