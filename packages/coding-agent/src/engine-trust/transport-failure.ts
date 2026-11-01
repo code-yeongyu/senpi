@@ -4,7 +4,7 @@
  * comes only from the adapter's structured transport diagnostic, which reads the native error's
  * `code`, never message text. The object and its diagnostics record name no host, path or certificate.
  */
-import { appendFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isTlsChainVerificationCode, type ProviderDiagnostic } from "@earendil-works/pi-ai";
 import { type EngineTrustActionId, engineTrustAction } from "./actions.ts";
@@ -42,15 +42,15 @@ export function transportTrustFailure(diagnostic: ProviderDiagnostic | undefined
 }
 
 /**
- * One line, in one append, to `diagnostics.jsonl` beside the generation file (design 5.3). A record
- * that cannot be written costs only the record: the failure still carries its `trust` object.
+ * One line, in one append, to `diagnostics.jsonl` beside the generation file (design 5.3). The append
+ * is asynchronous because this runs on the RPC session path, which takes no blocking filesystem call
+ * (no-sync-in-session-path). A record that cannot be written costs only the record: the failure still
+ * carries its `trust` object.
  */
 function appendDiagnosticsRecord(generationFile: string, record: object): void {
-	try {
-		appendFileSync(join(dirname(generationFile), "diagnostics.jsonl"), `${JSON.stringify(record)}\n`, {
-			mode: 0o600,
-		});
-	} catch {
+	appendFile(join(dirname(generationFile), "diagnostics.jsonl"), `${JSON.stringify(record)}\n`, {
+		mode: 0o600,
+	}).catch(() => {
 		// The trust directory may be gone or read-only; the record is diagnostic only.
-	}
+	});
 }

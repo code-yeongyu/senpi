@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { transportProviderDiagnosticFromError } from "../../../../ai/src/utils/provider-diagnostic-sources.ts";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { type EngineTrustMarker, recordAdoptedEngineTrust } from "../../../src/engine-trust/index.ts";
@@ -116,6 +116,8 @@ describe("transport trust under a fallback generation (#5244)", () => {
 				action: "retry-after-store-ready",
 			});
 		}
+		// The record is appended asynchronously (the RPC session path takes no blocking fs call), so wait for it.
+		await vi.waitFor(() => expect(records(first)).toHaveLength(1), { timeout: 5000 });
 		expect(records(first)).toEqual([
 			expect.objectContaining({
 				v: 1,
@@ -129,6 +131,7 @@ describe("transport trust under a fallback generation (#5244)", () => {
 		const second = adopt({ automatic: "fallback", fallbackReason: "access-denied" });
 		const [denied] = await agentEnds([transportFailure("CERT_UNTRUSTED"), transportFailure("CERT_UNTRUSTED")]);
 		expect(denied?.failure?.trust).toMatchObject({ reason: "access-denied", action: "check-store-access" });
+		await vi.waitFor(() => expect(records(second)).toHaveLength(1), { timeout: 5000 });
 		expect(records(second)).toEqual([
 			expect.objectContaining({ codes: ["trust-tls-failed-under-fallback", "access-denied"] }),
 		]);
