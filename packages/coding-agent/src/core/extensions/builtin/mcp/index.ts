@@ -135,7 +135,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		const attachedContexts = new WeakSet<object>();
 		const runtimeKey = {};
 		const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
-		pi.on("tool_call", (_event, ctx) => {
+		// A session drops this hook at session_start, so its tool calls emit no tool_hook_status for it (senpi#5320).
+		const dropFirstUseAttach = pi.on("tool_call", (_event, ctx) => {
 			const key = contextKey(ctx);
 			if (attachedContexts.has(key)) return undefined;
 			attachedContexts.add(key);
@@ -144,6 +145,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			return undefined;
 		});
 		pi.on("session_start", (event, ctx) => {
+			dropFirstUseAttach();
 			if (event.sizesOnly) return;
 			attachedContexts.add(contextKey(ctx));
 			const work = onSessionStart(event, ctx);

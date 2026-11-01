@@ -62,6 +62,26 @@ describe("MCP attaches without a session (RT5b)", () => {
 		expect(harness.session.getAllTools().map(({ name }) => name)).toContain("mcp_fx_tool_1");
 	});
 
+	it("runs only the session's own MCP tool hooks once session_start ran", async () => {
+		// Regression for senpi#5320: the first-use attach hook must not run on a session's tool calls.
+		// Given a runtime that loaded only the MCP builtin, with its tool hooks observed.
+		const harness = await runtimeWithoutSessionStart("session-hooks");
+		const runner = harness.getExtensionRunner();
+		const mcpHookStarts: string[] = [];
+		runner.setToolHookLifecycleObserver((event) => {
+			if (event.phase === "start") mcpHookStarts.push(event.toolCallId);
+		});
+		await toolCall(runner, "before");
+		await getMcpService().whenAttachSettled();
+		const beforeSessionStart = mcpHookStarts.filter((id) => id === "before").length;
+		// When session_start runs and a tool call follows.
+		await runner.emit({ type: "session_start", reason: "startup" });
+		await toolCall(runner, "after");
+		// Then exactly one MCP hook, the first-use attach, no longer runs.
+		expect(beforeSessionStart).toBeGreaterThan(0);
+		expect(mcpHookStarts.filter((id) => id === "after").length).toBe(beforeSessionStart - 1);
+	});
+
 	it("points elicitation at the runtime's UI broker", async () => {
 		// Given a runtime whose UI is a broker with an attached presenter.
 		const harness = await runtimeWithoutSessionStart("elicitation");
