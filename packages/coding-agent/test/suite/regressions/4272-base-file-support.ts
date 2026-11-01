@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { stat, writeFile } from "node:fs/promises";
 import { expect } from "vitest";
 import type { PersistedBase } from "../../../src/core/session-transcript-journal.ts";
-import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
+import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest-shape.ts";
 import {
 	type RecoveryPageAnswer,
 	type RecoveryPageOutcome,
