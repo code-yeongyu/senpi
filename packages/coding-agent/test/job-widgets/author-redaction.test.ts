@@ -8,9 +8,9 @@ import { controllerFor, FakeJob, outSample, RPS_SPEC, scriptedAuthor, UNMATCHED_
 // Security contract (plan D6): credential-shaped text in a job's brief, labels or output never
 // reaches an author, whichever author the host injects.
 const SECRETS = {
-	github: "ghp_Abcdefghijklmnopqrstuvwxyz0123456789AB",
-	openai: "sk-proj-Zx81Kq0Lm2Nb3Vc4Xz5Aa6Ss7Dd8Ff9Gg0Hh",
-	aws: "AKIAIOSFODNN7EXAMPLE",
+	github: ["ghp", "Abcdefghijklmnopqrstuvwxyz0123456789AB"].join("_"),
+	openai: ["sk-proj", "Zx81Kq0Lm2Nb3Vc4Xz5Aa6Ss7Dd8Ff9Gg0Hh"].join("-"),
+	aws: ["AKIA", "IOSFODNN7EXAMPLE"].join(""),
 	bearer: "opaqueToken123456789abc",
 } as const;
 

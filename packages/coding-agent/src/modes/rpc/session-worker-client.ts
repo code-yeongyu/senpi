@@ -11,6 +11,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { roleConnection } from "./connection-roles.ts";
 import { answeredUiRequestId, refusedExtensionUiResponse } from "./extension-ui-response.ts";
+import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
 import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
@@ -27,8 +28,10 @@ import type {
 } from "./session-worker-protocol.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
+import { WorkerIntake } from "./session-worker-intake.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 import { WorkerOwnerGates } from "./session-worker-owners.ts";
+import { WorkerSecretIds } from "./session-worker-secrets.ts";
 import { sessionWorkerDataRegistry } from "./session-worker-data.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
@@ -73,7 +76,7 @@ function spawnSessionWorker(webviewBroker: ReturnType<typeof createWebViewBroker
 
 export class SessionWorkerClient {
 	private secretRoute?: SecretInputRoute;
-	private readonly secretIds = new Set<string>();
+	private readonly secretIds = new WorkerSecretIds();
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
 	private readonly privateOperations = new Map<
@@ -104,7 +107,8 @@ export class SessionWorkerClient {
 	private stopLimitMirror: () => void = () => {};
 	/** The host's ordered acceptance lane for this worker incarnation, present only while the flag is on. */
 	readonly acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane() : undefined;
-	private expectedOrdinal = 0;
+	/** The host half of this incarnation's payload transport: permits, physical frame order, fragment staging (S12b). */
+	readonly intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
 	private readonly owners = new WorkerOwnerGates();
 
 	private readonly callbacks: SessionWorkerCallbacks;
@@ -116,7 +120,8 @@ export class SessionWorkerClient {
 		this.worker = this.spawned.result;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
-				for (const id of this.secretIds) this.secretRoute?.forget(id);
+				this.intake?.permits.close();
+				for (const id of this.secretIds.ids()) this.secretRoute?.forget(id);
 				this.secretIds.clear();
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
@@ -187,7 +192,7 @@ export class SessionWorkerClient {
 		const nonce = randomUUID();
 		const result = await this.request({
 			type: "commit",
-			...(this.acceptance ? { acceptance: true, recoveryEpoch: nonce } : {}),
+			...(this.intake ? { acceptance: true, recoveryEpoch: nonce, permits: this.intake.permits.block } : {}),
 		});
 		if (result.type !== "ready") throw new Error("Invalid worker commit response");
 		if (this.acceptance) {
@@ -276,6 +281,7 @@ export class SessionWorkerClient {
 	}
 
 	quarantine(): void {
+		this.intake?.permits.close();
 		this.stopped = true;
 		this.requests.close(new Error("session_closing"));
 		void this.worker.terminate();
@@ -300,11 +306,16 @@ export class SessionWorkerClient {
 
 	private receive(message: SessionWorkerToHost): void {
 		if (this.stopped) {
-			if ("signal" in message) acknowledge(message.signal, false);
+			if ("signal" in message && message.signal) acknowledge(message.signal, false);
 			return;
 		}
+		this.intake?.received(message);
 		switch (message.type) {
 			case "secret_select": {
+				if (!this.secretIds.has(message.id) && !this.secretIds.admitsNew()) {
+					acknowledge(message.signal, false);
+					return;
+				}
 				const select = () => {
 					const reason =
 						this.secretRoute?.select(message.id, () => this.post({ type: "cancel_secret", id: message.id })) ??
@@ -324,6 +335,10 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "secret_frame":
+				if (!this.secretIds.admitFrame(message.id, message.record)) {
+					acknowledge(message.signal, false);
+					return;
+				}
 				this.secretRoute?.send(message.id, message.record);
 				acknowledge(message.signal, true);
 				return;
@@ -332,7 +347,7 @@ export class SessionWorkerClient {
 				acknowledge(message.signal, true);
 				return;
 			case "secret_forget":
-				this.secretIds.delete(message.id);
+				this.secretIds.forget(message.id);
 				this.secretRoute?.forget(message.id);
 				acknowledge(message.signal, true);
 				return;
@@ -460,7 +475,7 @@ export class SessionWorkerClient {
 					return;
 				}
 				const lane = this.acceptance;
-				if (!this.inOrder(message)) return;
+				if (this.intake?.inOrder(message) === false) return;
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
 				if (message.snapshot) {
 					this.snapshot = message.snapshot;
@@ -470,7 +485,7 @@ export class SessionWorkerClient {
 						...message.activity,
 						state: { ...this.snapshot.state, isStreaming: message.activity.streaming },
 					};
-				const record = message.record;
+				const record: object = message.recordText === undefined ? message.record : JSON.parse(message.recordText);
 				if (
 					"type" in record &&
 					record.type === "security_grant_settled" &&
@@ -521,9 +536,9 @@ export class SessionWorkerClient {
 					if (message.bootstrap) lane?.bootstrap(message.bootstrap);
 					else {
 						lane?.applyTranscript(message.transitions ?? []);
-						lane?.accept(message.record, message.recovery, frameUnit(message), message.canonicalRefused === true);
+						lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
 					}
-					if (!writer.enqueue(sessionId, message.record)) {
+					if (!enqueueLegacyRecord(writer, sessionId, record)) {
 						acknowledge(message.signal, false);
 						this.fail("session_output_overflow_or_closed");
 						return Promise.reject(new Error("session_output_overflow_or_closed"));
@@ -555,7 +570,7 @@ export class SessionWorkerClient {
 					acknowledge(message.signal, false);
 					return;
 				}
-				if (!this.inOrder(message)) return;
+				if (this.intake?.inOrder(message) === false) return;
 				if (message.type === "canonical")
 					this.acceptance?.acceptControl(frameUnit({ ...message, canonical: message.record }));
 				else this.acceptance?.compactUnavailable(canonicalLoss(message));
@@ -586,6 +601,12 @@ export class SessionWorkerClient {
 				acknowledge(message.signal, true);
 				return;
 			}
+			case "fragment":
+				void this.intake?.fragment(message)?.then(
+					(whole) => this.receive(whole),
+					() => this.fail("session_worker_transfer_unreadable"),
+				);
+				return;
 			case "request_close":
 				this.requestClose?.();
 				return;
@@ -596,19 +617,6 @@ export class SessionWorkerClient {
 				this.fail(message.error);
 				return;
 		}
-	}
-
-	/** A gap, duplicate or reordered frame is denied and ends this incarnation before any mutation. */
-	private inOrder(message: { readonly ordinal?: number; readonly signal: SharedArrayBuffer }): boolean {
-		if (!this.acceptance) return true;
-		if (message.ordinal === this.expectedOrdinal) {
-			this.expectedOrdinal += 1;
-			return true;
-		}
-		acknowledge(message.signal, false);
-		const kind = (message.ordinal ?? Number.POSITIVE_INFINITY) < this.expectedOrdinal ? "duplicate" : "gap";
-		this.fail(`session_worker_frame_${kind}`);
-		return false;
 	}
 
 	private fail(error: string): void {
