@@ -63,6 +63,7 @@ export type AuthenticatedQueryInput = {
 	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
 	preferredAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
+	onAttemptStart?: () => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
 	) => RetainableAttempt<SDKMessage> | Promise<RetainableAttempt<SDKMessage>>;
