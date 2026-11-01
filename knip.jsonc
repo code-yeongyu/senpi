@@ -1157,8 +1157,6 @@
       "packages/coding-agent/src/modes/rpc/protocol-identity.ts": ["HOST_GENERATION_ENV", "HOST_INSTANCE_ID_ENV"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_SESSION_IDENTITY_MISMATCH, RPC_ERROR_SESSION_BUSY_LIFECYCLE, RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_SESSION_PATH_IN_USE, RPC_ERROR_SESSION_RESERVATION_LIMIT, RPC_ERROR_SESSION_NOT_HELD (+7 more)
       "packages/coding-agent/src/modes/rpc/rpc-error-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STALE_LEAF", "RPC_ERROR_STREAMING"],
-      // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_LIMITS
-      "packages/coding-agent/src/modes/rpc/rpc-input-validation.ts": ["SESSION_CONTEXT_LIMITS"],
       // pre-existing at origin main aceb1cc1d9: unused exports checkRpcKeyDirectory
       "packages/coding-agent/src/modes/rpc/rpc-public-key.ts": ["checkRpcKeyDirectory"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+7 more)
