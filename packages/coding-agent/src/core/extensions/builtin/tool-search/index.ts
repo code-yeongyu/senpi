@@ -16,9 +16,10 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 		// Boot point (senpi#5217): a session boots the catalog at session_start; a runtime with no
 		// session boots it at the first tool call a context sees. Each context boots once.
 		// A context with no session manager is the runtime itself: one boot per runtime.
+		// A session drops this hook at session_start, so its tool calls emit no tool_hook_status for it (senpi#5320).
 		const bootedContexts = new WeakSet<object>();
 		const runtimeKey = {};
-		pi.on("tool_call", (_event, ctx) => {
+		const dropFirstUseBoot = pi.on("tool_call", (_event, ctx) => {
 			const key = ctx.sessionManager ?? runtimeKey;
 			if (bootedContexts.has(key) || service.isDisposed || !canListTools(pi)) return;
 			bootedContexts.add(key);
@@ -26,6 +27,7 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 		});
 
 		pi.on("session_start", async (_event, ctx) => {
+			dropFirstUseBoot();
 			bootedContexts.add(ctx.sessionManager ?? runtimeKey);
 			service.beginSession();
 			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
