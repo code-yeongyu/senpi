@@ -10,7 +10,7 @@ import {
 	SessionEventWriter,
 } from "../../src/modes/rpc/session-event-writer.ts";
 import { waitForFifoReader } from "./rpc-worker-host-support.ts";
-import { reservationPhase as phase, reservationHost } from "./rpc-worker-reservation-support.ts";
+import { reservationHost, reservationStep as phase } from "./rpc-worker-reservation-support.ts";
 
 const overflow = { type: "overflow", command: "close_session", error: "rpc_close_output_overflow, resync required" };
 const response = (id: string) => ({ type: "response", command: "close_session", id, success: true });
