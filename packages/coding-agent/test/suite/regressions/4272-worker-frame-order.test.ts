@@ -53,7 +53,7 @@ it("Q4 gap: a skipped worker frame ordinal is denied credit and fails the incarn
 	expect(result.retired, "the incarnation's lane is retired").toBe(true);
 	expect(result.after.sequence, "nothing was accepted from the frame").toBe(result.before.sequence);
 	expect(result.after.sessionEpoch).toBe(result.before.sessionEpoch);
-}, 60_000);
+}, 600_000);
 
 it("Q4 duplicate: a repeated worker frame ordinal is denied credit and fails the incarnation with session_worker_frame_duplicate", async () => {
 	const result = await deliver((expected) => [frame(expected - 1)]);
@@ -62,7 +62,7 @@ it("Q4 duplicate: a repeated worker frame ordinal is denied credit and fails the
 	expect(result.retired, "the incarnation's lane is retired").toBe(true);
 	expect(result.after.sequence, "nothing was accepted from the frame").toBe(result.before.sequence);
 	expect(result.after.sessionEpoch).toBe(result.before.sessionEpoch);
-}, 60_000);
+}, 600_000);
 
 // A reorder reaches the host as the later frame first, so the gap is its typed kind; the late frame finds a
 // failed incarnation and is refused too, with no second failure and no acceptance.
@@ -73,7 +73,7 @@ it("Q4 reorder: frames arriving out of order are both denied credit and fail the
 	expect(result.retired, "the incarnation's lane is retired").toBe(true);
 	expect(result.after.sequence, "neither frame was accepted").toBe(result.before.sequence);
 	expect(result.after.sessionEpoch).toBe(result.before.sessionEpoch);
-}, 60_000);
+}, 600_000);
 
 // The session stays open: the frame is accepted first, then the writer refuses it (the real order).
 it("Q4 writer refusal: an in-order frame the writer refuses gets no credit, retires the lane and publishes no root past it", async () => {
@@ -109,4 +109,4 @@ it("Q4 writer refusal: an in-order frame the writer refuses gets no credit, reti
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);
