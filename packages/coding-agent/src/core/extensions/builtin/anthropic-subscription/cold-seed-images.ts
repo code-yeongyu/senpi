@@ -109,21 +109,43 @@ function collectOccurrences(
 	return occurrences;
 }
 
+/**
+ * Past `MAX_REPLAYED_HISTORY_IMAGES` distinct user uploads, the oldest ones are dropped in blocks of this many, so the
+ * history (where uploads are replayed in place) changes once per this many new uploads instead of on every one
+ * (senpi#2988 item 3). Between 8 - 4 + 1 = 5 and 8 of the newest uploads stay replayed.
+ */
+export const REPLAYED_UPLOAD_DROP_STEP = 4;
+
+function keptUploads(uploadsInFirstSeenOrder: readonly string[]): readonly string[] {
+	const over = uploadsInFirstSeenOrder.length - MAX_REPLAYED_HISTORY_IMAGES;
+	if (over <= 0) return uploadsInFirstSeenOrder;
+	return uploadsInFirstSeenOrder.slice(Math.ceil(over / REPLAYED_UPLOAD_DROP_STEP) * REPLAYED_UPLOAD_DROP_STEP);
+}
+
+/**
+ * The user's uploads come first and are chosen only from their order of first appearance, which later messages never
+ * change. The current turn's tool images fill the remaining slots, most recent first; they are sent after the cache
+ * breakpoint, so that choice may change every request.
+ */
 function selectUserFirstThenMostRecent(occurrences: readonly ImageOccurrence[]): ReadonlySet<string> {
-	const ranked = new Map<string, { fromUser: boolean; lastSeen: number }>();
+	const uploads: string[] = [];
+	const toolLastSeen = new Map<string, number>();
 	occurrences.forEach((occurrence, order) => {
 		const hash = occurrence.decoded?.sha256;
 		if (hash === undefined || isAnsweredToolImage(occurrence)) return;
-		const previous = ranked.get(hash);
-		ranked.set(hash, {
-			fromUser: (previous?.fromUser ?? false) || occurrence.origin.kind === "user",
-			lastSeen: order,
-		});
+		if (occurrence.origin.kind === "user") {
+			if (!uploads.includes(hash)) uploads.push(hash);
+		} else {
+			toolLastSeen.set(hash, order);
+		}
 	});
-	const ordered = [...ranked.entries()].sort(
-		([, a], [, b]) => Number(b.fromUser) - Number(a.fromUser) || b.lastSeen - a.lastSeen,
-	);
-	return new Set(ordered.slice(0, MAX_REPLAYED_HISTORY_IMAGES).map(([hash]) => hash));
+	const selected = new Set(keptUploads(uploads));
+	const tools = [...toolLastSeen.entries()]
+		.filter(([hash]) => !uploads.includes(hash))
+		.sort(([, a], [, b]) => b - a)
+		.slice(0, MAX_REPLAYED_HISTORY_IMAGES - selected.size);
+	for (const [hash] of tools) selected.add(hash);
+	return selected;
 }
 
 /**
