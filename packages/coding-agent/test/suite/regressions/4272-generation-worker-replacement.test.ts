@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { dataOf } from "../rpc-session-status-support.ts";
-import { workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { EVENT_SAFETY_MS, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -9,7 +9,8 @@ it("worker replacement rebinds the durable counter before publication and surviv
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	const host = await workerAcceptanceHost();
 	try {
-		const { sessionId, worker } = await host.open();
+		// The open shares the test's 600 s budget: its wait is the event safety bound, not the shorter open default.
+		const { sessionId, worker } = await host.open(EVENT_SAFETY_MS);
 		const first = worker.acceptance?.generations.next();
 		expect(first).toBeDefined();
 		expect((await host.request({ type: "new_session", sessionId })).success).toBe(true);

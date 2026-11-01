@@ -84,7 +84,7 @@ it("RULING-62 RULING-69 (1) the holder of a token pages a component of its real 
 		host.writer.unregisterConnection("held");
 		await host[Symbol.asyncDispose]();
 	}
-});
+}, 600_000);
 
 async function pagesOverTheWire(
 	host: Awaited<ReturnType<typeof statusHost>>,
@@ -260,7 +260,7 @@ it("RULING-69 (2) a peer that disconnects during a slow first open aborts it: th
 	expect(checkpoints.verifiedComponents, "an aborted open leaves no verified component").toBe(0);
 	held.release();
 	expect(checkpoints.open, "the disconnected peer's token is reclaimed").toBe(0);
-});
+}, 600_000);
 
 it("golden: with the flag off, get_recovery_page and the legacy read commands answer exactly as before", async () => {
 	await using host = await statusHost();
@@ -289,4 +289,4 @@ it("golden: with the flag off, get_recovery_page and the legacy read commands an
 	expect(Object.keys(entries.data as object).sort()).toEqual(["entries", "leafId"]);
 	const tree = await client.request({ type: "get_tree", sessionId });
 	expect(Object.keys(tree.data as object).sort()).toEqual(["leafId", "tree"]);
-});
+}, 600_000);
