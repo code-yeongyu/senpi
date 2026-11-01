@@ -1,12 +1,14 @@
 import { checkpointComponents } from "./compact-catalog-families.ts";
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
+import { baseStream, openBaseBytes } from "./compact-recovery-base.ts";
 import { producePage, type RecoveryPage } from "./compact-recovery-bytes.ts";
 import {
 	type CatalogComponent,
 	type CatalogRead,
 	type CatalogRoot,
 	CompactRecoveryCatalog,
+	componentBytes,
 } from "./compact-recovery-catalog.ts";
 import {
 	type BoundedId,
@@ -16,6 +18,7 @@ import {
 	type ContentRef,
 	parseBoundedId,
 	parseContentRef,
+	parsePageRef,
 	protocolId,
 } from "./compact-recovery-ids.ts";
 import type { CheckpointToken, RecoveryRouteKind } from "./compact-recovery-types.ts";
@@ -128,8 +131,9 @@ export class RecoveryManifests {
 	}
 
 	/**
-	 * One page of a component's bytes at a raw byte offset; a ref that names a node or nothing is `range`. A first open
-	 * verifies the component inside this request under its `signal`; it is cached only while the token still holds it.
+	 * One page of a component's bytes at a raw byte offset, or of the cut's loaded base under its reserved ref (S11c,
+	 * `compact-recovery-base.ts`); a ref that names a node or nothing is `range`. A first open verifies the source
+	 * inside this request under its `signal`; it is cached only while the token still holds it.
 	 */
 	page(
 		tokenId: string,
@@ -139,16 +143,21 @@ export class RecoveryManifests {
 		offset: number,
 		signal?: AbortSignal,
 	): Promise<RecoveryPage> {
-		const parsed = parseContentRef(ref);
+		const target = parsePageRef(ref);
 		const built = this.ready.get(tokenId);
-		if (!parsed.ok || !built) throw new CompactReadError("range");
+		if (!target.ok || !built) throw new CompactReadError("range");
 		return lane.cutStorage(root, async (store, valid) => {
-			let bytes = this.verified.get(root, parsed.value);
+			let bytes = this.verified.get(root, target.value.ref);
 			if (!bytes) {
-				const read = await this.catalogs.read(store, built.root, parsed.value, valid, signal);
-				if (read.kind !== "component") throw new CompactReadError("range");
-				bytes = read.bytes;
-				if (this.ready.get(tokenId) === built) this.verified.set(tokenId, root, read.ref, bytes);
+				bytes =
+					target.value.kind === "base"
+						? await openBaseBytes(
+								baseStream(root.transcript, built.manifest.catalogRoot, target.value.ref),
+								valid,
+								signal,
+							)
+						: componentBytes(await this.catalogs.read(store, built.root, target.value.ref, valid, signal));
+				if (this.ready.get(tokenId) === built) this.verified.set(tokenId, root, target.value.ref, bytes);
 			}
 			return producePage(bytes, offset, valid);
 		});
