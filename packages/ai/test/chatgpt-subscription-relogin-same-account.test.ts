@@ -54,6 +54,17 @@ describe("ChatGPT account identity (omo#9633)", () => {
 describe("a ChatGPT re-login of a saved account replaces it instead of appending (omo#9633)", () => {
 	const options = { accountIdentity: identity };
 
+	test("an SIWC login whose issuer/subject/client tuple differs never replaces an SIWC slot by token identity", () => {
+		const siwc = { route: "siwc" as const, issuer: "https://auth.openai.com", subject: "sub-a" };
+		const saved = { ...login(personA, "old", 1), ...siwc, clientId: "client-1" };
+		const stored: PooledCredential = { ...saved, accounts: [{ ...saved, name: "default", source: "login" }] };
+		const fresh = { ...login(personA, "new", 2), ...siwc, clientId: "client-2" };
+		const slots = listSlots(appendLoginSlot(stored, fresh, undefined, options) as PooledCredential);
+		expect(slots).toHaveLength(2);
+		expect(slots[0]).toMatchObject({ name: "default", refresh: "refresh-old", clientId: "client-1" });
+		expect(slots[1]).toMatchObject({ refresh: "refresh-new", clientId: "client-2" });
+	});
+
 	test.each([
 		["an SIWC login does not replace a legacy Codex slot", undefined, "siwc"],
 		["a legacy login does not replace an SIWC slot", "siwc", undefined],

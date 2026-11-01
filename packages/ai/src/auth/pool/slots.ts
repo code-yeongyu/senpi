@@ -485,7 +485,12 @@ export function appendLoginSlot(
 			return pooled;
 		}
 	}
-	const replaced = replaceSameAccount(current, flat, options?.accountIdentity, onAllocated);
+	// Sign in with ChatGPT names an account by its issuer, subject and issued client ID (matched above). Without
+	// that tuple, a shared ChatGPT token identity is not the same SIWC sign-in, so the login is appended.
+	const replaced =
+		flat.type === "oauth" && flat.route === "siwc"
+			? undefined
+			: replaceSameAccount(current, flat, options?.accountIdentity, onAllocated);
 	if (replaced) return replaced;
 	const name = nextLoginSlotName(current);
 	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
