@@ -56,7 +56,8 @@ it("makes a second accepted release a no-op for cuts routes and attachment owner
 	await using host = await statusHost();
 	const peer = host.client("peer");
 	const sessionPath = join(host.cwd, "release.jsonl");
-	await peer.request({ type: "open_session", sessionPath, admissionId: "survivor" });
+	// RULING-117: on the same socket "accepted" would replace this route, so the survivor holds its own socket.
+	await host.client("survivor").request({ type: "open_session", sessionPath, admissionId: "survivor" });
 	let release: (() => Promise<void>) | undefined;
 	const run = CompactAdmissions.prototype.run;
 	vi.spyOn(CompactAdmissions.prototype, "run").mockImplementation(function (
@@ -80,10 +81,12 @@ it("makes a second accepted release a no-op for cuts routes and attachment owner
 	const releaseAccepted = release ?? expect.unreachable("no accepted producer");
 	await releaseAccepted();
 	expect(host.writer.recoveryCheckpoints.status().open).toBe(1);
-	expect(host.writer.ordinaryRoute("peer", String(opened.sessionId))?.routes).toEqual(["survivor"]);
+	expect(host.writer.ordinaryRoute("peer", String(opened.sessionId))?.routes ?? []).toEqual([]);
+	expect(host.writer.ordinaryRoute("survivor", String(opened.sessionId))?.routes).toEqual(["survivor"]);
 	expect(host.core.router.sessionCount).toBe(1);
 	await releaseAccepted();
-	expect(retired).toHaveBeenCalledTimes(1);
+	// The peer's last hold detaches too, which retires its attach ordinal; "accepted" itself retires once.
+	expect(retired.mock.calls.filter(([, admissionId]) => admissionId === "accepted")).toHaveLength(1);
 	expect(unregistered).toHaveBeenCalledExactlyOnceWith("peer", "accepted");
 	expect(dataOf(await peer.request({ type: "list_sessions" })).sessions).toEqual([
 		expect.objectContaining({ sessionId: opened.sessionId, attachments: 1 }),

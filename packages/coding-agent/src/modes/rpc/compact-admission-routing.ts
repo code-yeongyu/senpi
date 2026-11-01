@@ -14,6 +14,8 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 	readonly subscriptions = new Map<string, string>();
 	readonly mirrorOwners = new Map<string, string>();
 	readonly pendingMirrors = new Map<string, MirrorPending>();
+	/** RULING-117: per session, the completed open that routes it on this socket and how that open ends. */
+	readonly opened = new Map<string, { readonly admissionId: string; readonly end: () => Promise<void> }>();
 	mirrorAdmissions?: (sessionId: string, recordType: string) => readonly string[];
 	// Terminal reply debt can enqueue after S08 retires the stream. Headers only, bounded by epoch admission IDs;
 	// this is neither another counter nor an attempt index, and cancelled answers never consult it.
@@ -25,6 +27,7 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 		for (const pending of this.pendingMirrors.values()) pending.retire();
 		this.pendingMirrors.clear();
 		this.admissions.clear();
+		this.opened.clear();
 		this.terminal.clear();
 		super.close();
 	}

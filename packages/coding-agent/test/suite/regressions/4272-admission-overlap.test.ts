@@ -5,7 +5,7 @@ import type { EventLease } from "../../../src/modes/rpc/compact-recovery-types.t
 
 afterEach(() => vi.unstubAllEnvs());
 
-it("T2/X04 every real leased suffix copy can page and release through its client admission", async () => {
+it("T2/X04 after a re-open supersedes a, every real leased suffix copy reaches b and pages and releases through it", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
 	const peer = host.client("peer");
@@ -21,11 +21,11 @@ it("T2/X04 every real leased suffix copy can page and release through its client
 	await delivered;
 	await host.writer.flush();
 	const envelopes = peer.inbox.slice(from).filter((frame) => frame.eventLease !== undefined);
-	for (const frame of envelopes)
-		expect(frame).toMatchObject({ generation: 1, admissionId: expect.stringMatching(/^[ab]$/) });
+	// RULING-117: b's completed re-open replaced a's route, so no suffix is copied to a.
+	for (const frame of envelopes) expect(frame).toMatchObject({ generation: 1, admissionId: "b" });
 	const end = envelopes.find((frame) => frame.type === "message_end") ?? expect.unreachable();
 	const lease = end.eventLease as EventLease;
-	for (const admissionId of ["a", "b"]) {
+	for (const admissionId of ["b"]) {
 		const page = await peer.request({
 			type: "get_recovery_page",
 			sessionId: opened.sessionId,
@@ -85,7 +85,7 @@ it("T2/T5 overlapping ordinary admissions share a cut and a surviving route can 
 	expect(host.writer.recoveryCheckpoints.status().open).toBe(0);
 }, 600_000);
 
-it("T2 every suffix and final close instance keeps both S08 routes after reset and stream retirement", async () => {
+it("T2 after a re-open supersedes a, every suffix and the final close reach only b, through reset and stream retirement", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
 	const peer = host.client("peer");
@@ -103,7 +103,7 @@ it("T2 every suffix and final close instance keeps both S08 routes after reset a
 	const frames = peer.inbox.slice(from).filter((frame) => frame.sessionId === sessionId);
 	expect(frames.some((frame) => frame.type === "session_closed")).toBe(true);
 	for (const frame of frames) {
-		expect(["a", "b"], JSON.stringify(frame)).toContain(frame.admissionId);
+		expect(frame.admissionId, JSON.stringify(frame)).toBe("b");
 		expect(frame.generation, JSON.stringify(frame)).toBe(reset.generation);
 	}
 	for (const type of ["agent_idle", "extension_ui_request", "agent_event", "event_lease", "session_closed"])
@@ -112,9 +112,9 @@ it("T2 every suffix and final close instance keeps both S08 routes after reset a
 				.filter((frame) => frame.type === type)
 				.map((frame) => frame.admissionId)
 				.sort(),
-		).toEqual(["a", "b"]);
-	expect(frames.filter((frame) => frame.command === "close_session")).toHaveLength(2);
-	expect(closeA).toMatchObject({ admissionId: "a", generation: reset.generation });
+		).toEqual(["b"]);
+	expect(frames.filter((frame) => frame.command === "close_session")).toHaveLength(1);
+	expect(closeA).toMatchObject({ success: false, code: "unknown_admission", admissionId: "a" });
 	expect(closeB).toMatchObject({ admissionId: "b", generation: reset.generation });
 }, 600_000);
 

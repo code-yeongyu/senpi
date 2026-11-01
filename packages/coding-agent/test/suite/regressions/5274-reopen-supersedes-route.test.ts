@@ -13,8 +13,9 @@ afterEach(() => {
 });
 
 // RULING-117 (#5274): a completed re-open of a session on the same socket replaces that socket's route to it, so
-// routed rows are bounded by the distinct sessions a socket holds, never by how often it re-opens one.
-const REOPENS = 10_000;
+// routed rows are bounded by the distinct sessions a socket holds, never by how often it re-opens one. 2,000 re-opens
+// turn the 127-row cap over ~15 times; the ruling's 10,000 also passed, in a 308 s file run that it dominated.
+const REOPENS = 2_000;
 
 async function compactHost() {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -24,7 +25,7 @@ async function compactHost() {
 const open = (peer: RawClient, cwd: string, file: string, admissionId: string) =>
 	peer.request({ type: "open_session", cwd, sessionPath: join(cwd, file), admissionId });
 
-it("RULING-117 10,000 re-opens of one session on one socket are all admitted; only the latest id still routes", async () => {
+it("RULING-117 2,000 re-opens of one session on one socket are all admitted; only the latest id still routes", async () => {
 	await using host = await compactHost();
 	const peer = host.client("peer");
 	let sessionId = "";

@@ -124,9 +124,47 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 	}
 	/** Whether an admission still routes a stream of this peer incarnation: what `reset_stream` resolves (#5274). */
 	routesAdmission(socketEpoch: string, admissionId: string): boolean {
-		for (const sessionId of this.fanout.acceptance.keys())
-			if (this.recoveryCheckpoints.stream({ socketEpoch, sessionId })?.routes.includes(admissionId)) return true;
-		return false;
+		return this.recoveryCheckpoints.routesAdmission(socketEpoch, admissionId);
+	}
+	/**
+	 * RULING-117: a completed open becomes this socket's one route to its session. Answers how to end the open it
+	 * replaces, only while that open still routes the session's stream; a retry of the same id replaces nothing.
+	 */
+	supersedeOpen(
+		peer: string,
+		sessionId: string,
+		admissionId: string,
+		end: () => Promise<void>,
+	): (() => Promise<void>) | undefined {
+		const registered = this.fanout.get(peer);
+		const actor = registered?.actor;
+		if (!registered || !(actor instanceof AdmissionRoutingActor)) return undefined;
+		const previous = actor.opened.get(sessionId);
+		actor.opened.set(sessionId, { admissionId, end });
+		const stream = this.recoveryCheckpoints.stream({ socketEpoch: registered.socketEpoch, sessionId });
+		return previous && previous.admissionId !== admissionId && stream?.routes.includes(previous.admissionId)
+			? previous.end
+			: undefined;
+	}
+	/**
+	 * The socket stops holding the session (a detach): its open keeps routing the session's terminal records and replies,
+	 * but owns no attachment any more, so a later re-open ends only its route and held id.
+	 */
+	override detachConnectionFromSession(id: string, sessionId: string): void {
+		const registered = this.fanout.get(id);
+		const actor = registered?.actor;
+		const opened = actor instanceof AdmissionRoutingActor ? actor.opened.get(sessionId) : undefined;
+		if (registered && actor instanceof AdmissionRoutingActor && opened) {
+			const caller = { socketEpoch: registered.socketEpoch, sessionId };
+			actor.opened.set(sessionId, {
+				admissionId: opened.admissionId,
+				end: async () => {
+					this.recoveryCheckpoints.retireRoute(caller, opened.admissionId);
+					actor.admissions.delete(opened.admissionId);
+				},
+			});
+		}
+		super.detachConnectionFromSession(id, sessionId);
 	}
 	/** Legacy views frozen for a peer's baseline and not yet released (R3.C6.4 accounting). */
 	get openLegacyViews(): number {

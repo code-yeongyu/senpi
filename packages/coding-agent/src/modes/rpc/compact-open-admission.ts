@@ -39,6 +39,7 @@ export async function compactOpen(
 		.digest("hex");
 	let delivery: ReturnType<typeof Promise.withResolvers<Readonly<Record<string, unknown>> | undefined>> | undefined;
 	let baseline: (() => void) | undefined;
+	let completedOpen: { readonly sessionId: string; readonly release: () => Promise<void> } | undefined;
 	const cancelledAnswer = async () => {
 		const result = await admissions.result(socketEpoch, admissionId);
 		if (result?.state !== "cancelled" || typeof result.answer.generation !== "number") return undefined;
@@ -80,6 +81,18 @@ export async function compactOpen(
 						admissionBaseline(reply, identity, () => active),
 						() => host.writer.socketEpochOf(peer) === socketEpoch,
 					);
+				const release = async () => {
+					if (!active) return;
+					active = false;
+					checkpoints.retireRoute(caller, admissionId);
+					host.writer.unregisterAdmission(peer, admissionId);
+					// A failed physical open already rolled back its attachment.
+					if (physicalSucceeded) {
+						releaseOwnerAttachment(host, peer, sessionId);
+						await releaseDisconnectAttachment(host, sessionId);
+					}
+				};
+				completedOpen = { sessionId, release };
 				result = {
 					answer: {
 						type: "response",
@@ -94,17 +107,7 @@ export async function compactOpen(
 							recovery: { token: token.id, componentRef: "manifest" },
 						},
 					},
-					release: async () => {
-						if (!active) return;
-						active = false;
-						checkpoints.retireRoute(caller, admissionId);
-						host.writer.unregisterAdmission(peer, admissionId);
-						// A failed physical open already rolled back its attachment.
-						if (physicalSucceeded) {
-							releaseOwnerAttachment(host, peer, sessionId);
-							await releaseDisconnectAttachment(host, sessionId);
-						}
-					},
+					release,
 				};
 			}, signal).catch(async (cause: unknown) => {
 				await result?.release();
@@ -118,8 +121,18 @@ export async function compactOpen(
 			physicalSucceeded = true;
 			return result;
 		});
-		const response = (await cancelledAnswer()) ?? { ...answer, id: command.id };
+		const cancelled = await cancelledAnswer();
+		const response = cancelled ?? { ...answer, id: command.id };
 		if (delivery) {
+			// RULING-117: only a completed open replaces the socket's earlier route to its session. The earlier open ends
+			// (route, held id, attachment) before this baseline enters the actor, so later records carry this id only.
+			const superseded =
+				cancelled === undefined && answer.success === true && completedOpen
+					? host.writer.supersedeOpen(peer, completedOpen.sessionId, admissionId, completedOpen.release)
+					: undefined;
+			void superseded?.().catch((cause: unknown) =>
+				process.stderr.write(`senpi rpc superseded open release failed: ${String(cause)}\n`),
+			);
 			baseline?.();
 			delivery.resolve(response);
 		} else await host.writer.enqueueControl(response, peer);

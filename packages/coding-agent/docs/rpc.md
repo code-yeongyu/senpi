@@ -855,6 +855,23 @@ complete, not for `sessionId` or no longer on the session's stream is refused wi
 `errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
 `recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
 
+**Admission IDs per socket (senpi#5274, RULING-113 and RULING-117).** A socket's admissions are capped by what is
+live, never by how many IDs it has used. At most 16 attempts run at once (`admission_admission_busy` past that). Running
+attempts plus routed admissions share 127 rows (128 rows within 16 MiB of 131,584-byte rows); a fresh attempt past
+them is refused `admission_admission_limit` (`errorData.reason: "admission_limit"`). A completed admission that no
+longer routes a stream stays in a least-recently-used row: an exact retry of a recent ID (C4.4) answers its stored
+result, opens nothing and replaces nothing, and an evicted ID answers `admission_admission_retired` (a 4,096-entry ring;
+an ID older than that is indistinguishable from a fresh one). A completed `open_session` or `attach_session` of a
+session this socket already routes REPLACES that route: the earlier admission receives no record after the new
+admission's baseline, its attachment is released, and `reset_stream` or `cancel_attempt` naming it answers
+`unknown_admission`. An ordinary route has no separate end record; a record already queued for the earlier ID is
+delivered whole. A re-open that is still pending, refused, cancelled or failed leaves the earlier route as it was.
+A route otherwise ends with its session or its socket; after a detach it keeps carrying the session's terminal
+records and the replies owed to it until then, and a later re-open still replaces it. Routed rows are therefore
+bounded by the distinct live sessions the socket routes, one row each however often it re-opens them: the 128th
+distinct session on one socket is refused `admission_admission_limit`, while re-opens of a routed session never run
+out.
+
 #### interactive_user
 
 A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's
