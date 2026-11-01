@@ -51,7 +51,9 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
 	const refusal = attachmentGate(host, command) ?? compactAdmissionGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
-	if (command.type === "set_client_info") {
+	// RULING-111 (LEAK-B/C): the host-side pre-declaration belongs to the compact negotiation; with the flag off a
+	// session-scoped declaration reaches its session exactly as on main.
+	if (command.type === "set_client_info" && compactUpdatesEnabled()) {
 		const reply = declareSocketClient(host, command);
 		if (!reply.success) return Promise.resolve(reply);
 		const peer = host.writer.currentConnection();

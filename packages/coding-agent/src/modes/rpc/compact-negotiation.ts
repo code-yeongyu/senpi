@@ -60,6 +60,8 @@ export class CompactSelection {
 
 /** Unknown/inherited opt-ins cannot stand in for an actual endpoint implementation. */
 export function advertisedCompactCapabilities(caps: readonly string[], supported: boolean): string[] {
+	// RULING-111 (LEAK-E): with the flag off the launch capabilities are echoed exactly as on main.
+	if (!compactUpdatesEnabled()) return [...caps];
 	const legacy = caps.filter((cap) => cap !== COMPACT_UPDATES_CAPABILITY && cap !== COMPACT_EVENTS_CAPABILITY);
 	return compactUpdatesEnabled() && supported ? [...new Set([...legacy, ...COMPACT_PAIR])] : legacy;
 }

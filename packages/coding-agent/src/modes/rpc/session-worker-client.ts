@@ -194,7 +194,11 @@ export class SessionWorkerClient {
 		this.writer = writer;
 		this.secretRoute = writer.secretInputRoute(sessionId);
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
-		process.stderr.write(`senpi rpc worker ${sessionId}: bound mode=${this.acceptance ? "acceptance" : "legacy"}\n`);
+		// RULING-111 (LEAK-D): a diagnostic of the compact path; with the flag off the stderr stays as on main.
+		if (compactUpdatesEnabled())
+			process.stderr.write(
+				`senpi rpc worker ${sessionId}: bound mode=${this.acceptance ? "acceptance" : "legacy"}\n`,
+			);
 		this.requestClose = requestClose;
 		this.options = options;
 		await this.request({
