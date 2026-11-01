@@ -65,6 +65,22 @@ describe("a ChatGPT re-login of a saved account replaces it instead of appending
 		expect(slots[1]).toMatchObject({ refresh: "refresh-new", clientId: "client-2" });
 	});
 
+	test("a same-route re-login keeps the login's account fields on the replaced slot", () => {
+		const siwc = {
+			route: "siwc" as const,
+			clientId: "client-1",
+			issuer: "https://auth.openai.com",
+			subject: "sub-a",
+		};
+		const saved = { ...login(personA, "old", 1), ...siwc };
+		const stored: PooledCredential = { ...saved, accounts: [{ ...saved, name: "default", source: "login" }] };
+		const slots = listSlots(
+			appendLoginSlot(stored, { ...login(personA, "new", 2), ...siwc }, undefined, options) as PooledCredential,
+		);
+		expect(slots).toHaveLength(1);
+		expect(slots[0]).toMatchObject({ name: "default", refresh: "refresh-new", ...siwc });
+	});
+
 	test.each([
 		["an SIWC login does not replace a legacy Codex slot", undefined, "siwc"],
 		["a legacy login does not replace an SIWC slot", "siwc", undefined],

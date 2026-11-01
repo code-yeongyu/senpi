@@ -545,14 +545,12 @@ function replaceSameAccount(
 		onAllocated?.(kept.name, "generated");
 		return flat;
 	}
+	// Built through the account-field projection so the login's route, issued client, issuer, subject, ID token
+	// and scopes reach the slot; a hand-copied token triple dropped them (#5003).
 	const fresh: CredentialSlot = {
-		name: kept.name,
+		...slotFromFlatCredentialNamed(flat, kept.name),
 		...(kept.displayName === undefined ? {} : { displayName: kept.displayName }),
 		...(kept.source === undefined ? {} : { source: kept.source }),
-		access: flat.access,
-		refresh: flat.refresh,
-		expires: flat.expires,
-		...credentialSlotEnv(flat),
 	};
 	const dropped = new Set(matches.slice(1).map((slot) => slot.name));
 	const accounts = slots.flatMap((slot) => (slot === kept ? [fresh] : dropped.has(slot.name) ? [] : [slot]));
