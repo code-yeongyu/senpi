@@ -811,7 +811,8 @@ With the flag off it answers as any unknown session command.
 
 Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default), cancels this connection's pending admission attempt
 (senpi#4272, S15a). The `admissionId` is the client's own id for an `open_session` or `subscribe_sessions` that
-carried it; the attempt belongs to the socket that sent it, so another connection's id is never found.
+carried it, or (S17) an `attach_session` with an `admissionId`; the attempt belongs to the socket that sent it, so
+another connection's id is never found.
 
 ```json
 {"type": "cancel_attempt", "admissionId": "open-9"}
