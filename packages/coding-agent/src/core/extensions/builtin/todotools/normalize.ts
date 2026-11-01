@@ -1,4 +1,4 @@
-import type { TodoOpEntry, TodoOperation, TodoPhase } from "./todo-types.ts";
+import { DEFAULT_INIT_PHASE, type TodoOpEntry, type TodoOperation, type TodoPhase } from "./todo-types.ts";
 
 export type TodoNormalization = {
 	entry?: TodoOpEntry;
@@ -78,11 +78,263 @@ function unwrapTodoList(value: unknown): unknown {
 	return Array.isArray(current) && current.length > 0 ? current : value;
 }
 
-/** The todo tool's `prepareArguments`: returns the arguments with `list` unwrapped to its canonical shape. */
+/**
+ * Reserved string key under which `prepareTodoArguments` carries its correction notices to
+ * `execute`. `validateToolArguments` clones prepared arguments with `structuredClone`, which
+ * drops symbol keys, so the channel must be a string key; `execute` strips it before
+ * `normalizeTodoParams` and prepends the notices, so the key never reaches a rendered or
+ * stored surface.
+ */
+export const TODO_PREPARED_CORRECTIONS_KEY = "__todoPreparedCorrections";
+
+function isPhaseRecord(value: unknown): value is { phase: string; items: unknown[] } {
+	return isRecord(value) && typeof value.phase === "string" && Array.isArray(value.items);
+}
+
+function isContentRecord(value: unknown): value is { content: string } {
+	return isRecord(value) && typeof value.content === "string";
+}
+
+function quoted(values: readonly string[]): string {
+	return values.map((value) => JSON.stringify(value)).join(", ");
+}
+
+/**
+ * Rewrites near-canonical `list` entries (senpi#5332) to the canonical shape: an entry whose
+ * `items` are all nested `{phase, items}` records is replaced by them, `items` entries that
+ * are records carrying a string `content` become that string, entries with missing or empty
+ * `items` and stray string entries are dropped, and entries with tasks but no usable `phase`
+ * name get sequential default names. An `items` array that mixes strings with phase records
+ * is ambiguous and returns `null`, as does nothing else here: the caller then leaves the
+ * whole call untouched so validation rejects it as before. The input array and its entries
+ * are never mutated; when nothing changes, the same array reference is returned.
+ */
+function normalizeTodoListEntries(input: readonly unknown[], notices: string[]): unknown[] | null {
+	let list = [...input];
+	let changed = false;
+
+	const promotedOuter: string[] = [];
+	for (let depth = 0; depth < 5; depth++) {
+		const next: unknown[] = [];
+		let promotedThisPass = false;
+		for (const entry of list) {
+			if (isPhaseRecord(entry) && entry.items.length > 0 && entry.items.every(isPhaseRecord)) {
+				next.push(...entry.items);
+				promotedOuter.push(entry.phase);
+				promotedThisPass = true;
+			} else {
+				next.push(entry);
+			}
+		}
+		if (!promotedThisPass) break;
+		list = next;
+	}
+	if (promotedOuter.length > 0) {
+		changed = true;
+		notices.push(
+			`[auto-corrected] "list" ${promotedOuter.length === 1 ? "entry" : "entries"} ${quoted(promotedOuter)} contained only nested phases; promoted the nested phases to top level. Each "list" entry is exactly one phase: {"phase":"<name>","items":["<task>", ...]}`,
+		);
+	}
+
+	let unwrappedContent = 0;
+	for (let index = 0; index < list.length; index++) {
+		const entry = list[index];
+		if (!isPhaseRecord(entry)) continue;
+		const mapped = entry.items.map((item) => {
+			if (isContentRecord(item) && !isPhaseRecord(item)) {
+				unwrappedContent += 1;
+				return item.content;
+			}
+			return item;
+		});
+		// Strings and nested phase records in one items array cannot be told apart, so no
+		// correction may guess: leave the whole call to validation.
+		if (mapped.some((item) => typeof item === "string") && mapped.some(isPhaseRecord)) return null;
+		if (!mapped.every((item) => typeof item === "string")) continue;
+		if (mapped.some((item, position) => item !== entry.items[position])) {
+			list[index] = { ...entry, items: mapped };
+			changed = true;
+		}
+	}
+	if (unwrappedContent > 0) {
+		notices.push(
+			`[auto-corrected] unwrapped ${unwrappedContent} "items" ${unwrappedContent === 1 ? "entry" : "entries"} carrying a "content" field into their task strings. "items" holds only task strings.`,
+		);
+	}
+
+	const withoutEmptyPhases = list.filter((entry) => {
+		if (!isRecord(entry)) return true;
+		if (typeof entry.phase !== "string" && !("items" in entry)) return true;
+		return entry.items !== undefined && (!Array.isArray(entry.items) || entry.items.length > 0);
+	});
+	if (withoutEmptyPhases.length !== list.length) {
+		changed = true;
+		const dropped = list.length - withoutEmptyPhases.length;
+		notices.push(
+			`[auto-corrected] dropped ${dropped} "list" ${dropped === 1 ? "entry" : "entries"} with no tasks. Every phase needs at least one task in "items".`,
+		);
+		list = withoutEmptyPhases;
+	}
+
+	const hasObjectEntries = list.some((entry) => isRecord(entry));
+	const strayStrings = list.filter((entry) => typeof entry === "string");
+	if (strayStrings.length > 0 && hasObjectEntries) {
+		changed = true;
+		notices.push(
+			`[auto-corrected] dropped ${strayStrings.length} stray ${strayStrings.length === 1 ? "entry" : "entries"} from "list". "list" holds only phase objects: {"phase":"<name>","items":["<task>", ...]}`,
+		);
+		list = list.filter((entry) => typeof entry !== "string");
+	}
+
+	const usedNames = new Set<string>();
+	for (const entry of list) {
+		if (isRecord(entry) && typeof entry.phase === "string" && entry.phase.trim() !== "") usedNames.add(entry.phase);
+	}
+	const generatedNames: string[] = [];
+	for (let index = 0; index < list.length; index++) {
+		const entry = list[index];
+		if (
+			!isRecord(entry) ||
+			!Array.isArray(entry.items) ||
+			entry.items.length === 0 ||
+			!entry.items.every((item) => typeof item === "string") ||
+			(typeof entry.phase === "string" && entry.phase.trim() !== "")
+		) {
+			continue;
+		}
+		let counter = 1;
+		let name = DEFAULT_INIT_PHASE;
+		while (usedNames.has(name)) {
+			counter += 1;
+			name = `${DEFAULT_INIT_PHASE} ${counter}`;
+		}
+		usedNames.add(name);
+		generatedNames.push(name);
+		const { phase: _replaced, ...rest } = entry;
+		list[index] = { phase: name, ...rest };
+		changed = true;
+	}
+	if (generatedNames.length > 0) {
+		notices.push(
+			`[auto-corrected] named ${generatedNames.length} "list" ${generatedNames.length === 1 ? "entry" : "entries"} without a phase name: ${quoted(generatedNames)}. Pass "phase" explicitly: {"phase":"<name>","items":["<task>", ...]}`,
+		);
+	}
+
+	return changed ? list : (input as unknown[]);
+}
+
+/**
+ * The todo tool's `prepareArguments`: rewrites near-canonical shapes (senpi#5148 wrappers,
+ * senpi#5332 list/op corrections) to the canonical one before schema validation. Any call a
+ * rule does not correct is returned as the SAME reference, and a correction that would leave
+ * `list` empty is abandoned entirely so the malformed call still fails validation instead of
+ * clearing the todo list.
+ */
 export function prepareTodoArguments(args: unknown): unknown {
-	if (!isRecord(args) || Array.isArray(args) || !("list" in args)) return args;
-	const unwrapped = unwrapTodoList(args.list);
-	return unwrapped === args.list ? args : { ...args, list: unwrapped };
+	if (!isRecord(args) || Array.isArray(args)) return args;
+	const notices: string[] = [];
+	let draft: Record<string, unknown> | undefined;
+	const revise = (mutate: (draftArgs: Record<string, unknown>) => void): void => {
+		draft ??= { ...args };
+		mutate(draft);
+	};
+
+	const rawOp = args.op;
+	let op = rawOp;
+	if (typeof rawOp === "string" && !isOperation(rawOp)) {
+		const stripped = rawOp.replace(/[^a-z]/gi, "");
+		if (isOperation(stripped)) {
+			op = stripped;
+			revise((draftArgs) => {
+				draftArgs.op = stripped;
+			});
+			notices.push(
+				`[auto-corrected] "op" ${JSON.stringify(rawOp)} is not a known operation; used "${stripped}" after stripping stray non-letter characters. Pass "op" exactly: init, start, done, rm, drop, append, view.`,
+			);
+		}
+	}
+
+	if (op === undefined || op === "init") {
+		if ("list" in args) {
+			let listValue: unknown = args.list;
+			if (typeof listValue === "string") {
+				try {
+					const parsed: unknown = JSON.parse(listValue);
+					if (Array.isArray(parsed) || isRecord(parsed)) {
+						listValue = parsed;
+						notices.push(
+							'[auto-corrected] "list" was sent as a JSON string; parsed it. Pass "list" as an array of phases.',
+						);
+					}
+				} catch {
+					// Unparseable: leave the string for validation to reject.
+				}
+			}
+			let candidate: unknown = unwrapTodoList(listValue);
+			if (Array.isArray(candidate)) {
+				const normalized = normalizeTodoListEntries(candidate, notices);
+				if (normalized === null) return args;
+				candidate = normalized;
+			}
+			// A correction must never widen a malformed call into a list clear.
+			if (Array.isArray(candidate) && candidate.length === 0) return args;
+			if (candidate !== args.list) {
+				const adopted = candidate;
+				revise((draftArgs) => {
+					draftArgs.list = adopted;
+				});
+			}
+		}
+
+		if (args.list === undefined && Array.isArray(args.items) && args.items.length > 0) {
+			const items = args.items;
+			if (items.every(isPhaseRecord)) {
+				const normalized = normalizeTodoListEntries([...items], notices);
+				if (normalized === null || normalized.length === 0) return args;
+				const adopted = normalized;
+				revise((draftArgs) => {
+					draftArgs.list = adopted;
+					delete draftArgs.items;
+				});
+				notices.push(
+					'[auto-corrected] "items" held phase records; moved them to "list". Pass phases under "list": {"op":"init","list":[{"phase":"<name>","items":["<task>", ...]}]}',
+				);
+			} else {
+				const mapped = items.map((item) => (isContentRecord(item) && !isPhaseRecord(item) ? item.content : item));
+				if (mapped.some((item) => typeof item === "string") && mapped.some(isPhaseRecord)) return args;
+				const unwrapped = items.filter((item) => isContentRecord(item) && !isPhaseRecord(item)).length;
+				if (unwrapped > 0 && mapped.every((item) => typeof item === "string")) {
+					revise((draftArgs) => {
+						draftArgs.items = mapped;
+					});
+					notices.push(
+						`[auto-corrected] unwrapped ${unwrapped} top-level "items" ${unwrapped === 1 ? "entry" : "entries"} carrying a "content" field into their task strings. "items" holds only task strings.`,
+					);
+				}
+			}
+		}
+	}
+
+	if (!draft) return args;
+	return notices.length > 0 ? { ...draft, [TODO_PREPARED_CORRECTIONS_KEY]: [...notices] } : draft;
+}
+
+/**
+ * Splits the prepare-time correction notices off prepared arguments (see
+ * `TODO_PREPARED_CORRECTIONS_KEY`): the arguments without the reserved key, plus the notices
+ * to prepend to `normalizeTodoParams`'s own corrections.
+ */
+export function splitPreparedCorrections(args: Record<string, unknown>): {
+	args: Record<string, unknown>;
+	corrections: string[];
+} {
+	const { [TODO_PREPARED_CORRECTIONS_KEY]: notices, ...rest } = args;
+	return {
+		args: rest,
+		corrections: Array.isArray(notices)
+			? notices.filter((notice): notice is string => typeof notice === "string")
+			: [],
+	};
 }
 
 function nonBlank(value: unknown): string | undefined {

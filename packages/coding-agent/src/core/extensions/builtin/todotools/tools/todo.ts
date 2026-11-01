@@ -16,7 +16,7 @@ import type {
 	ToolRenderContext,
 	ToolRenderResultOptions,
 } from "../../../types.ts";
-import { normalizeTodoParams, prepareTodoArguments } from "../normalize.ts";
+import { normalizeTodoParams, prepareTodoArguments, splitPreparedCorrections } from "../normalize.ts";
 import { TODO_TOOL_DESCRIPTION } from "../prompt.ts";
 import {
 	applyParams,
@@ -305,14 +305,17 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<TodoToolDetails>> {
 			const previousPhases = clonePhases(accessors.getCurrentPhases());
 			const previousAsk = accessors.getCurrentAsk();
-			const normalized = normalizeTodoParams(params as Record<string, unknown>, previousPhases);
+			// prepareTodoArguments carries its notices on the prepared args under a reserved key
+			// (#5332); strip it before normalizing and prepend the notices to the corrections.
+			const prepared = splitPreparedCorrections(params as Record<string, unknown>);
+			const normalized = normalizeTodoParams(prepared.args, previousPhases);
 			if (normalized.error || !normalized.entry) {
 				const error =
 					normalized.error ?? 'Missing "op". Example: {"op":"init","list":[{"phase":"Setup","items":["..."]}]}';
 				throw new Error(`${error}\n\n${formatSummary(previousPhases, [], true, previousAsk)}`);
 			}
 			const entry = normalized.entry;
-			const corrections = normalized.corrections;
+			const corrections = [...prepared.corrections, ...normalized.corrections];
 			const readOnly = entry.op === "view";
 			const errors: string[] = [];
 			const applied = readOnly

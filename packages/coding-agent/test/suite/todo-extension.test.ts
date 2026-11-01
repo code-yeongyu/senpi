@@ -20,7 +20,7 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { initTheme, theme } from "../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../src/utils/ansi.ts";
 import { createTestResourceLoader, userMsg } from "../utilities.ts";
-import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
+import { createHarness, getAssistantTexts, getMessageText, type Harness } from "./harness.ts";
 
 const TODO_EXTENSION_PATH = fileURLToPath(
 	new URL("../../src/core/extensions/builtin/todotools/index.ts", import.meta.url),
@@ -348,7 +348,7 @@ describe("todo extension", () => {
 		).toHaveLength(stateEntriesBeforeFailure);
 	});
 
-	it("rejects an init containing an empty phase atomically", async () => {
+	it("drops an empty phase from an init and applies the rest (#5332)", async () => {
 		// Given a valid persisted list
 		const harness = await createHarnessWithTodoExtension();
 		harnesses.push(harness);
@@ -369,21 +369,25 @@ describe("todo extension", () => {
 		const stateEntriesBefore = harness.sessionManager
 			.getBranch()
 			.filter((entry) => entry.type === "custom" && entry.customType === TODO_STATE_ENTRY_TYPE).length;
-		await harness.session.prompt("invalid init");
-		const failedResult = getLatestTodoResult(harness);
+		await harness.session.prompt("corrected init");
+		const correctedResult = getLatestTodoResult(harness);
 
-		// Then the batch is rejected wholesale and nothing new is persisted
-		expect(failedResult.isError).toBe(true);
+		// Then the empty phase is dropped, the rest applies, and the correction is reported
+		expect(correctedResult.isError).not.toBe(true);
+		expect(getMessageText(correctedResult)).toContain('[auto-corrected] dropped 1 "list" entry with no tasks');
+		expect(phasesFromResult(correctedResult)).toEqual([
+			{ name: "Filled", tasks: [{ content: "New task", status: "in_progress" }] },
+		]);
 		expect(
 			harness.sessionManager
 				.getBranch()
 				.filter((entry) => entry.type === "custom" && entry.customType === TODO_STATE_ENTRY_TYPE),
-		).toHaveLength(stateEntriesBefore);
+		).toHaveLength(stateEntriesBefore + 1);
 
-		// And the previous list is fully intact
+		// And the view echoes the corrected list
 		await harness.session.prompt("view");
 		expect(phasesFromResult(getLatestTodoResult(harness))).toEqual([
-			{ name: "Tasks", tasks: [{ content: "Keep me", status: "in_progress" }] },
+			{ name: "Filled", tasks: [{ content: "New task", status: "in_progress" }] },
 		]);
 	});
 
