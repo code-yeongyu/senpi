@@ -108,6 +108,7 @@ test("a SKIPPED case is never PASS, is counted on its own, and does not fail the
 		exitCode: 0,
 	});
 	assert.equal(summarizeRun([...results, { id: "E26", pass: false }], [], "compare").exitCode, 1);
+	assert.equal(summarizeRun([results[0]], [], "compare").exitCode, 1, "a run where every case was skipped ran nothing");
 });
 
 test("E29 is SKIPPED naming each missing prerequisite, and required where the host has both (senpi#5265)", () => {

@@ -55,7 +55,7 @@ export function goldenCellVerdict(entries, cell, root = EQ_DIR) {
 
 /**
  * The run's summary line and exit code. DEFERRED and SKIPPED (host-capability, senpi#5265) cells are counted on their own
- * and do not fail the run; a failed
+ * and do not fail the run, unless every selected case was skipped (nothing ran); a failed
  * case or a stale deferred entry does, and so does a run with nothing selected.
  */
 export function summarizeRun(results, staleEntries, mode) {
@@ -65,6 +65,6 @@ export function summarizeRun(results, staleEntries, mode) {
 	const failed = results.length - passed - deferred - skipped + staleEntries.length;
 	return {
 		line: `fused-equivalence-qa ${mode}: ${passed}/${results.length} passed, ${deferred} deferred, ${failed} failed${skipped ? `, ${skipped} skipped` : ""}`,
-		exitCode: failed === 0 && results.length > 0 ? 0 : 1,
+		exitCode: failed === 0 && results.length > skipped ? 0 : 1,
 	};
 }
