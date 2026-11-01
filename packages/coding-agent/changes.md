@@ -1,22 +1,3 @@
-## 2026-11-01 - Bump minimatch to 11.0.3 for GHSA-g3hv-75wg-m249 (#4820)
-
-### What changed
-
-- `packages/coding-agent/package.json`: `minimatch` 10.2.6 -> 11.0.3; regenerated `package-lock.json`, `bun.lock` and `packages/coding-agent/install-lock`.
-- `packages/coding-agent/test/minimatch-call-sites.test.ts`: table-driven cases for both minimatch call sites (model-scope globs with `nocase`, and resource filter globs with `**`, braces, case sensitivity and an agent dir under a dot directory). They pass unchanged on 10.2.6 and 11.0.3.
-
-### Why
-
-- `npm audit --omit=dev` flags minimatch below 11.0.1 (GHSA-g3hv-75wg-m249), and minimatch ships inside the bundle. senpi only calls the named `minimatch(path, pattern, options)` export, which 11 keeps; the APIs that 11 removes (`makeRe`, `AST`, `debug`) are unused.
-
-### Why an extension could not handle it
-
-- The dependency pin and the lockfiles belong to the engine package.
-
-### Expected merge conflict zones
-
-- LOW: `packages/coding-agent/package.json` dependency block and the regenerated lockfiles.
-
 ## 2026-10-30 - First-class private secret input (senpi#5108)
 
 ### What changed
