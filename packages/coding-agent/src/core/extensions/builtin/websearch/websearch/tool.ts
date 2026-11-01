@@ -67,6 +67,9 @@ export interface WebSearchToolOptions {
 	onSearchComplete?: (details: SearchDetails) => void;
 }
 
+/** The one Tool Guidelines bullet; the server-search `## Web Search` section states it instead (senpi#5335). */
+export const WEB_SEARCH_CITE_GUIDELINE = "After using web_search, cite relevant returned URLs in the final answer.";
+
 export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearchToolOptions = {}): WebSearchTool {
 	let routingState: SearchRoutingState | undefined;
 	let routingKey = "";
@@ -77,7 +80,7 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 		label: "Web Search",
 		description: "Search the web for current information and return source URLs for citation.",
 		promptSnippet: "Search the web for current information, documentation, news, or external facts.",
-		promptGuidelines: ["After using web_search, cite relevant returned URLs in the final answer."],
+		promptGuidelines: [WEB_SEARCH_CITE_GUIDELINE],
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx: ExtensionContext) {
 			if (params.allowed_domains?.length && params.blocked_domains?.length) {

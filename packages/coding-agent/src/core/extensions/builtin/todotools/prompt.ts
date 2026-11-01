@@ -48,7 +48,7 @@ export const TASK_MANAGEMENT_SECTION = `
 <Task_Management>
 ## Todo Management
 
-A request with three or more distinct steps gets a phased todo before the first edit - investigation, implementation, verification, final report - in the todo tool; its description carries the operations, anatomy, and rules. Mark each item done the moment it finishes and reconcile the list against the newest user message before ending a turn.
+A request with three or more distinct steps gets a phased todo before the first edit - investigation, implementation, verification, final report - in the todo tool.
 
 ## Evidence
 - File edit: inspect the changed files and diagnostics.

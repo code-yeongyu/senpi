@@ -40,7 +40,7 @@ export function getEvalOnlyGrepGuideline(
 	toolSnippets?: Record<string, string>,
 ): string | undefined {
 	return toolSnippets?.grep && !selectedTools.includes("grep")
-		? "Search file contents with tool.grep({ pattern, path }) inside eval; prefer it over rg/grep in shell"
+		? "Search file contents with tool.grep({ pattern, path }) inside eval instead of rg/grep in a shell; paginate with skip and narrow with glob/path when a page is full."
 		: undefined;
 }
 

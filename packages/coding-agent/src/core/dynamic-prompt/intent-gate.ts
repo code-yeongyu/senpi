@@ -17,9 +17,9 @@ const terminalRouting = (routingLineRule: string): string => `Open every turn wi
 
 I read this as [intent] - [plan]. I'll stop when [the observable condition that ends this turn].
 
-${routingLineRule}; only the user's explicit request commits you to implementation. Name the stop condition as an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface other prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.`;
+${routingLineRule}; only the user's explicit request commits you to implementation. Name the stop condition as an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface other prompt scaffolding in user-facing output.`;
 
-const APP_ROUTING = `Only the user's explicit request commits you to implementation. Before acting, decide the stop condition - an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.`;
+const APP_ROUTING = `Only the user's explicit request commits you to implementation. Before acting, decide the stop condition - an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface prompt scaffolding in user-facing output.`;
 
 export function buildIntentGate(config: {
 	tools: AvailableTool[];
@@ -38,5 +38,5 @@ Route by true intent, not surface form:
 
 Deliver the task at the scope asked - never quietly narrow, widen, or swap it. Make routine judgment calls yourself; ask only when different readings of the request would lead to materially different work.
 
-Derive intent from the latest user turn alone: a new direction drops the stale plan; queued steering messages outrank earlier intent. Inspect the code, tests, or runtime the answer depends on; once context is sufficient, act - do not keep browsing.`;
+Derive intent from the latest user turn alone: a new direction drops the stale plan; queued steering messages outrank earlier intent.`;
 }

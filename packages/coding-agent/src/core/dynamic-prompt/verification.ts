@@ -82,5 +82,5 @@ Tier the scope, never the rigor.
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: ${CLAIM_AUDIT[terminalOrApp(options.surface ?? "terminal")]} Fix only issues your changes caused; note pre-existing failures separately.`;
+Before reporting progress, audit each claim against a tool result from this session: ${CLAIM_AUDIT[terminalOrApp(options.surface ?? "terminal")]} Fix only issues your changes caused; note pre-existing failures separately.`;
 }

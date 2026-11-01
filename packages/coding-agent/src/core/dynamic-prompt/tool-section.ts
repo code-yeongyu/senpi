@@ -10,6 +10,11 @@ const CATEGORY_LABELS: Record<AvailableTool["category"], string> = {
 	command: "Commands",
 };
 
+/**
+ * Lists only tools that carry a snippet; callers pass snippets solely for tools whose schema the model
+ * does not see described, so a tool's own description is never restated here (senpi#5335). With no
+ * listed tool and no guideline the section renders empty.
+ */
 export function buildToolSection(options: {
 	tools: AvailableTool[];
 	toolSnippets: Record<string, string>;
@@ -28,8 +33,7 @@ export function buildToolSection(options: {
 		groupedTools.set(tool.category, existingTools);
 	}
 
-	const lines = ["## Available Tools", ""];
-	let hasVisibleTools = false;
+	const lines: string[] = [];
 
 	for (const category of CATEGORY_ORDER) {
 		const categoryTools = groupedTools.get(category);
@@ -37,16 +41,12 @@ export function buildToolSection(options: {
 			continue;
 		}
 
-		hasVisibleTools = true;
+		if (lines.length === 0) lines.push("## Available Tools", "");
 		lines.push(`### ${CATEGORY_LABELS[category]}`);
 		for (const tool of categoryTools) {
 			lines.push(`- ${tool.name}: ${tool.snippet}`);
 		}
 		lines.push("");
-	}
-
-	if (!hasVisibleTools) {
-		lines.push("(none)", "");
 	}
 
 	const guidelines =

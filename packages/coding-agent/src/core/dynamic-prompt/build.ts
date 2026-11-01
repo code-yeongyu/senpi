@@ -27,7 +27,7 @@ export interface DynamicPromptCoreContext {
 	tools: AvailableTool[];
 	surface: PromptSurface;
 	appName?: string;
-	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section. */
+	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section; empty when it has nothing to list. */
 	toolSection: string;
 }
 
@@ -46,6 +46,7 @@ export interface BuildDynamicSystemPromptOptions {
 	 */
 	cwd: string;
 	selectedTools: string[];
+	/** One-line snippets, listed under "## Available Tools" for selected tools; pass none for a tool whose schema description the model already sees. */
 	toolSnippets: Record<string, string>;
 	promptGuidelines: string[];
 	contextFiles: Array<{ path: string; content: string; scope?: "user" }>;
@@ -113,8 +114,7 @@ export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptO
 				"",
 				buildVerificationSection({ surface }),
 				"",
-				toolSection,
-				"",
+				...(toolSection ? [toolSection, ""] : []),
 				buildPoliciesSection(),
 				"",
 				buildHandoffSection({ surface }),
