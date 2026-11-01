@@ -2,6 +2,7 @@ import { VERSION } from "../../config.ts";
 import { sharedPathIdentityResolver } from "../../core/extensions/builtin/permission-system/path-identity-host.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
+import { advertisedCompactCapabilities } from "./compact-negotiation.ts";
 import { pathIdentityResolverStatus } from "./path-identity-status.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -30,7 +31,10 @@ export function answerProtocolInfo(
 		data: {
 			protocolVersion: 1,
 			serverVersion: VERSION,
-			capabilities,
+			capabilities: advertisedCompactCapabilities(
+				capabilities,
+				host.writer.currentConnection() !== undefined && host.registry.supportsCompact?.() === true,
+			),
 			mode: "multi",
 			...protocolIdentity(host.defaults.agentDir),
 			memory_pressure: host.memoryPressure,

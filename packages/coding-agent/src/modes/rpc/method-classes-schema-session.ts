@@ -200,14 +200,6 @@ const BASH_AND_TREE_SCHEMAS = {
 		maxBytes: OptNum,
 	}),
 	get_tree: session("get_tree", {}),
-	// every field is a bounded id at the token owner (`parseBoundedId`); a cursor is at most 128 bytes
-	get_recovery_page: session("get_recovery_page", {
-		token: Id,
-		admissionId: Id,
-		componentRef: Id,
-		requestId: Id,
-		cursor: OptId,
-	}),
 	get_last_assistant_text: session("get_last_assistant_text", {}),
 	set_session_name: session("set_session_name", { name: Str }),
 	record_user_activity: session("record_user_activity", { kind: Type.Literal("draft") }),

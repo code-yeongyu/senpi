@@ -730,6 +730,17 @@ reader (which stops near 4,000 levels on Node) never drops it.
 Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
 (senpi#4272, R4.B3). The command is additive: with the flag off it answers exactly as any unknown session command.
 
+Compact generations are allocated per durable session, not per socket or accepted-state epoch (RULING-99).
+A reconnect receives a higher generation; a host restart resumes above the persisted reservation ceiling in
+the agent directory. Generations may have gaps. The engine reserves ranges asynchronously before synchronous
+cut issuance; no token, manifest or event can name an unreserved generation. Exhaustion or storage failure
+refuses a new cut as `storage_unavailable`, never by resetting the counter. A concurrent owner cannot reserve
+the same session while its kernel ownership lock is held. Materializers continue to refuse lower generations
+as `stale_generation`.
+On new-session, switch and fork replacements, the owner rebinds before publishing the replacement's first cut.
+Its new range starts above both the lane's previous reservation ceiling and the target session's persisted floor;
+synchronous cut requests refuse while that asynchronous reservation is pending.
+
 ```json
 {"type": "get_recovery_page", "sessionId": "rpc-1", "token": "socket-3:7", "admissionId": "attach-9",
  "componentRef": "c-0000000000000007:003", "requestId": "r-12", "cursor": "p1:1:131072:..."}
@@ -740,7 +751,7 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   `cursor` continues a component from the previous answer and is omitted for a component's first page. Every field
   is an opaque bounded protocol id (ASCII `[A-Za-z0-9][A-Za-z0-9:_-]*`, at most 128 bytes), parsed before any use.
 - The answer's `data` is `{requestId, token, generation, componentRef, ordinal, offset, length, digest, bytes,
-  cursor, complete}`: `bytes` is the base64 of exactly `length` raw stored bytes of the component at raw byte
+  cursor, complete, repair}`: `bytes` is the base64 of exactly `length` raw stored bytes of the component at raw byte
   `offset` (the component's stored UTF-16LE bytes, the representation the catalog's lengths and `leaf` digests
   describe); `digest` is the catalog's `fragment`-domain SHA-256 over those raw bytes, so a client verifies it
   AFTER base64 decoding, never over the base64 text; `cursor` is the opaque cursor of the next page or `null` once
@@ -786,6 +797,157 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   edit to its lines, ids or content, before or after the first page) is `recovery_storage_unavailable` with `reason`
   `base_file_replaced`, `base_file_truncated`, `base_file_missing` or `base_fingerprint_mismatch`, never stale rows. With a base present, the transcript, opaque and source families are
   complete: their members are the catalog's rows of this epoch plus the base stream's rows of their family.
+
+**S14 repair policy (RULING-84 and RULING-87).** Success carries `data.repair`; a typed recovery failure carries
+`errorData.repair`, using the same `RecoveryRepairAdviceSchema` as the client package's
+`RecoveryRepairController`. Advice contains `state` (`ok`, `repair_needed`, or `storage_unavailable`),
+`healthRevision` (a persisted decimal counter), `source` (`sessionEpoch`, accepted `sequence`),
+`hint: "restart_from_catalog"` and `retryAfterMs` (100 to 2,000 ms, jittered, or zero on success).
+An unknown or foreign token receives null revision and source, never another admission's state.
+Storage unavailability ends only the recovery attempt, not the connection, and does not resubmit a prompt or
+fall back to current-root content. For storage failures, repair restarts at the catalog with a fresh cut after
+the backoff and only when either health revision or accepted-source identity changes.
+An `unknown_token` or `released` refusal instead requests one immediate catalog restart, even with unchanged
+or null revision/source. The driver supplies `observe(advice, now, { token, reason })`, using the refused request's
+token ID (or event lease ID) and `errorData.reason`; these are request context, not extra advice fields.
+A token receives at most one restart from this controller. If the fresh cut's token is also refused immediately,
+the controller waits for the bounded backoff before restarting it, without requiring a health/source change.
+Repeated observations of an already restarted token wait and cannot spin; a successful page ends the consecutive
+gone-token chain. Other repair reasons and calls without gone-token context retain the change-gated policy.
+A freeze never advances health revision;
+a successful write/fsync or completed repair after a storage failure does, durably before publication.
+The controller implements this policy without transport wiring; S15a owns the blocking end-to-end test
+`the in-repo client honours the hint end to end`. The compact delta flag remains OFF by default until S15a
+lands; S14's crash reclaim is also a prerequisite for default-on (RULING-79).
+
+At compact-host startup the producer classifies direct transcript, settled, current and event spool children
+of its own temporary base. Each new spool has an atomically published 0600 marker with scratch/live kind,
+boot-session identity and process start identity. Only a scratch owner proven dead is reclaimed. Live,
+unmarked, unreadable, foreign and linked roots survive; unknown roots are counted with age and size (null
+when unreadable), and failed removals remain reported debt. Accepted engine content is ephemeral scratch,
+not evidence of desktop SQL/replay commitment. Windows startup reclaim is a reported no-op because this
+implementation cannot prove POSIX ownership and no-follow traversal there.
+
+**Event leases (senpi#4272, S13).** Behind the same flag, a connection that sends `compact_events` in its
+`set_client_info` capabilities (an internal opt-in, not advertised; the public selection comes later) receives a
+session record larger than F = 262,144 bytes (newline included) as an envelope
+`{"type": <the record's type>, "sessionId", "eventLease": {"kind": "event", "id", "admissionId", "sessionEpoch",
+"sequence", "componentRef": "record", "length", "digest"}}`. `sequence` is the record's accepted sequence in
+`sessionEpoch`; no recovery generation changes. Other connections still receive the complete record. The lease's
+one component, `record`, is the record's exact JSON line without its newline, paged as its stored UTF-16LE bytes
+(`length`, `leaf` digest `digest`) through this command with `lease` in place of `token`:
+
+```json
+{"type": "get_recovery_page", "sessionId": "rpc-1", "lease": {"kind": "event", "id": "event:socket-3:4"},
+ "admissionId": "attach-9", "componentRef": "record", "requestId": "r-13"}
+```
+
+The answer's `data` carries `lease` in place of `token` and `generation`; ordinals, the active request, the
+socket's eight outstanding requests, retries and cursors follow the rules above. A lease is scoped like a token: one
+minted for another connection, session or admission is `unknown_token` with nothing else. A connection holds at
+most 32 live event leases; past that it receives `{"type": "event_lease_refused", "sessionId", "reason":
+"lease_limit"}` and is closed, and a record the host cannot stage is refused the same way with
+`"storage_unavailable"`. Its end releases every lease it holds. Leases are released only by `release_recovery`.
+
+#### release_recovery
+
+Behind the same flag, the consumer's receipt for an event lease (senpi#4272, S13). Send it only once the leased
+content is committed on the consumer's side (for the desktop: after its command transaction's dispatch succeeded);
+decoding a page, queueing or staging it is not a release point.
+
+```json
+{"type": "release_recovery", "sessionId": "rpc-1", "lease": {"kind": "event", "id": "event:socket-3:4"},
+ "admissionId": "attach-9"}
+```
+
+The answer's `data` is `{lease: {kind: "event", id}, outcome, remaining}`: `released` when this admission's
+reference was the last (`remaining: 0`, the content goes once reads in flight unwind), `held` while another
+admission still references it, and `duplicate` for a receipt this admission already gave, which changes nothing, so
+a consumer may retry a receipt after a rollback. A lease of another connection or session, or an unknown one, is
+`recovery_repair_needed` with `reason: "unknown_token"`; a malformed request is `recovery_malformed_request`.
+With the flag off it answers as any unknown session command.
+
+#### cancel_attempt
+
+Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default), cancels this connection's pending admission attempt
+(senpi#4272, S15a). The `admissionId` is the client's own id for an `open_session` or `subscribe_sessions` that
+carried it, or (S17) an `attach_session` with an `admissionId`; the attempt belongs to the socket that sent it, so
+another connection's id is never found.
+
+```json
+{"type": "cancel_attempt", "admissionId": "open-9"}
+```
+
+The host first checks the id against this connection's admissions: an id that is neither a pending attempt nor an
+admission this connection currently holds (never used, already cancelled, or completed and released) is refused with
+`unknown_admission`. Otherwise the answer's `data` is `{outcome}`: `cancelled` for a pending attempt (its late result
+is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). Only a
+socket connection has admissions, so on any other transport the id is unknown. A malformed `admissionId` is refused
+with `admission_malformed_request`. With the flag off it answers as any unknown command.
+
+#### reset_stream
+
+Behind the same flag, restarts the compact stream of an admission this connection already holds (senpi#4272,
+S15a-1), when the client has lost its place in it. It operates on existing admission authority, never as a fresh
+open or attachment: `admissionId` must name a completed admission of this socket for `sessionId`.
+
+```json
+{"type": "reset_stream", "sessionId": "rpc-1", "admissionId": "attach-9"}
+```
+
+The host freezes a new recovery checkpoint for that admission and answers it as the stream's new baseline:
+`{"type": "response", "command": "reset_stream", "success": true, "sessionId", "admissionId", "generation",
+"data": {"recovery": {"token", "componentRef": "manifest"}}}`, ordered before any later compact frame of the
+admission. Read the checkpoint with `get_recovery_page`. An `admissionId` this connection does not hold is refused with
+`unknown_admission` before the command runs. A held admission that is not
+complete, not for `sessionId` or no longer on the session's stream is refused with `recovery_unknown_token` and
+`errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
+`recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
+
+**Admission IDs per socket (senpi#5274, RULING-113, RULING-117 and RULING-118).** A socket's admissions are capped by what is
+live, never by how many IDs it has used. At most 16 attempts run at once (`admission_admission_busy` past that). Running
+attempts plus routed admissions share 127 rows (128 rows within 16 MiB of 131,584-byte rows); a fresh attempt past
+them is refused `admission_admission_limit` (`errorData.reason: "admission_limit"`). A completed admission that no
+longer routes a stream stays in a least-recently-used row: an exact retry of a recent ID (C4.4) answers its stored
+result, opens nothing and replaces nothing, and an evicted ID answers `admission_admission_retired` (a 4,096-entry ring;
+an ID older than that is indistinguishable from a fresh one). A completed `open_session` or `attach_session` of a
+session this socket already routes REPLACES that route: the earlier admission receives no record after the new
+admission's baseline, its attachment is released, and `reset_stream` or `cancel_attempt` naming it answers
+`unknown_admission`. An ordinary route has no separate end record; a record already queued for the earlier ID is
+delivered whole. A re-open that is still pending, refused, cancelled or failed leaves the earlier route as it was.
+A detach (`close_session`, `release_attachment`, `detach_connection`) also ends the route: when the detaching request
+names the admission, its reply is tagged with that admission first and the route retires right after it, so the
+records sealed before the reply (a final `session_closed`) keep the tag too; the peer then receives no further records
+for that admission, and the admission no longer counts toward the cap. A route otherwise ends with its session or its
+socket. Routed rows are therefore bounded by the pending attempts plus the distinct live sessions the socket still
+holds, one row each however often it re-opens them: the 128th distinct held session on one socket is refused
+`admission_admission_limit`, re-opens of a routed session never run out, and a socket that attaches to and detaches
+from any number of distinct live sessions in turn is never refused.
+Lifecycle broadcasts (`agent_start`, `agent_settled`, `agent_idle`, `session_opened`, `session_closed`,
+`session_parked`, `session_lifecycle`) are socket-wide and untagged, and they continue regardless of attach or detach;
+they are not route records. They reach every socket, except under I4: a worker session's (or an `attachedOnly` seal's)
+`session_closed` and `session_parked` reach attached connections only.
+
+**Route retirement (senpi#5274, RULING-119).** The engine never retires a delivering route silently: every retire is
+either the direct result of a client action whose reply the client sees, or announced to that client by a typed record
+before the route stops delivering. Per path:
+
+- A completed re-open of the session by the same socket (RULING-117): a client action; the new open's reply.
+- A detach (`close_session`, `release_attachment`, `reclaim_session`, `detach_connection`; RULING-118): a client action;
+  the detach's reply.
+- An accepted `open_session` or `attach_session` that ends without completing (cancelled, refused or failed after it
+  was accepted, for example when its durable answer row cannot be written): announced by its own final reply,
+  `attempt_cancelled` or the `admission_<reason>` refusal, which then carries `admissionId` and `generation`. That reply
+  is the last record tagged with the admission; records the open delivered before it (`session_opened`, and a rolled-back
+  open's `session_closed` with `reason: "error"`) keep the tag, and the route retires right after it.
+- A mirror admission's route: retired only by `unsubscribe_sessions` or the subscribe's own `cancel_attempt` (client
+  actions), by a subscribe refused before activation, or with the socket. Before activation no mirror record is
+  delivered: the records wait in the subscription's pending buffer until the answer row is durable and activation runs
+  as the last step (`compact-admission-settlement.ts`). A socket's connection is unregistered before its subscriptions
+  drop, so that path retires no delivering route. A mirror therefore needs no end record of its own.
+- A session's close or park: announced by `session_closed` or `session_parked`, tagged with every route the session had
+  on the socket; the session's streams end with it.
+- A socket's end: nothing can be delivered on it any more; its streams end with it.
 
 #### interactive_user
 
