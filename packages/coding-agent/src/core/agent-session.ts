@@ -242,6 +242,7 @@ import {
 	ExecuteToolError,
 	type ExecuteToolOptions,
 	type ExtensionCommandContextActions,
+	type ExtensionContext,
 	type ExtensionErrorListener,
 	type ExtensionMode,
 	type ExtensionRunner,
@@ -1296,6 +1297,45 @@ export interface SessionStats {
 	contextUsage?: ContextUsage;
 	/** Absent from hosts that predate the report. */
 	failures?: SessionFailureReport;
+}
+
+/** Where a tool call learns that steering was queued (senpi#5236). */
+export interface InvocationSteering {
+	/** Whether steering is already queued when the call starts. */
+	pending(): boolean;
+	/** Call `onSteer` when steering is queued; returns the unsubscribe. */
+	subscribe(onSteer: () => void): () => void;
+}
+
+/**
+ * Bind a tool call's invocation signals onto `context`: `steeringSignal` fires when `steering` reports steering and is
+ * never a cancellation. The subscription ends when the call's signal (else the context's) aborts or on `dispose`;
+ * `track`, when given, holds the dispose while the binding is live.
+ */
+export function bindInvocationSignals(
+	context: ExtensionContext,
+	signal: AbortSignal | undefined,
+	steering: InvocationSteering,
+	track?: Set<() => void>,
+): { context: ExtensionContext; dispose: () => void } {
+	const controller = new AbortController();
+	const cancellation = signal ?? context.signal;
+	const unsubscribe = steering.subscribe(() => controller.abort());
+	const dispose = () => {
+		unsubscribe();
+		cancellation?.removeEventListener("abort", dispose);
+		track?.delete(dispose);
+	};
+	track?.add(dispose);
+	cancellation?.addEventListener("abort", dispose, { once: true });
+	if (cancellation?.aborted) {
+		dispose();
+	} else if (steering.pending()) {
+		// Subscribe before checking, without yielding: queued steering cannot fall in a gap.
+		controller.abort();
+	}
+	Object.defineProperty(context, "steeringSignal", { value: controller.signal, enumerable: true });
+	return { context, dispose };
 }
 
 function estimateMessagesTokens(messages: AgentMessage[]): number {
@@ -3094,27 +3134,18 @@ export class AgentSession {
 	}
 
 	private _createToolContext(signal: AbortSignal | undefined) {
-		const context = this._extensionRunner.createContext();
-		const controller = new AbortController();
-		const cancellation = signal ?? context.signal;
-		const unsubscribe = this.subscribe((event) => {
-			if (event.type === "queue_update" && event.steering.length > 0) controller.abort();
-		});
-		const dispose = () => {
-			unsubscribe();
-			cancellation?.removeEventListener("abort", dispose);
-			this._toolContextDisposers.delete(dispose);
-		};
-		this._toolContextDisposers.add(dispose);
-		cancellation?.addEventListener("abort", dispose, { once: true });
-		if (cancellation?.aborted) {
-			dispose();
-		} else if (this._steeringMessages.length > 0) {
-			// Subscribe before checking, without yielding: queued steering cannot fall in a gap.
-			controller.abort();
-		}
-		Object.defineProperty(context, "steeringSignal", { value: controller.signal, enumerable: true });
-		return { context, dispose };
+		return bindInvocationSignals(
+			this._extensionRunner.createContext(),
+			signal,
+			{
+				pending: () => this._steeringMessages.length > 0,
+				subscribe: (onSteer) =>
+					this.subscribe((event) => {
+						if (event.type === "queue_update" && event.steering.length > 0) onSteer();
+					}),
+			},
+			this._toolContextDisposers,
+		);
 	}
 
 	private _emitQueueUpdate(): void {
