@@ -206,6 +206,8 @@ async function resolveStoredOAuth(
 	slotName?: string,
 	rejectedAccess?: string,
 ): Promise<AuthResult | undefined> {
+	// A retained registration is not an expired session to refresh.
+	if (stored.signedOut === true || (!stored.access && !stored.refresh)) return undefined;
 	const minimumValidityMs = Math.max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, minOAuthValidityMs ?? 0);
 	const expiresSoon = (credential: OAuthCredential) => Date.now() + minimumValidityMs >= credential.expires;
 	const isStale = (credential: OAuthCredential) =>

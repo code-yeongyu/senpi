@@ -5,12 +5,8 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
-import {
-	commonBuildOptions,
-	findContainingOutput,
-	lazyEntryPoints,
-	validateExternalImports,
-} from "./build-coding-agent-bundle.mjs";
+import { commonBuildOptions, findContainingOutput, validateExternalImports } from "./build-coding-agent-bundle.mjs";
+import { lazyEntryPoints } from "./bundle-entry-points.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const permissionSystemSrc = join(repoRoot, "packages", "coding-agent", "src", "core", "extensions", "builtin", "permission-system");
