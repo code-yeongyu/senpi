@@ -369,8 +369,12 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
-      - name: Normalizer and TUI comparator unit tests
-        run: node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs
+      - name: senpi-qa harness unit tests
+        shell: bash
+        run: |
+          # tui-smoke.test.mjs drives the real tmux driver (senpi#4986 regression); make sure tmux exists.
+          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs
 
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
@@ -825,7 +829,7 @@ jobs:
       # Exact-version proof invalidates on every Bun bump. Re-run the frozen old-parser
       # control together with the compiled-runtime pair proof before re-enabling it.
       - name: Run Windows private descriptor pair proof and compatibility control
-        run: node ../../scripts/run-tests.mjs vitest run test/suite/host-private-fds-pair.test.ts test/suite/host-private-fd-inherit.test.ts --reporter=verbose
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/host-private-fds-pair.test.ts test/suite/host-private-fds-proof-gate.test.ts test/suite/host-private-fd-inherit.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC host lifecycle tests
@@ -1315,7 +1319,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $sidecar = "$hostRoot/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py"
           New-Item -ItemType Directory -Force $sidecar | Out-Null
-          Copy-Item packages/senpi-codemode/src/kernels/py/prelude.py "$sidecar/prelude.py"
+          Copy-Item packages/senpi-codemode/src/kernels/py/*.py "$sidecar/"
       - name: Packaged cold and warm Python cells
         shell: pwsh
         run: |

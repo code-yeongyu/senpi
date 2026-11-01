@@ -10,6 +10,7 @@ import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
 import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { WorkerSessionRegistry } from "../../../src/modes/rpc/worker-session-registry.ts";
+import { EVENT_SAFETY_MS } from "../event-safety-bound.ts";
 
 const fauxPath = fileURLToPath(new URL("../../../../ai/src/providers/faux.ts", import.meta.url));
 /** The isolate's own build of the faux provider, so its provider capture is the one the isolate's session reads. */
@@ -35,7 +36,9 @@ export interface ObservedFrame {
 	readonly previousCredit: number | undefined;
 }
 
-export function within<T>(name: string, promise: Promise<T>, ms = 30_000): Promise<T> {
+export { EVENT_SAFETY_MS };
+
+export function within<T>(name: string, promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	return Promise.race([
 		promise,
@@ -47,8 +50,8 @@ export function within<T>(name: string, promise: Promise<T>, ms = 30_000): Promi
 
 export async function creditOf(signal: SharedArrayBuffer): Promise<number> {
 	const state = new Int32Array(signal);
-	const waited = Atomics.waitAsync(state, 0, 0, 10_000);
-	if (waited.async) await waited.value;
+	const waited = Atomics.waitAsync(state, 0, 0, EVENT_SAFETY_MS);
+	if (waited.async && (await waited.value) === "timed-out") throw new Error("deadline: credit");
 	return Atomics.load(state, 0);
 }
 
@@ -133,7 +136,7 @@ export async function workerAcceptanceHost(
 		},
 		waitForBackpressure: async () => {},
 	});
-	const next = (name: string, predicate: (record: WireRecord) => boolean): Promise<WireRecord> => {
+	const next = (name: string, predicate: (record: WireRecord) => boolean, ms?: number): Promise<WireRecord> => {
 		const found = Promise.withResolvers<WireRecord>();
 		const listener = (record: WireRecord) => {
 			if (!predicate(record)) return;
@@ -141,7 +144,7 @@ export async function workerAcceptanceHost(
 			found.resolve(record);
 		};
 		listeners.add(listener);
-		return within(name, found.promise);
+		return within(name, found.promise, ms);
 	};
 	let serial = 0;
 	const request = (command: { readonly type: string } & WireRecord): Promise<WireRecord> => {

@@ -1,3 +1,21 @@
+## 2026-10-30 - Mixed strict tool compatibility in catalog generation (senpi#4821)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: adds `mixedStrictTools: true` to the default and detected Chat Completions compatibility metadata, preserving the existing per-tool behavior unless a model explicitly disables mixing.
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: catalog generation must retain explicit no-mix overrides without changing the default behavior of other providers.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: compatibility metadata is generated build data, before runtime extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/scripts/generate-models.ts` `OPENAI_COMPLETIONS_DEFAULT_COMPAT` and `detectOpenAICompletionsCompat`.
+
 ## 2026-10-28 - GPT-6.1 Terra on the ChatGPT subscription (senpi#4578)
 
 ### What changed
