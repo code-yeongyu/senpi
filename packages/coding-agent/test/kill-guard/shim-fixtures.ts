@@ -58,6 +58,7 @@ function writeFakeJudge(path: string): void {
 			"#!/bin/sh",
 			'LOG="$JUDGE_LOG"',
 			RECORD,
+			// oxlint-disable-next-line eslint/no-template-curly-in-string -- literal sh text for the fake judge, expanded by the shell, not a template.
 			'printf \'env ELECTRON_RUN_AS_NODE=%s BUN_BE_BUN=%s\\n\' "${ELECTRON_RUN_AS_NODE-unset}" "${BUN_BE_BUN-unset}" >> "$LOG"',
 			'case "$FAKE_JUDGE_MODE" in',
 			"allow) exit 0 ;;",
