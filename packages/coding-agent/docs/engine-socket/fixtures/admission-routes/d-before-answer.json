@@ -450,7 +450,7 @@
 		"id": "peer-1"
 	},
 	"entryPage": {
-		"id": "peer-4",
+		"id": "peer-3",
 		"type": "response",
 		"command": "get_recovery_page",
 		"success": true,
