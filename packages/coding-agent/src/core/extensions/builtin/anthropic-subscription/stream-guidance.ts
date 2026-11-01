@@ -1,3 +1,5 @@
+import type { ProviderDiagnostic } from "@earendil-works/pi-ai";
+import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
 import { AllAccountsBlockedError } from "./affinity.ts";
 import { errorAccountContext } from "./account-context.ts";
 import { classifySdkError } from "./errors.ts";
@@ -11,6 +13,16 @@ import {
 	switchAccountLine,
 } from "./guidance.ts";
 import { ClaudeSignInRequiredError } from "./sign-in-again.ts";
+
+/**
+ * Every account waits on a limit with a known due-back time: a rate limit with that reset, so the goal parks
+ * until then instead of reading an unclassified failure (senpi#3975). Billing, org, auth, and unknown
+ * blocks must not be relabeled as rate limits merely because they have a re-probe deadline.
+ */
+export function allAccountsBlockedDiagnostic(error: unknown): ProviderDiagnostic | undefined {
+	if (!(error instanceof AllAccountsBlockedError) || !error.allRateLimited) return undefined;
+	return error.soonestUnblockAt === undefined ? undefined : credentialPoolBlockedDiagnostic(error.soonestUnblockAt);
+}
 
 export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCodeRun, now = Date.now()): string {
 	// The sign-in-again prompt is the remedy; the generic auth_error hint ("token was rejected... refresh") contradicts it.
