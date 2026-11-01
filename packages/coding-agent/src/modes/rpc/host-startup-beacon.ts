@@ -9,6 +9,7 @@
 import { fstatSync, writeSync } from "node:fs";
 import type { Readable } from "node:stream";
 import { isMainThread } from "node:worker_threads";
+import { isFifoMode } from "../../utils/inherited-duplex.ts";
 import { HOST_STARTUP_EVENTS_ENV } from "./host-identity-env.ts";
 import {
 	encodeStartupHandOff,
@@ -33,7 +34,8 @@ interface BeaconState {
 function isStartupPipe(fd: number): boolean {
 	try {
 		const stat = fstatSync(fd);
-		return stat.isFIFO() || stat.isSocket();
+		// Windows can report FIFO mode bits while Stats.isFIFO() returns false (#5137).
+		return isFifoMode(stat.mode) || stat.isSocket();
 	} catch {
 		return false;
 	}
