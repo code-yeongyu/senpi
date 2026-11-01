@@ -1089,8 +1089,19 @@ export class AuthStorage implements CredentialStore {
 			prompt: (prompt) => this.handleLegacyPrompt(prompt, callbacks),
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
+		const before = this.get(providerId);
 		const credential = await oauth.login(interaction);
 		this.set(providerId, credential);
+		if (this.authPath === undefined) return;
+		// Lazy like ModelRuntime.loadCredentialPool: the pool store pulls zod, which must stay out of the
+		// model-runtime import graph that every auth-storage importer shares.
+		const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+		await retireLoginSlotHealth(
+			join(dirname(this.authPath), "credential-pool-state.json"),
+			providerId,
+			before,
+			this.get(providerId),
+		);
 	}
 
 	logout(provider: string): void {
