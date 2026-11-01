@@ -306,7 +306,10 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 			const previousPhases = clonePhases(accessors.getCurrentPhases());
 			const previousAsk = accessors.getCurrentAsk();
 			// prepareTodoArguments carries its notices on the prepared args under a reserved key
-			// (#5332); strip it before normalizing and prepend the notices to the corrections.
+			// (#5332). The key is stripped here before normalizing and is never persisted or
+			// rendered, but the prepared arguments — key included — flow to the agent loop's
+			// beforeToolCall/afterToolCall hooks, so extension tool_call/tool_result hooks may
+			// observe it on the arguments they receive.
 			const prepared = splitPreparedCorrections(params as Record<string, unknown>);
 			const normalized = normalizeTodoParams(prepared.args, previousPhases);
 			if (normalized.error || !normalized.entry) {

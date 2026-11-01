@@ -82,8 +82,9 @@ function unwrapTodoList(value: unknown): unknown {
  * Reserved string key under which `prepareTodoArguments` carries its correction notices to
  * `execute`. `validateToolArguments` clones prepared arguments with `structuredClone`, which
  * drops symbol keys, so the channel must be a string key; `execute` strips it before
- * `normalizeTodoParams` and prepends the notices, so the key never reaches a rendered or
- * stored surface.
+ * `normalizeTodoParams` and prepends the notices. The key is never persisted or rendered,
+ * but prepared arguments flow to the agent loop's `beforeToolCall`/`afterToolCall` hooks, so
+ * extension `tool_call`/`tool_result` hooks may observe it on the arguments they receive.
  */
 export const TODO_PREPARED_CORRECTIONS_KEY = "__todoPreparedCorrections";
 
@@ -246,18 +247,29 @@ export function prepareTodoArguments(input: unknown): unknown {
 	const rawOp = args.op;
 	let op = rawOp;
 	if (typeof rawOp === "string" && !isOperation(rawOp)) {
-		const stripped = rawOp.replace(/[^a-z]/gi, "");
-		if (isOperation(stripped)) {
+		// Only stray characters around the op are stripped ("view}", " done."); the middle
+		// must already be exactly a known operation, so "re-move" stays invalid.
+		const stripped = rawOp.replace(/^[^a-z]+|[^a-z]+$/gi, "");
+		// A corrected rm/done/drop/start without a non-blank "task"/"phase" would act on every
+		// task (senpi#5332 review): leave such a call for validation to reject unchanged.
+		const carriesTarget = nonBlank(args.task) !== undefined || nonBlank(args.phase) !== undefined;
+		const needsTarget = stripped === "rm" || stripped === "done" || stripped === "drop" || stripped === "start";
+		if (isOperation(stripped) && (!needsTarget || carriesTarget)) {
 			op = stripped;
 			revise((draftArgs) => {
 				draftArgs.op = stripped;
 			});
 			notices.push(
-				`[auto-corrected] "op" ${JSON.stringify(rawOp)} is not a known operation; used "${stripped}" after stripping stray non-letter characters. Pass "op" exactly: init, start, done, rm, drop, append, view.`,
+				`[auto-corrected] "op" ${JSON.stringify(rawOp)} is not a known operation; used "${stripped}" after stripping stray leading or trailing non-letter characters. Pass "op" exactly: init, start, done, rm, drop, append, view.`,
 			);
 		}
 	}
 
+	// A `list` always means init, so its rules also run when op is missing. The top-level
+	// `items` rules do not: an op-less `items` call is only inferred as init against an empty
+	// list and as append with a phase, so promoting or unwrapping it here would bypass those
+	// guards (senpi#5332 review). Only an explicit "init" — after the op correction above —
+	// may adopt the `items` rules.
 	if (op === undefined || op === "init") {
 		if ("list" in args) {
 			let listValue: unknown = args.list;
@@ -289,32 +301,32 @@ export function prepareTodoArguments(input: unknown): unknown {
 				});
 			}
 		}
+	}
 
-		if (args.list === undefined && Array.isArray(args.items) && args.items.length > 0) {
-			const items = args.items;
-			if (items.every(isPhaseRecord)) {
-				const normalized = normalizeTodoListEntries([...items], notices);
-				if (normalized === null || normalized.length === 0) return args;
-				const adopted = normalized;
+	if (op === "init" && args.list === undefined && Array.isArray(args.items) && args.items.length > 0) {
+		const items = args.items;
+		if (items.every(isPhaseRecord)) {
+			const normalized = normalizeTodoListEntries([...items], notices);
+			if (normalized === null || normalized.length === 0) return args;
+			const adopted = normalized;
+			revise((draftArgs) => {
+				draftArgs.list = adopted;
+				delete draftArgs.items;
+			});
+			notices.push(
+				'[auto-corrected] "items" held phase records; moved them to "list". Pass phases under "list": {"op":"init","list":[{"phase":"<name>","items":["<task>", ...]}]}',
+			);
+		} else {
+			const mapped = items.map((item) => (isContentRecord(item) && !isPhaseRecord(item) ? item.content : item));
+			if (mapped.some((item) => typeof item === "string") && mapped.some(isPhaseRecord)) return args;
+			const unwrapped = items.filter((item) => isContentRecord(item) && !isPhaseRecord(item)).length;
+			if (unwrapped > 0 && mapped.every((item) => typeof item === "string")) {
 				revise((draftArgs) => {
-					draftArgs.list = adopted;
-					delete draftArgs.items;
+					draftArgs.items = mapped;
 				});
 				notices.push(
-					'[auto-corrected] "items" held phase records; moved them to "list". Pass phases under "list": {"op":"init","list":[{"phase":"<name>","items":["<task>", ...]}]}',
+					`[auto-corrected] unwrapped ${unwrapped} top-level "items" ${unwrapped === 1 ? "entry" : "entries"} carrying a "content" field into their task strings. "items" holds only task strings.`,
 				);
-			} else {
-				const mapped = items.map((item) => (isContentRecord(item) && !isPhaseRecord(item) ? item.content : item));
-				if (mapped.some((item) => typeof item === "string") && mapped.some(isPhaseRecord)) return args;
-				const unwrapped = items.filter((item) => isContentRecord(item) && !isPhaseRecord(item)).length;
-				if (unwrapped > 0 && mapped.every((item) => typeof item === "string")) {
-					revise((draftArgs) => {
-						draftArgs.items = mapped;
-					});
-					notices.push(
-						`[auto-corrected] unwrapped ${unwrapped} top-level "items" ${unwrapped === 1 ? "entry" : "entries"} carrying a "content" field into their task strings. "items" holds only task strings.`,
-					);
-				}
 			}
 		}
 	}

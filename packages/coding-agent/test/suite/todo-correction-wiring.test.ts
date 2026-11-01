@@ -489,4 +489,104 @@ describe("todo normalizes near-canonical shapes before validation (#5332)", () =
 		const details = result.details as TodoToolDetails;
 		expect(details.corrections ?? []).toEqual([]);
 	});
+
+	// senpi#5336 review: a prepare-time correction must never widen a malformed or op-less
+	// call into a bulk change. Every row runs through the agent loop's prepare -> validate
+	// -> execute path against the same seeded list, so a widened correction shows up as a
+	// silent success where an error is expected, or as a changed list where none is allowed.
+	const seededPhases: TodoPhase[] = [
+		{
+			name: "Setup",
+			tasks: [
+				{ content: "A", status: "in_progress" },
+				{ content: "B", status: "pending" },
+			],
+		},
+		{ name: "Work", tasks: [{ content: "C", status: "pending" }] },
+	];
+
+	async function runTodoOnSeededList(params: Record<string, unknown>) {
+		const harness = await createHarnessWithTodoExtension();
+		harnesses.push(harness);
+		harness.setResponses([
+			...responsesForTodo({
+				op: "init",
+				list: [
+					{ phase: "Setup", items: ["A", "B"] },
+					{ phase: "Work", items: ["C"] },
+				],
+			}),
+			...responsesForTodo(params),
+		]);
+
+		await harness.session.prompt("seed the list");
+		const seeded = getLatestPhasesFromBranchEntries(harness.sessionManager.getBranch());
+		expect(seeded).toEqual(seededPhases);
+		await harness.session.prompt("run the case");
+		return {
+			result: getLatestTodoResult(harness),
+			phases: getLatestPhasesFromBranchEntries(harness.sessionManager.getBranch()),
+			seeded,
+		};
+	}
+
+	type SeededOutcome = { error: true } | { error: false; expectedPhases: TodoPhase[]; notice: string };
+
+	it.each([
+		["an op with a task number inside it", { op: "rm 2" }, { error: true }],
+		["an op with a task selector inside it", { op: "done #1" }, { error: true }],
+		["a punctuated destructive op with no target", { op: "drop!" }, { error: true }],
+		["a punctuated targeting op with no target", { op: "start?" }, { error: true }],
+		["an op with an interior hyphen", { op: "re-move" }, { error: true }],
+		[
+			"op-less phase records in items against a seeded list",
+			{ items: [{ phase: "New", items: ["X"] }] },
+			{ error: true },
+		],
+		["op-less content records in items with a phase", { phase: "Setup", items: [{ content: "x" }] }, { error: true }],
+		[
+			"a punctuated done that carries its target",
+			{ op: "done.", task: "A" },
+			{
+				error: false,
+				expectedPhases: [
+					{
+						name: "Setup",
+						tasks: [
+							{ content: "A", status: "completed" },
+							{ content: "B", status: "in_progress" },
+						],
+					},
+					{ name: "Work", tasks: [{ content: "C", status: "pending" }] },
+				],
+				notice: '[auto-corrected] "op" "done." is not a known operation',
+			},
+		],
+		[
+			"an explicit init with phase records in items",
+			{ op: "init", items: [{ phase: "New", items: ["X"] }] },
+			{
+				error: false,
+				expectedPhases: [{ name: "New", tasks: [{ content: "X", status: "in_progress" }] }],
+				notice: '[auto-corrected] "items" held phase records',
+			},
+		],
+	] as Array<[string, Record<string, unknown>, SeededOutcome]>)(
+		"never widens %s into a bulk change or a list replacement",
+		async (_shape, params, expected) => {
+			const { result, seeded, phases } = await runTodoOnSeededList(params);
+
+			if (expected.error) {
+				expect(result.isError).toBe(true);
+				expect(getMessageText(result)).not.toContain("[auto-corrected]");
+				expect(phases).toEqual(seeded);
+				return;
+			}
+
+			expect(result.isError).not.toBe(true);
+			expect(getMessageText(result)).toContain(expected.notice);
+			expect((result.details as TodoToolDetails).corrections?.length).toBeGreaterThan(0);
+			expect(phases).toEqual(expected.expectedPhases);
+		},
+	);
 });
