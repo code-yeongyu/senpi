@@ -855,7 +855,7 @@ complete, not for `sessionId` or no longer on the session's stream is refused wi
 `errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
 `recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
 
-**Admission IDs per socket (senpi#5274, RULING-113 and RULING-117).** A socket's admissions are capped by what is
+**Admission IDs per socket (senpi#5274, RULING-113, RULING-117 and RULING-118).** A socket's admissions are capped by what is
 live, never by how many IDs it has used. At most 16 attempts run at once (`admission_admission_busy` past that). Running
 attempts plus routed admissions share 127 rows (128 rows within 16 MiB of 131,584-byte rows); a fresh attempt past
 them is refused `admission_admission_limit` (`errorData.reason: "admission_limit"`). A completed admission that no
@@ -866,11 +866,14 @@ session this socket already routes REPLACES that route: the earlier admission re
 admission's baseline, its attachment is released, and `reset_stream` or `cancel_attempt` naming it answers
 `unknown_admission`. An ordinary route has no separate end record; a record already queued for the earlier ID is
 delivered whole. A re-open that is still pending, refused, cancelled or failed leaves the earlier route as it was.
-A route otherwise ends with its session or its socket; after a detach it keeps carrying the session's terminal
-records and the replies owed to it until then, and a later re-open still replaces it. Routed rows are therefore
-bounded by the distinct live sessions the socket routes, one row each however often it re-opens them: the 128th
-distinct session on one socket is refused `admission_admission_limit`, while re-opens of a routed session never run
-out.
+A detach (`close_session`, `release_attachment`, `detach_connection`) also ends the route: when the detaching request
+names the admission, its reply is tagged with that admission first and the route retires right after it, so the
+records sealed before the reply (a final `session_closed`) keep the tag too; the peer then receives no further records
+for that admission, and the admission no longer counts toward the cap. A route otherwise ends with its session or its
+socket. Routed rows are therefore bounded by the pending attempts plus the distinct live sessions the socket still
+holds, one row each however often it re-opens them: the 128th distinct held session on one socket is refused
+`admission_admission_limit`, re-opens of a routed session never run out, and a socket that attaches to and detaches
+from any number of distinct live sessions in turn is never refused.
 
 #### interactive_user
 

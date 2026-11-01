@@ -1,4 +1,5 @@
 import type { EventLeases } from "./compact-event-leases.ts";
+import { captureAdmissionReply } from "./compact-admission-reply.ts";
 import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
 import { CompactRequiredStreams } from "./compact-required-streams.ts";
 import type { LegacyViewCursor } from "./legacy-view-cursor.ts";
@@ -147,24 +148,31 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 			: undefined;
 	}
 	/**
-	 * The socket stops holding the session (a detach): its open keeps routing the session's terminal records and replies,
-	 * but owns no attachment any more, so a later re-open ends only its route and held id.
+	 * RULING-118: the socket stops holding the session (a detach), so its open's route retires and stops counting toward
+	 * the admission cap. A detach made by a request naming that admission (`close_session`) retires it only after the
+	 * request's reply is routed, so the reply and the records sealed before it keep the admission's tag.
 	 */
 	override detachConnectionFromSession(id: string, sessionId: string): void {
 		const registered = this.fanout.get(id);
 		const actor = registered?.actor;
 		const opened = actor instanceof AdmissionRoutingActor ? actor.opened.get(sessionId) : undefined;
-		if (registered && actor instanceof AdmissionRoutingActor && opened) {
-			const caller = { socketEpoch: registered.socketEpoch, sessionId };
-			actor.opened.set(sessionId, {
-				admissionId: opened.admissionId,
-				end: async () => {
-					this.recoveryCheckpoints.retireRoute(caller, opened.admissionId);
-					actor.admissions.delete(opened.admissionId);
-				},
-			});
+		const caller = registered && { socketEpoch: registered.socketEpoch, sessionId };
+		if (caller && actor instanceof AdmissionRoutingActor && opened) actor.opened.delete(sessionId);
+		// An open whose own release already retired its route (then detached) has nothing left to retire.
+		if (caller && actor instanceof AdmissionRoutingActor && opened && this.routesStream(caller, opened.admissionId)) {
+			const retire = () => {
+				this.recoveryCheckpoints.retireRoute(caller, opened.admissionId);
+				actor.admissions.delete(opened.admissionId);
+			};
+			const request = captureAdmissionReply();
+			if (request?.id !== undefined && request.peer === id && request.admissionId === opened.admissionId)
+				actor.deferRetire(request.id, retire);
+			else retire();
 		}
 		super.detachConnectionFromSession(id, sessionId);
+	}
+	private routesStream(caller: { socketEpoch: string; sessionId: string }, admissionId: string): boolean {
+		return this.recoveryCheckpoints.stream(caller)?.routes.includes(admissionId) === true;
 	}
 	/** Legacy views frozen for a peer's baseline and not yet released (R3.C6.4 accounting). */
 	get openLegacyViews(): number {

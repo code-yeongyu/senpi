@@ -16,6 +16,8 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 	readonly pendingMirrors = new Map<string, MirrorPending>();
 	/** RULING-117: per session, the completed open that routes it on this socket and how that open ends. */
 	readonly opened = new Map<string, { readonly admissionId: string; readonly end: () => Promise<void> }>();
+	/** RULING-118: per request id, the route a detach of that request retires once the request's reply is routed. */
+	private readonly retireAfterReply = new Map<string, () => void>();
 	mirrorAdmissions?: (sessionId: string, recordType: string) => readonly string[];
 	// Terminal reply debt can enqueue after S08 retires the stream. Headers only, bounded by epoch admission IDs;
 	// this is neither another counter nor an attempt index, and cancelled answers never consult it.
@@ -28,6 +30,7 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 		this.pendingMirrors.clear();
 		this.admissions.clear();
 		this.opened.clear();
+		this.retireAfterReply.clear();
 		this.terminal.clear();
 		super.close();
 	}
@@ -76,11 +79,26 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 			: routes.map((admissionId) => serializeJsonLine({ ...record, admissionId, generation: stream?.generation }));
 	}
 
+	/** A detach made by request `id` retires its route after that request's reply took the route's tag. */
+	deferRetire(id: string, retire: () => void): void {
+		this.retireAfterReply.set(id, retire);
+	}
+
+	private retireReplied(line: string): void {
+		if (this.retireAfterReply.size === 0) return;
+		const record: Record<string, unknown> = JSON.parse(line);
+		if (record.type !== "response" || typeof record.id !== "string") return;
+		const retire = this.retireAfterReply.get(record.id);
+		this.retireAfterReply.delete(record.id);
+		retire?.();
+	}
+
 	bind(checkpoints: RecoveryCheckpoints, socketEpoch: string, peer: string): void {
 		this.peer = peer;
 		const enqueue = super.enqueue.bind(this);
 		this.enqueue = (line, key, written, demoted, reply, held) => {
 			const lines = this.route(line, checkpoints, socketEpoch);
+			this.retireReplied(line);
 			if (lines.length === 0) {
 				written?.(false);
 				return;
