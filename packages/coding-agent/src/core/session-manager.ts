@@ -1944,6 +1944,8 @@ export class SessionManager {
 			this.transcriptJournal.record({
 				kind: "append",
 				id: residentEntry.id,
+				type: residentEntry.type,
+				parentId: residentEntry.parentId,
 				entry: serialized,
 				persistence: this._transcriptPersistence(),
 				...(recoveryOwner ? { owningMessageId: recoveryOwner.messageId, recoveryEpoch: recoveryOwner.epoch } : {}),

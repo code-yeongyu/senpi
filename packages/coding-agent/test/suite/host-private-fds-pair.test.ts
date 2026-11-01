@@ -1,5 +1,6 @@
 import { spawn, type SpawnOptions, type StdioOptions } from "node:child_process";
 import { once } from "node:events";
+import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { Socket } from "node:net";
@@ -8,7 +9,10 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { closeDiscarded, parseTable } from "../../src/private-fds.ts";
 import { preparePrivateFdSpawn } from "../../src/private-fd-spawn.ts";
+import { inheritedDuplex } from "../../src/utils/inherited-duplex.ts";
 import { parseTable as oldParseTable } from "../fixtures/private-fd-old-parser.ts";
+
+vi.mock("node:fs", { spy: true });
 
 function inspection() {
 	return {
@@ -33,6 +37,55 @@ function forwardPair(options: SpawnOptions) {
 }
 
 describe("Windows private descriptor pairs (#4859)", () => {
+	// #5137: Windows Stats exposes FIFO mode bits even when isFIFO() returns false.
+	it.each([
+		{ mode: 0o010600, accepted: true },
+		{ mode: 0o010000, accepted: true },
+		{ mode: 0o100600, accepted: false },
+		{ mode: 0o140600, accepted: false },
+		{ mode: 0o020600, accepted: false },
+	])("default pipe check classifies mode $mode without isFIFO", ({ mode, accepted }) => {
+		const stat = Object.assign(fs.fstatSync(1), { mode, isFIFO: () => false });
+		const fstat = vi.mocked(fs.fstatSync).mockReturnValue(stat);
+		const { isPipe: _isPipe, ...runtime } = inspection();
+		try {
+			expect(parseTable('{"a":[5,6]}', runtime).entries.get("a")).toEqual(accepted ? [5, 6] : null);
+		} finally {
+			fstat.mockReset();
+		}
+	});
+
+	// #5137: adoption must use the same pipe check as the parser, or Windows accepts a pair it never adopts.
+	it.each([
+		{ mode: 0o010600, adopted: true },
+		{ mode: 0o100600, adopted: false },
+	])("pair adoption classifies mode $mode without isFIFO", async ({ mode, adopted }) => {
+		const root = await mkdtemp(join(tmpdir(), "private-fd-adopt-"));
+		const readFd = fs.openSync(join(root, "pipe"), "w+");
+		const writeFd = fs.openSync(join(root, "pipe"), "r+");
+		const stat = Object.assign(fs.fstatSync(readFd), { mode, isFIFO: () => false, isSocket: () => false });
+		const fstat = vi.mocked(fs.fstatSync).mockReturnValue(stat);
+		let channel: ReturnType<typeof inheritedDuplex>;
+		try {
+			channel = inheritedDuplex([readFd, writeFd]);
+		} finally {
+			fstat.mockReset();
+		}
+		try {
+			expect(channel !== undefined).toBe(adopted);
+		} finally {
+			if (channel === undefined) {
+				fs.closeSync(readFd);
+				fs.closeSync(writeFd);
+			} else {
+				const done = once(channel, "close");
+				channel.destroy();
+				await done;
+			}
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it.each([
 		{ label: "pair/pair", table: { a: [5, 6], b: [6, 7] }, cleared: [5, 6, 7] },
 		{ label: "bare/pair", table: { a: 6, b: [6, 7] }, cleared: [6, 7] },
@@ -279,6 +332,48 @@ describe("Windows private descriptor pairs (#4859)", () => {
 		const source = readFileSync(join(import.meta.dirname, "../../src/bun/cli.ts"), "utf8");
 		const imports = [...source.matchAll(/^import .*?["']([^"']+)["'];/gm)].map((match) => match[1]);
 		expect(imports.slice(0, 2)).toEqual(["./sandbox-env-setup.ts", "../private-fds.ts"]);
+	});
+});
+
+describe.skipIf(process.platform !== "win32")("non-compiled Bun Windows pair", () => {
+	// #5137: cover the source runtime separately from the compiled-runtime proof.
+	it("round-trips through a hop and destroys both handles", async () => {
+		const fixture = join(import.meta.dirname, "../fixtures/private-fd-pair.ts");
+		const mode = "hop";
+		const child = spawn("bun", [fixture, mode], {
+			env: { ...process.env, SENPI_PRIVATE_FDS: '{"a":[5,6]}' },
+			stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe", "pipe"],
+		});
+		const closed = once(child, "close", { signal: AbortSignal.timeout(30_000) });
+		const slots: readonly unknown[] = child.stdio;
+		const input = slots[5];
+		const output = slots[6];
+		if (!(input instanceof Socket) || !(output instanceof Socket)) throw new Error("missing pipes");
+		input.on("error", () => input.destroy());
+		output.on("error", () => output.destroy());
+		let received = "";
+		let report = "";
+		let errors = "";
+		child.stdout?.on("data", (chunk: Buffer) => {
+			report += chunk.toString();
+		});
+		child.stderr?.on("data", (chunk: Buffer) => {
+			errors += chunk.toString();
+		});
+		output.on("data", (chunk: Buffer) => {
+			received += chunk.toString();
+		});
+		output.resume();
+		input.end("ping");
+		try {
+			expect((await closed)[0], errors).toBe(0);
+			expect(received).toBe("echo:ping");
+			expect(JSON.parse(report)).toEqual({ closed: [true, true] });
+		} finally {
+			input.destroy();
+			output.destroy();
+			if (child.exitCode === null && child.signalCode === null) child.kill();
+		}
 	});
 });
 
