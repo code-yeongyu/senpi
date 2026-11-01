@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { applyAccountOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import { activeModelBlockUntil, pruneModelBlocks } from "../../../credential-pool/model-scope.ts";
+import { preferHeadroom } from "../../../credential-pool/selection-order.ts";
+import { subscriptionLimits } from "../../../subscription-limits/limit-store.ts";
 import type { AccountSlot } from "./accounts.ts";
 
 export const DEFAULT_AFFINITY_KEY = "claude-sdk-oauth-default";
@@ -142,10 +144,10 @@ function selectUnblocked(
 		options.preferredAccount === undefined
 			? undefined
 			: accounts.find((account) => account.name === options.preferredAccount);
-	if (preferred && !isBlockedFor(preferred, now, options.model)) return preferred;
-	return applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts)).find(
+	const usable = applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts)).filter(
 		(account) => !isBlockedFor(account, now, options.model),
 	);
+	return preferHeadroom(usable, "anthropic-subscription", subscriptionLimits.snapshot(), now, preferred?.name)[0];
 }
 
 function unblockAt(account: AccountSlot, now: number, model: string | undefined): number | undefined {
