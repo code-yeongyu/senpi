@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpToolCatalogEntry } from "../../src/core/extensions/builtin/mcp/catalog.ts";
 import { defaultSettings } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
 import { orderActiveSet, registerMcpTierBTools } from "../../src/core/extensions/builtin/mcp/expose/tier-b.ts";
+import { createMcpResourceTools } from "../../src/core/extensions/builtin/mcp/resources.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { TOOL_SEARCH_ACTIVATION_MARKER_V2 } from "../../src/core/extensions/builtin/tool-search/engine/marker.ts";
 import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
@@ -319,7 +320,7 @@ describe("direct-mode MCP tools keep one order whichever server connects first (
 		};
 	}
 	// Each server's connect re-registers the catalog of the servers connected so far.
-	function activeAfterConnects(order: readonly string[]): string[] {
+	function activeAfterConnects(order: readonly string[], withUtilities = false): string[] {
 		const pi = recordingPi(["read", "bash"]);
 		const toolSearchService = new ToolSearchService({
 			getAllTools: () => [],
@@ -336,6 +337,7 @@ describe("direct-mode MCP tools keep one order whichever server connects first (
 					activeEntries: [...connected],
 					searchMode: false,
 					settings: defaultSettings,
+					...(withUtilities ? { utilityTools: createMcpResourceTools(() => []) } : {}),
 				},
 				toolSearchService,
 			);
@@ -348,6 +350,20 @@ describe("direct-mode MCP tools keep one order whichever server connects first (
 		const stdioFirst = activeAfterConnects(["fxstdio", "fxhttp"]);
 		expect(stdioFirst).toEqual(httpFirst);
 		expect(httpFirst).toEqual(["read", "bash", "mcp_fxhttp_tool_1", "mcp_fxstdio_tool_1"]);
+	});
+
+	it("the fixed resource utility tools keep their place ahead of the per-server tools", () => {
+		const httpFirst = activeAfterConnects(["fxhttp", "fxstdio"], true);
+		const stdioFirst = activeAfterConnects(["fxstdio", "fxhttp"], true);
+		expect(stdioFirst).toEqual(httpFirst);
+		expect(httpFirst).toEqual([
+			"read",
+			"bash",
+			"mcp_list_resources",
+			"mcp_read_resource",
+			"mcp_fxhttp_tool_1",
+			"mcp_fxstdio_tool_1",
+		]);
 	});
 });
 
