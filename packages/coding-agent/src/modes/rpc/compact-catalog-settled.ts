@@ -23,7 +23,7 @@ const IDENTITY = familyId("identity");
 export const settledMember = (terminalSequence: number) => memberId("message", terminalSequence);
 
 /** The identity member of this epoch's n-th entry join: `join-<n>`, whose `messageId` an `entry_appended` names. */
-export const joinMember = (ordinal: number) => memberId("join", ordinal);
+const joinMember = (ordinal: number) => memberId("join", ordinal);
 
 /** A terminal as stored: its row, its payload (terminal record and correlation) spliced in, its paged call walked. */
 function terminalSteps(settled: SettledReader, row: TerminalRow, valid: () => void): Steps {
