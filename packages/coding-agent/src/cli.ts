@@ -10,6 +10,7 @@ import { existsSync, fstatSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
+import { isFifoMode } from "./utils/inherited-duplex.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
@@ -37,7 +38,7 @@ function reexecStdio(): StdioOptions {
 	if (!process.env[HOST_STARTUP_EVENTS_ENV]) return base;
 	try {
 		const stat = fstatSync(STARTUP_EVENT_FD);
-		if (!stat.isSocket() && !stat.isFIFO()) return base;
+		if (!stat.isSocket() && !isFifoMode(stat.mode)) return base;
 	} catch {
 		return base;
 	}
