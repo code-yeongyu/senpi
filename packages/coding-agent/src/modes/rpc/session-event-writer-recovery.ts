@@ -122,6 +122,12 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 	recoveryLane(sessionId: string) {
 		return this.fanout.acceptance.get(sessionId);
 	}
+	/** Whether an admission still routes a stream of this peer incarnation: what `reset_stream` resolves (#5274). */
+	routesAdmission(socketEpoch: string, admissionId: string): boolean {
+		for (const sessionId of this.fanout.acceptance.keys())
+			if (this.recoveryCheckpoints.stream({ socketEpoch, sessionId })?.routes.includes(admissionId)) return true;
+		return false;
+	}
 	/** Legacy views frozen for a peer's baseline and not yet released (R3.C6.4 accounting). */
 	get openLegacyViews(): number {
 		return this.fanout.replay.openCursors;

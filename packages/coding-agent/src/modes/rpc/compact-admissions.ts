@@ -26,6 +26,8 @@ export { ADMISSION_LIMITS } from "./compact-admission-storage.ts";
 export class CompactAdmissions {
 	private readonly epochs = new Map<string, Epoch>();
 	private readonly limits: Readonly<{ entries: number; bytes: number }>;
+	/** Whether a finished admission still routes a stream of its socket epoch; such a row is never evicted. */
+	private readonly routed: (socketEpoch: string, admissionId: string) => boolean;
 	private readonly losses: ProducerLosses = { abandoned: 0, releaseFailed: 0 };
 	private retiredOverflow = 0;
 
@@ -46,8 +48,12 @@ export class CompactAdmissions {
 		epoch.producer.end(() => recordProducerLoss(this.losses, "abandoned", epoch.hot.size));
 	}
 
-	constructor(limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS) {
+	constructor(
+		limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS,
+		routed: (socketEpoch: string, admissionId: string) => boolean = () => false,
+	) {
 		this.limits = limits;
+		this.routed = routed;
 	}
 
 	private key(id: string): string {
@@ -64,7 +70,7 @@ export class CompactAdmissions {
 				directory: mkdtemp(join(tmpdir(), "senpi-admissions-")),
 				hot: new Map(),
 				failures: new Map(),
-				done: new Set(),
+				done: new Map(),
 				retired: new Set(),
 				tail: Promise.resolve(),
 				ended: false,
@@ -98,7 +104,7 @@ export class CompactAdmissions {
 			const row = await readAdmissionRow(epoch, key);
 			if (row) {
 				if (row.fingerprint !== identity.fingerprint) throw new CompactAdmissionError("admission_conflict");
-				retainDone(epoch, key);
+				retainDone(epoch, key, identity.admissionId);
 				switch (row.state) {
 					case "complete":
 						if (row.answer === undefined) throw new CompactAdmissionError("storage_unavailable");
@@ -120,7 +126,8 @@ export class CompactAdmissions {
 			if (epoch.retired.has(key)) throw new CompactAdmissionError("admission_retired");
 			if (epoch.hot.size >= ADMISSION_LIMITS.hot) throw new CompactAdmissionError("admission_busy");
 			const capacity = Math.min(this.limits.entries, Math.floor(this.limits.bytes / ADMISSION_LIMITS.row));
-			if (!(await reserveRow(epoch, capacity, () => this.overflowRetired())))
+			const routed = (admissionId: string) => this.routed(identity.socketEpoch, admissionId);
+			if (!(await reserveRow(epoch, capacity, routed, () => this.overflowRetired())))
 				throw new CompactAdmissionError("admission_limit");
 			await writeAdmissionRow(epoch, key, { state: "pending", fingerprint: identity.fingerprint });
 			const pending = Promise.withResolvers<Answer>();
@@ -215,7 +222,7 @@ export class CompactAdmissions {
 			throw failure;
 		} finally {
 			epoch.hot.delete(key);
-			retainDone(epoch, key);
+			retainDone(epoch, key, identity.admissionId);
 		}
 	}
 

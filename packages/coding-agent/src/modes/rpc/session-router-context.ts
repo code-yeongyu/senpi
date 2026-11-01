@@ -2,7 +2,7 @@ import { subscriptionLimits } from "../../core/subscription-limits/limit-store.t
 
 import { ConnectionRoles } from "./connection-roles.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
-import { CompactAdmissions } from "./compact-admissions.ts";
+import { ADMISSION_LIMITS, CompactAdmissions } from "./compact-admissions.ts";
 import { advertisedCompactCapabilities } from "./compact-negotiation.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 
@@ -21,7 +21,11 @@ import { sweepIdleSessions } from "./session-router-occupancy.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 import { registryStatusSource } from "./session-status-source.ts";
 export class RouterContext {
-	readonly admissions = compactUpdatesEnabled() ? new CompactAdmissions() : undefined;
+	readonly admissions = compactUpdatesEnabled()
+		? new CompactAdmissions(ADMISSION_LIMITS, (socketEpoch, admissionId) =>
+				this.writer.routesAdmission(socketEpoch, admissionId),
+			)
+		: undefined;
 	readonly bindings = new Map<string, RpcSessionBinding>();
 
 	readonly stopLimitBroadcast: () => void;
