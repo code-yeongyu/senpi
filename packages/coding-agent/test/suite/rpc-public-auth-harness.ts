@@ -21,12 +21,18 @@ export async function sandbox() {
 	return { root, agentDir, socket: join(root, "s") };
 }
 
-/** Well below the per-test timeout of the files that start hosts, so a slow start fails with the host's own output. */
-export const HOST_STARTUP_BUDGET_MS = 20_000;
-/** For files that start hosts: comfortably above the startup budget, so a start never runs into the test timeout. */
+/**
+ * For files that start hosts: above the product's own bounds on a start (ensure's readiness budget, the
+ * supervisor's 30 s hold on its child's listen in `host-lifecycle.ts`), which end a slow start with an exit.
+ */
 export const HOST_TEST_TIMEOUT_MS = 60_000;
 
-/** Waits for the host's own ready line (bare `senpi rpc listening on`, supervisor `senpi rpc host ready`, ensure's JSON). */
+/**
+ * Settles on the host's own verdict, never on a wall clock (#5280): bare and supervisor hosts are ready at
+ * their ready line (`senpi rpc listening on` / `senpi rpc host ready`) and failed when they exit first.
+ * `host ensure` prints one JSON line for EVERY outcome, a start it gave up on included, and classifies it by
+ * its exit code (`host-command.ts`), so an ensured host is ready only when ensure exits 0.
+ */
 export async function launchHost(
 	qa: Awaited<ReturnType<typeof sandbox>>,
 	path: LaunchPath,
@@ -65,28 +71,27 @@ export async function launchHost(
 	});
 	const failure = (reason: string) =>
 		new Error(
-			`host ${reason} after ${Math.round(performance.now() - startedAt)} ms waiting for its ready line\nstderr:\n${stderr}\nstdout:\n${stdout}`,
+			`host ${reason} after ${Math.round(performance.now() - startedAt)} ms waiting for it to be ready\nstderr:\n${stderr}\nstdout:\n${stdout}`,
 		);
+	if (path === "ensured") {
+		// `close`, not `exit`: the one line is read in full before the verdict is quoted.
+		const [code] = await once(child, "close");
+		if (code !== 0) throw failure(`ensure exited with code ${String(code)}`);
+		return { child, stderr: () => stderr };
+	}
+	const readyLine = path === "bare" ? "senpi rpc listening on" : "senpi rpc host ready";
 	await new Promise<void>((resolve, reject) => {
-		const timeout = setTimeout(() => finish(failure("did not start")), HOST_STARTUP_BUDGET_MS);
 		const onData = () => {
-			if (
-				stderr.includes(path === "bare" ? "senpi rpc listening on" : "senpi rpc host ready") ||
-				(path === "ensured" && stdout.includes('"action"'))
-			)
-				finish();
+			if (stderr.includes(readyLine)) finish();
 		};
 		const onExit = () => finish(failure("exited"));
 		const finish = (error?: Error) => {
-			clearTimeout(timeout);
 			child.stderr?.off("data", onData);
-			child.stdout?.off("data", onData);
 			child.off("exit", onExit);
 			if (error) reject(error);
 			else resolve();
 		};
 		child.stderr?.on("data", onData);
-		child.stdout?.on("data", onData);
 		child.once("exit", onExit);
 	});
 	return { child, stderr: () => stderr };
