@@ -182,7 +182,8 @@ async function writerDelivers(depth: number, expectedDelivered?: boolean): Promi
 }
 
 it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typed over-engine refusal", async () => {
-	// Node 26 measurements: 5888/5889 split; 4990-vs-5246 disagreed across call sites; Lw-256 refused.
+	// Single-host Node 26 examples: 5888/5889 split; 4990-vs-5246 disagreed across call sites; Lw-256 refused.
+	// Another host measured P around 5407; these are examples, not portable expected values.
 	// Near-boundary replays are deliberately absent: the Node 26 delivery-path stack budget shifts by >=257
 	// levels with call context. Bisection measures Lw once; P is the independent native-only probe LIMIT.
 	let low = 0;
@@ -197,7 +198,7 @@ it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typ
 		LIMIT - 512,
 	);
 	const depth = Math.floor(Math.min(LIMIT, low) / 2);
-	console.log(`RULING-105 media Lw=${low} P=${LIMIT} far=${depth}`);
+	process.stdout.write(`RULING-105 media Lw=${low} P=${LIMIT} far=${depth}\n`);
 	for (let repeat = 0; repeat < 3; repeat++)
 		expect(await writerDelivers(depth, true), "far depth delivered").toBe(true);
 	expect(await writerDelivers(OVER_ENGINE, false), "over-engine refused").toBe(false);
