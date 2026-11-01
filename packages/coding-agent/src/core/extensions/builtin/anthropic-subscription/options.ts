@@ -25,7 +25,8 @@ import {
 import { loadOverrideSystemPrompt, resolveCustomSystemPrompt } from "./system-prompt.ts";
 import { BUILTIN_SDK_TOOLS, canUseTool, HOST_TOOL_DENIAL_HOOKS } from "./tools.ts";
 
-export type AnthropicSubscriptionAuthLane = AnthropicSubscriptionTokenInjection;
+/** `claude-cli`: a CLI-store account, whose own config dir links `projects` to the shared transcript root (senpi#4436). */
+export type AnthropicSubscriptionAuthLane = AnthropicSubscriptionTokenInjection | "claude-cli";
 
 export interface AnthropicSubscriptionQueryOptionsInput {
 	readonly model: Model<Api>;
