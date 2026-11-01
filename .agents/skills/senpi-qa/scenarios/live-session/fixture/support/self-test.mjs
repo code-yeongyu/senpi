@@ -68,6 +68,16 @@ export async function runSelfTest({ evidence, command }) {
 		full.verdict.pass,
 		`${full.session.meter.used} tokens, ${full.session.turns} turns`,
 	);
+	const childEval = full.record.sessionTranscripts.find((transcript) =>
+		transcript.entries.some((entry) => entry.message?.role === "toolResult" && entry.message.toolName === "eval") &&
+		transcript.entries.some((entry) => entry.type === "custom" && entry.customType === "live-tool-call" &&
+			entry.data?.id.startsWith("codemode-")),
+	);
+	checks.ok(
+		"child session eval dispatches have independent persisted evidence and pass G1",
+		Boolean(childEval) && full.verdict.checks.find((check) => check.id === "G1.hooks-once-per-call").pass,
+		`${full.record.sessionTranscripts.length} child session(s)`,
+	);
 	// senpi#5088: the first idle after delegation is not completion; only the delivered continuation writes notes.
 	const events = full.session.events;
 	const delegated = events.findIndex((e) => e.type === "tool_execution_end" && e.toolName === "task");
