@@ -866,7 +866,14 @@ belongs to, so a client can join it to that call's snapshot entry after a reconn
   names a `toolCallId` (there are no session-level hook records), but a hook can run for a call the session never
   announced, such as a nested call inside another tool; that record, a record for a call that already ended, a record
   refused at the protocol depth limit, and a record arriving while the epoch's compact state is unavailable all carry
-  `callUnknown: true`. A compact live call record carries exactly one of the two fields.
+  `callUnknown: true`. So does an execution or hook record (`tool_execution_*`, `tool_hook_status`) whose
+  `toolCallId` more than one call inside one assistant message took: those records name only the `toolCallId`, so the
+  host cannot tell which of those calls a record is about, and it never picks one by order. The mark lasts while any
+  call of that message and id is live. A `toolcall_*` update names its block by `contentIndex`, so it keeps the exact
+  key of its own call even then.
+
+A compact live call record carries exactly one of the two fields, `runtimeItemKey` or `callUnknown: true`, never both
+and never neither; that holds for its delta-only form too, when a newer `toolcall_delta` supersedes a queued one.
 
 The host appends the field after the record's own, like the message ids above (`{"type": "tool_execution_end", ...,
 "sessionId": "rpc-1", "runtimeItemKey": "..."}`); legacy connections and every connection with the flag off receive

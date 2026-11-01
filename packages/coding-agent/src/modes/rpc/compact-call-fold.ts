@@ -1,6 +1,7 @@
 import type { ActiveBlock } from "./compact-active-block.ts";
 import { CALL_NAMED_RECORDS } from "./compact-call-identity.ts";
 import {
+	CALL_UNKNOWN,
 	type CallCorrelation,
 	type CallIdentity,
 	callIdentity,
@@ -144,9 +145,11 @@ export function foldCallRecord(
 		}
 	}
 	const named = CALL_NAMED_RECORDS.has(String(type));
+	// C3.4: a call sharing its toolCallId inside its message was picked by order, which a stamp never vouches for.
+	const identity = call && calls.table.sharesIdInMessage(call) ? CALL_UNKNOWN : callIdentity(call);
 	return {
 		changed: calls.table.counters.replacements !== before,
 		...(projection ? { projection } : {}),
-		...(named ? { identity: callIdentity(call) } : {}),
+		...(named ? { identity } : {}),
 	};
 }
