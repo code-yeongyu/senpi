@@ -67,7 +67,8 @@ export function advertisedCompactCapabilities(caps: readonly string[], supported
 export function declarationReply(record: object, selection: CompactSelection | undefined): object | undefined {
 	const response = record as { type?: string; command?: string; success?: boolean; id?: string };
 	if (response.type !== "response" || response.command !== "set_client_info") return record;
-	if (response.id === undefined) return undefined;
+	// RULING-111: G1's ID-less silence exists only with the compact negotiation; flag off answers as main does.
+	if (response.id === undefined) return compactUpdatesEnabled() ? undefined : record;
 	return response.success && selection?.selected ? { ...record, data: selection.ack() } : record;
 }
 /** Shared handler applies session flags only after host validation; classic handlers never select compact. */
