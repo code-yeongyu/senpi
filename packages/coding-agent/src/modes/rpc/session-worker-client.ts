@@ -30,6 +30,7 @@ import { subscriptionLimits } from "../../core/subscription-limits/limit-store.t
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 import { WorkerOwnerGates } from "./session-worker-owners.ts";
+import { WorkerSecretIds } from "./session-worker-secrets.ts";
 import { sessionWorkerDataRegistry } from "./session-worker-data.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
@@ -74,7 +75,7 @@ function spawnSessionWorker(webviewBroker: ReturnType<typeof createWebViewBroker
 
 export class SessionWorkerClient {
 	private secretRoute?: SecretInputRoute;
-	private readonly secretIds = new Set<string>();
+	private readonly secretIds = new WorkerSecretIds();
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
 	private readonly privateOperations = new Map<
@@ -117,7 +118,7 @@ export class SessionWorkerClient {
 		this.worker = this.spawned.result;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
-				for (const id of this.secretIds) this.secretRoute?.forget(id);
+				for (const id of this.secretIds.ids()) this.secretRoute?.forget(id);
 				this.secretIds.clear();
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
@@ -306,6 +307,10 @@ export class SessionWorkerClient {
 		}
 		switch (message.type) {
 			case "secret_select": {
+				if (!this.secretIds.has(message.id) && !this.secretIds.admitsNew()) {
+					acknowledge(message.signal, false);
+					return;
+				}
 				const select = () => {
 					const reason =
 						this.secretRoute?.select(message.id, () => this.post({ type: "cancel_secret", id: message.id })) ??
@@ -325,6 +330,10 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "secret_frame":
+				if (!this.secretIds.admitFrame(message.id, message.record)) {
+					acknowledge(message.signal, false);
+					return;
+				}
 				this.secretRoute?.send(message.id, message.record);
 				acknowledge(message.signal, true);
 				return;
@@ -333,7 +342,7 @@ export class SessionWorkerClient {
 				acknowledge(message.signal, true);
 				return;
 			case "secret_forget":
-				this.secretIds.delete(message.id);
+				this.secretIds.forget(message.id);
 				this.secretRoute?.forget(message.id);
 				acknowledge(message.signal, true);
 				return;
