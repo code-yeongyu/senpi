@@ -6,7 +6,7 @@
  * and a case that leaves an unusable registration behind - an unguarded pidfile, a failed ensure -
  * has no way to stop it. Two self-terminating bindings keep that from stranding a host: the fixture
  * exits when the socket path it serves disappears (which happens the moment its sandbox directory
- * is removed), and when its parent is gone (a killed test runner reparents it to init).
+ * is removed), and when its parent is gone (a killed test runner reparents it).
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -100,7 +100,8 @@ const watchdog = setInterval(() => {
 	// The socket entry is this fixture's whole purpose; on win32 the pipe has no filesystem entry,
 	// so the sandbox directory that holds its secret is the equivalent evidence.
 	const servingPath = process.platform === "win32" ? dirname(socketPath) : socketPath;
-	const orphaned = process.ppid !== parentPid && process.ppid <= 1;
+	// A subreaper can adopt us instead of init; any reparent means our original parent died.
+	const orphaned = process.ppid !== parentPid;
 	if (existsSync(servingPath) && !orphaned) return;
 	clearInterval(watchdog);
 	server.close(() => process.exit(0));

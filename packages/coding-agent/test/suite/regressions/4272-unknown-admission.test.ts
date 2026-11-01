@@ -57,6 +57,7 @@ it("RULING-94 refuses unknown, foreign and retired identities with byte-identica
 			sessionId: String(own.sessionId),
 		},
 		"unheld",
+		"client_detach",
 	);
 	host.writer.unregisterAdmission("peer", "unheld");
 	await request();

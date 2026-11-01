@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts";
+import { CompactAdmissionError, CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts";
+import { RouteAnnouncement } from "../../../src/modes/rpc/route-retire-reasons.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 
 afterEach(() => {
@@ -43,20 +44,34 @@ it("releases the accepted cut and route exactly once when physical open actually
 	expect(retired).toHaveBeenCalledWith(
 		{ socketEpoch: host.writer.socketEpochOf("peer"), sessionId: expect.any(String) },
 		"failed",
+		expect.any(RouteAnnouncement),
 	);
+	// RULING-119: the router answers a throwing handler with nothing, so the open's own typed refusal ends the route.
+	await host.writer.flush();
+	expect(peer.inbox.filter((frame) => frame.admissionId === "failed").at(-1)).toMatchObject({
+		type: "response",
+		command: "open_session",
+		success: false,
+		admissionId: "failed",
+	});
 	expect(unregistered).toHaveBeenCalledExactlyOnceWith("peer", "failed");
 	expect(checkpoints.status().open).toBe(0);
 	expect(host.writer.ordinaryRoute("peer", retired.mock.calls[0]?.[0].sessionId ?? "")?.routes ?? []).toEqual([]);
 	expect(host.core.router.sessionCount).toBe(0);
 }, 600_000);
 
-// #4272: exercise the real accepted producer's release twice, not two independent failed attempts.
+// #4272: exercise the real accepted producer's release twice, not two independent failed attempts. RULING-119: the
+// producer releases only an open that did not complete, so its durable answer fails here after acceptance.
 it("makes a second accepted release a no-op for cuts routes and attachment ownership", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
 	const peer = host.client("peer");
 	const sessionPath = join(host.cwd, "release.jsonl");
-	await peer.request({ type: "open_session", sessionPath, admissionId: "survivor" });
+	// RULING-117: on the same socket "accepted" would replace this route, so the survivor holds its own socket.
+	const survived = await host
+		.client("survivor")
+		.request({ type: "open_session", sessionPath, admissionId: "survivor" });
+	const sessionId = String(survived.sessionId);
 	let release: (() => Promise<void>) | undefined;
 	const run = CompactAdmissions.prototype.run;
 	vi.spyOn(CompactAdmissions.prototype, "run").mockImplementation(function (
@@ -67,7 +82,7 @@ it("makes a second accepted release a no-op for cuts routes and attachment owner
 		return run.call(this, identity, async (signal) => {
 			const produced = await produce(signal);
 			release = produced.release;
-			return produced;
+			throw new CompactAdmissionError("storage_unavailable");
 		});
 	});
 	const opened = await peer.request({
@@ -75,18 +90,21 @@ it("makes a second accepted release a no-op for cuts routes and attachment owner
 		sessionPath,
 		admissionId: "accepted",
 	});
+	expect(opened).toMatchObject({ success: false, admissionId: "accepted" });
 	const retired = vi.spyOn(host.writer.recoveryCheckpoints, "retireRoute");
 	const unregistered = vi.spyOn(host.writer, "unregisterAdmission");
 	const releaseAccepted = release ?? expect.unreachable("no accepted producer");
 	await releaseAccepted();
 	expect(host.writer.recoveryCheckpoints.status().open).toBe(1);
-	expect(host.writer.ordinaryRoute("peer", String(opened.sessionId))?.routes).toEqual(["survivor"]);
+	expect(host.writer.ordinaryRoute("peer", sessionId)?.routes ?? []).toEqual([]);
+	expect(host.writer.ordinaryRoute("survivor", sessionId)?.routes).toEqual(["survivor"]);
 	expect(host.core.router.sessionCount).toBe(1);
 	await releaseAccepted();
-	expect(retired).toHaveBeenCalledTimes(1);
+	// The peer's last hold detaches too, which retires its attach ordinal; "accepted" itself retires once.
+	expect(retired.mock.calls.filter(([, admissionId]) => admissionId === "accepted")).toHaveLength(1);
 	expect(unregistered).toHaveBeenCalledExactlyOnceWith("peer", "accepted");
 	expect(dataOf(await peer.request({ type: "list_sessions" })).sessions).toEqual([
-		expect.objectContaining({ sessionId: opened.sessionId, attachments: 1 }),
+		expect.objectContaining({ sessionId, attachments: 1 }),
 	]);
 }, 600_000);
 
@@ -109,7 +127,9 @@ it("releases the accepted cut and route once when an attached open fails after a
 	expect(retired).toHaveBeenCalledExactlyOnceWith(
 		{ socketEpoch: host.writer.socketEpochOf("peer"), sessionId },
 		"failed",
+		expect.any(RouteAnnouncement),
 	);
+	expect(peer.inbox.filter((frame) => frame.admissionId === "failed").at(-1)).toBe(answer);
 	expect(checkpoints.tokens()).toHaveLength(before);
 	expect(host.writer.ordinaryRoute("peer", sessionId)?.routes ?? []).not.toContain("failed");
 	expect(host.core.router.sessionCount).toBe(1);

@@ -49,6 +49,12 @@ export type CatalogRead =
 			readonly bytes: FrozenBytes;
 	  };
 
+/** The byte source of a read that must be a component; a node under a page ref is `range`. */
+export function componentBytes(read: CatalogRead): FrozenBytes {
+	if (read.kind !== "component") throw new CompactReadError("range");
+	return read.bytes;
+}
+
 /** One open node per level: its entries, its pointer leaves so far, and the owners the sealed node will share. */
 interface Level {
 	readonly writer: CatalogNodeWriter;

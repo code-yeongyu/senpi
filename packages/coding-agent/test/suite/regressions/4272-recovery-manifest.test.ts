@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { CatalogEntry } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import type { CatalogRead } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
-import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
+import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest-shape.ts";
 import type { RecoveryRoute } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import type { RecoveryOutcome } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
