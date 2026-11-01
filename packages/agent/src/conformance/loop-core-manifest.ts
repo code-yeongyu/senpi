@@ -13,6 +13,7 @@ export const LOOP_CORE_MODULES = [
 	"local-failure.ts",
 	"response-timing.ts",
 	"stream-fn.ts",
+	"stream-keepalive.ts",
 	"tool-arguments.ts",
 	"tool-name-alias.ts",
 	"types.ts",
