@@ -155,6 +155,7 @@ export function buildBaseOptions(
 		onPayload: options?.onPayload,
 		onResponse: options?.onResponse,
 		onProviderStreamEvent: options?.onProviderStreamEvent,
+		onTransportActivity: options?.onTransportActivity,
 		timeoutMs: options?.timeoutMs,
 		websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs,
 		maxRetries: options?.maxRetries,

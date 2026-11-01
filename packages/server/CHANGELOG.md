@@ -8,6 +8,104 @@
 
 ### Fixed
 
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Changed
+
+- Run the client, protocol, server and telemetry Vitest suites on Bun, preserving their temp-owning runner and adding all four to CI's workspace selection ([#4801](https://github.com/code-yeongyu/senpi/pull/4801)).
+
+### Fixed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.10.24-4] - 2026-10-24
 
 ### Breaking Changes

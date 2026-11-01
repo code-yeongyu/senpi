@@ -7,24 +7,26 @@
  * reads the same records from either.
  */
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
-import type { AgentSession } from "../../core/agent-session.ts";
+import type { AgentSession, AgentSessionEventListener } from "../../core/agent-session.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { ClientMessageEvents } from "./client-message-events.ts";
+import { observeLifecycle } from "./lifecycle-delivery.ts";
 import type { RpcCommandInvocationEvent, RpcSkillInvocationEvent } from "./rpc-types.ts";
 
-/** Subscribes `output` to the session's records; returns the unsubscribe. */
+/** Subscribes `output` to the session's records (from `source`, by default `session.subscribe`); returns the unsubscribe. */
 export function subscribeSessionRecords(
 	session: AgentSession,
 	output: (record: object) => void,
 	onAbortSource: (source: AgentAbortSource) => void = () => {},
+	source: (listener: AgentSessionEventListener) => () => void = (listener) => session.subscribe(listener),
 ): () => void {
 	const correlatedEvents = new ClientMessageEvents(output, () => ClientAdmissions.forSession(session).hasIdentities);
-	return session.subscribe((event) => {
+	return source((event) => {
 		if (event.type === "session_lifecycle") {
 			// The connection adds the routing handle; classic stdio has no envelope.
 			const { sessionId: _sessionId, ...record } = event;
-			output(record);
+			output({ ...record, lifecycle: observeLifecycle(event.lifecycle) });
 			return;
 		}
 		if (event.type === "skill_invocation") {

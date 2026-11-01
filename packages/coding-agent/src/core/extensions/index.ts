@@ -31,6 +31,7 @@ export type {
 	SwitchSessionHandler,
 } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
+export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./secret-input.ts";
 export * from "./session-control-types.ts";
 export type {
 	AfterProviderResponseEvent,
@@ -103,12 +104,14 @@ export type {
 	ExtensionHandler,
 	ExtensionMode,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionUIInputOptions,
 	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
@@ -126,6 +129,7 @@ export type {
 	GrepToolResultEvent,
 	InlineExtension,
 	// Events - Input
+	InputAttribution,
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,
@@ -137,6 +141,7 @@ export type {
 	LsToolResultEvent,
 	MarkdownTransformContext,
 	MarkdownTransformer,
+	McpServersChangeEvent,
 	// Events - Message
 	MessageEndEvent,
 	MessageEndEventResult,
@@ -163,6 +168,7 @@ export type {
 	ReadToolResultEvent,
 	// Commands
 	RegisteredCommand,
+	RegisteredMcpServer,
 	RegisteredTool,
 	ReplacedSessionContext,
 	ResolvedCommand,

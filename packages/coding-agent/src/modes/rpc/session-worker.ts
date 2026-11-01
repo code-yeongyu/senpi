@@ -8,7 +8,8 @@ import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
-import { getDefaultSessionDir } from "../../core/session-manager.ts";
+import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
+import { getDefaultSessionDir, type SessionManager } from "../../core/session-manager.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
@@ -24,13 +25,23 @@ import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
+import { type CanonicalControl, carriedCanonical, carriedRefusal } from "./compact-canonical-pairing.ts";
+import { COMPACT_PROTOCOL_MAX_DEPTH, protocolDepthLimitOf } from "./compact-protocol-depth.ts";
+import { legacyJsonText } from "./jsonl.ts";
+import { jsonTextDeeperThan } from "./legacy-record-depth.ts";
+import { CompactProducerStamp } from "./compact-producer-stamp.ts";
 import {
 	type HostToSessionWorker,
 	SESSION_WORKER_LIMITS,
 	type SessionWorkerToHost,
 	type WorkerSnapshot,
+	withinFrameLimit,
 } from "./session-worker-protocol.ts";
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
+import { IssuedWorkerOwners } from "./session-worker-owners.ts";
+import { McpFormWorker } from "./mcp-form-worker.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
+import type { SecretInputUnavailableReason } from "../../core/extensions/secret-input.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
@@ -42,6 +53,8 @@ registerWebViewBroker(Reflect.get(Object(workerData), "webviewBroker"));
 const port = parentPort;
 if (!port) throw new Error("Session worker requires a parent port");
 const send = (message: SessionWorkerToHost): void => port.postMessage(message);
+const privateForms = new McpFormWorker(send);
+let privateFormsEnforced = false;
 
 function failWorker(error: string): never {
 	send({ type: "failure", error });
@@ -53,6 +66,51 @@ const { exchange, installWriteReservation } = createWorkerCredit(send, failWorke
 installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
+	readonly secretCancels = new Map<string, () => void>();
+	override secretInputRoute(_sessionId: string): SecretInputRoute {
+		const presenters = new Map<string, string | undefined>();
+		return {
+			select: (id, unavailable) => {
+				const decision = new SharedArrayBuffer(8192);
+				exchange((signal) => ({
+					type: "secret_select",
+					id,
+					connection: this.currentConnection(),
+					decision,
+					signal,
+				}));
+				const length = new Int32Array(decision, 0, 1)[0];
+				const result = JSON.parse(new TextDecoder().decode(new Uint8Array(decision, 4, length))) as
+					| { accepted: true; connection?: string }
+					| { accepted: false; reason: SecretInputUnavailableReason };
+				if (!result.accepted) return result.reason;
+				presenters.set(id, result.connection);
+				this.secretCancels.set(id, unavailable);
+				return undefined;
+			},
+			presenter: (id) => presenters.get(id),
+			// The parent authorizes the actual sender before forwarding a response into this isolate.
+			accepts: (id) => presenters.has(id) && presenters.get(id) === this.currentConnection(),
+			available: (id) => presenters.has(id),
+			send: (id, record) => exchange((signal) => ({ type: "secret_frame", id, record, signal })),
+			settled: (id) => {
+				this.secretCancels.delete(id);
+				exchange((signal) => ({ type: "secret_settled", id, signal }));
+			},
+			forget: (id) => {
+				this.secretCancels.delete(id);
+				presenters.delete(id);
+				exchange((signal) => ({ type: "secret_forget", id, signal }));
+			},
+			handshake: (capabilities) => {
+				if (this.currentConnection() === undefined)
+					exchange((signal) => ({ type: "secret_handshake", capabilities, signal }));
+			},
+		};
+	}
+	override bindMcpForms(_sessionId: string, durableId: string, ui: object, admit: () => void) {
+		return privateFormsEnforced ? privateForms.bind(durableId, ui, admit) : undefined;
+	}
 	override readonly workerSecurityBridge = true;
 	constructor() {
 		super(() => {});
@@ -87,8 +145,8 @@ class WorkerEventWriter extends SessionEventWriter {
 		}));
 	}
 	override enqueue(_sessionId: string, record: object): boolean {
-		if (Buffer.byteLength(JSON.stringify(record)) > SESSION_WORKER_LIMITS.outputBytes)
-			failWorker("session_worker_output_limit");
+		const line = legacyJsonText(record);
+		if (Buffer.byteLength(line) > SESSION_WORKER_LIMITS.outputBytes) failWorker("session_worker_output_limit");
 		const session = entry?.runtime?.session;
 		if (!session) throw new Error("Session output preceded runtime creation");
 		const activity = {
@@ -106,19 +164,72 @@ class WorkerEventWriter extends SessionEventWriter {
 				: undefined;
 		if (replacement && Buffer.byteLength(JSON.stringify(replacement)) > SESSION_WORKER_LIMITS.outputBytes)
 			failWorker("session_worker_snapshot_limit");
+		const replaced = "type" in record && record.type === "session_replaced";
+		const issued = this.connectionContext.owner?.wire;
+		const owner = issued && { ownerId: issued.ownerId, bindingGeneration: issued.bindingGeneration };
+		if (ordered && replaced) {
+			journaled = session.sessionManager;
+			stamp.forget();
+			canonicalLost = false;
+		}
+		const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
+		const epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
+		const recovery = recoveryCarrier(record);
+		const canonical = carriedCanonical(record);
+		const order = ordered
+			? {
+					...stamp.stamp(recovery, canonical, record),
+					recovery,
+					...(canonical ? { canonical } : {}),
+					...(carriedRefusal(record) ? { canonicalRefused: true as const } : {}),
+					...(replaced
+						? {
+								bootstrap: {
+									transcript: withinFrameLimit(session.sessionManager.beginTranscriptJournal()),
+									epochSignal,
+								},
+							}
+						: {}),
+					...(transitions.length > 0 ? { transitions: withinFrameLimit(transitions) } : {}),
+				}
+			: {};
 		exchange((signal) => ({
+			...order,
 			type: "output",
-			record,
+			// Keep one JSON-normal transfer format, including toJSON and non-cloneable fields.
+			// S12 replaces this whole-record serialization with compact records and permits.
+			...(jsonTextDeeperThan(line, COMPACT_PROTOCOL_MAX_DEPTH)
+				? { record: {}, recordText: line }
+				: { record: JSON.parse(line) as object }),
 			connection: this.currentConnection(),
+			...(owner === undefined ? {} : { owner }),
 			signal,
 			activity,
 			snapshot: replacement,
 		}));
+		if (epochSignal) setSessionRecoveryEpoch(session, Buffer.from(epochSignal).toString("ascii"));
 		return true;
+	}
+	override enqueueCanonical(_sessionId: string, control: CanonicalControl): void {
+		if (!ordered) return;
+		const { ordinal, firstOrdinal = ordinal } = stamp.stamp(control.carrier, control.record);
+		const { record, carrier: recovery } = control;
+		exchange((signal) => ({ type: "canonical", ordinal, firstOrdinal, recovery, record, signal }));
+	}
+	override canonicalUnavailable(_sessionId: string, cause: unknown): void {
+		// The host's compact state for this epoch is already gone after the first real loss; later losses would only cost
+		// exchanges. A depth refusal is never that loss and is always sent: the host counts it, live state or not (RULING-59 C).
+		const limit = protocolDepthLimitOf(cause);
+		if (!ordered || (canonicalLost && limit === undefined)) return;
+		canonicalLost ||= limit === undefined;
+		const { ordinal } = stamp.stamp(undefined, undefined);
+		const reason = cause instanceof Error ? cause.message : String(cause);
+		exchange((signal) => ({ type: "canonical_unavailable", ordinal, reason, limit, signal }));
 	}
 }
 
 const writer = new WorkerEventWriter();
+const issuedOwners = new IssuedWorkerOwners();
 // One session per isolate: the roles of the connections it serves, adopted from the host before each command.
 const connectionRoles = new ConnectionRoles();
 let prepared: Extract<HostToSessionWorker, { type: "prepare" }> | undefined;
@@ -126,6 +237,14 @@ let registry: RpcSessionRegistry | undefined;
 let entry: RpcSessionEntry | undefined;
 let binding: RpcSessionBinding | undefined;
 let closing = false;
+/** Set by `commit` when the host owns an acceptance lane; each output frame then carries the next ordinal. */
+let ordered = false;
+/** The output-frame ordinal (S04a) is the compact producer ordinal: one numbering (RULING-36). */
+const stamp = new CompactProducerStamp();
+/** One `canonical_unavailable` frame per epoch: set by the first, cleared with `stamp.forget()` at a replacement. */
+let canonicalLost = false;
+/** The manager whose committed transcript changes ride the next output frame; replaced with the session. */
+let journaled: SessionManager | undefined;
 let unsubscribe: (() => void) | undefined;
 let unsubscribeWake: (() => void) | undefined;
 
@@ -142,9 +261,8 @@ function subscribeSession(): void {
 	unsubscribeWake = entry?.runtime?.session.extensionRunner.onBusEvent(WAKE_SOURCE_STATE_EVENT, () =>
 		publishSnapshot(),
 	);
-	unsubscribe = entry?.runtime?.session.subscribe((event) =>
-		publishSnapshot(event.type === "agent_settled" || event.type === "agent_idle"),
-	);
+	// Settled for the host's drain only at agent_idle: agent_settled can precede its extension handlers (omo#11419).
+	unsubscribe = entry?.runtime?.session.subscribe((event) => publishSnapshot(event.type === "agent_idle"));
 }
 
 function snapshot(): WorkerSnapshot {
@@ -193,13 +311,25 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
 			const opened = await registry.openSession(prepared.profile);
 			entry = registry.getForCommand(opened.sessionId, "open_session");
-			send({ type: "ready", request: message.request, snapshot: snapshot() });
+			ordered = message.acceptance === true;
+			if (message.recoveryEpoch && entry.runtime)
+				setSessionRecoveryEpoch(entry.runtime.session, message.recoveryEpoch);
+			journaled = ordered ? entry.runtime?.session.sessionManager : undefined;
+			send({
+				type: "ready",
+				request: message.request,
+				snapshot: snapshot(),
+				...(ordered
+					? { bootstrap: { transcript: withinFrameLimit(journaled?.beginTranscriptJournal() ?? []) } }
+					: {}),
+			});
 			return;
 		}
 		case "bind": {
 			if (!entry || binding) throw new Error("Invalid session binding");
 			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const bindingEntry = entry;
+			privateFormsEnforced = message.mcpFormsEnforced === true;
 			const createBinding = () =>
 				createRpcSessionBinding(message.sessionId, bindingEntry, writer, () => send({ type: "request_close" }), {
 					capabilities: message.capabilities,
@@ -231,6 +361,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			await binding?.handle({ type: "extension_ui_response", id: message.id, cancelled: true });
 			return;
 		}
+		case "cancel_secret":
+			writer.secretCancels.get(message.id)?.();
+			return;
 		case "command": {
 			const privileged =
 				"type" in message.command &&
@@ -240,9 +373,13 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
 			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const activeBinding = binding;
-			await (message.connection === undefined
-				? activeBinding.handle(message.command)
-				: writer.withConnection(message.connection, () => activeBinding.handle(message.command)));
+			const run = () => activeBinding.handle(message.command);
+			const connection = message.connection;
+			await (connection === undefined
+				? run()
+				: message.owner === undefined
+					? writer.withConnection(connection, run)
+					: writer.connectionContext.runIssued(connection, issuedOwners.adopt(message.owner), run));
 			publishSnapshot();
 			send({ type: "result", request: message.request });
 			return;
@@ -264,6 +401,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			return;
 		case "subscription_limits":
 			for (const limits of message.accounts) subscriptionLimits.adopt(limits);
+			return;
+		case "owners_retired":
+			issuedOwners.retire(message.owners);
 			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();
@@ -292,6 +432,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 subscriptionLimits.subscribeMirror((limits) => send({ type: "subscription_limits", limits }));
 
 port.on("message", (message: HostToSessionWorker) => {
+	if (privateForms.receive(message)) return;
 	void handle(message).catch((cause: unknown) => {
 		const error = cause instanceof Error ? cause.message : String(cause);
 		if (error.startsWith("session_worker_")) {

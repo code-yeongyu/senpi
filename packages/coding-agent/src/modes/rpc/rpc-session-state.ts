@@ -9,7 +9,9 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { observeLifecycle } from "./lifecycle-delivery.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
+import { sessionUiAnswerLedger } from "./ui-answer-ledger.ts";
 import { sessionDialogRequests } from "./session-extension-ui-requests.ts";
 
 /**
@@ -33,10 +35,11 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
 	const lastProviderDiagnostic = sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic);
 	return {
+		answeredUiRequests: sessionUiAnswerLedger(session).snapshot(),
 		paused: session.paused ?? false,
 		pausedNoticeCount: session.pausedNoticeCount ?? 0,
 		holds: session.holds ?? [],
-		lifecycle: session.lifecycle,
+		lifecycle: observeLifecycle(session.lifecycle),
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
 		model: session.model,

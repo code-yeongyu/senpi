@@ -5,6 +5,7 @@ import { handleNoUI } from "../../src/core/extensions/builtin/permission-system/
 import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.ts";
 import {
 	CorrectedError,
+	DENIAL_IS_FINAL,
 	DeniedError,
 	RejectedError,
 	type Request,
@@ -188,7 +189,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 			expect(result).toEqual({
 				requestID: "print-test-1",
 				reply: "reject",
-				message: "Permission required for bash (rm -rf /). Use --permission bash=allow to override.",
+				message: `Permission required for bash (rm -rf /), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
 			});
 			expect(emittedEvents).toHaveLength(1);
 			expect(emittedEvents[0]).toEqual({
@@ -298,7 +299,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 
 				// then
 				expect(result?.reply).toBe("reject");
-				expect(result?.message).toContain("Use --permission bash=allow");
+				expect(result?.message).toContain("--permission bash=allow");
 			});
 
 			it("allows when rules permit", async () => {

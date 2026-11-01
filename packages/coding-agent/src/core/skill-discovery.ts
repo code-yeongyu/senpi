@@ -1,5 +1,6 @@
 import {
 	closeSync,
+	type Dirent,
 	existsSync,
 	fstatSync,
 	openSync,
@@ -34,6 +35,10 @@ export interface SkillWalkOptions {
 	readonly allowedSet?: SkillAllowedSet;
 	readonly ancestry?: ReadonlySet<string>;
 	readonly onDirectory?: (path: string) => void;
+	/** Receives the SKILL.md of each skill folder an ignore file hid from the walk. */
+	readonly onIgnoredSkill?: (skillFile: string) => void;
+	/** Optional cache owned by a single discovery pass, never retained on a Skill. */
+	readonly realpath?: (path: string) => string;
 }
 
 function toPosixPath(p: string): string {
@@ -67,13 +72,19 @@ function prefixIgnorePattern(line: string, prefix: string): string | null {
 	return negated ? `!${prefixed}` : prefixed;
 }
 
-function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
+/**
+ * Applies the ignore files present in `entries`, the listing of `dir` the walk already read, so no
+ * directory pays a probe per ignore-file name (omo#11437). Names compare case-insensitively, as the
+ * former existence probe did on case-insensitive volumes; a name that does not open is skipped.
+ */
+export function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string, entries: readonly Dirent[]): void {
 	const relativeDir = relative(rootDir, dir);
 	const prefix = relativeDir ? `${toPosixPath(relativeDir)}/` : "";
+	const names = new Set(entries.map((entry) => entry.name.toLowerCase()));
 
 	for (const filename of IGNORE_FILE_NAMES) {
+		if (!names.has(filename)) continue;
 		const ignorePath = join(dir, filename);
-		if (!existsSync(ignorePath)) continue;
 		try {
 			const content = readFileSync(ignorePath, "utf-8");
 			const patterns = content
@@ -154,7 +165,7 @@ export function collectSkillEntries(
 	let canonical: string;
 	try {
 		authorizeSkillPath(dir, options.provenance, options.allowedSet, true);
-		canonical = realpathSync.native(dir);
+		canonical = (options.realpath ?? realpathSync.native)(dir);
 	} catch (error) {
 		// Leave a blocked root as a candidate so the resource loader retains its
 		// provenance and produces the visible diagnostic without descending here.
@@ -168,10 +179,10 @@ export function collectSkillEntries(
 
 	const root = rootDir ?? dir;
 	const ig = ignoreMatcher ?? ignore();
-	addIgnoreRules(ig, dir, root);
 
 	try {
 		const dirEntries = readdirSync(dir, { withFileTypes: true });
+		addIgnoreRules(ig, dir, root, dirEntries);
 
 		for (const entry of dirEntries) {
 			if (entry.name !== "SKILL.md") {
@@ -201,8 +212,9 @@ export function collectSkillEntries(
 			const fullPath = join(dir, entry.name);
 			let isDir = entry.isDirectory();
 			let isFile = entry.isFile();
+			const isLink = entry.isSymbolicLink();
 
-			if (entry.isSymbolicLink()) {
+			if (isLink) {
 				try {
 					const stats = statSync(fullPath);
 					isDir = stats.isDirectory();
@@ -216,7 +228,7 @@ export function collectSkillEntries(
 			const shouldIncludeMarkdownFile =
 				isFile &&
 				entry.name.endsWith(".md") &&
-				!ig.ignores(relPath) &&
+				(isLink || !ig.ignores(relPath)) &&
 				((mode === "pi" && dir === root) || (mode === "agents" && dir !== root));
 			if (shouldIncludeMarkdownFile) {
 				entries.push(fullPath);
@@ -224,7 +236,17 @@ export function collectSkillEntries(
 			}
 
 			if (!isDir) continue;
-			if (ig.ignores(`${relPath}/`)) continue;
+			// A linked directory belongs to another tree: the ignore files above it neither hide it nor
+			// reach into it, while its own ignore files still apply inside it (senpi#5060).
+			if (isLink) {
+				entries.push(...collectSkillEntries(fullPath, mode, ignore(), root, { ...options, ancestry }));
+				continue;
+			}
+			if (ig.ignores(`${relPath}/`)) {
+				const skillFile = join(fullPath, "SKILL.md");
+				if (options.onIgnoredSkill && existsSync(skillFile)) options.onIgnoredSkill(skillFile);
+				continue;
+			}
 
 			entries.push(...collectSkillEntries(fullPath, mode, ig, root, { ...options, ancestry }));
 		}

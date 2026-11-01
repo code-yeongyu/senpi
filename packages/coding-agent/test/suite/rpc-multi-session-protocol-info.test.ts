@@ -24,6 +24,10 @@ describe("multi-session RPC protocol info", () => {
 				serverVersion: VERSION,
 				capabilities: [
 					"multi_session",
+					"snapshot_cursor",
+					"ui_answer_ledger",
+					"secret_input_v1", // senpi#5108: hosts advertise guarded private input.
+					"dialog_observer",
 					"session_lifecycle",
 					"expected_host_instance",
 					"attach_session",
@@ -40,12 +44,15 @@ describe("multi-session RPC protocol info", () => {
 					"continue_from_leaf",
 					"eval_cells",
 					"auth_key_verify",
+					"provider_account_test",
 					"queued_message_revision",
 					"tool_barrier",
 					"user_activity",
 					"session_held",
 					"resume_session",
 					"attended",
+					"observe_reads",
+					"entries_tail",
 					"retain_on_disconnect",
 					"detach_connection",
 					"unload_session",
@@ -61,6 +68,7 @@ describe("multi-session RPC protocol info", () => {
 					"prompt_surface",
 					"prompt_surface_chat",
 					"browser_engine",
+					"session_env",
 					"retry_fallback_profile",
 					"permission_preset_accept_edits",
 					"permission_preset_auto",
@@ -80,6 +88,10 @@ describe("multi-session RPC protocol info", () => {
 				launch_profile: { profile_id: expect.stringMatching(/^[0-9a-f]{64}$/), core: expect.anything() },
 				agentDir: resolve(getAgentDir()),
 				memory_pressure: false,
+				path_identity_resolver: {
+					state: expect.stringMatching(/^(not_started|ready|unavailable)$/),
+					detail: expect.toSatisfy((value: unknown) => value === null || typeof value === "string"),
+				},
 			},
 		});
 	});

@@ -92,6 +92,7 @@ changes.md                Fork-specific RPC behavior record
 - Pending work is rejected on disconnect or child exit; preserve request/response correlation.
 - Child stderr is emitted and embedded raw; treat diagnostics as secret-bearing.
 - Documented lazy boundaries (the root rule allows inline `import()` only at documented ones): `host-reservations.ts` (`claim()`, on the takeover of an unprovable claim) and `host-generations.ts` (the prune of an ended generation's unproven claims) load `core/session-write-fence.ts` on first use, so the lifecycle supervisor, which imports both modules, keeps the fence module and its synchronous read out of its startup graph (`test/supervisor-import-graph.test.ts`).
+- `host-lifecycle-launch.ts` loads `mcp-presenter-bootstrap.ts` only when fd 4 is supplied. A static import measured 67 modules (56 after allowed leaves, versus the unchanged ceiling of 55) in `test/supervisor-import-graph.test.ts`. Preserve this opt-in lazy boundary and its terminal catch: bootstrap loss must close only the presenter channel, never the shared supervisor or slot-3 lifetime channel.
 
 ### Shared-daemon invariants (I1-I4)
 

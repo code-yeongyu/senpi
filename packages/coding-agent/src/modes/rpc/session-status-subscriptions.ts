@@ -23,6 +23,7 @@ export interface SubscriptionOptions {
 	readonly includeContext: boolean;
 	readonly mirror: MirrorSelection;
 	readonly effects: boolean;
+	readonly dialogs?: boolean;
 }
 
 export interface SubscriptionRefusal {
@@ -89,7 +90,7 @@ export function parseSubscription(
 	request: Readonly<
 		Pick<
 			Extract<RpcCommand, { type: "subscribe_sessions" }>,
-			"sessions" | "mirror" | "include_workers" | "include_context" | "effects"
+			"sessions" | "mirror" | "include_workers" | "include_context" | "effects" | "dialogs"
 		>
 	>,
 ): { readonly options: SubscriptionOptions } | { readonly refusal: SubscriptionRefusal } {
@@ -101,11 +102,14 @@ export function parseSubscription(
 	if (typeof includeWorkers === "object") return { refusal: includeWorkers };
 	const includeContext = optionalBoolean(request.include_context, "include_context");
 	if (typeof includeContext === "object") return { refusal: includeContext };
+	const dialogs = optionalBoolean(request.dialogs, "dialogs");
+	if (typeof dialogs === "object") return { refusal: dialogs };
 	const effects = optionalBoolean(request.effects, "effects");
 	if (typeof effects === "object") return { refusal: effects };
 	return {
 		options: {
 			selector: selector.selector,
+			dialogs: dialogs ?? false,
 			// A childrenOf subscription exists to watch machine-driven children, which open as workers.
 			includeWorkers: includeWorkers ?? selector.selector.kind === "childrenOf",
 			includeContext: includeContext ?? false,

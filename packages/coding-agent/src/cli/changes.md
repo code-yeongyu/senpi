@@ -1,3 +1,137 @@
+## 2026-10-31 - ANTHROPIC_OAUTH_TOKEN help text (senpi#5131)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `ANTHROPIC_OAUTH_TOKEN` line of `--help` says the variable is read like `ANTHROPIC_API_KEY` and that Claude OAuth tokens are refused in favour of `anthropic-subscription`.
+
+### Why
+
+- senpi#5131: the old text advertised the removed OAuth path.
+
+### Why an extension could not handle it
+
+- The help text is the CLI's own.
+
+### Expected merge conflict zones
+
+- LOW: one line of the environment-variable list.
+
+## 2026-10-30 - Check CLI choices without type assertions (senpi#4971)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: compare session runtime and thinking level strings directly with their allowed tuple members.
+- `packages/coding-agent/src/modes/rpc/session-worker-requests.test.ts`: use valid `commit` requests instead of casting obsolete `open` request fixtures to `never`.
+
+### Why
+
+- Preserve the accepted CLI choices and deadline assertions while removing four unsafe type assertions.
+
+### Why an extension could not handle it
+
+- These predicates and worker request fixtures belong to the engine's CLI parser and colocated regression tests.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/cli/args.ts`, `packages/coding-agent/src/modes/rpc/session-worker-requests.test.ts`, and this PR's fragment.
+
+## 2026-10-28 - Prompt-size inventory follows the registered-server ownership rule (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: `mcpServerNames` merges extension-registered servers only when no extension handles `mcp_servers_change`, matching what the built-in gateway connects.
+
+### Why
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: the inventory estimates the built-in gateway's prompt section; counting servers another extension connects would overcount.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: the inventory is a CLI diagnostic outside the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `mcpServerNames` body.
+
+## 2026-10-25 - Explicit RPC endpoint attachment arguments (senpi#4269)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: exposes `--attach` and documents its required session reference.
+- `packages/coding-agent/src/cli/attach-args.ts`: validates attachment mode and incompatible session options before startup.
+
+### Why
+
+- `packages/coding-agent/src/cli/args.ts`: an explicit attachment must not fall through to local session creation or RPC server mode.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/args.ts`: mode selection happens before a session loads extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the argument result type, final validation, and help options.
+
+## 2026-10-26 - Read the canonical agent directory without opening state (#4368)
+
+### What changed
+
+- `packages/coding-agent/src/cli/agent-dir-command.ts`: add `config agent-dir --json`, reporting the exact `getAgentDir()` result and its directory source, selection rule and branded prefix. Every success or failure is one version-1 JSON record with `ok`; invalid arguments exit 2 and selector failures exit 1.
+- `packages/coding-agent/src/cli/config-command-help.ts`: extract the config help text and document the metadata command and its typed JSON exit contract.
+
+### Why
+
+- The desktop must ask the same engine version that will run its sessions instead of copying the CLI's directory-selection policy. Part of desktop#4753; the reporter's billing-error root cause remains unproven.
+
+### Why an extension could not handle it
+
+- Directory selection must be available before settings, extensions, data-home checks or host startup. The command only reads selector inputs and filesystem layout; it creates no marker or state files.
+
+### Expected merge conflict zones
+
+- LOW: metadata-command routing before full CLI startup.
+
+## 2026-10-25 - Public host commands accept presenter enforcement (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command-args.ts` and `packages/coding-agent/src/cli/host-command.ts`: accept and forward `--mcp-presenter-enforcement` only for ensure and handoff, separately from the launch specification.
+
+### Why
+
+- The public deployment path could pass fd 4 but not the enforcement option required to enroll.
+
+### Why an extension could not handle it
+
+- Host launch arguments are parsed before any session or extension exists.
+
+### Expected merge conflict zones
+
+- The host argument parser, help text and request options.
+
+## 2026-10-25 - Private presenter bootstrap launch options (#4197)
+
+### What changed
+
+- `args.ts`, `host-command-args.ts`, and `host-command.ts`: accept the reserved presenter descriptor and carry its live stream through the host launch API.
+
+### Why
+
+- An inherited private channel, not an advertised UI capability or a serialized launch argument containing credentials, establishes the launch principal.
+
+### Key decisions
+
+- Descriptor 4 is reserved for presenter bootstrap. Descriptor 3 remains the owner-lifetime channel. No key, challenge, or grant is put in an environment variable or command-line argument.
+- An `ensure` call that reuses an existing host does not enroll its caller.
+
+### Why an extension could not handle it
+
+- Extensions run after launch and cannot establish an inherited launch-owner trust boundary.
+
+### Expected merge conflict zones
+
+- LOW: CLI option parsing and the host-command runner call.
+
 ## 2026-10-24 - Parse standalone child ancestry before startup (oh-my-openagent#10782)
 
 ### What changed

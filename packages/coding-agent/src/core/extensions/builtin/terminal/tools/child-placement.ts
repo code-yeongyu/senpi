@@ -132,6 +132,7 @@ export function terminalChildJob(
 				...(ctx.shellPath === undefined ? {} : { shellPath: ctx.shellPath }),
 				defaultCols: ctx.defaultCols,
 				defaultRows: ctx.defaultRows,
+				redactSecretsInOutput: ctx.redactSecretsInOutput === true,
 				...(ctx.timeoutAction === undefined ? {} : { timeoutAction: ctx.timeoutAction }),
 			};
 		},

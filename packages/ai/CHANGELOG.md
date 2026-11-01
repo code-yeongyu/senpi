@@ -12,6 +12,192 @@
 
 ### Removed
 
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Preserve typed-secret OAuth prompt metadata through the compatibility adapter. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
+### Changed
+
+- A Claude OAuth token given to the `anthropic` provider is refused before any request with `ClaudeOAuthTokenRefusedError`, which points at `/login anthropic-subscription`; Anthropic API keys, `ANTHROPIC_AUTH_TOKEN` headers and workload identity federation are unchanged ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+
+### Fixed
+
+- Signing in to ChatGPT Subscription again as an already-saved account replaces that account instead of adding a duplicate, so sessions stop picking its invalidated old token ([#5009](https://github.com/code-yeongyu/senpi/pull/5009))
+- Avoid mixing strict and non-strict function tools on OpenGateway routes; reject conflicting required-strict tools before sending ([#4821](https://github.com/code-yeongyu/senpi/issues/4821)).
+- Tool argument validation for a discriminated `anyOf`/`oneOf` schema reports only the branch the arguments address, as one actionable line ([#5147](https://github.com/code-yeongyu/senpi/pull/5147)).
+- On OpenAI-compatible routes, tools whose parameters are a union of object shapes now tell the model which fields each shape requires ([#5150](https://github.com/code-yeongyu/senpi/pull/5150))
+
+### Removed
+
+- The Anthropic Messages API no longer takes Claude OAuth tokens (`sk-ant-oat...`) as API keys: the request path that presented senpi as Claude Code (identity betas, `claude-cli/<version>` user agent, Claude Code system block, tool-name mapping) and the `PI_CLAUDE_CODE_VERSION` fingerprint resolver are removed ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Anthropic requests send the cross-session stable part of the system prompt as its own cached block, so a new session reads it from cache even when memory or MCP instructions differ ([#4455](https://github.com/code-yeongyu/senpi/pull/4455))
+
+### Fixed
+
+- A 429 that names its reset as a wall clock with a zone ("resets 12am (Asia/Seoul)") now yields a retry hint ([#5047](https://github.com/code-yeongyu/senpi/pull/5047)).
+
+### Removed
+
+- The built-in Anthropic OAuth (PKCE) login, its copy-code login, its loopback callback listener on port 53692, its token refresh, and `loadAnthropicOAuth` from `@earendil-works/pi-ai/oauth`; Claude subscription sign-in goes through the Claude Code CLI ([#4515](https://github.com/code-yeongyu/senpi/pull/4515))
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- GPT-6.1 Terra (`gpt-6.1-terra`) in the ChatGPT subscription catalog, with a 500k-token context ([#4585](https://github.com/code-yeongyu/senpi/pull/4585))
+
+### Changed
+
+### Fixed
+
+- `describeProviderFailureForUser` rewrites the `Provider is not configured: <id>` failure into a neutral step (connect the provider, or choose another model), and shared account-limit descriptions omit TUI login/model commands. The message itself keeps the sentinel for classifiers ([#4341](https://github.com/code-yeongyu/senpi/pull/4341))
+- `AllSlotsBlockedError` shows its due-back time in local time, followed by the ISO instant, with a wait or sign-in step; `soonestUnblockAt` is unchanged ([#4544](https://github.com/code-yeongyu/senpi/pull/4544))
+- An OpenAI-compatible 429 that names a quota exhaustion only in `error.type` (`exceeded_current_quota_error`, no `error.code`) now classifies as `quota` instead of `unknown`; coarse `type` buckets are still ignored ([#4950](https://github.com/code-yeongyu/senpi/issues/4950))
+
+### Removed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+- Assistant messages can carry `errorCause: { type: "model_config", model }` for a model id its route does not serve; every provider stream sets it from the raw body of an error message (`stopReason: "error"`) and keeps only the redacted body of every provider error, and `isRetryableAssistantError` never retries it. `isModelConfigError`, the value-based `redactSecrets` (one token-wise pass, linear in the input, no regular expressions), `redactCredentialShapes` (known key prefixes and JWTs only) and `sanitizeProviderErrorMessage` are exported ([#4283](https://github.com/code-yeongyu/senpi/pull/4283))
+- `AssistantMessage.credentialServedRecently?: true` marks a failed response whose credential served a response moments before ([#2491](https://github.com/code-yeongyu/senpi/issues/2491))
+- Internal block seeds declare their producer-time replay or continuation offset (part of #4272).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `huggingface`, `opengateway`, `openrouter`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+- Moonshot `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` now send `reasoning_effort` (low / high / max) like `kimi-k3`, replay reasoning content, and bill the official USD list price on both Moonshot endpoints ([#4442](https://github.com/code-yeongyu/senpi/pull/4442))
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Recovery stream wrappers carry captured block records with remapped indices instead of dropping them; public events and bytes are unchanged ([#4307](https://github.com/code-yeongyu/senpi/pull/4307))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Assistant event streams can capture block seeds, delta coverage and native block transitions at the moment a provider emits them, for Anthropic, OpenAI Responses (including Codex and Azure) and OpenAI Completions; public events and bytes are unchanged ([#4277](https://github.com/code-yeongyu/senpi/pull/4277))
+- Bedrock, Mistral, Google, Vertex, Cursor, Pi messages, Devin and Faux streams capture block seeds, signatures and native block transitions at emission; public events and bytes are unchanged ([#4285](https://github.com/code-yeongyu/senpi/pull/4285))
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
+
+### Fixed
+
+- Protocol-owned tool validators can preserve model arguments instead of applying compatibility coercion ([#4191](https://github.com/code-yeongyu/senpi/issues/4191)).
+
+### Removed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.24-4] - 2026-10-24
 
 ### Breaking Changes

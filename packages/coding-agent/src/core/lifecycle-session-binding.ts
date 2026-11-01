@@ -14,13 +14,17 @@ import { lifecycleHistory } from "./lifecycle-history.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
+import { goalGuardAfter, type RunStopFacts } from "./lifecycle-stop.ts";
+import { wakeSourceItems } from "./lifecycle-wait-items.ts";
 import { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { SessionLifecycleEvent } from "./session-lifecycle-types.ts";
+import type { TurnDeadlineKind } from "./turn-deadline.ts";
 import { isRecord } from "./work-custody-record.ts";
 
 interface LifecycleBindingHost {
 	append(type: string, data: unknown): string;
 	emit(event: SessionLifecycleEvent): void;
+	holdInterruptedRun(): void;
 	factsFailed(error: unknown): void;
 }
 
@@ -34,6 +38,11 @@ export class LifecycleSessionBinding {
 	private readonly unsubscribeAdmission: () => void;
 	private readonly unsubscribeGoal: () => void;
 	private lastEnd: AgentEndEvent | undefined;
+	/** The run each emitted agent_end belonged to, read when it was emitted, not when its queue reaches it. */
+	private readonly boundEnds = new WeakMap<object, string | undefined>();
+	private lastEndRunId: string | undefined;
+	/** Captured once inside the bound end's own extension-processing window, never re-scanned by a later run. */
+	private lastEndGuard: RunStopFacts["guard"];
 	private refreshGeneration = 0;
 	private restored = false;
 	private nextRunOrigin: "human" | "automatic" | undefined;
@@ -73,14 +82,18 @@ export class LifecycleSessionBinding {
 		});
 		// A crashed receiver may have durable custody but no transcript entry yet. Recovery owns that
 		// delivery already; register it before session_start can let the gateway enqueue a second carrier.
-		const deliveryEntries = session.sessionManager.reduceHistory(lifecycleDeliveryEntries);
+		const deliveries = session.sessionManager.reduceHistory(lifecycleDeliveryEntries);
 		for (const record of this.controller.obligations.active) {
+			// Discover consumed work before session_start can queue another automatic turn. The later
+			// recovery pass still writes interruption/tool records, but must not be the first to close admission.
+			if (record.ticketId && (record.state === "consumed" || deliveries.has(record.ticketId)))
+				this.controller.ledger.interrupted = true;
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
 			const ticketId = record.ticketId;
 			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
 			const deliveryId = deliveryIdOf(message);
 			if (deliveryId === undefined) continue;
-			if (deliveryEntries.has(ticketId)) session.externalAdmission.observePersisted(message);
+			if (deliveries.has(ticketId)) session.externalAdmission.observePersisted(message);
 			else
 				session.externalAdmission.restoreQueued(
 					deliveryId,
@@ -131,9 +144,22 @@ export class LifecycleSessionBinding {
 
 	startRun(): void {
 		this.lastEnd = undefined;
+		this.lastEndGuard = undefined;
 		const origin = this.nextRunOrigin;
 		this.nextRunOrigin = undefined;
 		this.controller.startRun(origin);
+	}
+
+	deadlineStopped(kind: TurnDeadlineKind, atMs: number): void {
+		this.controller.deadlineStopped(kind, atMs);
+	}
+
+	deadlineStopWriteFailed(): void {
+		this.controller.deadlineStopWriteFailed();
+	}
+
+	bindTurnEnd(end: object): void {
+		this.boundEnds.set(end, this.controller.ledger.runId);
 	}
 
 	consume(message: AgentMessage): string | undefined {
@@ -146,8 +172,14 @@ export class LifecycleSessionBinding {
 		return ticketId ? this.session.sessionManager.reduceHistory(lifecycleDeliveryEntries).get(ticketId) : undefined;
 	}
 
-	async turnEnded(event: AgentEndEvent): Promise<void> {
+	/** `event` is the extension agent_end, never the session-level stamp; `end` is the core event bound at emission. */
+	async turnEnded(event: AgentEndEvent, end: object, guardStartLeafId?: string | null): Promise<void> {
 		this.lastEnd = event;
+		this.lastEndRunId = this.boundEnds.get(end);
+		this.lastEndGuard =
+			guardStartLeafId === undefined
+				? undefined
+				: goalGuardAfter(this.session.sessionManager.getBranch(), guardStartLeafId);
 		await this.refreshFacts();
 	}
 
@@ -195,7 +227,15 @@ export class LifecycleSessionBinding {
 				deadlineStop: input.deadlineStop || saved.deadlineStop,
 				providerRetryAtMs: input.providerRetryAtMs ?? saved.providerRetryAtMs,
 			};
-		this.controller.goalFacts(goal, input);
+		// Stop facts belong to the run that just ended in this process; a restored end carries its recorded stop.
+		const stop = this.lastEnd
+			? {
+					runId: this.lastEndRunId,
+					guard: this.lastEndGuard,
+					todo: collected?.todoOutcome,
+				}
+			: undefined;
+		this.controller.goalFacts(goal, input, stop);
 	}
 
 	async idle(): Promise<void> {
@@ -240,6 +280,9 @@ export class LifecycleSessionBinding {
 			this.recordInterruptedTools(transcript?.id ?? record.transcriptEntryId);
 		}
 		this.restored = true;
+		// Recovery may discover interruption after bindExtensions' initial hold check. Install the hold before
+		// publishing restored state or replaying custody; a saved Resume directive is not new human input.
+		this.host.holdInterruptedRun();
 		this.controller.obligations.retireRestoredSources();
 		this.controller.restoreComplete();
 		for (const record of this.controller.obligations.active) {
@@ -316,6 +359,7 @@ export class LifecycleSessionBinding {
 			data.source,
 			data.kind === "children" ? "children" : "background",
 			data.activeCount,
+			wakeSourceItems(data),
 		);
 	}
 

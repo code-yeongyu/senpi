@@ -8,6 +8,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { PendingInputSnapshot } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { RecoveryPageAnswer } from "./compact-recovery-requests.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 
 import type { EffectStatus } from "./effect-record.ts";
@@ -21,7 +22,10 @@ import type {
 	RpcSessionState,
 } from "./rpc-session-state-types.ts";
 
+import type { RpcSnapshot } from "./snapshot-types.ts";
+
 export type RpcReadResponse =
+	| { id?: string; type: "response"; command: "get_snapshot"; success: true; data: RpcSnapshot }
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
 	| {
 			id?: string;
@@ -89,7 +93,14 @@ export type RpcReadResponse =
 			type: "response";
 			command: "get_entries";
 			success: true;
-			data: { entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string };
+			data: {
+				entries: SessionEntry[];
+				leafId: string | null;
+				hasMore?: boolean;
+				nextSince?: string;
+				/** A `tail` page's oldest entry id while older entries remain (senpi#4267). */
+				next_before?: string;
+			};
 	  }
 	| {
 			id?: string;
@@ -98,6 +109,7 @@ export type RpcReadResponse =
 			success: true;
 			data: { tree: SessionTreeNode[]; leafId: string | null };
 	  }
+	| { id?: string; type: "response"; command: "get_recovery_page"; success: true; data: RecoveryPageAnswer }
 	| {
 			id?: string;
 			type: "response";

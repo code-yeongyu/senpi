@@ -1,33 +1,22 @@
+import type {
+	CredentialAuthResult,
+	CredentialModel,
+	CredentialResolver,
+	ProviderCredential,
+} from "../../../runtime/credential-resolver.ts";
 import { credentialParts, isPlaceholderKey, nonEmpty, OPENAI_BASE_URL } from "./credentials.ts";
 import { resolveConfiguredOpenAi } from "./openai-auth.ts";
 
-export interface ImageGenAuthModel {
-	provider: string;
-	id: string;
-	baseUrl: string;
-	api?: string;
-}
+export type ImageGenAuthModel = CredentialModel;
 
-export type ImageGenRegistryAuthResult =
-	| { ok: true; apiKey?: string; headers?: Record<string, string | null>; baseUrl?: string }
-	| { ok: false; error: string };
+export type ImageGenRegistryAuthResult = CredentialAuthResult;
 
-export interface ImageGenProviderAuthResult {
-	auth: {
-		apiKey?: string;
-		headers?: Record<string, string | null>;
-	};
-}
+export type ImageGenProviderAuthResult = ProviderCredential;
 
-export interface ImageGenAuthRegistry<TModel extends ImageGenAuthModel = ImageGenAuthModel> {
-	authStorage: {
-		get(provider: string): unknown;
-	};
-	getAll(): TModel[];
-	getApiKeyAndHeaders(model: TModel): Promise<ImageGenRegistryAuthResult>;
-	getProviderAuth(provider: string): Promise<ImageGenProviderAuthResult | undefined>;
-	getProviderAuthStatus?(provider: string): { configured: boolean; source?: string };
-}
+export type ImageGenAuthRegistry<TModel extends ImageGenAuthModel = ImageGenAuthModel> = Pick<
+	CredentialResolver<TModel>,
+	"authStorage" | "getAll" | "getApiKeyAndHeaders" | "getProviderAuth" | "getProviderAuthStatus"
+>;
 
 export interface ResolveImageGenAuthDeps<TModel extends ImageGenAuthModel = ImageGenAuthModel> {
 	modelRegistry: ImageGenAuthRegistry<TModel>;

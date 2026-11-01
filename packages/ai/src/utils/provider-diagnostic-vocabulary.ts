@@ -9,9 +9,10 @@ export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
 
 /**
  * Closed allowlist of provider error tokens and the family each one proves.
- * Exact tokens only: Anthropic `error.type` values and OpenAI-compatible
- * `error.code` values. `billing_error` proves a billing failure, not quota
- * exhaustion, so it stays `unknown`.
+ * Exact tokens only: Anthropic `error.type` values, OpenAI-compatible
+ * `error.code` values, and the precise OpenAI-compatible `error.type` values
+ * that stand in for a missing code (`exceeded_current_quota_error`, senpi#4950).
+ * `billing_error` proves a billing failure, not quota exhaustion, so it stays `unknown`.
  */
 export function categoryForProviderCode(code: string): ProviderDiagnosticCategory | undefined {
 	switch (code) {
@@ -22,6 +23,7 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 		case "rate_limit_exceeded":
 			return "rate_limit";
 		case "insufficient_quota":
+		case "exceeded_current_quota_error":
 		case "usage_limit_reached":
 		case "usage_not_included":
 			return "quota";
@@ -77,6 +79,7 @@ export function isProviderCodeStatusCompatible(code: string, status: number): bo
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
 		case "insufficient_quota":
+		case "exceeded_current_quota_error":
 		case "usage_limit_reached":
 		case "usage_not_included":
 			return status === 429;

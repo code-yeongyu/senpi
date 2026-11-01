@@ -1,3 +1,338 @@
+## 2026-10-29 - Run the compiled Windows pair and old-parser controls (#4859)
+
+### What changed
+
+- `.github/workflows/ci.yml`: runs `host-private-fds-pair.test.ts` and `host-private-fd-inherit.test.ts` in the existing Windows RPC job, including the compiled Bun round-trip, native failure guards and frozen old-parser compatibility control on the workflow's pinned runtime.
+
+### Why
+
+- A Bun bump invalidates the release proof and must re-run both controls before the proof can be re-enabled.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- The Windows RPC job's test steps.
+
+## 2026-10-30 - Pull-request CI runs only for PRs labelled run-full-ci (senpi#4968)
+
+### What changed
+
+- `.github/workflows/ci.yml`: no `pull_request` trigger. `push` (main) and `workflow_call` are unchanged. On a pull request the workflow runs only when `ci-full-label.yml` calls it.
+
+### Why
+
+- senpi#4968: merges are decided on a local whole-suite receipt at the exact head plus a review, so a hosted run on every PR push only held the account's shared runners, and a release job waited over an hour for one. Without a job-level gate, the required `Check and test` context stays expected on an unlabelled PR instead of passing as skipped.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `on:` block and the comment above `concurrency` in `ci.yml`.
+
+## 2026-10-30 - Install Bun for the RPC supervisor exit job (senpi#4852, part of #4845)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-owner-lifetime` job installs the repository's pinned Bun (1.4.4) before running the owner-lifetime regressions.
+
+### Why
+
+- The owner-lifetime regression now covers a Bun owner killed with SIGKILL; it spawns `bun`, which the Node-only job did not provide.
+
+### Why an extension could not handle it
+
+- GitHub Actions provisions the runner before the agent runtime starts.
+
+### Expected merge conflict zones
+
+- LOW: the setup steps of the `rpc-owner-lifetime` job in `ci.yml`.
+
+## 2026-10-29 - Exercise all four Bun-certified suites in CI (senpi#4763)
+
+### What changed
+
+- `.github/workflows/ci.yml`: add client, protocol and telemetry to the workspace test selection beside server. The job already installs Bun 1.4.4.
+
+### Why
+
+- Root test commands discover these packages, but CI's explicit selection previously omitted three of them.
+
+### Why an extension could not handle it
+
+- GitHub Actions selects workspace suites outside the extension runtime.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `test-workspaces` job's workspace selection.
+
+## 2026-10-29 - Use Bun in direct CI type checks (senpi#4770)
+
+### What changed
+
+- `.github/workflows/ci.yml` and `.github/workflows/read-summary-binary-parity.yml` use `bun check --no-script --all -p` with their existing gate-harness and root projects.
+
+### Why
+
+- CI and the root validation script should use the same checker without invoking package scripts.
+
+### Why an extension could not handle it
+
+- GitHub Actions runs these commands before the agent runtime starts.
+
+### Expected merge conflict zones
+
+- LOW: the direct type-check steps in `ci.yml` and `read-summary-binary-parity.yml`.
+
+## 2026-10-28 - Knip export coverage falls back to a bounded fetch of the PR head (senpi#4714)
+
+### What changed
+
+- `.github/workflows/ci.yml`: in the `check` job (`Static checks`), the `Knip export coverage` step still fetches a pull request's own commits with `--shallow-exclude=refs/heads/<base>` first. When that fetch fails, it now logs the fallback and fetches `refs/pull/<n>/head` with `--depth=500` into the same `origin/pr-head` ref, so `KNIP_COVERAGE_HISTORY` stays `origin/pr-head`.
+
+### Why
+
+- For a stacked PR whose base PR has just merged into `main`, the server refuses the `--shallow-exclude` fetch (`fatal: error processing shallow info: 4`, exit 128). Static checks then failed with no code problem (senpi#4714).
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `Knip export coverage` step in `.github/workflows/ci.yml`. Upstream pi-mono has no knip step, so on a sync keep this one.
+
+## 2026-10-28 - CI runs the fused-path equivalence harness (senpi#4639)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new `fused-equivalence` job (ubuntu-latest) runs the EQ normalizer unit tests, `fused-equivalence-qa.mjs --compare --pipeline legacy --placement fused` against the linux-x64 B0 goldens (cases E01-E20), and `node-smoke-qa.mjs --compare --runtimes node,bun`; the `Check and test` fan-in needs it and lists it in its summary.
+
+### Why
+
+- The planned execution-pipeline work must keep today's fused-path behavior: a change to what a provider, an RPC client or the session store observes has to fail the PR that makes it (senpi#4628).
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the job list and the `check-and-test` `needs` list in `ci.yml`.
+
+## 2026-10-28 - CI builds the workspace once for the four coding-agent shards (senpi#4612)
+
+### What changed
+
+- `.github/workflows/ci.yml`: added the `build-coding-agent` job, which runs `npm ci --ignore-scripts`
+  and `npm run build` once and uploads every `packages/**/dist` directory as a single tarball artifact
+  (`workspace-dist`). The four `test-coding-agent` shards now `needs:` that job, download and untar the
+  artifact, and no longer run `npm run build` themselves. Their test command, shard count (`N/4`) and
+  `timeout-minutes` values are unchanged, so the set of tests that run is identical.
+
+### Why
+
+- Each shard rebuilt the same workspace: four identical builds per run, measured at 33-37 s each on a
+  recent `main` run, on a runner pool that is congested (senpi#4610). The build is a pure function of the
+  checked-out tree, so producing it once and fanning it out removes ~105 s of duplicated work per run.
+
+### Why an extension could not handle it
+
+- This is GitHub Actions workflow wiring; it has no runtime surface an extension could reach.
+
+### Expected merge conflict zones
+
+- LOW: `.github/workflows/ci.yml` around the `test-coding-agent` job. Upstream edits to that job's step
+  list (install, build, test shard) would collide with the removed build step and the added
+  download/restore steps.
+
+## 2026-10-28 - Superseded pull-request runs are cancelled in two workflows (senpi#4611)
+
+### What changed
+
+- `.github/workflows/automation-branch-guard.yml`: a workflow-level `concurrency` group keyed by the pull request number, with `cancel-in-progress: true`. `pull_request` is the only trigger, so a newer head always replaces the older verdict.
+- `.github/workflows/publish-model-catalog.yml`: a workflow-level `concurrency` group of `pr-<number>` for `pull_request` events and `run-<run_id>` for every other event, with `cancel-in-progress` evaluating to true only for `pull_request`. `workflow_run`, `schedule` and `workflow_dispatch` runs therefore each get their own group and are never cancelled; the `publish` job keeps its own R2 group.
+
+### Why
+
+- Every push to a PR branch left the previous head's run of these workflows executing, holding runners for a result no merge decision can use while the newest head waited behind a long queue (senpi#4609).
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the block between `on:` and `permissions:` in both workflow files.
+
+## 2026-10-27 - Windows check that the bundled Claude CLI runs a .cmd BROWSER helper (senpi#4437)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `claude-executable-windows` job gains a step that runs `test/anthropic-subscription-claude-cli-auth-windows.test.ts` and fails when that test did not pass (a skip counts as failure).
+
+### Why
+
+- The senpi#4436 design leaves open whether the bundled CLI can run a `.cmd` helper given as `BROWSER` on Windows; only a real Windows runner can say, and the answer picks the Windows default sign-in method.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the step list of `claude-executable-windows` in `ci.yml`.
+
+## 2026-10-27 - CI runs the knip dead-code check (senpi#4421)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `check` job (`Static checks`) runs `npm run knip:check` right after `npm run check`, then fetches the base branch (and, for a pull request, its own commits) and runs `scripts/check-knip-export-coverage.mjs`.
+
+### Why
+
+- New dead code should fail the PR that adds it (senpi#4419), and a config change must never quietly stop knip from checking a file it checked before.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the step list of the `check` job in `ci.yml`.
+
+## 2026-10-25 - Exercise the attachment presentation on Windows (senpi#4269)
+
+### What changed
+
+- `.github/workflows/ci.yml`: runs `attach.test.ts` in the Windows RPC named-pipe job and requires its assertions to execute and pass.
+
+### Why
+
+- `.github/workflows/ci.yml`: local socket tests alone cannot prove the native Windows pipe transport.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection and test-result verification belong to CI.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the terminal endpoint test command and executed-test guard.
+
+## 2026-10-26 - Junction and ReFS receipts for the socket-secret adapter (senpi#4375)
+
+### What changed
+
+- `.github/workflows/ci.yml`: job `socket-secret-native-windows` also creates two NTFS directory junctions on the fixed volume (to the WinFsp `M:` volume and to the VHDX `V:` volume) and a ReFS-formatted VHDX (`R:`), and exports `RECEIPT_JUNCTION_WINFSP`, `RECEIPT_JUNCTION_VHDX` and `RECEIPT_REFS_VHDX`. If the image cannot format ReFS, the step exports `RECEIPT_REFS_UNAVAILABLE` with diskpart's exit instead of failing the job.
+
+### Why
+
+- senpi#4354: the classifying handle follows reparse points, but no native receipt proved it, and the ReFS-local rule had only fake coverage.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `Mount receipt fixtures` step of `socket-secret-native-windows` in `ci.yml`, if another fixture lands beside it.
+
+## 2026-10-26 - Windows native receipts for the socket-secret adapter (senpi#4302)
+
+### What changed
+
+- `.github/workflows/ci.yml`: new job `socket-secret-native-windows` on `windows-latest`, gated on the platform scope and added to the `Check and test` fan-in. It installs WinFsp 2.1 and Dokany 2.3.1 from their release assets, mounts a WinFsp disk volume reporting NTFS, a WinFsp network volume, a Dokany mirror, a local SMB share (mapped and UNC) and a VHDX-mounted NTFS volume, runs `cargo test -p senpi-socket-secret` and then the ignored native receipts, and writes every `RECEIPT_` line to the job summary.
+
+### Why
+
+- sisyphuslabs/omo-desktop-app#4199 design receipts 27 (PID-4 kernel-session identity) and 28 (`FileFsDriverPathInformation` locality) need a real Windows kernel; fakes cannot supply them, and no VM is used.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the job list and the `Check and test` needs list in `ci.yml`, if another Windows job lands beside it.
+
+## 2026-10-26 - publish-model-catalog requires a same-repository push for workflow_run runs (senpi#4344)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: for the `workflow_run` trigger, the `generate` job now also requires `github.event.workflow_run.head_repository.full_name == github.repository` and `github.event.workflow_run.event == 'push'`, on top of `conclusion == 'success'` and `head_branch == 'main'`; the `publish` job's `workflow_run` path requires the same two checks.
+
+### Why
+
+- `generate` checks out `workflow_run.head_sha`, and the branch name alone does not say which repository the triggering run belongs to (senpi#4342).
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `if:` lines of the `generate` and `publish` jobs in `publish-model-catalog.yml`.
+
+## 2026-10-25 - Build Binaries outwaits a queued publish-only run and keeps a draft npm already shipped (senpi#4244)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `publish-npm` job waits for the dispatched `publish-npm.yml` run through `scripts/await-dispatched-run.sh` instead of `timeout 3600 gh run watch`. The job gets `timeout-minutes: 360`, `AWAIT_MAX_SECONDS: "19800"`, `contents: read` and a sparse checkout of `scripts/`. The wait keeps going while the child is queued or in progress, prints its status each poll, and fails only when the child completes with a non-success conclusion or the ceiling passes.
+- `.github/workflows/build-binaries.yml`: `publish-npm` finds the dispatched run in its own step and exposes its id as the job output `run_id`. `cleanup-draft-github-release` gets `actions: read`, checks out `scripts/` and runs `scripts/release-draft-cleanup.sh` with that run id and the `publish-npm` job result. The script asks npm for `@code-yeongyu/senpi@<version>` and keeps the draft, prints the recovery commands and exits non-zero when npm has the version or cannot be asked. When npm does not have it (E404 or an empty `npm view` result), the script still keeps the draft while the dispatched publish run is queued or in progress, succeeded, or cannot be read; without a run id it keeps the draft while any `publish-npm.yml` dispatch run has not completed or the runs cannot be listed. It deletes the draft only when no publish run was dispatched or the publish run completed without success.
+
+### Why
+
+On 2026.10.24-1 the dispatched publish-only run sat queued for hosted runners past the 60 minute wait, then succeeded and put all seven packages on npm. The parent had already failed, so the release publish was skipped and the cleanup deleted the staged draft. The version was on npm with no GitHub release, and recovery needed a full rebuild (senpi#4173). A parent that gives up or is cancelled while the child is still queued must not delete the draft either, because the child can still publish.
+
+### Why an extension could not handle it
+
+Release orchestration is repository workflow configuration, not runtime behavior an extension can reach.
+
+### Expected merge conflict zones
+
+- LOW: the `publish-npm` and `cleanup-draft-github-release` jobs in `build-binaries.yml`, if upstream changes how its release workflow waits on npm publishing or cleans up drafts.
+
+## 2026-10-25 - The Windows RPC job drives a terminal control endpoint over a pipe (senpi#4267)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `RPC named pipes (Windows)` job's TUI step now runs the terminal endpoint suite that registers, lists, attaches and drives a terminal over a named pipe, plus the terminal socket wrong-secret suite.
+
+### Why
+
+- Terminal control endpoints now register on win32; the job proves it end to end instead of proving the old refusal.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `rpc-windows` job's TUI step and its comment.
+
+## 2026-10-25 - CI and release workflows pin Bun 1.4.4 (senpi#4223)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `oven-sh/setup-bun` step installs Bun `1.4.4` instead of `1.4.3`, so the shipped binaries compile on 1.4.4.
+- `.github/workflows/ci.yml`, `publish-npm.yml`, `releasability.yml`, `read-summary-binary-parity.yml` and `session-worker-compile.yml`: every `oven-sh/setup-bun` step installs Bun `1.4.4` instead of `1.4.3`.
+
+### Why
+
+CI and the release binaries must build and test on the Bun release users get. The 1.4.4 patch release needs no runtime code change here; `MIN_BUN_VERSION` and the version-gated workarounds stay as they are. The source-install security tests explicitly plant stale links after a real install instead of depending on Bun's old per-file symlink behavior. Deleted-source coverage retains both the installer's own failure and our dangling-link refusal, with the previous revision unchanged in both cases.
+
+### Why an extension could not handle it
+
+The toolchain version CI installs is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `bun-version` lines in the six workflows above, if upstream changes its Bun pin.
+
 ## 2026-10-23 - Four coding-agent CI shards leave timeout headroom (senpi#4131)
 
 ### What changed

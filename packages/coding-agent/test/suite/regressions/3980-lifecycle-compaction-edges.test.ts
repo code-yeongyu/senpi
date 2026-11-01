@@ -179,7 +179,8 @@ it("writes nothing after dispose through any lifecycle write path, including a r
 	const liveWrites = spyWrites(h.session.sessionManager);
 	const restoreWrites = spyWrites(reopened.session.sessionManager);
 	binding.controller.idle();
-	await binding.turnEnded({ type: "agent_end", messages: [] });
+	const turnEnd = { type: "agent_end" as const, messages: [] };
+	await binding.turnEnded(turnEnd, turnEnd);
 	binding.controller.humanInput(new Date().toISOString());
 	binding.controller.startRun("automatic");
 	binding.consume({

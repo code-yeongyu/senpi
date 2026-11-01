@@ -65,6 +65,12 @@ export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
  * client's own `set_client_info` and fixed at that first declaration (see `connection-roles.ts`).
  */
 export const INTERACTIVE_USER_CAPABILITY = "interactive_user";
+/** `get_state` and `get_entries` accept `observe: true` and then never count as an attachment (senpi#4267). */
+export const OBSERVE_READS_CAPABILITY = "observe_reads";
+/** `get_entries` accepts `before` and `tail` and answers `next_before` (senpi#4267). */
+export const ENTRIES_TAIL_CAPABILITY = "entries_tail";
+/** A terminal control endpoint serves the host's observe-and-drive command set (senpi#4267). */
+export const TUI_OBSERVER_CAPABILITY = "tui_observer";
 /** The connection owns this session as a task child; only it may pause or resume the session for its run (senpi#3811). */
 export const TASK_PARENT_CAPABILITY = "task_parent";
 
@@ -131,6 +137,15 @@ export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
 export const BROWSER_ENGINE_CAPABILITY = "browser_engine";
 
 /**
+ * HOST capability: this host honors `open_session.env` (senpi#4381), the per-spawn caller env channel.
+ * The entries are that session's own: its tool subprocesses see them, they are never merged into the host
+ * process environment or carried to a successor generation through it, and only a task child opened with
+ * `spawnedBy` naming that session inherits them (any client that could attach to it can open such a child).
+ * A name outside the host's caller-passable set is refused with `invalid_session_env`.
+ */
+export const SESSION_ENV_CAPABILITY = "session_env";
+
+/**
  * HOST capability: this host honors `open_session.retryFallback` (`{ modelFallback, fallbackChains }`). The
  * policy is that session's own: it is applied as an in-memory settings override for that session only,
  * never written to a settings file and never seen by another session on the host.
@@ -195,6 +210,8 @@ export function buildCustomUnsupportedRequest(
 
 /** `verify_api_key` and `keyHint` on `get_auth_providers` rows (desktop #2510). */
 export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
+/** `test_provider_account`: re-run the sign-in connection test on one Claude subscription account (senpi#4436). */
+export const PROVIDER_ACCOUNT_TEST_CAPABILITY = "provider_account_test";
 
 /** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
 export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";

@@ -44,15 +44,27 @@ export function insideSkillRoot(path: string, root: string): boolean {
 export function buildSkillAllowedSet(sources: readonly string[]): SkillAllowedSet {
 	const roots = new Set<string>();
 	const files = new Set<string>();
-	for (const source of sources) {
+	// Package resolution retains the selected root on every discovered skill.
+	// Walk each spelling once, without collapsing differently ignored aliases.
+	const realpaths = new Map<string, string>();
+	const realpath = (path: string): string => {
+		let canonical = realpaths.get(path);
+		if (canonical === undefined) {
+			canonical = realpathSync.native(path);
+			realpaths.set(path, canonical);
+		}
+		return canonical;
+	};
+	for (const source of new Set(sources)) {
 		try {
-			const canonical = realpathSync.native(source);
+			const canonical = realpath(source);
 			if (statSync(canonical).isFile()) {
 				files.add(canonical);
 				continue;
 			}
 			collectSkillEntries(source, "pi", undefined, undefined, {
-				onDirectory: (path) => roots.add(realpathSync.native(path)),
+				realpath,
+				onDirectory: (path) => roots.add(realpath(path)),
 			});
 		} catch {
 			/* An unavailable user root confers no project authority. */

@@ -39,6 +39,7 @@ import {
 } from "../modes/rpc/host-runner.ts";
 import { type ParsedHostArgs, parseHostArgs } from "./host-command-args.ts";
 import { emit } from "./host-emit.ts";
+import { presenterBootstrapStream } from "../modes/rpc/mcp-presenter-bootstrap.ts";
 
 export { parseHostArgs } from "./host-command-args.ts";
 
@@ -55,6 +56,8 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
   session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
 
   --rpc-key-root <dir>   endpoint credentials only; keeps this client's profile
+  --mcp-presenter-enforcement   ensure/handoff deployment opt-in; default off for a new host
+  --mcp-presenter-fd 4   ensure/handoff private enrollment channel; never enrolls on reuse
   --json   the answer is one JSON line on stdout (always, except shard-path's bare path)`;
 
 /**
@@ -69,7 +72,13 @@ export async function runHostCommand(args: readonly string[]): Promise<number> {
 	}
 	try {
 		const request = await hostRequest(parsed);
-		const outcome = await runHostRequest(request, parsed.keyRoot === undefined ? {} : { keyRoot: parsed.keyRoot });
+		const presenterBootstrap =
+			parsed.presenterBootstrapFd === undefined ? undefined : presenterBootstrapStream(parsed.presenterBootstrapFd);
+		const outcome = await runHostRequest(request, {
+			keyRoot: parsed.keyRoot,
+			presenterBootstrap,
+			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
+		}).finally(() => presenterBootstrap?.destroy());
 		if (parsed.subcommand === "shard-path" && !parsed.json) writeSync(1, `${String(outcome.payload.socket)}\n`);
 		else emit(outcome.payload);
 		return outcome.exitCode;

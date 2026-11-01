@@ -1,5 +1,6 @@
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { createAgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { EffectLedger } from "./effect-ledger.ts";
@@ -7,6 +8,8 @@ import { EffectLedger } from "./effect-ledger.ts";
 import { assertRequestedModelResolved } from "./open-session-model.ts";
 
 import { canonicalSessionPath } from "./session-path-key.ts";
+import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import { setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import {
 	type PendingClaims,
@@ -167,6 +170,12 @@ export async function openRegistrySession(
 		EffectLedger.sealOnReplace(entry.runtime);
 		entry.durableSessionId = manager.getSessionId();
 		entry.sessionPath ??= manager.getSessionFile();
+		// The accepted baseline precedes the open, so router admission and its reply come after it (R3.C1.1).
+		if (compactUpdatesEnabled() && host.options.workerIsolate !== true) {
+			entry.acceptance = new SessionAcceptanceLane();
+			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });
+			setSessionRecoveryEpoch(entry.runtime.session, entry.acceptance.recoveryEpoch);
+		}
 		entry.state = "open";
 		settleOpen.resolve();
 		return { sessionId: handle, durableSessionId: entry.durableSessionId, sessionPath: entry.sessionPath };

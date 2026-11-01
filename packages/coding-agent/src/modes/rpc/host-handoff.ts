@@ -28,6 +28,7 @@
  * left registered, and gc never judges the endpoint halfway through.
  */
 import { getAgentDir } from "../../config.ts";
+import type { Duplex } from "node:stream";
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
@@ -57,6 +58,9 @@ const HANDOFF_LOCK_WAIT_MS =
 	HANDOFF_PROBE_TIMEOUT_MS + Math.max(HANDOFF_LOCK_HOLD_MS, STOP_WAIT_BUDGET_MS + 10_000) + 10_000;
 
 export interface HandoffHostOptions {
+	readonly presenterBootstrap?: Duplex;
+	/** Deployment opt-in. An enforcing predecessor never downgrades during replacement. */
+	readonly mcpPresenterEnforcement?: boolean;
 	readonly socket: string;
 	readonly agentDir?: string;
 	/** Extra CLI arguments the successor's host child is launched with (provider pinning, extensions). */

@@ -1,3 +1,165 @@
+## 2026-10-31 - The Claude Code OAuth impersonation request path is removed; sk-ant-oat tokens are refused (senpi#5131)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the `isOAuthToken` branch of `createClient` is gone, and with it the Bearer auth for `sk-ant-oat` keys, the `claude-code-20250219` / `oauth-2025-04-20` identity betas, the `user-agent: claude-cli/<version>` and `x-app: cli` headers, the `claudeCodeVersion` constant, the `claude_code_version_too_old` retry (`retryWithNewerClaudeCode`, `noteTooOldClaudeCode`), the `"You are Claude Code, Anthropic's official CLI for Claude."` system block, and the Claude Code tool-name mapping (`claudeCodeTools`, `toClaudeCodeName`, `fromClaudeCodeName`) that `buildParams`, `getBetaFeatures`, `convertMessages`, `convertToolResult`, `convertTools`, `collectProviderNativeToolPairing` and the stream reader threaded through an `isOAuthToken` parameter. `createClient` returns the client. A new pre-flight `assertNotClaudeOAuthToken`, next to `assertRequestAuth` in both `stream` and `streamSimple`, throws the exported `ClaudeOAuthTokenRefusedError` (`code: "claude_oauth_token_refused"`, `provider`, `modelId`; `isClaudeOAuthTokenRefusedError` narrows it) before any client is constructed; its message names `/login anthropic-subscription`, `CLAUDE_CODE_OAUTH_TOKEN` and `anthropic-subscription/<model>`. The system block holds a cache checkpoint only when a system prompt exists.
+
+### Why
+
+- senpi#5131, owner ruling 2026-10-31: senpi must not send a Claude subscription token to the Messages API while presenting itself as Claude Code. #3315 moved subscriptions to the Agent SDK lane and #4515 deleted the PKCE login, but a token placed in `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, an `anthropic` API-key credential or a `models.json` `apiKey` still took this path. The refusal replaces a silent `401` from the API with the action the user needs.
+
+### Why an extension could not handle it
+
+- The client construction, headers and request body of the builtin `anthropic-messages` API are pi-ai's own; an extension cannot remove a header branch from them.
+
+### Expected merge conflict zones
+
+- HIGH: upstream still carries the OAuth stealth branch (`createClient`, `buildParams`, `convertMessages`, `convertTools`). Keep every `isOAuthToken` parameter and Claude Code mapping deleted; keep `assertNotClaudeOAuthToken` beside `assertRequestAuth`.
+
+## 2026-10-30 - Request-level strict tool sampling (senpi#4821)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: `convertTools` resolves function-tool strictness before serialization. With `mixedStrictTools: false`, a non-strict function tool downgrades every function tool; a required-strict tool instead fails before sending and names both conflicting tools. Grammar tools are excluded.
+
+### Why
+
+- `packages/ai/src/api/openai-completions.ts`: OpenGateway rejects requests mixing strict and non-strict function tools. Per-tool schema fallback left strict siblings enabled.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts`: the adapter owns strict-schema conversion and the final wire tool definitions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts` `convertTools`.
+
+## 2026-10-27 - Anthropic sends the cross-session stable system prefix as its own cached block (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` builds `params.system` through `anthropicSystemTextBlocks`, passing the leading system message's `stablePrefix`.
+- `packages/ai/src/api/anthropic-system-blocks.ts`: new. When the rendered prompt still starts with the recorded stable prefix it goes out as two text blocks whose concatenation is the prompt; the stable block carries the system `cache_control`, the tail none, so the breakpoint count is unchanged. A prompt that no longer starts with it (a later `context_with_system` rewrite) goes out as one block.
+
+### Why
+
+- One system block with one breakpoint missed whenever any byte of a volatile tail (memory, MCP instructions) differed between sessions, so a new session read only the tools prefix and re-wrote the ~20k-token stable prompt.
+
+### Why an extension could not handle it
+
+- System block construction and breakpoint placement happen inside `packages/ai/src/api/anthropic-messages.ts` after every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `params.system` assignment in `buildParams` in `packages/ai/src/api/anthropic-messages.ts`.
+
+## 2026-10-30 - Anthropic SSE reports transport activity (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `iterateSseMessages` calls an `onBytes` callback for every non-empty body chunk, before parsing, so `ping` events and `:` comments count; `iterateAnthropicEvents` and the stream pass `options.onTransportActivity` into it.
+- `packages/ai/src/api/simple-options.ts`: `buildBaseOptions` forwards `onTransportActivity`.
+
+### Why
+
+- Keep-alives are dropped by the SSE parser (comments) or the event filter (`ping`), so the agent loop could not see that an accepted request was still alive while the model thought before its first token.
+
+### Why an extension could not handle it
+
+- The SSE reader is internal to the adapter.
+
+### Expected merge conflict zones
+
+- LOW: `iterateSseMessages` read loop and signature; `iterateAnthropicEvents` call site; `buildBaseOptions` field list.
+
+## 2026-10-26 - The remaining provider families capture block seeds at emission (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/api/bedrock-converse-stream.ts`: the stream is created with capture. Each `signature` reasoning
+  delta, which grows `thinkingSignature` with no event, records a `message_block_metadata` `thinkingSignatureDelta`;
+  the first `redactedContent` of a block records `redacted: true` (plus `thinkingSignature: ""` when a signature had
+  accumulated) before the placeholder `thinking_delta`.
+- `packages/ai/src/api/mistral-conversations.ts`, `packages/ai/src/api/pi-messages.ts`: the stream is created with
+  capture. Their tool argument text grows by exactly the emitted deltas and is parsed on every delta (Pi keeps it in
+  the converter's closure-local `toolJson` store), so the default capture already records the raw spelling and the
+  parse frontier; Mistral's object arguments are recorded in the spelling the adapter emitted.
+- `packages/ai/src/api/google-generative-ai.ts`, `packages/ai/src/api/google-vertex.ts`: the stream is created with
+  capture. A thought signature that `retainThoughtSignature` installs on a text or thinking block records a
+  replacement `textSignature`/`thinkingSignature`; the tool delta (`JSON.stringify` of complete arguments) carries
+  `parsedThrough: 0`, so the complete parsed seed stays authoritative; native parts and the candidate's
+  `groundingMetadata`/`urlContextMetadata` blocks, appended with no event, record `message_block_state` insert and end
+  sharing one frozen copy.
+- `packages/ai/src/api/cursor-agent.ts` (fork-only): the stream is created with capture; an MCP argument delta
+  carries the parse frontier at Cursor's throttled reparse (`kStreamingLastParseLen`), so the stale preview survives
+  until the next 1024-unit reparse.
+- `packages/ai/src/api/devin-agent.ts`, `packages/ai/src/api/devin-agent/stream-state.ts` (fork-only): the stream is
+  created with capture; a replaced `thinkingSignature` and a tool name that arrives after its start record
+  `message_block_metadata`.
+
+### Why
+
+- These adapters mutate public blocks with no event (Bedrock signature growth and redaction, Google signatures and
+  native/grounding blocks, Devin signatures and late names) or hold raw argument text in adapter state; only the
+  adapter knows those facts at emission time (R3.C6.2, ruling 05 D1-D3). S02a-1 covered Anthropic, Responses and
+  Completions; this completes the producer side.
+
+### Why an extension could not handle it
+
+- The mutations happen inside adapter closures before any event exists; no hook exposes the emitted spelling, the
+  parse frontier or the event-less native blocks.
+
+### Expected merge conflict zones
+
+- LOW: each adapter's stream construction line.
+- LOW: `bedrock-converse-stream.ts` `handleContentBlockDelta` signature and redaction branches.
+- LOW: `google-generative-ai.ts`/`google-vertex.ts` text/thinking delta branches, the `functionCall` delta push, the
+  native-part branch and the grounding/urlContext metadata branches.
+
+## 2026-10-25 - Anthropic, Responses and Completions capture seeds and native transitions at emission (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the stream is created with capture. Unknown (native) blocks record a
+  `message_block_state` insert at `content_block_start` and an end at `content_block_stop` after `raw.input` is
+  parsed; each `signature_delta` records only its delta as `thinkingSignatureDelta`.
+- `packages/ai/src/api/openai-responses-shared.ts`: `processResponsesStream` enables capture on its stream; a
+  `function_call` start carries its possibly nonempty raw prefix (`item.arguments`) while its parsed seed stays
+  `{}`; native items record insert and replacement end in original index order, including image reconciliation
+  and terminal backfill; an `arguments.done` that does not extend the streamed prefix records an authoritative
+  `message_tool_arguments_reset`.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`,
+  `packages/ai/src/api/azure-openai-responses.ts`: the stream is created with capture, so `start` is captured too.
+- `packages/ai/src/api/openai-completions.ts`: the stream is created with capture. Deferred mixed-event flushes
+  emit starts whose coverage matches what they already hold: replayed deltas start at offset 0, and a tool start's
+  raw prefix is the deferred normalized deltas (function or grammar spelling) with its parse frontier at their end.
+  Per-chunk `reasoning_details` signature growth is not recorded (each chunk re-serializes the whole list); the
+  `thinking_end` block and the terminal message carry the final signature.
+- `packages/ai/src/api/lazy.ts`: the lazy wrapper is carrier-aware. Its forwarder reads the inner stream with
+  `assistantEvents`, so events keep their carriers and progress records cross to the outer stream as they are read
+  without an extra forwarder turn; the outer stream registers a records reader that keeps its cancellation.
+
+### Why
+
+- These adapters mutate public blocks without an event (native insert/end, signature growth, raw replacement) and
+  hold raw argument spelling in adapter state; only the adapter knows them at emission time (R3.C6.2, ruling 05
+  D1-D3). Builtin providers load through `lazyApi`, so the lazy wrapper must carry what the adapter captured.
+
+### Why an extension could not handle it
+
+- The mutations happen inside adapter closures before any event exists; no hook exposes the emitted raw spelling,
+  coverage or native transitions.
+
+### Expected merge conflict zones
+
+- LOW: each adapter's stream construction line.
+- LOW: `anthropic-messages.ts` `content_block_start` native branch, `signature_delta` branch and the
+  `content_block_stop` `providerNative` branch.
+- MEDIUM: `openai-responses-shared.ts` `createSlot` (function call and native slots), the image backfill loop,
+  the `arguments.done` branch and the native `output_item.done` branches.
+- LOW: `openai-completions.ts` `flushDeferredBlocks`.
+- LOW: `lazy.ts` `setCancellationHandler` and the source iterator in `lazyStream`.
+
 ## 2026-10-22 - Anthropic stable-prefix cache checkpoints (senpi#3242)
 
 ### What changed

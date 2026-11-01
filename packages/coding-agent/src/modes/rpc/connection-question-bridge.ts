@@ -4,6 +4,7 @@ import type {
 	QuestionRequest,
 	QuestionResponse,
 } from "../../core/extensions/types.ts";
+import type { UiRequestChange } from "./snapshot-types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
@@ -20,8 +21,8 @@ export class ConnectionQuestionBridge {
 	private readonly pending = new Map<string, Pending>();
 	private readonly resolved = new Set<string>();
 	private readonly output: (record: object) => void;
-	private readonly changed: (() => void) | undefined;
-	constructor(output: (record: object) => void, changed?: () => void) {
+	private readonly changed: ((change?: UiRequestChange) => void) | undefined;
+	constructor(output: (record: object) => void, changed?: (change?: UiRequestChange) => void) {
 		this.output = output;
 		this.changed = changed;
 	}
@@ -64,7 +65,11 @@ export class ConnectionQuestionBridge {
 				clearTimeout(timer);
 				opts?.signal?.removeEventListener("abort", cancel);
 				this.pending.delete(id);
-				this.changed?.();
+				this.changed?.({
+					type: "ui_request_settled",
+					uiRequestId: id,
+					disposition: status === "answered" || status === "comment-submitted" ? "answered" : "cancelled",
+				});
 				this.resolved.add(id);
 				const result: QuestionResponse = {
 					status,
@@ -137,7 +142,7 @@ export class ConnectionQuestionBridge {
 				},
 			});
 			arm();
-			this.changed?.();
+			this.changed?.({ type: "ui_request_pending", uiRequestId: id, method: "question", request: frame });
 			this.output(frame);
 			opts?.signal?.addEventListener("abort", cancel, { once: true });
 			if (opts?.signal?.aborted) cancel();

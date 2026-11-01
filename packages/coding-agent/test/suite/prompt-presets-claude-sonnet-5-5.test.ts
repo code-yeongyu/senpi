@@ -28,7 +28,7 @@ function hasSonnet55CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getSonnet55CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasSonnet55CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasSonnet55CatalogSignal));
 }
 
 describe("Claude Sonnet 5.5 prompt preset", () => {

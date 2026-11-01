@@ -53,8 +53,19 @@ export function isUserDirectedTurn(customType: string): boolean {
 	);
 }
 
+/** Recovering an interrupted run is not a new message that resets the unattended turn budget. */
+export function resetsEngineTurnHistory(customType: string, details?: unknown): boolean {
+	return (
+		isUserDirectedTurn(customType) &&
+		!(
+			customType === STOP_RESUME_CUSTOM_TYPE &&
+			(details as { resumeCause?: unknown } | undefined)?.resumeCause === "interrupted"
+		)
+	);
+}
+
 function isUserMessage(entry: SessionEntry): boolean {
-	if (entry.type === "custom_message") return isUserDirectedTurn(entry.customType);
+	if (entry.type === "custom_message") return resetsEngineTurnHistory(entry.customType, entry.details);
 	return entry.type === "message" && entry.message.role === "user";
 }
 

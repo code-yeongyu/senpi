@@ -1,9 +1,18 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { SessionConnectionContext } from "./session-connection-context.ts";
+import { SecretInputPresentations } from "./secret-input-presentations.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
+import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
+import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
+import type { CanonicalControl } from "./compact-canonical-pairing.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { normalizeJsonValue } from "./json-normal-value.ts";
+import { SessionStructuredLanes } from "./session-structured-lanes.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import { type MediaPersister, omitInlineMedia } from "./media-placeholders.ts";
+import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
+import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
+import { type MediaPersister, omitNormalInlineMedia } from "./media-placeholders.ts";
 import type {
 	RpcHostLifecycleEvent,
 	RpcOpenQueuedEvent,
@@ -12,6 +21,9 @@ import type {
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
 import { RpcSecurityPresentations } from "./security-presentations.ts";
+import type { RecoveryPageRequests } from "./compact-recovery-requests.ts";
+import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
+import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
 import { type QueueNode, type RecordQueue, SessionRecordAccounting } from "./session-record-accounting.ts";
@@ -48,20 +60,16 @@ function compactDelta(value: RpcRecord): { type: CompactDeltaType; contentIndex:
 	if (value.type !== "message_update" || !Object.hasOwn(value, "message")) return undefined;
 	const event = value.assistantMessageEvent;
 	if (typeof event !== "object" || event === null) return undefined;
-	const typedEvent = event as Record<string, unknown>;
+	const { type, contentIndex, delta } = event as Record<string, unknown>;
 	if (
-		typeof typedEvent.type !== "string" ||
-		!COMPACT_DELTA_TYPES.has(typedEvent.type as CompactDeltaType) ||
-		typeof typedEvent.contentIndex !== "number" ||
-		typeof typedEvent.delta !== "string"
+		typeof type !== "string" ||
+		!COMPACT_DELTA_TYPES.has(type as CompactDeltaType) ||
+		typeof contentIndex !== "number" ||
+		typeof delta !== "string"
 	) {
 		return undefined;
 	}
-	return {
-		type: typedEvent.type as CompactDeltaType,
-		contentIndex: typedEvent.contentIndex,
-		delta: typedEvent.delta,
-	};
+	return { type: type as CompactDeltaType, contentIndex, delta };
 }
 
 /** The delta-only form of a compact message_update: cumulative snapshot fields blanked, delta kept. */
@@ -86,10 +94,107 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter {
+	private readonly secretPresentations: SecretInputPresentations;
+	secretInputRoute(sessionId: string): SecretInputRoute {
+		return this.secretPresentations.route(sessionId);
+	}
+	setSoleSecretCapabilities(capabilities: readonly string[]): void {
+		this.secretPresentations.handshake(capabilities);
+	}
+	readonly structuredLanes = new SessionStructuredLanes();
+	/** Records refused at the engine's JSON depth limit on the legacy wire (RULING-68). */
+	readonly legacyRefusals = new LegacyRecordRefusals();
+	private presenterAuthority?: McpPresenterAuthority;
+	private readonly presenterConnections = new Map<string, McpPresenterConnection>();
+	private readonly presenterBindings = new Map<string, McpFormBinding>();
+
+	/** Deployment switch. Ordinary RPC behavior is unchanged unless the host explicitly enables it. */
+	enableMcpPresenters(): McpPresenterAuthority {
+		this.presenterAuthority ??= new McpPresenterAuthority();
+		return this.presenterAuthority;
+	}
+
+	get mcpPresenters(): McpPresenterAuthority | undefined {
+		return this.presenterAuthority;
+	}
+
+	getMcpPresenterConnection(id: string): McpPresenterConnection | undefined {
+		return this.presenterConnections.get(id);
+	}
+	findMcpPresenterConnection(nonce: string): McpPresenterConnection | undefined {
+		return [...this.presenterConnections.values()].find((connection) => connection.nonce === nonce);
+	}
+
+	getMcpFormBinding(sessionId: string): McpFormBinding | undefined {
+		return this.presenterBindings.get(sessionId);
+	}
+
+	bindMcpForms(
+		sessionId: string,
+		durableId: string,
+		ui: object,
+		admit: () => void,
+	): (() => void) | undefined | Promise<(() => void) | undefined> {
+		const authority = this.presenterAuthority;
+		if (!authority) return undefined;
+		const binding = authority.bind(sessionId, durableId, admit);
+		this.presenterBindings.set(sessionId, binding);
+		for (const id of this.fanout.attachedConnections(sessionId)) {
+			const connection = this.presenterConnections.get(id);
+			if (connection) authority.attach(connection, binding);
+		}
+		bindPrivateMcpForms(ui, binding);
+		return () => {
+			binding.dispose();
+			if (this.presenterBindings.get(sessionId) === binding) this.presenterBindings.delete(sessionId);
+		};
+	}
+
+	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
+	handleMcpForm(value: unknown): boolean {
+		if (!this.presenterAuthority) return false;
+		if (
+			typeof value !== "object" ||
+			value === null ||
+			!("type" in value) ||
+			typeof value.type !== "string" ||
+			(!value.type.startsWith("mcp_form_") && value.type !== "mcp_presenter_context")
+		)
+			return false;
+		const id = this.currentConnection();
+		const sender = id === undefined ? undefined : this.presenterConnections.get(id);
+		const context =
+			value.type === "mcp_presenter_context" && "sessionId" in value && typeof value.sessionId === "string" && sender
+				? this.presenterAuthority?.connectionContext(sender, value.sessionId)
+				: undefined;
+		const reply =
+			value.type === "mcp_presenter_context"
+				? context
+					? { ok: true, context }
+					: { error: "presenter_not_authorized" }
+				: sender && this.presenterAuthority
+					? this.presenterAuthority.receive(sender, value)
+					: { error: "presenter_not_authorized" };
+		const connection = id === undefined ? undefined : this.fanout.get(id)?.connection;
+		if (connection) {
+			try {
+				connection.writeRaw(
+					serializeJsonLine({
+						type: "mcp_form_reply",
+						...("id" in value && typeof value.id === "string" ? { id: value.id } : {}),
+						...reply,
+					}),
+				);
+			} catch {
+				if (sender) this.presenterAuthority?.detach(sender);
+			}
+		}
+		return true;
+	}
 	private readonly records = new SessionRecordAccounting();
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly fanout = new SessionEventFanout();
-	private readonly connectionContext = new AsyncLocalStorage<string>();
+	readonly connectionContext = new SessionConnectionContext((id) => this.fanout.get(id)?.owner);
 	private readonly securityPresentations = new RpcSecurityPresentations(
 		this.fanout,
 		(id, task) => this.withConnection(id, task),
@@ -150,7 +255,19 @@ export class SessionEventWriter {
 		waitOrSchedule?: BackpressureWaiter | FlushScheduler,
 		scheduleFlush?: FlushScheduler,
 	) {
-		this.fanout.onConnectionClosed = (id) => this.securityPresentations.dropConnection(id);
+		this.secretPresentations = new SecretInputPresentations(
+			this.fanout,
+			() => this.currentConnection(),
+			(line) => this.writeRaw(line),
+			() => this.requestFlush(),
+		);
+		this.fanout.onConnectionClosed = (id) => {
+			this.secretPresentations.detach(id);
+			this.securityPresentations.dropConnection(id);
+			const sender = this.presenterConnections.get(id);
+			if (sender) this.presenterAuthority?.detach(sender);
+			this.presenterConnections.delete(id);
+		};
 		this.writeRaw = writeRaw;
 		if (waitOrSchedule && scheduleFlush === undefined && waitOrSchedule.length > 0) {
 			this.scheduleFlush = waitOrSchedule as FlushScheduler;
@@ -172,15 +289,56 @@ export class SessionEventWriter {
 		return this.sealedSessions.has(sessionId);
 	}
 
+	/** Legacy views frozen for a peer's baseline and not yet released (R3.C6.4 accounting). */
+	get openLegacyViews(): number {
+		return this.fanout.replay.openCursors;
+	}
+
+	/** The checkpoint tokens frozen for peers' baselines and recoveries (S08a, R3.C1.5). */
+	get recoveryCheckpoints(): RecoveryCheckpoints {
+		return this.fanout.checkpoints;
+	}
+
+	/** The page requests over those tokens (S11b, R4.B3); undefined with the compact-updates flag off. */
+	get recoveryPages(): RecoveryPageRequests | undefined {
+		return this.fanout.pages;
+	}
+
+	/** The peer incarnation a registered connection is: what its tokens and cursors are bound to. */
+	socketEpochOf(id: string): string | undefined {
+		return this.fanout.get(id)?.socketEpoch;
+	}
+
 	registerConnection(
 		id: string,
 		connection: SessionEventWriterConnection,
 		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
 	): void {
+		const previousPresenter = this.presenterConnections.get(id);
+		if (previousPresenter) this.presenterAuthority?.detach(previousPresenter);
 		this.fanout.registerConnection(id, connection, options);
+		if (this.presenterAuthority) {
+			const sender = this.presenterAuthority.connect(id, (frame) => {
+				if (!this.fanout.get(id)) return false;
+				try {
+					connection.writeRaw(serializeJsonLine(frame));
+					// A pending drain does not undo an accepted write or drop the next resolution.
+					void connection.waitForBackpressure().catch(() => this.presenterAuthority?.detach(sender));
+					return true;
+				} catch {
+					this.presenterAuthority?.detach(sender);
+					return false;
+				}
+			});
+			this.presenterConnections.set(id, sender);
+		}
 	}
 
 	unregisterConnection(id: string): void {
+		this.secretPresentations.detach(id);
+		const sender = this.presenterConnections.get(id);
+		if (sender) this.presenterAuthority?.detach(sender);
+		this.presenterConnections.delete(id);
 		this.securityPresentations.dropConnection(id);
 		this.fanout.unregisterConnection(id);
 		this.status.dropConnection(id);
@@ -190,10 +348,17 @@ export class SessionEventWriter {
 	attachConnectionToSession(id: string, sessionId: string): void {
 		this.fanout.attachConnectionToSession(id, sessionId);
 		if (this.hasConnection(id)) this.securityPresentations.attach(id, sessionId);
+		const sender = this.presenterConnections.get(id);
+		const binding = this.presenterBindings.get(sessionId);
+		if (sender && binding) this.presenterAuthority?.attach(sender, binding);
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
+		const sender = this.presenterConnections.get(id);
+		const binding = this.presenterBindings.get(sessionId);
+		if (sender && binding) this.presenterAuthority?.detach(sender, binding);
 		this.fanout.detachConnectionFromSession(id, sessionId);
+		this.secretPresentations.recheck();
 		this.securityPresentations.detach(id, sessionId);
 	}
 
@@ -203,11 +368,19 @@ export class SessionEventWriter {
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
+		this.secretPresentations.recheck();
 		this.securityPresentations.capabilitiesChanged(id);
+		if (!capabilities.includes("interactive_user") || !capabilities.includes("mcp_form_presenter_v1")) {
+			const sender = this.presenterConnections.get(id);
+			if (sender) this.presenterAuthority?.withdraw(sender);
+		}
 	}
 
 	clearConnectionCapabilities(id: string): void {
+		const sender = this.presenterConnections.get(id);
+		if (sender) this.presenterAuthority?.withdraw(sender);
 		this.fanout.clearConnectionCapabilities(id);
+		this.secretPresentations.recheck();
 		this.securityPresentations.capabilitiesChanged(id);
 	}
 	bindSecurityPresentations(
@@ -257,6 +430,17 @@ export class SessionEventWriter {
 		else this.mediaPersisters.set(sessionId, persister);
 	}
 
+	/** A worker isolate frames a canonical-only unit; an in-process host folds block controls in its own lane. */
+	enqueueCanonical(_sessionId: string, _control: CanonicalControl): void {}
+
+	/** A worker isolate reports a lost canonical record to its host lane; an in-process binding tells its lane directly. */
+	canonicalUnavailable(_sessionId: string, _cause: unknown): void {}
+
+	/** The session's records reach `lane` before `enqueue`; sealing or forgetting the session retires it. */
+	registerAcceptance(sessionId: string, lane: SessionAcceptanceLane): void {
+		if (!this.sealedSessions.has(sessionId)) this.fanout.acceptance.set(sessionId, lane);
+	}
+
 	setSessionKind(sessionId: string, kind: SessionKind): void {
 		if (kind === "worker") this.workerSessions.add(sessionId);
 		else this.workerSessions.delete(sessionId);
@@ -282,7 +466,7 @@ export class SessionEventWriter {
 	enqueue(sessionId: string, value: object): boolean {
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
-		const record = value as RpcRecord;
+		const record = normalizeJsonValue(value).value as RpcRecord;
 		const isTargeted =
 			record.type === "response" ||
 			record.type === "bash_execution_update" ||
@@ -291,8 +475,26 @@ export class SessionEventWriter {
 			record.type === "relocation_due" ||
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
-		const tagged = { ...value, sessionId } as RpcRecord;
+		// A stale reply is consumed, not a session failure: the worker still gets its output credit.
+		const current = isTargeted ? this.connectionContext.currentGuard() : undefined;
+		if (current?.() === false) return true;
+		const tagged = { ...observeLifecycleDelivery(record), sessionId } as RpcRecord;
 		const line = serializeJsonLine(tagged);
+		// Observation records are per-subscription opt-ins on the subscriber's own actor FIFO: never attachments,
+		// the attach replay, response broadcast, or the stdio lane, which cannot subscribe.
+		if (
+			record.type === "snapshot_marker" ||
+			record.type === "ui_request_pending" ||
+			record.type === "ui_request_settled"
+		) {
+			const targets =
+				record.type === "snapshot_marker"
+					? this.status.mirrorTargets(sessionId, "snapshot_marker").filter((id) => id === targetId)
+					: this.status.dialogTargets(sessionId);
+			for (const target of targets) this.fanout.get(target)?.actor.enqueue(line);
+			if (targets.length > 0) this.requestFlush();
+			return true;
+		}
 		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
 			this.closeSession(
 				sessionId,
@@ -306,7 +508,7 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
-		this.openTurns.note(sessionId, record.type);
+		this.openTurns.note(sessionId, record.type, (record as { reason?: unknown }).reason);
 		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));
@@ -316,15 +518,17 @@ export class SessionEventWriter {
 		const hasPlaceholderTarget = targets.some((target) =>
 			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
 		);
-		const redacted = hasPlaceholderTarget ? omitInlineMedia(tagged, this.mediaPersisters.get(sessionId)) : tagged;
+		const redacted = hasPlaceholderTarget
+			? omitNormalInlineMedia(tagged, this.mediaPersisters.get(sessionId))
+			: tagged;
 		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
-		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, tagged);
+		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine);
 		for (const target of targets) {
 			if (target !== undefined && !this.fanout.get(target)) continue;
 			const registered = target === undefined ? undefined : this.fanout.get(target);
 			const wants =
 				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
-			if (registered) {
+			if (registered && target !== undefined) {
 				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
 				registered.actor.enqueue(
 					wants ? placeholderLine : line,
@@ -332,6 +536,10 @@ export class SessionEventWriter {
 					undefined,
 					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
 					isCorrelatedReply(tagged),
+					mirrors.includes(target)
+						? undefined
+						: this.fanout.attachmentOf(target, sessionId, isTargeted, record.type),
+					current,
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}
@@ -385,7 +593,8 @@ export class SessionEventWriter {
 		const line = serializeJsonLine({ type: "loaded_surfaces_changed", sessionId });
 		for (const id of this.fanout.attachedConnections(sessionId)) {
 			if (!this.surfaceDedupe.announce(id, sessionId, previous, digest)) continue;
-			this.fanout.get(id)?.actor.enqueue(line);
+			const held = this.fanout.attachmentOf(id, sessionId, false, "loaded_surfaces_changed");
+			this.fanout.get(id)?.actor.enqueue(line, undefined, undefined, undefined, false, held);
 		}
 		this.requestFlush();
 	}
@@ -546,6 +755,8 @@ export class SessionEventWriter {
 	 * session's final stdout record.
 	 */
 	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
+		this.presenterBindings.get(sessionId)?.dispose();
+		this.presenterBindings.delete(sessionId);
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.securityPresentations.dropSession(sessionId);
@@ -623,6 +834,8 @@ export class SessionEventWriter {
 		lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent,
 		attachedOnly = false,
 	): void {
+		this.presenterBindings.get(sessionId)?.dispose();
+		this.presenterBindings.delete(sessionId);
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.securityPresentations.dropSession(sessionId);

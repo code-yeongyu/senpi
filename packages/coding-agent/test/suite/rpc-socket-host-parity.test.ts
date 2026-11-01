@@ -18,6 +18,12 @@ function normalizeResponse(value: RecordValue): RecordValue {
 			const lifecycle = { ...(data.lifecycle as RecordValue) };
 			delete lifecycle.rootSessionId;
 			delete lifecycle.since;
+			delete lifecycle.observedAt;
+			if (lifecycle.activityRevision && typeof lifecycle.activityRevision === "object") {
+				const activityRevision = { ...(lifecycle.activityRevision as RecordValue) };
+				delete activityRevision.instanceId;
+				lifecycle.activityRevision = activityRevision;
+			}
 			data.lifecycle = lifecycle;
 		}
 		if (Array.isArray(data.messages)) {

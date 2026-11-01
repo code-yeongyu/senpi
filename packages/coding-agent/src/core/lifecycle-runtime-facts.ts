@@ -35,7 +35,9 @@ export function readLifecycleRuntimeFacts(session: AgentSession): LifecycleRunti
 			since: opened.get(dialog.id) ?? now,
 		});
 	}
-	const holds: LifecycleHold[] = session.holds.flatMap((hold: { readonly kind: string; readonly since: string }) => {
+	const holds: LifecycleHold[] = session.holds.flatMap((hold) => {
+		// The interruption gate is a human wait, not a user Stop. Preserve unattended and real Stop precedence.
+		if (hold.kind === "session_hold" && hold.key === "interrupted-run") return [];
 		switch (hold.kind) {
 			case "unattended":
 			case "session_hold":

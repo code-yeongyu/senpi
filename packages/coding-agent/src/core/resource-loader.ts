@@ -24,7 +24,7 @@ export { loadProjectContextFiles };
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { bundledBuiltinExtensions } from "./bundled-resources.ts";
-import { loadProjectContextFiles } from "./context-files.ts";
+import { type ContextFile, loadProjectContextFiles } from "./context-files.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	type BuiltinExtensionFactory,
@@ -61,7 +61,7 @@ import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-mem
 import { SettingsManager } from "./settings-manager.ts";
 import type { SkillProvenance } from "./skill-access.ts";
 import type { Skill } from "./skills.ts";
-import { loadSkills } from "./skills.ts";
+import { ignoredSkillDiagnostics, loadSkills } from "./skills.ts";
 import { warnIfLargeSkillCatalog } from "./skills-prompt.ts";
 import {
 	BUILTIN_PATH_PREFIX,
@@ -199,7 +199,7 @@ export interface ResourceLoader {
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
-	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }>; diagnostics?: ResourceDiagnostic[] };
+	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics?: ResourceDiagnostic[] };
 	getSystemPrompt(): string | undefined;
 	getSystemPromptSource(): { path: string } | undefined;
 	getAppendSystemPrompt(): string[];
@@ -412,8 +412,8 @@ export interface DefaultResourceLoaderOptions {
 		themes: Theme[];
 		diagnostics: ResourceDiagnostic[];
 	};
-	agentsFilesOverride?: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
-		agentsFiles: Array<{ path: string; content: string }>;
+	agentsFilesOverride?: (base: { agentsFiles: ContextFile[] }) => {
+		agentsFiles: ContextFile[];
 	};
 }
 
@@ -453,8 +453,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		themes: Theme[];
 		diagnostics: ResourceDiagnostic[];
 	};
-	private agentsFilesOverride?: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
-		agentsFiles: Array<{ path: string; content: string }>;
+	private agentsFilesOverride?: (base: { agentsFiles: ContextFile[] }) => {
+		agentsFiles: ContextFile[];
 	};
 
 	private extensionsResult: LoadExtensionsResult;
@@ -464,7 +464,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private promptDiagnostics: ResourceDiagnostic[];
 	private themes: Theme[];
 	private themeDiagnostics: ResourceDiagnostic[];
-	private agentsFiles: Array<{ path: string; content: string }>;
+	private agentsFiles: ContextFile[];
 	private contextDiagnostics: ResourceDiagnostic[] = [];
 	private systemPrompt?: string;
 	private systemPromptSourcePath?: string;
@@ -579,7 +579,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { themes: this.themes, diagnostics: this.themeDiagnostics };
 	}
 
-	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }>; diagnostics: ResourceDiagnostic[] } {
+	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics: ResourceDiagnostic[] } {
 		return { agentsFiles: this.agentsFiles, diagnostics: this.contextDiagnostics };
 	}
 
@@ -687,6 +687,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.userSkillRoots = [...(resolvedPaths.skillRoots ?? []), ...(cliExtensionPaths.skillRoots ?? [])]
 			.filter((selection) => selection.kind === "user")
 			.map((selection) => selection.selectedRoot);
+		this.ignoredSkillFiles = this.noSkills ? [] : [...(resolvedPaths.ignoredSkills ?? [])];
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -1150,6 +1151,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private userSkillRoots: string[] = [];
+	private ignoredSkillFiles: string[] = [];
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
@@ -1182,7 +1184,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 				skill.sourceInfo ??
 				this.getDefaultSourceInfoForPath(skill.filePath),
 		}));
-		this.skillDiagnostics = [...resolvedSkills.diagnostics, ...warnIfLargeSkillCatalog(this.skills)];
+		this.skillDiagnostics = [
+			...resolvedSkills.diagnostics,
+			...ignoredSkillDiagnostics(this.ignoredSkillFiles, this.skills),
+			...warnIfLargeSkillCatalog(this.skills),
+		];
 	}
 
 	private updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {

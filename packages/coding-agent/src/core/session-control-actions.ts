@@ -40,7 +40,6 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 	let retired = false;
 	return {
 		registerControlEndpoint: async (options) => {
-			if (process.platform === "win32") return { status: "unsupported", reason: "unsupported_platform" };
 			const host = deps.host();
 			if (host === undefined) return { status: "unsupported", reason: "unsupported_mode" };
 			// The endpoint may run a pass before this registration returns (its first `inbox` wake): a retired
