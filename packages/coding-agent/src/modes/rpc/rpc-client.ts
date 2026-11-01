@@ -7,7 +7,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { AssistantProgress, ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
@@ -142,6 +142,8 @@ export type RpcClientEvent =
 	// The host accepted an open_session and says where it is queued; the client also uses it to
 	// switch that open to its post-acknowledgement deadline (senpi#2209).
 	| RpcOpenQueuedEvent
+	// A compact recovery cut resets each tool call still open at it (senpi#5298, senpi#5300); listeners receive it as is.
+	| (Extract<AssistantProgress, { type: "message_tool_arguments_reset" }> & { readonly sessionId?: string })
 	| { type: "bash_start" }
 	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
@@ -1339,7 +1341,8 @@ export class RpcClient {
 					// Connection-level, not part of the agent's event stream.
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
-					event.type === "queued"
+					event.type === "queued" ||
+					event.type === "message_tool_arguments_reset"
 				)
 					return;
 				events.push(event);
