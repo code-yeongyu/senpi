@@ -7,12 +7,11 @@ import { type SeededJsonAgentSessionEvent, toJsonEvent } from "../json-event.ts"
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 
 /**
- * Internal structured capture (and the acceptance lane it feeds) is independent of public socket format negotiation:
- * every session that has the lane captures. With the rollout flag off, a session whose Agent was built outside the
- * session layer binds legacy-only, exactly as before S17; with it on, such a session still refuses the subscription.
+ * Internal structured capture and the acceptance lane it feeds follow the rollout flag alone (RULING-112): off, every
+ * session binds legacy-only, in process and in a worker alike; on, a session without the lane refuses the subscription.
  */
-export function structuredLaneEnabled(session: AgentSession): boolean {
-	return compactUpdatesEnabled() || session.hasStructuredLane;
+export function structuredLaneEnabled(): boolean {
+	return compactUpdatesEnabled();
 }
 
 type BlockState = "open" | "ended" | "invalid";

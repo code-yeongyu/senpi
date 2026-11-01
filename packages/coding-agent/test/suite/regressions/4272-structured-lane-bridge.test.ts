@@ -80,8 +80,8 @@ async function runControls(flag: boolean): Promise<Run> {
 		extensionFactories: [listen],
 	});
 	sessions.push(session);
-	// #4272 RULING-66 S17-Q1: internal capture runs for every session with the lane, not selected socket output.
-	expect(structuredLaneEnabled(session.harness.session)).toBe(true);
+	// #4272 RULING-112: internal capture follows the rollout flag alone, never selected socket output.
+	expect(structuredLaneEnabled()).toBe(flag);
 	const stopHold = session.harness.agent.subscribe((event) => {
 		if (event.type === "message_end" && event.message.role === "assistant") hold.resolve();
 	});
@@ -149,12 +149,11 @@ describe("T6 structured lane bridge", () => {
 		expect(run.extension.length).toBeGreaterThan(10);
 	});
 
-	it("keeps legacy socket and classic stdout bytes identical with the flag off and capture active", async () => {
+	it("keeps legacy socket and classic stdout bytes identical with the flag off, and opens no lane", async () => {
 		const on = await runControls(true);
 		const off = await runControls(false);
-		expect(off.hasWriteStructured).toEqual([true, true]);
+		expect(off.hasWriteStructured).toEqual([false, false]);
 		expect(on.hasWriteStructured).toEqual([true, true]);
-		for (const records of off.lane) expect(messageLabels(firstAssistantMessage(records))).toEqual(ASSISTANT_TURN);
 		expect(updates(on.socket).length).toBeGreaterThan(10);
 		expect(updates(on.socket)).toEqual(updates(off.socket));
 		expect(updates(on.stdout)).toEqual(updates(off.stdout));

@@ -20,7 +20,10 @@ export function declareSocketClient(
 	if (reason)
 		return error(command.id, command.type, reason === "connection_role_fixed" ? CONNECTION_ROLE_FIXED : reason);
 	if (peer !== undefined) {
-		const caps = selection?.capabilities ?? command.capabilities ?? host.pendingCapabilities.get(peer) ?? [];
+		// RULING-111 (LEAK-B): with the flag off a declaration without capabilities resets them, exactly as on main.
+		const caps = compactUpdatesEnabled()
+			? (selection?.capabilities ?? command.capabilities ?? host.pendingCapabilities.get(peer) ?? [])
+			: (command.capabilities ?? []);
 		host.pendingCapabilities.set(peer, [...caps]);
 		host.writer.setConnectionCapabilities(peer, caps);
 	} else if (command.capabilities !== undefined) host.writer.setSoleSecretCapabilities(command.capabilities);
