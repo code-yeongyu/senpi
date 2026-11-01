@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { assertValidSessionId } from "../../core/session-manager.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 
 import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
 
@@ -155,6 +156,7 @@ export async function openWorkerSession(
 		entry.requestedPathKey = profile.sessionPath ? path : undefined;
 		entry.sessionPath = path;
 		const snapshot = await worker.commit();
+		if (compactUpdatesEnabled()) await worker.acceptance?.generations.bind(snapshot.state.sessionId);
 		if (entry.state !== "opening")
 			throw workerFailure === undefined
 				? new RpcSessionRegistryError("session_closing")
