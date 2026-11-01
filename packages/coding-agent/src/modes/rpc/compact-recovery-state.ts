@@ -65,6 +65,7 @@ export class RecoveryCheckpoints {
 	private readonly manifests = new RecoveryManifests();
 	private readonly refusals = new Map<RefusalReason, number>();
 	private readonly unavailable = new Map<StorageUnavailableReason, number>();
+	private readonly ended = new Set<(tokenId: string) => void>();
 	private minted = 0;
 	private frozen = 0;
 	private reclaimed = 0;
@@ -80,6 +81,11 @@ export class RecoveryCheckpoints {
 	/** The stream a caller's admissions share, as a bounded description; undefined once its peer or session ended. */
 	stream(caller: RecoveryCaller): RecoveryStreamState | undefined {
 		return this.streams.describe(caller);
+	}
+
+	/** Runs once per token when its lease ends, however it ended (a release, a reclaim, its peer's end). */
+	onTokenEnd(listener: (tokenId: string) => void): void {
+		this.ended.add(listener);
 	}
 
 	status(): RecoveryCounters {
@@ -102,6 +108,8 @@ export class RecoveryCheckpoints {
 			return this.refuse(storageUnavailable("compact_state_unavailable"));
 		}
 		const id = `${route.socketEpoch}:${++this.minted}`;
+		// One token per root (RULING-69 (2)): a root already pinned is a broken invariant, thrown before any stream moves.
+		this.manifests.pin(id, root);
 		const { generation, retired } = this.streams.next(route, root.sessionEpoch, id);
 		const admission: RecoveryAdmission = Object.freeze({ ...route, sessionEpoch: root.sessionEpoch, generation });
 		const token: CheckpointToken = Object.freeze({
@@ -122,6 +130,7 @@ export class RecoveryCheckpoints {
 				this.manifests.release(token.id);
 				lane.release(root);
 				this.checkpoints.delete(token.id);
+				for (const listener of this.ended) listener(token.id);
 			},
 			() => {
 				const stale = this.staleness(token, lane);
@@ -181,6 +190,15 @@ export class RecoveryCheckpoints {
 		}
 	}
 
+	/**
+	 * The caller's claim on a token it named by id, before any request state is touched: a token superseded while an
+	 * operation still holds it answers `superseded_token` with the newer generation (RULING-70 (3), RULING-50 (2)).
+	 */
+	check(token: RecoveryToken, caller: RecoveryCaller): RecoveryOutcome<RecoveryToken> {
+		const claimed = this.claim(token, caller);
+		return claimed.ok ? recovered(token) : claimed;
+	}
+
 	/** The pinned transcript root (version, leaf, accepted ids, base identity); its bytes are read by S11's page route. */
 	transcript(token: RecoveryToken, caller: RecoveryCaller): RecoveryOutcome<TranscriptRoot> {
 		const claimed = this.claim(token, caller);
@@ -221,6 +239,20 @@ export class RecoveryCheckpoints {
 	/** One catalog node or component under the token, verified against its parent's digest before it is decoded. */
 	readCatalog(token: RecoveryToken, caller: RecoveryCaller, ref: string) {
 		return this.read(token, caller, (lane, root) => this.manifests.read(token.id, lane, root, ref));
+	}
+
+	/**
+	 * One bounded page (at most `FRAGMENT_MAX_BYTES` raw bytes) of a catalog component at a raw byte offset, under the
+	 * same claim and lease as every read (S11a; the cursor, ordinal and request limits around it are S11b). `signal` is
+	 * the request's budget: a first open's verification is charged to it and stops, typed `aborted`, when it aborts.
+	 */
+	readCatalogPage(token: RecoveryToken, caller: RecoveryCaller, ref: string, offset: number, signal?: AbortSignal) {
+		return this.read(token, caller, (lane, root) => this.manifests.page(token.id, lane, root, ref, offset, signal));
+	}
+
+	/** Components verified under the live frozen roots (RULING-69 (2)); a root's entries go with its lease. */
+	get verifiedComponents(): number {
+		return this.manifests.verifiedComponents;
 	}
 
 	private async read<T>(
