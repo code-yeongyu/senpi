@@ -486,11 +486,45 @@ behavior per provider in `models.json`:
 {
   "providers": {
     "openai": {
-      "credentials": { "rotation": true, "affinity": true, "cooldownBaseMs": 60000 }
+      "credentials": {
+        "rotation": true,
+        "affinity": true,
+        "accountStrategy": "cache-affine",
+        "cooldownBaseMs": 60000
+      }
     }
   }
 }
 ```
+
+`credentials.accountStrategy` chooses how new sessions select an account for that provider:
+
+- `"cache-affine"` (default) keeps the existing session-affine rendezvous order, with the user's stored account order taking precedence.
+- `"fill-first"` uses the user's stored account order, followed by the remaining accounts in their stored order, and selects the first usable account.
+- `"round-robin"` assigns consecutive new affinity keys to consecutive accounts. A session retains its chosen account until a block or the headroom preference requires another account. The cursor and choices are held in memory for the life of the process.
+
+An explicitly configured strategy takes precedence over the legacy `affinity` toggle.
+Without `accountStrategy`, an existing `affinity: false` configuration keeps its behavior.
+Unknown strategy values produce a configuration error naming `accountStrategy`.
+
+The Claude subscription lane owns its account selection separately. Set its strategy in
+`settings.json`, under `anthropicSubscriptionProvider`, instead of its `models.json` credential policy:
+
+```json
+{
+  "anthropicSubscriptionProvider": {
+    "accountStrategy": "round-robin"
+  }
+}
+```
+
+Project settings override global settings. The same three values and default apply.
+Claude also retains a usable resident session's account to preserve its prompt cache.
+
+All three strategies prefer accounts whose reported subscription windows are below 95% usage.
+Missing usage data and windows whose reset time has passed do not cause a skip. If every usable
+account is near its limit, the normal choice still receives the request. An explicit account pin
+always wins, and Claude's `accountFallback: false` still prevents automatic account switching.
 
 API key credentials can also include provider-scoped environment values. These values are used before process environment variables when resolving the credential key, provider/model headers, and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
 

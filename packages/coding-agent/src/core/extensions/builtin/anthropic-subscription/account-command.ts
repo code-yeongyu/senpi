@@ -160,6 +160,7 @@ function showAccounts(
 				pinnedAccount: pinned,
 				...(pinned === undefined ? {} : { pinSource: pinSource === "CLI" ? ("cli" as const) : pinSource }),
 				accountFallback: settings.accountFallback,
+				accountStrategy: settings.accountStrategy,
 				...(credential?.order === undefined ? {} : { accountOrder: credential.order }),
 			}).name;
 		} catch (error) {
