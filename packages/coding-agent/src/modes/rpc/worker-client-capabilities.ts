@@ -1,3 +1,4 @@
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { roleConnection } from "./connection-roles.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
@@ -10,7 +11,11 @@ export function workerCapabilities(
 	message: Extract<SessionWorkerToHost, { type: "capabilities" }>,
 	writer: SessionEventWriter | undefined,
 ): Options {
-	const current = message.connection === undefined ? undefined : writer?.compactSelection(message.connection);
+	// RULING-111: only the compact negotiation pins a socket's selection; with the flag off workers declare as on main.
+	const current =
+		message.connection === undefined || !compactUpdatesEnabled()
+			? undefined
+			: writer?.compactSelection(message.connection);
 	if (
 		current &&
 		(current.refused ||

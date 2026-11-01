@@ -1,3 +1,4 @@
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import {
 	isHostOwnedToolRuntimeCapability,
 	type ToolRuntimeKind,
@@ -139,8 +140,9 @@ export function multiSessionHostCapabilities(options: {
 			...options.negotiated.filter(
 				(capability) =>
 					capability !== "mcp_form_presenter_v1" &&
-					capability !== "compact_message_updates_v1" &&
-					capability !== "compact_events" &&
+					// RULING-111 (LEAK-E): only the compact negotiation owns these names; flag off echoes them as main does.
+					(!compactUpdatesEnabled() ||
+						(capability !== "compact_message_updates_v1" && capability !== "compact_events")) &&
 					!isHostOwnedToolRuntimeCapability(capability),
 			),
 		]),
