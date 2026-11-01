@@ -236,6 +236,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 */
 	streamStartTimeoutMs?: number;
 
+	/**
+	 * Bytes the provider reports through `onTransportActivity` (SSE pings, keep-alive comments) keep the start and
+	 * idle bounds from firing while they keep arriving within one bound. This caps how long keep-alives alone may
+	 * hold a request without any assistant event. Unset or non-positive values leave keep-alives unbounded.
+	 */
+	streamKeepAliveTimeoutMs?: number;
+
 	/** Provider/SDK timeout override for only the first request in this loop invocation. */
 	initialRequestTimeoutMs?: number;
 
@@ -473,6 +480,11 @@ export interface AgentState {
 	 * `content` or `sections` still apply on top of it.
 	 */
 	systemPrompt: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions; see
+	 * {@link AgentContext.systemPromptStablePrefix} (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
@@ -605,6 +617,13 @@ export interface AgentContext {
 	 * `normalizeContext()`. Upstream-built contexts carry the prompt in transcript system messages.
 	 */
 	systemPrompt?: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions, followed by content that is not
+	 * (memory, MCP instructions). Providers with block-level prompt caching put the system breakpoint at
+	 * its end so another session can read it from cache. Ignored unless `systemPrompt` starts with it
+	 * (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for execution in this run. */
