@@ -4,6 +4,7 @@ import type { Static } from "typebox";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
 	clonePhases,
+	DEFAULT_INIT_PHASE,
 	getLatestPhasesFromBranchEntries,
 	getTodoWidgetLines,
 	type TodoPhase,
@@ -331,5 +332,148 @@ describe("todo unwraps a list wrapped one level too deep (#5148)", () => {
 		const result = await runInit(list);
 
 		expect(result.isError).toBe(true);
+	});
+});
+
+describe("todo normalizes near-canonical shapes before validation (#5332)", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	async function runTodo(params: Record<string, unknown>) {
+		const harness = await createHarnessWithTodoExtension();
+		harnesses.push(harness);
+		harness.setResponses(responsesForTodo(params));
+		await harness.session.prompt("initialize");
+		return getLatestTodoResult(harness);
+	}
+
+	function phaseNames(result: ReturnType<typeof getLatestTodoResult>): string[] {
+		return ((result.details as TodoToolDetails).phases ?? []).map((phase) => phase.name);
+	}
+
+	it("initializes the issue shape's nested phases as top-level phases", async () => {
+		const result = await runTodo({
+			op: "init",
+			list: [
+				{
+					phase: "Plan",
+					items: [
+						{ phase: "Setup", items: ["Survey code"] },
+						{ phase: "Verify", items: ["Run tests"] },
+					],
+				},
+			],
+		});
+
+		expect(result.isError).not.toBe(true);
+		expect((result.details as TodoToolDetails).phases).toEqual([
+			{ name: "Setup", tasks: [{ content: "Survey code", status: "in_progress" }] },
+			{ name: "Verify", tasks: [{ content: "Run tests", status: "pending" }] },
+		]);
+		expect(getMessageText(result)).toContain('[auto-corrected] "list" entry "Plan"');
+		expect((result.details as TodoToolDetails).corrections?.length).toBeGreaterThan(0);
+	});
+
+	it.each([
+		[
+			"nested phases inside a phase's items",
+			{
+				op: "init",
+				list: [
+					{
+						phase: "Work",
+						items: [
+							{ phase: "Foundation", items: ["Survey code"] },
+							{ phase: "Verification", items: ["Run checks"] },
+							{ phase: "Report", items: ["Write report"] },
+						],
+					},
+				],
+			},
+			["Foundation", "Verification", "Report"],
+		],
+		[
+			"content records inside a phase's items",
+			{
+				op: "init",
+				list: [{ phase: "Setup", items: [{ taskId: "x", content: "Read the brief" }, "Write tests"] }],
+			},
+			["Setup"],
+		],
+		[
+			"top-level items holding phase records",
+			{
+				op: "init",
+				items: [
+					{ phase: "Setup", items: ["Survey code"] },
+					{ phase: "Verify", items: ["Run checks"] },
+				],
+			},
+			["Setup", "Verify"],
+		],
+		[
+			"top-level items holding content records",
+			{ op: "init", items: [{ content: "Read the brief" }, { content: "Write tests" }] },
+			[DEFAULT_INIT_PHASE],
+		],
+		[
+			"nameless phases get default names",
+			{ op: "init", list: [{ items: ["Survey code"] }, { items: ["Run checks"] }] },
+			[DEFAULT_INIT_PHASE, `${DEFAULT_INIT_PHASE} 2`],
+		],
+		[
+			"a nameless phase skips an already-used default name",
+			{
+				op: "init",
+				list: [{ phase: DEFAULT_INIT_PHASE, items: ["Survey code"] }, { items: ["Run checks"] }],
+			},
+			[DEFAULT_INIT_PHASE, `${DEFAULT_INIT_PHASE} 2`],
+		],
+		[
+			"a phase with no tasks is dropped",
+			{ op: "init", list: [{ phase: "Empty" }, { phase: "Setup", items: ["Survey code"] }] },
+			["Setup"],
+		],
+		[
+			"a JSON-string list is parsed",
+			{ op: "init", list: JSON.stringify([{ phase: "Setup", items: ["Survey code"] }]) },
+			["Setup"],
+		],
+		[
+			"stray strings mixed with phases are dropped",
+			{ op: "init", list: ["items", { phase: "Setup", items: ["Survey code"] }] },
+			["Setup"],
+		],
+		["an op with stray punctuation is stripped", { op: "view}" }, []],
+	])("normalizes %s", async (_shape, params, expectedPhases) => {
+		const result = await runTodo(params);
+
+		expect(result.isError).not.toBe(true);
+		expect(getMessageText(result)).toContain("[auto-corrected]");
+		expect(phaseNames(result)).toEqual(expectedPhases);
+	});
+
+	it.each([
+		[
+			"strings mixed with phase records in one items array",
+			{
+				op: "init",
+				list: [{ phase: "Setup", items: ["Do thing", { phase: "Nested", items: ["Nested task"] }] }],
+			},
+		],
+		["a list made only of strings", { op: "init", list: ["Survey code", "Write tests"] }],
+		[
+			"a list whose phases are all empty",
+			{ op: "init", list: [{ phase: "Empty", items: [] }, { phase: "Also empty" }] },
+		],
+		["an unparseable JSON string", { op: "init", list: "not json {" }],
+	])("still rejects %s", async (_shape, params) => {
+		const result = await runTodo(params);
+
+		expect(result.isError).toBe(true);
+		expect(getMessageText(result)).not.toContain("[auto-corrected]");
 	});
 });
