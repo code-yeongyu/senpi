@@ -96,11 +96,16 @@ it("#5274 a completed admission whose route is still live is never evicted", asy
 	const sessionPath = join(host.cwd, "pinned.jsonl");
 	const opened = await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: "kept" });
 	const sessionId = String(opened.sessionId);
-	const socketEpoch = host.writer.socketEpochOf("peer") ?? "";
-	// Every later admission finishes and leaves its route, so only "kept" stays live through the turnover.
+	const other = join(host.cwd, "turnover.jsonl");
+	// RULING-117: each re-open of the other session replaces its route, so only "kept" and the latest re-open route.
 	for (let id = 0; id < capacity; id++) {
-		await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: `later-${id}` });
-		host.writer.recoveryCheckpoints.retireRoute({ socketEpoch, sessionId }, `later-${id}`);
+		const later = await peer.request({
+			type: "open_session",
+			cwd: host.cwd,
+			sessionPath: other,
+			admissionId: `later-${id}`,
+		});
+		if (later.success !== true) expect(later, `later-${id}`).toMatchObject({ success: true });
 	}
 	const reset = await peer.request({ type: "reset_stream", sessionId, admissionId: "kept" });
 	expect(reset).toMatchObject({ success: true, sessionId, admissionId: "kept" });
