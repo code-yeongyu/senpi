@@ -810,20 +810,19 @@ With the flag off it answers as any unknown session command.
 #### cancel_attempt
 
 Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default), cancels this connection's pending admission attempt
-(senpi#4272, S15a). The `admissionId` is the client's own id for an `open_session`, `attach_session` or
-`subscribe_sessions` that carried it; the attempt belongs to the socket that sent it, so another connection's id
-is never found.
+(senpi#4272, S15a). The `admissionId` is the client's own id for an `open_session` or `subscribe_sessions` that
+carried it; the attempt belongs to the socket that sent it, so another connection's id is never found.
 
 ```json
-{"type": "cancel_attempt", "admissionId": "attach-9"}
+{"type": "cancel_attempt", "admissionId": "open-9"}
 ```
 
 The host first checks the id against this connection's admissions: an id that is neither a pending attempt nor an
 admission this connection currently holds (never used, already cancelled, or completed and released) is refused with
 `unknown_admission`. Otherwise the answer's `data` is `{outcome}`: `cancelled` for a pending attempt (its late result
-is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). A
-connection with no socket epoch (stdio) is refused with `unsupported_transport`, and a malformed `admissionId` with
-`admission_malformed_request`. With the flag off it answers as any unknown command.
+is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). Only a
+socket connection has admissions, so on any other transport the id is unknown. A malformed `admissionId` is refused
+with `admission_malformed_request`. With the flag off it answers as any unknown command.
 
 #### reset_stream
 
@@ -838,9 +837,11 @@ open or attachment: `admissionId` must name a completed admission of this socket
 The host freezes a new recovery checkpoint for that admission and answers it as the stream's new baseline:
 `{"type": "response", "command": "reset_stream", "success": true, "sessionId", "admissionId", "generation",
 "data": {"recovery": {"token", "componentRef": "manifest"}}}`, ordered before any later compact frame of the
-admission. Read the checkpoint with `get_recovery_page`. An admission that is unknown, not yet complete, of another
-connection or for another session is `recovery_repair_needed` with `reason: "unknown_token"`; a checkpoint that
-cannot be frozen answers its own `recovery_*` failure. With the flag off it answers as any unknown command.
+admission. Read the checkpoint with `get_recovery_page`. Like `cancel_attempt`, an `admissionId` this connection
+neither has pending nor holds is refused with `unknown_admission` before the command runs. A held admission that is not
+complete, not for `sessionId` or no longer on the session's stream is refused with `recovery_unknown_token` and
+`errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
+`recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
 
 #### interactive_user
 
