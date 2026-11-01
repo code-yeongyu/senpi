@@ -45,7 +45,8 @@ export class WorkerSessionRegistry {
 		this.options = options;
 		this.closeGraceMs = options.closeGraceMs;
 		this.now = options.now;
-		this.createWorker = options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks));
+		this.createWorker =
+			options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks, options.configuration.agentDir));
 	}
 
 	get size(): number {

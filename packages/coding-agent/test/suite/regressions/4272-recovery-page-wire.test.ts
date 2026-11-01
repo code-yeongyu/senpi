@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import { CompactReadError } from "../../../src/modes/rpc/compact-read-lease.ts";
 import { CompactRecoveryCatalog } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
-import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
+import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest-shape.ts";
 import type { RecoveryCheckpoints } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import type { RecoveryCaller } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import type { RpcCommand, RpcResponse } from "../../../src/modes/rpc/rpc-types.ts";
@@ -144,8 +144,21 @@ async function pagesOverTheWire(
 		success: false,
 		error: "recovery_repair_needed",
 		errorCode: "recovery_repair_needed",
-		errorData: { kind: "repair_needed", reason: "unknown_token" },
+		errorData: {
+			kind: "repair_needed",
+			reason: "unknown_token",
+			repair: {
+				state: "repair_needed",
+				healthRevision: null,
+				source: null,
+				hint: "restart_from_catalog",
+				retryAfterMs: expect.any(Number),
+			},
+		},
 	});
+	const retryAfterMs = (foreign as { errorData: { repair: { retryAfterMs: number } } }).errorData.repair.retryAfterMs;
+	expect(retryAfterMs).toBeGreaterThanOrEqual(100);
+	expect(retryAfterMs).toBeLessThanOrEqual(2_000);
 	const busy = await send("held", { requestId: "r-2", cursor: "p1:1:0:00000000000000000000000000000000" });
 	expect(busy).toMatchObject({
 		success: false,

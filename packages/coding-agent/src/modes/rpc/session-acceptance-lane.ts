@@ -18,6 +18,7 @@ import {
 } from "./session-acceptance-admission.ts";
 import { foldCompactRecord, foldCompactTransition } from "./session-acceptance-compact.ts";
 import { AcceptedRootReads } from "./session-acceptance-reads.ts";
+import { recoveryAgentDir, RecoveryStorageHealth } from "./compact-storage-health.ts";
 
 /** Where one accepted recovery record sits in its runtime incarnation (R3.C1.1). */
 interface AcceptedRef {
@@ -85,17 +86,27 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		storage?: CompactContentStoreOptions,
 		diagnose: (reason: SettledDiagnostic) => void = (reason) =>
 			process.stderr.write(`senpi rpc acceptance: settled transition: ${reason}\n`),
+		agentDir = recoveryAgentDir,
 	) {
 		super();
-		this.storage = storage;
+		this.storage = {
+			...storage,
+			dir: storage?.dir ?? tmpdir(),
+			health: storage?.health ?? new RecoveryStorageHealth(agentDir),
+		};
 		this.diagnose = diagnose;
 		const dir = join(storage?.dir ?? tmpdir(), `senpi-transcript-${randomUUID()}`);
-		this.staging = new TransferStaging(new CompactContentStore({ ...storage, dir }));
+		this.staging = new TransferStaging(new CompactContentStore({ ...this.storage, dir }));
 		this.transcript = new AcceptedTranscript(this.staging);
 	}
 
 	get recoveryEpoch(): string {
 		return this.nonce;
+	}
+
+	/** The sequence of the last record this epoch accepted: what a record leased right after its acceptance names (S13). */
+	get acceptedSequence(): number {
+		return this.sequence;
 	}
 
 	/** The public epoch of this incarnation (S08-Q1): distinct from the producer nonce, which is never serialized. */
