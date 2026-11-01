@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { findBaseModel, findFastModel } from "../../fast-model-pair.ts";
 import type { ModelRegistry } from "../../model-registry.ts";
 import { type ModelServiceTier, SettingsManager } from "../../settings-manager.ts";
 import { serviceTierForProvider, ultrafastSelectionWarning } from "../../ultrafast-lanes.ts";
@@ -11,7 +12,6 @@ type ProviderPayload = Record<string, unknown>;
 
 const OPENAI_CODEX_RESPONSES_API = "openai-codex-responses";
 export const CODEX_RESPONSES_API = OPENAI_CODEX_RESPONSES_API;
-const FAST_MODEL_SUFFIX = "-fast";
 const PRIORITY_TIER: ServiceTier = "priority";
 const SERVICE_TIER_APIS: ReadonlySet<Api> = new Set(["openai-responses", OPENAI_CODEX_RESPONSES_API]);
 const FAST_ARGUMENTS = ["on", "off"] as const;
@@ -51,34 +51,6 @@ function removeServiceTierFromPayload(api: Api | undefined, payload: unknown): u
 
 function getRequestModelId(modelRegistry: ModelRegistry, model: Model<Api>): string {
 	return modelRegistry.getUpstreamModelId(model) ?? model.id;
-}
-
-function isCompatibleFastVariant(modelRegistry: ModelRegistry, baseModel: Model<Api>, fastModel: Model<Api>): boolean {
-	return (
-		fastModel.provider === baseModel.provider &&
-		fastModel.api === baseModel.api &&
-		modelRegistry.getServiceTier(fastModel) === "priority" &&
-		getRequestModelId(modelRegistry, fastModel) === getRequestModelId(modelRegistry, baseModel)
-	);
-}
-
-function findBaseModel(modelRegistry: ModelRegistry, fastModel: Model<Api>): Model<Api> | undefined {
-	if (!fastModel.id.endsWith(FAST_MODEL_SUFFIX)) {
-		return undefined;
-	}
-
-	const baseModelId = fastModel.id.slice(0, -FAST_MODEL_SUFFIX.length);
-	const baseModel = modelRegistry.find(fastModel.provider, baseModelId);
-	return baseModel && isCompatibleFastVariant(modelRegistry, baseModel, fastModel) ? baseModel : undefined;
-}
-
-function findFastModel(modelRegistry: ModelRegistry, baseModel: Model<Api>): Model<Api> | undefined {
-	if (baseModel.id.endsWith(FAST_MODEL_SUFFIX)) {
-		return undefined;
-	}
-
-	const fastModel = modelRegistry.find(baseModel.provider, `${baseModel.id}${FAST_MODEL_SUFFIX}`);
-	return fastModel && isCompatibleFastVariant(modelRegistry, baseModel, fastModel) ? fastModel : undefined;
 }
 
 /**
