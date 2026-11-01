@@ -107,6 +107,7 @@ function createMutableAgentState(initialState?: AgentInitialState): MutableAgent
 
 	return {
 		systemPrompt: initialState?.systemPrompt ?? "",
+		systemPromptStablePrefix: initialState?.systemPromptStablePrefix,
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
 		reasoningBaseline: initialState?.reasoningBaseline,
@@ -163,6 +164,7 @@ export interface AgentOptions {
 	transport?: Transport;
 	timeoutMs?: number;
 	streamStartTimeoutMs?: number;
+	streamKeepAliveTimeoutMs?: number;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
 	toolHost?: AgentLoopConfig["toolHost"];
@@ -336,6 +338,8 @@ export class Agent {
 	public timeoutMs?: number;
 	/** Optional bound on the wait for the first provider stream event. */
 	public streamStartTimeoutMs?: number;
+	/** Optional bound on how long keep-alives alone may hold a provider request without content. */
+	public streamKeepAliveTimeoutMs?: number;
 	/** Optional cap for provider-requested retry delays. */
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
@@ -387,6 +391,7 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.timeoutMs = runtimeOptions.timeoutMs;
 		this.streamStartTimeoutMs = runtimeOptions.streamStartTimeoutMs;
+		this.streamKeepAliveTimeoutMs = runtimeOptions.streamKeepAliveTimeoutMs;
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
 		this.toolHost = runtimeOptions.toolHost;
@@ -748,6 +753,9 @@ export class Agent {
 	private createContextSnapshot(): AgentContext {
 		return {
 			systemPrompt: this._state.systemPrompt,
+			...(this._state.systemPromptStablePrefix === undefined
+				? {}
+				: { systemPromptStablePrefix: this._state.systemPromptStablePrefix }),
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
 			...(this._state.declaredTools ? { declaredTools: this._state.declaredTools.slice() } : {}),
@@ -782,6 +790,7 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			timeoutMs: this.timeoutMs,
 			streamStartTimeoutMs: this.streamStartTimeoutMs,
+			streamKeepAliveTimeoutMs: this.streamKeepAliveTimeoutMs,
 			initialRequestTimeoutMs: options.initialRequestTimeoutMs,
 			initialRequestStreamStartTimeoutMs: options.initialRequestStreamStartTimeoutMs,
 			maxRetryDelayMs: this.maxRetryDelayMs,

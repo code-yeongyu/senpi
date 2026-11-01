@@ -3,6 +3,7 @@
  */
 
 import { basename } from "node:path";
+import { SecretInputUnavailableError } from "./secret-input.ts";
 import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
 import { requestExtensionRpc } from "./rpc-request.ts";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
@@ -259,6 +260,17 @@ function isUserBashEventResult(value: unknown): value is UserBashEventResult {
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
 	systemPrompt?: string;
+	/** Leading part of `systemPrompt` no volatile handler changed; absent when every change was stable (senpi#4447). */
+	systemPromptStablePrefix?: string;
+}
+
+/** Characters at the start of `before` that `after` keeps. */
+function sharedPrefixLength(before: string, after: string): number {
+	if (after.startsWith(before)) return before.length;
+	const limit = Math.min(before.length, after.length);
+	let index = 0;
+	while (index < limit && before.charCodeAt(index) === after.charCodeAt(index)) index++;
+	return index;
 }
 
 /**
@@ -511,6 +523,22 @@ function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["t
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
 }
 
+/** `before_agent_start` dispatch order: every handler in load order, then the `runLast` ones (senpi#4448). */
+function beforeAgentStartDispatchOrder(extensions: Extension[]) {
+	const snapshot = snapshotEventHandlers(extensions, "before_agent_start");
+	const runsLast = (ext: Extension, handler: EventHandlerFn) => ext.runLastHandlers?.has(handler) === true;
+	const isBuiltin = (ext: Extension) => ext.path.startsWith("<builtin:");
+	const phase = (keep: (ext: Extension, handler: EventHandlerFn) => boolean) =>
+		snapshot.map(({ ext, handlers }) => ({ ext, handlers: handlers.filter((handler) => keep(ext, handler)) }));
+	// Builtin run-last handlers close the phase order, so MCP instructions stay last even after another
+	// extension's run-last handler (senpi#4448).
+	return [
+		...phase((ext, handler) => !runsLast(ext, handler)),
+		...phase((ext, handler) => runsLast(ext, handler) && !isBuiltin(ext)),
+		...phase((ext, handler) => runsLast(ext, handler) && isBuiltin(ext)),
+	];
+}
+
 type EventHandlerFn = NonNullable<ReturnType<Extension["handlers"]["get"]>>[number];
 interface HandlerEntry {
 	readonly path: string;
@@ -585,9 +613,14 @@ function createNoOpSessionSettings(): ExtensionContextActions["sessionSettings"]
 }
 
 export const noOpUIContext: ExtensionUIContext = {
+	capabilities: { secretInput: true },
 	select: async () => undefined,
 	confirm: async () => false,
-	input: async () => undefined,
+	input: async (_title, _placeholder, opts) => {
+		if (opts?.signal?.aborted) return undefined;
+		if (opts?.secret) throw new SecretInputUnavailableError("headless");
+		return undefined;
+	},
 	notify: () => {},
 	onTerminalInput: () => () => {},
 	setStatus: () => {},
@@ -690,6 +723,7 @@ export class ExtensionRunner {
 		reason: "rejected",
 	});
 	private getSystemPromptFn: () => string = () => "";
+	private getSystemPromptStablePrefixFn: () => string | undefined = () => undefined;
 	private getLoadedHookSourcesFn: ExtensionContextActions["getLoadedHookSources"] = () => ({
 		agentDir: "",
 		cwd: this.cwd,
@@ -858,6 +892,7 @@ export class ExtensionRunner {
 		this.getMessageRevisionFn = contextActions.getMessageRevision;
 		this.applyCompactionFn = contextActions.applyCompaction;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
+		this.getSystemPromptStablePrefixFn = contextActions.getSystemPromptStablePrefix ?? (() => undefined);
 		this.getLoadedHookSourcesFn = contextActions.getLoadedHookSources;
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
@@ -1037,7 +1072,7 @@ export class ExtensionRunner {
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
 			input: (title, placeholder, opts) =>
-				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
+				this.withUIPrompt("input", opts?.secret ? undefined : title, () => ui.input(title, placeholder, opts)),
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 			...(questionFn
@@ -1339,8 +1374,8 @@ export class ExtensionRunner {
 	}
 
 	/** Stops waiting on the given turn's handlers that are still running (the turn deadline's release). */
-	releaseHeldHandlers(turn: number): number {
-		return this.heldHandlerWaits.release(turn);
+	releaseHeldHandlers(turn: number, verdict: HandlerStopVerdict = "released"): number {
+		return this.heldHandlerWaits.release(turn, verdict);
 	}
 
 	/**
@@ -1378,10 +1413,12 @@ export class ExtensionRunner {
 		verdict: HandlerStopVerdict,
 		budget: ExtensionHandlerBudget,
 	): void {
+		// A person moving on from a settled run is not a failure: session.log records it (stage "released"), nothing else.
+		if (verdict === "yielded") return;
 		const error =
 			verdict === "timed_out"
 				? `handler timed out after ${budget.timeoutMs}ms`
-				: "handler released by the turn deadline";
+				: "handler released when the turn was stopped";
 		this.emitError({ extensionPath, event, error });
 	}
 
@@ -1888,6 +1925,10 @@ export class ExtensionRunner {
 			getSystemPrompt: () => {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
+			},
+			getSystemPromptStablePrefix: () => {
+				runner.assertActive();
+				return runner.getSystemPromptStablePrefixFn();
 			},
 			getSystemPromptOptions: () => {
 				runner.assertActive();
@@ -2635,8 +2676,9 @@ export class ExtensionRunner {
 		let currentSystemPrompt = systemPrompt;
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
+		let stableLength = systemPrompt.length;
 
-		dispatch: for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_agent_start")) {
+		dispatch: for (const { ext, handlers } of beforeAgentStartDispatchOrder(this.extensions)) {
 			for (const handler of handlers) {
 				if (options.signal?.aborted === true) break dispatch;
 				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
@@ -2671,6 +2713,12 @@ export class ExtensionRunner {
 							messages.push(result.message);
 						}
 						if (result.systemPrompt !== undefined) {
+							const cache =
+								result.systemPromptCache ?? (ext.path.startsWith("<builtin:") ? "stable" : "volatile");
+							stableLength =
+								cache === "stable" && stableLength === currentSystemPrompt.length
+									? result.systemPrompt.length
+									: Math.min(stableLength, sharedPrefixLength(currentSystemPrompt, result.systemPrompt));
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
 							parts = result.systemPromptParts;
@@ -2701,6 +2749,9 @@ export class ExtensionRunner {
 			return {
 				messages: messages.length > 0 ? messages : undefined,
 				systemPrompt: systemPromptModified ? currentSystemPrompt : undefined,
+				...(systemPromptModified && stableLength < currentSystemPrompt.length
+					? { systemPromptStablePrefix: currentSystemPrompt.slice(0, stableLength) }
+					: {}),
 			};
 		}
 
