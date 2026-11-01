@@ -1,4 +1,5 @@
 import { detachConnection } from "./connection-detach.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { compactAdmissionGate, declareSocketClient } from "./compact-socket-commands.ts";
 import { invalidCompactAdmission, unknownCompactAdmission } from "./compact-admission-validation.ts";
 import { compactSubscribe } from "./compact-subscribe-admission.ts";
@@ -50,13 +51,16 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
 	const refusal = attachmentGate(host, command) ?? compactAdmissionGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
-	if (command.type === "set_client_info") {
+	// RULING-111 (LEAK-B/C): the host-side pre-declaration belongs to the compact negotiation; with the flag off a
+	// session-scoped declaration reaches its session exactly as on main.
+	if (command.type === "set_client_info" && compactUpdatesEnabled()) {
 		const reply = declareSocketClient(host, command);
 		if (!reply.success) return Promise.resolve(reply);
 		const peer = host.writer.currentConnection();
 		if (command.capabilities !== undefined && peer !== undefined)
 			command = { ...command, capabilities: [...(host.pendingCapabilities.get(peer) ?? [])] };
-		if (command.id === undefined && command.capabilities === undefined) return Promise.resolve(undefined);
+		if (command.id === undefined && command.capabilities === undefined && compactUpdatesEnabled())
+			return Promise.resolve(undefined);
 	}
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.
@@ -173,7 +177,7 @@ export async function dispatch(
 		);
 	}
 	if (command.type === "set_client_info" && !command.sessionId)
-		return command.id === undefined ? undefined : declareSocketClient(host, command);
+		return command.id === undefined && compactUpdatesEnabled() ? undefined : declareSocketClient(host, command);
 	if (command.type === "subscribe_sessions") {
 		if (host.admissions && command.admissionId !== undefined) return compactSubscribe(host, command);
 		const connection = host.writer.currentConnection();

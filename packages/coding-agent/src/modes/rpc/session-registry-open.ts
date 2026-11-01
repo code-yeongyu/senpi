@@ -171,8 +171,8 @@ export async function openRegistrySession(
 		entry.durableSessionId = manager.getSessionId();
 		entry.sessionPath ??= manager.getSessionFile();
 		// The accepted baseline precedes the open, so router admission and its reply come after it (R3.C1.1).
-		// Gated like a worker incarnation's lane: a legacy-only session (flag off, no structured lane) owns none.
-		if (host.options.workerIsolate !== true && structuredLaneEnabled(entry.runtime.session)) {
+		// Gated like a worker incarnation's lane: with the flag off no session owns one (RULING-112).
+		if (host.options.workerIsolate !== true && structuredLaneEnabled()) {
 			entry.acceptance = new SessionAcceptanceLane(undefined, undefined, host.options.agentDir);
 			await entry.acceptance.generations.bind(entry.durableSessionId);
 			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });

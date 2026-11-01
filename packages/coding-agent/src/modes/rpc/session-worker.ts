@@ -20,7 +20,6 @@ import { initTheme } from "../interactive/theme/theme.ts";
 import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
-import { structuredLaneEnabled } from "./structured-session-records.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
@@ -304,9 +303,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
 			const opened = await registry.openSession(prepared.profile);
 			entry = registry.getForCommand(opened.sessionId, "open_session");
-			// A legacy-only session (flag off, no structured lane) declines the offer: `ready` without a bootstrap.
-			ordered =
-				message.acceptance === true && entry.runtime !== undefined && structuredLaneEnabled(entry.runtime.session);
+			// The host offers acceptance only with the flag on (RULING-112); a session without the structured lane declines
+			// it with a `ready` lacking a bootstrap, which the host refuses (RULING-106).
+			ordered = message.acceptance === true && entry.runtime?.session.hasStructuredLane === true;
 			if (message.recoveryEpoch && entry.runtime)
 				setSessionRecoveryEpoch(entry.runtime.session, message.recoveryEpoch);
 			journaled = ordered ? entry.runtime?.session.sessionManager : undefined;

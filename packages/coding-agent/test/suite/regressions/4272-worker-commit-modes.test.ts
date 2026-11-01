@@ -65,10 +65,11 @@ function worker() {
 	return { client, writer, delivered, failures, boundModes };
 }
 
-// Part of #4272, RULING-106 (B'): commit() alone negotiates acceptance, one outcome per branch, and the client logs the
-// mode each worker bound. A declined offer leaves no permit behind in the host's shared ledger.
+// Part of #4272, RULING-106 (B'): commit() alone negotiates acceptance, one outcome per branch, and with the flag on the
+// client logs the mode each worker bound. A refused offer leaves no permit behind in the host's shared ledger. RULING-112:
+// with the flag off commit() offers nothing, so the worker binds legacy with no permit and no log line (RULING-111).
 it.each([
-	{ bootstrap: true, flag: "0", mode: "acceptance" },
+	{ bootstrap: true, flag: "1", mode: "acceptance" },
 	{ bootstrap: false, flag: "0", mode: "legacy" },
 	{ bootstrap: false, flag: "1", mode: "refused" },
 ])("commit with bootstrap=$bootstrap and flag=$flag binds $mode", async ({ bootstrap, flag, mode }) => {
@@ -91,12 +92,13 @@ it.each([
 	}
 	await committed;
 	await host.client.bind("session", host.writer, () => {}, { capabilities: [] });
-	expect(host.boundModes()).toEqual([mode]);
+	expect(host.boundModes()).toEqual(flag === "1" ? [mode] : []);
 	expect(host.client.acceptance !== undefined).toBe(mode === "acceptance");
 	if (mode === "legacy") expect(hostWorkerPermits.status()).toEqual(permitsBefore);
 });
 
 it("delivers unordered output frames before commit() negotiates acceptance", async () => {
+	vi.stubEnv(FLAG, "1");
 	const host = worker();
 	await host.client.bind("session", host.writer, () => {}, { capabilities: [] });
 

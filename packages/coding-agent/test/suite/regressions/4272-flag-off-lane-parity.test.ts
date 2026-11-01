@@ -1,4 +1,4 @@
-// Part of #4272, RULING-110 (2): flag off + structured lane, in process == worker.
+// Part of #4272, RULING-112: flag off, in process == worker, both lane-free (legacy) even for a session with the lane.
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
@@ -63,10 +63,10 @@ async function workerTurn() {
 	}
 }
 
-it("in process: flag off, a session with the structured lane owns an acceptance lane", async () => {
+it("in process: flag off, a session with the structured lane owns no acceptance lane", async () => {
 	vi.stubEnv(FLAG, "0");
 	const { lane, turn } = await inProcessTurn();
-	expect(lane, "the in-process entry owns a SessionAcceptanceLane").toBeDefined();
+	expect(lane, "the in-process entry owns no SessionAcceptanceLane").toBeUndefined();
 	expect(turn).toContainEqual(
 		expect.objectContaining({ type: "message_end", role: "assistant", content: [{ type: "text", text: REPLY }] }),
 	);
@@ -74,14 +74,14 @@ it("in process: flag off, a session with the structured lane owns an acceptance 
 
 // Node only, like the other real-isolate cases: under the Bun vitest path a real isolate's structured lane sends no frame.
 it.skipIf(process.versions.bun !== undefined)(
-	"worker: flag off, the same session owns an acceptance lane and delivers the in-process legacy records",
+	"worker: flag off, the same session owns no acceptance lane and delivers the in-process legacy records",
 	async () => {
 		vi.stubEnv(FLAG, "0");
 		const worker = await workerTurn();
 		const inProcess = await inProcessTurn();
 		expect(worker.failures).toEqual([]);
-		expect(worker.lane, "the worker client owns a SessionAcceptanceLane").toBeDefined();
-		expect(inProcess.lane, "and so does the in-process entry").toBeDefined();
+		expect(worker.lane, "the worker client owns no SessionAcceptanceLane").toBeUndefined();
+		expect(inProcess.lane, "and neither does the in-process entry").toBeUndefined();
 		expect(worker.turn.some((record) => record.type === "message_end" && record.role === "assistant")).toBe(true);
 		expect(worker.turn, "the same ordered legacy records for open_session -> prompt -> agent_end").toEqual(
 			inProcess.turn,

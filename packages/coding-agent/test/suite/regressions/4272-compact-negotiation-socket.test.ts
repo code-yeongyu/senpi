@@ -140,13 +140,26 @@ it.each(["0", "1"])(
 			expect(
 				await peer.request({ type: "set_client_info", sessionId: opened.sessionId, capabilities: [] }),
 			).toMatchObject({ success: flag !== "1" });
-			// RULING-73/G1: success and refusal are silent without an id, on both routes and with either flag.
+			// RULING-73/G1: with the flag on, success and refusal are silent without an id, on both routes.
+			// RULING-111: with the flag off an ID-less declaration is answered exactly as on main, which is the same
+			// answer the identical declaration gets with an id, minus the id.
 			for (const sessionId of [undefined, opened.sessionId]) {
 				for (const capabilities of [undefined, PAIR, [...PAIR, "session_relocation"], [PAIR[0]], []]) {
 					const before = peer.records.length;
 					peer.send({ type: "set_client_info", sessionId, capabilities });
 					await peer.request({ type: "get_state", sessionId: opened.sessionId });
-					expect(peer.records.slice(before).filter((record) => record.command === "set_client_info")).toEqual([]);
+					const idless = peer.records.slice(before).filter((record) => record.command === "set_client_info");
+					if (flag === "1") {
+						expect(idless).toEqual([]);
+						continue;
+					}
+					const { id: _id, ...withoutId } = await peer.request({
+						type: "set_client_info",
+						sessionId,
+						capabilities,
+					});
+					expect(idless).toEqual([withoutId]);
+					expect(idless[0]).not.toHaveProperty("id");
 				}
 			}
 			await peer.close();
@@ -158,7 +171,7 @@ it.each(["0", "1"])(
 );
 
 it.each(["0", "1"])(
-	"X06/RULING-66: private worker capture and transport are unconditional (%s)",
+	"X06/RULING-112: private worker capture and transport follow the flag alone (%s)",
 	async (flag) => {
 		vi.stubEnv(FLAG, flag);
 		const host = await workerAcceptanceHost(builtFauxPath);
@@ -171,7 +184,9 @@ it.each(["0", "1"])(
 				true,
 			);
 			await idle;
-			expect(records.some((frame) => frame.type === "canonical" || frame.canonical !== undefined)).toBe(true);
+			expect(records.some((frame) => frame.type === "canonical" || frame.canonical !== undefined)).toBe(
+				flag === "1",
+			);
 			expect(
 				host.records.some((record) => record.materializer !== undefined || record.eventLease !== undefined),
 			).toBe(false);
