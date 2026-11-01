@@ -34,8 +34,9 @@ export interface SettledEnd {
 export const MAX_PENDING_JOINS = 1024;
 
 /**
- * RULING-122 (#5337): how many entry ids whose join was dropped at `MAX_PENDING_JOINS` the epoch remembers, so their
- * `entry_appended` says `ownerUnknown` instead of a false not-owned. Past this the epoch overflows and can no longer
+ * RULING-122 (#5337): how many unvouched entry ids the epoch remembers, so their `entry_appended` says `ownerUnknown`
+ * instead of a false not-owned: an owned append whose join was dropped at `MAX_PENDING_JOINS`, or that the settled
+ * store never joined (its transcript unavailable, its join refused). Past this the epoch overflows and can no longer
  * vouch for any entry it has no join for.
  */
 export const MAX_EVICTED_JOINS = 4096;
@@ -50,7 +51,7 @@ const OWNER_UNKNOWN: LiveIdentity = Object.freeze({ ownerUnknown: true });
  */
 export class MessageIdentities {
 	private readonly joins = new Map<string, string>();
-	private readonly evicted = new Set<string>();
+	private readonly unvouched = new Set<string>();
 	private overflowed = false;
 	private evictions = 0;
 	private overflows = 0;
@@ -59,7 +60,7 @@ export class MessageIdentities {
 	/** The epoch ended: nothing it joined or held can name a record delivered later. */
 	reset(): void {
 		this.joins.clear();
-		this.evicted.clear();
+		this.unvouched.clear();
 		this.overflowed = false;
 		this.held = undefined;
 	}
@@ -69,19 +70,30 @@ export class MessageIdentities {
 		return { ownerJoinsEvicted: this.evictions, ownerJoinsOverflowed: this.overflows };
 	}
 
-	/** `owner`: the message the settled store joined this append to, the `messageId` of its `join-<n>` member. */
+	/**
+	 * `owner`: the message the settled store joined this append to, the `messageId` of its `join-<n>` member; undefined
+	 * when it recorded no join, which for an owned append (it carries `owningMessageId`) leaves the entry unvouched.
+	 */
 	joined(transition: TranscriptTransition, owner: string | undefined): void {
-		if (owner === undefined || transition.kind !== "append") return;
+		if (transition.kind !== "append") return;
+		if (owner === undefined) {
+			if (transition.owningMessageId !== undefined) this.unvouch(transition.id);
+			return;
+		}
 		this.joins.set(transition.id, owner);
 		if (this.joins.size <= MAX_PENDING_JOINS) return;
 		const [oldest] = this.joins.keys();
 		if (oldest === undefined) return;
 		this.joins.delete(oldest);
 		this.evictions += 1;
-		this.evicted.add(oldest);
-		if (this.evicted.size <= MAX_EVICTED_JOINS) return;
-		const [forgotten] = this.evicted.keys();
-		if (forgotten !== undefined) this.evicted.delete(forgotten);
+		this.unvouch(oldest);
+	}
+
+	private unvouch(entryId: string): void {
+		this.unvouched.add(entryId);
+		if (this.unvouched.size <= MAX_EVICTED_JOINS) return;
+		const [forgotten] = this.unvouched.keys();
+		if (forgotten !== undefined) this.unvouched.delete(forgotten);
 		this.overflows += 1;
 		if (this.overflowed) return;
 		this.overflowed = true;
@@ -113,7 +125,7 @@ export class MessageIdentities {
 		this.joins.delete(entryId);
 		if (owningMessageId !== undefined) return { owningMessageId };
 		// RULING-122: an entry whose join may have been dropped is never reported as not message-owned.
-		const unknown = this.evicted.delete(entryId) || this.overflowed;
+		const unknown = this.unvouched.delete(entryId) || this.overflowed;
 		return unknown ? OWNER_UNKNOWN : undefined;
 	}
 }

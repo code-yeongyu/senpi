@@ -828,16 +828,20 @@ the settled overlay it pages after a reconnect or a recovery cut without a secon
   - `owningMessageId` present: the entry joined a message, and this is that join member's `messageId`. The owner is
     captured when the append is applied and kept for that entry, so transcript batches applied before its
     `entry_appended` cannot drop it.
-  - `ownerUnknown: true`: the host cannot vouch for the entry's ownership. At most 1,024 joins wait for their
-    `entry_appended` at once; a join dropped at that bound is remembered by entry id (up to 4,096 per epoch), and once
-    that memory itself overflows, every entry of the epoch with no join carries `ownerUnknown` until the next
-    bootstrap, including entries no message owns (conservative by design: never a false
-    "not owned"). Resolve such an entry through recovery's `identity` member `join-<n>` for that entry id.
+  - `ownerUnknown: true`: the host cannot vouch for the entry's ownership. An owned entry the settled store never
+    joined (the epoch's transcript component was unavailable, or the store refused the join) carries it. At most 1,024
+    joins wait for their `entry_appended` at once; a join dropped at that bound is remembered by entry id. Both kinds
+    share one memory (up to 4,096 ids per epoch), and once that memory itself overflows, every entry of the epoch with
+    no join carries `ownerUnknown` until the next bootstrap, including entries no message owns (conservative by
+    design: never a false "not owned"). Resolve a dropped join through recovery's `identity` member `join-<n>` for
+    that entry id; an entry the store never joined has no such member.
   - both absent: the entry is not message-owned, never a lost or pending join. This absence is normative only because
     the host marks every entry it cannot vouch for with `ownerUnknown`.
 
   The lane's status counts dropped joins (`ownerJoinsEvicted`) and ids dropped from that memory
-  (`ownerJoinsOverflowed`), and the host writes one stderr line at an epoch's first overflow.
+  (`ownerJoinsOverflowed`), and the host writes one stderr line at an epoch's first overflow. An `entry_appended`
+  carries its tri-state even when the host refused its canonical record at the protocol depth limit: the record is
+  still delivered, and it takes its entry's join like any other.
 - `transcript_write_failed` gains `messageId`: the failed terminal row's `messageId`.
 
 The host appends the fields after the record's own (`{"type": "message_end", ..., "sessionId": "rpc-1", "messageId":

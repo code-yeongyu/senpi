@@ -207,10 +207,9 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		if (type === "turn_end" || type === "agent_end") this.turnId = null;
 		const messageId = type.startsWith("message_") && this.settled.valid(carrier) ? carrier.messageId : null;
 		if (type === "message_start") this.activeMessageId = messageId;
-		if (folds) {
-			const at = { record, type, carrier, canonical, sequence: this.sequence, turnId, call: call?.projection };
-			this.identities.hold(type, this.sequence, record, foldCompactRecord(this.compact(), at));
-		}
+		const unit = { record, type, carrier, canonical, sequence: this.sequence, turnId, call: call?.projection };
+		// An unfolded record is still delivered, so its `entry_appended` takes its entry's join (RULING-122).
+		this.identities.hold(type, this.sequence, record, folds ? foldCompactRecord(this.compact(), unit) : undefined);
 		if (type === "message_end" && this.activeMessageId === messageId) this.activeMessageId = null;
 		return {
 			sessionEpoch: this.epoch,
