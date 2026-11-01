@@ -1169,8 +1169,6 @@
       "packages/coding-agent/src/modes/rpc/runtime-build-id.ts": ["loadedRuntimeSource"],
       // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_PATCH_LIMITS, RESERVED_SESSION_CONTEXT_KEYS
       "packages/coding-agent/src/modes/rpc/session-context-patch.ts": ["RESERVED_SESSION_CONTEXT_KEYS", "SESSION_CONTEXT_PATCH_LIMITS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports beginPendingClaim
-      "packages/coding-agent/src/modes/rpc/session-registry-claims.ts": ["beginPendingClaim"],
       // pre-existing at origin main aceb1cc1d9: unused exports RELEASE_SETTLE_MS
       "packages/coding-agent/src/modes/rpc/session-release-interrupt.ts": ["RELEASE_SETTLE_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports HOST_ANSWER_TIMEOUT_MS
