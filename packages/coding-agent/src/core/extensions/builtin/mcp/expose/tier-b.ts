@@ -91,10 +91,12 @@ export function registerMcpTierBTools(
 	const promoted = promotedNamesByRegistrar.get(pi as object) ?? new Set<string>();
 	promotedNamesByRegistrar.set(pi as object, promoted);
 	const gatewayNames: string[] = [];
+	const serverGatewayNames: string[] = [];
 	for (const gateway of input.proxyGateways ?? []) {
 		const tool = createMcpProxyTool(gateway.server, gateway.entries);
 		pi.registerTool(tool);
 		gatewayNames.push(tool.name);
+		serverGatewayNames.push(tool.name);
 	}
 	for (const tool of input.utilityTools ?? []) {
 		pi.registerTool(tool);
@@ -113,10 +115,15 @@ export function registerMcpTierBTools(
 	const stubSwap = input.searchMode && input.settings.stubSwap === true;
 	const stubbed = new Set<string>();
 	const registeredNames = new Set(fullDefs.map((def) => def.name));
-	// MCP-owned names sort by name like shared-catalog members: in direct mode they are not
+	// Per-server MCP names sort by name like shared-catalog members: in direct mode they are not
 	// in the search catalog, and keeping their reference order made the tool list follow
-	// which server finished connecting first (#5289).
-	const catalogNames = new Set([...toolSearchService.getCatalog().map((doc) => doc.name), ...managedNames]);
+	// which server finished connecting first (#5289). The fixed utility tools keep their
+	// reference place ahead of them; their position never depended on connect order.
+	const catalogNames = new Set([
+		...toolSearchService.getCatalog().map((doc) => doc.name),
+		...fullDefs.map((def) => def.name),
+		...serverGatewayNames,
+	]);
 
 	const activate = (names: readonly string[]): void => {
 		const known = [...new Set(names.filter((name) => registeredNames.has(name)))];
