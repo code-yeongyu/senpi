@@ -984,11 +984,15 @@ export class ModelRuntime implements Models {
 				: undefined;
 		const upstreamModelId = compatibility.upstreamModelId;
 		const requestModel: TModel =
-			resolution.auth.baseUrl || upstreamModelId
+			resolution.auth.baseUrl || upstreamModelId || ((resolution.auth.api || resolution.auth.compat) && isModelType(model, "chat"))
 				? {
 						...model,
 						...(upstreamModelId ? { id: upstreamModelId } : {}),
 						...(resolution.auth.baseUrl ? { baseUrl: resolution.auth.baseUrl } : {}),
+						...(resolution.auth.api && isModelType(model, "chat") ? { api: resolution.auth.api } : {}),
+						...(resolution.auth.compat && isModelType(model, "chat")
+							? { compat: { ...model.compat, ...resolution.auth.compat } }
+							: {}),
 					}
 				: model;
 		const rejectedTokenStatuses = provider.auth.oauth?.rejectedTokenStatuses;

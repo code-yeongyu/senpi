@@ -1,13 +1,17 @@
-import type { ProviderEnv, ProviderHeaders } from "../types.ts";
+import type { Api, Model, ProviderEnv, ProviderHeaders } from "../types.ts";
 
 /**
  * Request auth for a single model request. If a value cannot be expressed as
- * `apiKey`, `headers`, or `baseUrl`, it is provider config, not auth.
+ * `apiKey`, `headers`, `baseUrl`, or the credential's chat route, it is provider config, not auth.
  */
 export interface ModelAuth {
 	apiKey?: string;
 	headers?: ProviderHeaders;
 	baseUrl?: string;
+	/** Credential-selected chat transport; absent preserves the selected model's API. */
+	api?: Api;
+	/** Request restrictions belonging to the selected credential's chat route. */
+	compat?: Model<Api>["compat"];
 }
 
 /**
@@ -25,12 +29,24 @@ export interface OAuthCredentials {
 	refresh: string;
 	access: string;
 	expires: number;
+	/** ChatGPT slots without a route retain the legacy Codex protocol. */
+	route?: "siwc" | "codex";
 	[key: string]: unknown;
 }
 
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
+	/** Verified account identity, retained only by flows that validate an ID token. */
+	subject?: string;
+	/** Display metadata only; not proof of identity or workspace membership. */
+	email?: string;
+	issuer?: string;
+	/** Issued OAuth client ID, not the dynamic registration entrypoint. */
+	clientId?: string;
+	/** Retained for a later id_token_hint; treat as secret credential material. */
+	idToken?: string;
+	scopes?: string[];
 }
 
 /** One type-tagged credential per provider — the shape of today's auth.json. */

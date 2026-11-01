@@ -1,6 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createModels, type OAuthCredential } from "@earendil-works/pi-ai";
+import { listSlots, projectSlot } from "@earendil-works/pi-ai/auth/pool/slots";
+import { chatgptSubscriptionProvider } from "@earendil-works/pi-ai/providers/chatgpt-subscription";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { subscribeProviderAccountEvents } from "../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
@@ -52,6 +55,48 @@ function collectAccountsChanged(): { changed: string[]; unsubscribe: () => void 
 }
 
 describe("/gpt-account add", () => {
+	// #5003 W12: the command must append through Models.login, not replace or log out the pool.
+	it("adds a registration through the shared login while keeping saved accounts", async () => {
+		const legacy: OAuthCredential = {
+			type: "oauth",
+			access: "synthetic-legacy",
+			refresh: "synthetic-legacy-refresh",
+			expires: 4102444800000,
+		};
+		await storage.modify("chatgpt-subscription", async () => legacy);
+		const models = createModels({ credentials: storage });
+		const provider = chatgptSubscriptionProvider();
+		const oauth = provider.auth.oauth;
+		if (!oauth) throw new Error("chatgpt-subscription oauth is not configured");
+		models.setProvider({
+			...provider,
+			auth: {
+				oauth: {
+					...oauth,
+					login: async () => ({
+						type: "oauth",
+						route: "siwc",
+						issuer: "https://auth.openai.com",
+						subject: "synthetic-subject",
+						clientId: "oaiapp_synthetic",
+						access: "synthetic-new",
+						refresh: "synthetic-new-refresh",
+						expires: 4102444800000,
+					}),
+				},
+			},
+		});
+		const { ctx, notices } = createLoginContext(async (id, _method, interaction) => {
+			await models.login(id, "oauth", interaction);
+		});
+		await registeredGptCommand().handler("add", ctx);
+		const stored = storage.get(provider.id);
+		expect(listSlots(stored).map((slot) => slot.name)).toEqual(["default", "login-2"]);
+		expect(projectSlot(stored, "default")).toEqual(legacy);
+		expect(projectSlot(stored, "login-2")).toMatchObject({ route: "siwc", clientId: "oaiapp_synthetic" });
+		expect(notices.some((notice) => notice.type === "error")).toBe(false);
+	});
+
 	it("shows the login-method choice as a selector and relays the chosen option id", async () => {
 		const methods: string[] = [];
 		const { ctx, notices, dialogs } = createLoginContext(
