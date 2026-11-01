@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
 import type {
 	Agent,
 	AgentContinuationOptions,
@@ -2338,6 +2339,7 @@ export class AgentSession {
 	}
 
 	private _installAgentToolHooks(): void {
+		bindPipelineWitness(this.agent, this.sessionManager, () => this._cwd);
 		this.agent.resolveUnknownToolCall = (toolName) => {
 			const resolvedName = resolveToolNameAlias(toolName, this._callableToolNames());
 			if (resolvedName === undefined || !this._activateLazyTool(resolvedName)) return undefined;
