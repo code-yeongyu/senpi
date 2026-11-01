@@ -110,7 +110,9 @@ export class CompactSettledMessages {
 
 	/**
 	 * Returns the accepted end (undefined when refused): whether it joined the message to its durable entry, the only end
-	 * that settles persistence, and the identity its terminal row records (RULING-120). `call`:
+	 * that settles persistence, and the message's settled ids (RULING-120): its `messageId` and the end's accepted sequence as
+	 * `terminalSequence`, which a pending or failed terminal pages as `message-<terminalSequence>` and a joined message
+	 * pages only through its `join-<n>` member's `messageId` (an already-joined end writes no terminal row). `call`:
 	 * the projection of the outstanding call this toolResult settles, stored with the terminal (Q2). The terminal is
 	 * serialized from `record`, so a record over the protocol depth limit is refused typed before anything changes
 	 * (RULING-59 C); the lane runs that check, and counts the refusal, before it calls this.

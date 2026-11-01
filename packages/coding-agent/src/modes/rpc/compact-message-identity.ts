@@ -1,6 +1,10 @@
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 
-/** What an accepted end's terminal row records: the settled `message-<terminalSequence>` member's own ids. */
+/**
+ * An accepted end's settled ids: the message's `messageId` and the end's accepted sequence. A pending or failed terminal
+ * pages them as the `message-<terminalSequence>` member; a joined message writes no terminal row and pages only its
+ * `join-<n>` member's `messageId`.
+ */
 export interface TerminalIdentity {
 	readonly messageId: string;
 	readonly terminalSequence: number;
