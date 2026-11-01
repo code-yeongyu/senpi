@@ -98,7 +98,7 @@ export class MessageIdentities {
 		if (this.overflowed) return;
 		this.overflowed = true;
 		process.stderr.write(
-			`senpi rpc acceptance: owner join ring overflowed (${MAX_EVICTED_JOINS}); unmatched entries carry ownerUnknown until the epoch ends\n`,
+			`senpi rpc acceptance: unvouched-owner ring overflowed (${MAX_EVICTED_JOINS}; evicted or never-joined owned entries); unmatched entries carry ownerUnknown until the epoch ends\n`,
 		);
 	}
 
