@@ -230,8 +230,12 @@ async function removeNamedAccount(
 		return;
 	}
 	try {
-		await removeProviderAccount(ctx.modelRegistry.authStorage, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, name);
-		ctx.ui.notify(`Removed Anthropic Subscription account: ${name}.`, "info");
+		const { notice } = await removeProviderAccount(
+			ctx.modelRegistry.authStorage,
+			ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+			name,
+		);
+		ctx.ui.notify(notice ?? `Removed Anthropic Subscription account: ${name}.`, notice ? "warning" : "info");
 	} catch (error) {
 		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 	}

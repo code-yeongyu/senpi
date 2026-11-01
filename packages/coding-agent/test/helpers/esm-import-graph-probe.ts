@@ -75,7 +75,8 @@ function runImportProbe(repoRoot: string, targetPath: string, scratchPrefix: str
 	const cleanupLink = ensureBuiltDependencyLink(repoRoot);
 	try {
 		const args = ["--import", join(scratch, "register.mjs"), join(scratch, "driver.mjs"), targetPath];
-		const child = spawnSync(process.execPath, args, {
+		// Node's loader hooks are the probe, including when Vitest itself runs under Bun.
+		const child = spawnSync(process.versions.bun ? "node" : process.execPath, args, {
 			cwd: repoRoot,
 			env: { ...process.env, PI_IMPORT_GRAPH_LOG: logPath },
 			encoding: "utf8",
