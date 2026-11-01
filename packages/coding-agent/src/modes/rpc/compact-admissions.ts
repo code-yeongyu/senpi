@@ -19,6 +19,7 @@ import {
 	runAdmissionProducer,
 } from "./compact-admission-producer.ts";
 import { reserveRow, retainDone } from "./compact-admission-retention.ts";
+import { settleProducedAdmission } from "./compact-admission-settlement.ts";
 export { CompactAdmissionError } from "./compact-admission-error.ts";
 export { ADMISSION_LIMITS } from "./compact-admission-storage.ts";
 
@@ -151,45 +152,13 @@ export class CompactAdmissions {
 				(value) =>
 					value.release().catch((cause: unknown) => recordProducerLoss(this.losses, "releaseFailed", 1, cause)),
 			);
-			let value = produced.answer;
-			const cancelled = await this.serial(epoch, async () => {
-				const row = await readAdmissionRow(epoch, key);
-				const retired = epoch.ended || row?.state === "cancelled";
-				const persist = async () => {
-					const answer = JSON.stringify(value);
-					if (Buffer.byteLength(answer) > 65_536) throw new CompactAdmissionError("storage_unavailable");
-					await writeAdmissionRow(epoch, key, {
-						state: retired ? "cancelled" : "complete",
-						fingerprint: identity.fingerprint,
-						answer,
-					});
-				};
-				value = produced?.refusal?.() ?? value;
-				await persist();
-				// Overflow during the durable write is a terminal, replayable refusal, not a fresh attempt.
-				const refused = produced?.refusal?.();
-				if (refused && JSON.stringify(refused) !== JSON.stringify(value)) {
-					value = refused;
-					await persist();
-				}
-				if (retired || epoch.ended || refused) return true;
-				// RULING-93: durable terminal row FIRST, synchronous activation SECOND. A crash
-				// between them ends this connection, which retires its subscription and pending buffer.
-				try {
-					produced?.activate?.();
-				} catch (cause) {
-					process.stderr.write(
-						`senpi rpc admission activation failed; releasing subscription: ${cause instanceof Error ? cause.message : String(cause)}\n`,
-					);
-					epoch.failures.set(key, {
-						state: "failed",
-						fingerprint: identity.fingerprint,
-						failure: "storage_unavailable",
-					});
-					throw new CompactAdmissionError("storage_unavailable");
-				}
-				return false;
-			});
+			const { value, cancelled } = await settleProducedAdmission(
+				epoch,
+				key,
+				identity.fingerprint,
+				produced,
+				(action) => this.serial(epoch, action),
+			);
 			if (cancelled) {
 				const release = produced.release;
 				produced = undefined;
