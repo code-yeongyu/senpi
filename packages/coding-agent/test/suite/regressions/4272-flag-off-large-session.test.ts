@@ -1,4 +1,4 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
@@ -186,7 +186,9 @@ async function largeFlagOffSession(create: () => Promise<LargeHost>) {
 	});
 	const frames = storeBaselines();
 	const requests = vi.spyOn(SessionWorkerRequests.prototype, "request");
-	const spillBefore = await entries([tmpdir()], SPILL_DIR);
+	// A private temp root: other test files create and remove the same spill dirs in the shared tmpdir().
+	const temp = await mkdtemp(join(tmpdir(), "l"));
+	vi.stubEnv("TMPDIR", temp);
 	const host = await create();
 	const healthDirs = [host.agentDir, recoveryAgentDir];
 	const healthBefore = await entries(healthDirs, HEALTH_DIR);
@@ -204,12 +206,13 @@ async function largeFlagOffSession(create: () => Promise<LargeHost>) {
 		expect(baseline).toEqual(remembered?.map((line) => JSON.parse(line)));
 		const added = stderr.filter((line) => /^senpi rpc acceptance:|^senpi rpc worker .* bound mode=/m.test(line));
 		expect(added).toEqual([]);
-		expect(await entries([tmpdir()], SPILL_DIR)).toEqual(spillBefore);
+		expect(await entries([temp], SPILL_DIR)).toEqual([]);
 		expect(await entries(healthDirs, HEALTH_DIR)).toEqual(healthBefore);
 		const commits = requests.mock.calls.map(([message]) => message).filter((message) => message.type === "commit");
 		return { opened, commits };
 	} finally {
 		await host.dispose();
+		await rm(temp, { recursive: true, force: true });
 	}
 }
 
