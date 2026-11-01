@@ -147,9 +147,10 @@ export function rungSelector(selector: Pick<FallbackSelector, "provider" | "id" 
 /**
  * Converts validated configuration to canonical selector strings for runtime lookup.
  *
- * A bare key (no provider prefix) is a model-family policy: it expands to one
- * canonical key per provider serving that family, so a chain shipped for
- * `claude-fable-5` applies no matter which provider the user attached it through.
+ * A bare key or entry (no provider prefix) is a model-family policy: it expands
+ * only to that model vendor's first-party providers (see `FIRST_PARTY_PROVIDERS`),
+ * so a chain shipped for `claude-fable-5` applies on both Anthropic lanes and
+ * never lands a rung on a reseller the user did not name.
  * Provider-qualified keys and entries keep exact semantics, and an explicit key
  * always overrides the expansion it collides with.
  */
@@ -168,11 +169,11 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 	const explicitKeys = new Set<string>();
 	const tombstones = new Set<string>();
 
-	const expandEntries = (entries: readonly string[], keySelector: string): string[] =>
+	const expandEntries = (entries: readonly string[], keySelector: string, sessionProvider: string): string[] =>
 		entries.flatMap((entry) => {
 			const bare = parseBareSelector(entry);
 			if (bare) {
-				return rankFamilyModels(models, bare.family, tiers, { limit: MAX_PROVIDERS_PER_FAMILY })
+				return rankFamilyModels(models, bare.family, tiers, { limit: MAX_PROVIDERS_PER_FAMILY, sessionProvider })
 					.map((model) =>
 						bare.thinkingLevel ? `${formatSelector(model)}:${bare.thinkingLevel}` : formatSelector(model),
 					)
@@ -196,7 +197,7 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 			const keySelector = bareKey.thinkingLevel
 				? `${formatSelector(model)}:${bareKey.thinkingLevel}`
 				: formatSelector(model);
-			const canonicalEntries = expandEntries(entries, keySelector);
+			const canonicalEntries = expandEntries(entries, keySelector, model.provider);
 			if (canonicalEntries.length > 0) canonical[keySelector] = canonicalEntries;
 		}
 	}
@@ -211,7 +212,7 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 			continue;
 		}
 		explicitKeys.add(keySelector.toLowerCase());
-		const canonicalEntries = expandEntries(entries, keySelector);
+		const canonicalEntries = expandEntries(entries, keySelector, parsedKey.provider);
 		if (canonicalEntries.length > 0) canonical[keySelector] = canonicalEntries;
 	}
 
