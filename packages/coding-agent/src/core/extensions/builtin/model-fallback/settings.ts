@@ -6,7 +6,7 @@ export type FallbackSettings = RetryFallbackSettings;
 
 /**
  * `/fallback` shows what the user can act on. A bare default expands across every
- * provider in the builtin catalog that publishes the model, so canonicalizing
+ * first-party provider of the model's vendor in the builtin catalog, so canonicalizing
  * against the full registry listed chains for providers the user cannot select
  * (no credentials). Scope the display to selectable models; the runtime keeps
  * using the full registry so a chain still resolves for the active model.
