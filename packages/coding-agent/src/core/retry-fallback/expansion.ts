@@ -30,19 +30,30 @@ export const FIRST_PARTY_PROVIDERS: readonly { readonly family: RegExp; readonly
 ];
 
 /**
- * Whether a bare selector for `family` may resolve on `provider`. A known vendor
- * resolves only on its first-party providers. An unknown vendor has no
- * first-party lane to prefer, so it stays on `sessionProvider`, the provider the
- * chain key already runs on: `resolveChainKey` only selects a key matching the
- * running model's `provider/id`, so that provider is one the user chose. Bare
- * keys pass no session provider: a key never routes a request, and each
- * expanded key applies only to sessions already on its own provider.
+ * Whether a bare selector for `family` may resolve on `provider`.
+ *
+ * A rung (`sessionProvider` set) runs on the provider the chain key already runs
+ * on: `resolveChainKey` only selects a key matching the running model's
+ * `provider/id`, so that provider is the one the user chose. A fallback never
+ * moves the turn to another account or billing lane of the same vendor (a
+ * Claude subscription never falls onto the Anthropic API key, senpi#5518), and
+ * `rankFamilyModels` keeps only the session's provider whenever it serves the
+ * family. Another vendor's model named in the chain (a bare `k3` rung on a
+ * Claude session) still reaches that vendor's first-party providers; anything
+ * else takes an explicit `provider/id` entry.
+ *
+ * Bare keys pass no session provider: a key never routes a request, so a known
+ * vendor's bare key attaches to its first-party sessions and an unknown
+ * vendor's to every provider serving it.
  */
 function inBareScope(provider: string, family: string, sessionProvider: string | undefined): boolean {
 	const normalized = provider.toLowerCase();
 	const vendor = FIRST_PARTY_PROVIDERS.find((entry) => entry.family.test(family));
-	if (vendor) return vendor.providers.includes(normalized);
-	return sessionProvider === undefined || normalized === sessionProvider.toLowerCase();
+	if (sessionProvider === undefined) return vendor === undefined || vendor.providers.includes(normalized);
+	const session = sessionProvider.toLowerCase();
+	if (normalized === session) return true;
+	if (vendor === undefined || vendor.providers.includes(session)) return false;
+	return vendor.providers.includes(normalized);
 }
 
 /**
@@ -169,7 +180,10 @@ export function rankFamilyModels(
 		else byProvider.set(model.provider, [model]);
 	}
 
-	const picked = [...byProvider.values()].flatMap((variants) => {
+	// The session's own provider serves the family: the rung stays there and never reaches another lane.
+	const session = options.sessionProvider?.toLowerCase();
+	const own = [...byProvider.entries()].find(([provider]) => provider.toLowerCase() === session)?.[1];
+	const picked = (own === undefined ? [...byProvider.values()] : [own]).flatMap((variants) => {
 		const variant = pickVariant(variants, family);
 		return variant ? [variant] : [];
 	});
