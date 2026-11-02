@@ -1158,18 +1158,30 @@ jobs:
         shell: bash
         run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
 
+      # Skips are allowed by full test name, per platform (the macOS-only WebKit block, the Windows-only
+      # hung-Chrome test); any other skip fails the step. Keep in sync with the macos-combined copy.
       - name: Require the WebView suites to have executed
         shell: bash
         run: |
           node -e '
             const r = JSON.parse(require("fs").readFileSync("vitest-webview.json", "utf8"));
             const results = r.testResults.flatMap((file) => file.assertionResults);
+            const expectedSkips = new Set([
+              ...(process.platform === "darwin" ? [] : [
+                "Bun.WebView from an eval cell the macOS default (WebKit) backend serves a fresh view after the kernel that opened the first one resets",
+                "Bun.WebView from an eval cell the macOS default (WebKit) backend drives views from two kernels at once",
+              ]),
+              ...(process.platform === "win32" ? [
+                "a misbehaving Chrome behind the main-thread WebView service keeps the main thread and other kernels serving while Chrome is hung",
+              ] : []),
+            ]);
             const passed = results.filter((a) => a.status === "passed").length;
             const failed = results.filter((a) => a.status === "failed").length;
-            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed").length;
-            const allowedSkips = process.platform === "win32" ? 1 : 0;
-            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped);
-            if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed");
+            const unexpected = skipped.filter((a) => !expectedSkips.has(a.fullName));
+            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped.length + " unexpected-skips=" + unexpected.length);
+            for (const a of unexpected) console.log("::error::unexpected skip: " + a.fullName);
+            if (passed < 10 || failed !== 0 || unexpected.length !== 0) process.exit(1);
           '
         working-directory: packages/senpi-codemode
       - name: Check OS temp after tests
@@ -1780,6 +1792,8 @@ jobs:
         shell: bash
         run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
 
+      # Skips are allowed by full test name, per platform; any other skip fails the step. Keep in sync
+      # with the eval-kernel-webview copy.
       - name: Require the WebView suites to have executed
         if: ${{ !cancelled() && steps.webview.outcome == 'success' }}
         shell: bash
@@ -1787,12 +1801,22 @@ jobs:
           node -e '
             const r = JSON.parse(require("fs").readFileSync("vitest-webview.json", "utf8"));
             const results = r.testResults.flatMap((file) => file.assertionResults);
+            const expectedSkips = new Set([
+              ...(process.platform === "darwin" ? [] : [
+                "Bun.WebView from an eval cell the macOS default (WebKit) backend serves a fresh view after the kernel that opened the first one resets",
+                "Bun.WebView from an eval cell the macOS default (WebKit) backend drives views from two kernels at once",
+              ]),
+              ...(process.platform === "win32" ? [
+                "a misbehaving Chrome behind the main-thread WebView service keeps the main thread and other kernels serving while Chrome is hung",
+              ] : []),
+            ]);
             const passed = results.filter((a) => a.status === "passed").length;
             const failed = results.filter((a) => a.status === "failed").length;
-            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed").length;
-            const allowedSkips = process.platform === "win32" ? 1 : 0;
-            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped);
-            if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed");
+            const unexpected = skipped.filter((a) => !expectedSkips.has(a.fullName));
+            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped.length + " unexpected-skips=" + unexpected.length);
+            for (const a of unexpected) console.log("::error::unexpected skip: " + a.fullName);
+            if (passed < 10 || failed !== 0 || unexpected.length !== 0) process.exit(1);
           '
         working-directory: packages/senpi-codemode
 
