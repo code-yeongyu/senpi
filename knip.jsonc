@@ -1041,8 +1041,6 @@
       "packages/coding-agent/src/core/webview/webview-wire.ts": ["WEBVIEW_METHODS"],
       // pre-existing at origin main aceb1cc1d9: unused exports WAKE_SOURCE_KEY_PREFIX
       "packages/coding-agent/src/core/work-obligations.ts": ["WAKE_SOURCE_KEY_PREFIX"],
-      // pre-existing at origin main aceb1cc1d9: unused exports runCoordinatorProcess
-      "packages/coding-agent/src/experimental/coordinator.ts": ["runCoordinatorProcess"],
       // pre-existing at origin main aceb1cc1d9: unused exports defineService, Worker
       "packages/coding-agent/src/experimental/mini/shared/protocol.ts": ["Worker", "defineService"],
       // pre-existing at origin main aceb1cc1d9: unused exports jsonConnection, parentConnection
@@ -1565,6 +1563,8 @@
         "src/tool-child-main.ts",
         "src/utils/image-resize-worker.ts",
         "src/core/extensions/builtin/permission-system/path-identity-worker.ts",
+        // The kill guard's judge, compiled into the binary by path (build:binary) and imported by URL by codemode workers.
+        "src/core/kill-guard/index.ts",
         // Experimental entries run by path (mini-test.sh, experimental-cli-entry.test.ts).
         "src/experimental/cli.ts",
         "src/experimental/mini/main.ts",
