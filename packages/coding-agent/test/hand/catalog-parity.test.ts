@@ -4,54 +4,17 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { afterEach, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
-import { createAgentSessionServices } from "../../src/core/agent-session-services.ts";
 import type { ExtensionAPI, InlineExtension } from "../../src/core/extensions/index.ts";
-import { bootstrapRuntime, buildToolRegistry } from "../../src/core/runtime/bootstrap.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { SettingsManager } from "../../src/core/settings-manager.ts";
-import { createToolDispatcher } from "../../src/core/tool-dispatch/tool-dispatcher.ts";
 import { builtInExtensions } from "../../src/extensions/index.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { handToolCatalog, toolCatalog } from "../../src/modes/hand/tool-catalog.ts";
+import { createLooplessRuntimeFactory } from "../../src/modes/rpc/runtime-factory-loopless.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
-
-/**
- * A hand's tool runtime: the cwd-bound services, then the session-less registry (`bootstrapRuntime` +
- * `buildToolRegistry`), which is the composition the loopless runtime factory (senpi#5413) performs. Once
- * that factory is on `main`, this is `createLooplessRuntimeFactory(configuration, local)({ cwd })`.
- */
-async function looplessDefinitions(cwd: string, agentDir: string, extensionFactories: InlineExtension[]) {
-	const services = await createAgentSessionServices({
-		cwd,
-		agentDir,
-		settingsManager: SettingsManager.create(cwd, agentDir),
-		resourceLoaderOptions: { noSkills: true, noContextFiles: true, noPromptTemplates: true, extensionFactories },
-	});
-	const dispatcher = createToolDispatcher({ runtime: "in-process" });
-	const runtime = bootstrapRuntime({
-		cwd: services.cwd,
-		settingsManager: services.settingsManager,
-		extensionsResult: services.resourceLoader.getExtensions(),
-		modelRegistry: services.modelRegistry,
-		toolDispatcher: dispatcher,
-	});
-	const registry = buildToolRegistry({
-		baseToolDefinitions: runtime.baseToolDefinitions,
-		runner: runtime.extensionRunner,
-		dispatcher,
-	});
-	return {
-		definitions: registry.definitions,
-		dispose: async () => {
-			await dispatcher.dispose();
-			runtime.extensionRunner.invalidate("catalog parity test finished");
-		},
-	};
-}
 
 function fixtureExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
@@ -95,7 +58,7 @@ it("a hand exposes the same tool catalog as the fused engine for the same config
 		agentDir,
 		sessionManager: SessionManager.inMemory(cwd),
 	});
-	const hand = await looplessDefinitions(cwd, agentDir, extensionFactories);
+	const hand = await createLooplessRuntimeFactory(configuration, { extensionFactories })({ cwd });
 	cleanups.push(async () => {
 		await hand.dispose();
 		fused.session.dispose();
