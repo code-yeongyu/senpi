@@ -87,3 +87,40 @@ it("RULING-125 the in-repo client marks every re-send of an admission id with re
 	]);
 	expect(fixture.failures).toEqual([]);
 }, 600_000);
+
+it("RULING-125 a re-send after the client reconnects is marked retry:true and is never a fresh admission", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	await using fixture = await admissionClient();
+	const { host, client, requests } = fixture;
+	await client.openSession({ cwd: host.cwd, admissionId: "across-reconnect" });
+	await client.stop();
+	host.writer.unregisterConnection("rpc-client");
+	await host.core.router.releaseConnection("rpc-client");
+	await client.start();
+	const pair = ["compact_message_updates_v1", "event_resync"];
+	await host.writer.withConnection("rpc-client", () => host.core.router.handle({ type: "get_protocol_info" }));
+	await client.setClientInfo(100, pair);
+	const produced: string[] = [];
+	const run = CompactAdmissions.prototype.run;
+	vi.spyOn(CompactAdmissions.prototype, "run").mockImplementation(function (
+		this: CompactAdmissions,
+		identity,
+		produce,
+	) {
+		return run.call(this, identity, (signal) => {
+			produced.push(identity.admissionId);
+			return produce(signal);
+		});
+	});
+	// The new socket epoch has never seen the ID: only the marker keeps the re-send from opening again.
+	await expect(client.openSession({ cwd: host.cwd, admissionId: "across-reconnect" })).rejects.toMatchObject({
+		errorCode: "admission_admission_unknown",
+	});
+	const opens = requests.filter((request) => request.type === "open_session");
+	expect(opens.map((request) => [request.admissionId, request.retry])).toEqual([
+		["across-reconnect", undefined],
+		["across-reconnect", true],
+	]);
+	expect(produced).toEqual([]);
+	expect(fixture.failures).toEqual([]);
+}, 600_000);
