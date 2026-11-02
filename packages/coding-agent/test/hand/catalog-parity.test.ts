@@ -150,7 +150,9 @@ describe("a hand exposes the same tool catalog as the fused engine for the same 
 
 			expect(names(handCatalog)).toEqual(fusedNames);
 			handCatalog.forEach((declaration, index) => {
-				expect(JSON.stringify(declaration), declaration.name).toBe(JSON.stringify(fusedCatalog[index]));
+				expect(JSON.parse(JSON.stringify(declaration)), declaration.name).toEqual(
+					JSON.parse(JSON.stringify(fusedCatalog[index])),
+				);
 			});
 		},
 		60_000,
