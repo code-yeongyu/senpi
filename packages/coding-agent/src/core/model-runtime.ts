@@ -65,7 +65,6 @@ import {
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
-import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
 import {
 	assertChatModel,
 	assertClassifierModel,
@@ -141,19 +140,6 @@ interface ModelRuntimeSnapshot {
 	configuredProviders: ReadonlySet<string>;
 	storedProviders: ReadonlySet<string>;
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
-}
-
-/**
- * The Claude Code version the Anthropic OAuth fingerprint advertises is cached beside
- * models.json, so every runtime on this agent directory shares one background lookup per
- * six hours. An in-memory runtime (`modelsPath: null`) keeps pi-ai's bundled floor.
- */
-function installClaudeCodeVersionCache(modelsPath: string | undefined): void {
-	if (modelsPath === undefined) return;
-	installClaudeCodeVersionFileStore({
-		path: join(dirname(modelsPath), "claude-code-version.json"),
-		offline: envValue("OFFLINE") !== undefined,
-	});
 }
 
 export interface ProviderRegistrationOptions {
@@ -368,7 +354,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -423,7 +408,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = ModelConfig.loadSync(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -1374,7 +1358,13 @@ export class ModelRuntime implements Models {
 	): Promise<Credential> {
 		const signal = operationSignal(interaction.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
+			const store = this.credentials.backingStore;
+			const before = await store.read(providerId, { signal });
 			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
+			if (this.poolStatePath !== undefined) {
+				const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+				await retireLoginSlotHealth(this.poolStatePath, providerId, before, await store.read(providerId, { signal }));
+			}
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
 			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
 			emitProviderAccountsChanged(providerId, "login");

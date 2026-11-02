@@ -379,7 +379,7 @@ async function entryKind(path: string): Promise<"directory" | "file" | undefined
  * As in git, a worktree folder deleted without `git worktree prune` keeps its admin record, so a folder
  * recreated at that path with a `.git` file the record points back at is that worktree again.
  */
-export async function linkedWorktreeMainCheckoutDir(cwd: string): Promise<string | undefined> {
+async function linkedWorktreeMainCheckoutDir(cwd: string): Promise<string | undefined> {
 	const dir = (await realPathOf(resolvePath(cwd))) ?? resolvePath(cwd);
 	let checkoutRoot = dir;
 	let markerKind = await entryKind(join(checkoutRoot, ".git"));

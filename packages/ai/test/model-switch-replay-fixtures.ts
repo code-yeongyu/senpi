@@ -75,6 +75,7 @@ export const COMPLETIONS_COMPAT = {
 	thinkingTokenBudgetField: undefined,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
+	mixedStrictTools: true,
 	toolSchemaFlavor: undefined,
 	toolCallFormat: undefined,
 	cacheControlFormat: "anthropic",

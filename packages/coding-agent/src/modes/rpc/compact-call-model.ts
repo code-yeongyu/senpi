@@ -60,7 +60,12 @@ export interface CallProjection {
 	readonly startSequence: number | null;
 	readonly startedAtMs: number | null;
 	readonly outcome: CallOutcome | null;
-	/** `omitted` counts completed children left out at `NESTED_PROJECTION_LIMIT` (RULING-49); `complete` is false when it is not 0. */
+	/**
+	 * `omitted` counts completed children a projecting path left out (RULING-49). It is 0 whenever paging is complete:
+	 * the settled store pages every completed child instead of capping it (RULING-60 Q3, RULING-67 (1)), and no producer
+	 * truncates. A consumer that truncates for its own bound reports its exact count here and carries RULING-49's
+	 * exact-count test. `complete` is false when a child is still open, incomplete, or omitted.
+	 */
 	readonly nestedCalls: {
 		readonly calls: readonly CallProjection[];
 		readonly complete: boolean;
@@ -92,9 +97,6 @@ export interface CallScope {
 	readonly turnId: string | null;
 }
 
-/** Completed children carried on a parent projection: the same bound as the parent's nested-call record. */
-export const NESTED_PROJECTION_LIMIT = 256;
-
 export const TERMINAL_PHASE: CallPhase = "completed-awaiting-entry";
 
 /** Execution, hook and boundary records the lane folds into the calls component. */
@@ -118,6 +120,21 @@ export const CALL_ONLY_RECORDS: ReadonlySet<string> = new Set([
 
 export function runtimeItemKey(scope: CallScope, creationSequence: number, k: number): string {
 	return `${scope.sessionEpoch}:${creationSequence}.${k}`;
+}
+
+/**
+ * RULING-123 (#5346): the call a compact peer's copy of a live call record names. `runtimeItemKey` is the key
+ * `runtimeItemKey` above minted when the outstanding call the record changed was created, the key that call's snapshot
+ * `calls` entry and its settled projection carry: opaque, fixed for the call's lifetime, and never reused in the session
+ * (it embeds the epoch and the creation sequence, so it alone is unique, even when providers reuse a `toolCallId`).
+ * `callUnknown`: the host changed no call with this record, so it cannot vouch for one (RULING-122's fail-safe rule).
+ */
+export type CallIdentity = { readonly runtimeItemKey: string } | { readonly callUnknown: true };
+
+export const CALL_UNKNOWN: CallIdentity = Object.freeze({ callUnknown: true });
+
+export function callIdentity(call: OutstandingCall | undefined): CallIdentity {
+	return call ? { runtimeItemKey: call.runtimeItemKey } : CALL_UNKNOWN;
 }
 
 /** Fixed-width tree ordinal so the root orders calls by creation, independent of the epoch string. */

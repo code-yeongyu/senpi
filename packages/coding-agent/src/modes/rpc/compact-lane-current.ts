@@ -6,7 +6,7 @@ import { COMPONENT_RECORDS } from "./compact-current-components.ts";
 import { type CanonicalUnit, laneTransition } from "./compact-lane-transitions.ts";
 import { assertProtocolDepth, protocolClone, protocolDepthLimitOf } from "./compact-protocol-depth.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
-import { CompactSessionState, type CompactSessionStateOptions } from "./compact-session-state.ts";
+import { CompactSessionState, type CompactSessionStateOptions, type CutStorageUse } from "./compact-session-state.ts";
 import type { CompactSettledMessages } from "./compact-settled-messages.ts";
 import type { FrozenCompactState } from "./compact-state-view.ts";
 import { compactColdFlow } from "./compact-transcript-flows.ts";
@@ -80,6 +80,11 @@ export class CompactLaneCurrent {
 			this.fail(cause);
 			return undefined;
 		}
+	}
+
+	/** The call whose block a `toolcall_*` update streams (RULING-123); undefined once the state is unavailable. */
+	callOwning(messageId: string, contentIndex: number) {
+		return this.state?.callOwning(messageId, contentIndex);
 	}
 
 	/**
@@ -161,6 +166,10 @@ export class CompactLaneCurrent {
 
 	readCalls(cut: FrozenCompactState | undefined) {
 		return this.owned(cut, (owner, held) => owner.readCalls(held));
+	}
+
+	cutStorage<T>(cut: FrozenCompactState | undefined, use: CutStorageUse<T>): Promise<T> {
+		return this.owned(cut, (owner, held) => owner.cutStorage(held, use));
 	}
 
 	private owned<T>(
