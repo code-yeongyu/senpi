@@ -1,3 +1,23 @@
+## 2026-11-02 - Ollama Cloud web search provider (senpi#5485)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/ollama.ts` (new, ported from oh-my-pi's `packages/coding-agent/src/web/search/providers/ollama.ts`): POSTs `{query, max_results (clamped to 1..10)}` to `https://ollama.com/api/web_search` with `Authorization: Bearer <apiKey>`. `allowedDomains`/`blockedDomains` fold into the query as `site:`/`-site:` terms via `appendDomainFilters` (the upstream adapter passes `site:` operators through in the query the same way). Response `results[]` map `content` into the snippet and fall back to the URL when `title` is missing; entries without a string URL are dropped.
+- `websearch/types.ts`, `provider-endpoints.ts`, `providers.ts`, `config.ts`: `ollama` joins the provider union, the default endpoint table, the module registry and `PROVIDERS`. It requires `apiKey` (not in `KEYLESS_PROVIDERS`), so a `websearch.json` entry without one fails config validation.
+- Covered by `test/suite/websearch-ollama-provider.test.ts`.
+
+### Why
+
+- Ollama Cloud offers a hosted web search API; senpi#5485 ports the provider from oh-my-pi so keyed configs can route searches to it.
+
+### Why an extension could not handle it
+
+- The provider registry and config validation are private to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: one line per provider in `types.ts`, `config.ts` `PROVIDERS`, `provider-endpoints.ts`, `providers.ts`.
+
 ## 2026-10-26 - Google grounding default leaves retired gemini-2.5-flash (senpi#4340)
 
 ### What changed

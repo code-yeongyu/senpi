@@ -16,6 +16,7 @@ import { kagiProvider } from "./providers/kagi.ts";
 import { keenableProvider } from "./providers/keenable.ts";
 import { kimiProvider } from "./providers/kimi.ts";
 import { mojeekProvider } from "./providers/mojeek.ts";
+import { ollamaProvider } from "./providers/ollama.ts";
 import { openAiResponsesProvider } from "./providers/openai-responses.ts";
 import { parallelProvider } from "./providers/parallel.ts";
 import { openRouterProvider } from "./providers/openrouter.ts";
@@ -74,6 +75,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	jina: jinaProvider,
 	tinyfish: tinyfishProvider,
 	synthetic: syntheticProvider,
+	ollama: ollamaProvider,
 };
 
 /** A count chosen for one call outranks a provider entry's own value, which outranks the caller's default. */
