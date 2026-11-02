@@ -242,6 +242,13 @@ describe.runIf(posix && (await hasPython3()))("Python kernel cells (E7, E8, A4, 
 				["/usr/bin/nice", "-n", "5", "/bin/sh", "-c", REPORTER],
 				["nohup", "sh", "-c", REPORTER],
 				["xargs", "sh", "-c", REPORTER],
+				// Shells beyond the POSIX family, busybox applets, and a command line inside one word (env -S): the judge
+				// refuses each of these, so none of them runs.
+				["fish", "-c", "kill -9 -1"],
+				["tcsh", "-c", "kill -9 -1"],
+				["busybox", "sh", "-c", "kill -9 -1"],
+				["env", "-S", "kill -9 -1"],
+				["env", "--split-string=kill -9 -1"],
 			];
 			for (const argv of argvShapes) {
 				const sent = requests.length;
