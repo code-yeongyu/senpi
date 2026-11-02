@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEditTool } from "../src/core/tools/edit.ts";
-import { acquireFileMutationLock, withFileMutationQueue } from "../src/core/tools/file-mutation-queue.ts";
+import {
+	acquireFileMutationLock,
+	FileLockedByStuckModuleError,
+	withFileMutationQueue,
+	withFileMutationQueues,
+} from "../src/core/tools/file-mutation-queue.ts";
 import { createWriteTool } from "../src/core/tools/write.ts";
 
 function delay(ms: number): Promise<void> {
@@ -106,6 +111,53 @@ describe("withFileMutationQueue", () => {
 		]);
 
 		expect(order).toEqual(["target:start", "target:end", "alias:start", "alias:end"]);
+	});
+});
+
+describe("withFileMutationQueues", () => {
+	it("reserves every path in the transaction until the mutation finishes", async () => {
+		const dir = await createTempDir();
+		const firstPath = join(dir, "first.txt");
+		const secondPath = join(dir, "second.txt");
+		await Promise.all([writeFile(firstPath, "first\n", "utf8"), writeFile(secondPath, "second\n", "utf8")]);
+		const order: string[] = [];
+		const reserved = createDeferred();
+		const release = createDeferred();
+
+		const reservation = withFileMutationQueues([firstPath, secondPath], async () => {
+			order.push("reservation:start");
+			reserved.resolve();
+			await release.promise;
+			order.push("reservation:end");
+		});
+		await reserved.promise;
+
+		const afterFirst = withFileMutationQueue(firstPath, async () => {
+			order.push("first");
+		});
+		const afterSecond = withFileMutationQueue(secondPath, async () => {
+			order.push("second");
+		});
+		await withFileMutationQueue(join(dir, "unrelated.txt"), async () => {
+			order.push("unrelated");
+		});
+
+		expect(order).toEqual(["reservation:start", "unrelated"]);
+		release.resolve();
+		await Promise.all([reservation, afterFirst, afterSecond]);
+		expect(order).toEqual(["reservation:start", "unrelated", "reservation:end", "first", "second"]);
+	});
+
+	it("fails fast when any reserved path is held by a stuck module", async () => {
+		const dir = await createTempDir();
+		const stuckPath = join(dir, "stuck.txt");
+		const freePath = join(dir, "free.txt");
+		const lock = await acquireFileMutationLock(stuckPath);
+		lock.markStuck("stuck-test-module");
+
+		await expect(withFileMutationQueues([freePath, stuckPath], async () => "ran")).rejects.toBeInstanceOf(
+			FileLockedByStuckModuleError,
+		);
 	});
 });
 
