@@ -38,7 +38,7 @@
  * is ever judged, and a judged host that is not stale is kept with the `stale_*` reason that saved it.
  */
 import { lstat, readdir, rm, rmdir, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type EndpointKind, HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
@@ -48,7 +48,7 @@ import { type EndpointInUse, endpointInUse, type SocketSilence, socketSiblings }
 import { judgeStaleEngine, type StaleEngineKeep, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { stopHost } from "./host-stop.ts";
 import { gcRpcPublicKeys } from "./rpc-public-key.ts";
-import { BIND_SCRATCH_INFIX, BIND_SCRATCH_SOCKET } from "./socket-ownership.ts";
+import { BIND_SCRATCH_SOCKET, isBindScratchName } from "./socket-ownership.ts";
 
 export type HostGcKeptReason =
 	| EndpointInUse
@@ -189,8 +189,7 @@ async function removeEndpoint(socket: string, dir: string): Promise<readonly Hos
 			throw error;
 		});
 		if (entry?.isDirectory()) {
-			const bindDir = sibling.startsWith(`${basename(socket)}${BIND_SCRATCH_INFIX}`);
-			if (!bindDir || !(await reclaimBindDir(path))) skipped.push({ path, type: "directory" });
+			if (!isBindScratchName(sibling) || !(await reclaimBindDir(path))) skipped.push({ path, type: "directory" });
 		} else if (entry !== undefined) await rm(path, { force: true });
 	}
 	await rm(socket, { force: true });
@@ -198,17 +197,24 @@ async function removeEndpoint(socket: string, dir: string): Promise<readonly Hos
 	return skipped;
 }
 
-/** A bind directory a crashed `listen` left: removed only while it holds nothing but that bind's socket. */
+/**
+ * A bind directory a crashed `listen` left: removed only while it holds nothing but that bind's socket. One it cannot
+ * read or empty (another user's, a permission change) is left and reported like any other directory sibling.
+ */
 async function reclaimBindDir(path: string): Promise<boolean> {
-	const inside = await readdir(path);
-	if (inside.some((name) => name !== BIND_SCRATCH_SOCKET)) return false;
-	const bound = join(path, BIND_SCRATCH_SOCKET);
-	if (inside.length > 0) {
-		if (!(await lstat(bound)).isSocket()) return false;
-		await unlink(bound);
+	try {
+		const inside = await readdir(path);
+		if (inside.some((name) => name !== BIND_SCRATCH_SOCKET)) return false;
+		const bound = join(path, BIND_SCRATCH_SOCKET);
+		if (inside.length > 0) {
+			if (!(await lstat(bound)).isSocket()) return false;
+			await unlink(bound);
+		}
+		await rmdir(path);
+		return true;
+	} catch {
+		return false;
 	}
-	await rmdir(path);
-	return true;
 }
 
 /** The ensure lock of `socket`, taken exactly as `ensureHost` takes it; `undefined` when not free in time. */

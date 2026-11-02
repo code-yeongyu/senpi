@@ -51,6 +51,11 @@ export const MAX_SOCKET_PATH_BYTES = 103;
 export const BIND_SCRATCH_INFIX = ".bind-";
 export const BIND_SCRATCH_SOCKET = "s";
 
+/** A bind directory's name, for any socket it was made beside (the public one, or a successor's `.next-<gen>`). */
+export function isBindScratchName(name: string): boolean {
+	return /\.bind-[0-9a-f]{12}$/.test(name);
+}
+
 /**
  * Where a successor generation binds before it owns the public name. It never binds the live
  * public path: that path belongs to the running host until the successor is proven to work.

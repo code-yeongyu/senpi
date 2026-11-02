@@ -20,7 +20,7 @@ import { generationPaths, type HostDaemonDirectory } from "./host-daemon-paths.t
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
-import { BIND_SCRATCH_INFIX } from "./socket-ownership.ts";
+import { BIND_SCRATCH_INFIX, isBindScratchName } from "./socket-ownership.ts";
 import { readSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
 
 export type EndpointInUse = "live_generation" | "live_claim" | "reachable";
@@ -47,7 +47,9 @@ export async function endpointInUse(
 	const silence = await socketSilence(socket);
 	if (silence === undefined) return { inUse: "reachable" };
 	// A successor mid-handoff listens on `<socket>.next-<gen>` before it registers anywhere.
-	const successors = (await socketSiblings(socket)).filter((name) => name.startsWith(`${basename(socket)}.next-`));
+	const successors = (await socketSiblings(socket)).filter(
+		(name) => name.startsWith(`${basename(socket)}.next-`) && !isBindScratchName(name),
+	);
 	for (const successor of successors) {
 		if ((await socketSilence(join(dirname(socket), successor))) === undefined) return { inUse: "reachable" };
 	}
