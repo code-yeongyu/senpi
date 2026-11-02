@@ -15,6 +15,11 @@ export interface IdpOptions {
 	iss: "omit" | "match" | "mismatch";
 	/** Advertise `authorization_response_iss_parameter_supported` in the server metadata. */
 	issSupported: boolean;
+	/**
+	 * Reject an authorize request whose `redirect_uri` is not one of the client's
+	 * registered redirect URIs, as strict authorization servers (e.g. Neon) do.
+	 */
+	strictRedirectUris: boolean;
 }
 
 export interface HttpReply {
@@ -60,6 +65,7 @@ export class IdpState {
 	registerHits = 0;
 	discoveryHits = 0;
 	familyInvalidated = false;
+	readonly #clients = new Map<string, string[]>();
 	readonly #codes = new Map<string, IssuedCode>();
 	readonly #refresh = new Map<string, RefreshToken>();
 	readonly #revokedFamilies = new Set<string>();
@@ -122,6 +128,10 @@ export class IdpState {
 	register(body: Record<string, unknown>): HttpReply {
 		this.registerHits++;
 		const clientId = `dcr-${randomBytes(6).toString("hex")}`;
+		const redirectUris = Array.isArray(body.redirect_uris)
+			? body.redirect_uris.filter((uri): uri is string => typeof uri === "string")
+			: [];
+		this.#clients.set(clientId, redirectUris);
 		return {
 			status: 201,
 			body: {
@@ -137,6 +147,15 @@ export class IdpState {
 		const redirectUri = query.get("redirect_uri");
 		const state = query.get("state");
 		if (redirectUri === null) return { status: 400, body: { error: "invalid_request" } };
+		if (this.options.strictRedirectUris) {
+			const registered = this.#clients.get(query.get("client_id") ?? "");
+			if (registered === undefined || !registered.includes(redirectUri)) {
+				return {
+					status: 400,
+					body: { error: "invalid_request", error_description: "invalid redirect uri" },
+				};
+			}
+		}
 		const code = `code-${randomBytes(12).toString("hex")}`;
 		this.#codes.set(code, {
 			clientId: query.get("client_id") ?? "unknown",
@@ -284,6 +303,7 @@ export function parseIdpOptions(argv: string[]): IdpOptions {
 		nullOptionalFields: argv.includes("--null-optional-fields"),
 		iss: parseIssMode(argv),
 		issSupported: argv.includes("--iss-supported"),
+		strictRedirectUris: argv.includes("--strict-redirect"),
 	};
 }
 
