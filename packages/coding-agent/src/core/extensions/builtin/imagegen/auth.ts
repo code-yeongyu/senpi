@@ -1,81 +1,51 @@
-export interface ImageGenAuthModel {
-	provider: string;
-	id: string;
-	baseUrl: string;
-	api?: string;
-}
+import type {
+	CredentialAuthResult,
+	CredentialModel,
+	CredentialResolver,
+	ProviderCredential,
+} from "../../../runtime/credential-resolver.ts";
+import { credentialParts, isPlaceholderKey, nonEmpty, OPENAI_BASE_URL } from "./credentials.ts";
+import { resolveConfiguredOpenAi } from "./openai-auth.ts";
 
-export type ImageGenRegistryAuthResult =
-	| { ok: true; apiKey?: string; headers?: Record<string, string | null> }
-	| { ok: false; error: string };
+export type ImageGenAuthModel = CredentialModel;
 
-export interface ImageGenProviderAuthResult {
-	auth: {
-		apiKey?: string;
-		headers?: Record<string, string | null>;
-	};
-}
+export type ImageGenRegistryAuthResult = CredentialAuthResult;
 
-export interface ImageGenAuthRegistry<TModel extends ImageGenAuthModel = ImageGenAuthModel> {
-	authStorage: {
-		get(provider: string): unknown;
-	};
-	getAll(): TModel[];
-	getApiKeyAndHeaders(model: TModel): Promise<ImageGenRegistryAuthResult>;
-	getProviderAuth(provider: string): Promise<ImageGenProviderAuthResult | undefined>;
-}
+export type ImageGenProviderAuthResult = ProviderCredential;
+
+export type ImageGenAuthRegistry<TModel extends ImageGenAuthModel = ImageGenAuthModel> = Pick<
+	CredentialResolver<TModel>,
+	"authStorage" | "getAll" | "getApiKeyAndHeaders" | "getProviderAuth" | "getProviderAuthStatus"
+>;
 
 export interface ResolveImageGenAuthDeps<TModel extends ImageGenAuthModel = ImageGenAuthModel> {
 	modelRegistry: ImageGenAuthRegistry<TModel>;
 	env?: Readonly<Record<string, string | undefined>>;
 }
 
-export type ImageGenAuthResolution =
-	| {
-			kind: "native-openai" | "gateway";
-			apiKey: string | undefined;
-			baseUrl: string;
-			headers?: Record<string, string>;
-			provenance: "store" | "env" | "provider-config";
-			providerId?: string;
-	  }
-	| { kind: "none"; reason: string };
-
-interface CredentialParts {
+export interface ImageGenResolvedAuth {
+	kind: "native-openai" | "gateway";
 	apiKey: string | undefined;
+	baseUrl: string;
 	headers?: Record<string, string>;
+	provenance: "store" | "env" | "provider-config";
+	providerId?: string;
 }
 
-const OPENAI_BASE_URL = "https://api.openai.com/v1";
-const SETUP_REASON =
+export type ImageGenAuthResolution = ImageGenResolvedAuth | { kind: "none"; reason: string };
+
+/**
+ * One source the tool may send the request to. `fallthrough` is true only for a gateway found by
+ * scanning models.json: when it has no images endpoint (404/405) the tool tries the next candidate.
+ * A source the user chose (a stored or overridden `openai`, the PI_IMAGE_GEN_PROVIDER pin, or
+ * OPENAI_API_KEY) never falls through, so its failure is reported as is.
+ */
+export interface ImageGenCandidate extends ImageGenResolvedAuth {
+	fallthrough: boolean;
+}
+
+export const SETUP_REASON =
 	'Image generation is not configured. Store an OpenAI API key for provider "openai", configure an OpenAI-compatible gateway in models.json and optionally pin it with PI_IMAGE_GEN_PROVIDER, or set OPENAI_API_KEY.';
-
-function nonEmpty(value: string | undefined): string | undefined {
-	const trimmed = value?.trim();
-	return trimmed ? trimmed : undefined;
-}
-
-function resolvedHeaders(headers: Record<string, string | null> | undefined): Record<string, string> | undefined {
-	if (!headers) return undefined;
-	const resolved: Record<string, string> = {};
-	for (const [name, value] of Object.entries(headers)) {
-		if (typeof value === "string" && value.trim().length > 0) resolved[name] = value;
-	}
-	return Object.keys(resolved).length > 0 ? resolved : undefined;
-}
-
-function credentialParts(
-	auth: { apiKey?: string; headers?: Record<string, string | null> } | undefined,
-): CredentialParts | undefined {
-	const apiKey = nonEmpty(auth?.apiKey);
-	if (!apiKey) return undefined;
-	const headers = resolvedHeaders(auth?.headers);
-	return { apiKey, ...(headers ? { headers } : {}) };
-}
-
-function isStoredApiKey(value: unknown): boolean {
-	return typeof value === "object" && value !== null && "type" in value && value.type === "api_key";
-}
 
 function isGatewayApi(api: string | undefined): boolean {
 	return api === "openai-completions" || api === "openai-responses";
@@ -106,32 +76,11 @@ function groupGatewayModels<TModel extends ImageGenAuthModel>(models: readonly T
 	return groups;
 }
 
-async function resolveStoredOpenAi<TModel extends ImageGenAuthModel>(
-	registry: ImageGenAuthRegistry<TModel>,
-): Promise<ImageGenAuthResolution | undefined> {
-	if (!isStoredApiKey(registry.authStorage.get("openai"))) return undefined;
-	let resolved: ImageGenProviderAuthResult | undefined;
-	try {
-		resolved = await registry.getProviderAuth("openai");
-	} catch {
-		return undefined;
-	}
-	const credentials = credentialParts(resolved?.auth);
-	if (!credentials) return undefined;
-	return {
-		kind: "native-openai",
-		...credentials,
-		baseUrl: OPENAI_BASE_URL,
-		provenance: "store",
-		providerId: "openai",
-	};
-}
-
 async function resolveGateway<TModel extends ImageGenAuthModel>(
 	providerId: string,
 	model: TModel,
 	registry: ImageGenAuthRegistry<TModel>,
-): Promise<ImageGenAuthResolution | undefined> {
+): Promise<ImageGenResolvedAuth | undefined> {
 	const baseUrl = nonEmpty(model.baseUrl);
 	if (!baseUrl) return undefined;
 	let resolved: ImageGenRegistryAuthResult;
@@ -152,21 +101,36 @@ async function resolveGateway<TModel extends ImageGenAuthModel>(
 	};
 }
 
-export async function resolveImageGenAuth<TModel extends ImageGenAuthModel>(
+/**
+ * Yields the image sources in precedence order, resolving each one's credentials only when the
+ * previous candidate fell through: a stored `openai` key, the PI_IMAGE_GEN_PROVIDER pin, a
+ * models.json `openai` override, scanned gateways, then OPENAI_API_KEY.
+ */
+export async function* imageGenCandidates<TModel extends ImageGenAuthModel>(
 	deps: ResolveImageGenAuthDeps<TModel>,
-): Promise<ImageGenAuthResolution> {
-	const native = await resolveStoredOpenAi(deps.modelRegistry);
-	if (native) return native;
-
-	const groups = groupGatewayModels(deps.modelRegistry.getAll());
+): AsyncGenerator<ImageGenCandidate> {
+	const registry = deps.modelRegistry;
 	const env = deps.env ?? process.env;
+	const openai = await resolveConfiguredOpenAi(registry);
+	if (openai?.tier === "store") {
+		yield { ...openai.resolution, fallthrough: false };
+		return;
+	}
+
+	const groups = groupGatewayModels(registry.getAll());
 	const pinnedProvider = nonEmpty(env.PI_IMAGE_GEN_PROVIDER);
-	if (pinnedProvider) {
-		const pinnedModel = groups.get(pinnedProvider);
-		if (pinnedModel) {
-			const pinned = await resolveGateway(pinnedProvider, pinnedModel, deps.modelRegistry);
-			if (pinned) return pinned;
+	const pinnedModel = pinnedProvider === undefined ? undefined : groups.get(pinnedProvider);
+	if (pinnedProvider !== undefined && pinnedModel !== undefined) {
+		const pinned = await resolveGateway(pinnedProvider, pinnedModel, registry);
+		if (pinned) {
+			yield { ...pinned, fallthrough: false };
+			return;
 		}
+	}
+
+	if (openai) {
+		yield { ...openai.resolution, fallthrough: false };
+		return;
 	}
 
 	const providerIds = [...groups.keys()]
@@ -175,19 +139,27 @@ export async function resolveImageGenAuth<TModel extends ImageGenAuthModel>(
 	for (const providerId of providerIds) {
 		const model = groups.get(providerId);
 		if (!model) continue;
-		const gateway = await resolveGateway(providerId, model, deps.modelRegistry);
-		if (gateway) return gateway;
+		const gateway = await resolveGateway(providerId, model, registry);
+		if (gateway) yield { ...gateway, fallthrough: true };
 	}
 
 	const envApiKey = nonEmpty(env.OPENAI_API_KEY);
-	if (envApiKey) {
-		return {
+	if (envApiKey && !isPlaceholderKey(envApiKey)) {
+		yield {
 			kind: "native-openai",
 			apiKey: envApiKey,
 			baseUrl: OPENAI_BASE_URL,
 			provenance: "env",
+			fallthrough: false,
 		};
 	}
+}
 
-	return { kind: "none", reason: SETUP_REASON };
+export async function resolveImageGenAuth<TModel extends ImageGenAuthModel>(
+	deps: ResolveImageGenAuthDeps<TModel>,
+): Promise<ImageGenAuthResolution> {
+	const first = await imageGenCandidates(deps).next();
+	if (first.done) return { kind: "none", reason: SETUP_REASON };
+	const { fallthrough: _fallthrough, ...resolution } = first.value;
+	return resolution;
 }

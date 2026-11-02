@@ -20,6 +20,8 @@ export interface InterpreterDetected {
 
 export interface InterpreterUnavailable {
 	readonly ok: false;
+	/** Why a configured interpreter could not be used; unset when detection simply found none. */
+	readonly reason?: string;
 }
 
 export type InterpreterDetection = InterpreterDetected | InterpreterUnavailable;
@@ -43,6 +45,8 @@ export interface CreateInterpreterDetectorOptions {
 
 export interface InterpreterDetector {
 	detect(language: CodemodeLanguage): Promise<InterpreterDetection>;
+	/** Probes exactly this executable (no PATH candidates, no splitting on spaces). */
+	detectExplicit(path: string): Promise<InterpreterDetection>;
 }
 
 export interface LanguageAvailability {
@@ -74,6 +78,9 @@ export function createInterpreterDetector(options: CreateInterpreterDetectorOpti
 			cache.set(language, pending);
 			return pending;
 		},
+		detectExplicit(path) {
+			return probeExplicit(path, probe);
+		},
 	};
 }
 
@@ -82,7 +89,7 @@ export async function getInterpreterAvailability(
 	detector: InterpreterDetector,
 ): Promise<InterpreterAvailability> {
 	return {
-		py: await availabilityFor("py", settings.languages.py, detector),
+		py: await pythonAvailability(settings, detector),
 		js: await availabilityFor("js", settings.languages.js, detector),
 		rb: await availabilityFor("rb", settings.languages.rb, detector),
 		jl: await availabilityFor("jl", settings.languages.jl, detector),
@@ -98,6 +105,32 @@ async function availabilityFor(
 		enabled,
 		detected: enabled ? await detector.detect(language) : unavailable,
 	};
+}
+
+/** `languages.pyInterpreter`, when set, is the only interpreter Python uses; a path that does not answer makes Python unavailable. */
+async function pythonAvailability(
+	settings: CodemodeSettings,
+	detector: InterpreterDetector,
+): Promise<LanguageAvailability> {
+	const configured = settings.languages.pyInterpreter;
+	if (configured === undefined || !settings.languages.py)
+		return await availabilityFor("py", settings.languages.py, detector);
+	return { enabled: true, detected: await detector.detectExplicit(configured) };
+}
+
+async function probeExplicit(path: string, probe: ExecFileProbe): Promise<InterpreterDetection> {
+	const reason = (detail: string): InterpreterUnavailable => ({
+		ok: false,
+		reason: `languages.pyInterpreter "${path}" ${detail}; Python is unavailable in this session`,
+	});
+	try {
+		const result = await probe(path, ["--version"], { timeoutMs: probeTimeoutMs });
+		const version = parseVersion(`${result.stdout}\n${result.stderr}`);
+		if (version === null) return reason("did not report a Python version");
+		return { ok: true, path, version, resolvedPath: path };
+	} catch (error) {
+		return reason(`could not run (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`);
+	}
 }
 
 async function detectUncached(

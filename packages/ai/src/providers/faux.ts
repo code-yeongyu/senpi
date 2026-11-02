@@ -15,11 +15,16 @@ import type {
 	StreamOptions,
 	TextContent,
 	ThinkingContent,
+	Tool,
 	ToolCall,
 	ToolResultMessage,
+	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { enableAssistantCapture } from "../utils/assistant-capture.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
+import { getSystemMessageText } from "../utils/text.ts";
+import { getCurrentSystemPrompt, getCurrentTools } from "../utils/transcript.ts";
 
 const DEFAULT_API = "faux";
 const DEFAULT_PROVIDER = "faux";
@@ -43,6 +48,7 @@ export interface FauxModelDefinition {
 	name?: string;
 	reasoning?: boolean;
 	input?: ("text" | "image")[];
+	inputLimits?: Model<string>["inputLimits"];
 	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	contextWindow?: number;
 	maxTokens?: number;
@@ -94,11 +100,11 @@ export function fauxAssistantMessage(
 		model: DEFAULT_MODEL_ID,
 		usage: DEFAULT_USAGE,
 		stopReason: options.stopReason ?? "stop",
-		stopDetails: options.stopDetails,
-		deferred: options.deferred,
-		errorMessage: options.errorMessage,
-		abortSource: options.abortSource,
-		responseId: options.responseId,
+		...(options.stopDetails === undefined ? {} : { stopDetails: options.stopDetails }),
+		...(options.deferred === undefined ? {} : { deferred: options.deferred }),
+		...(options.errorMessage === undefined ? {} : { errorMessage: options.errorMessage }),
+		...(options.abortSource === undefined ? {} : { abortSource: options.abortSource }),
+		...(options.responseId === undefined ? {} : { responseId: options.responseId }),
 		timestamp: options.timestamp ?? Date.now(),
 	};
 }
@@ -110,7 +116,7 @@ export interface FauxProviderState {
 }
 
 export type FauxResponseFactory = (
-	context: Context,
+	context: TranscriptContext,
 	options: SimpleStreamOptions | undefined,
 	state: FauxProviderState,
 	model: Model<string>,
@@ -128,6 +134,8 @@ export interface RegisterFauxProviderOptions {
 		pollAfterMs?: number;
 	};
 	tokensPerSecond?: number;
+	/** Headers every scripted response reports through `onResponse` (default none). */
+	responseHeaders?: Record<string, string>;
 	schedulerHook?: () => void | Promise<void>;
 	tokenSize?: {
 		min?: number;
@@ -136,6 +144,10 @@ export interface RegisterFauxProviderOptions {
 }
 
 export interface FauxCallLogEntry {
+	/**
+	 * The request as the pre-transcript `Context` shape: the prompt and tools replayed from the
+	 * transcript's system messages, and `messages` without system messages.
+	 */
 	context: Context;
 	options?: StreamOptions;
 	timestamp: number;
@@ -181,16 +193,24 @@ function cloneStreamOptionsForLog(options: StreamOptions | undefined): StreamOpt
 	return { ...options };
 }
 
-function cloneContextForLog(context: Context): Context {
+function cloneToolForLog(tool: Tool): Tool {
 	return {
-		...context,
-		messages: structuredClone(context.messages),
-		tools: context.tools?.map((tool) => ({
-			name: tool.name,
-			description: tool.description,
-			parameters: structuredClone(tool.parameters),
-			...(tool.freeform ? { freeform: structuredClone(tool.freeform) } : {}),
-		})),
+		name: tool.name,
+		description: tool.description,
+		parameters: structuredClone(tool.parameters),
+		...(tool.freeform ? { freeform: structuredClone(tool.freeform) } : {}),
+	};
+}
+
+/** Log a request in the pre-transcript `Context` shape; system messages fold into `systemPrompt`/`tools`. */
+function toLoggedContext(transcript: TranscriptContext): Context {
+	const systemPrompt = getCurrentSystemPrompt(transcript.messages);
+	const tools = getCurrentTools(transcript.messages);
+	return {
+		...(systemPrompt ? { systemPrompt } : {}),
+		messages: structuredClone(transcript.messages.filter((message) => message.role !== "system")),
+		...(tools.length > 0 ? { tools: tools.map(cloneToolForLog) } : {}),
+		...(transcript.activeToolNames ? { activeToolNames: [...transcript.activeToolNames] } : {}),
 	};
 }
 
@@ -232,27 +252,27 @@ function toolResultToText(message: ToolResultMessage): string {
 }
 
 function messageToText(message: Message): string {
+	if (message.role === "system") {
+		return [
+			getSystemMessageText(message),
+			...(message.toolsRemoved?.map((tool) => `tool-:${JSON.stringify(tool)}`) ?? []),
+			...(message.toolsAdded?.map((tool) => `tool+:${JSON.stringify(tool)}`) ?? []),
+		]
+			.filter((part) => part.length > 0)
+			.join("\n");
+	}
 	if (message.role === "user") {
 		return contentToText(message.content);
 	}
 	if (message.role === "assistant") {
 		return assistantContentToText(message.content);
 	}
+	if (message.role === "configurationUpdate") return "";
 	return toolResultToText(message);
 }
 
-function serializeContext(context: Context): string {
-	const parts: string[] = [];
-	if (context.systemPrompt) {
-		parts.push(`system:${context.systemPrompt}`);
-	}
-	for (const message of context.messages) {
-		parts.push(`${message.role}:${messageToText(message)}`);
-	}
-	if (context.tools?.length) {
-		parts.push(`tools:${JSON.stringify(context.tools)}`);
-	}
-	return parts.join("\n\n");
+function serializeContext(context: TranscriptContext): string {
+	return context.messages.map((message) => `${message.role}:${messageToText(message)}`).join("\n\n");
 }
 
 function commonPrefixLength(a: string, b: string): number {
@@ -266,7 +286,7 @@ function commonPrefixLength(a: string, b: string): number {
 
 function withUsageEstimate(
 	message: AssistantMessage,
-	context: Context,
+	context: TranscriptContext,
 	options: StreamOptions | undefined,
 	promptCache: Map<string, string>,
 ): AssistantMessage {
@@ -464,7 +484,11 @@ async function streamWithDeltas(
 				stream.end(aborted);
 				return;
 			}
-			stream.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+			// Faux never parses its generated chunks; only the end installs the arguments.
+			stream.push(
+				{ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } },
+				{ parsedThrough: 0 },
+			);
 		}
 		(partial.content[index] as ToolCall).arguments = block.arguments;
 		stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: { ...partial } });
@@ -486,6 +510,7 @@ async function streamWithDeltas(
 export function createFauxCore(options: RegisterFauxProviderOptions) {
 	const api = options.api ?? randomId(DEFAULT_API);
 	const provider = options.provider ?? DEFAULT_PROVIDER;
+	const responseHeaders = options.responseHeaders ?? {};
 	const minTokenSize = Math.max(
 		1,
 		Math.min(options.tokenSize?.min ?? DEFAULT_MIN_TOKEN_SIZE, options.tokenSize?.max ?? DEFAULT_MAX_TOKEN_SIZE),
@@ -502,7 +527,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		{
 			handle: DeferredHandle;
 			step: FauxResponseStep;
-			context: Context;
+			context: TranscriptContext;
 			options: SimpleStreamOptions | undefined;
 			model: Model<string>;
 			pendingFetches: number;
@@ -532,6 +557,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		baseUrl: DEFAULT_BASE_URL,
 		reasoning: definition.reasoning ?? false,
 		input: definition.input ?? ["text", "image"],
+		inputLimits: definition.inputLimits,
 		cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: definition.contextWindow ?? 128000,
 		maxTokens: definition.maxTokens ?? 16384,
@@ -539,7 +565,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 
 	const resolveResponse = async (
 		step: FauxResponseStep,
-		context: Context,
+		context: TranscriptContext,
 		streamOptions: SimpleStreamOptions | undefined,
 		requestModel: Model<string>,
 	): Promise<AssistantMessage> => {
@@ -554,10 +580,11 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 
 	const stream: StreamFunction<string, SimpleStreamOptions> = (requestModel, context, streamOptions) => {
 		const outer = createAssistantMessageEventStream();
+		enableAssistantCapture(outer);
 		const step = pendingResponses.shift();
 		state.callCount++;
 		callLog.push({
-			context: cloneContextForLog(context),
+			context: toLoggedContext(context),
 			options: cloneStreamOptionsForLog(streamOptions),
 			timestamp: Date.now(),
 			modelId: requestModel.id,
@@ -565,7 +592,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 
 		queueMicrotask(async () => {
 			try {
-				await streamOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
+				await streamOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
 				if (!step) {
 					let message = createErrorMessage(
 						new Error("No more faux responses queued"),
@@ -637,11 +664,12 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		fetchOptions?: DeferredFetchOptions,
 	): AssistantMessageEventStream => {
 		const outer = createAssistantMessageEventStream();
+		enableAssistantCapture(outer);
 		state.deferredFetchCount++;
 
 		queueMicrotask(async () => {
 			try {
-				await fetchOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
+				await fetchOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
 				const entry = deferredResponses.get(handle.id);
 				if (
 					!entry ||
@@ -707,7 +735,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		state.cancelledDeferred.push(structuredClone(handle));
 		const entry = deferredResponses.get(handle.id);
 		if (entry) entry.cancelled = true;
-		await cancelOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
+		await cancelOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
 	};
 
 	function getModel(): Model<string>;
@@ -740,7 +768,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		},
 		getCallLog() {
 			return callLog.map((entry) => ({
-				context: cloneContextForLog(entry.context),
+				context: structuredClone(entry.context),
 				options: cloneStreamOptionsForLog(entry.options),
 				timestamp: entry.timestamp,
 				modelId: entry.modelId,

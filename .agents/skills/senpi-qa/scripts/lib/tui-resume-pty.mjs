@@ -4,14 +4,17 @@ import { dirname, join } from "node:path";
 import { cliEntry, stripAnsi, tsxEntry } from "./common.mjs";
 import {
 	BOOT_TIMEOUT_MS,
+	BOOT_SENTINELS,
 	COLS,
 	FINAL_MARKER,
 	FIRST_MARKER,
 	HYDRATE_TIMEOUT_MS,
 	ROWS,
 	SELECTOR_TIMEOUT_MS,
+	STARTUP_TIMEOUT_MS,
 	TUI_ARGS,
 } from "./tui-resume-args.mjs";
+import { createResumeScreen, waitForStartupComplete } from "./tui-resume-screen.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -81,10 +84,6 @@ function waitUntil(stream, predicate, { timeoutMs, label }) {
 	});
 }
 
-function waitForText(stream, needle, options) {
-	return waitUntil(stream, (raw) => stripAnsi(raw).includes(needle), options);
-}
-
 function recordAction(actions, type, detail) {
 	actions.push({ t: new Date().toISOString(), type, ...detail });
 }
@@ -100,8 +99,22 @@ export async function spawnResumeTui({ root, cwd, env }) {
 }
 
 export async function driveResume(term, stream, { messages, actions }) {
-	await waitForText(stream, "senpi v", { timeoutMs: BOOT_TIMEOUT_MS, label: "TUI boot" });
-	recordAction(actions, "boot", { sentinel: "senpi v" });
+	await waitUntil(
+		stream,
+		(raw) => BOOT_SENTINELS.some((sentinel) => stripAnsi(raw).includes(sentinel)),
+		{ timeoutMs: BOOT_TIMEOUT_MS, label: "TUI boot" },
+	);
+	recordAction(actions, "boot", { sentinels: BOOT_SENTINELS });
+
+	// The header is painted before startup finishes, and a submit before then is only parked in the editor
+	// (senpi#5291): wait until the TUI accepts a submit.
+	const screen = createResumeScreen(stream, { cols: COLS, rows: ROWS });
+	try {
+		const probes = await waitForStartupComplete(term, screen, { timeoutMs: STARTUP_TIMEOUT_MS });
+		recordAction(actions, "ready", { probes });
+	} finally {
+		screen.dispose();
+	}
 
 	const selectorWait = waitUntil(
 		stream,

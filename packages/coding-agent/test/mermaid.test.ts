@@ -62,30 +62,39 @@ describe("Mermaid rendering", () => {
 		expect(transformMermaid(partialMarkdown, { isStreaming: true })).toContain("───▶");
 	});
 
+	it("renders diagrams with class assignments", () => {
+		const markdown = "```mermaid\nflowchart LR\n  A[Foo]:::highlight --> B[Bar]\n```";
+		const rendered = transformMermaid(markdown);
+
+		expect(rendered).not.toContain("```mermaid");
+		expect(rendered).not.toContain("Mermaid diagram not rendered");
+		expect(rendered).toContain("│ Foo ├───▶│ Bar │");
+	});
+
 	it("falls back to the code block with a warning after streaming", () => {
-		const markdown = "```mermaid\nflowchart LR\n  A[Foo] --> B[Bar]\n  oops one\n```";
+		const markdown = "```mermaid\nflowchart LR\n  A[Foo] invalid\n```";
 		const final = transformMermaid(markdown);
 		const followedByText = transformMermaid(`${markdown}\nFollowing text`);
 		const streaming = transformMermaid(markdown, { isStreaming: true });
 
 		expect(final).toContain(markdown);
 		expect(final).toContain("```\n`Mermaid diagram not rendered");
-		expect(final).toContain('dropped, expected a link: "one"');
+		expect(final).toContain('dropped, expected a link: "invalid"');
 		expect(final).not.toContain("more)");
 		expect(followedByText).toContain("  \nFollowing text");
 		expect(streaming).not.toContain("Mermaid diagram not rendered");
 		expect(streaming).not.toContain("```mermaid");
-		expect(streaming).toContain("│ Foo ├");
+		expect(streaming).toContain("│ Foo │");
 	});
 
 	it("summarizes additional partial-render warnings", () => {
-		const markdown = "```mermaid\nflowchart LR\n  A[Foo] --> B[Bar]\n  oops one\n  oops two\n```";
+		const markdown = "```mermaid\nflowchart LR\n  A[Foo] invalid\n  B[Bar] also-invalid\n```";
 		const rendered = transformMermaid(markdown);
 
 		expect(rendered).toContain(markdown);
-		expect(rendered).toContain('dropped, expected a link: "one"');
+		expect(rendered).toContain('dropped, expected a link: "invalid"');
 		expect(rendered).toContain("(+1 more)");
-		expect(rendered).not.toContain('dropped, expected a link: "two"');
+		expect(rendered).not.toContain('dropped, expected a link: "also-invalid"');
 	});
 
 	it("respects rendering modes and skips thinking blocks", () => {

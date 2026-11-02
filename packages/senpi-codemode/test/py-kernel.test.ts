@@ -132,7 +132,9 @@ describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
 			connection: { port: server.port, token: server.token },
 		});
 		try {
-			await expect(runCell(kernel, "tool.echo_tool({'q': 'hi'})")).resolves.toMatchObject({
+			const result = await runCell(kernel, "tool.echo_tool({'q': 'hi'})");
+			// On failure, show the whole cell result (its error and whether it timed out), not just ok:false (senpi#2619).
+			expect(result, JSON.stringify(result)).toMatchObject({
 				ok: true,
 				valueRepr: expect.stringContaining("'echoed': True"),
 			});
@@ -143,6 +145,45 @@ describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
 			// (additionalProperties: false) would reject at executeTool validation.
 			expect(requests[0]?.args).toEqual({ q: "hi" });
 			expect(requests[0]?.callId).toMatch(/^py-/);
+		} finally {
+			await kernel.close();
+			await server.close();
+		}
+	});
+
+	// senpi#2619: the bridge is a loopback call. urllib's default opener honors proxy settings (the
+	// environment everywhere, the registry on Windows), so a configured proxy must never carry it.
+	it("reaches the loopback bridge even when a proxy is configured", async () => {
+		const requests: BridgeHttpCallRequest[] = [];
+		const server = await startBridgeServer({
+			token: "proxy-token",
+			onCall: async (request) => {
+				requests.push(request);
+				return { echoed: true };
+			},
+			onEmit: async () => {},
+			onCompletion: async () => "unused",
+		});
+		const kernel = await PythonKernel.start({
+			interpreterPath: (await createInterpreterDetector().detect("py")).ok ? "python3" : "python",
+			sessionId: "proxy-session",
+			cwd: process.cwd(),
+			connection: { port: server.port, token: server.token },
+			env: {
+				...process.env,
+				HTTP_PROXY: "http://127.0.0.1:9",
+				http_proxy: "http://127.0.0.1:9",
+				NO_PROXY: "",
+				no_proxy: "",
+			},
+		});
+		try {
+			const result = await runCell(kernel, "tool.echo_tool({'q': 'via-loopback'})");
+			expect(result, JSON.stringify(result)).toMatchObject({
+				ok: true,
+				valueRepr: expect.stringContaining("'echoed': True"),
+			});
+			expect(requests).toHaveLength(1);
 		} finally {
 			await kernel.close();
 			await server.close();
@@ -167,10 +208,8 @@ describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
 			connection: { port: server.port, token: server.token },
 		});
 		try {
-			await expect(runCell(kernel, "completion('Say hi', temperature=0)")).resolves.toMatchObject({
-				ok: true,
-				valueRepr: "'completion-ok'",
-			});
+			const result = await runCell(kernel, "completion('Say hi', temperature=0)");
+			expect(result, JSON.stringify(result)).toMatchObject({ ok: true, valueRepr: "'completion-ok'" });
 			expect(completions).toEqual([{ prompt: "Say hi", opts: { temperature: 0 } }]);
 		} finally {
 			await kernel.close();

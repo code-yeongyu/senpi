@@ -1,0 +1,299 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
+import { describe, expect, it } from "vitest";
+import { DEEPSEEK_V4_RULES } from "../../src/core/extensions/builtin/prompt-preset/deepseek-v4.ts";
+import { DEEPSEEK_V41_FLASH_RULES } from "../../src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts";
+import { EXECUTION_TOOLING_RULES } from "../../src/core/extensions/builtin/prompt-preset/execution-tooling.ts";
+import {
+	type PromptPresetSettings,
+	resolvePreset,
+	resolvePresetName,
+} from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
+
+function createModel(id: string, provider: string, name = id): Model<Api> {
+	return {
+		id,
+		name,
+		api: "openai-completions",
+		provider,
+		baseUrl: "https://example.com/v1",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 384_000,
+	};
+}
+
+const AUTO: PromptPresetSettings = { promptPreset: "auto" };
+
+// Real-world id shapes verified against models.dev and senpi's generated
+// provider catalogs on 2026-09-11, the day after the V4.1 Flash release.
+const V41_FLASH_MODEL_IDS: ReadonlyArray<readonly [id: string, provider: string]> = [
+	["deepseek-flash", "deepseek"], // official API name
+	["deepseek-flash", "opencode-go"],
+	["deepseek-v4.1-flash", "requesty"],
+	["deepseek-v4.1-flash", "llmgateway"],
+	["deepseek/deepseek-v4.1-flash", "openrouter"],
+	["deepseek/deepseek-v4.1-flash", "vercel-ai-gateway"],
+	["deepseek/deepseek-v4.1-flash:thinking", "nano-gpt"],
+	["deepseek-ai/DeepSeek-V4.1-Flash", "huggingface"],
+	["deepseek-ai/DeepSeek-V4.1-Flash", "deepinfra"],
+	["deepinfra/deepseek-ai/DeepSeek-V4.1-Flash", "edenai"],
+	["accounts/fireworks/models/deepseek-v4p1-flash", "fireworks"],
+	["deepseek-v4-1-flash", "venice"],
+	["DeepSeek-V4.1-Flash", "custom"],
+	// The 2026-10-17 snapshot (DeepSeek-V4.1-Flash-1017): the official API serves it
+	// as deepseek-flash; gateways list it under a dated id.
+	["deepseek/deepseek-v4.1-flash-1017", "openrouter"],
+	["deepseek/deepseek-v4.1-flash-1017", "vercel-ai-gateway"],
+	["deepseek/deepseek-v4.1-flash-1017", "kilo"],
+	["deepseek-ai/DeepSeek-V4.1-Flash-1017", "baseten"],
+];
+
+// Every shipped catalog row of the 1017 snapshot, read from the catalogs themselves (id or display name),
+// so a row added later is checked without editing this file.
+const SNAPSHOT_1017 = /v4[.p -]?1[- ]flash[- (]+1017/i;
+const SHIPPED_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string, model: Model<Api>]> =
+	getProviders().flatMap((provider) =>
+		getModels(provider)
+			.filter((model) => SNAPSHOT_1017.test(`${model.id} ${model.name}`))
+			.map((model) => [provider, model.id, model] as const),
+	);
+
+// Rows known to ship on 2026-10-20; removing one from its catalog must fail the suite.
+const KNOWN_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string]> = [
+	["baseten", "deepseek-ai/DeepSeek-V4.1-Flash-1017"],
+	["baseten", "deepseek-ai/DeepSeek-V4.1-Flash-1017-Fast"],
+	["fireworks", "accounts/fireworks/models/deepseek-v4p1-flash-1017"],
+	["opengateway", "deepseek/deepseek-flash"],
+	["openrouter", "deepseek/deepseek-v4.1-flash-1017"],
+	["qwen-token-plan-cn", "deepseek-v4.1-flash-1017"],
+	["venice", "deepseek-v4-1-flash-1017"],
+	["vercel-ai-gateway", "deepseek/deepseek-v4.1-flash-1017"],
+	["vercel-ai-gateway", "deepseek/deepseek-v4.1-flash-1017-fast"],
+];
+
+// The official API retired V4 Flash on 2026-09-10 and serves these names with V4.1 Flash.
+const RETIRED_OFFICIAL_ALIASES = ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"];
+
+// The same names on every other provider still resolve to the V4 weights.
+const V4_FLASH_ELSEWHERE: ReadonlyArray<readonly [id: string, provider: string, expected: string]> = [
+	["deepseek-v4-flash", "openrouter", "deepseek-v4-flash"],
+	["deepseek/deepseek-v4-flash", "openrouter", "deepseek-v4-flash"],
+	["deepseek-ai/DeepSeek-V4-Flash", "huggingface", "deepseek-v4-flash"],
+	["deepseek-v4-flash-vision-exp", "opencode", "deepseek-v4-flash"],
+	["deepseek/deepseek-v4-flash-0731", "openrouter", "deepseek-v4-flash-0731"],
+	["deepseek-v4-flash-0731", "deepseek", "deepseek-v4-flash-0731"],
+	["deepseek-v4-pro", "deepseek", "deepseek-v4-pro"],
+];
+
+const NON_MATCHING_MODEL_IDS = [
+	"deepseek-v4.1-pro",
+	"deepseek-v4",
+	"deepseek-v41",
+	"deepseek-chat",
+	"deepseek-reasoner",
+	"deepseek/deepseek-r1",
+	"flash",
+	"gemini-3.6-flash",
+	"qwen3.6-flash",
+];
+
+function hasV41Signal(searchable: string): boolean {
+	return (
+		/(?:^|[/@:._-])deepseek[._-]v4(?:[._-]1|p1)[._-]flash(?:$|[/@:._-])/.test(searchable) ||
+		/(?:^|[/@:._-])deepseek[._-]flash(?:$|[/@:._-])/.test(searchable)
+	);
+}
+
+function hasV4FlashSignal(searchable: string): boolean {
+	return /(?:^|[/@:._-])deepseek[._-]v4[._-]flash(?:$|[/@:._-])/.test(searchable);
+}
+
+function getV41CatalogModels(): Model<Api>[] {
+	return getProviders().flatMap((provider) =>
+		getModels(provider).filter((model) => {
+			const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
+			return hasV41Signal(searchable) || (model.provider === "deepseek" && hasV4FlashSignal(searchable));
+		}),
+	);
+}
+
+// Image input and reasoning are per-provider serving choices, not snapshot facts: models.dev lists mistral's
+// deepseek-v4-1-flash-1017 as text-only (attachment false), so the release's catalog regeneration can add such a
+// row (senpi#4762). Every shipped row must reach the V4.1 preset; the curated KNOWN_1017_ROWS pin the multimodal set.
+function expectShipped1017Row(model: Model<Api>): void {
+	expect(model.input).toContain("text");
+	expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+}
+
+describe("DeepSeek V4.1 Flash prompt preset", () => {
+	it.each(V41_FLASH_MODEL_IDS)("resolves %s on %s to the deepseek-v4-1-flash preset", (modelId, provider) => {
+		// when
+		const preset = resolvePreset(createModel(modelId, provider), AUTO);
+
+		// then
+		expect(preset?.name).toBe("deepseek-v4-1-flash");
+		expect(preset?.prompt).toContain("You are senpi");
+		expect(preset?.prompt).not.toContain("apply_patch");
+		expect(preset?.prompt.length).toBeGreaterThan(2_000);
+	});
+
+	it("matches by display name when the raw id carries no signal", () => {
+		// given
+		const model = createModel("ds-flash-latest", "aggregator", "DeepSeek V4.1 Flash");
+
+		// then
+		expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+	});
+
+	it.each(RETIRED_OFFICIAL_ALIASES)("routes the retired official alias %s to the V4.1 preset", (modelId) => {
+		expect(resolvePresetName(createModel(modelId, "deepseek"), AUTO)).toBe("deepseek-v4-1-flash");
+	});
+
+	it.each(V4_FLASH_ELSEWHERE)("keeps %s on %s on the %s preset", (modelId, provider, expected) => {
+		expect(resolvePresetName(createModel(modelId, provider), AUTO)).toBe(expected);
+	});
+
+	it.each(NON_MATCHING_MODEL_IDS)("does not route %s to the V4.1 preset", (modelId) => {
+		expect(resolvePresetName(createModel(modelId, "openrouter", "some model"), AUTO)).not.toBe("deepseek-v4-1-flash");
+	});
+
+	it("allows settings.json to force the preset regardless of model id", () => {
+		// given
+		const settings = { promptPreset: "deepseek-v4-1-flash" } as PromptPresetSettings;
+
+		// when
+		const preset = resolvePreset(createModel("some-random-model", "custom"), settings);
+
+		// then
+		expect(preset?.name).toBe("deepseek-v4-1-flash");
+	});
+
+	it("returns the V4.1 preset for every V4.1 Flash built-in catalog model", () => {
+		// given
+		const catalogModels = getV41CatalogModels();
+		const catalogModelIds = catalogModels.map((model) => `${model.provider}/${model.id}`);
+
+		// when
+		const misses = catalogModels
+			.filter((model) => resolvePresetName(model, AUTO) !== "deepseek-v4-1-flash")
+			.map((model) => `${model.provider}/${model.id}`);
+
+		// then
+		// Catalog ids drift across regenerations: the official provider renamed
+		// its row deepseek-v4-flash -> deepseek-flash after V4 Flash retired on
+		// 2026-09-10, and opencode-go renamed deepseek-flash -> deepseek-v4.1-flash
+		// on 2026-09-11 (fork main PR #1619 pinned the retired official spelling;
+		// upstream 12f59336a + 713bdf38d renamed the row and the 2026-09-12 merge
+		// regenerated the catalog). Pin each provider's presence in the V4.1 set,
+		// not one spelling.
+		expect(catalogModelIds.some((id) => id.startsWith("deepseek/"))).toBe(true);
+		expect(catalogModelIds.some((id) => id.startsWith("opencode-go/"))).toBe(true);
+		expect(misses).toEqual([]);
+	});
+
+	it.each(SHIPPED_1017_ROWS)("ships the 1017 snapshot row on %s (%s) on the V4.1 preset", (_provider, _id, model) => {
+		expectShipped1017Row(model);
+	});
+
+	it("accepts a text-only 1017 row as the release's catalog regeneration can add one", () => {
+		// given models.dev's mistral row, served text-only upstream
+		const model = { ...createModel("deepseek-v4-1-flash-1017", "mistral"), input: ["text"] } satisfies Model<Api>;
+
+		// then
+		expectShipped1017Row(model);
+	});
+
+	it.each(KNOWN_1017_ROWS)(
+		"still ships the 1017 snapshot row on %s (%s) as a multimodal reasoning row",
+		(provider, id) => {
+			// when
+			const model = SHIPPED_1017_ROWS.find(([p, i]) => p === provider && i === id)?.[2];
+
+			// then
+			expect(model?.reasoning).toBe(true);
+			expect(model?.input).toContain("image");
+		},
+	);
+});
+
+describe("DeepSeek V4.1 Flash prompt content", () => {
+	const settings = { promptPreset: "deepseek-v4-1-flash" } as PromptPresetSettings;
+
+	function buildPrompt(selectedTools: string[]): string {
+		const preset = resolvePreset(createModel("deepseek-flash", "deepseek"), settings, {
+			cwd: "/workspace",
+			selectedTools,
+			toolSnippets: {},
+			promptGuidelines: [],
+			contextFiles: [],
+			skills: [],
+		});
+		if (!preset) {
+			throw new Error("deepseek-v4-1-flash did not resolve");
+		}
+		return preset.prompt;
+	}
+
+	function sectionOf(prompt: string, directive: string): string | undefined {
+		const at = prompt.indexOf(directive);
+		if (at === -1) return undefined;
+		const start = prompt.lastIndexOf("\n## ", at);
+		return prompt.slice(start + 1, prompt.indexOf("\n", start + 1));
+	}
+
+	const ALL_TOOLS = ["read", "edit", "bash", "eval", "todo", "task"];
+
+	it("renders each V4.1 rule exactly once, inside its owning section, when its tool is mounted", () => {
+		// given
+		const prompt = buildPrompt(ALL_TOOLS);
+
+		// then
+		for (const rule of DEEPSEEK_V41_FLASH_RULES) {
+			expect(prompt.split(rule.directive).length - 1, rule.id).toBe(1);
+			expect(sectionOf(prompt, rule.directive), rule.id).toBe(rule.section);
+		}
+	});
+
+	it("drops a tool-bound rule when its tool is not mounted", () => {
+		// given
+		const prompt = buildPrompt(["read", "edit", "bash"]);
+
+		// then
+		for (const rule of DEEPSEEK_V41_FLASH_RULES) {
+			expect(prompt.includes(rule.directive), rule.id).toBe(rule.requiresTool === undefined);
+		}
+	});
+
+	it("carries every V4 Flash-line repair and none of the Pro-only ones", () => {
+		// given
+		const carried = new Set(DEEPSEEK_V41_FLASH_RULES.flatMap((rule) => (rule.carriedFrom ? [rule.carriedFrom] : [])));
+		const prompt = buildPrompt(ALL_TOOLS);
+
+		// then
+		for (const rule of DEEPSEEK_V4_RULES) {
+			expect(carried.has(rule.id), rule.id).toBe(rule.presets.includes("deepseek-v4-flash"));
+			expect(prompt, rule.id).not.toContain(rule.directive);
+		}
+	});
+
+	it("renders the claude-dialect eval-routing stance only when eval is selected", () => {
+		// given
+		const withEval = buildPrompt(["read", "edit", "bash", "eval"]);
+		const withoutEval = buildPrompt(["read", "edit", "bash"]);
+
+		// then
+		expect(withEval).toContain("<execution_tooling>");
+		expect(withoutEval).not.toContain("<execution_tooling>");
+		for (const rule of EXECUTION_TOOLING_RULES) {
+			expect(withEval).toContain(rule.directive.claude);
+			expect(withoutEval).not.toContain(rule.directive.claude);
+		}
+	});
+
+	it("uses the claude workstation dialect", () => {
+		expect(buildPrompt(["bash"])).toContain("<execution_context>");
+	});
+});

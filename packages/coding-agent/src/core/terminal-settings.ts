@@ -1,8 +1,20 @@
+export const TERMINAL_MOUSE_MODES = ["off", "whilePending", "always"] as const;
+export type TerminalMouseMode = (typeof TERMINAL_MOUSE_MODES)[number];
+
+export function isTerminalMouseMode(value: unknown): value is TerminalMouseMode {
+	return value === "off" || value === "whilePending" || value === "always";
+}
+
 export interface TerminalSettings {
+	mouse?: TerminalMouseMode; // default: whilePending; off also disables fullscreen capture
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
+	// Terminal capability overrides (upstream e86823096); "auto" defers to detection.
+	hyperlinks?: boolean | "auto";
+	images?: "kitty" | "iterm2" | "auto" | false;
+	trueColor?: boolean | "auto";
 	// Persistent-terminal tool suite (builtin `terminal` extension) config.
 	defaultCols?: number; // default: 120 (PTY width for new sessions)
 	defaultRows?: number; // default: 40 (PTY height for new sessions)
@@ -15,6 +27,11 @@ export interface TerminalSettings {
 	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
 	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
 	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
+	monitorWakesPerHour?: number; // default: 12 (average wakes an hour of a persistent command monitor; extra lines batch into the next wake, max 3600)
+	monitorRunawayLinesPerMinute?: number; // default: 120 (runaway guard: matched lines a minute that count as a flood)
+	monitorRunawayMinutes?: number; // default: 5 (runaway guard: consecutive flood minutes before a persistent command monitor is paused, max 1440)
+	maxDurableMonitors?: number | "unlimited";
+	killGuard?: "on" | "off"; // default: "on" (refuse agent signals that match everything or hit protected processes); read from user settings only // default: "unlimited" (persistent monitors per session; invalid values mean unlimited)
 }
 
 export interface BranchSummarySettings {

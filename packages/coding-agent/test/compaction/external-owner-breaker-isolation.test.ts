@@ -143,7 +143,11 @@ function reducibleMessages(): AgentMessage[] {
 	return messages;
 }
 
-function buildContext(options: { breakerFallback: boolean; laneOwnsCompaction: boolean }): string {
+function buildContext(options: {
+	breakerFallback: boolean;
+	laneOwnsCompaction: boolean;
+	appendOnlyTranscript?: boolean;
+}): string {
 	const ctx = {
 		model: fauxModel(),
 		cwd: process.cwd(),
@@ -162,6 +166,7 @@ function buildContext(options: { breakerFallback: boolean; laneOwnsCompaction: b
 			toolAdmissionEnabled: false,
 			breakerFallback: options.breakerFallback,
 			laneOwnsCompaction: options.laneOwnsCompaction,
+			appendOnlyTranscript: options.appendOnlyTranscript,
 			emergencyPruneLatch: createEmergencyPruneLatch(),
 		}),
 	);
@@ -217,6 +222,24 @@ describe("external-owner breaker isolation", () => {
 				const reduced = buildContext({ breakerFallback: true, laneOwnsCompaction: false });
 
 				expect(reduced).not.toBe(untouched);
+			});
+		});
+
+		describe("When the session replays into an append-only resident transcript (#2746)", () => {
+			it("Then the tripped breaker's fallback leaves the already-sent messages untouched", () => {
+				const untouched = buildContext({
+					breakerFallback: false,
+					laneOwnsCompaction: false,
+					appendOnlyTranscript: true,
+				});
+
+				const withTrippedBreaker = buildContext({
+					breakerFallback: true,
+					laneOwnsCompaction: false,
+					appendOnlyTranscript: true,
+				});
+
+				expect(withTrippedBreaker).toBe(untouched);
 			});
 		});
 	});

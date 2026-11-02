@@ -9,9 +9,9 @@ import {
 	spawnCli,
 	startFakeModelServer,
 	writeMockModelsJson,
-} from "../qa-app-server/lib/env.mjs";
-import { trackCloser, untrackCloser } from "../qa-app-server/lib/cleanup.mjs";
-import { fail, pass } from "../qa-app-server/lib/rpc.mjs";
+} from "../qa-shared/lib/env.mjs";
+import { trackCloser, untrackCloser } from "../qa-shared/lib/cleanup.mjs";
+import { fail, pass } from "../qa-shared/lib/report.mjs";
 
 const transcript = [];
 const outPath = flag("--out");

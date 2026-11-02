@@ -20,12 +20,17 @@ describe("export HTML skill block rendering", () => {
 		body: "# Inspect\n\nUse inspection tools.",
 	};
 
+	const parsedSkill = {
+		name: skill.name,
+		location: skill.filePath,
+		content: `References are relative to ${skill.baseDir}.\n\n${skill.body}`,
+	};
+
 	it("round-trips the production skill invocation payload through both parsers", () => {
 		const payload = formatSkillInvocationPrompt([skill], "Check errors.");
 		const expected: ParsedSkillBlock = {
-			name: skill.name,
-			location: skill.filePath,
-			content: `References are relative to ${skill.baseDir}.\n\n${skill.body}`,
+			...parsedSkill,
+			skills: [parsedSkill],
 			userMessage: "Check errors.",
 		};
 
@@ -42,16 +47,17 @@ describe("export HTML skill block rendering", () => {
 		};
 		const payload = formatSkillInvocationPrompt([skill, secondSkill], "Check errors.");
 
-		expect(parseSkillBlock(payload)?.userMessage).toBe("Check errors.");
-		expect(standaloneParser(payload)?.userMessage).toBe("Check errors.");
+		for (const parsed of [parseSkillBlock(payload), standaloneParser(payload)]) {
+			expect(parsed?.userMessage).toBe("Check errors.");
+			expect(parsed?.skills.map((entry) => entry.name)).toEqual(["inspect", "verify"]);
+		}
 	});
 
 	it("keeps parsing legacy payloads from resumed and imported sessions", () => {
 		const legacyPayload = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${skill.body}\n</skill>\n\nCheck errors.`;
 		const expected: ParsedSkillBlock = {
-			name: skill.name,
-			location: skill.filePath,
-			content: `References are relative to ${skill.baseDir}.\n\n${skill.body}`,
+			...parsedSkill,
+			skills: [parsedSkill],
 			userMessage: "Check errors.",
 		};
 
@@ -79,7 +85,7 @@ describe("export HTML skill block rendering", () => {
 	it("renders skill content as markdown, not raw text", () => {
 		// The skill block body is markdown (from the SKILL.md file).
 		// It should be rendered through safeMarkedParse, not escaped as raw text.
-		expect(templateJs).toMatch(/safeMarkedParse\(skillBlock\.content\)/);
+		expect(templateJs).toMatch(/safeMarkedParse\(skill\.content\)/);
 	});
 
 	it("shows skill name and user message in the sidebar tree", () => {

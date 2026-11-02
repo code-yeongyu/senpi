@@ -114,6 +114,17 @@ function renderToolDiffLine(
 	return theme.bg(background, rendered);
 }
 
+export function countDiffChanges(diffText: string): { added: number; removed: number } {
+	let added = 0;
+	let removed = 0;
+	for (const line of diffText.split("\n")) {
+		if (line.startsWith("+++") || line.startsWith("---")) continue;
+		if (line.startsWith("+")) added++;
+		else if (line.startsWith("-")) removed++;
+	}
+	return { added, removed };
+}
+
 export function renderToolDiff(diffText: string, options: RenderToolDiffOptions): string {
 	const parsedLines = diffText.split("\n").map(parseRenderableDiffLine);
 	const rendered: string[] = [];

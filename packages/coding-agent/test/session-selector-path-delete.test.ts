@@ -218,13 +218,15 @@ describe("session selector path/delete interactions", () => {
 
 	it("does not start redundant All loads when toggling scopes while All is already loading", async () => {
 		const currentSessions = [makeSession({ id: "current" })];
+		const allSessions = [makeSession({ id: "all" })];
 		const allDeferred = createDeferred<SessionInfo[]>();
 		let allLoadCalls = 0;
 
 		const selector = new SessionSelectorComponent(
 			async () => currentSessions,
-			async () => {
+			async (onProgress) => {
 				allLoadCalls++;
+				onProgress?.(1, 2, allSessions);
 				return allDeferred.promise;
 			},
 			() => {},
@@ -241,8 +243,10 @@ describe("session selector path/delete interactions", () => {
 		list.handleInput("\t"); // current -> all again while load pending
 
 		expect(allLoadCalls).toBe(1);
+		expect(selector.getSessionList().getSelectedSessionPath()).toBe(allSessions[0]!.path);
+		expect(selector.render(120).join("\n")).toContain("Loading");
 
-		allDeferred.resolve([makeSession({ id: "all" })]);
+		allDeferred.resolve(allSessions);
 		await flushPromises();
 	});
 
@@ -280,6 +284,51 @@ describe("session selector path/delete interactions", () => {
 		const output = stripAnsi(selector.render(120).join("\n"));
 		expect(output).toContain("Parent");
 		expect(output).toContain("└─ Child");
+	});
+
+	it("re-resolves symlink aliases when the session list is replaced", async () => {
+		const paths = createSymlinkedSessionPaths();
+		tempDirs.push(paths.baseDir);
+		const aliasASessions = join(paths.baseDir, "alias-a", "sessions");
+		rmSync(aliasASessions);
+		const elsewhere = join(paths.baseDir, "elsewhere");
+		mkdirSync(elsewhere);
+		writeFileSync(join(elsewhere, "parent.jsonl"), "other parent\n");
+		symlinkSync(elsewhere, aliasASessions);
+
+		const listSessions = (): SessionInfo[] => [
+			makeSession({
+				id: "parent",
+				path: paths.parentAliasB,
+				name: "Parent",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+			}),
+			makeSession({
+				id: "child",
+				path: paths.childAliasB,
+				parentSessionPath: paths.parentAliasA,
+				name: "Child",
+				modified: new Date("2025-12-31T00:00:00.000Z"),
+			}),
+		];
+
+		const selector = new SessionSelectorComponent(
+			async () => listSessions(),
+			async () => [],
+			() => {},
+			() => {},
+			() => {},
+			() => {},
+			{ keybindings },
+		);
+		await flushPromises();
+		expect(stripAnsi(selector.render(120).join("\n"))).not.toContain("└─ Child");
+
+		rmSync(aliasASessions);
+		symlinkSync(join(paths.baseDir, "real", "sessions"), aliasASessions);
+		selector.getSessionList().setSessions(listSessions(), false);
+
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("└─ Child");
 	});
 
 	it("sorts threaded sessions by latest activity in their subtree", async () => {

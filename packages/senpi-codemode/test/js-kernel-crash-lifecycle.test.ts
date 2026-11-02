@@ -102,22 +102,39 @@ describe("JavaScriptKernel worker crash lifecycle", () => {
 		const queued = kernel.run({ cellId: "crash-queued", code: "return 40 + 2", timeoutMs: 2_000 });
 
 		await expect(first).resolves.toMatchObject({ ok: false });
-		await expect(withDeadline(queued, 750)).resolves.toMatchObject({ ok: true, valueRepr: "42" });
+		// The replacement worker's start is the event this waits for, however long a loaded host takes to give it.
+		await expect(queued).resolves.toMatchObject({ ok: true, valueRepr: "42" });
 		expect(await spawnCount(entry)).toBe(2);
+	});
+
+	it("settles a memory query with the crash error when the worker dies answering it", async () => {
+		const entry = await createQueryCrashWorkerEntry();
+		const kernel = createKernel(entry);
+		await expect(kernel.run({ cellId: "before-query", code: "return 1", timeoutMs: 2_000 })).resolves.toMatchObject({
+			ok: true,
+		});
+
+		await expect(kernel.queryMemory()).rejects.toThrow("intentional memory-query crash");
 	});
 });
 
-async function withDeadline<T>(promise: Promise<T>, delayMs: number): Promise<T> {
-	let timeout: NodeJS.Timeout | undefined;
-	const deadline = new Promise<never>((_, reject) => {
-		timeout = setTimeout(
-			() => reject(new Error(`queued JavaScript run did not settle within ${delayMs}ms`)),
-			delayMs,
-		);
-	});
-	try {
-		return await Promise.race([promise, deadline]);
-	} finally {
-		if (timeout) clearTimeout(timeout);
-	}
+async function createQueryCrashWorkerEntry(): Promise<CrashWorkerEntry> {
+	const root = await mkdtemp(join(tmpdir(), "senpi-js-query-crash-"));
+	const entryPath = join(root, "worker-entry.mjs");
+	const spawnLog = join(root, "spawns.txt");
+	const source = `
+import { parentPort } from "node:worker_threads";
+
+if (!parentPort) throw new Error("test worker missing parentPort");
+parentPort.on("message", (message) => {
+  if (message.type === "init") parentPort.postMessage({ type: "ready" });
+  else if (message.type === "run") parentPort.postMessage({ type: "result", cellId: message.cellId, ok: true, valueRepr: "1", durationMs: 0 });
+  else if (message.type === "memory-query") setTimeout(() => { throw new Error("intentional memory-query crash"); }, 0);
+});
+`;
+	await writeFile(entryPath, source);
+	await appendFile(spawnLog, "");
+	const entry = { root, url: pathToFileURL(entryPath), spawnLog };
+	entries.add(entry);
+	return entry;
 }

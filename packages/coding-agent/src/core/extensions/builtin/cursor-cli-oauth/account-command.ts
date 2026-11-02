@@ -1,6 +1,8 @@
 import type { Credential } from "@earendil-works/pi-ai";
+import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
+import { describeAccountBlock } from "../../../credential-account-status.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
-import { emitProviderAccountsChanged } from "../claude-sdk-oauth/account-events.ts";
+import { emitProviderAccountsChanged } from "../anthropic-subscription/account-events.ts";
 import {
 	type CursorCliAccountSlot,
 	type CursorCliOauthCredential,
@@ -62,9 +64,9 @@ function parseArgs(rawArgs: string): string[] {
 }
 
 function slotStatus(slot: CursorCliAccountSlot, now: number): string {
-	if (slot.blockReason === "auth_error") return "blocked until re-login";
+	if (slot.blockReason === "auth_error") return describeAccountBlock({ blocked: true, blockedReason: "auth_error" });
 	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) {
-		return `blocked until ${new Date(slot.blockedUntil).toISOString()} (${slot.blockReason ?? "rate_limit"})`;
+		return describeAccountBlock({ blocked: true, blockedReason: "rate_limit", blockedUntil: slot.blockedUntil });
 	}
 	return "available";
 }
@@ -97,6 +99,7 @@ export function registerCursorCliAccountCommand(pi: ExtensionAPI, deps: CursorCl
 	pi.registerCommand("cursor-account", {
 		description: "List and manage Cursor CLI (OAuth) accounts.",
 		argumentHint: "[list | add | remove <name> | pin <name> | unpin | import | acknowledge | status]",
+		requiresArguments: false,
 		handler: async (rawArgs: string, ctx: ExtensionCommandContext): Promise<void> => {
 			try {
 				const args = parseArgs(rawArgs);
@@ -163,6 +166,7 @@ function showAccounts(
 			affinityPick = selectAccount(accounts, {
 				sessionId: ctx.sessionManager.getSessionId(),
 				pinnedAccount: pinned,
+				...(credential.order === undefined ? {} : { accountOrder: credential.order }),
 				now: now(),
 			}).name;
 		} catch (error) {
@@ -172,13 +176,16 @@ function showAccounts(
 	const lines = ["Cursor CLI (OAuth) accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
 	for (const account of accounts) {
-		const states = [account.name, account.source, slotStatus(account, now())];
+		const states = [accountLabel(account), account.source, slotStatus(account, now())];
 		if (account.name === pinned) states.push("pinned");
 		if (account.name === affinityPick) states.push("affinity pick");
 		lines.push(`  ${states.join(" | ")}`);
 	}
-	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${pinned} (${pinSource})`}`);
-	lines.push(`Affinity pick: ${affinityPick ?? (affinityError ? `unavailable - ${affinityError}` : "none")}`);
+	const labelFor = (name: string) => accountLabel(accounts.find((account) => account.name === name) ?? { name });
+	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${labelFor(pinned)} (${pinSource})`}`);
+	lines.push(
+		`Affinity pick: ${affinityPick === undefined ? (affinityError ? `unavailable - ${affinityError}` : "none") : labelFor(affinityPick)}`,
+	);
 	generation.runFencedSync(ctx, () => ctx.ui.notify(lines.join("\n"), "info"));
 }
 

@@ -30,6 +30,7 @@ interface EvalExecutionBasePayload {
 	readonly completedAt: number;
 	readonly durationMs: number;
 	readonly kernelDurationMs?: number;
+	readonly queued_ms: number;
 	readonly detached: boolean;
 	readonly toolCallCount: number;
 	readonly pendingToolCallCount: number;
@@ -66,6 +67,7 @@ export interface BuildEvalExecutionEventPayloadOptions {
 	readonly state: CellState;
 	readonly outcome: EvalExecutionSettleOutcome;
 	readonly completedAt: number;
+	readonly queuedMs?: number;
 	readonly detached: boolean;
 }
 
@@ -87,6 +89,7 @@ export function buildEvalExecutionEventPayload(
 		startedAt: state.startedAt,
 		completedAt,
 		durationMs: Math.max(0, completedAt - state.startedAt),
+		queued_ms: options.queuedMs ?? 0,
 		...(result === undefined ? {} : { kernelDurationMs: result.details.durationMs }),
 		detached,
 		toolCallCount: state.toolCallMetrics.length,
@@ -110,6 +113,7 @@ export function toEvalExecutionRpcPayload(payload: EvalExecutionEventPayload): E
 		startedAt: payload.startedAt,
 		completedAt: payload.completedAt,
 		durationMs: payload.durationMs,
+		queued_ms: payload.queued_ms,
 		...(payload.kernelDurationMs === undefined ? {} : { kernelDurationMs: payload.kernelDurationMs }),
 		detached: payload.detached,
 		toolCallCount: payload.toolCallCount,

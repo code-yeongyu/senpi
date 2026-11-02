@@ -12,6 +12,12 @@ session-info-format.ts  Session/cost/token summaries
 streaming-reveal*.ts    Paced reveal of streamed assistant content
 tool-args-reveal.ts, tool-result-reveal.ts, tool-progress.ts  Progressive tool call/result surfaces
 model-search.ts, model-search-rank.ts, model-catalog-refresh.ts  Model picker search/rank/refresh
+session-control-host.ts Installs `pi.session.registerControlEndpoint` on a TUI session; submission tickets + editor edges
+session-control-endpoint.ts, session-control-lifecycle.ts  Register -> bind -> publish a `tui` endpoint; wake edges; clean exit
+session-control-registry.ts, session-control-server.ts     `rpc/tui/t-<16hex>.sock` path (+ /tmp fallback), registry dir, secret-authenticated listener
+session-control-commands.ts, session-control-feed.ts      Read-mostly command set; `subscribe` feed (state/report/question/completion)
+session-control-wake.ts WakeScheduler (one pass at a time, edges coalesce into one more) + inbox watcher
+components/remote-delivery-message.ts  Renders a `session_control_delivery` transcript entry
 tips/                   Startup/working tip registry, scheduler, and catalog/ tip sets
 grok/                   Grok chrome/palette/welcome-card render surfaces
 components/             Messages, tools, footer, selectors, dialogs, editor
@@ -33,6 +39,7 @@ changes.md              Fork-specific interactive behavior
 | Theme behavior | `theme/` and `components/theme-selector.ts` |
 | Streaming reveal pacing | `streaming-reveal.ts`, `streaming-reveal-pacing.ts`, `streaming-reveal-content.ts` |
 | Startup/working tips | `tips/registry.ts`, `tips/scheduler.ts`, `tips/catalog/` |
+| Control endpoint, external admission holds | `session-control-*.ts`, `../../core/external-admission.ts` |
 
 ## INVARIANTS
 
@@ -43,6 +50,8 @@ changes.md              Fork-specific interactive behavior
 - Components return styled text through TUI helpers. Arbitrary ANSI styling/output escapes are forbidden; preserve only established terminal-protocol markers such as the OSC 133 zones in `components/assistant-message.ts`.
 - Themes remain JSON assets and are copied by package build scripts; do not symlink them.
 - Selectors resolve `Promise<T | null>` where `null` means canceled.
+- The TUI always runs its own local session; it never joins a multi-session host. Other sessions reach it only through a control endpoint an extension registers (`session-control-*.ts`, docs/rpc.md "Interactive sessions expose a control endpoint"); a TUI with no registrant opens no socket.
+- External deliveries never overtake the user: every editor submission holds admission until its input reaches the runtime (a ticket per submission, a hold per prompt/command), and a draft in the editor holds it too. A new submit path must claim or release its ticket.
 
 ## ANTI-PATTERNS
 
@@ -56,5 +65,5 @@ changes.md              Fork-specific interactive behavior
 
 - Run focused component/interactive tests from `packages/coding-agent`.
 - Run `packages/tui/test/tui-render.test.ts` when render frequency or memoization changes.
-- Every UI change requires root `npm run check`, `senpi-qa` TUI smoke evidence, and visual inspection across relevant terminal sizes.
+- Every UI change requires root `bun run check`, `senpi-qa` TUI smoke evidence, and visual inspection across relevant terminal sizes.
 - Record fork-visible changes in `changes.md` and preserve them during upstream merges.

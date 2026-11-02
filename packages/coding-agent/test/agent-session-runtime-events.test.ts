@@ -139,7 +139,13 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		const secondSessionFile = runtimeHost.session.sessionFile;
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },
-			{ type: "session_shutdown", reason: "new", targetSessionFile: secondSessionFile },
+			// The host hands each session_shutdown handler its own budget signal.
+			{
+				type: "session_shutdown",
+				reason: "new",
+				targetSessionFile: secondSessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "new", previousSessionFile: originalSessionFile },
 		]);
 
@@ -151,7 +157,12 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		await runtimeHost.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "resume", targetSessionFile: originalSessionFile },
-			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
+			{
+				type: "session_shutdown",
+				reason: "resume",
+				targetSessionFile: originalSessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
 		]);
 	});
@@ -206,6 +217,34 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		runtimeHost.setRebindSession(undefined);
 	});
 
+	it("runs onBeforeSessionReplace listeners on replacement only, beside beforeSessionInvalidate and never on dispose", async () => {
+		// Given: two replace listeners and the single-slot invalidate hook interactive mode owns.
+		const phases: string[] = [];
+		const { runtimeHost } = await createRuntimeHost(() => {});
+		runtimeHost.setBeforeSessionInvalidate(() => phases.push("beforeSessionInvalidate"));
+		const removeFirst = runtimeHost.onBeforeSessionReplace(() => phases.push("replace:first"));
+		runtimeHost.onBeforeSessionReplace(() => phases.push("replace:second"));
+
+		// When: two replacements (the first listener removed in between), then a dispose.
+		await runtimeHost.newSession();
+		removeFirst();
+		await runtimeHost.newSession();
+		phases.push("dispose");
+		await runtimeHost.dispose();
+
+		// Then
+		expect(phases).toEqual([
+			"replace:first",
+			"replace:second",
+			"beforeSessionInvalidate",
+			"replace:second",
+			"beforeSessionInvalidate",
+			"dispose",
+			"beforeSessionInvalidate",
+		]);
+		runtimeHost.setBeforeSessionInvalidate(undefined);
+	});
+
 	it("emits session_before_fork and session_start and honors cancellation", async () => {
 		const events: RecordedSessionEvent[] = [];
 		let cancelNextFork = false;
@@ -238,7 +277,12 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		await runtimeHost.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_fork", entryId: userMessage.entryId, position: "before" },
-			{ type: "session_shutdown", reason: "fork", targetSessionFile: runtimeHost.session.sessionFile },
+			{
+				type: "session_shutdown",
+				reason: "fork",
+				targetSessionFile: runtimeHost.session.sessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "fork", previousSessionFile },
 		]);
 

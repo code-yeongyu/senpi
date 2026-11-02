@@ -1,38 +1,48 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type { McpServerConfig } from "./config-schema.ts";
-import {
-	configureMcpElicitation,
-	MCP_CLIENT_ELICITATION_CAPABILITY,
-	type McpElicitationUiProvider,
-} from "./elicitation.ts";
-import { AuthError, ConnectError, TimeoutError } from "./errors.ts";
+import type { McpElicitationUiProvider } from "./elicitation.ts";
+import { ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
-import { type McpAsyncErrorSink, safeInterval, safeOn, safeTimer } from "./wrap.ts";
+import type { ProjectMcpMaterialization } from "./project-skill-policy.ts";
+import type { McpMaterializedTransport, McpTransportSpec } from "./transport-sdk.ts";
+import { errorMessage, mcpTransportSpec } from "./transport-spec.ts";
+import { type McpAsyncErrorSink, safeInterval, safeTimer } from "./wrap.ts";
 
 export type McpTransportConnection = {
 	readonly serverName: string;
 	readonly client: Client;
 	readonly transport: Transport;
 	readonly transportKind: "stdio" | "http";
+	/** The configured HTTP endpoint; undefined for stdio. */
+	readonly endpointUrl?: URL;
 	readonly connectTimeoutMs: number;
 	readonly asyncErrorSink: McpAsyncErrorSink;
+	/**
+	 * Loads the SDK and builds the transport + client. Idempotent and
+	 * single-flight; `client`/`transport` throw until it has resolved.
+	 */
+	materialize(): Promise<void>;
 	captureRootPid?(): void;
 	getRootPid(): number | null;
+	closeTransport(): Promise<void>;
 };
 
 export type CreateMcpTransportOptions = {
+	readonly projectPolicy?: boolean;
+	readonly resolveProjectPolicy?: () => Promise<ProjectMcpMaterialization>;
 	readonly serverName: string;
 	readonly config: McpServerConfig;
 	readonly logger: McpLogger;
 	readonly env?: Record<string, string | undefined>;
 	readonly elicitationUiProvider?: McpElicitationUiProvider;
+	readonly elicitationEnabled?: boolean;
 	// Present only when OAuth is the resolved auth mode for this server.
 	readonly authProvider?: McpOAuthProvider;
+	/** Re-reads a declaring server's references for this transport (senpi#3858). */
+	readonly resolveConfig?: () => Promise<McpServerConfig>;
 };
 
 const SHUTDOWN_GRACE_MS = 100,
@@ -41,8 +51,8 @@ const SHUTDOWN_GRACE_MS = 100,
 	SHUTDOWN_CLOSE_WAIT_MS = 400;
 
 export function createMcpTransport(options: CreateMcpTransportOptions): McpTransportConnection {
-	if (options.config.type === "stdio") return createStdioConnection(options, options.config.connectTimeoutMs);
-	return createHttpConnection(options, options.config.connectTimeoutMs);
+	const spec = mcpTransportSpec(options);
+	return createConnection(options, spec, options.config.connectTimeoutMs);
 }
 
 export async function connectMcpTransport(connection: McpTransportConnection): Promise<void> {
@@ -65,19 +75,22 @@ export async function connectMcpTransport(connection: McpTransportConnection): P
 		connection.asyncErrorSink,
 	);
 	try {
+		await connection.materialize();
 		await connection.client.connect(connection.transport, {
 			signal: controller.signal,
 			timeout: connection.connectTimeoutMs,
 		});
 	} catch (error) {
 		await shutdownMcpTransport(connection).catch(() => undefined);
+		if (error instanceof ConnectError && error.phase === "modern-stdio") throw error;
 		if (timedOut) {
 			throw new TimeoutError(
 				`MCP server ${connection.serverName} timed out during connect after ${connection.connectTimeoutMs}ms`,
 				{ cause: error, phase: "connect", retriable: true, serverName: connection.serverName },
 			);
 		}
-		throw new ConnectError(`MCP server ${connection.serverName} failed during connect: ${errorMessage(error)}`, {
+		const reason = crossOriginRedirectReason(error, connection.endpointUrl) ?? errorMessage(error);
+		throw new ConnectError(`MCP server ${connection.serverName} failed during connect: ${reason}`, {
 			cause: error,
 			phase: "connect",
 			retriable: true,
@@ -91,7 +104,7 @@ export async function connectMcpTransport(connection: McpTransportConnection): P
 
 export async function shutdownMcpTransport(connection: McpTransportConnection): Promise<void> {
 	const rootPid = connection.getRootPid();
-	const closePromise = closeClientAndTransport(connection);
+	const closePromise = connection.closeTransport();
 	await delay(SHUTDOWN_GRACE_MS);
 
 	if (rootPid !== null) {
@@ -103,200 +116,97 @@ export async function shutdownMcpTransport(connection: McpTransportConnection): 
 	await Promise.race([closePromise, delay(SHUTDOWN_CLOSE_WAIT_MS)]);
 }
 
-function createStdioConnection(options: CreateMcpTransportOptions, connectTimeoutMs: number): McpTransportConnection {
-	if (options.config.command === undefined || options.config.command.trim().length === 0) {
-		throw new ConnectError(`MCP server ${options.serverName} stdio command is required`, {
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	const transport = new StdioClientTransport({
-		args: options.config.args,
-		command: options.config.command,
-		cwd: options.config.cwd,
-		env: buildStdioEnv(options),
-		stderr: "pipe",
-	});
-	pipeStderr(transport, options.logger);
-	return createConnection(
-		options.serverName,
-		"stdio",
-		transport,
-		connectTimeoutMs,
-		{ logger: options.logger },
-		options.elicitationUiProvider,
-	);
-}
-
-function createHttpConnection(options: CreateMcpTransportOptions, connectTimeoutMs: number): McpTransportConnection {
-	if (options.config.url === undefined || options.config.url.trim().length === 0) {
-		throw new ConnectError(`MCP server ${options.serverName} HTTP URL is required`, {
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	let url: URL;
-	try {
-		url = new URL(options.config.url);
-	} catch (error) {
-		throw new ConnectError(`MCP server ${options.serverName} HTTP URL is invalid: ${errorMessage(error)}`, {
-			cause: error,
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	const headers = buildHeaders(options);
-	const transport = new StreamableHTTPClientTransport(url, {
-		authProvider: options.authProvider,
-		requestInit: Object.keys(headers).length === 0 ? undefined : { headers },
-	});
-	return createConnection(
-		options.serverName,
-		"http",
-		transport,
-		connectTimeoutMs,
-		{ logger: options.logger },
-		options.elicitationUiProvider,
-	);
-}
-
 function createConnection(
-	serverName: string,
-	transportKind: "stdio" | "http",
-	transport: Transport,
+	options: CreateMcpTransportOptions,
+	spec: McpTransportSpec,
 	connectTimeoutMs: number,
-	asyncErrorSink: McpAsyncErrorSink,
-	elicitationUiProvider: McpElicitationUiProvider | undefined,
 ): McpTransportConnection {
+	const asyncErrorSink: McpAsyncErrorSink = { logger: options.logger };
+	let materialized: McpMaterializedTransport | undefined;
+	let pending: Promise<McpMaterializedTransport> | undefined;
+	const abort = new AbortController();
 	let lastRootPid: number | null = null;
-	const readRootPid = (): number | null => (transport instanceof StdioClientTransport ? transport.pid : null);
 	const captureRootPid = (): void => {
-		lastRootPid = readRootPid() ?? lastRootPid;
+		lastRootPid = materialized?.readPid() ?? lastRootPid;
 	};
-	if (transport instanceof StdioClientTransport) trackStdioStart(transport, captureRootPid);
+	const built = (): McpMaterializedTransport => {
+		if (materialized === undefined) {
+			throw new ConnectError(`MCP server ${options.serverName} transport is not started`, {
+				phase: "create",
+				serverName: options.serverName,
+			});
+		}
+		return materialized;
+	};
 	return {
-		captureRootPid,
-		client: buildMcpClient(elicitationUiProvider),
-		connectTimeoutMs,
 		asyncErrorSink,
-		getRootPid: () => {
-			captureRootPid();
-			return readRootPid() ?? lastRootPid;
+		captureRootPid,
+		get client(): Client {
+			return built().client;
 		},
-		serverName,
-		transport,
-		transportKind,
-	};
-}
-
-function trackStdioStart(transport: StdioClientTransport, captureRootPid: () => void): void {
-	const start = transport.start.bind(transport);
-	transport.start = async () => {
-		await start();
-		captureRootPid();
-	};
-}
-
-function buildStdioEnv(options: CreateMcpTransportOptions): Record<string, string> {
-	const env: Record<string, string> = {
-		...getDefaultEnvironment(),
-		...definedEnv(options.env),
-		...(options.config.env ?? {}),
-	};
-	// OMP pattern: hand stdio OAuth servers the current access token via env.
-	const accessToken = options.authProvider?.tokens()?.access_token;
-	if (accessToken !== undefined && accessToken.length > 0) env.OAUTH_ACCESS_TOKEN = accessToken;
-	return env;
-}
-
-function definedEnv(env: Record<string, string | undefined> | undefined): Record<string, string> {
-	const result: Record<string, string> = {};
-	for (const [key, value] of Object.entries(env ?? {})) {
-		if (value !== undefined) result[key] = value;
-	}
-	return result;
-}
-
-function buildHeaders(options: CreateMcpTransportOptions): Record<string, string> {
-	const headers = { ...(options.config.headers ?? {}) };
-	const shouldAttachBearer =
-		options.config.auth === "bearer" ||
-		(options.config.auth === undefined && options.config.bearerTokenEnv !== undefined);
-	if (!shouldAttachBearer) return headers;
-	const envName = options.config.bearerTokenEnv;
-	if (envName === undefined || envName.trim().length === 0) {
-		throw new AuthError(`MCP server ${options.serverName} bearer auth requires bearerTokenEnv`, {
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	const token = options.env?.[envName] ?? process.env[envName];
-	if (token === undefined || token.length === 0) {
-		throw new AuthError(`MCP server ${options.serverName} bearer token env ${envName} is not set`, {
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	headers.authorization = `Bearer ${token}`;
-	return headers;
-}
-
-function pipeStderr(transport: StdioClientTransport, logger: McpLogger): void {
-	let pending = "";
-	const stderr = transport.stderr;
-	if (stderr === undefined || stderr === null) return;
-	const sink: McpAsyncErrorSink = { logger };
-	safeOn(
-		stderr,
-		"data",
-		"transport.stderr.data",
-		(chunk) => {
-			if (!Buffer.isBuffer(chunk) && typeof chunk !== "string") return;
-			pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
-			const lines = pending.split(/\r?\n/);
-			pending = lines.pop() ?? "";
-			for (const line of lines) {
-				if (line.length > 0) logger.stderr(line);
+		closeTransport: async (): Promise<void> => {
+			abort.abort();
+			await materialized?.close();
+		},
+		connectTimeoutMs,
+		getRootPid: (): number | null => {
+			captureRootPid();
+			return materialized?.readPid() ?? lastRootPid;
+		},
+		materialize: async (): Promise<void> => {
+			const materializeWith = (current: McpTransportSpec) =>
+				import("./modern/dispatch.ts").then(({ materializeNegotiatedTransport }) =>
+					materializeNegotiatedTransport(
+						{
+							elicitationUiProvider: options.elicitationUiProvider,
+							elicitationEnabled: options.elicitationEnabled,
+							logger: options.logger,
+							onStart: captureRootPid,
+							sink: asyncErrorSink,
+							spec: current,
+						},
+						options.serverName,
+						connectTimeoutMs,
+						abort.signal,
+					),
+				);
+			const { resolveConfig } = options;
+			pending ??=
+				resolveConfig === undefined
+					? materializeWith(spec)
+					: resolveConfig().then((config) => materializeWith(mcpTransportSpec({ ...options, config })));
+			materialized = await pending;
+			if (abort.signal.aborted) {
+				await materialized.close();
+				abort.signal.throwIfAborted();
 			}
 		},
-		sink,
-	);
-	safeOn(
-		stderr,
-		"end",
-		"transport.stderr.end",
-		() => {
-			if (pending.length > 0) logger.stderr(pending);
-			pending = "";
+		serverName: options.serverName,
+		get transport(): Transport {
+			return built().transport;
 		},
-		sink,
-	);
+		transportKind: spec.kind,
+		...(spec.kind === "http" ? { endpointUrl: spec.url } : {}),
+	};
 }
 
-async function closeClientAndTransport(connection: McpTransportConnection): Promise<void> {
-	if (isTerminableHttpTransport(connection.transport)) {
-		await connection.transport.terminateSession().catch(() => undefined);
+// The SDK (1.32+) refuses a redirect to another origin and reports `Redirect to <target> not followed` with a
+// 3xx code. senpi keeps that default (senpi#2940); this names both origins and the rule so the user can fix the URL.
+const UNFOLLOWED_REDIRECT = /Redirect to (\S+) not followed/;
+function crossOriginRedirectReason(error: unknown, endpoint: URL | undefined): string | undefined {
+	if (endpoint === undefined || !(error instanceof Error)) return undefined;
+	const code = (error as { code?: unknown }).code;
+	if (typeof code !== "number" || code < 300 || code >= 400) return undefined;
+	const target = UNFOLLOWED_REDIRECT.exec(error.message)?.[1];
+	if (target === undefined) return undefined;
+	let targetOrigin: string;
+	try {
+		targetOrigin = new URL(target).origin;
+	} catch (parseError) {
+		if (parseError instanceof TypeError) return undefined;
+		throw parseError;
 	}
-	await connection.transport.close().catch(() => undefined);
-	await connection.client.close().catch(() => undefined);
-}
-
-function isTerminableHttpTransport(
-	transport: Transport,
-): transport is Transport & { terminateSession(): Promise<void> } {
-	return typeof (transport as Partial<{ terminateSession(): Promise<void> }>).terminateSession === "function";
-}
-
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
-function buildMcpClient(elicitationUiProvider: McpElicitationUiProvider | undefined): Client {
-	// Elicitation capability is declared EMPTY on purpose (form mode only;
-	// Spring-AI servers reject richer shapes) and the create-handler is wired
-	// before any connect so mid-call requests never race registration.
-	const client = new Client(
-		{ name: "senpi-mcp-client", version: "0.0.0" },
-		{ capabilities: MCP_CLIENT_ELICITATION_CAPABILITY },
-	);
-	configureMcpElicitation(client, elicitationUiProvider);
-	return client;
+	// The SDK refuses some same-origin redirects too (a POST answered with 301-303, added userinfo); keep its text.
+	if (targetOrigin === endpoint.origin) return undefined;
+	return `the endpoint at ${endpoint.origin} redirected to ${targetOrigin}, and senpi only follows redirects within the same origin, so credentials and requests never move to another server without your say-so. Point the server's url at ${target} if that is where it now lives.`;
 }

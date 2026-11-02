@@ -1,14 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
-import type { McpServerConfig } from "./config-schema.ts";
+import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
+import { lockWithLossHandling } from "../../../file-lock.ts";
+import { isEphemeralIdentity } from "./config-identity-key.ts";
+import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
+import { listMcpTools } from "./tool-client.ts";
+import type { McpListedTool as ListedTool } from "./tool-contracts.ts";
+import { isModernMcpClient } from "./modern/request.ts";
+import { hasSupportedModernToolSchemas } from "./modern/tool-schema.ts";
 
-type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
+type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 type ListedPrompt = Awaited<ReturnType<Client["listPrompts"]>>["prompts"][number];
 
 export interface McpCatalogCacheFile {
@@ -17,10 +24,13 @@ export interface McpCatalogCacheFile {
 }
 
 export interface McpCachedServerCatalog {
+	readonly modern?: boolean;
 	readonly configHash: string;
+	readonly credentialIdentity?: string;
 	readonly fetchedAt: number;
 	readonly tools: ListedTool[];
 	readonly resources: ListedResource[];
+	readonly resourceTemplates?: ListedResourceTemplate[];
 	readonly prompts: ListedPrompt[];
 	readonly instructions?: string;
 }
@@ -45,35 +55,59 @@ export function getValidCachedServer(
 	cache: McpCatalogCacheFile,
 	serverName: string,
 	configHash: string,
-	now = Date.now(),
+	credentialIdentity = "none",
 ): McpCachedServerCatalog | undefined {
 	const cached = cache.servers[serverName];
 	if (cached === undefined) return undefined;
 	if (cached.configHash !== configHash) return undefined;
-	if (now - cached.fetchedAt > CACHE_TTL_MS) return undefined;
+	if (
+		cached.credentialIdentity !== credentialIdentity &&
+		!(credentialIdentity === "none" && cached.credentialIdentity === undefined)
+	) {
+		return undefined;
+	}
 	return cached;
+}
+
+export function cachedCatalogNeedsRefresh(cached: McpCachedServerCatalog, now = Date.now()): boolean {
+	return now - cached.fetchedAt > CACHE_TTL_MS;
 }
 
 export async function collectServerCatalogForCache(
 	connection: ServerConnection,
-	config: McpServerConfig,
+	config: Pick<McpServerDeclaredConfig, "requestTimeoutMs">,
 	configHash: string,
+	credentialIdentity?: string,
 ): Promise<McpCachedServerCatalog> {
 	const tools = await collectAllPages<ListedTool>((cursor) =>
-		connection.client.listTools(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		listMcpTools(connection.client, cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	const resources = await collectOptionalPages<ListedResource>((cursor) =>
-		connection.client.listResources(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		connection.client.listResources(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	const prompts = await collectOptionalPages<ListedPrompt>((cursor) =>
-		connection.client.listPrompts(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		connection.client.listPrompts(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
+	);
+	const resourceTemplates = await collectOptionalPages<ListedResourceTemplate>((cursor) =>
+		connection.client.listResourceTemplates(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	return {
 		configHash,
+		...(isModernMcpClient(connection.client) ? { modern: true } : {}),
+		credentialIdentity,
 		fetchedAt: Date.now(),
 		instructions: connection.client.getInstructions(),
 		prompts,
 		resources,
+		resourceTemplates,
 		tools: tools.items,
 	};
 }
@@ -82,10 +116,32 @@ export async function writeMcpCachedServer(
 	agentDir: string | undefined,
 	serverName: string,
 	server: McpCachedServerCatalog,
+	isCurrent?: () => boolean,
 ): Promise<void> {
-	const cache = await readMcpCatalogCache(agentDir);
-	const next: McpCatalogCacheFile = { version: 1, servers: { ...cache.servers, [serverName]: server } };
-	await atomicWriteJson(getMcpCatalogCachePath(agentDir), next);
+	// Without a valid installation key nothing keyed is persisted (senpi#3858).
+	if (isEphemeralIdentity(server.configHash) || isEphemeralIdentity(server.credentialIdentity)) return;
+	if (isCurrent?.() === false) return;
+	const path = getMcpCatalogCachePath(agentDir);
+	await mkdir(dirname(path), { recursive: true });
+	const lock = await lockWithLossHandling(dirname(path), {
+		lockfilePath: `${path}.lock`,
+		realpath: false,
+		retries: { retries: 50, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
+		stale: 30_000,
+	});
+	try {
+		if (isCurrent?.() === false) return;
+		const cache = await readMcpCatalogCache(agentDir);
+		if (isCurrent?.() === false) return;
+		const persisted = redactResolvedReferenceData(server);
+		const next: McpCatalogCacheFile = {
+			version: 1,
+			servers: { ...cache.servers, [serverName]: persisted },
+		};
+		await atomicWriteJson(path, next, isCurrent, lock.assertHeld);
+	} finally {
+		await lock.release();
+	}
 }
 
 async function collectOptionalPages<TItem>(listFn: (cursor: string | undefined) => Promise<unknown>): Promise<TItem[]> {
@@ -97,11 +153,22 @@ async function collectOptionalPages<TItem>(listFn: (cursor: string | undefined) 
 	}
 }
 
-async function atomicWriteJson(path: string, value: unknown): Promise<void> {
+async function atomicWriteJson(
+	path: string,
+	value: unknown,
+	isCurrent?: () => boolean,
+	assertHeld?: () => void,
+): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
 	const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-	await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-	await rename(tmp, path);
+	try {
+		await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+		if (isCurrent?.() === false) return;
+		assertHeld?.();
+		await rename(tmp, path);
+	} finally {
+		await rm(tmp, { force: true });
+	}
 }
 
 function normalizeCacheFile(value: unknown): McpCatalogCacheFile {
@@ -118,25 +185,44 @@ function normalizeCachedServer(value: unknown): McpCachedServerCatalog | undefin
 	if (!isRecord(value) || typeof value.configHash !== "string" || typeof value.fetchedAt !== "number") {
 		return undefined;
 	}
-	const tools = normalizeTools(value.tools);
+	const tools = normalizeTools(value.tools, value.modern === true);
 	if (tools === undefined) return undefined;
 	const resources = Array.isArray(value.resources) ? (value.resources as ListedResource[]) : [];
 	const prompts = Array.isArray(value.prompts) ? (value.prompts as ListedPrompt[]) : [];
+	const resourceTemplates = Array.isArray(value.resourceTemplates)
+		? (value.resourceTemplates as ListedResourceTemplate[])
+		: [];
 	const instructions = typeof value.instructions === "string" ? value.instructions : undefined;
-	return { configHash: value.configHash, fetchedAt: value.fetchedAt, instructions, prompts, resources, tools };
+	return {
+		configHash: value.configHash,
+		...(value.modern === true ? { modern: true } : {}),
+		credentialIdentity: typeof value.credentialIdentity === "string" ? value.credentialIdentity : undefined,
+		fetchedAt: value.fetchedAt,
+		instructions,
+		prompts,
+		resources,
+		resourceTemplates,
+		tools,
+	};
 }
 
-function normalizeTools(value: unknown): ListedTool[] | undefined {
+function normalizeTools(value: unknown, modern: boolean): ListedTool[] | undefined {
 	if (!Array.isArray(value)) return undefined;
 	const tools: ListedTool[] = [];
 	for (const item of value) {
-		if (!isRecord(item) || typeof item.name !== "string" || !isRecord(item.inputSchema)) return undefined;
-		tools.push({
+		if (!isRecord(item) || typeof item.name !== "string") return undefined;
+		if (!isRecord(item.inputSchema) && !(modern && typeof item.inputSchema === "boolean")) return undefined;
+		const tool: ListedTool = {
+			...(modern ? item : {}),
 			annotations: isRecord(item.annotations) ? (item.annotations as ListedTool["annotations"]) : undefined,
 			description: typeof item.description === "string" ? item.description : undefined,
 			inputSchema: item.inputSchema as ListedTool["inputSchema"],
+			...(modern && (isRecord(item.outputSchema) || typeof item.outputSchema === "boolean")
+				? { outputSchema: item.outputSchema }
+				: {}),
 			name: item.name,
-		});
+		};
+		if (!modern || hasSupportedModernToolSchemas(tool)) tools.push(tool);
 	}
 	return tools;
 }

@@ -6,6 +6,8 @@ import { streamAnthropic } from "../src/providers/anthropic.ts";
 import { fauxAssistantMessage, fauxToolCall } from "../src/providers/faux.ts";
 import type { Context, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function createSseResponse(): Response {
 	const events = [
 		[
@@ -46,14 +48,16 @@ function makeTool(name: string): Tool {
 async function captureText(context: Context): Promise<string[]> {
 	let captured: Record<string, unknown> = {};
 	const client = {
-		messages: {
-			create: (params: unknown) => {
-				captured = params as Record<string, unknown>;
-				return { asResponse: async () => createSseResponse() };
+		beta: {
+			messages: {
+				create: (params: unknown) => {
+					captured = params as Record<string, unknown>;
+					return { asResponse: async () => createSseResponse() };
+				},
 			},
 		},
 	} as Anthropic;
-	const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), context, {
+	const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), normalizeContext(context), {
 		apiKey: "fake-key",
 		client,
 	});

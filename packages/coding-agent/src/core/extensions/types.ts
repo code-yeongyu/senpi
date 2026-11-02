@@ -8,30 +8,52 @@
  * - Interact with the user via UI primitives
  */
 
+import type { PromptSizeReport } from "../prompt-size-report.ts";
+import type { InputOrigin } from "../input-origin.ts";
+import type { LifecycleApi } from "../session-lifecycle-types.ts";
+import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
+import type { ContextEvent } from "./context-event.ts";
+import type { ExtensionRpcRequestHandler } from "./rpc-context.ts";
+
+export type { ContextEvent } from "./context-event.ts";
+
 import type {
 	AgentMessage,
+	AgentTool,
+	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
 	ToolExecutionMode,
 } from "@earendil-works/pi-agent-core";
 import type {
+	AnyModel,
 	Api,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
+	AuthContext,
+	AuthResult,
+	ClassifierApi,
 	ConstrainedSamplingConfig,
 	Context,
 	FreeformToolFormat,
+	ImageApi,
 	ImageContent,
+	JsonValue,
+	Message,
 	Model,
 	OAuthCredentials,
 	OAuthLoginCallbacks,
 	Provider,
+	ProviderClassifier,
 	ProviderHeaders,
+	ProviderId,
+	ProviderImages,
 	RefreshModelsContext,
 	SimpleStreamOptions,
 	TextContent,
 	ToolResultMessage,
+	TranscriptContext,
 	Usage,
 } from "@earendil-works/pi-ai";
 import type {
@@ -49,26 +71,34 @@ import type {
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
+import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
+import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
 import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
+import type { ModelChangeOrigin } from "../model-change-origin.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { InitialModelProvenance, ScopedModel } from "../model-resolver.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
+	ContextEditEntry,
 	CustomEntry,
+	ProjectedSessionEntry,
 	ReadonlySessionManager,
 	SessionEntry,
 	SessionManager,
 } from "../session-manager.ts";
+import type { Settings } from "../settings-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
-import type { SourceInfo } from "../source-info.ts";
+import type { SourceInfo, SourceScope } from "../source-info.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import type { ToolBarrierSpec, ToolWorkspaceEffect } from "../tool-barrier.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
 import type {
@@ -87,14 +117,23 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { ReadClassifier } from "../tools/read-classifiers.ts";
+import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { McpServerRegistry } from "./mcp-server-registry.ts";
+import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
+import type { EvalHandleHost } from "./eval-handle-host.ts";
+import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
+import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
+import type { UserActivityKind } from "./user-activity.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
-export type { BuildSystemPromptOptions } from "../system-prompt.ts";
+export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
+export * from "./session-control-types.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 
-export type ServiceTier = "auto" | "flex" | "priority";
+export type ServiceTier = "auto" | "flex" | "priority" | "ultrafast";
 // biome-ignore format: keep literal union alias consistent with nearby ServiceTier style.
 export type CompactionReason = "manual" | "threshold" | "overflow" | "pre_prompt" | "branch" | "extension";
 export type CompactionRejectionCause =
@@ -111,19 +150,42 @@ export type CompactionRejectionCause =
 
 /** Options for extension UI dialogs. */
 export interface ExtensionUIDialogOptions {
+	/** Private local dialog: emits no generic blocked event or pending marker. Not an RPC field. */
+	ephemeral?: boolean;
 	/** AbortSignal to programmatically dismiss the dialog. */
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
+	/** The tool call this dialog is about (a permission request), sent to RPC clients as is. */
+	toolCallId?: string;
+	/** Set with `toolCallId` when another tool (for example a codemode script) issued that call. */
+	parentToolCallId?: string;
+}
+
+/** A guarded private single-line input; callers on older hosts must check capabilities first. */
+export interface ExtensionUIInputOptions extends ExtensionUIDialogOptions {
+	secret?: boolean;
 }
 
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
+/**
+ * A choice offered next to a string-array widget. `command` is ordinary slash-command text: the TUI shows it
+ * next to the label for the user to type, and an RPC client that renders a button sends it as a normal prompt,
+ * so every host runs the same command handler.
+ */
+export interface ExtensionWidgetAction {
+	label: string;
+	command: string;
+}
+
 /** Options for extension widgets. */
 export interface ExtensionWidgetOptions {
 	/** Where the widget is rendered. Defaults to "aboveEditor". */
 	placement?: WidgetPlacement;
+	/** Choices shown with a string-array widget (ignored for component factories). */
+	actions?: readonly ExtensionWidgetAction[];
 }
 
 /** Raw terminal input listener for extensions. */
@@ -141,11 +203,48 @@ export interface WorkingIndicatorOptions {
 export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
 export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
 
+/** Canonical multi-question prompt shown through ExtensionUIContext.question. */
+export interface QuestionRequest {
+	requestId: string;
+	questions: Array<{
+		id: string;
+		header: string;
+		question: string;
+		options: Array<{ label: string; description?: string }>;
+		multiSelect: boolean;
+	}>;
+	waitForAnswer: boolean;
+	timeoutMs: number;
+	/** The question gates an action: a missing answer means the action is not taken (senpi#2949). */
+	required?: boolean;
+}
+
+/**
+ * Why a question was cancelled. Only a cancel the user chose (`user`) or a failing question UI
+ * (`ui_failure`) shows the model the answers given before it; the lifecycle cancels stay silent.
+ */
+export type QuestionCancelOrigin = "user" | "ui_failure" | "turn_abort" | "session_closed" | "ask_user_disabled";
+
+/** Outcome of ExtensionUIContext.question. */
+export interface QuestionResponse {
+	status: "answered" | "comment-submitted" | "timed_out" | "cancelled" | "orphaned-after-restart" | "unavailable";
+	/** Answering surface; omitted when the question ended without an answer. */
+	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint";
+	answers: Record<string, { selected: string[]; text?: string }>;
+	comment?: string;
+	unanswered: string[];
+	autoResolvedAfterMs?: number;
+	/** Why a `cancelled` question ended; a UI omits it for every cancel the user did not choose. */
+	cancelOrigin?: QuestionCancelOrigin;
+}
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
  */
 export interface ExtensionUIContext {
+	/** Implements private collection and typed refusal; a presenter is checked at call time. */
+	readonly capabilities?: { readonly secretInput?: true };
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
@@ -153,7 +252,23 @@ export interface ExtensionUIContext {
 	confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean>;
 
 	/** Show a text input dialog. */
-	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+	input(title: string, placeholder?: string, opts?: ExtensionUIInputOptions): Promise<string | undefined>;
+
+	/**
+	 * Show a multi-question prompt and resolve with the user's answers, comment, cancel, or timeout.
+	 * Optional so hand-built contexts and modes that do not implement it remain valid.
+	 */
+	question?(
+		request: QuestionRequest,
+		opts?: ExtensionUIDialogOptions & {
+			onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
+			/**
+			 * How the answer reaches the model. A "user-message" answer is reported as a person's input when it
+			 * is delivered, so a UI adapter must not report it again.
+			 */
+			deliver?: "tool-result" | "user-message";
+		},
+	): Promise<QuestionResponse>;
 
 	/** Show a notification to the user. */
 	notify(message: string, type?: "info" | "warning" | "error"): void;
@@ -163,6 +278,14 @@ export interface ExtensionUIContext {
 
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
+
+	/**
+	 * Report the USD the subagent tree under this session has spent (every child, nested child and
+	 * background child, each counted once). The footer shows it after the session's own cost, as
+	 * `$0.380 (+1.270)`. Pass undefined to clear; a negative or non-finite figure clears it too.
+	 * Optional so UI contexts written before it keep compiling; call it as `ctx.ui.setSubagentCost?.(x)`.
+	 */
+	setSubagentCost?(costUsd: number | undefined): void;
 
 	/** Set the working/loading message shown during streaming. Call with no argument to restore default. */
 	setWorkingMessage(message?: string): void;
@@ -403,9 +526,16 @@ export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest
 /**
  * Context passed to extension event handlers.
  */
-export type ExtensionMode = "tui" | "rpc" | "app-server" | "json" | "print";
+export type ExtensionMode = "tui" | "rpc" | "json" | "print";
 
 export interface ExtensionContext {
+	/**
+	 * Runs the child module registered as `id` with `args` and resolves its export's return value: on the session's
+	 * tool child under `--tool-runtime child` (spawned on demand, never falling back in-process), in this process under
+	 * `in-process`. A module that cannot be loaded fails `offload_module_unavailable` in both. Optional for
+	 * compatibility with contexts built outside a session runner; every runner-built context has it.
+	 */
+	readonly offload?: (id: string, args: unknown, options?: OffloadOptions) => Promise<unknown>;
 	/** UI methods for user interaction */
 	ui: ExtensionUIContext;
 	/** Current run mode. Use "tui" to guard terminal-only UI such as custom components. */
@@ -416,28 +546,74 @@ export interface ExtensionContext {
 	cwd: string;
 	/** Agent state directory (settings, logs, sessions) resolved for this session. */
 	agentDir: string;
+	/** Resolved paths of loaded extensions, including synthetic builtin/inline identifiers. */
+	readonly loadedExtensionPaths?: readonly string[];
 	/** Session manager (read-only) */
 	sessionManager: ReadonlySessionManager;
+	/** Absolute goal-store path for this session; reading it does not create the file. */
+	readonly goalStoreFile?: string;
+	/** Browser engine the opener chose for THIS session (`open_session.browserEngine`); absent when it chose none. */
+	readonly browserEngine?: BrowserEngine;
+	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
+	readonly sessionEnv?: Readonly<Record<string, string>>;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
 	model: Model<any> | undefined;
 	/** Current service tier for the active model (from -fast suffix or scoped model config) */
 	serviceTier: ServiceTier | undefined;
+	/**
+	 * The tier the session's requests carry right now: `serviceTier`, promoted to `"priority"`
+	 * while session fast mode is on. Hosts that spawn delegated sessions read this to inherit the
+	 * parent's effective execution tier. Optional so hand-built contexts stay valid; readers fall
+	 * back to `serviceTier`.
+	 */
+	effectiveServiceTier?: ServiceTier | undefined;
 	/** Models scoped to this session. Empty when all available models are usable. */
 	scopedModels: readonly ScopedModel[];
 	/** Current thinking level, when provided by the session runtime. */
 	thinkingLevel?: ThinkingLevel;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
+	/** Whether automatic turns are held until real input or an explicit Resume. */
+	engineTurnsHeld?(): boolean;
+	/** Note a source-owned wake without rendering or charging its continuation. */
+	noteHeldWake?(source: string): void;
+	/** This session's hold records and its pause sequence (senpi#3811). */
+	getPauseState?(): { pauseSeq: number; holds: SessionHoldRecord[] };
+	/** Hold wakes tagged `details.runRef` for this run until the user resumes (senpi#3811). */
+	fenceRun?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
+	/** Drop this run's fence once the run is journaled cancelled; a run with no fence is a no-op (senpi#3811). */
+	releaseRunFence?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
+	/**
+	 * Invocation-scoped notification that steering is queued. Never a cancellation signal.
+	 * Available during tool execution; follow-up messages do not trigger it.
+	 */
+	readonly steeringSignal?: AbortSignal;
+	/**
+	 * Transient parent JS kernel-tool capability. Present only while a supported
+	 * JavaScript eval owns the host-tool context; absent on older runtimes.
+	 */
+	readonly kernelTools?: ExtensionKernelTools;
+	/**
+	 * Session-scoped host capability behind the in-cell `wait()` / `handle()` helpers: watch, send to,
+	 * cancel and read host-owned work (agent runs, workpools) fenced by owner, id and run epoch.
+	 * Provided by the task owner through `pi.provideEvalHandleHost`; absent on runtimes without a provider.
+	 */
+	readonly evalHandleHost?: EvalHandleHost;
 	/** Abort the current agent operation */
 	abort(source?: "user" | "system"): void;
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
+	/**
+	 * Whether a person's input is waiting in the queue (a TUI submit, an RPC client prompt/steer/follow_up, or an
+	 * answered question), decided from the entries queued now. Extension and engine sends are never a person's.
+	 */
+	hasQueuedPersonInput?(): boolean;
 	/**
 	 * Request a full session reload when the host provides a reload action.
 	 * Interactive hosts may resolve without reloading while streaming or compacting, so
@@ -459,6 +635,8 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Get resolved compaction settings from global/project/user overrides. */
 	getCompactionSettings(): CompactionPreparation["settings"];
+	/** Session-selected usable summarization model; throws when every authenticated account is spent. */
+	getCompactionModel?(): Model<Api> | undefined;
 	/**
 	 * Longest a tool may block in the foreground before the active model's prompt
 	 * cache expires, or `undefined` when no cache-derived budget applies. Reads the
@@ -467,6 +645,8 @@ export interface ExtensionContext {
 	getPromptCacheSafeWaitSeconds?(): number | undefined;
 	/** Maximum Goal monitor continuation backstop configured for prompt-cache waits. */
 	getPromptCacheGoalBackstopMaxSeconds?(): number;
+	/** Subscribe to host-authenticated activity; extensions cannot publish it. */
+	onUserActivity?(listener: (kind: UserActivityKind) => void): () => void;
 	/** Resolved opt-in prompt-cache keep-alive policy. */
 	getPromptCacheKeepAliveSettings?(): {
 		enabled: boolean;
@@ -476,6 +656,15 @@ export interface ExtensionContext {
 	};
 	/** Get resolved look-at settings from global/project/user overrides. */
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
+	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
+	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
+	/**
+	 * Run `publish` once every `session_start` handler of the current dispatch has returned, in admission order;
+	 * outside a `session_start` dispatch it runs now. Recovered work published here cannot be answered while a
+	 * later startup handler is still preparing the session. Skipped when the session was replaced, reloaded or
+	 * disposed before dispatch ended; a returned promise's rejection is reported as an extension error.
+	 */
+	afterSessionStart?(publish: () => void | Promise<void>): void;
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -484,9 +673,25 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/**
 	 * Prepare a request-local provider context through the normal extension
-	 * boundary. Persisted session messages are never modified.
+	 * boundary. Persisted session messages are never modified. Server search is
+	 * disabled for these auxiliary requests unless preserving a keepalive prefix.
 	 */
-	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
+	prepareProviderRequest?(
+		messages: AgentMessage[],
+		options?: { allowServerSearch?: boolean },
+	): Promise<ProviderRequestPreparation>;
+	/**
+	 * The provider request prefix the next user turn will send, with an empty conversation:
+	 * the system prompt composed through a `before_agent_start` preview pass, the session's
+	 * tools in request order, and the request options (auth, reasoning, service tier, payload
+	 * hooks) resolved the way the turn resolves them.
+	 *
+	 * The preview pass invokes only handlers registered with `{ previewSafe: true }`, so the
+	 * result is `skipped` when any `before_agent_start` handler is not preview-safe, when no
+	 * model is selected, and when `signal` aborts or a user prompt starts composing its turn
+	 * before the prefix is built.
+	 */
+	getPromptCachePrefixRequest?(options?: PromptCachePrefixRequestOptions): Promise<PromptCachePrefixResult>;
 	/** Start user-visible compaction feedback before an extension has a precomputed summary to apply. */
 	beginCompaction?(options: BeginCompactionOptions): AbortSignal | undefined;
 	/** Stream user-visible compaction content while an extension-generated summary is available. */
@@ -500,6 +705,13 @@ export interface ExtensionContext {
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 	/**
+	 * The leading part of `getSystemPrompt()` the session's own requests cache separately (senpi#4447).
+	 * A request built from `getSystemPrompt()` passes it as `Context.systemPromptStablePrefix` so its system
+	 * blocks and cache breakpoint match the turn's. Undefined when every addition was stable. Optional on the
+	 * base context for compatibility with hand-built contexts; the senpi runner always binds it.
+	 */
+	getSystemPromptStablePrefix?(): string | undefined;
+	/**
 	 * Get the current base system-prompt construction options, including any
 	 * user overrides (`customPrompt` from --system-prompt, `appendSystemPrompt`
 	 * from --append-system-prompt). Optional on the base context for
@@ -512,6 +724,11 @@ export interface ExtensionContext {
 	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
 	getRegisteredMcpServers?(): readonly RegisteredMcpServerDeclaration[];
 	/**
+	 * Whether a loaded extension handles `mcp_servers_change` and therefore connects the registered
+	 * servers itself. The built-in MCP gateway then leaves them alone, so no server is connected twice.
+	 */
+	extensionConnectsMcpServers?(): boolean;
+	/**
 	 * Report what the currently running tool_call/tool_result handler is doing.
 	 * Updates the live "Running PreToolUse/PostToolUse hook" status row in the TUI.
 	 * Only available on the context passed to tool_call/tool_result handlers; calls
@@ -520,11 +737,89 @@ export interface ExtensionContext {
 	updateToolHookStatus?(statusMessage: string): void;
 }
 
+/**
+ * The members of {@link ExtensionContext} a runtime serves without a session (senpi#5223). A context from an
+ * `ExtensionRunner` built without a session manager has no `sessionManager` or `goalStoreFile`, and every other
+ * member outside this set throws a "loop-side and not bound" error.
+ */
+export type ExtensionRuntimeContext = Pick<
+	ExtensionContext,
+	| "offload"
+	| "ui"
+	| "mode"
+	| "hasUI"
+	| "cwd"
+	| "agentDir"
+	| "loadedExtensionPaths"
+	| "modelRegistry"
+	| "isProjectTrusted"
+	| "kernelTools"
+	| "evalHandleHost"
+	| "shutdown"
+	| "getLookAtSettings"
+	| "getAskUserSettings"
+	| "getImageSettings"
+	| "getRegisteredMcpServers"
+	| "extensionConnectsMcpServers"
+>;
+
+/** Provider request prefix of the next user turn (see `ExtensionContext.getPromptCachePrefixRequest`). */
+export interface PromptCachePrefixRequest {
+	readonly model: Model<Api>;
+	readonly context: Context;
+	readonly options: SimpleStreamOptions;
+	/** Sizes of the exact preview composition; never includes prompt or tool content. */
+	readonly sizeReport?: PromptSizeReport;
+}
+
+export interface PromptCachePrefixRequestOptions {
+	/** Inspect composition without resolving credentials (which may refresh over the network). */
+	readonly sizesOnly?: boolean;
+	/** Aborting stops the preview pass before its next handler and resolves the build as `skipped`. */
+	readonly signal?: AbortSignal;
+}
+
+/** Outcome of `ExtensionContext.getPromptCachePrefixRequest`. */
+export type PromptCachePrefixResult =
+	| { readonly status: "ready"; readonly request: PromptCachePrefixRequest }
+	| { readonly status: "skipped"; readonly reason: string };
+
 /** Request-local transformations shared by normal and compaction provider calls. */
 export interface ProviderRequestPreparation {
 	messages: AgentMessage[];
 	transformPayload(payload: unknown): Promise<unknown>;
 	transformHeaders(headers: ProviderHeaders): Promise<ProviderHeaders>;
+}
+
+export interface ExtensionTreeNavigationOptions {
+	summarize?: boolean;
+	customInstructions?: string;
+	replaceInstructions?: boolean;
+	label?: string;
+	/** The caller's last observed leaf, not the selected message's entry ID. */
+	expectedLeafId?: string;
+}
+
+/**
+ * Context passed to tool `execute()` in a session: the extension context plus `executeTool()`
+ * for running other tools through the same validation, hooks, and permission checks as
+ * model-issued calls.
+ *
+ * A tool wrapped with `wrapToolDefinition()` without a context factory, such as a built-in tool
+ * created with `createBashTool()` and run in a plain `Agent` or called directly, gets no context.
+ */
+export interface ExtensionToolContext extends ExtensionContext {
+	/** Tools {@link executeTool} can call. */
+	readonly tools: readonly AgentTool[];
+	/**
+	 * Run another tool. The call gets the id `<calling id>/<n>`, and the `tool_call`, `tool_result`,
+	 * and `tool_execution_*` events carry `parentToolCallId`. It does not appear in the transcript;
+	 * a bounded record of it is kept as `nestedCalls` on the calling tool's result message.
+	 *
+	 * Never rejects for tool failures: unknown tools, validation errors, blocked calls, and thrown
+	 * errors come back as `isError: true`.
+	 */
+	executeTool(name: string, args: unknown, options?: ExecuteToolOptions): Promise<AgentToolCallOutcome>;
 }
 
 /**
@@ -550,11 +845,34 @@ export interface ExtensionCommandContext extends ExtensionContext {
 		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	): Promise<{ cancelled: boolean }>;
 
-	/** Navigate to a different point in the session tree. */
+	/** Navigate by entry ID; the positional targetId form remains supported unchanged. */
 	navigateTree(
-		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
+		targetId: string | ({ entryId: string } & ExtensionTreeNavigationOptions),
+		options?: ExtensionTreeNavigationOptions,
 	): Promise<{ cancelled: boolean }>;
+
+	/**
+	 * Replace an assistant response with an edited copy: the leaf moves to the entry's parent and the
+	 * copy (text only; tool calls and thinking are dropped) is appended as the new leaf. Pass the leaf
+	 * you last observed as `expectedLeafId` to be refused instead of overwriting a moved session.
+	 * Rejects with the same typed errors as `AgentSession.editAssistantMessage`.
+	 */
+	editAssistantMessage(
+		entryId: string,
+		text: string,
+		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+	): Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
+
+	/**
+	 * Replace a user prompt with an edited copy, preserving attachments and the abandoned branch.
+	 * Uses the same options as editAssistantMessage; starts no turn. Rejects with UserEditError
+	 * (not-found, not-user, empty, stale-leaf) or SessionStreamingError, unchanged from core.
+	 */
+	editUserMessage(
+		entryId: string,
+		text: string,
+		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+	): Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
 
 	/** Switch to a different session file. */
 	switchSession(
@@ -631,14 +949,156 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	spinnerFrame?: number;
 }
 
-export type ToolExposure = "direct" | "search";
+/**
+ * How the model reaches a tool (fork vocabulary; upstream literals map onto it, see
+ * {@link ToolExposureAlias} and {@link normalizeToolExposure}).
+ *
+ * - `direct`: declared to the model while active, and callable while active.
+ * - `search`: registered but withheld until `tool_search` (or a lazy activator) promotes it.
+ *   Upstream `deferred` maps here.
+ * - `eval`: active but withheld from the model whenever the eval tool is registered; callable as
+ *   `tool.<name>()` inside eval cells. Upstream `codemode` maps here.
+ * - `model-only`: declared to the model while active, never callable from other tools.
+ * - `hidden`: registered but unreachable. Activating it has no effect.
+ */
+export type ToolExposure = "direct" | "search" | "eval" | "model-only" | "hidden";
+
+/** Upstream exposure literals accepted on {@link ToolDefinition.exposure}; normalized to fork values. */
+export type ToolExposureAlias = "deferred" | "codemode";
+
+/**
+ * Globals a tool contributes to the persistent eval kernels while it is active. Each snippet runs before a cell
+ * only when one of `exports` is missing, and calls the tool through the ordinary `tool.<name>()` helper; a
+ * deactivated tool's exports are removed before the next cell. `documentation` is one line rendered into the
+ * eval prompt's helper list while the tool is active.
+ */
+export interface KernelPreludeContribution {
+	/** JavaScript statements that assign every name in `exports` onto `globalThis`. */
+	readonly javascript: string;
+	/** Python statements that bind every name in `exports` in the kernel namespace. */
+	readonly python: string;
+	readonly documentation: string;
+	/** Global names the snippets define; must not shadow a built-in kernel helper such as `display` or `tool`. */
+	readonly exports: readonly string[];
+}
+
+/** One permission request a tool's own parser derives from a call's input (see {@link ToolDefinition.permissionParser}). */
+export interface ToolPermissionRequest {
+	/** Permission class matched against rules, e.g. `"my_tool"` for `my_tool:read=allow`. */
+	readonly permission: string;
+	/** Patterns this call is checked against. */
+	readonly patterns: readonly string[];
+	/** Patterns an "always" approval of this call records. */
+	readonly always: readonly string[];
+}
+
+/**
+ * Hints about what a tool does, with the meaning of MCP tool annotations. They come from the tool's
+ * author and are not verified; permission extensions can use them to decide which calls to confirm.
+ */
+export interface ToolAnnotations {
+	/** The tool does not modify its environment. */
+	readOnlyHint?: boolean;
+	/** The tool may delete or overwrite data, rather than only add to it. Meaningful when not read-only. */
+	destructiveHint?: boolean;
+	/** Repeating a call with the same arguments has no further effect. Meaningful when not read-only. */
+	idempotentHint?: boolean;
+	/** The tool reaches an open world of external entities, such as the web, rather than a closed domain. */
+	openWorldHint?: boolean;
+}
+
+/** A group of related tools, such as the tools of one MCP server. Codemode tools list them together. */
+export interface ToolNamespace {
+	/** For example `mcp__docs`. */
+	name: string;
+	/** Shown once above the group's tools. */
+	description?: string;
+}
+
+/** The tools of a session as {@link ToolDefinition.prepareLoadout} sees them. */
+export interface ToolLoadout {
+	/** Tools declared to the model (the active tools), in order, with their original descriptions. */
+	readonly declared: readonly AgentTool[];
+	/** Tools callable through `ctx.executeTool()`. */
+	readonly callable: readonly AgentTool[];
+	/** Every registered tool. */
+	readonly registered: readonly AgentTool[];
+	getExposure(name: string): ToolExposure;
+	getNamespace(name: string): ToolNamespace | undefined;
+}
+
+/** Changes {@link ToolDefinition.prepareLoadout} makes to what the model sees. */
+export interface ToolLoadoutChanges {
+	/** Model-facing descriptions of declared tools, by tool name. */
+	descriptions?: Readonly<Record<string, string>>;
+	/**
+	 * Declared tools whose declarations requests leave out. They stay active and callable, and the
+	 * transcript still declares them, so the active set survives `/tree` and resume.
+	 */
+	hiddenDeclarations?: readonly string[];
+}
+
+export type ToolPlacement = "server" | "child";
 
 /**
  * Tool definition for registerTool().
  */
+/** A tool body loaded from a file on the session's tool child (senpi#3566). */
+export interface ToolChildJob {
+	readonly kind: string;
+	args(params: unknown, toolCallId: string, ctx: ExtensionToolContext): unknown;
+	/**
+	 * Sees the job's result with the child generation it ran on, and may replace it: state that lives on the child (a
+	 * PTY session) is gone once that generation exits, which only the server can tell apart from "never existed".
+	 */
+	result?(params: unknown, value: AgentToolResult<unknown>, generation: number): AgentToolResult<unknown>;
+	/**
+	 * Where one call runs. State the server owns (a monitor's session) is reached on the server, the child's own on the
+	 * child; `both` runs the server's body, then the child's job, and joins their content. Unset: always the child.
+	 */
+	placement?(params: unknown): "server" | "child" | "both";
+	/** Receives what a job of this kind reported later from the child (`wake`), with the generation it came from. */
+	wake?(value: unknown, generation: number): void;
+	/** Told when a child generation exited: state that lived on it is gone. */
+	childExited?(generation: number): void;
+}
+
+export interface ToolChildModule {
+	readonly path: string;
+	readonly export: string;
+}
+
+/**
+ * A module the session may run on its tool child (`ctx.offload(id, ...)`), registered with `pi.registerChildModule`.
+ * File-backed only: `module` is a path (relative to the registering extension's file, or absolute) whose `export`
+ * receives `(args, host)` - the same host object (`signal`, `call`, `complete`, `reserved`, `listTools`, `authorize`,
+ * `withFileLock`) on both runtimes. Under `--tool-runtime child` it runs on the session's child; under `in-process` the
+ * server imports the same module and runs it directly, its host calls answered by the session in the same way. `idempotent` lets a job lost to a child exit run once more.
+ */
+export interface ChildModuleRegistration {
+	readonly id: string;
+	readonly module: string;
+	readonly export: string;
+	readonly idempotent?: boolean;
+}
+
+export interface RegisteredChildModule {
+	readonly registration: ChildModuleRegistration;
+	/** The registering extension's source, which a relative `module` path resolves against. */
+	readonly sourceInfo: SourceInfo;
+}
+
+export interface OffloadOptions {
+	readonly signal?: AbortSignal;
+	/**
+	 * Fails the job `tool_child_deadline` after this long, on either runtime; the default is the module job's own
+	 * deadline. Must be a finite number above 0, else `offload` rejects with `offload_bad_options`.
+	 */
+	readonly deadlineMs?: number;
+}
+
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
-	/** Tool name (used in LLM tool calls) */
-	name: string;
+	/** Tool name (used in LLM tool calls) */ name: string;
 	/** Human-readable label for UI */
 	label: string;
 	/** Description for LLM */
@@ -646,10 +1106,15 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	/**
 	 * Initial model-exposure policy. Defaults to `"direct"`.
 	 *
+	 * `"eval"` means registered and active but withheld from the model whenever the eval tool is registered;
+	 * it remains callable as `tool.<name>()`.
+	 *
 	 * This is not a permission boundary: explicit `setActiveTools()` calls or host configuration may still activate
 	 * a search-exposed tool.
+	 *
+	 * Upstream literals are accepted and normalized: `"deferred"` -> `"search"`, `"codemode"` -> `"eval"`.
 	 */
-	exposure?: ToolExposure;
+	exposure?: ToolExposure | ToolExposureAlias;
 	/** Supplemental capability text indexed by `tool_search`; never sent to the model and ignored unless exposure is `"search"`. */
 	searchText?: string;
 	/** Synonyms and domain terms indexed by `tool_search` with the same weight as tool names; never sent to the model. */
@@ -673,6 +1138,14 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * prompt-cache prefix.
 	 */
 	promptGuidelines?: string[];
+	/** Optional eval-kernel globals installed while this tool is active; see {@link KernelPreludeContribution}. */
+	kernelPrelude?: KernelPreludeContribution;
+	/**
+	 * Optional permission parsing for this tool: the permission-system checks the returned requests instead of one
+	 * catch-all request named after the tool, so rules can grant tiers such as `my_tool:read=allow`. A built-in
+	 * parser for the same tool name always wins.
+	 */
+	permissionParser?: (input: Record<string, unknown>, cwd: string) => ToolPermissionRequest[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional OpenAI Responses freeform tool metadata. */
@@ -686,6 +1159,38 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	prepareArguments?: (args: unknown) => Static<TParams>;
 
 	/**
+	 * JSON Schema of `structuredContent` in successful results. Tools that declare it should always
+	 * set `structuredContent`; codemode scripts then receive it instead of the text content.
+	 */
+	outputSchema?: TSchema;
+
+	/** Group the tool belongs to, for example its MCP server. */
+	namespace?: ToolNamespace;
+
+	/** Hints about what the tool does, for example from an MCP server. */
+	annotations?: ToolAnnotations;
+
+	/**
+	 * What a call can do to the workspace. `"read"` tools run while a tool barrier is armed; anything else,
+	 * including a tool that leaves this unset, waits for its release (senpi#3717).
+	 */
+	workspaceEffect?: ToolWorkspaceEffect;
+
+	/**
+	 * Whether registering the tool activates it. Default: `true` for `direct` and `model-only` tools;
+	 * other exposures are never activated on registration. A tool with `defaultActive: false` is
+	 * activated by naming it in `--tools` or the `defaultTools` setting, or with `setActiveTools()`.
+	 */
+	defaultActive?: boolean;
+
+	/**
+	 * Adjust how the loadout is presented to the model while this tool is active. Called whenever
+	 * the active tools change. Tools that orchestrate other tools use it, for example to list the
+	 * callable tools in their own description.
+	 */
+	prepareLoadout?: (loadout: ToolLoadout) => ToolLoadoutChanges | undefined;
+
+	/**
 	 * Per-tool execution mode override.
 	 * - "sequential": this tool must execute one at a time with other tool calls.
 	 * - "parallel": this tool can execute concurrently with other tool calls.
@@ -694,13 +1199,30 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	executionMode?: ToolExecutionMode;
 
+	/** Where this tool's work runs once the per-session tool child exists (senpi#3566). */
+	placement?: ToolPlacement;
+	/**
+	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
+	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
+	 * function that receives `{ params, toolCallId }` and returns a structured-cloneable tool result. Without it a
+	 * child-placed tool reports `tool_runtime_unavailable` under `--tool-runtime child`; `execute` still runs in-process.
+	 */
+	childModule?: ToolChildModule;
+	/**
+	 * A child-placed tool whose body is a tool-child job kind (built-in tools that keep state on the child, such as the
+	 * terminal's PTY sessions) instead of a `childModule`: `args` builds the job's arguments on the server from the call.
+	 */
+	childJob?: ToolChildJob;
+	/** Set by built-in tool factories that capture injected operations or a policy override; such a definition always executes on the session's server process, even when {@link ToolDefinition.placement} is `"child"`, and the dispatcher logs one notice per tool when it pins one. */
+	serverPinned?: boolean;
+
 	/** Execute the tool. */
 	execute(
 		toolCallId: string,
 		params: Static<TParams>,
 		signal: AbortSignal | undefined,
 		onUpdate: AgentToolUpdateCallback<TDetails> | undefined,
-		ctx: ExtensionContext,
+		ctx: ExtensionToolContext,
 	): Promise<AgentToolResult<TDetails>>;
 
 	/** Custom rendering for tool call display */
@@ -728,7 +1250,7 @@ export function normalizeToolExposure(
 	searchGroup?: string;
 	allowLazyActivation: boolean;
 } {
-	const exposure: ToolExposure = definition.exposure === "search" ? "search" : "direct";
+	const exposure = toForkToolExposure(definition.exposure);
 	return {
 		exposure,
 		searchText: exposure === "search" ? definition.searchText : undefined,
@@ -736,6 +1258,23 @@ export function normalizeToolExposure(
 		searchGroup: definition.searchGroup,
 		allowLazyActivation: definition.allowLazyActivation !== false,
 	};
+}
+
+function toForkToolExposure(exposure: ToolDefinition["exposure"]): ToolExposure {
+	switch (exposure) {
+		case "search":
+		case "deferred":
+			return "search";
+		case "eval":
+		case "codemode":
+			return "eval";
+		case "model-only":
+		case "hidden":
+			return exposure;
+		case "direct":
+		case undefined:
+			return "direct";
+	}
 }
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
@@ -786,15 +1325,41 @@ export interface ResourcesDiscoverEvent {
 	type: "resources_discover";
 	cwd: string;
 	reason: "startup" | "reload";
+	/**
+	 * Capability signal: this host accepts `{ path, scope }` entries in the result. Hosts that
+	 * predate scoped entries omit the field, so a handler that must run on both returns plain
+	 * paths when it is absent.
+	 */
+	scopedEntries: true;
 }
+
+/**
+ * A resource path contributed by `resources_discover`. A bare string inherits its scope from the
+ * contributing extension: `system` when that extension is builtin, or when it is a system package
+ * and the path lies inside the package; `temporary` otherwise. The object form pins the scope
+ * explicitly, e.g. `{ path, scope: "user" }` for user-owned data a system extension surfaces.
+ */
+export type ResourceDiscoverEntry = string | { path: string; scope?: SourceScope };
 
 /** Result from resources_discover event handler */
 export interface ResourcesDiscoverResult {
-	skillPaths?: string[];
-	promptPaths?: string[];
-	themePaths?: string[];
+	skillPaths?: ResourceDiscoverEntry[];
+	promptPaths?: ResourceDiscoverEntry[];
+	themePaths?: ResourceDiscoverEntry[];
 	/** Hook config paths discovered after initial session_start; visible to later hooks and reloads. */
-	hookPaths?: string[];
+	hookPaths?: ResourceDiscoverEntry[];
+}
+
+/**
+ * Fired when an extension registers or unregisters an MCP server after the extensions are bound
+ * (see {@link ExtensionAPI.registerMcpServer}). Servers registered while extensions load are read
+ * with `pi.getMcpServers()` on `session_start`. Handling this event marks an extension as the one
+ * that connects registered servers.
+ */
+export interface McpServersChangeEvent {
+	type: "mcp_servers_change";
+	/** Every registered server after the change. */
+	servers: RegisteredMcpServer[];
 }
 
 // ============================================================================
@@ -804,12 +1369,42 @@ export interface ResourcesDiscoverResult {
 /** Fired when a session is started, loaded, or reloaded */
 export interface SessionStartEvent {
 	type: "session_start";
+	/** Diagnostic startup: built-in MCP attach and cache prewarm are skipped; every other handler runs; no turn starts. */
+	readonly sizesOnly?: boolean;
 	/** Why this session start happened. */
 	reason: "startup" | "reload" | "new" | "resume" | "fork";
 	/** Initial model resolver branch, when the session was resolved during this startup. */
 	initialModelProvenance?: InitialModelProvenance;
 	/** Previously active session file. Present for "new", "resume", and "fork". */
 	previousSessionFile?: string;
+	/**
+	 * `false` when no client is attached to this start (a host reopening a parked session). Engine-originated
+	 * turns are held until real input or an explicit Resume (senpi#3853). Attaching releases nothing.
+	 */
+	attended?: boolean;
+}
+
+/** Sources released by real input or an explicit Resume; goal handlers revalidate current state. */
+export interface HeldWakesReleasedEvent {
+	type: "held_wakes_released";
+	sources: Record<string, number>;
+}
+
+export type HeldWakesReleasedEventResult = undefined;
+
+/** A hold record on this session (senpi#3811): `session_hold` (user Stop), `run_fence`, `inherited_hold`, `unattended`. */
+export interface SessionHoldRecord {
+	kind: string;
+	key: string;
+	data?: unknown;
+}
+
+/** Fired when this session becomes paused or resumed; a run fence alone does not pause it. Omo propagates a Stop to its run. */
+export interface SessionHoldChangedEvent {
+	type: "session_hold_changed";
+	change: "paused" | "resumed";
+	pauseSeq: number;
+	holds: SessionHoldRecord[];
 }
 
 /** Fired when the current session metadata changes. */
@@ -817,6 +1412,16 @@ export interface SessionInfoChangedEvent {
 	type: "session_info_changed";
 	/** Current normalized session name. Undefined when the name is cleared. */
 	name: string | undefined;
+}
+
+/** Fired when the last client detaches from a retained in-process RPC session. */
+export interface SessionParkedEvent {
+	type: "session_parked";
+}
+
+/** Fired when the first client reattaches to an open, parked in-process RPC session. */
+export interface SessionResumedEvent {
+	type: "session_resumed";
 }
 
 /** Fired before switching to another session (can be cancelled) */
@@ -921,11 +1526,54 @@ export interface SessionShutdownEvent {
 	reason: "quit" | "reload" | "new" | "resume" | "fork";
 	/** Destination session file when shutting down due to session replacement. */
 	targetSessionFile?: string;
+	/**
+	 * Per-handler signal the host aborts when this handler exceeds
+	 * `sessionShutdownHandlerTimeoutMs`; teardown then continues without it.
+	 * Long shutdown work should observe it. Absent on hosts that predate the
+	 * shutdown handler budget.
+	 */
+	signal?: AbortSignal;
 }
 
 /** Fired when the user aborts the session outside an active agent run (retry backoff, compaction, or queued continuation), stopping in-flight work without an agent_end that carries abortSource. Extensions that track run-progress state (e.g. goal) use this to mark their state as user-interrupted. */
 export interface SessionAbortEvent {
 	type: "session_abort";
+}
+
+/**
+ * Fired when the session is released to move to another device, while this runtime is still live. Write the state
+ * this extension keeps for the session outside the session folder (records, logs, finished child sessions) into
+ * `dir`; it travels in the move's bundle. A handler that throws, or is still running at the `session_shutdown`
+ * handler budget, refuses the move: nothing is sealed.
+ */
+export interface SessionMoveExportEvent {
+	type: "session_move_export";
+	moveId: string;
+	/**
+	 * An empty folder for this release attempt; write under a subfolder named after the extension. Only the attempt
+	 * that seals the session is bundled, so a write after `signal` aborted never reaches the move.
+	 */
+	dir: string;
+	/** Aborted when the host stops waiting on this handler (the `session_shutdown` handler budget's hard cap). */
+	signal: AbortSignal;
+}
+
+/**
+ * Fired on the receiving device right after `session_start` of an open that finds state a move brought in, with a
+ * copy of the folder the sender's extensions filled. Restore from it. The state is marked restored and removed only
+ * when every handler returned without throwing within the `session_shutdown` handler budget; otherwise every handler
+ * gets it again on the next open (`redelivered: true`), as after a crash before that mark. Handlers must therefore be
+ * idempotent: restoring the same state twice must leave the same result as restoring it once.
+ */
+export interface SessionMoveImportEvent {
+	type: "session_move_import";
+	moveId: string;
+	/** This delivery's own copy: what a handler does to it after `signal` aborted never reaches a later delivery. */
+	dir: string;
+	/** True when this state was delivered before and not marked restored (an earlier attempt failed or crashed). */
+	redelivered: boolean;
+	/** Aborted when the host stops waiting on this handler (the `session_shutdown` handler budget's hard cap). */
+	signal: AbortSignal;
 }
 
 /** Fired on the old extension runner when a reload or session replacement rebuilds the runner and one or more extensions are absent from it. */
@@ -968,7 +1616,11 @@ export interface SessionTreeEvent {
 
 export type SessionEvent =
 	| SessionStartEvent
+	| HeldWakesReleasedEvent
+	| SessionHoldChangedEvent
 	| SessionInfoChangedEvent
+	| SessionParkedEvent
+	| SessionResumedEvent
 	| SessionBeforeSwitchEvent
 	| SessionBeforeForkEvent
 	| SessionBeforeReloadEvent
@@ -978,6 +1630,8 @@ export type SessionEvent =
 	| SessionShutdownEvent
 	| SessionAbortEvent
 	| SessionExtensionsRemovedEvent
+	| SessionMoveExportEvent
+	| SessionMoveImportEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent;
 
@@ -985,9 +1639,13 @@ export type SessionEvent =
 // Agent Events
 // ============================================================================
 
-/** Fired before each LLM call. Can modify messages. */
-export interface ContextEvent {
-	type: "context";
+/**
+ * Fired before each LLM call, after every `context` handler has run and Pi has restored
+ * the prompt and tool state. `messages` is the full transcript including system messages,
+ * and the result is sent as returned: the handler owns the prompt and tool declarations.
+ */
+export interface ContextWithSystemEvent {
+	type: "context_with_system";
 	messages: AgentMessage[];
 }
 
@@ -1018,17 +1676,74 @@ export interface AfterProviderResponseEvent {
 	headers: Record<string, string>;
 }
 
+/** Fired for a parsed provider stream event before Pi normalizes it. */
+export interface ProviderStreamEvent {
+	type: "provider_stream_event";
+	provider: ProviderId;
+	api: Api;
+	model: string;
+	data: unknown;
+}
+
 /** Fired after user submits prompt but before agent loop. */
 export interface BeforeAgentStartEvent {
 	type: "before_agent_start";
 	/** The raw user prompt text (after expansion). */
 	prompt: string;
+	/**
+	 * Who started this turn: `"prompt"` for a user prompt (and a preview of one), `"delivery"` for an
+	 * externally admitted session-control delivery, or `"extension"` for any other turn an extension
+	 * triggered with `sendMessage(..., { triggerTurn: true })`. For either custom-message trigger,
+	 * `prompt` is that message's text.
+	 */
+	trigger: "prompt" | "delivery" | "extension";
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
 	/** The fully assembled system prompt string. */
 	systemPrompt: string;
 	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
 	systemPromptOptions: BuildSystemPromptOptions;
+	/**
+	 * `true` when the host composes the next turn's system prompt ahead of any user prompt
+	 * (the session-start prompt-cache prewarm). `prompt` is empty and no turn follows, so a
+	 * handler must return the system prompt it would return for a real turn but must not
+	 * consume one-shot state, start work, or change session state. Only handlers registered
+	 * with `{ previewSafe: true }` receive a preview.
+	 */
+	preview?: boolean;
+}
+
+/** Registration options for `pi.on("before_agent_start", handler, options)`. */
+export interface BeforeAgentStartHandlerOptions {
+	/**
+	 * Declares that the handler has no side effects when `event.preview` is `true`: it only
+	 * computes the system prompt a real turn would get, and consumes no one-shot state,
+	 * starts no work, and changes nothing a later turn observes. Only preview-safe handlers
+	 * run in a preview; while any registered `before_agent_start` handler is not preview-safe,
+	 * the host skips previews (and with them the session-start prompt-cache prewarm).
+	 */
+	previewSafe?: boolean;
+	/**
+	 * Runs the handler after every handler registered without it, on real turns and previews alike;
+	 * run-last handlers keep their registration order among themselves, except that builtin run-last
+	 * handlers run after every other extension's, so MCP server instructions always close the system
+	 * prompt (senpi#4448).
+	 */
+	runLast?: boolean;
+}
+
+/** Registration options for `pi.on("context", handler, options)` and `pi.on("context_with_system", handler, options)`. */
+export interface ContextHandlerOptions {
+	/**
+	 * Opt-in performance declaration (senpi#2525). `false` declares that the handler never
+	 * mutates a message object — or anything nested in one — in place; it may still return a
+	 * new list holding new message objects. When every `context` and `context_with_system`
+	 * handler about to run declares this, the runner shares the live transcript objects with
+	 * those handlers instead of deep-cloning the whole context every turn. While any handler
+	 * has not declared it, behavior is unchanged: one deep clone up front, and in-place edits
+	 * stay isolated from the runtime transcript.
+	 */
+	mutatesMessages?: boolean;
 }
 
 /** Fired when an agent loop starts */
@@ -1046,11 +1761,97 @@ export interface AgentEndEvent {
 	willRetry?: boolean;
 	/** Present when the host can attribute the abort to a user action or internal operation. */
 	abortSource?: "user" | "system" | "provider";
+	/**
+	 * Present on a system abort the turn deadline lease caused (`turn_inactivity_ms` or
+	 * `turn_max_runtime_ms`). A deadline stop is never auto-continued: goal continuations,
+	 * monitor backstops and hidden nudges hold off until admitted user input clears the hold.
+	 */
+	deadline?: { kind: "inactivity" | "max_runtime"; limitMs: number; elapsedMs: number };
+}
+
+export type AgentActivityOutcome = "completed" | "aborted" | "error";
+
+export interface CustomEntryDraft {
+	type: "custom";
+	customType: string;
+	data?: unknown;
+}
+
+export interface CustomMessageEntryDraft {
+	type: "custom_message";
+	customType: string;
+	content: string | (TextContent | ImageContent)[];
+	display: boolean;
+	details?: unknown;
+}
+
+export interface ContextEditEntryDraft {
+	type: "context_edit";
+	targetId: string;
+	replacement: ContextEditEntry["replacement"];
+}
+
+export interface CompactionEntryDraft {
+	type: "compaction";
+	summary: string;
+	/** Null creates a self-retaining compaction that keeps no preceding entries. */
+	firstKeptEntryId: string | null;
+	details?: unknown;
+	usage?: Usage;
+}
+
+export type SessionBoundaryDraft =
+	| CustomEntryDraft
+	| CustomMessageEntryDraft
+	| ContextEditEntryDraft
+	| CompactionEntryDraft;
+
+export interface BoundaryContextPreview {
+	contextEntries: ProjectedSessionEntry[];
+	contextMessages: AgentMessage[];
+	llmMessages: Message[];
+	pendingMessages: AgentMessage[];
+	canContinue: boolean;
+}
+
+export interface BoundaryState {
+	entries: SessionBoundaryDraft[];
+	continue: boolean;
+	context: BoundaryContextPreview;
+	outcome: AgentActivityOutcome;
+}
+
+export interface BoundaryResult {
+	entries?: SessionBoundaryDraft[];
+	continue?: boolean;
+}
+
+/** Fired before final settlement. May append entries and ensure one next provider request. */
+export interface AgentBeforeSettleEvent extends BoundaryState {
+	type: "agent_before_settle";
 }
 
 /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
 export interface AgentSettledEvent {
 	type: "agent_settled";
+}
+
+export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom" | "question";
+
+/** Fired when Pi starts waiting on a blocking user-facing extension UI prompt. */
+export interface UIPromptStartEvent {
+	type: "ui_prompt_start";
+	reason: "ui_prompt";
+	kind: UIPromptKind;
+	title?: string;
+}
+
+/** Fired when Pi is no longer waiting on a blocking user-facing extension UI prompt. */
+export interface UIPromptEndEvent {
+	type: "ui_prompt_end";
+	reason: "ui_prompt";
+	kind: UIPromptKind;
+	title?: string;
 }
 
 /** Fired at the start of each turn */
@@ -1061,11 +1862,13 @@ export interface TurnStartEvent {
 }
 
 /** Fired at the end of each turn */
-export interface TurnEndEvent {
+export interface TurnEndEvent extends BoundaryState {
 	type: "turn_end";
 	turnIndex: number;
 	message: AgentMessage;
 	toolResults: ToolResultMessage[];
+	messageEntryId: string;
+	toolResultEntryIds: string[];
 }
 
 /** Fired when a message starts (user, assistant, or toolResult) */
@@ -1093,6 +1896,8 @@ export interface ToolExecutionStartEvent {
 	toolCallId: string;
 	toolName: string;
 	args: any;
+	/** Set when another tool (for example a codemode script) made this call. */
+	parentToolCallId?: string;
 }
 
 /** Fired during tool execution with partial/streaming output */
@@ -1102,6 +1907,8 @@ export interface ToolExecutionUpdateEvent {
 	toolName: string;
 	args: any;
 	partialResult: any;
+	/** Set when another tool (for example a codemode script) made this call. */
+	parentToolCallId?: string;
 }
 
 /** Fired when a tool finishes executing */
@@ -1111,6 +1918,8 @@ export interface ToolExecutionEndEvent {
 	toolName: string;
 	result: any;
 	isError: boolean;
+	/** Set when another tool (for example a codemode script) made this call. */
+	parentToolCallId?: string;
 }
 
 // ============================================================================
@@ -1118,6 +1927,22 @@ export interface ToolExecutionEndEvent {
 // ============================================================================
 
 export type ModelSelectSource = "set" | "cycle" | "restore" | "fallback" | "fallback-revert";
+
+/**
+ * Fired when an extension-registered provider's OAuth login starts, before the provider's own login code runs.
+ * Every handler is awaited in order, so a host can acquire what the login needs first (for example download and
+ * pin the Claude Code binary and set `CLAUDE_CODE_EXECUTABLE`). A handler that throws is reported and the login
+ * still runs. There is no handler budget: the login's own cancel and idle timeout bound it, through `signal`.
+ */
+export interface ProviderLoginStartEvent {
+	type: "provider_login_start";
+	/** The provider id passed to `pi.registerProvider`. */
+	provider: string;
+	/** Aborts when the login is cancelled. */
+	signal: AbortSignal;
+	/** Shows a progress line in the login UI. */
+	progress: (message: string) => void;
+}
 
 /** Fired when a new model is selected */
 export interface ModelSelectEvent {
@@ -1156,6 +1981,16 @@ export interface ThinkingLevelSelectEvent {
 	previousLevel: ThinkingLevel;
 }
 
+/**
+ * Fired after the active tool set gains tools: `pi.setActiveTools()`, tool_search promotion, or a
+ * by-name call that lazily activates a deferred tool. Notification-only; `toolNames` lists only the
+ * newly active tools.
+ */
+export interface ToolActivatedEvent {
+	type: "tool_activated";
+	toolNames: string[];
+}
+
 // ============================================================================
 // User Bash Events
 // ============================================================================
@@ -1178,6 +2013,12 @@ export interface UserBashEvent {
 /** Source of user input */
 export type InputSource = "interactive" | "rpc" | "extension";
 
+/**
+ * Who the input came from: `"user"` for a person (typed in the TUI, sent by an RPC client, or a person's answer
+ * delivered through the extension API); `"agent"` for input an extension, tool, subagent or the session itself sends.
+ */
+export type InputAttribution = "user" | "agent";
+
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {
 	type: "input";
@@ -1189,6 +2030,8 @@ export interface InputEvent {
 	images?: ImageContent[];
 	/** Where the input came from */
 	source: InputSource;
+	/** Whether a person or an agent sent the input; `source` says only which channel it arrived on. */
+	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
 }
@@ -1213,7 +2056,14 @@ export type InputEventResult =
 
 interface ToolCallEventBase {
 	type: "tool_call";
+	/**
+	 * The call's id. For calls another tool made (with `parentToolCallId` set), pi assigns
+	 * `<parent id>/<n>`; such ids never appear as tool calls or tool results in the transcript, only
+	 * in the parent result's `nestedCalls` record.
+	 */
 	toolCallId: string;
+	/** Set when another tool (for example a codemode script) issued this call. */
+	parentToolCallId?: string;
 }
 
 export interface BashToolCallEvent extends ToolCallEventBase {
@@ -1281,9 +2131,17 @@ export type ToolCallEvent =
 
 interface ToolResultEventBase {
 	type: "tool_result";
+	/** The call's id; `<parent id>/<n>` for nested calls, see `ToolCallEvent`. */
 	toolCallId: string;
+	/** Set when another tool (for example a codemode script) issued this call. */
+	parentToolCallId?: string;
 	input: Record<string, unknown>;
 	content: (TextContent | ImageContent)[];
+	/**
+	 * Machine-readable result for tools that declare an `outputSchema`. Handlers that redact
+	 * `content` should also replace this; replacing `content` alone drops it.
+	 */
+	structuredContent?: JsonValue;
 	isError: boolean;
 	/** Usage from the tool execution itself, if available. */
 	usage?: Usage;
@@ -1414,15 +2272,22 @@ export function isToolCallEventType(toolName: string, event: ToolCallEvent): boo
 export type ExtensionEvent =
 	| ProjectTrustEvent
 	| ResourcesDiscoverEvent
+	| McpServersChangeEvent
 	| SessionEvent
 	| ContextEvent
+	| ContextWithSystemEvent
 	| BeforeProviderRequestEvent
 	| BeforeProviderHeadersEvent
 	| AfterProviderResponseEvent
+	| ProviderStreamEvent
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
+	| AgentBeforeSettleEvent
 	| AgentSettledEvent
+	| SessionControlWakeEvent
+	| UIPromptStartEvent
+	| UIPromptEndEvent
 	| TurnStartEvent
 	| TurnEndEvent
 	| MessageStartEvent
@@ -1432,8 +2297,10 @@ export type ExtensionEvent =
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
+	| ProviderLoginStartEvent
 	| SystemPromptChangeEvent
 	| ThinkingLevelSelectEvent
+	| ToolActivatedEvent
 	| UserBashEvent
 	| InputEvent
 	| InputDispositionEvent
@@ -1447,6 +2314,9 @@ export type ExtensionEvent =
 export interface ContextEventResult {
 	messages?: AgentMessage[];
 }
+
+export type TurnEndEventResult = BoundaryResult;
+export type AgentBeforeSettleEventResult = BoundaryResult;
 
 export type BeforeProviderRequestEventResult = unknown;
 
@@ -1462,16 +2332,27 @@ export interface ToolCallEventResult {
 }
 
 /** Result from user_bash event handler */
-export interface UserBashEventResult {
-	/** Custom operations to use for execution */
-	operations?: BashOperations;
-	/** Full replacement: extension handled execution, use this result */
-	result?: BashResult;
-}
+export type UserBashEventResult =
+	| {
+			/** Custom operations to use for execution */
+			operations: BashOperations;
+			result?: never;
+	  }
+	| {
+			operations?: never;
+			/** Full replacement: extension handled execution, use this result */
+			result: BashResult;
+	  };
 
+/**
+ * Changes a `tool_result` handler makes. Omitted fields stay as they are, except that replacing
+ * `content` without returning `structuredContent` drops the structured content, because it may no
+ * longer match. Return it along with `content` to keep it.
+ */
 export interface ToolResultEventResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
+	structuredContent?: JsonValue;
 	isError?: boolean;
 	usage?: Usage;
 }
@@ -1482,9 +2363,22 @@ export interface MessageEndEventResult {
 }
 
 export interface BeforeAgentStartEventResult {
-	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
-	/** Replace the system prompt for this turn. If multiple extensions return this, they are chained. */
+	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details"> & {
+		/** Insert before this turn's triggering prompt instead of appending after it. */
+		placement?: "before-prompt";
+	};
+	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
+	/**
+	 * Whether this handler's change to `systemPrompt` is the same in every session in the same working
+	 * directory (`"stable"`; the base prompt names the cwd) or differs between sessions, turns or commits
+	 * (`"volatile"`: memory, per-prompt hook output, per-session state). Defaults to `"stable"` for
+	 * builtin extensions and `"volatile"` for every other extension. The prompt up to the first volatile
+	 * change is sent as a separately cached prefix where the provider supports it (senpi#4447).
+	 */
+	systemPromptCache?: "stable" | "volatile";
+	/** Exact render parts of a complete replacement, used only by preview accounting. */
+	readonly systemPromptParts?: readonly DynamicSystemPromptPart[];
 }
 
 export interface SessionBeforeSwitchResult {
@@ -1568,6 +2462,9 @@ export interface EntryRenderOptions {
 	expanded: boolean;
 }
 
+/** Figures one extension adds to the on-demand memory report, read only when a report is taken. */
+export type MemoryReporter = () => Readonly<Record<string, number>>;
+
 export type MessageRenderer<T = unknown> = (
 	message: CustomMessage<T>,
 	options: MessageRenderOptions,
@@ -1580,6 +2477,15 @@ export type EntryRenderer<T = unknown> = (
 	theme: Theme,
 ) => Component | undefined;
 
+export interface EntryRendererOptions<T = unknown> {
+	/**
+	 * Return true when `next` should replace `previous` in place instead of rendering as a
+	 * second card. Only consulted when `previous` is the transcript card directly before
+	 * `next` (nothing visible in between) and both carry this renderer's custom type.
+	 */
+	readonly replaces?: (previous: CustomEntry<T>, next: CustomEntry<T>) => boolean;
+}
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -1590,6 +2496,11 @@ export interface RegisteredCommand {
 	description?: string;
 	/** Compact usage hint shown alongside the command in compatible UIs. */
 	argumentHint?: string;
+	/**
+	 * Whether picker Enter completes `/name ` and waits for input. Omitted means true when
+	 * `argumentHint` is set; set `false` to submit on first Enter despite an optional-argument hint.
+	 */
+	requiresArguments?: boolean;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
@@ -1597,6 +2508,42 @@ export interface RegisteredCommand {
 export interface ResolvedCommand extends RegisteredCommand {
 	invocationName: string;
 }
+
+// ============================================================================
+// Session identity (per-session facts an extension is loaded with)
+// ============================================================================
+
+/**
+ * Engine-level visibility class of a session, chosen by whoever opened it
+ * (`open_session.kind`). `worker` sessions are machine-driven work (a task child, a
+ * team member) that clients do not list or mirror by default; every other session -
+ * classic launches, interactive opens, and any open that omits the field - is
+ * `interactive`.
+ */
+export type SessionKind = "interactive" | "worker";
+
+/**
+ * Opaque per-session labels the opener attached (`open_session.context`). The engine
+ * never interprets them: they carry no auth, no model and no resource decision, and
+ * exist so ONE host with ONE extension set can let an extension recognize the session
+ * it was loaded for.
+ */
+export type SessionContext = Readonly<Record<string, string>>;
+
+/** What a session opened without `context` sees - shared so no caller invents its own. */
+export const EMPTY_SESSION_CONTEXT: SessionContext = Object.freeze({});
+
+/** The per-session facts an extension factory may branch on at registration time. */
+export interface ExtensionSessionProfile {
+	readonly sessionKind: SessionKind;
+	readonly sessionContext: SessionContext;
+}
+
+/** The profile a classic launch (and any caller that names none) loads extensions with. */
+export const DEFAULT_EXTENSION_SESSION_PROFILE: ExtensionSessionProfile = Object.freeze({
+	sessionKind: "interactive",
+	sessionContext: EMPTY_SESSION_CONTEXT,
+});
 
 // ============================================================================
 // Extension API
@@ -1610,68 +2557,124 @@ export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContex
  * ExtensionAPI passed to extension factory functions.
  */
 export interface ExtensionAPI {
+	/** Durable engine custody and generation-fenced child/workflow reporting. */
+	readonly lifecycle: LifecycleApi;
 	// =========================================================================
 	// Session Context
 	// =========================================================================
 
 	/** Absolute cwd of the session this extension instance was loaded for. */
 	readonly cwd: string;
+	/**
+	 * Visibility class of the session this extension instance was loaded for
+	 * (`open_session.kind`). `interactive` for classic launches and every open that
+	 * omits the field.
+	 */
+	readonly sessionKind: SessionKind;
+	/**
+	 * Opaque labels the opener attached to this session (`open_session.context`), or
+	 * `{}` when it attached none. One extension set can therefore serve every session
+	 * of a shared host and still gate itself per session.
+	 */
+	readonly sessionContext: SessionContext;
 
 	// =========================================================================
 	// Event Subscription
 	// =========================================================================
 
-	on(event: "project_trust", handler: ProjectTrustHandler): void;
-	on(event: "resources_discover", handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>): void;
-	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): void;
-	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): void;
+	on(event: "project_trust", handler: ProjectTrustHandler): () => void;
+	on(
+		event: "resources_discover",
+		handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>,
+	): () => void;
+	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): () => void;
+	on(
+		event: "held_wakes_released",
+		handler: ExtensionHandler<HeldWakesReleasedEvent, HeldWakesReleasedEventResult>,
+	): () => void;
+	on(event: "session_hold_changed", handler: ExtensionHandler<SessionHoldChangedEvent>): () => void;
+	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): () => void;
+	on(event: "session_parked", handler: ExtensionHandler<SessionParkedEvent>): () => void;
+	on(event: "session_resumed", handler: ExtensionHandler<SessionResumedEvent>): () => void;
 	on(
 		event: "session_before_switch",
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,
-	): void;
-	on(event: "session_before_fork", handler: ExtensionHandler<SessionBeforeForkEvent, SessionBeforeForkResult>): void;
+	): () => void;
+	on(
+		event: "session_before_fork",
+		handler: ExtensionHandler<SessionBeforeForkEvent, SessionBeforeForkResult>,
+	): () => void;
 	on(
 		event: "session_before_reload",
 		handler: ExtensionHandler<SessionBeforeReloadEvent, SessionBeforeReloadResult>,
-	): void;
+	): () => void;
 	on(
 		event: "session_before_compact",
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,
-	): void;
-	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): void;
-	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): void;
-	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): void;
-	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): void;
-	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): void;
-	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
-	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
-	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
+	): () => void;
+	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): () => void;
+	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): () => void;
+	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
+	on(event: "mcp_servers_change", handler: ExtensionHandler<McpServersChangeEvent>): () => void;
+	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): () => void;
+	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): () => void;
+	on(event: "session_move_export", handler: ExtensionHandler<SessionMoveExportEvent>): () => void;
+	on(event: "session_move_import", handler: ExtensionHandler<SessionMoveImportEvent>): () => void;
+	on(
+		event: "session_before_tree",
+		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
+	): () => void;
+	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): () => void;
+	on(
+		event: "context",
+		handler: ExtensionHandler<ContextEvent, ContextEventResult>,
+		options?: ContextHandlerOptions,
+	): () => void;
+	on(
+		event: "context_with_system",
+		handler: ExtensionHandler<ContextWithSystemEvent, ContextEventResult>,
+		options?: ContextHandlerOptions,
+	): () => void;
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
-	): void;
-	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): void;
-	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
-	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
-	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
-	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
-	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
-	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
-	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
-	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
-	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): void;
-	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>): void;
-	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): void;
-	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
-	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
-	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): void;
-	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): void;
-	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
-	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
-	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
-	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
-	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
-	on(event: "input_disposition", handler: ExtensionHandler<InputDispositionEvent>): void;
+	): () => void;
+	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): () => void;
+	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): () => void;
+	on(event: "provider_stream_event", handler: ExtensionHandler<ProviderStreamEvent>): () => void;
+	on(
+		event: "before_agent_start",
+		handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>,
+		options?: BeforeAgentStartHandlerOptions,
+	): () => void;
+	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): () => void;
+	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): () => void;
+	on(
+		event: "agent_before_settle",
+		handler: ExtensionHandler<AgentBeforeSettleEvent, AgentBeforeSettleEventResult>,
+	): () => void;
+	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): () => void;
+	on(event: "session_control_wake", handler: ExtensionHandler<SessionControlWakeEvent>): () => void;
+	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): () => void;
+	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): () => void;
+	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): () => void;
+	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent, TurnEndEventResult>): () => void;
+	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): () => void;
+	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): () => void;
+	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>): () => void;
+	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): () => void;
+	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): () => void;
+	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): () => void;
+	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): () => void;
+	on(event: "provider_login_start", handler: ExtensionHandler<ProviderLoginStartEvent>): () => void;
+	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): () => void;
+	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): () => void;
+	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): () => void;
+	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): () => void;
+	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): () => void;
+	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): () => void;
+	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): () => void;
+	on(event: "input_disposition", handler: ExtensionHandler<InputDispositionEvent>): () => void;
 
 	// =========================================================================
 	// Tool Registration
@@ -1684,6 +2687,13 @@ export interface ExtensionAPI {
 
 	/** Register migration guidance returned when an intentionally removed tool is called. */
 	registerRemovedToolHint(name: string, hint: string): void;
+
+	/**
+	 * Provide this session's `EvalHandleHost` (the task/workpool owner implements it). Session-scoped:
+	 * every extension loaded in the same session reads it back as `ctx.evalHandleHost`; the last
+	 * provider wins, and a replaced or reloaded session starts without one.
+	 */
+	provideEvalHandleHost(host: EvalHandleHost): void;
 
 	/**
 	 * Register a callback that may activate a registered-but-inactive tool on demand.
@@ -1700,14 +2710,30 @@ export interface ExtensionAPI {
 	 */
 	registerFilesystemPolicy(policy: FilesystemPolicy): void;
 
-	/** Register an MCP server that the agent can use. Factory-time only. */
+	/** Registers a file-backed module `ctx.offload(id, ...)` can run (see {@link ChildModuleRegistration}). */
+	registerChildModule(registration: ChildModuleRegistration): void;
+
+	/**
+	 * Register an MCP server for this session, with the same config as an `mcpServers` entry in
+	 * `mcp.json`. Servers registered while the extension loads connect on `session_start`; the
+	 * extension that handles `mcp_servers_change` connects later registrations right away.
+	 * Registering a name again replaces this extension's earlier registration. When several extensions
+	 * register the same name, the declaration from the extension earliest in the session's extension
+	 * order is kept, regardless of which registered first (see `getMcpServers` in docs/extensions.md
+	 * for that order). The registration is not saved: register again on every load.
+	 * Throws for invalid configs.
+	 */
 	registerMcpServer(name: string, config: McpServerDeclaration): void;
+	/** Remove an MCP server this extension registered. */
+	unregisterMcpServer(name: string): void;
+	/** Every MCP server registered by extensions. For extensions that connect MCP servers. */
+	getMcpServers(): RegisteredMcpServer[];
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
 
-	/** Register a custom command. */
+	/** Register a custom command. Submit any text (`sendUserMessage`) inside the handler: text sent after it returns is not held behind the user's input. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
 
 	/** Register a keyboard shortcut. */
@@ -1738,6 +2764,23 @@ export interface ExtensionAPI {
 	/** Get the value of a registered CLI flag. */
 	getFlag(name: string): boolean | string | undefined;
 
+	/**
+	 * The permission preset the permission system enforces for this session right now: the flag, then
+	 * project and global settings (with the same untrusted-project handling), then the `full-access`
+	 * default. A preset flag changed since the last tool call is applied first. `undefined` when the
+	 * permission system is not running for the session, its setup failed, or the session is not bound yet.
+	 */
+	getPermissionPreset(): PermissionPresetName | undefined;
+
+	/**
+	 * Every subscription account's latest limit windows: the records `get_subscription_limits` serves, fed by
+	 * the engine's usage poll and by turns (senpi#3684). An account nothing has reported for is absent.
+	 */
+	getSubscriptionLimits(): readonly AccountLimits[];
+
+	/** Called each time an account's limits are reported; returns the unsubscribe. */
+	onSubscriptionLimits(listener: (limits: AccountLimits) => void): () => void;
+
 	// =========================================================================
 	// Message Rendering
 	// =========================================================================
@@ -1748,23 +2791,49 @@ export interface ExtensionAPI {
 	/** Register a transformer for user and assistant Markdown before Pi renders it in the interactive transcript. */
 	registerMarkdownTransformer(transformer: MarkdownTransformer): void;
 
+	/**
+	 * Contribute figures to the on-demand memory report (`SENPI_MEMORY_REPORT=1`): the report carries
+	 * `reporter()`'s numbers under `name`. Called only when a report is taken, never on a timer.
+	 * Throws for a name the report reserves (`main`, `kernels`, `residentStore`, ...).
+	 */
+	registerMemoryReporter(name: string, reporter: MemoryReporter): void;
+
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
-	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
+	registerEntryRenderer<T = unknown>(
+		customType: string,
+		renderer: EntryRenderer<T>,
+		options?: EntryRendererOptions<T>,
+	): void;
+
+	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
+	registerReadClassifier(classifier: ReadClassifier): () => void;
 
 	// =========================================================================
 	// Actions
 	// =========================================================================
 
-	/** Send a custom message to the session. */
+	/**
+	 * Send a custom message to the session. With `items` the message is an itemized batch (senpi#3811): if a live
+	 * hold applies to any item it is stored as one notice per item, otherwise it is delivered as one message, and the
+	 * call answers one receipt per item once each item is in durable custody. `undefined` (a host without item custody)
+	 * and `void` (an implementation of this API that predates `items`, such as a test double) both mean no receipts;
+	 * admitting `void` keeps every single-signature `sendMessage(...): void` implementation assignable.
+	 */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options: SendMessageOptions & { items: readonly SendMessageItem[] },
+		// biome-ignore lint/suspicious/noConfusingVoidType: void keeps single-signature `sendMessage(...): void` implementations assignable; it means no receipts
+	): Promise<readonly SendMessageReceipt[] | undefined> | void;
+	sendMessage<T = unknown>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: SendMessageOptions,
 	): void;
 
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
+	 * From a command handler, send before the handler returns: text sent after it returned is not held behind the user's input.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
@@ -1772,7 +2841,7 @@ export interface ExtensionAPI {
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
-	appendEntry<T = unknown>(customType: string, data?: T): void;
+	appendEntry<T = unknown>(customType: string, data?: T, options?: AppendEntryOptions): void;
 
 	// =========================================================================
 	// Session Metadata
@@ -1791,6 +2860,15 @@ export interface ExtensionAPI {
 	exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
 
 	/**
+	 * Redact text before an extension sends it off this machine: the same rules `/share` applies (#3524), with this
+	 * machine's home path, account and host names plus any `extraLiterals`. Idempotent; `counts` is keyed by category.
+	 */
+	redactForUpload(text: string, options?: UploadRedactionOptions): UploadRedaction;
+
+	/** The running senpi version. */
+	readonly hostVersion: string;
+
+	/**
 	 * Execute an active tool through the same validation, tool_call, permission, and
 	 * tool_result pipeline used by model-dispatched tool calls.
 	 */
@@ -1800,13 +2878,29 @@ export interface ExtensionAPI {
 		options?: ExecuteToolOptions<TDetails>,
 	): Promise<ExecuteToolResult<TDetails>>;
 
-	/** Get the list of currently active tool names. */
+	/** Get the names of the active tools, which are the tools declared to the model. */
 	getActiveTools(): string[];
 
-	/** Get all configured tools with parameter schema, prompt guidelines, and source metadata. */
+	/**
+	 * Arm the session's tool barrier (senpi#3717): until `releaseToolBarrier(id)`, the end of the turn it
+	 * belongs to, or `deadlineMs`, tools not declared `workspaceEffect: "read"` wait before they run.
+	 * Armed while idle, it belongs to the next turn.
+	 */
+	armToolBarrier(spec: ToolBarrierSpec): void;
+
+	/** Open the barrier armed under `id`; false (a no-op) when no barrier with that id is armed. */
+	releaseToolBarrier(id: string): boolean;
+
+	/** Get all configured tools with parameter schema, prompt guidelines, exposure, and source metadata. */
 	getAllTools(): ToolInfo[];
 
-	/** Set the active tools by name. */
+	/** Get a copy of the effective settings (global and project settings merged, with overrides). */
+	getSettings(): Settings;
+
+	/**
+	 * Set the active tools by name. Unknown and `hidden` tools are ignored. Tools with `codemode` or
+	 * `deferred` exposure stay callable from codemode scripts whether active or not.
+	 */
 	setActiveTools(toolNames: string[]): void;
 
 	/** Get available slash commands in the current session. */
@@ -1816,13 +2910,19 @@ export interface ExtensionAPI {
 	// Model and Thinking Level
 	// =========================================================================
 
-	/** Set the current model. Returns false if no API key available. */
+	/**
+	 * Set the model for the current session without changing the configured default for new sessions.
+	 * Returns false if authentication is not configured for the model's provider.
+	 */
 	setModel(model: Model<any>): Promise<boolean>;
 
 	/** Get current thinking level. */
 	getThinkingLevel(): ThinkingLevel;
 
-	/** Set thinking level (clamped to model capabilities). */
+	/**
+	 * Set the thinking level (clamped to model capabilities) for the current session without changing the configured default
+	 * for new sessions.
+	 */
 	setThinkingLevel(level: ThinkingLevel): void;
 
 	/**
@@ -1852,9 +2952,12 @@ export interface ExtensionAPI {
 	 * Register or override a model provider.
 	 *
 	 * If `models` is provided: replaces all existing models for this provider.
-	 * If only `baseUrl` is provided: overrides the URL for existing models.
+	 * If only `baseUrl` is provided: overrides the URL for existing models, unless the user's
+	 * models.json sets a `baseUrl` for this provider or model, which always wins.
 	 * If `oauth` is provided: registers OAuth provider for /login support.
-	 * If `streamSimple` is provided: registers a custom API stream handler.
+	 * If `streamSimple` is provided: registers a custom API stream handler. It must send each
+	 * request to `model.baseUrl`: when models.json sets a `baseUrl`, every model of the provider
+	 * carries it.
 	 *
 	 * During initial extension load this call is queued and applied once the
 	 * runner has bound its context. After that it takes effect immediately, so
@@ -1881,7 +2984,7 @@ export interface ExtensionAPI {
 	 * });
 	 *
 	 * @example
-	 * // Override baseUrl for an existing provider
+	 * // Override baseUrl for an existing provider (a models.json baseUrl still wins)
 	 * pi.registerProvider("anthropic", {
 	 *   baseUrl: "https://proxy.example.com"
 	 * });
@@ -1929,21 +3032,49 @@ export interface ExtensionAPI {
 		handle(name: string, handler: ExtensionRpcRequestHandler): void;
 	};
 
+	/**
+	 * Register a virtual model: a selectable catalog entry that routes each request to a physical
+	 * model. The selection (`ctx.model`, `model_change` entries) names the virtual model; assistant
+	 * messages record the physical model and thinking level the router picked.
+	 *
+	 * `provider` may be any provider id, including one with physical models, and may list several
+	 * virtual models. Registering the same provider and id again replaces the virtual model. See
+	 * docs/virtual-models.md.
+	 */
+	registerVirtualModel<TState = unknown>(model: ExtensionVirtualModel<TState>): void;
+
+	/** Remove a virtual model registered with `registerVirtualModel()`. */
+	unregisterVirtualModel(provider: string, id: string): void;
+
 	/** Shared event bus for extension communication. */
 	events: EventBus;
+
+	/** Session control: external-message admission, its ledger, the durable header and the control endpoint. */
+	readonly session: SessionControlActions;
 }
 
-export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
+export type { ExtensionRpcRequestContext, ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 // ============================================================================
 // Provider Registration Types
 // ============================================================================
 
+/** Virtual model registered via pi.registerVirtualModel(). */
+export interface ExtensionVirtualModel<TState = unknown> extends Omit<VirtualModelDefinition<TState>, "route"> {
+	/** Like `VirtualModelDefinition.route`, with an extension context. */
+	route(request: ModelRouteRequest<TState>, ctx: ExtensionContext): ModelRoute<TState> | Promise<ModelRoute<TState>>;
+}
+
 /** Configuration for registering a provider via pi.registerProvider(). */
 export interface ProviderConfig {
 	/** Display name for the provider in UI. */
 	name?: string;
-	/** Base URL for the API endpoint. Required when defining models. */
+	/**
+	 * Base URL for the API endpoint. Required when defining models. A models.json `baseUrl` for this
+	 * provider (or a models.json `models[i].baseUrl`) takes precedence over it and over model-level
+	 * `baseUrl` values declared here, for every model of the provider. `streamSimple`, `images` and
+	 * `classifiers` must therefore send each request to `model.baseUrl`, not to this value.
+	 */
 	baseUrl?: string;
 	/** API key literal, env interpolation ($ENV_VAR or ${ENV_VAR}), or leading !command. Required when defining models (unless oauth provided). */
 	apiKey?: string;
@@ -1951,11 +3082,23 @@ export interface ProviderConfig {
 	api?: Api;
 	/**
 	 * Optional streamSimple handler for custom APIs.
+	 * The context is a normalized transcript: read the prompt and tools from its system messages
+	 * (`getCurrentSystemPrompt(context.messages)`, `getCurrentTools(context.messages)`).
 	 * Implementations must invoke `options.onPayload` before sending the provider request and use any
 	 * returned replacement payload. They must invoke `options.onResponse` after receiving the response
-	 * and before consuming its body, matching built-in providers.
+	 * and before consuming its body, matching built-in providers. Implementations may invoke
+	 * `options.onProviderStreamEvent(data, model)` with parsed stream events before normalization.
+	 * Event data is adapter-owned and must be treated as read-only.
 	 */
-	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+	streamSimple?: (
+		model: Model<Api>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	) => AssistantMessageEventStream;
+	/** Image-generation implementations keyed by image API. */
+	images?: Partial<Record<ImageApi, ProviderImages>>;
+	/** Classifier implementations keyed by classifier API. */
+	classifiers?: Partial<Record<ClassifierApi, ProviderClassifier>>;
 	/** Custom headers to include in requests. */
 	headers?: Record<string, string>;
 	/** Custom fields merged into provider request bodies. */
@@ -1969,6 +3112,29 @@ export interface ProviderConfig {
 	 * Use context.publish({ persist: entry }) when the catalog should persist across sessions.
 	 */
 	refreshModels?(context: RefreshModelsContext): Promise<ProviderModelConfig[]>;
+	/**
+	 * Ambient api-key auth resolved from a shared cloud credential chain (Google
+	 * ADC, AWS env) rather than a credential configured for this provider. The
+	 * provider counts as configured only while `resolve` yields a result, and the
+	 * ambient marker keeps it from outranking a provider the user configured when
+	 * the automatic default model is chosen (senpi#2327). Ignored when `apiKey` or
+	 * credential headers already supply auth.
+	 */
+	ambientAuth?: {
+		/** Display name, e.g. "Google Cloud credentials". */
+		name?: string;
+		/**
+		 * Resolve from the ambient chain. `undefined` means the chain currently
+		 * supplies no credential, so the provider stays unavailable. A returned
+		 * result should carry `ambient: true`.
+		 */
+		resolve(input: {
+			ctx: AuthContext;
+			signal: AbortSignal;
+			/** Read-only env of another provider's stored credential; routing metadata only, never keys. */
+			storedProviderEnv?(providerId: string): Promise<Record<string, string> | undefined>;
+		}): Promise<AuthResult | undefined>;
+	};
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
 	oauth?: {
 		/** Display name for the provider in login UI. */
@@ -1994,41 +3160,75 @@ export interface ProviderConfig {
 	 * every expansion, so a settings change takes effect without re-registration.
 	 */
 	fallbackEligible?(): boolean;
+	/**
+	 * Set by a provider whose own lane chooses among the accounts stored for it (pin, session
+	 * stickiness, per-account limits) and fails over between them. The generic credential pool then
+	 * never wraps it: two layers choosing accounts pinned the lane's verdicts on slots the lane never
+	 * used and blocked all of them (senpi#2081).
+	 */
+	ownsAccountSelection?: boolean;
 }
 
-/** Configuration for a model within a provider. */
-export interface ProviderModelConfig {
-	/** Model ID (e.g., "claude-sonnet-4-20250514"). */
+interface ProviderModelConfigBase {
+	/** Model ID. */
 	id: string;
-	/** Display name (e.g., "Claude 4 Sonnet"). */
+	/** Display name. */
 	name: string;
 	/** Canonical provider model ID reported in responses when this model is an alias. */
 	upstreamModelId?: string;
 	/** API type override for this model. */
-	api?: Api;
+	api?: string;
 	/** API endpoint URL override for this model. */
 	baseUrl?: string;
+	/** Supported input types (`"video"` only for chat models that declare it). */
+	input: ("text" | "image" | "video")[];
+	/** Provider input limits and cache-safe image preprocessing metadata. */
+	inputLimits?: AnyModel["inputLimits"];
+	/** Per-million-token cost rates and optional request-wide input pricing tiers. */
+	cost: AnyModel["cost"];
+	/** Custom headers for this model. */
+	headers?: Record<string, string>;
+}
+
+/** Chat model configuration. Omitted `type` is normalized to `"chat"`. */
+export interface ProviderChatModelConfig extends ProviderModelConfigBase {
+	type?: "chat";
+	api?: Api;
 	/** Whether the model supports extended thinking. */
 	reasoning: boolean;
 	/** Whether supported text-encoded tool calls should be recovered from assistant text. */
 	recoverTextToolCalls?: boolean;
 	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */
 	thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
-	/** Supported input types. */
-	input: ("text" | "image" | "video")[];
-	/** Per-million-token cost rates and optional request-wide input pricing tiers. */
-	cost: Model<Api>["cost"];
+	/** Best-effort prompt cache lifetime in seconds per retention tier (catalog metadata). */
+	promptCache?: Model<Api>["promptCache"];
 	/** Maximum context window size in tokens. */
 	contextWindow: number;
 	/** Maximum output tokens. */
 	maxTokens: number;
-	/** Custom headers for this model. */
-	headers?: Record<string, string>;
 	/** Custom fields merged into request bodies after provider-level fields. */
 	extraBody?: Record<string, unknown>;
+	samplingParams?: Record<string, unknown>;
 	/** OpenAI compatibility settings. */
 	compat?: Model<Api>["compat"];
 }
+
+/** Image-generation model configuration. */
+export interface ProviderImageModelConfig extends ProviderModelConfigBase {
+	type: "image";
+	api?: ImageApi;
+	output: ("text" | "image")[];
+}
+
+/** Structured classifier model configuration. */
+export interface ProviderClassifierModelConfig extends ProviderModelConfigBase {
+	type: "classifier";
+	api?: ClassifierApi;
+	contextWindow: number;
+}
+
+/** Configuration for a model within a provider. */
+export type ProviderModelConfig = ProviderChatModelConfig | ProviderImageModelConfig | ProviderClassifierModelConfig;
 
 /** Extension factory function type. Supports both sync and async initialization. */
 export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
@@ -2036,11 +3236,31 @@ export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 export type InlineExtension =
 	| ExtensionFactory
 	| {
-			/** Display name shown as `<inline:name>` in the startup Extensions list. */
+			/**
+			 * Display name shown as `<inline:name>` in the startup Extensions list and errors. With
+			 * `builtin`, the extension is named `builtin:name` in errors and diagnostics.
+			 */
 			name: string;
 			factory: ExtensionFactory;
 			/** Omit this extension from the startup Extensions list. */
 			hidden?: boolean;
+			/**
+			 * Leave this extension out when another extension registers a tool, command, or flag with a
+			 * name it registers during loading, instead of reporting a conflict. The CLI's built-in MCP,
+			 * codemode, and tool search extensions use it, so for example an MCP extension that registers
+			 * `/mcp` replaces the built-in MCP support. The factory still runs, so it should only register
+			 * tools, commands, flags, and event handlers.
+			 */
+			replaceable?: boolean;
+			/**
+			 * Supply the code of the `builtin:<name>` extension instead of loading as an inline extension.
+			 * `builtin:<name>` is an extension resource like a file: it loads by default, `pi config` lists
+			 * it, `-builtin:<name>` in the `extensions` setting and `--no-extensions` disable it, and
+			 * `-e builtin:<name>` loads it explicitly. It is hidden from the startup Extensions list and
+			 * loads after project trust is resolved, so it cannot handle `project_trust`. The CLI's built-in
+			 * extensions use it.
+			 */
+			builtin?: boolean;
 	  };
 
 // ============================================================================
@@ -2069,17 +3289,61 @@ export interface ExtensionShortcut {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
+export interface SendMessageOptions {
+	triggerTurn?: boolean;
+	deliverAs?: "steer" | "followUp" | "nextTurn";
+	/** A delivery ticket from `pi.lifecycle.obligations` (senpi#3864). */
+	ticket?: string;
+}
+
+/** One wake inside an itemized `sendMessage` batch (senpi#3811 design 4.5). */
+export interface SendMessageItem {
+	readonly itemId: string;
+	/** Producer label the held notice is counted under. */
+	readonly producer: string;
+	/** The run this item belongs to: a fence on that run holds the batch. */
+	readonly runRef?: { readonly kind: "dag" | "task" | "workpool" | "team"; readonly id: string };
+	/** This item's own payload, stored as its notice if the batch is held; defaults to the batch content. */
+	readonly content?: CustomMessage["content"];
+	/** This item's own details for its notice; the batch details are not copied into a per-item notice. */
+	readonly details?: unknown;
+}
+
+/** Where an item of an itemized batch went: its own notice (`noticeId`) in the held batch's one notice entry, or the one message entry that carried it. */
+export interface SendMessageReceipt {
+	readonly itemId: string;
+	readonly entryId: string;
+	readonly disposition: "notice_persisted" | "message_persisted";
+	readonly noticeId?: string;
+}
+
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: SendMessageOptions,
 ) => void;
+
+/** Admits an itemized batch and answers one receipt per item (senpi#3811 design 4.5); `undefined` when the
+ * host has no item custody and delivered the batch as a plain message. */
+export type SendItemizedMessageHandler = <T = unknown>(
+	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+	options: SendMessageOptions & { items: readonly SendMessageItem[] },
+) => Promise<readonly SendMessageReceipt[] | undefined>;
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
 	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 ) => void;
 
-export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
+export interface AppendEntryOptions {
+	/**
+	 * Mark the entry as bookkeeping written at session start without any user action. A session file this
+	 * process created that holds only setup entries and such bookkeeping is removed when the session closes
+	 * without a conversation (senpi#3263). Leave it unset for anything a user created or anything billed.
+	 */
+	startupBookkeeping?: boolean;
+}
+
+export type AppendEntryHandler = <T = unknown>(customType: string, data?: T, options?: AppendEntryOptions) => void;
 
 export type SetSessionNameHandler = (name: string) => void;
 
@@ -2130,7 +3394,12 @@ export type RegisterLazyToolActivatorHandler = (activator: LazyToolActivator) =>
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with normalized exposure metadata and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "promptGuidelines"> & {
+export type ToolInfo = Pick<
+	ToolDefinition,
+	"name" | "label" | "description" | "parameters" | "promptGuidelines" | "kernelPrelude" | "permissionParser"
+> & {
+	namespace?: ToolNamespace;
+	annotations?: ToolAnnotations;
 	sourceInfo: SourceInfo;
 	exposure: ToolExposure;
 	searchText?: string;
@@ -2141,6 +3410,8 @@ export type ToolInfo = Pick<ToolDefinition, "name" | "label" | "description" | "
 
 export type GetAllToolsHandler = () => ToolInfo[];
 
+export type GetSettingsHandler = () => Settings;
+
 export type GetCommandsHandler = () => SlashCommandInfo[];
 
 export type SetActiveToolsHandler = (toolNames: string[]) => void;
@@ -2149,7 +3420,7 @@ export type RefreshToolsHandler = () => void;
 
 export type RegisterRemovedToolHintHandler = (name: string, hint: string) => void;
 
-export type SetModelHandler = (model: Model<any>) => Promise<boolean>;
+export type SetModelHandler = (model: Model<any>, origin?: ModelChangeOrigin) => Promise<boolean>;
 
 export type GetThinkingLevelHandler = () => ThinkingLevel;
 
@@ -2195,6 +3466,12 @@ export interface ExtensionRuntimeState {
 	pendingProviderRegistrations: PendingProviderConfigRegistration[];
 	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */
 	pendingNativeProviderRegistrations: PendingNativeProviderRegistration[];
+	/** Virtual model registrations queued during extension loading, processed when runner binds. */
+	pendingVirtualModelRegistrations: Array<{ definition: VirtualModelDefinition; extensionPath: string }>;
+	/** Servers registered with `pi.registerMcpServer()`. */
+	mcpServers: McpServerRegistry;
+	/** Create an extension context. Throws before the runner binds. */
+	createContext: () => ExtensionContext;
 	/** Throws when this extension instance is stale after runtime replacement. */
 	assertActive: () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */
@@ -2212,6 +3489,12 @@ export interface ExtensionRuntimeState {
 	unregisterProvider: (name: string, extensionPath?: string) => void;
 	/** Forwards extension-registered migration guidance after the host binds actions. */
 	registerRemovedToolHint: RegisterRemovedToolHintHandler;
+	registerVirtualModel: (definition: VirtualModelDefinition, extensionPath?: string) => void;
+	unregisterVirtualModel: (provider: string, id: string) => void;
+	/** Awaits every `provider_login_start` handler. Resolves at once until a runner owns this runtime. */
+	emitProviderLoginStart: (event: ProviderLoginStartEvent) => Promise<void>;
+	/** The session's eval handle host, set by `pi.provideEvalHandleHost`; cleared when the runtime is invalidated. */
+	evalHandleHost?: EvalHandleHost;
 }
 
 /**
@@ -2219,8 +3502,16 @@ export interface ExtensionRuntimeState {
  * Provided to runner.initialize(), copied into the shared runtime.
  */
 export interface ExtensionActions {
+	lifecycle?: LifecycleApi;
 	sendMessage: SendMessageHandler;
-	sendUserMessage: SendUserMessageHandler;
+	/** Hosts without itemized custody omit it: an itemized send is then delivered plainly and answers no receipts. */
+	sendItemizedMessage?: SendItemizedMessageHandler;
+	/** The runner passes the origin it captured when the extension called `sendUserMessage` (a person's answer is `person`). */
+	sendUserMessage: (
+		content: Parameters<SendUserMessageHandler>[0],
+		options?: Parameters<SendUserMessageHandler>[1],
+		inputOrigin?: InputOrigin,
+	) => void;
 	appendEntry: AppendEntryHandler;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;
@@ -2228,6 +3519,7 @@ export interface ExtensionActions {
 	executeTool: ExecuteToolHandler;
 	getActiveTools: GetActiveToolsHandler;
 	getAllTools: GetAllToolsHandler;
+	getSettings: GetSettingsHandler;
 	setActiveTools: SetActiveToolsHandler;
 	refreshTools: RefreshToolsHandler;
 	registerRemovedToolHint: RegisterRemovedToolHintHandler;
@@ -2239,6 +3531,11 @@ export interface ExtensionActions {
 	setSessionModel: SetModelHandler;
 	setSessionThinkingLevel: SetThinkingLevelHandler;
 	setSessionFastMode: SetSessionFastModeHandler;
+	/** Bound by `AgentSession`; a runtime bound without it keeps the pre-bind stub. */
+	sessionControl?: SessionControlActions;
+	/** Bound by `AgentSession` (senpi#3717); a runtime bound without them has no tool barrier. */
+	armToolBarrier?: (spec: ToolBarrierSpec) => void;
+	releaseToolBarrier?: (id: string) => boolean;
 }
 
 /**
@@ -2246,22 +3543,36 @@ export interface ExtensionActions {
  * Required by all modes.
  */
 export interface ExtensionContextActions {
+	/** Runs a registered child module through the session's tool dispatcher; absent where no session backs the runner. */
+	offload?: (id: string, args: unknown, options?: OffloadOptions) => Promise<unknown>;
 	getModel: () => Model<any> | undefined;
 	getServiceTier: () => ServiceTier | undefined;
+	/** Effective request tier (fast mode included). Defaults to `getServiceTier` when omitted. */
+	getEffectiveServiceTier?: () => ServiceTier | undefined;
 	getScopedModels: () => readonly ScopedModel[];
 	getAgentDir?: () => string;
 	isIdle: () => boolean;
+	engineTurnsHeld?: () => boolean;
+	noteHeldWake?: (source: string) => void;
+	getPauseState?: () => { pauseSeq: number; holds: SessionHoldRecord[] };
+	fenceRun?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
+	releaseRunFence?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
+	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
+	questionInput?: () => void;
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
 	abort: (source?: "user" | "system") => void;
 	hasPendingMessages: () => boolean;
+	hasQueuedPersonInput?: () => boolean;
 	isCompacting: () => boolean;
 	checkReloadVeto?: () => Promise<ReloadVetoDecision>;
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	getCompactionSettings: () => CompactionPreparation["settings"];
+	getCompactionModel?: () => Model<Api> | undefined;
 	getPromptCacheSafeWaitSeconds?: () => number | undefined;
 	getPromptCacheGoalBackstopMaxSeconds?: () => number;
+	onUserActivity?: (listener: (kind: UserActivityKind) => void) => () => void;
 	getPromptCacheKeepAliveSettings?: () => {
 		enabled: boolean;
 		maxRequestsPerSession: number;
@@ -2269,6 +3580,9 @@ export interface ExtensionContextActions {
 		marginSeconds: number;
 	};
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
+	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
+	getBrowserEngine?: () => BrowserEngine | undefined;
+	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
@@ -2278,8 +3592,19 @@ export interface ExtensionContextActions {
 	getMessageRevision: () => number;
 	applyCompaction: (precomputed: CompactionResult, options: ApplyCompactionOptions) => Promise<ApplyCompactionResult>;
 	getSystemPrompt: () => string;
+	getSystemPromptStablePrefix?: () => string | undefined;
 	getLoadedHookSources: () => LoadedHookSources;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
+	getPromptCachePrefixRequest?: (options?: PromptCachePrefixRequestOptions) => Promise<PromptCachePrefixResult>;
+	/** Backs `ExtensionToolContext.executeTool()`. Without it, nested calls fail. */
+	executeTool?: (
+		callerId: string,
+		name: string,
+		args: unknown,
+		options: ExecuteToolOptions,
+	) => Promise<AgentToolCallOutcome>;
+	/** Backs `ExtensionToolContext.tools`. */
+	getCallableTools?: () => readonly AgentTool[];
 }
 
 export interface LoadedHookSources {
@@ -2297,7 +3622,7 @@ export interface LoadedHookSources {
 
 /**
  * Actions for ExtensionCommandContext (ctx.* in command handlers).
- * Only needed for interactive mode where extension commands are invokable.
+ * Bound by interactive, print, and RPC modes where extension commands are invokable.
  */
 export interface ExtensionCommandContextActions {
 	waitForIdle: () => Promise<void>;
@@ -2310,10 +3635,13 @@ export interface ExtensionCommandContextActions {
 		entryId: string,
 		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	) => Promise<{ cancelled: boolean }>;
-	navigateTree: (
-		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-	) => Promise<{ cancelled: boolean }>;
+	navigateTree: (targetId: string, options?: ExtensionTreeNavigationOptions) => Promise<{ cancelled: boolean }>;
+	editAssistantMessage: (
+		entryId: string,
+		text: string,
+		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+	) => Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
+	editUserMessage: ExtensionCommandContext["editUserMessage"];
 	switchSession: (
 		sessionPath: string,
 		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
@@ -2327,11 +3655,16 @@ export interface ExtensionCommandContextActions {
  */
 export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
 
-/** Loaded extension with all registered items. */
-export interface RegisteredMcpServerDeclaration {
+/** An MCP server registered with `pi.registerMcpServer()`, as `pi.getMcpServers()` lists it. */
+export interface RegisteredMcpServer {
 	name: string;
 	config: McpServerDeclaration;
+	/** Path of the extension that registered the server. */
 	extensionPath: string;
+}
+
+/** A registration as the built-in MCP gateway reads it: the public shape plus the registering extension's cwd. */
+export interface RegisteredMcpServerDeclaration extends RegisteredMcpServer {
 	registrationCwd: string;
 }
 
@@ -2339,17 +3672,30 @@ export interface Extension {
 	path: string;
 	resolvedPath: string;
 	hidden?: boolean;
+	/** See {@link InlineExtension}. */
+	replaceable?: boolean;
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
+	/** `before_agent_start` handlers registered with `{ previewSafe: true }`. */
+	previewSafeHandlers?: WeakSet<HandlerFn>;
+	/** `before_agent_start` handlers registered with `{ runLast: true }`. */
+	runLastHandlers?: WeakSet<HandlerFn>;
+	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
+	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;
+	/** Optional for compatibility with extension records created before child modules. */
+	childModules?: Map<string, RegisteredChildModule>;
 	/** Optional for compatibility with extension records created before this additive registry. */
 	removedToolHints?: Map<string, string>;
 	lazyToolActivators?: LazyToolActivator[];
 	/** Optional for compatibility with extension records created before filesystem policies. */
 	filesystemPolicies?: FilesystemPolicy[];
 	messageRenderers: Map<string, MessageRenderer>;
+	/** Optional for compatibility with extension records created before memory reporters. */
+	memoryReporters?: Map<string, MemoryReporter>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
+	entryRendererOptions?: Map<string, EntryRendererOptions>;
 	commands: Map<string, RegisteredCommand>;
 	/** Optional for compatibility with extension records created before RPC requests. */
 	rpcHandlers?: Map<string, ExtensionRpcRequestHandler>;
@@ -2363,6 +3709,7 @@ export interface Extension {
 export interface LoadExtensionsResult {
 	extensions: Extension[];
 	errors: Array<{ path: string; error: string }>;
+	warnings?: Array<{ path: string; warning: string }>;
 	/** Shared runtime - actions are throwing stubs until runner.initialize() */
 	runtime: ExtensionRuntime;
 	/** Event bus shared by every API created for this extension generation. */

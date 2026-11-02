@@ -1,5 +1,6 @@
-import type { KernelToHostMessage } from "../../bridge/protocol.ts";
+import type { EvalStatusEvent, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { JavaScriptRunInput } from "./kernel-contract.ts";
+import { crashedResult } from "./worker-host.ts";
 
 type ResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -7,8 +8,14 @@ export interface PendingJavaScriptRun {
 	readonly input: JavaScriptRunInput;
 	readonly resolve: (message: ResultMessage) => void;
 	readonly reject: (error: Error) => void;
+	readonly settlement: Promise<ResultMessage>;
 	startedAtMs: number | null;
 	settled: boolean;
+	/** Host-composed result that wins over whatever the worker reports once an interrupt is in flight. */
+	interruptResult: ResultMessage | null;
+	interruptAck: PromiseWithResolvers<void> | null;
+	settledByWorker: boolean;
+	shellWaitActive: boolean;
 }
 
 export class JavaScriptRunQueue {
@@ -24,9 +31,20 @@ export class JavaScriptRunQueue {
 	}
 
 	enqueue(input: JavaScriptRunInput): Promise<ResultMessage> {
-		return new Promise((resolve, reject) => {
-			this.#queue.push({ input, resolve, reject, startedAtMs: null, settled: false });
+		const { promise, resolve, reject } = Promise.withResolvers<ResultMessage>();
+		this.#queue.push({
+			input,
+			resolve,
+			reject,
+			settlement: promise,
+			startedAtMs: null,
+			settled: false,
+			interruptResult: null,
+			interruptAck: null,
+			settledByWorker: false,
+			shellWaitActive: false,
 		});
+		return promise;
 	}
 
 	startNext(startedAtMs: number): PendingJavaScriptRun | null {
@@ -34,7 +52,31 @@ export class JavaScriptRunQueue {
 		const next = this.#queue.shift() ?? null;
 		if (next) next.startedAtMs = startedAtMs;
 		this.#active = next;
+		next?.input.onStarted?.();
 		return next;
+	}
+
+	acknowledgeInterrupt(event: EvalStatusEvent): void {
+		const active = this.#active;
+		if (!active || event.cellId !== active.input.cellId) return;
+		active.shellWaitActive = event.shellWaitActive === true;
+		active.interruptAck?.resolve();
+	}
+
+	remove(cellId: string, reason = "interrupted"): boolean {
+		const index = this.#queue.findIndex((run) => run.input.cellId === cellId);
+		if (index < 0) return false;
+		const [run] = this.#queue.splice(index, 1);
+		if (!run) return false;
+		this.settle(run, stoppedResult(cellId, reason));
+		return true;
+	}
+
+	snapshot(): { activeCellId: string | null; queuedCellIds: readonly string[] } {
+		return {
+			activeCellId: this.#active?.input.cellId ?? null,
+			queuedCellIds: this.#queue.map((run) => run.input.cellId),
+		};
 	}
 
 	durationMs(run: PendingJavaScriptRun, finishedAtMs: number): number {
@@ -42,11 +84,10 @@ export class JavaScriptRunQueue {
 		return Math.max(0, Math.round(finishedAtMs - run.startedAtMs));
 	}
 
-	takeInterruptTarget(): PendingJavaScriptRun | null {
-		if (!this.#active) return this.#queue.shift() ?? null;
-		const active = this.#active;
-		this.#active = null;
-		return active;
+	/** Settles `run` as crashed with `error`: the worker died under it. */
+	settleCrashed(run: PendingJavaScriptRun, error: Error): void {
+		this.releaseActive(run);
+		this.settle(run, crashedResult(run.input.cellId, error, this.durationMs(run, performance.now())));
 	}
 
 	releaseActive(run: PendingJavaScriptRun): boolean {
@@ -64,7 +105,7 @@ export class JavaScriptRunQueue {
 	settleAll(message: string): void {
 		const active = this.#active;
 		this.#active = null;
-		if (active) this.settle(active, stoppedResult(active.input.cellId, message));
+		if (active) this.settle(active, active.interruptResult ?? stoppedResult(active.input.cellId, message));
 		for (const queued of this.#queue.splice(0)) this.settle(queued, stoppedResult(queued.input.cellId, message));
 	}
 

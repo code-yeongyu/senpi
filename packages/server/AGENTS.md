@@ -32,7 +32,7 @@ Package exports: `.` (core), `./testing`, `./unix`.
 - `LiveSessionManager` owns runtime lifecycle: unsubscribe on dispose, settle in-flight operations on disconnect, guard double-dispose via the `disposing` promise.
 - Snapshot broadcasts serialize through `broadcastQueue` and carry a monotonic revision; do not publish out of order.
 - Keep type bridging in `src/protocol.ts` exhaustive; the compile-time `Assert`/`ExactKeys` checks there must stay so pi-ai/pi-protocol drift fails typecheck.
-- Tests are Vitest (`npm test` runs `vitest --run`), not the Node test runner.
+- Tests are Vitest (`bun run test` runs `vitest --run`), not the Node test runner.
 
 ## WHERE TO LOOK
 
@@ -48,7 +48,7 @@ Package exports: `.` (core), `./testing`, `./unix`.
 
 ## VALIDATION
 
-- `npm test` (Vitest) from this package; root `npm run check` after code changes.
+- `bun run test` (Vitest) from this package; root `bun run check` after code changes.
 - Add lifecycle tests for handshake timeout, disconnect mid-operation, duplicate close, and stale-socket takeover.
 - Inspect logs and fixtures for secret safety before committing.
 

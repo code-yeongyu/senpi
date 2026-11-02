@@ -1,7 +1,8 @@
 import type { ExtensionContext } from "../../types.ts";
+import { withTerminalContext } from "./context-lifetime.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import type { NotifyMode } from "./settings.ts";
+import type { TerminalExitView } from "./tools/context.ts";
 import { describeExit } from "./tools/spawn.ts";
 
 /** Modes that never wake the agent: one-shot, non-interactive runs. */
@@ -11,7 +12,7 @@ export const TERMINAL_NOTIFICATION_CUSTOM_TYPE = "senpi-terminal:notification";
 export interface TerminalNotifierDeps {
 	/** Deliver a model-visible notification without rendering synthetic user input. */
 	readonly sendMessage: (
-		message: { customType: string; content: string; display: boolean },
+		message: { customType: string; content: string; display: boolean; details?: unknown },
 		options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
 	) => void;
 	readonly getContext: () => ExtensionContext | undefined;
@@ -22,7 +23,7 @@ export interface TerminalNotifierDeps {
 export const NOTICE_TAIL_MAX_CHARS = 2000;
 
 export interface TerminalNotificationDelivery {
-	readonly send: (content: string, options?: { readonly forceWake?: boolean }) => void;
+	readonly send: (content: string, options?: { readonly forceWake?: boolean; readonly details?: unknown }) => void;
 }
 
 /** Shared terminal-notification guard and notify-mode mapping. */
@@ -37,7 +38,12 @@ export function getTerminalNotificationDelivery(
 	return {
 		send: (content, options) =>
 			deps.sendMessage(
-				{ customType, content, display: false },
+				{
+					customType,
+					content,
+					display: false,
+					...(options?.details === undefined ? {} : { details: options.details }),
+				},
 				{
 					triggerTurn: true,
 					deliverAs: mode === "wake" || options?.forceWake === true ? "steer" : "followUp",
@@ -46,7 +52,7 @@ export function getTerminalNotificationDelivery(
 	};
 }
 
-function buildNotice(id: string, runtime: TerminalRuntimeSession): string {
+function buildNotice(id: string, runtime: TerminalExitView): string {
 	const status = describeExit(runtime) ?? "exited";
 	const code = runtime.exitResult?.exitCode;
 	const codeText = code === null || code === undefined ? "" : ` (exit code ${code})`;
@@ -73,13 +79,24 @@ function buildNotice(id: string, runtime: TerminalRuntimeSession): string {
 export class TerminalNotifier {
 	private readonly notified = new Set<string>();
 	private readonly deps: TerminalNotifierDeps;
+	private retired = false;
 
 	constructor(deps: TerminalNotifierDeps) {
 		this.deps = deps;
 	}
 
-	notifyCompletion(id: string, runtime: TerminalRuntimeSession): void {
-		if (this.notified.has(id)) return;
+	notifyCompletion(id: string, runtime: TerminalExitView): void {
+		if (this.retired || this.notified.has(id)) return;
+		withTerminalContext(
+			() => this.deliverCompletion(id, runtime),
+			() => {
+				this.retired = true;
+				this.notified.clear();
+			},
+		);
+	}
+
+	private deliverCompletion(id: string, runtime: TerminalExitView): void {
 		const delivery = getTerminalNotificationDelivery(this.deps);
 		if (!delivery) return;
 

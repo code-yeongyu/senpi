@@ -3,13 +3,15 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { detectJsonIndent, serializeLockfile } from "./install-lock-utils.mjs";
 
 const root = join(import.meta.dirname, "..");
 const lockPath = join(root, "package-lock.json");
 const sdkLockPath = "packages/coding-agent/node_modules/@anthropic-ai/claude-agent-sdk";
 
 export async function updateClaudeAgentSdkPlatformLock({ check = false } = {}) {
-	const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+	const source = readFileSync(lockPath, "utf8");
+	const lock = JSON.parse(source);
 	const sdk = lock.packages?.[sdkLockPath];
 	if (!sdk) throw new Error(`package-lock.json is missing ${sdkLockPath}`);
 
@@ -43,7 +45,7 @@ export async function updateClaudeAgentSdkPlatformLock({ check = false } = {}) {
 		};
 	}
 
-	writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+	writeFileSync(lockPath, serializeLockfile(lock, detectJsonIndent(source)));
 	process.stdout.write(`Locked ${missing.length} Claude Agent SDK platform package(s).\n`);
 }
 

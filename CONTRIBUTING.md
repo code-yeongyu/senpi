@@ -29,10 +29,13 @@ senpi periodically merges selected upstream releases from `upstream` (i.e. `badl
 ## Before Submitting a PR
 
 ```bash
-node scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
-node scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
-npm run check     # Biome + tsc + browser-smoke check (pre-commit equivalent)
-npm test          # Vitest across workspaces (skips live-API)
+# Bun is the fleet-standard invocation.
+bun install --ignore-scripts
+npm install --ignore-scripts # Contributor-compatible alternative
+bun scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
+bun scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
+bun run check     # oxlint + oxfmt + lint ratchet + tsc + browser-smoke check (pre-commit equivalent)
+bun run test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```
 
@@ -41,9 +44,9 @@ Use `--with-native` only when working on native Rust code; it reads `rust-toolch
 toolchain when `rustup` is available, and then runs the Rust native build/check path when a Cargo workspace exists. If Rust is
 missing, the setup prints the exact rustup command to run instead of bootstrapping global tooling silently.
 
-`npm run check` and `npm test` must pass. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
+`bun run check` and `bun run test` must pass. The legacy npm equivalents remain supported for contributors: root scripts fan out through `scripts/run-workspaces.mjs` with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites in the same order. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
 If you touch MCP dependencies, keep `@modelcontextprotocol/sdk` exact-pinned and verify the workspace install with
-`npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi`.
+`bun pm ls @modelcontextprotocol/sdk` (npm equivalent: `npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi`).
 
 Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
@@ -57,8 +60,8 @@ senpi uses **CalVer** (Calendar Versioning), distinct from upstream `badlogic/pi
 
 Locally:
 ```bash
-npm run release             # uses today's UTC date
-npm run release -- --dry-run   # preview without committing
+bun run release             # uses today's UTC date
+bun run release --dry-run   # preview without committing
 ```
 
 The release script (`scripts/release.mjs`) imports `scripts/calver.mjs` to compute the next version, then:
@@ -72,7 +75,7 @@ The release script (`scripts/release.mjs`) imports `scripts/calver.mjs` to compu
 7. After npm succeeds, the binary workflow makes the staged GitHub Release public.
 
 Source workspace manifests are intentionally private. Real npm publication is
-only supported through the trusted workflow; use `npm run publish:dry` for local
+only supported through the trusted workflow; use `bun run publish:dry` for local
 package validation.
 
 ### CalVer rules
@@ -99,7 +102,7 @@ and canonical tests, and strict CLI/RPC/TUI manual QA. Merge only after those lo
 
 > Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
-This still applies. The release script will surface `[Unreleased]` entries; maintainers curate them before cutting a release.
+Maintainers curate package `CHANGELOG.md` blocks in `changes/unreleased/<pr>.md`; the release script compiles them into the changelogs at the release cut.
 
 ## Quality Bar for Issues
 
@@ -125,8 +128,8 @@ PRs that bloat the core or skip `changes.md` will be asked to convert to an exte
 
 ## Style
 
-- TAB indent (Biome `indentWidth: 3`). 120-column line width.
-- Match the style of the surrounding file. The codebase is largely consistent — Biome plus the existing patterns are the source of truth.
+- TAB indent (oxfmt `tabWidth: 3`). 120-column line width.
+- Match the style of the surrounding file. The codebase is largely consistent — oxlint, oxfmt and the existing patterns are the source of truth.
 - Use the path aliases defined in root `tsconfig.json` (`@earendil-works/pi-*`, `@code-yeongyu/senpi*`).
 
 ### Why are weekend issues lower priority?

@@ -37,6 +37,12 @@ beforeEach(() => {
 					headers: {},
 					models: [{ id: "empty-model" }],
 				},
+				"command-metadata": {
+					baseUrl: "https://example.invalid/v1",
+					api: "openai-completions",
+					headers: { "User-Agent": "!printf 'senpi-command-agent'" },
+					models: [{ id: "command-metadata-model" }],
+				},
 				"api-key": {
 					baseUrl: "https://example.invalid/v1",
 					api: "openai-completions",
@@ -115,6 +121,20 @@ describe("configured request header auth", () => {
 
 		await runtime.completeSimple(requireModel(runtime, "headers-only", "headers-model"), { messages: [] });
 		expect(capturedHeaders).toEqual({ "x-api-key": "header-key" });
+	});
+
+	it("resolves a !command metadata header for a provider that authenticates nothing", async () => {
+		// Given a provider whose only header is metadata produced by a shell command
+		const registry = await createModelRegistry(AuthStorage.inMemory(), modelsPath);
+		const runtime = getModelRuntime(registry);
+		const model = requireModel(runtime, "command-metadata", "command-metadata-model");
+		expect(await runtime.getAuth(model)).toBeUndefined();
+
+		// When a request asks for its key and headers
+		const auth = await registry.getApiKeyAndHeaders(model);
+
+		// Then the command ran and its output is on the request
+		expect(auth).toMatchObject({ ok: true, headers: { "User-Agent": "senpi-command-agent" } });
 	});
 
 	it("does not treat metadata or empty header maps as authentication", async () => {

@@ -84,8 +84,8 @@ export function resolveContainedPath(
 		};
 	}
 	if (fileExists(resolvedPath)) {
-		const realPath = realpathSync(resolvedPath);
-		if (!isContained(realpathSync(pluginRoot), realPath)) {
+		const realPath = realpathSync.native(resolvedPath);
+		if (!isContained(realpathSync.native(pluginRoot), realPath)) {
 			return {
 				message: `Plugin hook path is outside plugin root: ${manifestPathInput}`,
 				ok: false,

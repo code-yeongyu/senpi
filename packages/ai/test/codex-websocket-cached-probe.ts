@@ -11,13 +11,13 @@ import { join, resolve } from "node:path";
 import { Type } from "typebox";
 import { ModelRuntime } from "../../coding-agent/src/core/model-runtime.ts";
 import {
-	closeOpenAICodexWebSocketSessions,
-	getOpenAICodexWebSocketDebugStats,
-	resetOpenAICodexWebSocketDebugStats,
+	closeChatGptSubscriptionWebSocketSessions,
+	getChatGptSubscriptionWebSocketDebugStats,
+	resetChatGptSubscriptionWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, Context, Message, Model, Tool, ToolResultMessage, Transport } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { AssistantMessage, Message, Model, Tool, ToolResultMessage, Transport } from "../src/types.ts";
 
 type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -163,23 +163,24 @@ function percentile(values: number[], p: number): number {
 
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
-	const model = getModel("openai-codex", "gpt-5.5") as Model<"openai-codex-responses"> | undefined;
+	const model = getModel("chatgpt-subscription", "gpt-5.5") as Model<"openai-codex-responses"> | undefined;
 	if (!model) throw new Error("Model openai-codex/gpt-5.5 not found");
 	const modelWithMaxTokens = { ...model, maxTokens: args.maxTokens };
 	const modelRuntime = await ModelRuntime.create();
 	const apiKey =
-		(await modelRuntime.getAuth("openai-codex"))?.auth.apiKey ?? (await modelRuntime.getAuth("openai"))?.auth.apiKey;
+		(await modelRuntime.getAuth("chatgpt-subscription"))?.auth.apiKey ??
+		(await modelRuntime.getAuth("openai"))?.auth.apiKey;
 	if (!apiKey) {
 		throw new Error("No OpenAI Codex API key found in coding-agent auth storage.");
 	}
-	const context: Context = {
+	const context = normalizeContext({
 		systemPrompt:
 			"You are participating in a benchmark. For each benchmark turn, call deterministic_probe exactly once before the final answer. Keep final answers minimal.",
 		messages: [],
 		tools: [deterministicProbeTool()],
-	};
+	});
 	const elapsed: number[] = [];
-	resetOpenAICodexWebSocketDebugStats(args.sessionId);
+	resetChatGptSubscriptionWebSocketDebugStats(args.sessionId);
 
 	console.log(`provider openai-codex, model gpt-5.5`);
 	console.log(`sessionId ${args.sessionId}`);
@@ -191,7 +192,7 @@ async function main(): Promise<void> {
 
 	for (let turn = 1; turn <= args.turns; turn++) {
 		context.messages.push({ role: "user", content: buildPrompt(turn), timestamp: Date.now() });
-		const beforeStats = getOpenAICodexWebSocketDebugStats(args.sessionId);
+		const beforeStats = getChatGptSubscriptionWebSocketDebugStats(args.sessionId);
 		const started = Date.now();
 		let requests = 0;
 		let assistantCount = 0;
@@ -247,7 +248,7 @@ async function main(): Promise<void> {
 
 		const elapsedMs = Date.now() - started;
 		elapsed.push(elapsedMs);
-		const afterStats = getOpenAICodexWebSocketDebugStats(args.sessionId);
+		const afterStats = getChatGptSubscriptionWebSocketDebugStats(args.sessionId);
 		const statLine = afterStats
 			? `ws requests ${afterStats.requests - (beforeStats?.requests ?? 0)} | new/reused ${afterStats.connectionsCreated - (beforeStats?.connectionsCreated ?? 0)}/${afterStats.connectionsReused - (beforeStats?.connectionsReused ?? 0)} | cached ${afterStats.cachedContextRequests - (beforeStats?.cachedContextRequests ?? 0)} | store ${afterStats.storeTrueRequests - (beforeStats?.storeTrueRequests ?? 0)} | full/delta ${afterStats.fullContextRequests - (beforeStats?.fullContextRequests ?? 0)}/${afterStats.deltaRequests - (beforeStats?.deltaRequests ?? 0)}`
 			: "ws none";
@@ -266,7 +267,7 @@ async function main(): Promise<void> {
 		);
 	}
 
-	const stats = getOpenAICodexWebSocketDebugStats(args.sessionId);
+	const stats = getChatGptSubscriptionWebSocketDebugStats(args.sessionId);
 	console.log("");
 	console.log(
 		[
@@ -290,7 +291,7 @@ async function main(): Promise<void> {
 			`lastPreviousResponseId ${stats?.lastPreviousResponseId ?? "n/a"}`,
 		].join(" | "),
 	);
-	closeOpenAICodexWebSocketSessions(args.sessionId);
+	closeChatGptSubscriptionWebSocketSessions(args.sessionId);
 }
 
 main().catch((error: unknown) => {

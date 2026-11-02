@@ -1,3 +1,5 @@
+import { mayHoldActivationMarker } from "./marker-candidates.ts";
+
 export const TOOL_SEARCH_ACTIVATION_MARKER_V2 = "[tool_search:activated:v2]";
 export const LEGACY_TOOL_SEARCH_ACTIVATION_MARKER = "[tool_search:activated]";
 
@@ -51,6 +53,7 @@ export function emitActivationMarker(activations: readonly ToolActivationIdentit
 export function parseActivationMarkers(messages: readonly unknown[]): ParsedActivationMarker[] {
 	const markers: ParsedActivationMarker[] = [];
 	for (const message of messages) {
+		if (!mayHoldActivationMarker(message)) continue;
 		let blob: string;
 		try {
 			blob = JSON.stringify(message) ?? "";

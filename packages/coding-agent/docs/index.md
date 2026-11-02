@@ -7,7 +7,7 @@ Senpi is a minimal terminal coding harness. It is designed to stay small at the 
 Install with npm:
 
 ```bash
-npm install -g @code-yeongyu/senpi
+bun add -g @code-yeongyu/senpi
 ```
 
 To uninstall senpi itself, use the package manager that installed it:
@@ -33,7 +33,6 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 - [Quickstart](quickstart.md) - install, authenticate, and run a first session.
 - [Using Senpi](usage.md) - interactive mode, slash commands, context files, and CLI reference.
 - [Providers](providers.md) - subscription and API-key setup for built-in providers.
-- [llama.cpp](llama-cpp.md) - run a local router and manage models with `/llama`.
 - [Security](security.md) - project trust, sandbox boundaries, and vulnerability reporting.
 - [Containerization](containerization.md) - sandbox senpi with Gondolin, Docker, or OpenShell.
 - [Settings](settings.md) - global and project settings.
@@ -52,6 +51,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 - [Senpi packages](packages.md) - bundle and share extensions, skills, prompts, and themes.
 - [Custom models](models.md) - add model entries for supported provider APIs.
 - [Custom providers](custom-provider.md) - implement custom APIs and OAuth flows.
+- [Virtual models](virtual-models.md) - route each request to a physical model from an extension.
 
 ## Programmatic usage
 

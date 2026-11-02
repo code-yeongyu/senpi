@@ -37,6 +37,7 @@ type UncaughtCrashThis = {
 	isShuttingDown: boolean;
 	showWarning: (message: string) => void;
 	ui: { stop: () => void };
+	pauseQuestionMouseCapture: () => void;
 	unregisterSignalHandlers: () => void;
 };
 
@@ -60,6 +61,7 @@ function createCrashContext(): UncaughtCrashThis {
 		isShuttingDown: false,
 		showWarning: vi.fn(),
 		ui: { stop: vi.fn() },
+		pauseQuestionMouseCapture: vi.fn(),
 		unregisterSignalHandlers: vi.fn(),
 	};
 }

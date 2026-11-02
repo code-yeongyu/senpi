@@ -55,6 +55,6 @@ package.json + package-lock.json         Private dep island (node-pty only); sta
 
 ## VALIDATION
 
-- Setup once: `node scripts/devenv-setup.mjs`; harness check: `node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check`.
+- Setup once: `bun scripts/devenv-setup.mjs`; harness check: `node .agents/skills/senpi-qa/scripts/lib/common.mjs --self-check`.
 - Lib units: `node --test .agents/skills/senpi-qa/scripts/lib/` (runs the four `*.test.mjs`).
 - A new script is not done until its own `--self-test` passes with evidence captured.

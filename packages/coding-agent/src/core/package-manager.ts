@@ -12,7 +12,9 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
+import { signalSpawnedChild } from "../utils/child-signal.ts";
 import { stripBom } from "../utils/text.ts";
+import { projectAgentsSkillDirs } from "./trust-manager.ts";
 
 function getEnv(): NodeJS.ProcessEnv {
 	if (process.platform !== "linux" || Object.keys(process.env).length > 0) {
@@ -44,8 +46,11 @@ import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
 import { envValue } from "./brand.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
-import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
+import { readPiManifest } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
+import { insideSkillRoot, type SkillProvenance, skillProjectRoot } from "./skill-access.ts";
+import { collectAutoSkillEntries, collectSkillEntries } from "./skill-discovery.ts";
+import { BUILTIN_PATH_PREFIX, type SourceScope } from "./source-info.ts";
 
 const NETWORK_TIMEOUT_MS = 10000;
 const UPDATE_CHECK_CONCURRENCY = 4;
@@ -70,6 +75,8 @@ export interface PathMetadata {
 	scope: SourceScope;
 	origin: "package" | "top-level";
 	baseDir?: string;
+	packageRoot?: string;
+	skillProvenance?: SkillProvenance;
 }
 
 export interface ResolvedResource {
@@ -79,6 +86,9 @@ export interface ResolvedResource {
 }
 
 export interface ResolvedPaths {
+	skillRoots?: readonly SkillProvenance[];
+	/** SKILL.md files of auto-discovered skill folders that an ignore file hid (senpi#5060). */
+	ignoredSkills?: readonly string[];
 	extensions: ResolvedResource[];
 	skills: ResolvedResource[];
 	prompts: ResolvedResource[];
@@ -101,7 +111,7 @@ export interface PackageUpdate {
 	source: string;
 	displayName: string;
 	type: "npm" | "git";
-	scope: Exclude<SourceScope, "temporary">;
+	scope: InstalledSourceScope;
 }
 
 export interface ConfiguredPackage {
@@ -133,9 +143,9 @@ interface PackageManagerOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager: SettingsManager;
+	/** Names of built-in extensions, resolved as `builtin:<name>` extension resources. */
+	builtinExtensions?: string[];
 }
-
-type SourceScope = "user" | "project" | "temporary";
 
 type NpmSource = {
 	type: "npm";
@@ -153,7 +163,8 @@ type LocalSource = {
 
 type ParsedSource = NpmSource | GitSource | LocalSource;
 
-type InstalledSourceScope = Exclude<SourceScope, "temporary">;
+/** Scopes whose packages the manager installs and updates; `temporary` and `system` sources are never managed. */
+type InstalledSourceScope = Exclude<SourceScope, "temporary" | "system">;
 
 interface ConfiguredUpdateSource {
 	source: string;
@@ -174,6 +185,7 @@ interface ResourceAccumulator {
 	prompts: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	themes: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	hooks: Map<string, { metadata: PathMetadata; enabled: boolean }>;
+	ignoredSkills: Set<string>;
 }
 
 /**
@@ -189,6 +201,8 @@ interface ResourceAccumulator {
  *   4  package resource (origin: "package")
  */
 function resourcePrecedenceRank(m: PathMetadata): number {
+	// Built-in extensions load after file and package extensions, whichever scope enables them.
+	if (m.source === "builtin") return 5;
 	if (m.origin === "package") return 4;
 	const scopeBase = m.scope === "project" ? 0 : 2;
 	return scopeBase + (m.source === "local" ? 0 : 1);
@@ -365,124 +379,9 @@ function collectFiles(
 	return files;
 }
 
-type SkillDiscoveryMode = "pi" | "agents";
-
-function collectSkillEntries(
-	dir: string,
-	mode: SkillDiscoveryMode,
-	ignoreMatcher?: IgnoreMatcher,
-	rootDir?: string,
-): string[] {
-	const entries: string[] = [];
-	if (!existsSync(dir)) return entries;
-
-	const root = rootDir ?? dir;
-	const ig = ignoreMatcher ?? ignore();
-	addIgnoreRules(ig, dir, root);
-
-	try {
-		const dirEntries = readdirSync(dir, { withFileTypes: true });
-
-		for (const entry of dirEntries) {
-			if (entry.name !== "SKILL.md") {
-				continue;
-			}
-
-			const fullPath = join(dir, entry.name);
-			let isFile = entry.isFile();
-			if (entry.isSymbolicLink()) {
-				try {
-					isFile = statSync(fullPath).isFile();
-				} catch {
-					continue;
-				}
-			}
-
-			const relPath = toPosixPath(relative(root, fullPath));
-			if (isFile && !ig.ignores(relPath)) {
-				entries.push(fullPath);
-				return entries;
-			}
-		}
-
-		for (const entry of dirEntries) {
-			if (entry.name.startsWith(".")) continue;
-			if (entry.name === "node_modules") continue;
-
-			const fullPath = join(dir, entry.name);
-			let isDir = entry.isDirectory();
-			let isFile = entry.isFile();
-
-			if (entry.isSymbolicLink()) {
-				try {
-					const stats = statSync(fullPath);
-					isDir = stats.isDirectory();
-					isFile = stats.isFile();
-				} catch {
-					continue;
-				}
-			}
-
-			const relPath = toPosixPath(relative(root, fullPath));
-			const shouldIncludeMarkdownFile =
-				isFile &&
-				entry.name.endsWith(".md") &&
-				!ig.ignores(relPath) &&
-				((mode === "pi" && dir === root) || (mode === "agents" && dir !== root));
-			if (shouldIncludeMarkdownFile) {
-				entries.push(fullPath);
-				continue;
-			}
-
-			if (!isDir) continue;
-			if (ig.ignores(`${relPath}/`)) continue;
-
-			entries.push(...collectSkillEntries(fullPath, mode, ig, root));
-		}
-	} catch {
-		// Ignore errors
-	}
-
-	return entries;
-}
-
-function collectAutoSkillEntries(dir: string, mode: SkillDiscoveryMode): string[] {
-	return collectSkillEntries(dir, mode);
-}
-
-function findGitRepoRoot(startDir: string): string | null {
-	let dir = resolve(startDir);
-	while (true) {
-		if (existsSync(join(dir, ".git"))) {
-			return dir;
-		}
-		const parent = dirname(dir);
-		if (parent === dir) {
-			return null;
-		}
-		dir = parent;
-	}
-}
-
 function collectAncestorAgentsSkillDirs(startDir: string): string[] {
-	const skillDirs: string[] = [];
-	const resolvedStartDir = resolve(startDir);
-	const gitRepoRoot = findGitRepoRoot(resolvedStartDir);
-
-	let dir = resolvedStartDir;
-	while (true) {
-		skillDirs.push(join(dir, ".agents", "skills"));
-		if (gitRepoRoot && dir === gitRepoRoot) {
-			break;
-		}
-		const parent = dirname(dir);
-		if (parent === dir) {
-			break;
-		}
-		dir = parent;
-	}
-
-	return skillDirs;
+	// The same walk the trust check uses: home and above are never project skills (#3420 review).
+	return projectAgentsSkillDirs(startDir);
 }
 
 function collectAutoPromptEntries(dir: string): string[] {
@@ -647,9 +546,9 @@ function collectAutoExtensionEntries(dir: string): string[] {
  * Collect resource files from a directory based on resource type.
  * Extensions use smart discovery (index.ts in subdirs), others use recursive collection.
  */
-function collectResourceFiles(dir: string, resourceType: ResourceType): string[] {
+function collectResourceFiles(dir: string, resourceType: ResourceType, provenance?: SkillProvenance): string[] {
 	if (resourceType === "skills") {
-		return collectSkillEntries(dir, "pi");
+		return collectSkillEntries(dir, "pi", undefined, undefined, { provenance });
 	}
 	if (resourceType === "extensions") {
 		return collectAutoExtensionEntries(dir);
@@ -812,6 +711,7 @@ export class DefaultPackageManager implements PackageManager {
 	private cwd: string;
 	private agentDir: string;
 	private settingsManager: SettingsManager;
+	private builtinExtensions: string[];
 	private globalNpmRoot: string | undefined;
 	private globalNpmRootCommandKey: string | undefined;
 	private progressCallback: ProgressCallback | undefined;
@@ -820,6 +720,7 @@ export class DefaultPackageManager implements PackageManager {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager;
+		this.builtinExtensions = options.builtinExtensions ?? [];
 	}
 
 	setProgressCallback(callback: ProgressCallback | undefined): void {
@@ -965,6 +866,23 @@ export class DefaultPackageManager implements PackageManager {
 
 		this.addAutoDiscoveredResources(accumulator, globalSettings, projectSettings, globalBaseDir, projectBaseDir);
 
+		// Built-in extensions are enabled unless the user `extensions` setting excludes them, for example
+		// with `-builtin:mcp`. A matching `+`, `-`, or `!` entry in the project setting overrides that.
+		for (const name of this.builtinExtensions) {
+			const path = `${BUILTIN_PATH_PREFIX}${name}`;
+			const projectEnabled = applyAutoloadDisabledPatterns(
+				[path],
+				getOverridePatterns(projectSettings.extensions ?? []),
+				projectBaseDir,
+			).get(path);
+			this.addResource(
+				accumulator.extensions,
+				path,
+				{ source: "builtin", scope: projectEnabled === undefined ? "user" : "project", origin: "top-level" },
+				projectEnabled ?? isEnabledByOverrides(path, globalSettings.extensions ?? [], globalBaseDir),
+			);
+		}
+
 		return this.toResolvedPaths(accumulator);
 	}
 
@@ -974,7 +892,13 @@ export class DefaultPackageManager implements PackageManager {
 	): Promise<ResolvedPaths> {
 		const accumulator = this.createAccumulator();
 		const scope: SourceScope = options?.temporary ? "temporary" : options?.local ? "project" : "user";
-		const packageSources = sources.map((source) => ({ pkg: source as PackageSource, scope }));
+		// `-e builtin:<name>` loads a built-in extension; the resource loader reports unknown names.
+		for (const source of sources.filter((source) => source.startsWith(BUILTIN_PATH_PREFIX))) {
+			this.addResource(accumulator.extensions, source, { source: "builtin", scope, origin: "top-level" }, true);
+		}
+		const packageSources = sources
+			.filter((source) => !source.startsWith(BUILTIN_PATH_PREFIX))
+			.map((source) => ({ pkg: source as PackageSource, scope }));
 		await this.resolvePackageSources(packageSources, accumulator);
 		return this.toResolvedPaths(accumulator);
 	}
@@ -1206,8 +1130,8 @@ export class DefaultPackageManager implements PackageManager {
 		const packageSources = this.dedupePackages(allPackages);
 		const checks = packageSources
 			.filter(
-				(entry): entry is { pkg: PackageSource; scope: Exclude<SourceScope, "temporary"> } =>
-					entry.scope !== "temporary",
+				(entry): entry is { pkg: PackageSource; scope: InstalledSourceScope } =>
+					entry.scope !== "temporary" && entry.scope !== "system",
 			)
 			.map((entry) => async (): Promise<PackageUpdate | undefined> => {
 				const source = typeof entry.pkg === "string" ? entry.pkg : entry.pkg.source;
@@ -1296,6 +1220,7 @@ export class DefaultPackageManager implements PackageManager {
 					installedPath = this.getNpmInstallPath(parsed, resolvedScope);
 				}
 				metadata.baseDir = installedPath;
+				metadata.packageRoot = installedPath;
 				this.collectPackageResources(installedPath, accumulator, filter, metadata);
 				continue;
 			}
@@ -1309,6 +1234,7 @@ export class DefaultPackageManager implements PackageManager {
 					await this.refreshTemporaryGitSource(parsed, resolvedSource);
 				}
 				metadata.baseDir = installedPath;
+				metadata.packageRoot = installedPath;
 				this.collectPackageResources(installedPath, accumulator, filter, metadata);
 			}
 		}
@@ -1350,6 +1276,7 @@ export class DefaultPackageManager implements PackageManager {
 			}
 			if (stats.isDirectory()) {
 				metadata.baseDir = resolved;
+				metadata.packageRoot = resolved;
 				const resources = this.collectPackageResources(resolved, accumulator, filter, metadata);
 				if (!resources) {
 					this.addResource(accumulator.extensions, resolved, metadata, true);
@@ -1763,10 +1690,25 @@ export class DefaultPackageManager implements PackageManager {
 
 	private getPackageManagerName(): string {
 		const npmCommand = this.getNpmCommand();
-		const commandParts = [npmCommand.command, ...npmCommand.args];
-		const separatorIndex = commandParts.lastIndexOf("--");
-		const packageManagerCommand = separatorIndex >= 0 ? commandParts[separatorIndex + 1] : npmCommand.command;
-		return packageManagerCommand ? basename(packageManagerCommand).replace(/\.(cmd|exe)$/i, "") : "";
+		const normalizeCommandName = (command: string): string => basename(command).replace(/\.(cmd|exe)$/i, "");
+		const supportedPackageManagers = new Set(["npm", "pnpm", "bun"]);
+		const directCommand = normalizeCommandName(npmCommand.command);
+		const separatorIndex = npmCommand.args.lastIndexOf("--");
+		if (separatorIndex >= 0) {
+			const wrappedCommand = npmCommand.args[separatorIndex + 1];
+			return wrappedCommand ? normalizeCommandName(wrappedCommand) : directCommand;
+		}
+		if (supportedPackageManagers.has(directCommand)) return directCommand;
+
+		const wrappedPackageManagers = [
+			...new Set(
+				npmCommand.args.map(normalizeCommandName).filter((command) => supportedPackageManagers.has(command)),
+			),
+		];
+		if (wrappedPackageManagers.length > 1) {
+			throw new Error(`Ambiguous npmCommand package managers: ${wrappedPackageManagers.join(", ")}`);
+		}
+		return wrappedPackageManagers[0] ?? directCommand;
 	}
 
 	private async runNpmCommand(args: string[], options?: { cwd?: string }): Promise<void> {
@@ -1775,11 +1717,22 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private getGitDependencyInstallArgs(): string[] {
-		const configuredCommand = this.settingsManager.getNpmCommand();
-		if (configuredCommand && configuredCommand.length > 0) {
-			return ["install"];
+		switch (this.getPackageManagerName()) {
+			case "bun":
+				return ["install", "--omit=dev", "--omit=peer"];
+			case "pnpm":
+				return [
+					"install",
+					"--prod",
+					"--config.auto-install-peers=false",
+					"--config.strict-peer-dependencies=false",
+					"--config.strict-dep-builds=false",
+				];
+			case "npm":
+				return ["install", "--omit=dev", "--legacy-peer-deps"];
+			default:
+				return ["install"];
 		}
-		return ["install", "--omit=dev"];
 	}
 
 	private runNpmCommandSync(args: string[]): string {
@@ -2098,7 +2051,8 @@ export class DefaultPackageManager implements PackageManager {
 
 	private getGitInstallPath(source: GitSource, scope: SourceScope): string {
 		if (scope === "temporary") {
-			return this.getTemporaryDir(`git-${source.host}`, source.path);
+			// Include the ref in the hash so each pinned ref gets its own checkout.
+			return this.getTemporaryDir(`git-${source.host}`, source.path, source.ref);
 		}
 		const installRoot = this.getGitInstallRoot(scope);
 		if (!installRoot) {
@@ -2118,10 +2072,10 @@ export class DefaultPackageManager implements PackageManager {
 		return join(this.agentDir, "git");
 	}
 
-	private getTemporaryDir(prefix: string, suffix?: string): string {
+	private getTemporaryDir(prefix: string, suffix?: string, ref?: string): string {
 		const root = this.resolveManagedPath(getExtensionTempFolder(this.agentDir), prefix);
 		const hash = createHash("sha256")
-			.update(`${prefix}-${suffix ?? ""}`)
+			.update(`${prefix}-${suffix ?? ""}${ref ? `@${ref}` : ""}`)
 			.digest("hex")
 			.slice(0, 8);
 		return this.resolveManagedPath(root, hash, suffix ?? "");
@@ -2161,6 +2115,14 @@ export class DefaultPackageManager implements PackageManager {
 		filter: PackageFilter | undefined,
 		metadata: PathMetadata,
 	): boolean {
+		metadata = this.selectSkillRoot(packageRoot, metadata, "project-auto");
+		const manifest = readPiManifest(join(packageRoot, "package.json"));
+		// Only a package the command line supplied (temporary scope) may declare itself part of the harness;
+		// an installed user/project package keeps its scope so it cannot hide from the trust surface.
+		if (manifest?.system === true && metadata.scope === "temporary") {
+			metadata.scope = "system";
+		}
+
 		if (filter) {
 			for (const resourceType of RESOURCE_TYPES) {
 				const patterns = filter[resourceType];
@@ -2176,10 +2138,9 @@ export class DefaultPackageManager implements PackageManager {
 			return true;
 		}
 
-		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		if (manifest) {
 			for (const resourceType of RESOURCE_TYPES) {
-				const entries = manifest[resourceType as keyof PiManifest];
+				const entries = manifest[resourceType];
 				this.addManifestEntries(
 					entries,
 					packageRoot,
@@ -2196,7 +2157,7 @@ export class DefaultPackageManager implements PackageManager {
 			const dir = join(packageRoot, resourceType);
 			if (existsSync(dir)) {
 				// Collect all files from the directory (all enabled by default)
-				const files = collectResourceFiles(dir, resourceType);
+				const files = collectResourceFiles(dir, resourceType, metadata.skillProvenance);
 				for (const f of files) {
 					this.addResource(this.getTargetMap(accumulator, resourceType), f, metadata, true);
 				}
@@ -2213,7 +2174,7 @@ export class DefaultPackageManager implements PackageManager {
 		metadata: PathMetadata,
 	): void {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
-		const entries = manifest?.[resourceType as keyof PiManifest];
+		const entries = manifest?.[resourceType];
 		if (entries) {
 			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata);
 			return;
@@ -2221,7 +2182,7 @@ export class DefaultPackageManager implements PackageManager {
 		const dir = join(packageRoot, resourceType);
 		if (existsSync(dir)) {
 			// Collect all files from the directory (all enabled by default)
-			const files = collectResourceFiles(dir, resourceType);
+			const files = collectResourceFiles(dir, resourceType, metadata.skillProvenance);
 			for (const f of files) {
 				this.addResource(target, f, metadata, true);
 			}
@@ -2235,7 +2196,7 @@ export class DefaultPackageManager implements PackageManager {
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
 	): void {
-		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType);
+		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, metadata.skillProvenance);
 
 		if (userPatterns.length === 0) {
 			// Empty array explicitly disables all resources of this type
@@ -2265,7 +2226,7 @@ export class DefaultPackageManager implements PackageManager {
 			return;
 		}
 
-		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType);
+		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, metadata.skillProvenance);
 		const enabledByUser = applyAutoloadDisabledPatterns(allFiles, userPatterns, packageRoot);
 		for (const [filePath, enabled] of enabledByUser) {
 			this.addResource(target, filePath, metadata, enabled);
@@ -2280,11 +2241,12 @@ export class DefaultPackageManager implements PackageManager {
 	private collectManifestFiles(
 		packageRoot: string,
 		resourceType: ResourceType,
+		provenance?: SkillProvenance,
 	): { allFiles: string[]; enabledByManifest: Set<string> } {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
-		const entries = manifest?.[resourceType as keyof PiManifest];
+		const entries = manifest?.[resourceType];
 		if (entries && entries.length > 0) {
-			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType);
+			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType, provenance);
 			const manifestPatterns = entries.filter(isOverridePattern);
 			const enabledByManifest =
 				manifestPatterns.length > 0 ? applyPatterns(allFiles, manifestPatterns, packageRoot) : new Set(allFiles);
@@ -2295,7 +2257,7 @@ export class DefaultPackageManager implements PackageManager {
 		if (!existsSync(conventionDir)) {
 			return { allFiles: [], enabledByManifest: new Set() };
 		}
-		const allFiles = collectResourceFiles(conventionDir, resourceType);
+		const allFiles = collectResourceFiles(conventionDir, resourceType, provenance);
 		return { allFiles, enabledByManifest: new Set(allFiles) };
 	}
 
@@ -2308,7 +2270,7 @@ export class DefaultPackageManager implements PackageManager {
 	): void {
 		if (!entries) return;
 
-		const allFiles = this.collectFilesFromManifestEntries(entries, root, resourceType);
+		const allFiles = this.collectFilesFromManifestEntries(entries, root, resourceType, metadata.skillProvenance);
 		const patterns = entries.filter(isOverridePattern);
 		const enabledPaths = applyPatterns(allFiles, patterns, root);
 
@@ -2319,7 +2281,12 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
-	private collectFilesFromManifestEntries(entries: string[], root: string, resourceType: ResourceType): string[] {
+	private collectFilesFromManifestEntries(
+		entries: string[],
+		root: string,
+		resourceType: ResourceType,
+		provenance?: SkillProvenance,
+	): string[] {
 		const sourceEntries = entries.filter((entry) => !isOverridePattern(entry));
 		const resolved = sourceEntries.flatMap((entry) => {
 			if (!hasGlobPattern(entry)) {
@@ -2328,7 +2295,7 @@ export class DefaultPackageManager implements PackageManager {
 
 			return expandPackageGlob(entry, root);
 		});
-		return this.collectFilesFromPaths(resolved, resourceType);
+		return this.collectFilesFromPaths(resolved, resourceType, provenance);
 	}
 
 	private resolveLocalEntries(
@@ -2343,14 +2310,21 @@ export class DefaultPackageManager implements PackageManager {
 		// Collect all files from plain entries (non-pattern entries)
 		const { plain, patterns } = splitPatterns(entries);
 		const resolvedPlain = plain.map((p) => this.resolvePathFromBase(p, baseDir));
-		const allFiles = this.collectFilesFromPaths(resolvedPlain, resourceType);
+		const metadataByFile = new Map<string, PathMetadata>();
+		const allFiles = resolvedPlain.flatMap((path) => {
+			const selected =
+				resourceType === "skills" ? this.selectSkillRoot(path, metadata, "project-selected") : metadata;
+			const files = this.collectFilesFromPaths([path], resourceType, selected.skillProvenance);
+			for (const file of files) metadataByFile.set(file, selected);
+			return files;
+		});
 
 		// Determine which files are enabled based on patterns
 		const enabledPaths = applyPatterns(allFiles, patterns, baseDir);
 
 		// Add all files with their enabled state
 		for (const f of allFiles) {
-			this.addResource(target, f, metadata, enabledPaths.has(f));
+			this.addResource(target, f, metadataByFile.get(f) ?? metadata, enabledPaths.has(f));
 		}
 	}
 
@@ -2413,9 +2387,7 @@ export class DefaultPackageManager implements PackageManager {
 		};
 		const userAgentsSkillsDir = join(getHomeDir(), ".agents", "skills");
 		const projectTrusted = this.settingsManager.isProjectTrusted();
-		const projectAgentsSkillDirs = projectTrusted
-			? collectAncestorAgentsSkillDirs(this.cwd).filter((dir) => resolve(dir) !== resolve(userAgentsSkillsDir))
-			: [];
+		const projectAgentsSkillDirs = projectTrusted ? collectAncestorAgentsSkillDirs(this.cwd) : [];
 
 		const addResources = (
 			resourceType: ResourceType,
@@ -2430,6 +2402,25 @@ export class DefaultPackageManager implements PackageManager {
 				this.addResource(target, path, metadata, enabled);
 			}
 		};
+		const addSkills = (
+			root: string,
+			mode: "pi" | "agents",
+			metadata: PathMetadata,
+			overrides: string[],
+			base: string,
+		) => {
+			const selected = this.selectSkillRoot(root, metadata, "project-auto");
+			addResources(
+				"skills",
+				collectAutoSkillEntries(root, mode, {
+					provenance: selected.skillProvenance,
+					onIgnoredSkill: (skillFile) => accumulator.ignoredSkills.add(skillFile),
+				}),
+				selected,
+				overrides,
+				base,
+			);
+		};
 
 		if (projectTrusted) {
 			// Project extensions from .pi/
@@ -2442,13 +2433,7 @@ export class DefaultPackageManager implements PackageManager {
 			);
 
 			// Project skills from .pi/
-			addResources(
-				"skills",
-				collectAutoSkillEntries(projectDirs.skills, "pi"),
-				projectMetadata,
-				projectOverrides.skills,
-				projectBaseDir,
-			);
+			addSkills(projectDirs.skills, "pi", projectMetadata, projectOverrides.skills, projectBaseDir);
 		}
 
 		// Project skills from .agents/ (each with its own baseDir)
@@ -2458,13 +2443,7 @@ export class DefaultPackageManager implements PackageManager {
 				...projectMetadata,
 				baseDir: agentsBaseDir,
 			};
-			addResources(
-				"skills",
-				collectAutoSkillEntries(agentsSkillsDir, "agents"),
-				agentsMetadata,
-				projectOverrides.skills,
-				agentsBaseDir,
-			);
+			addSkills(agentsSkillsDir, "agents", agentsMetadata, projectOverrides.skills, agentsBaseDir);
 		}
 
 		if (projectTrusted) {
@@ -2491,7 +2470,7 @@ export class DefaultPackageManager implements PackageManager {
 			);
 		}
 
-		if (resolve(legacyProjectBaseDir) !== resolve(projectBaseDir)) {
+		if (projectTrusted && resolve(legacyProjectBaseDir) !== resolve(projectBaseDir)) {
 			const legacyProjectMetadata: PathMetadata = {
 				...projectMetadata,
 				baseDir: legacyProjectBaseDir,
@@ -2504,9 +2483,9 @@ export class DefaultPackageManager implements PackageManager {
 				projectOverrides.extensions,
 				legacyProjectBaseDir,
 			);
-			addResources(
-				"skills",
-				collectAutoSkillEntries(legacyProjectDirs.skills, "pi"),
+			addSkills(
+				legacyProjectDirs.skills,
+				"pi",
 				legacyProjectMetadata,
 				projectOverrides.skills,
 				legacyProjectBaseDir,
@@ -2544,13 +2523,7 @@ export class DefaultPackageManager implements PackageManager {
 		);
 
 		// User skills from ~/.pi/agent/
-		addResources(
-			"skills",
-			collectAutoSkillEntries(userDirs.skills, "pi"),
-			userMetadata,
-			userOverrides.skills,
-			globalBaseDir,
-		);
+		addSkills(userDirs.skills, "pi", userMetadata, userOverrides.skills, globalBaseDir);
 
 		// User skills from ~/.agents/ (with its own baseDir)
 		const userAgentsBaseDir = dirname(userAgentsSkillsDir);
@@ -2558,13 +2531,7 @@ export class DefaultPackageManager implements PackageManager {
 			...userMetadata,
 			baseDir: userAgentsBaseDir,
 		};
-		addResources(
-			"skills",
-			collectAutoSkillEntries(userAgentsSkillsDir, "agents"),
-			userAgentsMetadata,
-			userOverrides.skills,
-			userAgentsBaseDir,
-		);
+		addSkills(userAgentsSkillsDir, "agents", userAgentsMetadata, userOverrides.skills, userAgentsBaseDir);
 
 		addResources(
 			"prompts",
@@ -2589,7 +2556,36 @@ export class DefaultPackageManager implements PackageManager {
 		);
 	}
 
-	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {
+	private selectSkillRoot(
+		root: string,
+		metadata: PathMetadata,
+		kind: "project-auto" | "project-selected",
+	): PathMetadata {
+		const repositoryRoot = skillProjectRoot(this.cwd);
+		// Outside a git repository, ancestor `.agents/skills` roots above cwd are auto-discovered too;
+		// each is contained by the directory that owns it, so its own files load while links out of it
+		// are still refused (senpi#3796).
+		const spelled = resolve(root);
+		const owner = dirname(dirname(spelled));
+		const ancestorSkillsDir =
+			basename(spelled) === "skills" &&
+			[".agents", ".senpi", ".pi"].includes(basename(dirname(spelled))) &&
+			insideSkillRoot(resolve(this.cwd), owner);
+		const projectRoot =
+			kind === "project-auto" && ancestorSkillsDir && !insideSkillRoot(spelled, repositoryRoot)
+				? owner
+				: repositoryRoot;
+		return {
+			...metadata,
+			skillProvenance: {
+				kind: metadata.scope === "project" ? kind : "user",
+				selectedRoot: root,
+				projectRoot,
+			},
+		};
+	}
+
+	private collectFilesFromPaths(paths: string[], resourceType: ResourceType, provenance?: SkillProvenance): string[] {
 		const files: string[] = [];
 		for (const p of paths) {
 			if (!existsSync(p)) continue;
@@ -2599,7 +2595,7 @@ export class DefaultPackageManager implements PackageManager {
 				if (stats.isFile()) {
 					files.push(p);
 				} else if (stats.isDirectory()) {
-					files.push(...collectResourceFiles(p, resourceType));
+					files.push(...collectResourceFiles(p, resourceType, provenance));
 				}
 			} catch {
 				// Ignore errors
@@ -2647,6 +2643,7 @@ export class DefaultPackageManager implements PackageManager {
 			prompts: new Map(),
 			themes: new Map(),
 			hooks: new Map(),
+			ignoredSkills: new Set(),
 		};
 	}
 
@@ -2671,11 +2668,15 @@ export class DefaultPackageManager implements PackageManager {
 		};
 
 		return {
+			skillRoots: [...accumulator.skills.values()]
+				.filter((entry) => entry.enabled)
+				.flatMap((entry) => (entry.metadata.skillProvenance === undefined ? [] : [entry.metadata.skillProvenance])),
 			extensions: mapToResolved(accumulator.extensions),
 			skills: mapToResolved(accumulator.skills),
 			prompts: mapToResolved(accumulator.prompts),
 			themes: mapToResolved(accumulator.themes),
 			hooks: mapToResolved(accumulator.hooks),
+			ignoredSkills: [...accumulator.ignoredSkills].sort(),
 		};
 	}
 
@@ -2685,6 +2686,7 @@ export class DefaultPackageManager implements PackageManager {
 			cwd: options?.cwd,
 			stdio: isStdoutTakenOver() ? ["ignore", 2, 2] : "inherit",
 			env,
+			windowsHide: true,
 		});
 	}
 
@@ -2699,6 +2701,7 @@ export class DefaultPackageManager implements PackageManager {
 			cwd: options?.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			env,
+			windowsHide: true,
 		});
 	}
 
@@ -2716,7 +2719,7 @@ export class DefaultPackageManager implements PackageManager {
 				typeof options?.timeoutMs === "number"
 					? setTimeout(() => {
 							timedOut = true;
-							child.kill();
+							signalSpawnedChild(child);
 						}, options.timeoutMs)
 					: undefined;
 
@@ -2766,6 +2769,7 @@ export class DefaultPackageManager implements PackageManager {
 			stdio: ["ignore", "pipe", "pipe"],
 			encoding: "utf-8",
 			env,
+			windowsHide: true,
 		});
 		if (result.error || result.status !== 0) {
 			throw new Error(

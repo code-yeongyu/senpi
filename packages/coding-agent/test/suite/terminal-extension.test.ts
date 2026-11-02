@@ -36,7 +36,7 @@ vi.mock("../../src/core/extensions/builtin/terminal/tools/spawn.ts", async (impo
 	};
 });
 
-const COMPANIONS = ["bash_output", "bash_input", "bash_resize", "kill_bash", "monitor"];
+const COMPANIONS = ["bash_output", "kill_bash", "monitor"];
 
 function firstText(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content.find((block) => block.type === "text")?.text ?? "";
@@ -66,7 +66,7 @@ describe("terminal builtin extension — tool surface & mutual exclusion", () =>
 		return harness;
 	}
 
-	it("registers PTY bash plus the four companion tools", async () => {
+	it("registers PTY bash plus the resident companion tools", async () => {
 		delete process.env.PI_ANTHROPIC_BASH;
 		const harness = await anthropicHarness();
 		await harness.session.bindExtensions({});
@@ -142,12 +142,16 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 		if (!runtime) throw new Error(`No terminal session found with id: ${bashId}`);
 		await new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => reject(new Error("READY_MARK never arrived within 5s")), 5000);
-			const unsubscribe = runtime.onOutput((chunk) => {
-				if (!chunk.includes("READY_MARK")) return;
+			const done = () => {
 				clearTimeout(timer);
 				unsubscribe();
 				resolve();
+			};
+			const unsubscribe = runtime.onOutput((chunk) => {
+				if (chunk.includes("READY_MARK")) done();
 			});
+			// Subscribed first, then check what execute's early-output grace already buffered.
+			if (runtime.fullOutput().includes("READY_MARK")) done();
 		});
 		const peeked = await output.execute("call-peek", { bash_id: bashId });
 		expect(firstText(peeked)).toContain("READY_MARK");
@@ -345,6 +349,7 @@ describe("terminal extension auto-detach wiring", () => {
 		let activeTools: string[] = [];
 		const fakePi = {
 			registerTool: (tool: Tool) => tools.set(tool.name, tool),
+			registerMessageRenderer: () => {},
 			on: (event: string, handler: Handler) => {
 				const registered = handlers.get(event) ?? [];
 				registered.push(handler);

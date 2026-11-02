@@ -59,6 +59,32 @@ describe("resolvePromptCacheSafeWaitSeconds", () => {
 		expect(resolvePromptCacheSafeWaitSeconds(googleModel() as Model<Api>, undefined, {})).toBeUndefined();
 	});
 
+	// code-yeongyu/senpi#2090: GPT-5.6+ on OpenAI's own lanes keeps its cache for at least 30 minutes.
+	it("derives a 30-minute budget for OpenAI GPT-6 and keeps 5 minutes for GPT-5.5", () => {
+		const openai = (id: string): Model<Api> =>
+			({
+				...anthropicModel(),
+				id,
+				api: "openai-responses",
+				provider: "openai",
+				baseUrl: "https://api.openai.com/v1",
+			}) as Model<Api>;
+		expect(resolvePromptCacheSafeWaitSeconds(openai("gpt-6-sol"), undefined, {})).toBe(1770);
+		expect(resolvePromptCacheSafeWaitSeconds(openai("gpt-5.5"), undefined, {})).toBe(270);
+	});
+
+	// code-yeongyu/senpi#831: a best-effort cache has no expiry to protect.
+	it("returns no budget for DeepSeek's best-effort cache instead of a fabricated 270s", () => {
+		const deepseek = {
+			...anthropicModel(),
+			id: "deepseek-v4-pro",
+			api: "openai-completions",
+			provider: "deepseek",
+			baseUrl: "https://api.deepseek.com",
+		} as Model<Api>;
+		expect(resolvePromptCacheSafeWaitSeconds(deepseek, undefined, {})).toBeUndefined();
+	});
+
 	it("returns undefined when no model is active", () => {
 		expect(resolvePromptCacheSafeWaitSeconds(undefined, undefined, {})).toBeUndefined();
 	});

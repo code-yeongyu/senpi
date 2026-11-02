@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createAgentSessionServices } from "../src/core/agent-session-services.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -10,6 +11,7 @@ import {
 	credentialPoolStatePath,
 	slotHealth,
 } from "../src/core/credential-pool/state-store.ts";
+import { FILE_STORAGE_LOCK_OPTIONS } from "../src/core/lockfile-policy.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
 const NOW = 1_756_000_000_000;
@@ -31,6 +33,22 @@ afterEach(() => {
 describe("credential pool state sidecar", () => {
 	test("default path lives in the agent dir", () => {
 		expect(credentialPoolStatePath("/tmp/agent")).toBe("/tmp/agent/credential-pool-state.json");
+	});
+
+	test("two repository instances wait through a real shared lock", async () => {
+		// #given one holder owns the lock and a second repository starts reading
+		await repository.listSlots("openai", "api");
+		const release = await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+		const waiting = expect(new CredentialSlotRepository(path).listSlots("openai", "api")).resolves.toEqual({});
+
+		// #when the holder keeps the lock past the waiter's first attempt, so the waiter
+		// can only succeed by retrying: a single-shot acquire fails here with ELOCKED.
+		await new Promise<void>((resolve) => setTimeout(resolve, 150));
+		expect(lockfile.checkSync(path, { realpath: false, stale: FILE_STORAGE_LOCK_OPTIONS.stale })).toBe(true);
+		await release();
+
+		// #then the waiter completed through its bounded retry loop
+		await waiting;
 	});
 
 	test("a cooldown written before a restart still suppresses the slot after re-reading", async () => {
@@ -74,14 +92,15 @@ describe("credential pool state sidecar", () => {
 		expect(second).toBeUndefined();
 	});
 
-	test("an auth block never leases a probe; only re-login clears it", async () => {
+	test("an auth block leases one probe once its re-probe time passes (senpi#3264)", async () => {
 		await repository.mutateSlotState("openai", "api", "work", () => ({
 			blockedUntil: NOW - 1_000,
 			blockReason: "auth_error",
 		}));
 
 		const lease = await acquireHalfOpenLease(repository, "openai", "api", "work", { now: NOW });
-		expect(lease).toBeUndefined();
+		expect(lease).toBeDefined();
+		expect(await acquireHalfOpenLease(repository, "openai", "api", "work", { now: NOW })).toBeUndefined();
 	});
 
 	test("two custom agent directories give ModelRuntime isolated repositories", async () => {

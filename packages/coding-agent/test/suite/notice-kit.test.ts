@@ -1,3 +1,4 @@
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
 	buildNoticeBox,
@@ -83,6 +84,21 @@ describe("buildNoticeBox", () => {
 		const titleText = "[1mtoned[22m";
 		expect(rawRender({ title: "toned", tone: "warning", why: "w" })).toContain(theme.fg("warning", titleText));
 		expect(rawRender({ title: "toned", why: "w" })).toContain(theme.fg("accent", titleText));
+	});
+
+	it("wraps a 134-char why at width 80 so every visible row fits and the full text is present", () => {
+		const why =
+			"New version 5.0.0-0.beta.51 is available. Run bun add --cwd '/Users/bitcosgo/.bun/install/global/node_modules/omo-ai' -g omo-ai@beta x";
+		expect(why.length).toBe(134);
+
+		const rows = buildNoticeBox({ title: "Update Available", why }, { expanded: false }, theme).render(80);
+		expect(rows.length).toBeGreaterThan(0);
+		for (const row of rows) {
+			expect(visibleWidth(row)).toBeLessThanOrEqual(80);
+		}
+
+		const present = rows.map((row) => row.replace(ANSI_PATTERN, "").trim()).join(" ");
+		expect(present.replace(/\s+/g, " ")).toContain(why);
 	});
 });
 

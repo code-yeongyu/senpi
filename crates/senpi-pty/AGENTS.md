@@ -19,7 +19,7 @@ index.js, index.d.ts     Node package loader/types
 
 - `NATIVE_PTY_ABI_VERSION = "1"` in the TypeScript loader (`packages/pty/src/native-loader.ts`) and the exported `__senpiPtyAbi1` marker must agree; the Rust constant lives in `src/lib.rs`.
 - ABI versioning is intentionally separate from CalVer. Change it only for an incompatible native contract and update both crate and loader tests.
-- `index.js` and `index.d.ts` are NAPI-RS-generated loader output; never hand-edit them. Regenerate with `npm run build --workspace=@earendil-works/senpi-pty-native` (`napi build --platform`).
+- `index.js` and `index.d.ts` are NAPI-RS-generated loader output; never hand-edit them. Regenerate with `bun run build --workspace=@earendil-works/senpi-pty-native` (`napi build --platform`).
 - Keep the six targets declared in `package.json` aligned when changing exports or build paths. A checked-in `senpi_pty.darwin-arm64.node` prebuild covers the local darwin-arm64 fast path only; other targets come from prebuilt packaging, and missing native bindings intentionally use the TypeScript pipe fallback.
 
 ## LIFECYCLE INVARIANTS
@@ -44,5 +44,5 @@ index.js, index.d.ts     Node package loader/types
 ## VALIDATION
 
 - Run `cargo test -p senpi-pty` from the repository root.
-- Run package loader/ABI tests in `packages/pty` and `npm run check:prebuild` after native changes.
-- Native lifecycle changes require manual PTY QA on affected platforms plus root `npm run check`.
+- Run package loader/ABI tests in `packages/pty` and `bun run check:prebuild` after native changes.
+- Native lifecycle changes require manual PTY QA on affected platforms plus root `bun run check`.

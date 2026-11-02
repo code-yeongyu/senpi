@@ -134,6 +134,41 @@ describe("stream buffers", () => {
 		manager.resetBuffers();
 		expect(manager.checkDelta("dle", ctx())).toEqual([]);
 	});
+
+	it("caps each stream buffer to a tail window above the longest rule pattern", () => {
+		const manager = makeManager();
+		manager.addRule(makeRule("capped", { condition: ["needle-[0-9a-f]{8}"] }));
+		const cap = Math.max(1024, "needle-[0-9a-f]{8}".length * 4);
+		for (let i = 0; i < 100; i++) {
+			manager.checkDelta("x".repeat(200), ctx());
+		}
+		const lengths = manager.getStreamBufferLengths();
+		expect(lengths.get("text:main")).toBeDefined();
+		for (const length of lengths.values()) {
+			expect(length).toBeLessThanOrEqual(cap);
+		}
+	});
+
+	it("still matches a pattern whose match lands at the tail of the window", () => {
+		const manager = makeManager();
+		manager.addRule(makeRule("tail", { condition: ["needle-[0-9a-f]{8}"] }));
+		for (let i = 0; i < 100; i++) {
+			manager.checkDelta("x".repeat(200), ctx());
+		}
+		expect(manager.checkDelta("needle-1234", ctx())).toEqual([]);
+		expect(names(manager.checkDelta("abcd", ctx()))).toEqual(["tail"]);
+	});
+
+	it("clears the tail windows when a message completes", () => {
+		const manager = makeManager();
+		manager.addRule(makeRule("cleared"));
+		manager.checkDelta("nee", ctx());
+		manager.resetBuffers();
+		expect(manager.checkDelta("dle", ctx())).toEqual([]);
+		expect(manager.getStreamBufferLengths().size).toBe(1);
+		manager.resetBuffers();
+		expect(manager.getStreamBufferLengths().size).toBe(0);
+	});
 });
 
 describe("scope and glob gating", () => {

@@ -16,6 +16,7 @@ type EventListener = (data: unknown) => void;
 interface ToolResultLike {
 	content: Array<{ type: string; text?: string }>;
 	isError?: boolean;
+	details?: { bash_id?: string; monitor_id?: string };
 }
 
 interface ToolLike {
@@ -82,6 +83,7 @@ function createRunner(): FakeRunner {
 
 	const pi = {
 		registerTool: (tool: ToolLike) => tools.set(tool.name, tool),
+		registerMessageRenderer: () => {},
 		on: (eventType: string, handler: Handler) => {
 			const registered = handlers.get(eventType) ?? [];
 			registered.push(handler);
@@ -121,14 +123,10 @@ function createRunner(): FakeRunner {
 	};
 }
 
-function firstText(result: ToolResultLike | undefined): string {
-	return result?.content.find((block) => block.type === "text")?.text ?? "";
-}
-
 function extractBashId(result: ToolResultLike | undefined): string {
-	const match = /ID: (bash_\d+)/.exec(firstText(result));
-	if (!match?.[1]) throw new Error(`No bash id in tool result: ${firstText(result)}`);
-	return match[1];
+	const bashId = result?.details?.bash_id;
+	if (!bashId) throw new Error(`No bash id in tool result details: ${JSON.stringify(result?.details)}`);
+	return bashId;
 }
 
 function makeContext(cwd: string, sessionId: string): ExtensionContext {
@@ -192,7 +190,8 @@ describe("terminal wake source state", () => {
 			command: "cat",
 			persistent: true,
 		});
-		const bashId = extractBashId(started);
+		const monitorId = started?.details?.monitor_id;
+		expect(monitorId).toMatch(/^mon_/);
 
 		const legacy = runner.legacyMonitorStates.at(-1);
 		const channel = runner.channelStates.filter((state) => state.source === "terminal-monitors").at(-1);
@@ -200,7 +199,7 @@ describe("terminal wake source state", () => {
 		expect(channel).toEqual({
 			source: "terminal-monitors",
 			activeCount: legacy?.activeCount,
-			monitors: [{ id: bashId, description: "dual emit monitor", startedAtMs: expect.any(Number) }],
+			monitors: [{ id: monitorId, description: "dual emit monitor", startedAtMs: expect.any(Number) }],
 		});
 	});
 

@@ -130,13 +130,26 @@ describe("AuthStorage slot-preserving writes", () => {
 		expect(entry?.pinned).toBe("work");
 	});
 
-	test("set on a flat provider keeps today's whole-write shape", () => {
+	test("set on a flat provider promotes the legacy credential instead of overwriting it", () => {
 		writeAuthJson({ openai: { type: "api_key", key: "legacy-key" } });
 		const storage = AuthStorage.create(authJsonPath);
 
-		storage.set("openai", { type: "api_key", key: "replaced-key" });
+		storage.set("openai", { type: "api_key", key: "second-key" });
 
-		expect(readAuthJson().openai).toEqual({ type: "api_key", key: "replaced-key" });
+		const entry = readAuthJson().openai;
+		expect(entry?.accounts?.map((slot) => slot.name)).toEqual(["default", "login-2"]);
+		expect(entry?.accounts?.find((slot) => slot.name === "default")).toMatchObject({ key: "legacy-key" });
+		expect(entry?.accounts?.find((slot) => slot.name === "login-2")).toMatchObject({ key: "second-key" });
+		expect(entry).toMatchObject({ type: "api_key", key: "legacy-key" });
+	});
+
+	test("set without a stored credential still writes the flat credential as-is", () => {
+		writeAuthJson({});
+		const storage = AuthStorage.create(authJsonPath);
+
+		storage.set("openai", { type: "api_key", key: "first-key" });
+
+		expect(readAuthJson().openai).toEqual({ type: "api_key", key: "first-key" });
 	});
 
 	test("reading a flat credential never rewrites auth.json", () => {

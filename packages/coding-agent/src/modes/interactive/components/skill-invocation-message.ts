@@ -1,6 +1,6 @@
-import { Box, Markdown, type MarkdownTheme, Text } from "@earendil-works/pi-tui";
+import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Text } from "@earendil-works/pi-tui";
 import type { ParsedSkillBlock } from "../../../core/agent-session.ts";
-import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
 
 /**
@@ -13,11 +13,16 @@ export class SkillInvocationMessageComponent extends Box {
 	private skillBlock: ParsedSkillBlock;
 	private markdownTheme: MarkdownTheme;
 
-	constructor(skillBlock: ParsedSkillBlock, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
+	constructor(skillBlock: ParsedSkillBlock, markdownTheme: MarkdownTheme = sharedMarkdownTheme()) {
 		super(1, 1, (t) => theme.bg("customMessageBg", t));
 		this.skillBlock = skillBlock;
 		this.markdownTheme = markdownTheme;
 		this.updateDisplay();
+	}
+
+	/** Rendered entirely by children that this class rebuilds on every state change. */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
 	}
 
 	setExpanded(expanded: boolean): void {
@@ -32,24 +37,34 @@ export class SkillInvocationMessageComponent extends Box {
 
 	private updateDisplay(): void {
 		this.clear();
+		const content = new Container();
 
 		if (this.expanded) {
-			// Expanded: label + skill name header + full content
+			// Expanded: label + one name header and body per invoked skill
 			const label = theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m`);
-			this.addChild(new Text(label, 0, 0));
-			const header = `**${this.skillBlock.name}**\n\n`;
-			this.addChild(
-				new Markdown(header + this.skillBlock.content, 0, 0, this.markdownTheme, {
+			content.addChild(new Text(label, 0, 0));
+			const body = this.skillBlock.skills.map((skill) => `**${skill.name}**\n\n${skill.content}`).join("\n\n");
+			content.addChild(
+				new Markdown(body, 0, 0, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}),
 			);
 		} else {
-			// Collapsed: single line - [skill] name (hint to expand)
+			// Collapsed: single line - [skill] names (hint to expand)
+			const names = this.skillBlock.skills.map((skill) => skill.name).join(", ");
 			const line =
 				theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m `) +
-				theme.fg("customMessageText", this.skillBlock.name) +
+				theme.fg("customMessageText", names) +
 				theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`);
-			this.addChild(new Text(line, 0, 0));
+			content.addChild(new Text(line, 0, 0));
 		}
+
+		this.addChild(
+			new MouseRegion(content, (event) => {
+				if (event.type !== "click" || event.button !== "left") return undefined;
+				this.setExpanded(!this.expanded);
+				return { handled: true };
+			}),
+		);
 	}
 }

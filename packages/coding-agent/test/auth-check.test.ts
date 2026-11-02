@@ -62,27 +62,27 @@ describe("auth check command", () => {
 		);
 
 		const credentials = AuthStorage.inMemory({
-			"openai-codex": { type: "oauth", access: "old-token", refresh: "refresh-token", expires: 0 },
+			"chatgpt-subscription": { type: "oauth", access: "old-token", refresh: "refresh-token", expires: 0 },
 		});
 		const oauthRuntime = await createRuntime(credentials);
-		const oauth = oauthRuntime.getProvider("openai-codex")?.auth.oauth;
-		if (!oauth) throw new Error("OpenAI Codex OAuth provider is not registered");
+		const oauth = oauthRuntime.getProvider("chatgpt-subscription")?.auth.oauth;
+		if (!oauth) throw new Error("ChatGPT Subscription OAuth provider is not registered");
 		const refresh = vi.fn(oauth.refresh);
 		oauth.refresh = refresh;
 
-		await expect(getProviderCredential("openai-codex", oauthRuntime, credentials, { refresh: false })).resolves.toBe(
-			"old-token",
-		);
+		await expect(
+			getProviderCredential("chatgpt-subscription", oauthRuntime, credentials, { refresh: false }),
+		).resolves.toBe("old-token");
 		expect(refresh).not.toHaveBeenCalled();
 	});
 
 	test("refreshes OAuth by default", async () => {
 		const credentials = AuthStorage.inMemory({
-			"openai-codex": { type: "oauth", access: "old-token", refresh: "refresh-token", expires: 0 },
+			"chatgpt-subscription": { type: "oauth", access: "old-token", refresh: "refresh-token", expires: 0 },
 		});
 		const runtime = await createRuntime(credentials);
-		const oauth = runtime.getProvider("openai-codex")?.auth.oauth;
-		if (!oauth) throw new Error("OpenAI Codex OAuth provider is not registered");
+		const oauth = runtime.getProvider("chatgpt-subscription")?.auth.oauth;
+		if (!oauth) throw new Error("ChatGPT Subscription OAuth provider is not registered");
 		const refresh = vi.fn(async () => ({
 			type: "oauth" as const,
 			access: "fresh-token",
@@ -92,7 +92,7 @@ describe("auth check command", () => {
 		oauth.refresh = refresh;
 
 		await expect(
-			checkProviderAuth(parseArgs(["--provider", "openai-codex"]), runtime, { refresh: true }),
+			checkProviderAuth(parseArgs(["--provider", "chatgpt-subscription"]), runtime, { refresh: true }),
 		).resolves.toMatchObject({
 			status: "ready",
 		});

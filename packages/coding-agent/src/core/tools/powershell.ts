@@ -50,10 +50,16 @@ export function createPowerShellToolDefinition(
 	cwd: string,
 	options?: PowerShellToolOptions,
 ): ReturnType<typeof createShellToolDefinition> {
-	return createShellToolDefinition(cwd, powershellToolConfig, {
+	// The default PowerShell operations are local, not caller-injected: only a caller's own operations pin the tool.
+	const { serverPinned: _defaultOperationsPin, ...definition } = createShellToolDefinition(cwd, powershellToolConfig, {
 		...options,
 		operations: options?.operations ?? createLocalPowerShellOperations(),
 	});
+	return {
+		...definition,
+		...(options?.operations !== undefined || options?.spawnHook !== undefined ? { serverPinned: true } : {}),
+		exposure: "eval",
+	};
 }
 
 export function createPowerShellTool(cwd: string, options?: PowerShellToolOptions): ReturnType<typeof createBashTool> {

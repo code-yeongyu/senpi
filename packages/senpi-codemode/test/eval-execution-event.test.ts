@@ -1,10 +1,10 @@
-import type { AgentToolResult, ExtensionContext } from "@code-yeongyu/senpi";
+import type { AgentToolResult, ExtensionToolContext } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { EVAL_EXECUTION_EVENT, type EvalExecutionEventPayload } from "../src/tool/eval-execution-event.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
-import type { ExecuteTool } from "../src/tool/types.ts";
+import type { EvalKernelRunInput, ExecuteTool } from "../src/tool/types.ts";
 import { Deferred, errorResult, FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
 afterEach(() => {
@@ -16,22 +16,29 @@ type SerialResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
 
 class SerialFakeKernel extends FakeKernel {
 	readonly #serialMessages: KernelToHostMessage[];
+	#reply = new Deferred<void>();
 	constructor(messages: KernelToHostMessage[]) {
 		super(messages);
 		this.#serialMessages = messages;
 	}
 	/** Emits tool-calls one at a time, waiting for each host reply — deterministic per-call wall-clock durations. */
-	async run(input: { cellId: string; code: string; timeoutMs?: number }): Promise<SerialResultMessage> {
+	async run(input: EvalKernelRunInput): Promise<SerialResultMessage> {
 		this.runs.push(input);
+		input.onStarted?.();
 		for (const message of this.#serialMessages) {
 			if (message.type !== "tool-call") continue;
-			const repliesBefore = this.replies.length;
-			this.onMessage?.(message);
-			while (this.replies.length === repliesBefore) await Promise.resolve();
+			this.#reply = new Deferred<void>();
+			(input.onMessage ?? this.onMessage)?.(message);
+			await this.#reply.promise;
 		}
 		const settled = this.#serialMessages.find((message): message is SerialResultMessage => message.type === "result");
 		if (!settled) throw new Error("fake kernel missing result");
 		return settled;
+	}
+
+	override deliverToolReply(message: unknown): void {
+		super.deliverToolReply(message);
+		this.#reply.resolve(undefined);
 	}
 }
 
@@ -55,7 +62,7 @@ function createTool(
 	});
 }
 
-function interactiveContext(): ExtensionContext {
+function interactiveContext(): ExtensionToolContext {
 	return { ...fakeExtensionContext(), mode: "tui" };
 }
 
@@ -96,6 +103,7 @@ describe("eval execution event contract", () => {
 			startedAt: 1_000,
 			completedAt: 1_018,
 			durationMs: 18,
+			queued_ms: 0,
 			kernelDurationMs: 99,
 			detached: false,
 			toolCallCount: 2,

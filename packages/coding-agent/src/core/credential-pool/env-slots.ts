@@ -1,4 +1,4 @@
-import { getApiKeyEnvVars } from "@earendil-works/pi-ai";
+import { apiKeyEnvProviders, getApiKeyEnvVars, normalizeProviderId } from "@earendil-works/pi-ai";
 
 export const MAX_ENV_SLOT_INDEX = 16;
 
@@ -15,10 +15,28 @@ export type EnvCredentialSlot = {
  * canonical mapping lists several variables.
  */
 export function primaryEnvVar(providerId: string): string | undefined {
-	if (providerId === "claude-sdk-oauth") return "CLAUDE_CODE_OAUTH_TOKEN";
+	// Read boundary (senpi#1989): a caller may still pass the legacy provider id,
+	// so compare normalized. CLAUDE_CODE_OAUTH_TOKEN is a frozen env-var name and
+	// is deliberately unchanged.
+	if (normalizeProviderId(providerId) === "anthropic-subscription") return "CLAUDE_CODE_OAUTH_TOKEN";
 	const envVars = getApiKeyEnvVars(providerId);
 	if (!envVars || envVars.length === 0) return undefined;
 	return envVars.find((name) => name.endsWith("_API_KEY")) ?? envVars[0];
+}
+
+/**
+ * Every name `discoverEnvSlots` can read, for every provider that has env slots: the primary
+ * variable and `<VAR>_2` .. `<VAR>_16`. Names only, never values.
+ */
+export function envSlotVarNames(): readonly string[] {
+	const names = new Set<string>();
+	for (const provider of [...apiKeyEnvProviders(), "anthropic-subscription"]) {
+		const primary = primaryEnvVar(provider);
+		if (!primary) continue;
+		names.add(primary);
+		for (let index = 2; index <= MAX_ENV_SLOT_INDEX; index++) names.add(`${primary}_${index}`);
+	}
+	return [...names];
 }
 
 /**

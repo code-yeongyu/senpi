@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import mcpExtension from "../../src/core/extensions/builtin/mcp/index.ts";
@@ -127,7 +127,7 @@ async function promptAndCaptureSystemPrompt(harness: Harness): Promise<string> {
 	let systemPrompt = "";
 	harness.setResponses([
 		(context) => {
-			systemPrompt = context.systemPrompt ?? "";
+			systemPrompt = getCurrentSystemPrompt(context.messages);
 			return fauxAssistantMessage("done");
 		},
 	]);

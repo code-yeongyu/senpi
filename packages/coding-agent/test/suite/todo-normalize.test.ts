@@ -31,7 +31,7 @@ describe("normalizeTodoParams", () => {
 		] as const)("rejects a blank %s %s target", (op, field) => {
 			const raw: Record<string, unknown> = { op, [field]: " \t " };
 			expect(expectError(raw)).toBe(
-				`Blank "${field}" — pass the exact ${field} text, or omit the field entirely for a bulk operation.`,
+				`Blank "${field}": pass the exact ${field} text, or omit the field entirely for a bulk operation.`,
 			);
 		});
 
@@ -306,19 +306,19 @@ describe("normalizeTodoParams rm both-blank padding", () => {
 
 	it.each(["start", "done", "drop"] as const)("still rejects %s with both targets blank", (op) => {
 		expect(expectError({ op, task: "", phase: "" })).toBe(
-			'Blank "task" — pass the exact task text, or omit the field entirely for a bulk operation.',
+			'Blank "task": pass the exact task text, or omit the field entirely for a bulk operation.',
 		);
 	});
 
 	it("still rejects rm with only the task blank", () => {
 		expect(expectError({ op: "rm", task: "" })).toBe(
-			'Blank "task" — pass the exact task text, or omit the field entirely for a bulk operation.',
+			'Blank "task": pass the exact task text, or omit the field entirely for a bulk operation.',
 		);
 	});
 
 	it("still rejects rm with only the phase blank", () => {
 		expect(expectError({ op: "rm", phase: " " })).toBe(
-			'Blank "phase" — pass the exact phase text, or omit the field entirely for a bulk operation.',
+			'Blank "phase": pass the exact phase text, or omit the field entirely for a bulk operation.',
 		);
 	});
 });

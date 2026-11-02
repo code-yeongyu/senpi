@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import type { ExtensionRunner } from "../extensions/runner.ts";
 import type { SessionBeforeCompactResult } from "../extensions/types.ts";
@@ -20,7 +21,7 @@ import {
 } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
 import type { CompactionPreparation } from "./compaction.ts";
-import { completeSummarization, estimateTokens } from "./compaction.ts";
+import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction.ts";
 import {
 	computeFileLists,
 	contentTextForSummary,
@@ -90,7 +91,7 @@ export interface GenerateBranchSummaryOptions {
 	customInstructions?: string;
 	/** If true, customInstructions replaces the default prompt instead of being appended */
 	replaceInstructions?: boolean;
-	/** Tokens reserved for prompt + LLM response (default 16384) */
+	/** Tokens reserved when selecting branch history (default 16384) */
 	reserveTokens?: number;
 	/** Extension runner used to emit session_before_compact for branch summaries */
 	extensionRunner?: ExtensionRunner;
@@ -408,20 +409,23 @@ export async function generateBranchSummary(
 		},
 	];
 
+	const maxTokens = Math.min(4096, model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY);
+
 	// Call LLM for summarization. Prefer the session stream function so SDK
 	// request behavior (timeouts, retries, attribution headers) stays consistent
 	// without running through agent state/events. Retried via completeSummarization
 	// so transient stream drops reuse the configured retry policy.
-	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
-	const requestOptions: BranchSummaryStreamOptions = { apiKey, headers, extraBody, env, signal, maxTokens: 2048 };
+	const context = normalizeContext({ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages });
+	const requestOptions: BranchSummaryStreamOptions = { apiKey, headers, extraBody, env, signal, maxTokens };
 	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks);
 
 	// Check if aborted or errored
 	if (response.stopReason === "aborted") {
 		return { aborted: true };
 	}
-	if (response.stopReason === "error") {
-		return { error: response.errorMessage || "Summarization failed" };
+	const failure = getSummarizationFailure(response, "Branch summarization");
+	if (failure) {
+		return { error: failure };
 	}
 	if (response.content.some((block) => block.type === "toolCall")) {
 		return { error: "Branch summarization attempted to call a tool" };

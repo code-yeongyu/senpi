@@ -65,10 +65,16 @@ describe("createEvalTool interrupt handling", () => {
 		manager.acquired.resolve(kernel);
 	});
 
-	it("preempts reset when the configured deadline expires", async () => {
+	it("preempts a queued reset at its submission-time hard limit without interrupting a cell", async () => {
 		vi.useFakeTimers();
 		const kernel = new DelayedResetKernel([result("cell-reset-timeout", "must not run")]);
-		const tool = createTool(new FakeManager([["js", kernel]]));
+		const tool = createEvalTool({
+			enabledLanguages: { js: true, py: false, rb: false, jl: false },
+			kernelManager: new FakeManager([["js", kernel]]),
+			cellTimeoutSeconds: 30,
+			hardLimitSeconds: 1,
+			executeTool: vi.fn(),
+		});
 		const execution = tool.execute(
 			"cell-reset-timeout",
 			{ language: "js", code: "1", reset: true, timeout: 1, summary: "reset timeout" },
@@ -86,9 +92,9 @@ describe("createEvalTool interrupt handling", () => {
 
 		await expect(outcome).resolves.toMatchObject({
 			status: "rejected",
-			reason: { name: "TimeoutError", message: expect.stringContaining("Cell timed out after 1000ms") },
+			reason: { name: "TimeoutError", message: expect.stringContaining("1s hard limit") },
 		});
-		expect(kernel.interrupts).toEqual(["Cell timed out after 1000ms"]);
+		expect(kernel.interrupts).toEqual([]);
 		expect(kernel.runs).toEqual([]);
 		kernel.resetReleased.resolve(undefined);
 	});
@@ -264,7 +270,12 @@ describe("createEvalTool interrupt handling", () => {
 		);
 
 		expect(kernel.runs).toEqual([
-			{ cellId: "cell-timeout-status", code: "await tool.slow({})", timeoutMs: undefined },
+			{
+				cellId: "cell-timeout-status",
+				code: "await tool.slow({})",
+				onStarted: expect.any(Function),
+				onMessage: expect.any(Function),
+			},
 		]);
 		expect(kernel.interrupts).toEqual([]);
 		expect(toolResult.details.statusEvents).toEqual([{ op: "read", path: "/tmp/example.ts" }]);

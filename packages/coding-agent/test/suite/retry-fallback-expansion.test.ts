@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { canonicalizeFallbackChains } from "../../src/core/retry-fallback/chains.ts";
-import { DEFAULT_FALLBACK_CHAINS, resolveRetryFallbackSettings } from "../../src/core/retry-fallback/settings.ts";
+import { resolveRetryFallbackSettings } from "../../src/core/retry-fallback/settings.ts";
 
 function model(provider: string, id: string): Model<Api> {
 	return {
@@ -20,8 +20,14 @@ function model(provider: string, id: string): Model<Api> {
 }
 
 const FABLE = "claude-fable-5";
+const FABLE51 = "claude-fable-5-1";
 const OPUS5 = "claude-opus-5";
 const OPUS48 = "claude-opus-4-8";
+
+const EXPLICIT_FALLBACK_CHAINS = {
+	[FABLE51]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
+	[FABLE]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
+};
 
 /** Registry stand-in: `oauthProviders` marks which providers hold an OAuth credential. */
 function lookup(models: Model<Api>[], oauthProviders: string[] = [], unauthenticated: string[] = []) {
@@ -36,10 +42,23 @@ function lookup(models: Model<Api>[], oauthProviders: string[] = [], unauthentic
 	};
 }
 
+describe("bare fallback expansion provider policy", () => {
+	it("excludes Cursor and other non-first-party models from bare fallback candidates", () => {
+		const cursorKimi = model("cursor", "kimi-k3");
+		const apitopiaKimi = model("apitopia", "kimi-k3");
+		const moonshotKimi = model("moonshotai", "kimi-k3");
+		const resolved = canonicalizeFallbackChains(
+			{ "openai/gpt-5.4": ["kimi-k3:max"] },
+			lookup([model("openai", "gpt-5.4"), cursorKimi, apitopiaKimi, moonshotKimi], ["cursor", "apitopia"]),
+		);
+		expect(resolved["openai/gpt-5.4"]).toEqual(["moonshotai/kimi-k3:max"]);
+	});
+});
+
 const sdkAndAnthropic = [
-	model("claude-sdk-oauth", FABLE),
-	model("claude-sdk-oauth", OPUS5),
-	model("claude-sdk-oauth", OPUS48),
+	model("anthropic-subscription", FABLE),
+	model("anthropic-subscription", OPUS5),
+	model("anthropic-subscription", OPUS48),
 	model("anthropic", FABLE),
 	model("anthropic", OPUS5),
 	model("anthropic", OPUS48),
@@ -48,55 +67,58 @@ const sdkAndAnthropic = [
 ];
 
 describe("bare model-id family expansion", () => {
-	it("ships a provider-agnostic default chain with bare model ids", () => {
-		expect(DEFAULT_FALLBACK_CHAINS).toEqual({
+	it("expands an explicitly configured provider-agnostic chain with bare model ids", () => {
+		expect(EXPLICIT_FALLBACK_CHAINS).toEqual({
+			[FABLE51]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
 			[FABLE]: ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
-			// Last-resort lane for models with no chain of their own.
-			"*": ["k3:max", "kimi-k3:max", `${OPUS5}:xhigh`, `${OPUS48}:xhigh`],
 		});
 	});
 
-	it("expands the shipped kimi-k3 alias to providers that expose the model as kimi-k3", () => {
-		// Issue #793: OpenCode Go serves Kimi K3 as `kimi-k3`, which the bare `k3`
-		// family cannot match; the shipped chain carries an explicit alias entry.
-		const registry = [...sdkAndAnthropic, model("opencode-go", "kimi-k3")];
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(registry));
+	it("reaches a reseller's kimi-k3 only through a selector that names it", () => {
+		// Issue #793: OpenCode Go serves Kimi K3 as `kimi-k3`. It resells Moonshot's
+		// model, so the bare alias stays on Moonshot's own lanes and the user names
+		// OpenCode Go explicitly to route there.
+		const registry = [...sdkAndAnthropic, model("opencode-go", "kimi-k3"), model("moonshotai", "kimi-k3")];
+		const bare = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(registry));
+		const named = canonicalizeFallbackChains({ [FABLE]: ["opencode-go/kimi-k3:max"] }, lookup(registry));
 
-		expect(chains[`anthropic/${FABLE}`]).toContain("opencode-go/kimi-k3:max");
+		expect(bare[`anthropic/${FABLE}`]).toContain("moonshotai/kimi-k3:max");
+		expect(bare[`anthropic/${FABLE}`]).not.toContain("opencode-go/kimi-k3:max");
+		expect(named[`anthropic/${FABLE}`]).toEqual(["opencode-go/kimi-k3:max"]);
 	});
 
 	it("expands a bare key into one canonical key per serving provider", () => {
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
 
-		expect(Object.keys(chains).sort()).toEqual(["*", `anthropic/${FABLE}`, `claude-sdk-oauth/${FABLE}`]);
+		expect(Object.keys(chains).sort()).toEqual([`anthropic-subscription/${FABLE}`, `anthropic/${FABLE}`]);
 	});
 
 	it("ranks OAuth-credential providers ahead of API-key providers for bare candidates", () => {
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(sdkAndAnthropic, ["anthropic"]));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic, ["anthropic"]));
 
 		// anthropic holds the OAuth credential here, so it outranks the sdk provider
-		// even though the tie-break table would otherwise prefer claude-sdk-oauth.
-		expect(chains[`claude-sdk-oauth/${FABLE}`]?.slice(0, 3)).toEqual([
+		// even though the tie-break table would otherwise prefer anthropic-subscription.
+		expect(chains[`anthropic-subscription/${FABLE}`]?.slice(0, 3)).toEqual([
 			"kimi-coding/k3:max",
 			`anthropic/${OPUS5}:xhigh`,
-			`claude-sdk-oauth/${OPUS5}:xhigh`,
+			`anthropic-subscription/${OPUS5}:xhigh`,
 		]);
 	});
 
 	it("breaks ties with the fixed provider table when no provider holds OAuth", () => {
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
 
 		expect(chains[`anthropic/${FABLE}`]).toEqual([
 			"kimi-coding/k3:max",
-			`claude-sdk-oauth/${OPUS5}:xhigh`,
+			`anthropic-subscription/${OPUS5}:xhigh`,
 			`anthropic/${OPUS5}:xhigh`,
-			`claude-sdk-oauth/${OPUS48}:xhigh`,
+			`anthropic-subscription/${OPUS48}:xhigh`,
 			`anthropic/${OPUS48}:xhigh`,
 		]);
 	});
 
 	it("keeps model-major ordering so every provider for one model precedes the next model", () => {
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
 		const entries = chains[`anthropic/${FABLE}`] ?? [];
 		const lastOpus5 = entries.findLastIndex((entry) => entry.includes(OPUS5));
 		const firstOpus48 = entries.findIndex((entry) => entry.includes(OPUS48));
@@ -105,36 +127,46 @@ describe("bare model-id family expansion", () => {
 	});
 
 	it("prefers the exact model id over a longer family variant inside one provider", () => {
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(sdkAndAnthropic));
 
 		expect(chains[`anthropic/${FABLE}`]?.[0]).toBe("kimi-coding/k3:max");
 		expect(chains[`anthropic/${FABLE}`]).not.toContain("kimi-coding/k3-256k:max");
 	});
 
 	it("matches namespaced provider ids by family without substring false positives", () => {
+		// A vendor with no first-party entry stays on the session's provider, so a
+		// re-host serving it under namespaced ids still matches the bare family.
+		const models = [
+			model("acme-cloud", "global.acme.coder-5"),
+			model("acme-cloud", "global.acme.coder-4"),
+			model("other", "not-coder-5"),
+		];
+		const chains = canonicalizeFallbackChains({ "coder-5": ["coder-4:xhigh"] }, lookup(models));
+
+		expect(Object.keys(chains).sort()).toEqual(["acme-cloud/global.acme.coder-5"]);
+		expect(chains["acme-cloud/global.acme.coder-5"]).toEqual(["acme-cloud/global.acme.coder-4:xhigh"]);
+	});
+
+	it("never expands a bare Claude selector onto a cloud re-host", () => {
 		const models = [
 			model("amazon-bedrock", `global.anthropic.${FABLE}`),
 			model("amazon-bedrock", `global.anthropic.${OPUS5}`),
-			model("other", `not-${FABLE}`),
 		];
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(models));
 
-		expect(Object.keys(chains).sort()).toEqual(["*", `amazon-bedrock/global.anthropic.${FABLE}`]);
-		expect(chains[`amazon-bedrock/global.anthropic.${FABLE}`]).toEqual([
-			`amazon-bedrock/global.anthropic.${OPUS5}:xhigh`,
-		]);
+		expect(canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(models))).toEqual({});
 	});
 
-	it("never expands a bare selector onto openrouter", () => {
+	// Issue #2774: gateway credentials do not authorize implicit provider switches.
+	it.each(["openrouter", "opengateway", "vercel-ai-gateway"])("never expands a bare selector onto %s", (provider) => {
 		const models = [
-			model("openrouter", `anthropic/${FABLE}`),
-			model("openrouter", `anthropic/${OPUS5}`),
+			model(provider, `anthropic/${FABLE}`),
+			model(provider, `anthropic/${OPUS5}`),
 			model("anthropic", FABLE),
 			model("anthropic", OPUS5),
 		];
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(models));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(models));
 
-		expect(Object.keys(chains).sort()).toEqual(["*", `anthropic/${FABLE}`]);
+		expect(Object.keys(chains).sort()).toEqual([`anthropic/${FABLE}`]);
 		expect(chains[`anthropic/${FABLE}`]).toEqual([`anthropic/${OPUS5}:xhigh`]);
 	});
 
@@ -148,8 +180,24 @@ describe("bare model-id family expansion", () => {
 		expect(chains).toEqual({ [`anthropic/${FABLE}`]: ["openrouter/qwen/qwen3-coder:exacto:max"] });
 	});
 
+	it.each(["opengateway", "vercel-ai-gateway"])("preserves explicit %s keys and entries", (provider) => {
+		const source = `${provider}/anthropic/${FABLE}`;
+		const target = `${provider}/anthropic/${OPUS5}:max`;
+		const models = [
+			model("anthropic", FABLE),
+			model(provider, `anthropic/${FABLE}`),
+			model(provider, `anthropic/${OPUS5}`),
+		];
+		const chains = canonicalizeFallbackChains(
+			{ [source]: [target], [`anthropic/${FABLE}`]: [target] },
+			lookup(models),
+		);
+
+		expect(chains).toEqual({ [source]: [target], [`anthropic/${FABLE}`]: [target] });
+	});
+
 	it("drops a bare key whose family no provider serves", () => {
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup([model("openai", "gpt-5.4")]));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup([model("openai", "gpt-5.4")]));
 
 		expect(chains).toEqual({});
 	});
@@ -167,17 +215,14 @@ describe("bare-key opt-out tombstones", () => {
 	it("removes the shipped default when the user empties the bare key", () => {
 		const resolved = resolveRetryFallbackSettings({ fallbackChains: { [FABLE]: [] } });
 
-		// The per-model chain is gone; the wildcard lane survives as its own key.
-		// hasExplicitFallbackOptOut keeps that lane from resurrecting fallback for
-		// the tombstoned model itself (see retry-fallback-chains.test.ts).
-		expect(Object.keys(canonicalizeFallbackChains(resolved.chains, lookup(sdkAndAnthropic)))).toEqual(["*"]);
+		expect(Object.keys(canonicalizeFallbackChains(resolved.chains, lookup(sdkAndAnthropic)))).toEqual([]);
 	});
 
 	it("removes only one provider variant when the user empties a canonical key", () => {
 		const resolved = resolveRetryFallbackSettings({ fallbackChains: { [`anthropic/${FABLE}`]: [] } });
 		const chains = canonicalizeFallbackChains(resolved.chains, lookup(sdkAndAnthropic));
 
-		expect(Object.keys(chains).sort()).toEqual(["*", `claude-sdk-oauth/${FABLE}`]);
+		expect(Object.keys(chains).sort()).toEqual([`anthropic-subscription/${FABLE}`]);
 	});
 
 	it("lets an explicit canonical chain override the expanded default for that provider only", () => {
@@ -187,14 +232,18 @@ describe("bare-key opt-out tombstones", () => {
 		const chains = canonicalizeFallbackChains(resolved.chains, lookup(sdkAndAnthropic));
 
 		expect(chains[`anthropic/${FABLE}`]).toEqual([`anthropic/${OPUS48}:max`]);
-		expect(chains[`claude-sdk-oauth/${FABLE}`]?.[0]).toBe("kimi-coding/k3:max");
+		// The other provider variant keeps the shipped ladder, expanded OAuth-tier first.
+		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([
+			`anthropic-subscription/${OPUS5}`,
+			`anthropic/${OPUS5}`,
+		]);
 	});
 });
 
 describe("expansion stays scoped to models the user can actually use", () => {
 	const catalog = [
-		model("claude-sdk-oauth", FABLE),
-		model("claude-sdk-oauth", OPUS5),
+		model("anthropic-subscription", FABLE),
+		model("anthropic-subscription", OPUS5),
 		model("anthropic", FABLE),
 		model("anthropic", OPUS5),
 		model("github-copilot", FABLE),
@@ -208,7 +257,7 @@ describe("expansion stays scoped to models the user can actually use", () => {
 
 	it("prefers authenticated providers over unauthenticated ones for bare candidates", () => {
 		const unauthenticated = ["github-copilot", "opencode", "cloudflare-ai-gateway"];
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(catalog, [], unauthenticated));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(catalog, [], unauthenticated));
 
 		// Ranking, never filtering: an unauthenticated provider must not outrank a
 		// configured one, but the chain still exists when availability is unknown.
@@ -221,7 +270,7 @@ describe("expansion stays scoped to models the user can actually use", () => {
 
 	it("still expands when no provider reports configured auth yet", () => {
 		const chains = canonicalizeFallbackChains(
-			DEFAULT_FALLBACK_CHAINS,
+			EXPLICIT_FALLBACK_CHAINS,
 			lookup(
 				catalog,
 				[],
@@ -233,7 +282,7 @@ describe("expansion stays scoped to models the user can actually use", () => {
 	});
 
 	it("caps how many providers one bare candidate fans out to", () => {
-		const chains = canonicalizeFallbackChains(DEFAULT_FALLBACK_CHAINS, lookup(catalog));
+		const chains = canonicalizeFallbackChains(EXPLICIT_FALLBACK_CHAINS, lookup(catalog));
 		const entries = chains[`anthropic/${FABLE}`] ?? [];
 		const opus5Providers = entries.filter((entry) => entry.includes(OPUS5));
 

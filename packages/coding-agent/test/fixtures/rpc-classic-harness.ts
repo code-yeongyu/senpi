@@ -173,8 +173,11 @@ export async function createFakeRuntimeHost(options: CreateHostOptions): Promise
 	// telling the connection handler to re-read it, so every rebind pin would
 	// observe the stale identity.
 	let rebind: ((session: AgentSession) => Promise<void>) | undefined;
+	// Like the real runtime, replacement listeners run against the outgoing session before it is swapped.
+	const replaceListeners = new Set<() => void>();
 	const swap = async (): Promise<void> => {
 		if (!secondary) return;
+		for (const listener of [...replaceListeners]) listener();
 		live = secondary.session;
 		await rebind?.(live);
 	};
@@ -197,6 +200,10 @@ export async function createFakeRuntimeHost(options: CreateHostOptions): Promise
 		dispose: vi.fn(async () => {}),
 		setRebindSession: vi.fn((callback?: (session: AgentSession) => Promise<void>) => {
 			rebind = callback;
+		}),
+		onBeforeSessionReplace: vi.fn((listener: () => void) => {
+			replaceListeners.add(listener);
+			return () => replaceListeners.delete(listener);
 		}),
 	} as unknown as AgentSessionRuntime;
 

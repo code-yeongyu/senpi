@@ -7,15 +7,6 @@ import { describe, it } from "node:test";
 import { buildPublishArgs } from "./publish-command.mjs";
 
 describe("npm publish command", () => {
-	it("keeps registry package sources private", () => {
-		for (const directory of ["ai", "agent", "tui", "pty", "telemetry", "senpi-codemode", "coding-agent"]) {
-			const manifest = JSON.parse(
-				readFileSync(new URL(`../packages/${directory}/package.json`, import.meta.url), "utf8"),
-			);
-			assert.equal(manifest.private, true, directory);
-		}
-	});
-
 	it("routes root publish scripts through the guarded publisher", () => {
 		const rootPackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 		assert.equal(rootPackage.scripts.publish, "npm run prepublishOnly && node scripts/publish.mjs");

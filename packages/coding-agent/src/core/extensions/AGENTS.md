@@ -9,8 +9,9 @@ extensions/
 ├── types.ts             # Public API: ExtensionAPI, Extension, ExtensionContext, ExtensionUIContext,
 │                        # ExtensionEvent union (30+ events), all *EventResult types, ToolDefinition.
 │                        # ~2367 LOC — VERY HIGH merge-conflict risk on every upstream sync.
-├── loader.ts            # Discovery + jiti-based TS import. Shared importer per `loadExtensions()` batch
-│                        # (perf fix 2026-05-08). Aliases `@mariozechner/pi-*` → workspace packages.
+├── loader.ts            # Discovery + TS import (native Bun importer, lazy jiti on Node).
+│                        # Aliases `@mariozechner/pi-*` → workspace packages.
+├── extension-module-cache.ts # One live module generation + its factories, keyed by source fingerprint
 ├── runner.ts            # ExtensionRunner — owns the runtime, dispatches events, holds shutdown handlers,
 │                        # exposes `bindCore()` to wire `pi.*` stubs to real implementations.
 ├── wrapper.ts           # 30-line wrapper utility used to track extension origin per UI message
@@ -52,7 +53,8 @@ extensions/
 - **Event handlers can return values** that the runner uses — see `model_select` returning `ModelSelectEventResult` (2026-04-30) and `session_before_compact` returning a snapshot.
 - **Extension factories are pure**: no top-level side effects, no fs reads, no environment captures. All side effects belong inside `pi.on("session_start", …)`.
 - **`bindCore()` is privileged**: only the host (senpi `agent-session.ts` or interactive-mode shortcut path) may call it. Extensions consume the bound API only.
-- **Shared jiti importer** per `loadExtensions()` call — preserve `moduleCache: false` so reloads see fresh source, but reuse the importer to avoid multi-second per-extension TS resolution cost.
+- **One module generation per source version, not per load** (`extension-module-cache.ts`, senpi#1948): every `loadExtensions()` shares the live importer and its compiled factories while every source file that generation compiled is unchanged; a changed or deleted file drops the generation so the next load recompiles. A module registry cannot evict, so compiling per load leaks the whole graph per session on a multi-session host. The Node jiti path keeps `moduleCache: false` and is never cached, because it cannot report the files it compiled.
+- **Factories run per load even on a cache hit** — module scope is shared, extension instances are not.
 
 ## ANTI-PATTERNS
 

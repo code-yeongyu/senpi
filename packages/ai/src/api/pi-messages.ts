@@ -13,7 +13,8 @@ import type {
 	AssistantMessage,
 	AssistantMessageEvent,
 	CacheRetention,
-	Context,
+	JsonObject,
+	JsonValue,
 	Model,
 	ProviderEnv,
 	SimpleStreamOptions,
@@ -21,6 +22,7 @@ import type {
 	StreamOptions,
 	ThinkingLevel,
 	ToolCall,
+	TranscriptContext,
 } from "../types.ts";
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -71,6 +73,7 @@ export type PiMessagesEvent =
 			reason: Extract<PiMessagesStopReason, "stop" | "length" | "toolUse">;
 			usage: PiMessagesUsage;
 			responseId?: string;
+			providerThinkingLevel?: string;
 			rewrite?: PiMessagesRewriteImpact;
 	  }
 	| {
@@ -79,6 +82,7 @@ export type PiMessagesEvent =
 			usage: PiMessagesUsage;
 			errorMessage?: string;
 			responseId?: string;
+			providerThinkingLevel?: string;
 			rewrite?: PiMessagesRewriteImpact;
 	  };
 
@@ -93,14 +97,20 @@ type PiMessagesErrorBody = {
 
 export class PiMessagesResponseError extends Error {
 	code?: string;
-	readonly diagnosticDetails: Record<string, unknown>;
+	readonly diagnosticDetails: JsonObject;
 
-	constructor(message: string, code: string | undefined, diagnosticDetails: Record<string, unknown>) {
+	constructor(message: string, code: string | undefined, diagnosticDetails: JsonObject) {
 		super(message);
 		this.name = "PiMessagesResponseError";
 		this.code = code;
 		this.diagnosticDetails = diagnosticDetails;
 	}
+}
+
+/** `promptCacheBreakpoint` is a request-local hint for adapters that place cache breakpoints; it is not part of the pi-messages wire. */
+function withoutPromptCacheBreakpoint(message: AssistantMessage): AssistantMessage {
+	const { promptCacheBreakpoint: _hint, ...rest } = message;
+	return rest;
 }
 
 function parsePiMessagesErrorBody(body: string): PiMessagesErrorBody | undefined {
@@ -145,8 +155,8 @@ function createPiMessagesResponseError(
 		url: url.toString(),
 		status: response.status,
 		statusText: response.statusText,
-		error: errorBody?.error,
-		body: errorBody ? undefined : truncateDiagnosticString(body),
+		...(errorBody?.error === undefined ? {} : { error: errorBody.error as JsonValue }),
+		...(errorBody ? {} : { body: truncateDiagnosticString(body) }),
 		timestampMs: Date.now(),
 	});
 }
@@ -194,6 +204,9 @@ function createEventConverter(model: Model<"pi-messages">) {
 					usage: event.usage,
 					responseId: event.responseId,
 				});
+				if (event.providerThinkingLevel !== undefined) {
+					partial.providerThinkingLevel = event.providerThinkingLevel;
+				}
 				appendRewriteDiagnostic(partial, event.rewrite);
 				return { type: "done", reason: event.reason, message: partial };
 			case "error":
@@ -203,6 +216,9 @@ function createEventConverter(model: Model<"pi-messages">) {
 					errorMessage: event.errorMessage,
 					responseId: event.responseId,
 				});
+				if (event.providerThinkingLevel !== undefined) {
+					partial.providerThinkingLevel = event.providerThinkingLevel;
+				}
 				appendRewriteDiagnostic(partial, event.rewrite);
 				return { type: "error", reason: event.reason, error: partial };
 			case "start":
@@ -344,10 +360,10 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 
 export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 	model: Model<"pi-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: PiMessagesOptions,
 ): AssistantMessageEventStream => {
-	const eventStream = new AssistantMessageEventStream();
+	const eventStream = new AssistantMessageEventStream({ captureBlocks: true });
 	const convertEvent = createEventConverter(model);
 
 	void (async () => {
@@ -364,7 +380,29 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			let payload: unknown = {
 				model: model.id,
-				context,
+				context: {
+					...context,
+					messages: context.messages.map((message) =>
+						message.role === "toolResult"
+							? {
+									...message,
+									content: message.content.map((part) =>
+										part.type === "text"
+											? {
+													type: part.type,
+													text: part.text,
+													...(part.textSignature === undefined
+														? {}
+														: { textSignature: part.textSignature }),
+												}
+											: part,
+									),
+								}
+							: message.role === "assistant" && message.promptCacheBreakpoint
+								? withoutPromptCacheBreakpoint(message)
+								: message,
+					),
+				},
 				options: {
 					temperature: options?.temperature,
 					maxTokens: options?.maxTokens,
@@ -402,6 +440,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 			}
 
 			for await (const piEvent of readPiMessagesEvents(response.body)) {
+				await options?.onProviderStreamEvent?.(piEvent, model);
 				const event = convertEvent(piEvent);
 				eventStream.push(event);
 				if (event.type === "done" || event.type === "error") {
@@ -420,7 +459,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 export const streamSimple: StreamFunction<"pi-messages", SimpleStreamOptions> = (
 	model: Model<"pi-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const extra = options as PiMessagesOptions | undefined;

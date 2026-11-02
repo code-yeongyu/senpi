@@ -1,7 +1,7 @@
 // allow: SIZE_OK - one cohesive streaming-output state machine owns decoding, truncation, spill, and terminal cleanup.
 import { randomBytes } from "node:crypto";
 import { createWriteStream, type WriteStream } from "node:fs";
-import { rm } from "node:fs/promises";
+import { open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TailWindow } from "./tail-window.ts";
@@ -17,6 +17,12 @@ export interface OutputSnapshot {
 	content: string;
 	truncation: TruncationResult;
 	fullOutputPath?: string;
+}
+
+export interface FullOutput {
+	content: string;
+	/** Whether `content` omits part of the output. */
+	truncated: boolean;
 }
 
 function defaultTempFilePath(prefix: string): string {
@@ -208,6 +214,44 @@ export class OutputAccumulator {
 				throw new AggregateError([error, unlinkError], "Output spill cleanup failed");
 			}
 			throw error;
+		}
+	}
+
+	/**
+	 * The complete output, for callers that can take more than the display snapshot. Call after
+	 * `finish()` and `closeTempFile()`. Output longer than `maxBytes` raw bytes keeps its first and
+	 * last `maxBytes / 2` bytes around an omission marker.
+	 */
+	async readFullOutput(maxBytes: number): Promise<FullOutput> {
+		if (!this.tempFilePath) {
+			// Fork `appendText()` buffers strings beside raw chunks; encode them back before decoding the whole.
+			const chunks = this.rawChunks.map((chunk) =>
+				typeof chunk === "string" ? Buffer.from(chunk, "utf-8") : chunk,
+			);
+			return { content: new TextDecoder().decode(Buffer.concat(chunks)), truncated: false };
+		}
+		const file = await open(this.tempFilePath, "r");
+		try {
+			const size = (await file.stat()).size;
+			if (size <= maxBytes) {
+				return { content: new TextDecoder().decode(await file.readFile()), truncated: false };
+			}
+			const headBytes = Math.floor(maxBytes / 2);
+			const tailBytes = maxBytes - headBytes;
+			const head = Buffer.alloc(headBytes);
+			const tail = Buffer.alloc(tailBytes);
+			await file.read(head, 0, headBytes, 0);
+			await file.read(tail, 0, tailBytes, size - tailBytes);
+			// Cut at character boundaries: streaming decode holds back an incomplete trailing sequence,
+			// and the tail skips leading continuation bytes.
+			const headText = new TextDecoder().decode(head, { stream: true });
+			let tailStart = 0;
+			while (tailStart < tail.length && (tail[tailStart] & 0xc0) === 0x80) tailStart++;
+			const tailText = new TextDecoder().decode(tail.subarray(tailStart));
+			const omitted = size - headBytes - tailBytes;
+			return { content: `${headText}\n\n[... ${omitted} bytes omitted ...]\n\n${tailText}`, truncated: true };
+		} finally {
+			await file.close();
 		}
 	}
 

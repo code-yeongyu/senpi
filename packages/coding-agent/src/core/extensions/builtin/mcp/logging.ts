@@ -10,8 +10,8 @@
 // the bucket refills continuously.
 
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { LoggingMessageNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { McpLogger } from "./log.ts";
+import { LoggingMessageNotificationSchema, registerMcpNotificationHandler } from "./notification-schemas.ts";
 
 export const MCP_LOG_RATE_LIMIT_PER_SECOND = 10;
 
@@ -53,7 +53,7 @@ export function subscribeMcpServerLogging(client: Client, options: McpLoggingOpt
 	const now = options.now ?? Date.now;
 	let tokens = rate;
 	let lastRefill = now();
-	client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+	registerMcpNotificationHandler(client, LoggingMessageNotificationSchema, (notification) => {
 		const { level, data, logger: serverLogger } = notification.params;
 		if (threshold !== undefined && severity(level) > threshold) return;
 		const at = now();

@@ -48,5 +48,5 @@ Largest examples carry real complexity, not toy scope: `extensions/overlay-qa-te
 ## VALIDATION
 
 - Run the focused tests for the public API demonstrated by the example.
-- Typecheck examples through root `npm run check`.
+- Typecheck examples through root `bun run check`.
 - Interactive examples require real CLI or visual QA when their behavior changes.

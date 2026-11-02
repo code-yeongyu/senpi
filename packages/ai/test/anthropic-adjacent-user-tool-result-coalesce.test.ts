@@ -6,6 +6,8 @@ import { streamAnthropic } from "../src/providers/anthropic.ts";
 import { fauxAssistantMessage, fauxToolCall } from "../src/providers/faux.ts";
 import type { Context, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 type WireBlock = {
 	type: string;
 	tool_use_id?: string;
@@ -64,10 +66,12 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 	it("coalesces a user message immediately following a toolResult into a single alternating user turn", async () => {
 		let captured: WirePayload | undefined;
 		const client = {
-			messages: {
-				create: (params: unknown) => {
-					captured = params as WirePayload;
-					return { asResponse: async () => createSseResponse() };
+			beta: {
+				messages: {
+					create: (params: unknown) => {
+						captured = params as WirePayload;
+						return { asResponse: async () => createSseResponse() };
+					},
 				},
 			},
 		} as Anthropic;
@@ -84,7 +88,7 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 			tools: [makeTool("bash")],
 		};
 
-		const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), context, {
+		const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), normalizeContext(context), {
 			apiKey: "fake-key",
 			client,
 		});
@@ -111,10 +115,12 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 	it("preserves standalone string user messages as string content", async () => {
 		let captured: WirePayload | undefined;
 		const client = {
-			messages: {
-				create: (params: unknown) => {
-					captured = params as WirePayload;
-					return { asResponse: async () => createSseResponse() };
+			beta: {
+				messages: {
+					create: (params: unknown) => {
+						captured = params as WirePayload;
+						return { asResponse: async () => createSseResponse() };
+					},
 				},
 			},
 		} as Anthropic;
@@ -123,7 +129,7 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 			messages: [userMessage("standalone prompt")],
 		};
 
-		const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), context, {
+		const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), normalizeContext(context), {
 			apiKey: "fake-key",
 			client,
 			cacheRetention: "none",
@@ -136,10 +142,12 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 	it("coalesces consecutive user text messages into a single user turn", async () => {
 		let captured: WirePayload | undefined;
 		const client = {
-			messages: {
-				create: (params: unknown) => {
-					captured = params as WirePayload;
-					return { asResponse: async () => createSseResponse() };
+			beta: {
+				messages: {
+					create: (params: unknown) => {
+						captured = params as WirePayload;
+						return { asResponse: async () => createSseResponse() };
+					},
 				},
 			},
 		} as Anthropic;
@@ -154,7 +162,7 @@ describe("Anthropic adjacent user and toolResult coalescence", () => {
 			],
 		};
 
-		const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), context, {
+		const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), normalizeContext(context), {
 			apiKey: "fake-key",
 			client,
 		});

@@ -14,6 +14,7 @@ export interface BunTerminal {
 }
 
 interface BunSubprocess {
+	readonly pid: number;
 	readonly terminal: BunTerminal;
 	readonly exited: Promise<number>;
 	kill: (signal?: TerminalSessionSignal) => void;
@@ -84,6 +85,7 @@ export function createBunTerminalSession(
 	}
 
 	return {
+		pid: child.pid,
 		write(data) {
 			child.terminal.write(data);
 			return { ok: true, note: BUN_TERMINAL_NOTE } satisfies TerminalSessionOperationResult;

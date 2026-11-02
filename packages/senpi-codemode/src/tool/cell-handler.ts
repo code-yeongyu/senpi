@@ -1,4 +1,10 @@
-import { type AgentToolResult, type ExtensionContext, sanitizeTerminalLabel } from "@code-yeongyu/senpi";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+	type AgentToolResult,
+	type ExtensionContext,
+	kernelToolsStorage,
+	sanitizeTerminalLabel,
+} from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import { RESERVED_SCHEMA_TOOL } from "../bridge/reserved.ts";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
@@ -8,6 +14,9 @@ import { appendSchemaHint } from "../bridges/schema-hint.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
+import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
+import type { KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import {
 	boundToolCallArgs,
 	capCodePoints,
@@ -17,6 +26,7 @@ import {
 	type ToolCallCapture,
 	toolCallResultPreview,
 } from "./call-capture.ts";
+import { completionCallOptions, reservedDispatchContext } from "./cell-reserved-dispatch.ts";
 import { CellResultBuilder, type CellState } from "./cell-runtime.ts";
 import { type EvalImageResizer, marshalToolResult, toolResultIsError } from "./image.ts";
 import { upsertStatusEvent } from "./status-events.ts";
@@ -39,6 +49,14 @@ export interface CellBridgeRuntime {
 	readonly ctx: ExtensionContext;
 	readonly artifactPath?: string;
 	readonly imageResizer?: EvalImageResizer;
+	/** This cell's live kernel-tool capability; JS and Python kernels have one (#1754, #2731). */
+	readonly kernelTools?: KernelToolsCapability;
+	/** The session generation's handle registry behind `wait()` / `handle()` / completion handles. */
+	readonly handles?: HandleRegistry;
+	/** Absolute wall-clock deadline of this cell; a completion handle it creates is bounded by it. */
+	readonly hardDeadlineMs?: number;
+	/** A JS cell's session environment for `packages.install()`; Python cells reach theirs over the bridge. */
+	readonly environments?: PackagesInstallEnvironments;
 }
 
 export class CellHandler {
@@ -46,11 +64,18 @@ export class CellHandler {
 	readonly #state: CellState;
 	readonly #runtime: CellBridgeRuntime;
 	readonly #resultBuilder: CellResultBuilder;
+	readonly #dispatchContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
 
 	constructor(kernel: EvalKernel, state: CellState, runtime: CellBridgeRuntime) {
 		this.#kernel = kernel;
 		this.#state = state;
 		this.#runtime = runtime;
+		// Construct in the submitting cell's host context; worker callbacks cannot supply it (#2512).
+		// Bind this cell's capability once; undefined clears any enclosing JS grant for non-JS cells.
+		this.#dispatchContext =
+			runtime.kernelTools === undefined
+				? kernelToolsStorage.exit(() => AsyncLocalStorage.snapshot())
+				: kernelToolsStorage.run(runtime.kernelTools, () => AsyncLocalStorage.snapshot());
 		const settings = runtime.settings.outputSink;
 		this.#resultBuilder = new CellResultBuilder({
 			state,
@@ -81,7 +106,8 @@ export class CellHandler {
 				this.#resultBuilder.display(message);
 				return;
 			case "tool-call": {
-				const pending = this.#handleToolCall(message);
+				// A retained worker carries its creation context, not this cell's RPC connection.
+				const pending = this.#dispatchContext(() => this.#handleToolCall(message));
 				this.#state.pendingBridgeCalls.push(pending);
 				await pending;
 				return;
@@ -90,6 +116,8 @@ export class CellHandler {
 			case "init-failed":
 			case "result":
 			case "closed":
+			case "kernel-tool-describe-reply":
+			case "kernel-tool-invoke-reply":
 				return;
 			default:
 				throw new TypeError(`Unhandled kernel message: ${String(message)}`);
@@ -140,17 +168,12 @@ export class CellHandler {
 			await this.#deliverToolReply(
 				message,
 				async () => ({
-					value: await runReservedTool(message.toolName, {
-						callId: message.callId,
-						args: message.args,
-						executeTool: this.#runtime.executeTool,
-						taskToolName: this.#runtime.settings.taskTools.task,
-						taskOutputToolName: this.#runtime.settings.taskTools.output,
-						listTools: this.#runtime.listTools,
-						signal: this.#state.signal,
-						emitStatus: (event) => this.#recordStatus(event),
-						marshalToolResult,
-					}),
+					value: await runReservedTool(
+						message.toolName,
+						reservedDispatchContext(message, this.#runtime, this.#state.signal, (event) =>
+							this.#recordStatus(event),
+						),
+					),
 					toolCallOk: true,
 				}),
 				capture,
@@ -158,13 +181,15 @@ export class CellHandler {
 			return;
 		}
 		if (message.toolName === "completion" && this.#runtime.complete) {
-			const result = await handleCompletionToolCall({
-				message,
-				kernel: this.#kernel,
-				complete: this.#runtime.complete,
-				ctx: this.#runtime.ctx,
-				isActive: () => this.#state.active,
-			});
+			const result = await handleCompletionToolCall(
+				completionCallOptions(
+					message,
+					this.#kernel,
+					this.#runtime,
+					this.#runtime.complete,
+					() => this.#state.active,
+				),
+			);
 			if (!this.#state.active) return;
 			recordToolCall(this.#state.toolCalls, result.ok, capture, undefined, result.ok ? undefined : result.error);
 			this.#resultBuilder.emitUpdate(false);
@@ -213,17 +238,20 @@ export class CellHandler {
 			this.#kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: true, value: reply.value });
 		} catch (error) {
 			if (!this.#state.active) return;
-			const text = appendSchemaHint(
-				error instanceof Error ? error.message : String(error),
-				message.toolName,
-				this.#toolParameters(message.toolName),
-			);
+			const code =
+				error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			// A blocked call (a permission denial or another hook's veto) is not an argument problem.
+			const text =
+				code === "blocked"
+					? errorMessage
+					: appendSchemaHint(errorMessage, message.toolName, this.#toolParameters(message.toolName));
 			recordToolCall(this.#state.toolCalls, false, capture, undefined, text);
 			this.#kernel.deliverToolReply({
 				type: "tool-reply",
 				callId: message.callId,
 				ok: false,
-				error: { message: text },
+				error: { message: text, ...(code === undefined ? {} : { code }) },
 			});
 		}
 		this.#resultBuilder.emitUpdate(false);

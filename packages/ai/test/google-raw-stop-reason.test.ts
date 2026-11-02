@@ -1,10 +1,11 @@
 import { arch, platform, release } from "node:os";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const googleGenAiMock = vi.hoisted(() => ({
 	constructorCalls: [] as Array<Record<string, unknown>>,
 	finishReason: "MALFORMED_FUNCTION_CALL",
 	includeFunctionCall: false,
+	streamChunks: undefined as Array<Record<string, unknown>> | undefined,
 }));
 
 vi.mock("@google/genai", () => {
@@ -15,6 +16,10 @@ vi.mock("@google/genai", () => {
 
 		models = {
 			generateContentStream: async function* () {
+				if (googleGenAiMock.streamChunks) {
+					yield* googleGenAiMock.streamChunks;
+					return;
+				}
 				yield {
 					responseId: "google-response-id",
 					candidates: [
@@ -87,14 +92,18 @@ vi.mock("@google/genai", () => {
 
 import { stream as streamGoogleGenerativeAi } from "../src/api/google-generative-ai.ts";
 import { stream as streamGoogleVertex } from "../src/api/google-vertex.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context } from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { Api, Model, StreamOptions } from "../src/types.ts";
+
+beforeEach(() => {
+	googleGenAiMock.streamChunks = undefined;
+});
 
 const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
-const context: Context = {
+const context = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
-};
+});
 
 async function captureGoogleHeaders(headers?: Record<string, string>): Promise<Record<string, string>> {
 	googleGenAiMock.constructorCalls.length = 0;
@@ -183,6 +192,63 @@ describe("Google raw stop reasons", () => {
 	});
 });
 
+describe("Google provider stream events", () => {
+	const googleModel = getModel("google", "gemini-2.5-flash");
+	const vertexModel = getModel("google-vertex", "gemini-3-flash-preview");
+	const adapters = [
+		{
+			name: "Google Generative AI",
+			model: googleModel,
+			createStream: (onProviderStreamEvent: StreamOptions["onProviderStreamEvent"]) =>
+				streamGoogleGenerativeAi(googleModel, context, {
+					apiKey: "test-api-key",
+					onProviderStreamEvent,
+				}),
+		},
+		{
+			name: "Google Vertex",
+			model: vertexModel,
+			createStream: (onProviderStreamEvent: StreamOptions["onProviderStreamEvent"]) =>
+				streamGoogleVertex(vertexModel, context, {
+					project: "test-project",
+					location: "us-central1",
+					onProviderStreamEvent,
+				}),
+		},
+	];
+
+	it.each(adapters)(
+		"forwards each SDK chunk in order before normalizing it for $name",
+		async ({ model, createStream }) => {
+			googleGenAiMock.streamChunks = [
+				{
+					responseId: "resp_google",
+					candidates: [{ content: { parts: [{ text: "hello" }] } }],
+				},
+				{
+					candidates: [{ finishReason: "STOP" }],
+					usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 1, totalTokenCount: 3 },
+				},
+			];
+			const received: unknown[] = [];
+			const eventModels: Model<Api>[] = [];
+			const result = await createStream(async (chunk, eventModel) => {
+				await Promise.resolve();
+				received.push(chunk);
+				eventModels.push(eventModel);
+			}).result();
+
+			expect(received).toEqual(googleGenAiMock.streamChunks);
+			expect(received[0]).toBe(googleGenAiMock.streamChunks[0]);
+			expect(received[1]).toBe(googleGenAiMock.streamChunks[1]);
+			expect(eventModels).toEqual([model, model]);
+			expect(result.stopReason).toBe("stop");
+			expect(result.responseId).toBe("resp_google");
+			expect(result.content).toEqual([{ type: "text", text: "hello" }]);
+		},
+	);
+});
+
 describe("Google Generative AI user agent", () => {
 	it("uses pi's User-Agent by default", async () => {
 		expect((await captureGoogleHeaders())["User-Agent"]).toBe(PI_USER_AGENT);
@@ -191,4 +257,54 @@ describe("Google Generative AI user agent", () => {
 	it("lets explicit headers override the default User-Agent", async () => {
 		expect((await captureGoogleHeaders({ "User-Agent": "custom-agent" }))["User-Agent"]).toBe("custom-agent");
 	});
+});
+
+describe("Google usage reasoning count (senpi#3879)", () => {
+	const reasoningAdapters = [
+		{
+			name: "Google Generative AI",
+			createStream: () =>
+				streamGoogleGenerativeAi(getModel("google", "gemini-2.5-flash"), context, { apiKey: "test-api-key" }),
+		},
+		{
+			name: "Google Vertex",
+			createStream: () =>
+				streamGoogleVertex(getModel("google-vertex", "gemini-3-flash-preview"), context, {
+					project: "test-project",
+					location: "us-central1",
+				}),
+		},
+	];
+	const counts: ReadonlyArray<{
+		readonly label: string;
+		readonly thoughts: unknown;
+		readonly expected: number | undefined;
+	}> = [
+		{ label: "absent", thoughts: undefined, expected: undefined },
+		{ label: "null", thoughts: null, expected: undefined },
+		{ label: "NaN", thoughts: Number.NaN, expected: undefined },
+		{ label: "0", thoughts: 0, expected: 0 },
+		{ label: "42", thoughts: 42, expected: 42 },
+	];
+
+	for (const adapter of reasoningAdapters) {
+		it.each(counts)(`${adapter.name}: thoughtsTokenCount $label`, async ({ thoughts, expected }) => {
+			googleGenAiMock.streamChunks = [
+				{
+					candidates: [{ finishReason: "STOP", content: { parts: [{ text: "hi" }] } }],
+					usageMetadata: {
+						promptTokenCount: 5,
+						candidatesTokenCount: 2,
+						totalTokenCount: 7,
+						...(thoughts === undefined ? {} : { thoughtsTokenCount: thoughts }),
+					},
+				},
+			];
+
+			const message = await adapter.createStream().result();
+
+			if (expected === undefined) expect(message.usage).not.toHaveProperty("reasoning");
+			else expect(message.usage.reasoning).toBe(expected);
+		});
+	}
 });

@@ -15,6 +15,8 @@ export interface IdleTimeoutOptions {
 	readonly timeoutMs: number;
 	/** Defaults to {@link DEFAULT_MAX_PAUSE_GRACE_MS}; floored at `timeoutMs` so a pause never shortens the budget. */
 	readonly maxPauseGraceMs?: number;
+	/** Optional absolute deadline that neither idle resets nor bridge pauses may extend. */
+	readonly deadlineMs?: number;
 	readonly onTimeout: (event: IdleTimeoutEvent) => void;
 }
 
@@ -26,6 +28,7 @@ export interface TimeoutPauseHandle {
 export class IdleTimeout implements TimeoutPauseHandle {
 	readonly #cellId: string;
 	readonly #onTimeout: (event: IdleTimeoutEvent) => void;
+	readonly #absoluteDeadlineMs: number;
 	readonly #controller = new AbortController();
 	readonly signal = this.#controller.signal;
 	readonly timeoutMs: number;
@@ -38,6 +41,7 @@ export class IdleTimeout implements TimeoutPauseHandle {
 
 	constructor(options: IdleTimeoutOptions) {
 		this.#cellId = options.cellId;
+		this.#absoluteDeadlineMs = options.deadlineMs ?? Number.POSITIVE_INFINITY;
 		this.timeoutMs = Math.max(1, Math.floor(options.timeoutMs));
 		this.maxPauseGraceMs = Math.max(
 			this.timeoutMs,
@@ -78,7 +82,10 @@ export class IdleTimeout implements TimeoutPauseHandle {
 
 	#arm(delayMs: number): void {
 		this.#clearTimer();
-		const timer = setTimeout(() => this.#expire(), Math.max(0, delayMs));
+		const timer = setTimeout(
+			() => this.#expire(),
+			Math.max(0, Math.min(delayMs, this.#absoluteDeadlineMs - Date.now())),
+		);
 		timer.unref?.();
 		this.#timer = timer;
 	}
@@ -93,7 +100,7 @@ export class IdleTimeout implements TimeoutPauseHandle {
 		if (this.#settled) return;
 		const pausedDeadlineMs = this.#pausedDeadlineMs;
 		if (this.#pauseDepth > 0 && pausedDeadlineMs === undefined) return;
-		const deadlineMs = pausedDeadlineMs ?? this.#deadlineMs;
+		const deadlineMs = Math.min(pausedDeadlineMs ?? this.#deadlineMs, this.#absoluteDeadlineMs);
 		const remainingMs = deadlineMs - Date.now();
 		if (remainingMs > 0) {
 			this.#arm(remainingMs);

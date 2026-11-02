@@ -30,7 +30,7 @@ describe("AgentSession prompt characterization", () => {
 	it("publishes durable entries for ordinary prompt messages", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
-		// entry_appended exists to hydrate the shared-host RPC proxy mirror; it is scoped to
+		// entry_appended lets RPC clients mirror durable session entries; it is scoped to
 		// rpc mode so classic/print streams keep their pinned event order (see
 		// agent-session-retry-events.test.ts, which asserts the full ordered label list).
 		await harness.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
@@ -38,7 +38,13 @@ describe("AgentSession prompt characterization", () => {
 
 		await harness.session.prompt("hi");
 
-		expect(harness.eventsOfType("entry_appended").map((event) => event.entry.type)).toEqual(["message", "message"]);
+		// Design 4.4 adds durable lifecycle metadata; ordinary transcript publications stay in order.
+		expect(
+			harness
+				.eventsOfType("entry_appended")
+				.filter((event) => event.entry.type !== "custom" || event.entry.customType !== "session-lifecycle")
+				.map((event) => event.entry.type),
+		).toEqual(["message", "message"]);
 	});
 
 	it("prompts while idle and records a single text response", async () => {

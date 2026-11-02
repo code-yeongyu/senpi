@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openaiImagesApi } from "../src/api/openai-images.lazy.ts";
 import { generateImages, type OpenAIImagesOptions } from "../src/api/openai-images.ts";
-import type { ImagesContext, ImagesModel } from "../src/types.ts";
+import type { ImageModel, ImagesContext } from "../src/types.ts";
 
 const PNG_B64 = "iVBORw0KGgo=";
 const WEBP_B64 = "UklGRgAAAABXRUJQ";
@@ -21,6 +21,7 @@ vi.mock("openai", () => {
 		}
 
 		images = {
+			edit: (params: unknown, options?: unknown) => this.images.generate(params, options),
 			generate: (params: unknown, options?: unknown) => {
 				mockState.requestParams.push(params);
 				mockState.requestOptions.push(options);
@@ -37,7 +38,11 @@ vi.mock("openai", () => {
 			},
 		};
 	}
-	return { default: FakeOpenAI };
+	return {
+		default: FakeOpenAI,
+		toFile: async (bytes: Uint8Array, name: string, options: FilePropertyBag) =>
+			new File([Uint8Array.from(bytes)], name, options),
+	};
 });
 
 type ImageFixture = { b64_json?: string; url?: string; revised_prompt?: string };
@@ -47,7 +52,8 @@ function setResponse(data: ImageFixture[] | null = [{ b64_json: PNG_B64 }], usag
 	mockState.responses[0] = { created: 1, ...(data === null ? {} : { data }), ...(usage ? { usage } : {}) };
 }
 
-const model: ImagesModel<"openai-images"> = {
+const model: ImageModel<"openai-images"> = {
+	type: "image",
 	id: "gpt-image-2",
 	name: "GPT Image 2",
 	api: "openai-images",
@@ -137,7 +143,7 @@ describe("openai images", () => {
 			[{ input: [] }, "non-empty"],
 			[{ input: [{ type: "text", text: "   " }] }, "non-empty"],
 			[{ input: [{ type: "text", text: "x".repeat(32001) }] }, "32000"],
-			[{ input: [{ type: "image", mimeType: "image/png", data: PNG_B64 }] }, "images edit endpoint"],
+			[{ input: [{ type: "image", mimeType: "image/png", data: PNG_B64 }] }, "non-empty"],
 		];
 		for (const [input, message] of invalid) {
 			expect((await run({}, model, input)).errorMessage).toContain(message);

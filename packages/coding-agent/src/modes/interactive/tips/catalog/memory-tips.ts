@@ -97,6 +97,13 @@ export const MEMORY_TIPS = [
 		render: () => "Edited memory files by hand? Run /recompile so this session picks the changes up right away.",
 	},
 	{
+		id: "memory.aha-moment",
+		bindings: [],
+		requiresCommand: "memory",
+		render: () =>
+			"Memory speaks up on its own: when something remembered would change the next step, an Aha moment! line surfaces it mid-task. Silence means nothing relevant was found.",
+	},
+	{
 		id: "memory.stop-repeating",
 		bindings: [],
 		requiresCommand: "memory",

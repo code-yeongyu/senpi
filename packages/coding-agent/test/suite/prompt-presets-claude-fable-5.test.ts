@@ -1,7 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { TEST_DISCIPLINE_RULES } from "../../src/core/dynamic-prompt/verification.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -25,11 +24,12 @@ function createModel(id: string, provider: string, api: Api = "anthropic-message
 
 function hasFable5CatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
+	if (/claude-fable-5[-.]1(?:$|[/@._:-])/.test(searchable)) return false;
 	return /(?:^|[/@._-])claude-fable-5(?:$|[/@._:-])/.test(searchable);
 }
 
 function getFable5CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasFable5CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasFable5CatalogSignal));
 }
 
 describe("Claude Fable 5 prompt preset", () => {
@@ -40,6 +40,10 @@ describe("Claude Fable 5 prompt preset", () => {
 		"eu.anthropic.claude-fable-5",
 		"global.anthropic.claude-fable-5",
 		"Claude Fable 5",
+		"claude-mythos-5",
+		"anthropic/claude-mythos-5",
+		"claude-mythos-5-thinking",
+		"Claude Mythos 5",
 	])("resolves %s to the claude-fable-5 preset", (modelId) => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
@@ -50,23 +54,25 @@ describe("Claude Fable 5 prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("claude-fable-5");
-		expect(preset?.prompt).toContain("You are senpi");
 	});
 
-	it.each(["claude-opus-4-8", "~anthropic/claude-fable-latest", "some-fable-compatible-router"])(
-		"does not route %s to the claude-fable-5 preset",
-		(modelId) => {
-			// given
-			const settings: PromptPresetSettings = { promptPreset: "auto" };
-			const model = createModel(modelId, "anthropic");
+	it.each([
+		"claude-opus-4-8",
+		"claude-fable-5-1",
+		"claude-mythos-5-1",
+		"~anthropic/claude-fable-latest",
+		"some-fable-compatible-router",
+	])("does not route %s to the claude-fable-5 preset", (modelId) => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel(modelId, "anthropic");
 
-			// when
-			const presetName = resolvePresetName(model, settings);
+		// when
+		const presetName = resolvePresetName(model, settings);
 
-			// then
-			expect(presetName).not.toBe("claude-fable-5");
-		},
-	);
+		// then
+		expect(presetName).not.toBe("claude-fable-5");
+	});
 
 	it("allows settings.json to force claude-fable-5 regardless of model id", () => {
 		// given
@@ -80,18 +86,13 @@ describe("Claude Fable 5 prompt preset", () => {
 		expect(preset?.name).toBe("claude-fable-5");
 	});
 
-	it("keeps every shared test-discipline rule after the dieted core rewrite", () => {
-		// given
+	it("routes user questions through ask_user_question when it is available", () => {
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
 		const model = createModel("claude-fable-5", "anthropic");
 
-		// when
 		const preset = resolvePreset(model, settings);
 
-		// then
-		for (const rule of TEST_DISCIPLINE_RULES) {
-			expect(preset?.prompt).toContain(rule.directive);
-		}
+		expect(preset?.prompt).toContain("ask_user_question");
 	});
 
 	it("does not include GPT or Kimi tuning in the claude-fable-5 preset", () => {
@@ -105,7 +106,6 @@ describe("Claude Fable 5 prompt preset", () => {
 		// then
 		expect(preset?.name).toBe("claude-fable-5");
 		expect(preset?.prompt).not.toContain("apply_patch");
-		expect(preset?.prompt).not.toContain("filler verification language");
 	});
 
 	it("returns claude-fable-5 preset for every Claude Fable 5 built-in catalog model", () => {

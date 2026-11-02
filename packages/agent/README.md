@@ -6,11 +6,18 @@ Stateful agent with tool execution and event streaming. Built on `@earendil-work
 
 ```bash
 npm install @earendil-works/pi-agent-core
+
+# Bun alternative
+bun add @earendil-works/pi-agent-core
 ```
 
 ### SQLite session backends
 
 The SQLite session backend and the `node:sqlite` adapter live in a separate package, `@earendil-works/pi-storage-sqlite-node`, so the core package does not pull in runtime builtins or native SQLite dependencies by default. The backend accepts a runtime-specific SQLite factory, allowing other session backends to ship as their own packages in the future.
+
+### Agent harness
+
+This fork keeps the agent harness (`src/harness/**`) in this package, together with its subpath exports (`./node`, `./harness/*`, `./experimental/pico3`) and the SQLite session backend package. Upstream v1.0.0 moved that runtime into `pi-durable`; the fork did not adopt that move, so coding-agent keeps importing the harness from `@earendil-works/pi-agent-core`.
 
 ## Quick Start
 
@@ -41,6 +48,10 @@ agent.subscribe((event) => {
 
 await agent.prompt("Hello!");
 ```
+
+## Experimental facet services
+
+Transport-neutral facet-service primitives live in `@earendil-works/chord`. The agent core does not export the service runtime.
 
 ## Core Concepts
 
@@ -123,27 +134,54 @@ The `beforeToolCall` hook runs after `tool_execution_start` and validated argume
 
 Tools, blocked `beforeToolCall` results, and `afterToolCall` overrides can return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
 
-The `Agent` class accepts `shouldStopAfterTurn` in `AgentOptions`. Low-level loop callers can set the same hook in `AgentLoopConfig`:
+When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
+
+### Request preparation and turn finalization
+
+`prepareRequest` runs immediately before every conversational provider request, including the first. Use it to install canonical persisted context after pending input has been emitted:
 
 ```typescript
-const stream = agentLoop(
-  prompts,
-  context,
-  {
-    model,
-    convertToLlm,
-    shouldStopAfterTurn: async ({ message, toolResults, context, newMessages }) => {
-      return shouldCompactBeforeNextTurn(context.messages);
-    },
-  },
-  undefined,
-  models.streamSimple.bind(models),
-);
+agent.prepareRequest = async ({ context }) => ({
+  context: { ...context, messages: await session.loadModelContext() },
+});
 ```
 
-`shouldStopAfterTurn` runs after `turn_end` is emitted and after the assistant response and any tool executions have completed normally. If it returns `true`, the loop emits `agent_end` and exits before polling steering or follow-up queues, and before starting another LLM call. It does not abort the provider stream, does not cancel running tools, and does not alter the assistant message stop reason. The `AgentOptions` callback also receives the active run's `AbortSignal` as its second argument.
+`prepareRequest` does not poll queues. Steering queued while it runs waits for the next normal steering poll.
 
-When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
+`finishTurn` runs after the assistant message and all tool results are finalized, but before `turn_end`. It runs for normal, error, and aborted responses:
+
+```typescript
+agent.finishTurn = async ({ message }) => {
+  if (message.stopReason === "error" || message.stopReason === "aborted") return;
+  if (shouldEndRun(message)) return { action: "end" };
+  return needsAnotherResponse(message) ? { action: "continue" } : undefined;
+};
+```
+
+Returning `undefined` keeps normal scheduling. `{ action: "end" }` stops right after `turn_end`, before polling steering or follow-up queues or preparing another request. On a normal response, `{ action: "continue" }` makes sure one more provider request happens: tool results, steering, or a follow-up that already cause that request satisfy it, and otherwise the loop makes one context-only request. Error and aborted responses stay hard exits, so their decisions are ignored. `finishTurn` runs again after the next request, so returning `{ action: "continue" }` unconditionally loops forever. Low-level loop callers set the same hooks in `AgentLoopConfig`.
+
+To migrate from the removed `shouldStopAfterTurn`, return `{ action: "end" }` and guard error and aborted responses to keep the old normal-response-only invocation:
+
+```typescript
+finishTurn: async (turn, signal) => {
+  if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return;
+  return (await shouldStop(turn, signal)) ? { action: "end" } : undefined;
+},
+```
+
+Each provider turn follows this lifecycle:
+
+```text
+selected input events
+→ prepareRequest
+→ provider response
+→ tool results
+→ finishTurn
+→ turn_end
+→ existing continuation scheduling or agent_end
+```
+
+`agent.peekQueuedMessages()` previews the next queue-selected batch, respecting the queue modes, without consuming it.
 
 ### continue() Event Sequence
 
@@ -240,9 +278,10 @@ const agent = new Agent({
     }
   },
 
-  // Stop gracefully after a completed turn, before queued messages are polled.
-  shouldStopAfterTurn: async ({ context }, signal) => {
-    return shouldCompactBeforeNextTurn(context.messages, signal);
+  // End the run gracefully after a completed turn, before queued messages are polled.
+  finishTurn: async ({ message, context }, signal) => {
+    if (message.stopReason === "error" || message.stopReason === "aborted") return;
+    return (await shouldCompactBeforeNextTurn(context.messages, signal)) ? { action: "end" } : undefined;
   },
 
   // Custom thinking budgets for token-based providers
@@ -309,7 +348,8 @@ agent.state.tools = [myTool];
 agent.toolExecution = "sequential";
 agent.beforeToolCall = async ({ toolCall }) => undefined;
 agent.afterToolCall = async ({ toolCall, result }) => undefined;
-agent.shouldStopAfterTurn = async ({ context }) => shouldCompactBeforeNextTurn(context.messages);
+agent.prepareRequest = async ({ context }) => undefined;
+agent.finishTurn = async () => undefined;
 agent.state.messages = newMessages; // top-level array is copied
 agent.state.messages.push(message);
 agent.reset();

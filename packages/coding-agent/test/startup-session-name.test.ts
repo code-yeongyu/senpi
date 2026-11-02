@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -69,11 +70,13 @@ function readSessionInfoNames(sessionFile: string): string[] {
 
 async function runCli(args: string[], dirs: CliDirs): Promise<CliResult> {
 	let stderr = "";
+	// The stable CLI is spawned exactly as it ships: no experimental source resolver in the
+	// child's module graph (the stable entry must never depend on `src/experimental/**`).
 	const child = spawn(process.execPath, [cliPath, ...args], {
 		cwd: dirs.projectDir,
 		detached: process.platform !== "win32",
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			[ENV_AGENT_DIR]: dirs.agentDir,
 			PI_OFFLINE: "1",
 			TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),

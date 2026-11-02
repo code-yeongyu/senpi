@@ -1,86 +1,22 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	type AgentSessionEvent,
-	MAX_SKILL_EXPANSIONS_PER_PROMPT,
-	MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT,
-	parseSkillInvocationTokens,
-} from "../../../src/core/agent-session.ts";
-import { createSyntheticSourceInfo } from "../../../src/core/source-info.ts";
+import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
+import { UnknownCommandError } from "../../../src/core/unknown-command.ts";
 import type { ResourceLoader } from "../../../src/index.ts";
-import { createTestResourceLoader } from "../../utilities.ts";
-import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.ts";
-
-type SkillDefinition = {
-	name: string;
-	body: string;
-};
-
-type SkillFixture = SkillDefinition & {
-	filePath: string;
-};
-
-const skillBlock = (skill: SkillFixture, baseDir: string): string =>
-	`The user explicitly invoked the "${skill.name}" skill. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions.\n\n<skill-instruction name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${baseDir}.\n\n${skill.body}\n</skill-instruction>`;
-
-const userRequest = (request: string): string => `<user-request>\n${request}\n</user-request>`;
-
-function createSkillResourceLoader(
-	tempDir: string,
-	definitions: SkillDefinition[],
-): {
-	resourceLoader: ResourceLoader;
-	skills: SkillFixture[];
-} {
-	const skills = definitions.map((definition) => {
-		const filePath = join(tempDir, `${definition.name}.md`);
-		writeFileSync(filePath, definition.body);
-		return { ...definition, filePath };
-	});
-
-	return {
-		resourceLoader: {
-			...createTestResourceLoader(),
-			getSkills: () => ({
-				skills: skills.map((skill) => ({
-					name: skill.name,
-					description: `${skill.name} skill`,
-					filePath: skill.filePath,
-					disableModelInvocation: false,
-					baseDir: tempDir,
-					sourceInfo: createSyntheticSourceInfo(skill.filePath, {
-						source: "local",
-						scope: "project",
-						origin: "top-level",
-						baseDir: tempDir,
-					}),
-				})),
-				diagnostics: [],
-			}),
-		},
-		skills,
-	};
-}
-
-async function promptAndCapture(harness: Harness, text: string): Promise<string> {
-	let captured = "";
-	harness.setResponses([
-		(context) => {
-			const userMessages = context.messages.filter((message) => message.role === "user");
-			const user = userMessages[userMessages.length - 1];
-			captured = user ? getMessageText(user) : "";
-			return fauxAssistantMessage("ok");
-		},
-	]);
-
-	await harness.session.prompt(text);
-	return captured;
-}
+import { createHarness, getUserTexts, type Harness } from "../harness.ts";
+import {
+	createSkillResourceLoader,
+	promptAndCapture,
+	type SkillDefinition,
+	type SkillFixture,
+	skillBlock,
+	userRequest,
+} from "./308-skill-composition-support.ts";
 
 function collectSkillInvocationEvents(harness: Harness): {
 	events: AgentSessionEvent[];
@@ -202,13 +138,35 @@ describe("#308 skill composition", () => {
 		const actual = await promptAndCapture(harness, "Use $skill:debugging to inspect $HOME safely");
 		invocationEvents.unsubscribe();
 
-		expect(actual).toBe(`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("Use to inspect $HOME safely")}`);
+		expect(actual).toBe(
+			`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("Use [skill: debugging] to inspect $HOME safely")}`,
+		);
 		expect(invocationEvents.events).toEqual([
 			{
 				type: "skill_invocation",
 				skills: [{ name: "debugging", path: skills[0]!.filePath, syntax: "dollar" }],
 			},
 		]);
+	});
+
+	it("preserves Korean inline references and duplicate mixed invocations", async () => {
+		const { resourceLoader, skills, tempDir } = createFixtures([
+			{ name: "debugging", body: "# Debugging Skill\n\nTrace the defect." },
+			{ name: "review", body: "# Review Skill\n\nReview the result." },
+		]);
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+
+		expect(
+			await promptAndCapture(
+				harness,
+				"한국어로 $skill:debugging 와 $skill:debugging 를 $skill:review 함께 확인해 주세요",
+			),
+		).toBe(
+			`${skillBlock(skills[0]!, tempDir)}\n\n${skillBlock(skills[1]!, tempDir)}\n\n${userRequest(
+				"한국어로 [skill: debugging] 와 [skill: debugging] 를 [skill: review] 함께 확인해 주세요",
+			)}`,
+		);
 	});
 
 	it("preserves indentation and blank-line structure outside removed tokens", async () => {
@@ -223,29 +181,25 @@ describe("#308 skill composition", () => {
 		expect(actual).toBe(`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("    const x = 1;\n\treturn x;")}`);
 	});
 
-	it("bounds token parsing before processing adversarial repeated input", () => {
-		const prompt = Array.from({ length: MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT + 20 }, () => "$skill:debugging").join(
-			" ",
-		);
-
-		const tokens = parseSkillInvocationTokens(prompt);
-
-		expect(tokens).toHaveLength(MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT);
-		expect(prompt.slice(tokens.at(-1)!.end)).toContain("$skill:debugging");
-	});
-
-	it("keeps bare inline dollar skill names literal", async () => {
-		const { resourceLoader } = createFixtures([
+	it("expands a bare inline dollar mention of a loaded skill and keeps unknown ones literal", async () => {
+		const { resourceLoader, skills, tempDir } = createFixtures([
 			{ name: "debugging", body: "# Debugging Skill\n\nTrace the defect." },
 		]);
 		const harness = await createHarness({ resourceLoader });
 		harnesses.push(harness);
 		const invocationEvents = collectSkillInvocationEvents(harness);
-		const prompt = "Use $debugging now";
 
-		expect(await promptAndCapture(harness, prompt)).toBe(prompt);
+		expect(await promptAndCapture(harness, "Use $debugging now")).toBe(
+			`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("Use [skill: debugging] now")}`,
+		);
+		expect(await promptAndCapture(harness, "Use $missing now")).toBe("Use $missing now");
 		invocationEvents.unsubscribe();
-		expect(invocationEvents.events).toEqual([]);
+		expect(invocationEvents.events).toEqual([
+			{
+				type: "skill_invocation",
+				skills: [{ name: "debugging", path: skills[0]!.filePath, syntax: "dollar" }],
+			},
+		]);
 	});
 
 	it("preserves mixed dollar and slash invocation order", async () => {
@@ -285,7 +239,10 @@ describe("#308 skill composition", () => {
 		expect(await promptAndCapture(harness, "/skill:first /skill:missing /skill:second keep this literal")).toBe(
 			`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("/skill:missing /skill:second keep this literal")}`,
 		);
-		expect(await promptAndCapture(harness, "/skill:missing keep this literal")).toBe(
+		await expect(harness.session.prompt("/skill:missing keep this literal")).rejects.toBeInstanceOf(
+			UnknownCommandError,
+		);
+		expect(await promptAndCapture(harness, "/skill:missing keep this literal", { unknownCommandAsText: true })).toBe(
 			"/skill:missing keep this literal",
 		);
 	});
@@ -309,36 +266,6 @@ describe("#308 skill composition", () => {
 		expect(await promptAndCapture(harness, "/skill:first /skill:first compose once")).toBe(
 			`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("compose once")}`,
 		);
-	});
-
-	it("caps expansion, leaves the remaining skill tokens literal, and emits a visible warning", async () => {
-		const definitions = Array.from({ length: MAX_SKILL_EXPANSIONS_PER_PROMPT + 2 }, (_, index) => ({
-			name: `skill-${index + 1}`,
-			body: `# Skill ${index + 1}\n\nUse skill ${index + 1}.`,
-		}));
-		const { resourceLoader, skills, tempDir } = createFixtures(definitions);
-		const harness = await createHarness({ resourceLoader });
-		harnesses.push(harness);
-		const errors: string[] = [];
-		const unsubscribe = harness.getExtensionRunner().onError((error) => {
-			if (error.event === "skill_expansion") errors.push(error.error);
-		});
-
-		const prompt = `${skills.map((skill) => `/skill:${skill.name}`).join(" ")} compose within the cap`;
-		const actual = await promptAndCapture(harness, prompt);
-		unsubscribe();
-
-		expect(actual).toBe(
-			`${skills
-				.slice(0, MAX_SKILL_EXPANSIONS_PER_PROMPT)
-				.map((skill) => skillBlock(skill, tempDir))
-				.join("\n\n")}\n\n${userRequest(
-				`/skill:${skills[MAX_SKILL_EXPANSIONS_PER_PROMPT]!.name} /skill:${skills[MAX_SKILL_EXPANSIONS_PER_PROMPT + 1]!.name} compose within the cap`,
-			)}`,
-		);
-		expect(errors).toEqual([
-			`Expanded at most ${MAX_SKILL_EXPANSIONS_PER_PROMPT} skills; remaining skill commands were left as literal text.`,
-		]);
 	});
 
 	it("uses the same composed expansion for queued steering and follow-up messages", async () => {

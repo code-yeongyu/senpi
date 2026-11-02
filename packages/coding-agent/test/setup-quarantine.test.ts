@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, test } from "vitest";
 import { getAgentDir, getPackageDir } from "../src/config.ts";
 import { resetBrandProfileForTests } from "../src/core/brand.ts";
-import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv } from "./support/quarantine.ts";
+import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv, scrubHostLifecycleEnv } from "./support/quarantine.ts";
 
 const AMBIENT_AGENT_DIR_KEYS = [
 	"OMO_CODING_AGENT_DIR",
@@ -106,6 +106,49 @@ describe("test quarantine resolver", () => {
 			expect(getPackageDir()).toBe(process.cwd());
 		} finally {
 			restoreEnv(saved);
+		}
+	});
+});
+
+/** What a host generation exports to the sessions it runs (`TRANSIENT_ENV_NAMES` in host-daemon-env.ts). */
+const HOST_LIFECYCLE_ENV = {
+	SENPI_RPC_HOST_GENERATION: "10",
+	SENPI_RPC_HOST_INSTANCE_ID: "outer-host",
+	SENPI_RPC_HOST_DAEMON_DIR: "/outer/rpc-host-daemon/0123456789abcdef",
+	SENPI_RPC_HOST_PUBLIC_SOCKET: "/outer/rpc.sock",
+	SENPI_RPC_HOST_WATCH_PPID: "1",
+	SENPI_RPC_HOST_WATCH_FD: "3",
+	SENPI_RPC_HOST_SCRATCH_DIR: "/outer/scratch",
+	SENPI_RPC_HOST_CLEANUP_PATHS: "/outer/host.pid",
+} as const;
+
+describe("RPC host lifecycle environment", () => {
+	test("scrubHostLifecycleEnv removes every SENPI_RPC_HOST_ variable and nothing else", () => {
+		const env: Record<string, string> = {
+			...HOST_LIFECYCLE_ENV,
+			SENPI_RPC_HOST_IDLE_EXIT_MS: "5",
+			SENPI_RPC_SESSION_IDLE_EVICTION_MS: "keep",
+			UNRELATED: "keep",
+		};
+
+		scrubHostLifecycleEnv(env);
+
+		expect(env).toEqual({ SENPI_RPC_SESSION_IDLE_EVICTION_MS: "keep", UNRELATED: "keep" });
+	});
+
+	test("the setup module drops an inherited host lifecycle before any test runs", async () => {
+		const saved = Object.fromEntries(Object.keys(HOST_LIFECYCLE_ENV).map((key) => [key, process.env[key]]));
+		Object.assign(process.env, HOST_LIFECYCLE_ENV);
+		try {
+			const setupModuleSpecifier = "./setup.ts?inherited-host-lifecycle";
+			await import(setupModuleSpecifier);
+
+			for (const key of Object.keys(HOST_LIFECYCLE_ENV)) expect(process.env[key]).toBeUndefined();
+		} finally {
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
 		}
 	});
 });

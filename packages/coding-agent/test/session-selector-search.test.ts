@@ -55,6 +55,31 @@ describe("session selector search", () => {
 		expect(result.map((s) => s.id)).toEqual(["a"]);
 	});
 
+	it("matches fuzzy tokens regardless of query and text case", () => {
+		const sessions: SessionInfo[] = [
+			makeSession({
+				id: "a",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+				allMessagesText: "RESUME Picker",
+			}),
+		];
+
+		expect(filterAndSortSessions(sessions, "Resume pICKER", "relevance").map((s) => s.id)).toEqual(["a"]);
+	});
+
+	it("searches the text of a new row object that replaces an earlier one for the same session", () => {
+		const modified = new Date("2026-01-01T00:00:00.000Z");
+		const before = [makeSession({ id: "a", modified, allMessagesText: "alpha" })];
+		expect(filterAndSortSessions(before, "alpha", "recent").map((s) => s.id)).toEqual(["a"]);
+		expect(filterAndSortSessions(before, '"alpha"', "recent").map((s) => s.id)).toEqual(["a"]);
+
+		const after = [makeSession({ id: "a", modified, allMessagesText: "Beta   gamma" })];
+		expect(filterAndSortSessions(after, "alpha", "recent")).toEqual([]);
+		expect(filterAndSortSessions(after, "beta", "recent").map((s) => s.id)).toEqual(["a"]);
+		expect(filterAndSortSessions(after, '"beta gamma"', "recent").map((s) => s.id)).toEqual(["a"]);
+		expect(filterAndSortSessions(after, "re:Beta\\s+gamma", "recent").map((s) => s.id)).toEqual(["a"]);
+	});
+
 	it("recent sort preserves input order", () => {
 		const sessions: SessionInfo[] = [
 			makeSession({

@@ -4,6 +4,7 @@ import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
 	ResponseFunctionCallOutputItemList,
+	ResponseFunctionWebSearch,
 	ResponseInput,
 	ResponseInputContent,
 	ResponseInputImage,
@@ -20,26 +21,34 @@ import {
 	contextProvenanceFingerprint,
 	getContextProvenance,
 } from "../context-provenance.ts";
-import { calculateCost } from "../models.ts";
+import { calculateCost, supportsConfigurationUpdate } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
-	Context,
 	ImageContent,
+	Message,
 	Model,
 	ProviderNativeContent,
 	StopReason,
+	StreamOptions,
+	SystemMessage,
 	TextContent,
 	TextSignatureV1,
 	ThinkingContent,
 	Tool,
 	ToolCall,
+	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { enableAssistantCapture, pushAssistantProgress } from "../utils/assistant-capture.ts";
+import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
+import { getCurrentTools, getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -48,6 +57,8 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
+import { parsePromptCacheDiagnostics } from "./openai-responses-prompt-cache.ts";
+import { withResponsesCompletionGrace } from "./responses-completion-grace.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 // =============================================================================
@@ -129,15 +140,18 @@ function convertToolResultOutput<TApi extends Api>(
 }
 
 export interface OpenAIResponsesStreamOptions {
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	/** SIWC succeeds only on response.completed, never on a finished tool alone. */
+	siwc?: boolean;
+	onProviderStreamEvent?: StreamOptions["onProviderStreamEvent"];
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	resolveServiceTier?: (
-		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
-		requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
-	) => ResponseCreateParamsStreaming["service_tier"] | undefined;
+		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
+		requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
+	) => ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined;
 	applyServiceTierPricing?: (
 		usage: Usage,
-		serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+		serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 	) => void;
 }
 
@@ -146,9 +160,17 @@ export interface ConvertResponsesMessagesOptions {
 	preserveThinking?: boolean;
 	preserveTextSignatures?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
-	deferredTools?: ReadonlyMap<string, Tool>;
-	deferredToolsMode?: "additional-tools" | "tool-search";
+	/** Whether later system messages are sent in place; otherwise they are folded into the leading prompt. */
+	supportsMidConvoSystemMessages?: boolean;
+	supportsAdditionalTools?: boolean;
+	supportsToolSearch?: boolean;
 	toolOptions?: ConvertResponsesToolsOptions;
+	/**
+	 * Send the system prompt as one `input_text` block carrying an explicit
+	 * `prompt_cache_breakpoint`, so the platform writes and looks up the prefix at the end of
+	 * the system prompt even when hosted tools (`web_search_preview`) are present (senpi#2096).
+	 */
+	systemPromptCacheBreakpoint?: boolean;
 	/** Internal request-local provenance sealing pass. Never serialized to provider payloads. */
 	sealContextProvenance?: boolean;
 }
@@ -157,7 +179,7 @@ export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
 	supportsStrictMode?: boolean;
 	supportsOpenAIGrammarTools?: boolean;
-	deferLoading?: boolean;
+	toolSearchResult?: boolean;
 }
 
 type ResponseCustomToolCallItem = {
@@ -186,7 +208,8 @@ type ResponseInputItem =
 	| OpenAIResponseInputItem
 	| ResponseCustomToolCallItem
 	| ResponseCustomToolCallOutputItem
-	| AdditionalToolsInputItem;
+	| AdditionalToolsInputItem
+	| { type: "configuration_update"; reasoning: { effort: string } };
 
 export const CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL = "custom";
 
@@ -232,16 +255,65 @@ function withContextProvenance<T extends object>(item: T, message: unknown, seal
 	return item;
 }
 // =============================================================================
+// Tool placement
+// =============================================================================
+
+export type ResponsesDeferredToolsMode = "additional-tools" | "tool-search";
+
+/** `additional_tools` items win over client tool search when a model supports both. */
+export function resolveResponsesDeferredToolsMode(
+	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean } | undefined,
+): ResponsesDeferredToolsMode | undefined {
+	if (compat?.supportsAdditionalTools) return "additional-tools";
+	return compat?.supportsToolSearch ? "tool-search" : undefined;
+}
+
+export interface ResponsesToolPlacement {
+	/** Tools sent in the top-level `tools` field. */
+	requestTools: Tool[];
+	/** Whether later system messages load their own `toolsAdded` in place. */
+	anchorsAdditions: boolean;
+	/** Tools a tool result loads in place through `addedToolNames`. */
+	deferred: ReadonlyMap<string, Tool>;
+}
+
+/**
+ * Upstream transcript placement plus the fork's `addedToolNames` deferral: a current tool first named by a
+ * tool result's `addedToolNames` (before any call to it) leaves the top-level `tools` field and is loaded
+ * where that result appears, so lazy activation never rewrites the cached prefix.
+ */
+export function resolveResponsesToolPlacement(
+	messages: readonly Message[],
+	supportsToolAdditions: boolean,
+): ResponsesToolPlacement {
+	const transcriptTools = resolveTranscriptTools(messages, supportsToolAdditions);
+	const { deferred } = splitDeferredTools(
+		{ messages: [...messages], tools: getCurrentTools(messages) },
+		supportsToolAdditions,
+	);
+	return {
+		requestTools: transcriptTools.requestTools.filter((tool) => !deferred.has(tool.name)),
+		anchorsAdditions: transcriptTools.anchorsAdditions,
+		deferred,
+	};
+}
+
+// =============================================================================
 // Message conversion
 // =============================================================================
 
 export function convertResponsesMessages<TApi extends Api>(
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	allowedToolCallProviders: ReadonlySet<string>,
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
+	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInputItem[] = [];
+	const deferredToolsMode = resolveResponsesDeferredToolsMode(options);
+	const toolPlacement = resolveResponsesToolPlacement(normalizedContext.messages, deferredToolsMode !== undefined);
+	const declaredTools = getDeclaredTools(normalizedContext.messages);
+	// One ledger for both in-place loading paths: transcript system messages and `addedToolNames`.
 	const loadedToolNames = new Set<string>();
 
 	const normalizeIdPart = (part: string): string => {
@@ -272,24 +344,79 @@ export function convertResponsesMessages<TApi extends Api>(
 		return `${normalizedCallId}|${normalizedItemId}`;
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
+	const transformedMessages = transformMessages(normalizedContext.messages, model, normalizeToolCallId, {
 		preserveThinking: options?.preserveThinking,
 		preserveTextSignatures: options?.preserveTextSignatures,
 	});
-
-	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-	if (includeSystemPrompt && context.systemPrompt) {
-		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
+	const appendSystemToolAdditions = (message: SystemMessage, seed: string): void => {
+		const tools = toolPlacement.anchorsAdditions
+			? (message.toolsAdded ?? []).filter((tool) => !loadedToolNames.has(tool.name))
+			: [];
+		if (tools.length === 0) return;
+		for (const tool of tools) loadedToolNames.add(tool.name);
+		if (options?.supportsAdditionalTools) {
+			messages.push({
+				type: "additional_tools",
+				role: "developer",
+				tools: convertResponsesTools(tools, options.toolOptions),
+			} satisfies ResponseInputItem);
+			return;
+		}
+		if (!options?.supportsToolSearch) return;
+		const names = tools.map((tool) => tool.name);
+		const callId = `pi_tool_load_${shortHash(`${seed}:${names.join(",")}`)}`;
 		messages.push({
-			role,
-			content: sanitizeSurrogates(context.systemPrompt),
-		});
-	}
+			type: "tool_search_call",
+			call_id: callId,
+			execution: "client",
+			status: "completed",
+			arguments: { query: names.join(" "), limit: names.length },
+		} satisfies ResponseInputItem);
+		messages.push({
+			type: "tool_search_output",
+			call_id: callId,
+			execution: "client",
+			status: "completed",
+			tools: convertResponsesTools(tools, { ...options.toolOptions, toolSearchResult: true }),
+		} satisfies ResponseToolSearchOutputItemParam);
+	};
+	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
+	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
+	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 
 	let msgIndex = 0;
+	let sourceIndex = 0;
 	for (const msg of transformedMessages) {
-		if (msg.role === "user") {
+		const isLeadingSystemMessage = sourceIndex++ === 0 && msg.role === "system";
+		if (msg.role === "configurationUpdate") {
+			if (!supportsConfigurationUpdate(model)) continue;
+			const previous = messages[messages.length - 1];
+			if (previous?.type === "configuration_update") {
+				messages[messages.length - 1] = {
+					type: "configuration_update",
+					reasoning: { effort: msg.effort },
+				};
+			} else {
+				messages.push({ type: "configuration_update", reasoning: { effort: msg.effort } });
+			}
+			continue;
+		}
+		if (msg.role === "system") {
+			if (!isLeadingSystemMessage) appendSystemToolAdditions(msg, `system:${msgIndex}`);
+			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
+				const text = isLeadingSystemMessage ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg);
+				if (text.length > 0 && isLeadingSystemMessage && options?.systemPromptCacheBreakpoint === true) {
+					const block = {
+						type: "input_text" as const,
+						text: sanitizeSurrogates(text),
+						prompt_cache_breakpoint: { mode: "explicit" },
+					};
+					messages.push({ role: instructionRole, content: [block] });
+				} else if (text.length > 0) {
+					messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+				}
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push(
 					withContextProvenance(
@@ -361,6 +488,27 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 					// Signed foreign blocks with no text are intentionally dropped.
 				} else if (block.type === "providerNative") {
+					// Responses accepts its completed web_search_call output items
+					// in the next input. Keep them only on the originating route/model;
+					// encrypted/native state must never cross provider boundaries.
+					// https://developers.openai.com/api/docs/guides/conversation-state
+					// Verified against the ChatGPT subscription endpoint for senpi#3122.
+					const raw = block.raw;
+					if (
+						isSameModel &&
+						block.subtype === "web_search_call" &&
+						raw !== null &&
+						typeof raw === "object" &&
+						"type" in raw &&
+						raw.type === "web_search_call" &&
+						"id" in raw &&
+						typeof raw.id === "string" &&
+						"action" in raw &&
+						"status" in raw &&
+						(raw.status === "completed" || raw.status === "failed")
+					) {
+						output.push(raw as ResponseFunctionWebSearch);
+					}
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
 					pushAssistantText(textBlock.text, textBlock.textSignature);
@@ -369,25 +517,25 @@ export function convertResponsesMessages<TApi extends Api>(
 					const [callId, itemIdRaw] = toolCall.id.split("|");
 					const customInputProperty = options?.grammarToolInputProperties?.get(toolCall.name);
 					const isPersistedFreeform = itemIdRaw === CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL;
-					const isFreeform = isFreeformToolName(toolCall.name, context.tools) || isPersistedFreeform;
+					const isFreeform = isFreeformToolName(toolCall.name, declaredTools) || isPersistedFreeform;
 					let itemId: string | undefined = isPersistedFreeform ? undefined : itemIdRaw;
 
 					// An active grammar declaration wins over sentinel recovery below: its
 					// named input property is richer than the persisted freeform fallback.
 
 					// For different-model messages, set id to undefined to avoid pairing validation.
-					// OpenAI tracks which fc_xxx IDs were paired with rs_xxx reasoning items.
+					// OpenAI tracks which item IDs were paired with rs_xxx reasoning items.
 					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					// Function-call item ids must begin with fc_ while freeform calls can replay
-					// without the local <call_id>|custom sentinel.
-					if (
-						(isDifferentModel && itemId?.startsWith("fc_")) ||
-						(!isFreeform && customInputProperty === undefined && !itemId?.startsWith("fc_"))
-					) {
+					// Also drop ids that do not match the replayed item type: function_call ids must be fc_*
+					// and custom_tool_call ids must be ctc_*. Foreign tool call ids are normalized to fc_*, and
+					// a call can switch between the two types when grammar tool support differs. Freeform
+					// calls replay without an item id and without the local <call_id>|custom sentinel.
+					const itemIdPrefix = customInputProperty === undefined ? "fc_" : "ctc_";
+					if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) {
 						itemId = undefined;
 					}
 
-					const canReplayNamespace = isSameModel || options?.deferredTools?.has(toolCall.name) === true;
+					const canReplayNamespace = isSameModel || toolPlacement.deferred.has(toolCall.name);
 
 					if (customInputProperty !== undefined) {
 						output.push({
@@ -446,7 +594,7 @@ export function convertResponsesMessages<TApi extends Api>(
 						options?.sealContextProvenance,
 					),
 				);
-			} else if (isFreeformToolName(msg.toolName, context.tools) || isPersistedFreeform) {
+			} else if (isFreeformToolName(msg.toolName, declaredTools) || isPersistedFreeform) {
 				messages.push(
 					withContextProvenance(
 						{
@@ -470,24 +618,24 @@ export function convertResponsesMessages<TApi extends Api>(
 			}
 			const deferredTools: Tool[] = [];
 			for (const name of msg.addedToolNames ?? []) {
-				const tool = options?.deferredTools?.get(name);
+				const tool = toolPlacement.deferred.get(name);
 				if (!tool || loadedToolNames.has(name)) continue;
 				loadedToolNames.add(name);
 				deferredTools.push(tool);
 			}
-			if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
+			if (deferredTools.length > 0 && deferredToolsMode === "additional-tools") {
 				messages.push(
 					withContextProvenance(
 						{
 							type: "additional_tools",
 							role: "developer",
-							tools: convertResponsesTools(deferredTools, options.toolOptions),
+							tools: convertResponsesTools(deferredTools, options?.toolOptions),
 						} satisfies ResponseInputItem,
 						msg,
-						options.sealContextProvenance,
+						options?.sealContextProvenance,
 					),
 				);
-			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
+			} else if (deferredTools.length > 0 && deferredToolsMode === "tool-search") {
 				const names = deferredTools.map((tool) => tool.name);
 				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
 				messages.push(
@@ -512,7 +660,7 @@ export function convertResponsesMessages<TApi extends Api>(
 							status: "completed",
 							tools: convertResponsesTools(deferredTools, {
 								...options?.toolOptions,
-								deferLoading: true,
+								toolSearchResult: true,
 							}),
 						} satisfies ResponseToolSearchOutputItemParam,
 						msg,
@@ -521,7 +669,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				);
 			}
 		}
-		msgIndex++;
+		if (!isLeadingSystemMessage) msgIndex++;
 	}
 
 	return messages as ResponseInput;
@@ -536,7 +684,8 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 	const supportsStrictMode = options?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
 
-	return tools.map((tool) => {
+	const sortedTools = [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+	return sortedTools.map((tool) => {
 		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -548,7 +697,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 					syntax: grammar.format,
 					definition: grammar.definition,
 				},
-				...(options?.deferLoading ? { defer_loading: true } : {}),
+				...(options?.toolSearchResult ? { defer_loading: true } : {}),
 			} satisfies OpenAITool;
 		}
 		if (tool.freeform) {
@@ -557,7 +706,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 				name: tool.name,
 				description: tool.description,
 				format: tool.freeform,
-				...(options?.deferLoading ? { defer_loading: true } : {}),
+				...(options?.toolSearchResult ? { defer_loading: true } : {}),
 			} as OpenAITool;
 		}
 
@@ -570,7 +719,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			name: tool.name,
 			description: tool.description,
 			parameters: getJsonSchemaToolParameters(tool, strict === true) as ResponseFunctionTool["parameters"],
-			...(options?.deferLoading ? { defer_loading: true } : {}),
+			...(options?.toolSearchResult ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {
 			functionTool.strict = strict;
@@ -675,6 +824,7 @@ export async function processResponsesStream<TApi extends Api>(
 	model: Model<TApi>,
 	options?: OpenAIResponsesStreamOptions,
 ): Promise<void> {
+	enableAssistantCapture(stream);
 	let sawTerminalResponseEvent = false;
 	let nativeImageBase64Chars = 0;
 	const outputSlots = new Map<number, ResponsesOutputSlot>();
@@ -743,7 +893,10 @@ export async function processResponsesStream<TApi extends Api>(
 				contentIndex: output.content.length - 1,
 			} satisfies ResponsesOutputSlot;
 			outputSlots.set(outputIndex, slot);
-			stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
+			stream.push(
+				{ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output },
+				{ rawArgumentPrefix: block.partialJson },
+			);
 			return slot;
 		}
 		if (isResponseCustomToolCallItem(item)) {
@@ -784,6 +937,12 @@ export async function processResponsesStream<TApi extends Api>(
 		if (imageItem) reconcileNativeImageSlot(outputIndex, slot, imageItem);
 		output.content.push(block);
 		outputSlots.set(outputIndex, slot);
+		pushAssistantProgress(stream, {
+			type: "message_block_state",
+			contentIndex: slot.contentIndex,
+			phase: "insert",
+			block,
+		});
 		return slot;
 	};
 	const getOrCreateSlot = (
@@ -831,8 +990,15 @@ export async function processResponsesStream<TApi extends Api>(
 			const imageItem = readNativeImageGenerationCall(outputItem);
 			if (!imageItem) continue;
 			const existingSlot = getSlot(outputIndex, "providerNative");
+			const slot = existingSlot ?? createSlot(outputIndex, outputItem);
 			if (existingSlot) reconcileNativeImageSlot(outputIndex, existingSlot, imageItem);
-			else createSlot(outputIndex, outputItem);
+			if (slot)
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 			outputSlots.delete(outputIndex);
 		}
 	};
@@ -863,19 +1029,25 @@ export async function processResponsesStream<TApi extends Api>(
 		if (response?.id) {
 			output.responseId = response.id;
 		}
+		const promptCacheDiagnostics = parsePromptCacheDiagnostics(
+			(response as { prompt_cache_diagnostics?: unknown } | undefined)?.prompt_cache_diagnostics,
+		);
+		if (promptCacheDiagnostics) output.promptCacheDiagnostics = promptCacheDiagnostics;
 		if (response?.usage) {
 			const inputDetails = response.usage.input_tokens_details as
-				| { cached_tokens?: number; cache_write_tokens?: number }
+				| { cached_tokens?: number; cache_write_tokens?: number; cache_creation_tokens?: number }
 				| undefined;
 			const cachedTokens = inputDetails?.cached_tokens || 0;
-			const cacheWriteTokens = inputDetails?.cache_write_tokens || 0;
+			// OpenAI platform reports cache_write_tokens; some compatible gateways use cache_creation_tokens.
+			const cacheWriteTokens = inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_tokens ?? 0;
+			const reasoning = reportedCount(response.usage.output_tokens_details?.reasoning_tokens);
 			output.usage = {
 				// OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
 				input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
 				output: response.usage.output_tokens || 0,
 				cacheRead: cachedTokens,
 				cacheWrite: cacheWriteTokens,
-				reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
+				...(reasoning === undefined ? {} : { reasoning }),
 				totalTokens: response.usage.total_tokens || 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
@@ -895,13 +1067,15 @@ export async function processResponsesStream<TApi extends Api>(
 		output.rawStopReason = incompleteReason ? `${status}.${incompleteReason}` : status;
 		const mappedStop = mapStopReason(status, incompleteReason);
 		output.stopReason = mappedStop.stopReason;
-		output.errorMessage = mappedStop.errorMessage;
+		if (mappedStop.errorMessage === undefined) delete output.errorMessage;
+		else output.errorMessage = mappedStop.errorMessage;
 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 			output.stopReason = "toolUse";
 		}
 	};
 
-	for await (const event of openaiStream) {
+	for await (const event of withResponsesCompletionGrace(openaiStream)) {
+		await options?.onProviderStreamEvent?.(event, model);
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
@@ -972,6 +1146,13 @@ export async function processResponsesStream<TApi extends Api>(
 			if (event.arguments.startsWith(previousPartialJson)) {
 				const delta = event.arguments.slice(previousPartialJson.length);
 				if (delta.length > 0) pushToolCallDelta(slot, delta);
+			} else {
+				pushAssistantProgress(stream, {
+					type: "message_tool_arguments_reset",
+					contentIndex: slot.contentIndex,
+					rawArgumentPrefix: event.arguments,
+					parsedThrough: event.arguments.length,
+				});
 			}
 		} else if (event.type === "response.custom_tool_call_input.delta") {
 			const slot = getSlot(event.output_index, "toolCall");
@@ -992,6 +1173,12 @@ export async function processResponsesStream<TApi extends Api>(
 
 			if (imageItem && slot?.type === "providerNative") {
 				reconcileNativeImageSlot(event.output_index, slot, imageItem);
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 				finalizedNativeImageOutputIndexes.add(event.output_index);
 				outputSlots.delete(event.output_index);
 			} else if (item.type === "reasoning" && slot?.type === "thinking") {
@@ -1062,12 +1249,34 @@ export async function processResponsesStream<TApi extends Api>(
 			} else if (slot?.type === "providerNative") {
 				slot.block.subtype = item.type;
 				slot.block.raw = item;
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 				outputSlots.delete(event.output_index);
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			finalizeResponse(event.response);
+			if (options?.siwc && event.type === "response.incomplete") {
+				throw new Error(`Response incomplete: ${event.response.incomplete_details?.reason ?? "unknown reason"}`);
+			}
 		} else if (event.type === "error") {
-			throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
+			const errorEvent = event as typeof event & {
+				error?: { code?: string | null; message?: string; param?: string };
+				status?: number;
+			};
+			const code = errorEvent.error?.code ?? errorEvent.code ?? errorEvent.status;
+			const message = errorEvent.error?.message || errorEvent.message || "Unknown error";
+			const failure = new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: typeof code === "string" ? code : undefined,
+						status: errorEvent.status,
+						param: errorEvent.error?.param ?? errorEvent.param,
+					})
+				: failure;
 		} else if (event.type === "response.failed") {
 			sawTerminalResponseEvent = true;
 			output.rawStopReason = event.response?.status;
@@ -1078,12 +1287,32 @@ export async function processResponsesStream<TApi extends Api>(
 				: details?.reason
 					? `incomplete: ${details.reason}`
 					: "Unknown error (no error details in response)";
-			throw new Error(msg);
+			const failure = new Error(msg);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: error?.code,
+						param: error && "param" in error ? error.param : undefined,
+					})
+				: failure;
 		}
 	}
 	const hasFinalizedToolCall = output.content.some((block) => block.type === "toolCall" && !("partialJson" in block));
-	if (!sawTerminalResponseEvent && !hasFinalizedToolCall) {
+	if (!sawTerminalResponseEvent && (options?.siwc || !hasFinalizedToolCall)) {
 		throw new Error("OpenAI Responses stream ended before a terminal response event");
+	}
+	// The agent runs every tool call in the final message. Refuse to hand over calls whose
+	// output_item.done never arrived: their arguments may be cut off or mixed up, e.g. when a
+	// non-compliant server omits output_index. Finished calls have their scratch buffers removed.
+	if (output.stopReason === "toolUse") {
+		for (const block of output.content) {
+			if (block.type !== "toolCall") continue;
+			const toolCall = block as StreamingToolCall;
+			if (toolCall.partialJson !== undefined || toolCall.customInput !== undefined) {
+				throw new Error(
+					`OpenAI Responses stream completed with an unfinished tool call: ${toolCall.name} (${toolCall.id})`,
+				);
+			}
+		}
 	}
 }
 

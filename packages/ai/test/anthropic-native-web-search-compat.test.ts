@@ -5,6 +5,8 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
 	return new Response(body, {
@@ -47,12 +49,14 @@ const minimalEvents = [
 
 function createCapturingClient(response: Response, captured?: { params?: Record<string, unknown> }): Anthropic {
 	return {
-		messages: {
-			create: (params: Record<string, unknown>) => {
-				if (captured) captured.params = params;
-				return {
-					asResponse: async () => response,
-				};
+		beta: {
+			messages: {
+				create: (params: Record<string, unknown>) => {
+					if (captured) captured.params = params;
+					return {
+						asResponse: async () => response,
+					};
+				},
 			},
 		},
 	} as unknown as Anthropic;
@@ -91,7 +95,7 @@ async function captureParams(
 	},
 ): Promise<Record<string, unknown>> {
 	const captured: { params?: Record<string, unknown> } = {};
-	const stream = streamAnthropic(model, options?.context ?? createContext(), {
+	const stream = streamAnthropic(model, normalizeContext(options?.context ?? createContext()), {
 		client: createCapturingClient(createSseResponse(minimalEvents), captured),
 		...(options?.toolChoice ? { toolChoice: options.toolChoice } : {}),
 		onPayload: (payload) => {
@@ -222,7 +226,7 @@ describe("Anthropic web-search replay guard", () => {
 
 	async function captureReplayedAssistantContent(model: Model<"anthropic-messages">): Promise<unknown> {
 		const captured: { params?: Record<string, unknown> } = {};
-		const stream = streamAnthropic(model, replayContext(model), {
+		const stream = streamAnthropic(model, normalizeContext(replayContext(model)), {
 			client: createCapturingClient(createSseResponse(minimalEvents), captured),
 		});
 		await stream.result();
@@ -301,7 +305,7 @@ describe("Anthropic server_tool_use input streaming", () => {
 			minimalEvents[2],
 		]);
 
-		const stream = streamAnthropic(getModel("anthropic", "claude-sonnet-4-5"), createContext(), {
+		const stream = streamAnthropic(getModel("anthropic", "claude-sonnet-4-5"), normalizeContext(createContext()), {
 			client: createCapturingClient(response),
 		});
 		const result = await stream.result();

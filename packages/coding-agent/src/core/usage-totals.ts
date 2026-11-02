@@ -1,4 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai/compat";
+import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 export interface UsageTotals {
@@ -7,6 +8,8 @@ export interface UsageTotals {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
+	/** Some summed turn had no known price, so `cost` is a lower bound (senpi#3844). */
+	costUnknown?: true;
 }
 
 export function createUsageTotals(): UsageTotals {
@@ -25,15 +28,43 @@ export function addUsageToTotals(totals: UsageTotals, usage: Usage): void {
 	totals.cacheRead += usage.cacheRead;
 	totals.cacheWrite += usage.cacheWrite;
 	totals.cost += usage.cost.total;
+	if (usage.costUnknown) totals.costUnknown = true;
+}
+
+/** Sum of two usages, keeping the optional token splits when either side reports them. */
+export function combineUsage(first: Usage, second: Usage): Usage {
+	return {
+		input: first.input + second.input,
+		output: first.output + second.output,
+		cacheRead: first.cacheRead + second.cacheRead,
+		cacheWrite: first.cacheWrite + second.cacheWrite,
+		...(first.cacheWrite1h !== undefined || second.cacheWrite1h !== undefined
+			? { cacheWrite1h: (first.cacheWrite1h ?? 0) + (second.cacheWrite1h ?? 0) }
+			: {}),
+		...(first.reasoning !== undefined || second.reasoning !== undefined
+			? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) }
+			: {}),
+		totalTokens: first.totalTokens + second.totalTokens,
+		cost: {
+			input: first.cost.input + second.cost.input,
+			output: first.cost.output + second.cost.output,
+			cacheRead: first.cost.cacheRead + second.cost.cacheRead,
+			cacheWrite: first.cost.cacheWrite + second.cost.cacheWrite,
+			total: first.cost.total + second.cost.total,
+		},
+		...(first.costUnknown || second.costUnknown ? { costUnknown: true } : {}),
+	};
 }
 
 export interface UsageCostBreakdownEntry {
 	key: string;
 	cost: number;
+	/** Some of this row's turns had no known price (senpi#3844). */
+	costUnknown?: true;
 	tokens: number;
 }
 
-/** Group attributable assistant usage by model and all other usage into a separate bucket. */
+/** Group model-attributed usage by model and all other usage into a separate bucket. */
 export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdownEntry[] {
 	const totalsByKey = new Map<string, UsageTotals>();
 
@@ -43,12 +74,18 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 		if (entry.type === "message" && entry.message.role === "assistant") {
 			key = `${entry.message.provider}/${entry.message.responseModel ?? entry.message.model}`;
 			usage = entry.message.usage;
+		} else if (entry.type === "usage") {
+			key = `${entry.provider}/${entry.model}`;
+			usage = entry.usage;
 		} else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
 			key = "Tools/summaries";
 			usage = entry.message.usage;
 		} else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
 			key = "Tools/summaries";
 			usage = entry.usage;
+		} else {
+			usage = getPromptCachePrewarmUsage(entry);
+			if (usage) key = "Tools/summaries";
 		}
 		if (!key || !usage) continue;
 
@@ -63,6 +100,7 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 	return Array.from(totalsByKey, ([key, totals]) => ({
 		key,
 		cost: totals.cost,
+		...(totals.costUnknown ? { costUnknown: true as const } : {}),
 		tokens: totals.input + totals.output + totals.cacheRead + totals.cacheWrite,
 	}))
 		.filter((entry) => entry.cost > 0 || entry.tokens > 0)

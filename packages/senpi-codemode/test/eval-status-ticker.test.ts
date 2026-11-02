@@ -18,8 +18,10 @@ describe("EvalStatusTicker", () => {
 
 	it("unrefs the interval handle so it never keeps the process alive", () => {
 		const unref = vi.fn();
-		const fakeHandle = { unref, ref: vi.fn(), hasRef: () => true } as unknown as NodeJS.Timeout;
-		const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(fakeHandle);
+		const real = setInterval(() => {}, 60_000);
+		clearInterval(real);
+		real.unref = unref;
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation(() => real);
 		const ticker = new EvalStatusTicker({ render: () => {}, now: () => T0 });
 
 		ticker.sync([entry("cell-1", "long running cell")]);

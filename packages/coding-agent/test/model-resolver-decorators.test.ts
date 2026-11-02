@@ -78,12 +78,41 @@ describe("service-tier decorators", () => {
 	});
 
 	test("all tier values parse", () => {
-		for (const tier of ["auto", "flex", "priority"] as const) {
+		for (const tier of ["auto", "flex", "priority", "ultrafast"] as const) {
 			const result = parseModelPattern(`gpt-5.5:${tier}`, registryModels);
 			expect(result.model?.id).toBe("gpt-5.5");
 			expect(result.serviceTier).toBe(tier);
+			if (tier === "ultrafast") {
+				expect(result.warning).toBe(
+					"Ultrafast is documented for GPT-6 Astra and GPT-6.1 Sol; openai/gpt-5.5 may reject or ignore it",
+				);
+			} else {
+				expect(result.warning).toBeUndefined();
+			}
+		}
+	});
+
+	test("ultrafast on GPT-6.1 Sol selects without an undocumented-tier warning", () => {
+		const sol = model("chatgpt-subscription", "gpt-6.1-sol", "GPT-6.1 Sol");
+		for (const pattern of [
+			"chatgpt-subscription/gpt-6.1-sol:ultrafast:xhigh",
+			"chatgpt-subscription/gpt-6.1-sol:xhigh:ultrafast",
+		]) {
+			const result = parseModelPattern(pattern, [sol]);
+			expect(result.model?.id).toBe("gpt-6.1-sol");
+			expect(result.serviceTier).toBe("ultrafast");
+			expect(result.thinkingLevel).toBe("xhigh");
 			expect(result.warning).toBeUndefined();
 		}
+	});
+
+	test("ultrafast on a gateway model warns that the request runs at its default tier", () => {
+		const gateway = model("opencode", "gpt-6-astra", "GPT-6 Astra");
+		const result = parseModelPattern("opencode/gpt-6-astra:ultrafast", [gateway]);
+		expect(result.serviceTier).toBe("ultrafast");
+		expect(result.warning).toBe(
+			"Ultrafast is only sent to OpenAI and ChatGPT Subscription; opencode/gpt-6-astra runs at its default tier",
+		);
 	});
 
 	test("a model id that literally ends in :priority still matches whole (full-string precedence)", () => {

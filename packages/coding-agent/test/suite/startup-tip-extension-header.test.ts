@@ -16,8 +16,9 @@ function renderAll(container: Container): string {
 
 describe("startup tip survives an extension header override", () => {
 	test("the tip is never interpolated into the built-in header text", () => {
-		const logoToken = ["$", "{logo}"].join("");
-		const expandedToken = ["$", "{expandedInstructions}"].join("");
+		// The header text is built on demand from thunks so it follows theme changes (upstream sync, L6a).
+		const logoToken = ["$", "{logo()}"].join("");
+		const expandedToken = ["$", "{expandedInstructions()}"].join("");
 		const headerClosures = INTERACTIVE_MODE_SOURCE.split("\n").filter(
 			(line) => line.includes(logoToken) || line.includes(expandedToken),
 		);

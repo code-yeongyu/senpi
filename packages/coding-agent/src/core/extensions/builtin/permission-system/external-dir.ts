@@ -1,6 +1,26 @@
-import * as fs from "node:fs";
+import { type BigIntStats, statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+
+export type AlwaysScope = "file" | "directory";
+
+export function toParentDirectoryPattern(inputPath: string, scope: AlwaysScope, originalPath = inputPath): string {
+	if (inputPath === "~" || inputPath === "$HOME") {
+		return `${inputPath}/*`;
+	}
+	if (scope === "directory" || /[\\/]$/.test(originalPath)) {
+		return inputPath.endsWith("/") || inputPath.endsWith("\\") ? `${inputPath}*` : `${inputPath}/*`;
+	}
+	if (inputPath.endsWith("/") || inputPath.endsWith("\\")) {
+		return `${inputPath}*`;
+	}
+	const parentPattern = inputPath.replace(/[\\/][^\\/]+$/, "/*");
+	if (parentPattern.replaceAll("\\", "/") === `${path.parse(inputPath).root.replaceAll("\\", "/")}*`) {
+		return inputPath;
+	}
+	return parentPattern;
+}
 
 export function expandHome(inputPath: string): string {
 	if (inputPath === "~") {
@@ -18,36 +38,49 @@ export function expandHome(inputPath: string): string {
 	return inputPath;
 }
 
-function normalizePath(inputPath: string): string {
-	let candidate = path.normalize(inputPath);
-	const suffix: string[] = [];
-	for (;;) {
-		try {
-			const resolved = fs.realpathSync(candidate);
-			return suffix.length === 0 ? resolved : path.join(resolved, ...suffix.reverse());
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return candidate;
-			const parent = path.dirname(candidate);
-			if (parent === candidate) return candidate;
-			suffix.push(path.basename(candidate));
-			candidate = parent;
-		}
-	}
-}
-
-export function isExternalPath(inputPath: string, cwd: string): boolean {
+/** The resolved target if it is external, shared by classification and the permission request. */
+export function resolveExternalPath(inputPath: string, cwd: string): string | undefined {
 	const expandedPath = expandHome(inputPath);
-	const normalizedCwd = normalizePath(cwd);
+	// Resolution must never open(2) a component (autofs triggers block, execute-only dirs EACCES):
+	// realpathWithoutOpen walks lstat/readlink only, exactly what the classifier needs.
+	const normalizedCwd = realpathWithoutOpen(cwd);
 	const absolutePath = path.isAbsolute(expandedPath) ? expandedPath : path.resolve(normalizedCwd, expandedPath);
-	const normalizedTarget = normalizePath(absolutePath);
+	const normalizedTarget = realpathWithoutOpen(absolutePath);
 
 	if (normalizedTarget === normalizedCwd) {
-		return false;
+		return undefined;
 	}
 
 	const cwdWithSeparator = normalizedCwd.endsWith(path.sep) ? normalizedCwd : normalizedCwd + path.sep;
 
-	return !normalizedTarget.startsWith(cwdWithSeparator);
+	if (normalizedTarget.startsWith(cwdWithSeparator)) return undefined;
+
+	// Case-preserving spellings can name the same directory on a case-insensitive volume.
+	// stat compares filesystem identity without opening a directory (unlike Bun's realpath).
+	// Walk through missing descendants to their existing ancestor; never lowercase names,
+	// since two differently cased directories can be distinct on a case-sensitive volume.
+	let cwdIdentity: BigIntStats;
+	try {
+		cwdIdentity = statSync(normalizedCwd, { bigint: true });
+	} catch {
+		return normalizedTarget;
+	}
+	let ancestor = normalizedTarget;
+	for (;;) {
+		try {
+			const identity = statSync(ancestor, { bigint: true });
+			if (identity.dev === cwdIdentity.dev && identity.ino === cwdIdentity.ino) return undefined;
+		} catch {
+			// A missing or inaccessible component does not establish containment.
+		}
+		const parent = path.dirname(ancestor);
+		if (parent === ancestor) return normalizedTarget;
+		ancestor = parent;
+	}
+}
+
+export function isExternalPath(inputPath: string, cwd: string): boolean {
+	return resolveExternalPath(inputPath, cwd) !== undefined;
 }
 
 function tokenizeCommand(command: string): string[] {

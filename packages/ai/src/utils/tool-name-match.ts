@@ -1,0 +1,117 @@
+/**
+ * Lenient tool-name matching shared by the inbound tool-call resolver
+ * (`@earendil-works/pi-agent-core` `resolveToolNameAlias`) and the Anthropic
+ * tool-reference repair, so both paths accept the same shapes.
+ *
+ * Models write tool names in shapes no tool was registered under: recased
+ * (`LazyWeather` for `lazy_weather`), under a gateway namespace in any case
+ * (`mcp__686f__Eval`, `MCP__686f__Eval`), under a namespace whose id contains
+ * underscores (`mcp__my_server__Memory`), or without the `mcp_<server>_`
+ * prefix senpi's own MCP tools carry (`create_issue` for
+ * `mcp_github_create_issue`).
+ *
+ * A namespace is cut only at its delimiter: `__` for the gateway form, the
+ * first `_` for `mcp_<server>_<tool>`. It is never cut inside the tool's own
+ * name, so `mcp__sandbox__run_bash` cannot fall through to a local `bash`.
+ * Each form is tried most specific first (exact, case/separator fold, then a
+ * registered tool whose unprefixed name folds the same), and a step resolves
+ * only when exactly one tool matches it: the matcher never guesses between two
+ * candidates.
+ */
+
+const GATEWAY_NAMESPACE = /^mcp__(.+)$/i;
+const GATEWAY_DELIMITER = /_{2,}/g;
+const SERVER_NAMESPACE = /^mcp_([^_]+)_(.+)$/i;
+
+export function foldToolName(name: string): string {
+	return name.toLowerCase().replaceAll(/[-_]/g, "");
+}
+
+/**
+ * The name itself, then its unprefixed remainders, longest first:
+ * `mcp__my_srv__x__Tool` -> `x__Tool`, `Tool`; `mcp_github_create_issue` ->
+ * `create_issue`.
+ */
+export function toolNameForms(name: string): string[] {
+	const forms = [name];
+	const gateway = GATEWAY_NAMESPACE.exec(name);
+	if (gateway) {
+		const rest = gateway[1] ?? "";
+		for (const run of rest.matchAll(GATEWAY_DELIMITER)) {
+			const suffix = rest.slice(run.index + run[0].length);
+			if (run.index > 0 && suffix.length > 0) forms.push(suffix);
+		}
+		return forms;
+	}
+	const tool = SERVER_NAMESPACE.exec(name)?.[2];
+	if (tool !== undefined) forms.push(tool);
+	return forms;
+}
+
+function uniqueMatch(names: readonly string[], matches: (name: string) => boolean): string | undefined {
+	const found = names.filter(matches);
+	return found.length === 1 ? found[0] : undefined;
+}
+
+/**
+ * Words that turn a stray prefix into an instruction rather than noise: a call
+ * named `delete_write` or `force_bash` is refused, never run as `write` or
+ * `bash`.
+ */
+const DESTRUCTIVE_PREFIX_WORDS: ReadonlySet<string> = new Set([
+	"delete",
+	"remove",
+	"rm",
+	"force",
+	"drop",
+	"purge",
+	"wipe",
+	"kill",
+	"reset",
+	"overwrite",
+	"truncate",
+	"destroy",
+]);
+
+/**
+ * Last resort for a plain name carrying a stray word prefix (`trophy_eval` for
+ * `eval`, omo#12065). The prefixes models emit there are arbitrary words a
+ * namespacing proxy invented (`trophy`, `fringe`, `board`, `column`), so the
+ * prefix cannot be allowlisted; instead it is refused when it carries meaning.
+ * Resolves to the one registered tool whose exact name is a `_`-separated
+ * suffix of the requested name, unless any word of the stripped prefix is a
+ * destructive verb (`delete_write`) or itself names a registered tool
+ * (`read_write`). Namespaced names are excluded so `mcp__sandbox__run_bash`
+ * still never falls through to a local `bash`, and two suffix matches
+ * (`x_read_file` against `read_file` and `file`) refuse.
+ */
+function strayPrefixMatch(requested: string, names: readonly string[]): string | undefined {
+	if (toolNameForms(requested).length > 1) return undefined;
+	const match = uniqueMatch(names, (name) => requested.length > name.length + 1 && requested.endsWith(`_${name}`));
+	if (match === undefined) return undefined;
+	const prefix = requested.slice(0, requested.length - match.length - 1);
+	const registered = new Set(names.map(foldToolName));
+	const meaningful = [prefix, ...prefix.split(/[-_]+/)].some((word) => {
+		const key = foldToolName(word);
+		return DESTRUCTIVE_PREFIX_WORDS.has(key) || registered.has(key);
+	});
+	return meaningful ? undefined : match;
+}
+
+/** Resolve `requested` to the one available tool it names, or `undefined` when none or several match. */
+export function resolveToolNameMatch(requested: string, available: Iterable<string>): string | undefined {
+	const names = [...new Set(available)];
+	for (const form of toolNameForms(requested)) {
+		if (names.includes(form)) return form;
+		const key = foldToolName(form);
+		const folded = uniqueMatch(names, (name) => foldToolName(name) === key);
+		if (folded !== undefined) return folded;
+		const unprefixed = uniqueMatch(names, (name) =>
+			toolNameForms(name)
+				.slice(1)
+				.some((registeredForm) => foldToolName(registeredForm) === key),
+		);
+		if (unprefixed !== undefined) return unprefixed;
+	}
+	return strayPrefixMatch(requested, names);
+}

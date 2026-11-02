@@ -72,7 +72,7 @@ export const ANTHROPIC_BASH_SECTION = `
 ## Bash Tool
 
 The native bash tool is available in this session. The model has direct
-shell access via the bash_20250124 tool. The session is stateless — each
+shell access via the bash_20250124 tool. The session is stateless: each
 command runs independently. The 'restart' parameter is accepted but has
 no effect (no persistent shell session). Standard senpi safety
 guardrails still apply.
@@ -83,17 +83,21 @@ export default function anthropicBashExtension(pi: ExtensionAPI): void {
 		return addAnthropicBashToPayload(ctx.model?.api, event.payload);
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (ctx.model?.api !== "anthropic-messages") {
-			return undefined;
-		}
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			if (ctx.model?.api !== "anthropic-messages") {
+				return undefined;
+			}
 
-		if (!isAnthropicBashEnabled()) {
-			return undefined;
-		}
+			if (!isAnthropicBashEnabled()) {
+				return undefined;
+			}
 
-		return {
-			systemPrompt: `${event.systemPrompt}\n${ANTHROPIC_BASH_SECTION}`,
-		};
-	});
+			return {
+				systemPrompt: `${event.systemPrompt}\n${ANTHROPIC_BASH_SECTION}`,
+			};
+		},
+		{ previewSafe: true },
+	);
 }

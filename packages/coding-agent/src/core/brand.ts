@@ -28,6 +28,11 @@ export interface BrandUpdateChannel {
 	readonly changelogUrl?: string;
 }
 
+export interface BrandChangelog {
+	readonly path: string;
+	readonly version?: string;
+}
+
 export interface BrandProfile {
 	/** Product name shown to users and to the model. */
 	readonly name: string;
@@ -47,6 +52,17 @@ export interface BrandProfile {
 	readonly originator?: string;
 	/** Update channel of the branded product; absent means the product manages updates itself. */
 	readonly update?: BrandUpdateChannel;
+	readonly changelog?: BrandChangelog;
+}
+
+function readChangelog(source: Record<string, unknown>): BrandChangelog | undefined {
+	const value = source.changelog;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const changelog = value as Record<string, unknown>;
+	const path = readString(changelog, "path");
+	if (!path?.startsWith("/") || path.includes("\0")) return undefined;
+	const version = readString(changelog, "version");
+	return { path, ...(version ? { version } : {}) };
 }
 
 function readUpdateChannel(source: Record<string, unknown>): BrandUpdateChannel | undefined {
@@ -114,6 +130,7 @@ export function parseBrandProfile(raw: string | undefined): BrandProfile | undef
 		return undefined;
 	}
 
+	const changelog = readChangelog(source);
 	return {
 		name,
 		command: readString(source, "command"),
@@ -124,6 +141,7 @@ export function parseBrandProfile(raw: string | undefined): BrandProfile | undef
 		userAgent: readString(source, "userAgent") || name,
 		originator: readString(source, "originator"),
 		update: readUpdateChannel(source),
+		...(changelog ? { changelog } : {}),
 	};
 }
 

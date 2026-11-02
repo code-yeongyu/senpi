@@ -22,7 +22,7 @@ import { type FauxProviderRegistration, fauxAssistantMessage, registerFauxProvid
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/account-management.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import type {
 	AgentEndEvent,
@@ -191,6 +191,7 @@ function createAgentEndEvent(overrides?: Partial<AgentEndEvent>): AgentEndEvent 
 function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 	return {
 		type: "before_agent_start",
+		trigger: "prompt",
 		prompt: "next prompt",
 		systemPrompt: "TEST AGENT SYSTEM PROMPT",
 		systemPromptOptions: { cwd: process.cwd() },
@@ -381,7 +382,7 @@ describe("idle-apply (idle generation completes while still idle)", () => {
 	});
 
 	it("does not idle-apply on a lane the SDK owns", async () => {
-		const harness = createIdleApplyHarness({ provider: CLAUDE_SDK_OAUTH_PROVIDER_ID });
+		const harness = createIdleApplyHarness({ provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID });
 		harness.registration.setResponses([fauxAssistantMessage("should never be requested")]);
 
 		await harness.agentEnd(createAgentEndEvent(), harness.ctx);

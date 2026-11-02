@@ -48,8 +48,8 @@ Newer providers on disk (each `<name>.ts` + `<name>.models.ts`): ant-ling, kimi-
 - Every API stream must preserve tool calls, thinking blocks, usage accounting, stop reasons, setup errors, and abort semantics.
 - Default tests run with zero credentials. Use the faux provider for deterministic event sequences.
 - Keep image providers structurally separate under `images/`.
-- `data/` is committed generated source; never hand-edit. Regenerate with `npm run hydrate-model-data`, validate with `npm run check:model-data` (contract in `packages/ai/scripts/AGENTS.md`).
-- Every `*.models.ts` opens with "Do not edit manually - run `npm run generate-models` to update" and flattens its JSON through `../model-catalog.ts`.
+- `data/` is committed generated source; never hand-edit. Regenerate with `bun run hydrate-model-data`, validate with `bun run check:model-data` (contract in `packages/ai/scripts/AGENTS.md`).
+- Every `*.models.ts` opens with "Do not edit manually - run `bun run generate-models` to update" and flattens its JSON through `../model-catalog.ts`.
 
 ## ANTI-PATTERNS
 

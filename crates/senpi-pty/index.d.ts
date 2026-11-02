@@ -7,6 +7,8 @@ export declare class PtySession {
   kill(signal?: string | undefined | null): NapiResult<undefined>
   waitExit(): NapiResult<Promise<NativePtyExit>>
   wait(): NapiResult<Promise<NativePtyExit>>
+  get pid(): number | null
+  get processGroupId(): number | null
 }
 export type NativePtySession = PtySession
 

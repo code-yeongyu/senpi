@@ -4,12 +4,25 @@ import type { LoadExtensionsResult, ProjectTrustContext } from "./extensions/typ
 import type { DefaultProjectTrust } from "./settings-manager.ts";
 import {
 	getProjectTrustOptions,
+	getSavedProjectTrust,
 	hasTrustRequiringProjectResources,
 	type ProjectTrustOption,
 	type ProjectTrustStore,
 } from "./trust-manager.ts";
 
-export type AppMode = "interactive" | "print" | "json" | "rpc" | "app-server";
+export type AppMode = "interactive" | "print" | "json" | "rpc";
+
+/**
+ * Full access means no prompt anywhere (sisyphuslabs/omo-desktop-app#2465): a session whose
+ * permission preset is explicitly `full-access` trusts its project for that session. Explicit
+ * means the session's `permission-preset` flag (CLI, or `open_session.permissionPreset` through
+ * the launch profile), else the user's global setting. Project settings never count: they are what
+ * trust gates. The implicit default never counts either, so a plain launch keeps asking.
+ */
+export function presetTrustsProject(presetFlag: boolean | string | undefined, globalPreset: unknown): boolean {
+	if (typeof presetFlag === "string") return presetFlag === "full-access";
+	return globalPreset === "full-access";
+}
 
 export interface ResolveProjectTrustedOptions {
 	cwd: string;
@@ -69,7 +82,7 @@ export async function resolveProjectTrusted(options: ResolveProjectTrustedOption
 		}
 	}
 
-	const decision = options.trustStore.get(options.cwd);
+	const decision = await getSavedProjectTrust(options.trustStore, options.cwd);
 	if (decision !== null) {
 		return decision;
 	}

@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -15,6 +15,7 @@ import type {
 	AgentToolResult,
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	ToolDefinition,
 	ToolRenderContext,
 } from "../../src/core/extensions/types.ts";
@@ -47,7 +48,7 @@ function getLatestTodoResult(harness: Harness) {
 
 function responsesForTodo(params: Record<string, unknown>, finalText = "done") {
 	return [
-		fauxAssistantMessage([fauxToolCall("todo", params)], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxToolCall("todo", params as JsonObject)], { stopReason: "toolUse" }),
 		fauxAssistantMessage(finalText),
 	];
 }
@@ -66,6 +67,8 @@ async function captureTodoTool(initialPhases: TodoPhase[] = []) {
 		setCurrentPhases: (phases) => {
 			currentPhases = clonePhases(phases);
 		},
+		getCurrentAsk: () => undefined,
+		setCurrentAsk: () => {},
 		syncWidget: () => {},
 	});
 	if (!capturedTool) throw new Error("Expected todo tool to be registered");
@@ -108,7 +111,7 @@ describe("todo correction wiring", () => {
 
 	it("advertises explicit operation and exact-reference schema guidance without auto-correction", () => {
 		expect(schemaDescription(TODO_PARAMS_SCHEMA.properties.op)).toBe(
-			"Operation to perform. Required — always pass it explicitly.",
+			"Operation to perform. Required: always pass it explicitly.",
 		);
 		expect(schemaDescription(TODO_PARAMS_SCHEMA.properties.list)).toBe("Phased task list for init");
 		expect(schemaDescription(TODO_PARAMS_SCHEMA.properties.task)).toBe(
@@ -207,8 +210,14 @@ describe("todo correction wiring", () => {
 		if (!tool.execute) throw new Error("Expected todo execute");
 
 		await expect(
-			tool.execute("blank-target", { op: "done", task: " " } as TodoParams, undefined, undefined, context),
-		).rejects.toThrow('Blank "task" — pass the exact task text, or omit the field entirely for a bulk operation.');
+			tool.execute(
+				"blank-target",
+				{ op: "done", task: " " } as TodoParams,
+				undefined,
+				undefined,
+				context as ExtensionToolContext,
+			),
+		).rejects.toThrow('Blank "task": pass the exact task text, or omit the field entirely for a bulk operation.');
 		expect(getCurrentPhases()).toEqual(initialPhases);
 	});
 
@@ -255,7 +264,7 @@ describe("todo correction wiring", () => {
 				],
 				storage: "memory" as const,
 				corrections: [
-					'[auto-matched] task " deploy api " -> "Deploy API" — pass the exact text from the previous todo result next time',
+					'[auto-matched] task " deploy api " -> "Deploy API": pass the exact text from the previous todo result next time',
 				],
 			},
 		} satisfies { content: { type: "text"; text: string }[]; details: TodoToolDetails };
@@ -274,5 +283,53 @@ describe("todo correction wiring", () => {
 		expect(rendered).toContain("I. Planning");
 		expect(rendered).toContain("II. Verification");
 		expect(rendered).toContain("[•] Continue");
+	});
+});
+
+describe("todo unwraps a list wrapped one level too deep (#5148)", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	const canonical = [
+		{ phase: "Foundation", items: ["Survey code"] },
+		{ phase: "Verification", items: ["Run checks"] },
+	];
+	const expectedPhases = [
+		{ name: "Foundation", tasks: [{ content: "Survey code", status: "in_progress" }] },
+		{ name: "Verification", tasks: [{ content: "Run checks", status: "pending" }] },
+	];
+
+	async function runInit(list: unknown) {
+		const harness = await createHarnessWithTodoExtension();
+		harnesses.push(harness);
+		harness.setResponses(responsesForTodo({ op: "init", list }));
+		await harness.session.prompt("initialize");
+		return getLatestTodoResult(harness);
+	}
+
+	it.each([
+		["canonical list (unchanged)", canonical],
+		["one nested array", [canonical]],
+		["one inner array per phase", canonical.map((phase) => [phase])],
+		["object wrapper", { list: canonical }],
+		["object wrapper around a nested array", { list: [canonical] }],
+	])("initializes the same phases from the %s", async (_shape, list) => {
+		const result = await runInit(list);
+
+		expect(result.isError).not.toBe(true);
+		expect((result.details as TodoToolDetails).phases).toEqual(expectedPhases);
+	});
+
+	it.each([
+		["a mixed array of phases and arrays", [canonical[0], [canonical[1]]]],
+		["a wrapper with extra keys", { list: canonical, extra: true }],
+		["a wrapper around an empty list", [[]]],
+	])("still rejects %s", async (_shape, list) => {
+		const result = await runInit(list);
+
+		expect(result.isError).toBe(true);
 	});
 });

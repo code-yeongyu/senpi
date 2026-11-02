@@ -4,12 +4,14 @@ import {
 	Container,
 	Markdown,
 	type MarkdownTheme,
+	nextRenderRevision,
 	Spacer,
 	Text,
+	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
-import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
 import { type AssistantRenderDescriptor, createAssistantRenderDescriptors } from "./assistant-render-descriptors.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
@@ -20,6 +22,25 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 function assertNever(value: never): never {
 	throw new TypeError(`Unexpected assistant render variant: ${String(value)}`);
+}
+
+/** The folded handoff line: always one row, cut to the width instead of wrapping (senpi#3323). */
+class SingleLine implements Component {
+	private readonly revision = nextRenderRevision();
+	private readonly text: string;
+	private readonly pad: number;
+	constructor(text: string, pad: number) {
+		this.text = text;
+		this.pad = pad;
+	}
+	render(width: number): string[] {
+		const room = Math.max(1, width - this.pad);
+		return [`${" ".repeat(this.pad)}${truncateToWidth(this.text, room)}`];
+	}
+	invalidate(): void {}
+	getRenderRevision(): number {
+		return this.revision;
+	}
 }
 
 export class AssistantMessageComponent extends Container {
@@ -35,18 +56,23 @@ export class AssistantMessageComponent extends Container {
 	private renderDescriptors: readonly AssistantRenderDescriptor[] = [];
 	private hasToolCalls = false;
 	private expanded = false;
+	private providerErrorOwned = false;
+	private ownsTurnNotice = false;
 	private isStreaming = false;
 	private showTimestamps: boolean;
 	private timestampEligible: boolean;
-	// Stamped once when the message arrives, never at render time: render() is
-	// cache-backed and re-runs on resize, so reading the clock there would make a
-	// past message silently change its own timestamp.
+	// Stamped once on the first update, never at render time: render() re-runs on
+	// resize, and streaming updates must retain the original arrival time.
 	private arrivedAt?: Date;
+	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	private handoffOpenOverrides = new Map<number, boolean>();
+	/** Moves whenever the cached render is dropped; output is a function of the state `updateContent` records. */
+	private revision = nextRenderRevision();
 
 	constructor(
 		message?: AssistantMessage,
 		hideThinkingBlock = false,
-		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		markdownTheme: MarkdownTheme = sharedMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
@@ -72,7 +98,8 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	override invalidate(): void {
-		this.invalidateRenderCache();
+		this.renderCache = undefined;
+		this.revision = nextRenderRevision();
 		super.invalidate();
 		this.renderDescriptors = [];
 		this.refreshContent();
@@ -81,6 +108,7 @@ export class AssistantMessageComponent extends Container {
 	setHideThinkingBlock(hide: boolean): void {
 		if (this.hideThinkingBlock === hide) return;
 		this.hideThinkingBlock = hide;
+		this.thinkingVisibilityOverrides.clear();
 		this.refreshContent();
 	}
 
@@ -93,7 +121,26 @@ export class AssistantMessageComponent extends Container {
 	setExpanded(expanded: boolean): void {
 		if (this.expanded === expanded) return;
 		this.expanded = expanded;
+		this.handoffOpenOverrides.clear();
 		this.refreshContent();
+	}
+
+	/** A replayed turn draws in one component, so it shows its own turn-ending notice (senpi#4958). */
+	setOwnsTurnNotice(owned: boolean): void {
+		if (this.ownsTurnNotice === owned) return;
+		this.ownsTurnNotice = owned;
+		this.refreshContent();
+	}
+
+	setProviderErrorOwned(owned: boolean): void {
+		if (this.providerErrorOwned === owned) return;
+		this.providerErrorOwned = owned;
+		this.refreshContent();
+	}
+
+	/** Transcript-only reasoning/empty streaming heads may sit inside a compact exploration group. */
+	get isExplorationDetail(): boolean {
+		return this.renderDescriptors.every((part) => part.kind === "spacer" || part.kind === "thinking-label");
 	}
 
 	setOutputPad(padding: number): void {
@@ -131,6 +178,10 @@ export class AssistantMessageComponent extends Container {
 		return theme.fg("dim", `${hh}:${mm}:${ss} `);
 	}
 
+	override getRenderRevision(): number {
+		return this.revision;
+	}
+
 	override render(width: number): string[] {
 		const signature = this.lastMessageSignature ?? "";
 		if (this.renderCache?.width === width && this.renderCache.signature === signature) {
@@ -144,11 +195,8 @@ export class AssistantMessageComponent extends Container {
 		const firstContentLineIndex = lines.findIndex((line) => visibleWidth(line) > 0);
 		if (firstContentLineIndex >= 0 && showTimestamp) {
 			const prefixedLine = prefix + lines[firstContentLineIndex];
-			if (visibleWidth(prefixedLine) <= width) {
-				lines[firstContentLineIndex] = prefixedLine;
-			} else {
-				lines = super.render(width);
-			}
+			if (visibleWidth(prefixedLine) <= width) lines[firstContentLineIndex] = prefixedLine;
+			else lines = super.render(width);
 		}
 		if (this.hasToolCalls || lines.length === 0) {
 			this.cacheRender(width, signature, lines);
@@ -162,9 +210,6 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
-		// First delta only. updateContent runs once per streaming chunk, so stamping
-		// unconditionally would march the clock forward while the message is still
-		// being written and land on the completion time rather than the start.
 		this.arrivedAt ??= new Date();
 		const previousMessage = this.lastMessage;
 		const streamingChanged = this.isStreaming !== isStreaming;
@@ -176,13 +221,18 @@ export class AssistantMessageComponent extends Container {
 		}
 		this.lastMessageSignature = messageSignature;
 		this.renderCache = undefined;
+		this.revision = nextRenderRevision();
 		if (streamingChanged) this.renderDescriptors = [];
 		this.hasToolCalls = message.content.some((content) => content.type === "toolCall");
 		const descriptors = createAssistantRenderDescriptors(message, {
 			expanded: this.expanded,
+			providerErrorOwned: this.providerErrorOwned,
 			hiddenThinkingLabel: this.hiddenThinkingLabel,
 			hideThinkingBlock: this.hideThinkingBlock,
+			thinkingVisibilityOverrides: this.thinkingVisibilityOverrides,
+			handoffOpenOverrides: this.handoffOpenOverrides,
 			hasToolCalls: this.hasToolCalls,
+			ownsTurnNotice: this.ownsTurnNotice,
 		});
 		this.reconcileRenderDescriptors(descriptors);
 	}
@@ -217,29 +267,73 @@ export class AssistantMessageComponent extends Container {
 					transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
 				});
 			case "thinking-md":
-				return new Markdown(
-					descriptor.text,
-					this.outputPad,
-					0,
-					this.markdownTheme,
-					{
-						color: (text: string) => theme.fg("thinkingText", text),
-						italic: true,
-					},
-					{
-						transform: createMarkdownTransform("assistant-thinking", this.isStreaming, this.markdownTransformers),
-					},
+				return this.withThinkingToggle(
+					new Markdown(
+						descriptor.text,
+						this.outputPad,
+						0,
+						this.markdownTheme,
+						{
+							color: (text: string) => theme.fg("thinkingText", text),
+							italic: true,
+						},
+						{
+							transform: createMarkdownTransform(
+								"assistant-thinking",
+								this.isStreaming,
+								this.markdownTransformers,
+							),
+						},
+					),
+					descriptor,
 				);
 			case "thinking-label":
+				return this.withThinkingToggle(new Text(descriptor.text, this.outputPad, 0), descriptor);
 			case "error-text":
 				return new Text(descriptor.text, this.outputPad, 0);
 			case "provider-native-summary":
 				return new Text(descriptor.text, 1, 0);
 			case "provider-native-body":
 				return new Text(descriptor.text, 3, 0);
+			case "handoff-line":
+				return this.withHandoffToggle(new SingleLine(descriptor.text, this.outputPad), descriptor);
+			case "handoff-body":
+				return this.withHandoffToggle(new Text(descriptor.text, this.outputPad, 0), descriptor);
 			default:
 				return assertNever(descriptor.kind);
 		}
+	}
+
+	/**
+	 * Left-clicking a thinking run toggles that run between its label and its body (upstream
+	 * 71026970a). The mouse handler is attached to the Markdown/Text child itself so the
+	 * incremental reconciler still sees the same child types it updates in place.
+	 */
+	private withThinkingToggle(component: Component, descriptor: AssistantRenderDescriptor): Component {
+		const runIndex = descriptor.thinkingRun;
+		if (runIndex === undefined) return component;
+		component.handleMouse = (event) => {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
+			this.thinkingVisibilityOverrides.set(runIndex, !hidden);
+			this.refreshContent();
+			return { handled: true };
+		};
+		return component;
+	}
+
+	/** Left-clicking a handoff fold line or its open body toggles that block, like a thinking run. */
+	private withHandoffToggle(component: Component, descriptor: AssistantRenderDescriptor): Component {
+		const block = descriptor.handoffBlock;
+		if (block === undefined) return component;
+		component.handleMouse = (event) => {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			const open = this.handoffOpenOverrides.get(block) ?? this.expanded;
+			this.handoffOpenOverrides.set(block, !open);
+			this.refreshContent();
+			return { handled: true };
+		};
+		return component;
 	}
 
 	private createMessageSignature(message: AssistantMessage): string {
@@ -247,6 +341,9 @@ export class AssistantMessageComponent extends Container {
 			content: message.content,
 			hiddenThinkingLabel: this.hiddenThinkingLabel,
 			hideThinkingBlock: this.hideThinkingBlock,
+			thinkingVisibilityOverrides: [...this.thinkingVisibilityOverrides],
+			handoffOpenOverrides: [...this.handoffOpenOverrides],
+			expanded: this.expanded,
 			errorState: [message.diagnostics, message.errorMessage],
 			stopReason: message.stopReason,
 		});
@@ -258,6 +355,7 @@ export class AssistantMessageComponent extends Container {
 
 	private invalidateRenderCache(): void {
 		this.renderCache = undefined;
+		this.revision = nextRenderRevision();
 	}
 
 	private refreshContent(): void {

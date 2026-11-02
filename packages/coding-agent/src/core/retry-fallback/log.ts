@@ -1,12 +1,14 @@
-import { chmodSync, closeSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { rotateLogIfNeeded } from "../log-file-rotation.ts";
+import { redactSecrets } from "../sensitive-output.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_STRING_LENGTH = 200;
 const BLOCKED_KEY =
 	/^(?:__proto__|constructor|prototype|headers?|env(?:ironment)?|authorization|credential(?:s)?|password|secret|token|api_?key|client_?secret)$/i;
 const ALLOWED_DATA_KEY =
-	/^(?:selector|candidate|currentSelector|originalSelector|from|to|model|chainKey|reason|skipReason|classification|thinkingLevel|durationMs|retryAfterMs|error|errorMessage|warning)$/;
+	/^(?:selector|candidate|currentSelector|originalSelector|from|to|model|provider|chainKey|reason|skipReason|classification|thinkingLevel|durationMs|retryAfterMs|error|errorMessage|warning|trigger)$/;
 const SENSITIVE_TEXT =
 	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 
@@ -72,31 +74,14 @@ function formatLine(
 function writeLine(filePath: string, line: string, maxBytes: number): void {
 	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
 	const text = `${line}\n`;
-	if (fileExceedsCap(filePath, Buffer.byteLength(text), maxBytes)) {
-		rmSync(`${filePath}.1`, { force: true });
-		renameSync(filePath, `${filePath}.1`);
-		chmodSync(`${filePath}.1`, 0o600);
-	}
+	rotateLogIfNeeded(filePath, Buffer.byteLength(text), maxBytes);
 	const descriptor = openSync(filePath, "a", 0o600);
 	try {
 		writeSync(descriptor, text);
+		fchmodSync(descriptor, 0o600);
 	} finally {
 		closeSync(descriptor);
 	}
-	chmodSync(filePath, 0o600);
-}
-
-function fileExceedsCap(filePath: string, incomingBytes: number, maxBytes: number): boolean {
-	try {
-		return statSync(filePath).size + incomingBytes > maxBytes;
-	} catch (error) {
-		if (isMissingFileError(error)) return false;
-		throw error;
-	}
-}
-
-function isMissingFileError(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
@@ -136,6 +121,6 @@ function safeEntries(value: object): Array<[string, unknown]> {
 }
 
 function safeText(value: string): string {
-	const redacted = value.replace(SENSITIVE_TEXT, "$1[redacted]");
+	const redacted = redactSecrets(value.replace(SENSITIVE_TEXT, "$1[redacted]"), "[redacted]");
 	return redacted.length <= MAX_STRING_LENGTH ? redacted : `${redacted.slice(0, MAX_STRING_LENGTH - 3)}...`;
 }

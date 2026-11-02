@@ -47,6 +47,15 @@ export interface AuthOperationOptions {
 	signal?: AbortSignal;
 }
 
+/** Secret-free outcome; callers can direct an unconfirmed user to ChatGPT Settings. */
+export type OAuthRevocationResult = { status: "revoked" | "remote_revocation_unconfirmed" };
+
+export interface LogoutOptions extends AuthOperationOptions {
+	slotId?: string;
+	/** Injectable backoff scheduler; production defaults to an abortable timer. */
+	sleep?: (milliseconds: number) => Promise<void>;
+}
+
 /**
  * App-owned credential storage, keyed by `Provider.id`, one entry per
  * provider; an entry may pool sibling slots under `accounts` while its flat
@@ -69,6 +78,14 @@ export interface CredentialStore {
 	 * resolved request auth comes from `Models.getAuth()`.
 	 */
 	read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined>;
+
+	/**
+	 * Read one pooled slot already projected onto the flat credential shape, as
+	 * `projectSlot(await read(...), slotName)` would. Optional: a store that keeps
+	 * configuration references in pooled keys implements it so a slot-scoped request
+	 * resolves only the selected slot, never the flat key or a sibling.
+	 */
+	readSlot?(providerId: string, slotName: string, options?: AuthOperationOptions): Promise<Credential | undefined>;
 
 	/**
 	 * List stored credential metadata without resolving or exposing secrets.
@@ -108,11 +125,18 @@ export interface AuthResult {
 	env?: ProviderEnv;
 	/** Human-readable label for status UI: "ANTHROPIC_API_KEY", "OAuth", "~/.aws/credentials". */
 	source?: string;
+	/**
+	 * Resolved only from a shared cloud credential chain (AWS profile/keys/roles, Google ADC)
+	 * that exists for other tools too, not from a credential configured for this provider.
+	 */
+	ambient?: true;
 }
 
 export interface AuthCheck {
 	source?: string;
 	type: "api_key" | "oauth";
+	/** Same meaning as `AuthResult.ambient`. */
+	ambient?: true;
 }
 
 export type AuthType = "api_key" | "oauth";
@@ -147,6 +171,13 @@ export type AuthEvent =
 	  }
 	| { type: "progress"; message: string };
 
+/** Secret-free receipt emitted only after the account write succeeds. */
+export interface AccountLoginReceipt {
+	readonly providerId: string;
+	readonly name: string;
+	readonly origin: "generated" | "provider";
+}
+
 /**
  * Login interaction callbacks serving both api-key and OAuth flows.
  *
@@ -156,13 +187,15 @@ export type AuthEvent =
  */
 export interface AuthInteraction {
 	signal?: AbortSignal;
+	/** Absent for provider-owned envelopes without one unambiguous new slot ID. */
+	onAccountCommitted?(receipt: AccountLoginReceipt): void;
 
 	prompt(prompt: AuthPrompt): Promise<string>;
 	notify(event: AuthEvent): void;
 }
 
 /** Normalized interaction passed to provider login implementations. */
-export type ProviderAuthInteraction = AuthInteraction & { signal: AbortSignal };
+export type ProviderAuthInteraction = Omit<AuthInteraction, "onAccountCommitted"> & { signal: AbortSignal };
 
 /**
  * Api-key auth: stored key/provider env plus ambient sources (env vars, AWS
@@ -174,6 +207,14 @@ export interface ApiKeyAuth {
 
 	/** Ambient compatibility adapter that must not outrank a stored OAuth credential. */
 	ambientOnly?: boolean;
+
+	/**
+	 * A login may leave the key blank: the provider needs none (a local server such as llama.cpp) or its
+	 * `resolve` falls back to an ambient key while the login stores other env (Kimi's region + KIMI_API_KEY).
+	 * `Models.login` then drops the blank key; without this flag it refuses one with `EmptyApiKeyError` (#3867).
+	 * Only `Models.login` reads it: `AuthStorage.set` and RPC `login_api_key` always require a key.
+	 */
+	keyOptional?: boolean;
 
 	/** Interactive setup (prompt for key/provider env). Absent = ambient-only. */
 	login?(interaction: ProviderAuthInteraction): Promise<ApiKeyCredential>;
@@ -202,6 +243,16 @@ export interface ApiKeyAuth {
 	}): Promise<AuthResult | undefined>;
 }
 
+/** App-supplied context for `Models.login`. */
+export interface LoginOptions {
+	/**
+	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
+	 * agent host ID. Called only by login flows that need it, so apps can create
+	 * the ID on first use and must return the same ID on every later call.
+	 */
+	getDeviceId?: () => string;
+}
+
 /**
  * OAuth auth. The `refresh`/`toAuth` split lets `Models` own the locked
  * refresh pattern: `refresh` produces a credential, `toAuth` derives request
@@ -217,13 +268,32 @@ export interface OAuthAuth {
 	/** Selector label for the OAuth login option, e.g. "Sign in with SuperGrok or X Premium". */
 	loginLabel?: string;
 
-	login(interaction: ProviderAuthInteraction): Promise<OAuthCredential>;
+	/**
+	 * HTTP statuses with which the provider refuses a stored access token before its
+	 * own expiry says so (GitHub Copilot revokes its short-lived token server-side and
+	 * answers 401/403). The runtime re-exchanges that exact token once and retries the
+	 * request before surfacing the failure.
+	 */
+	rejectedTokenStatuses?: readonly number[];
+
+	login(interaction: ProviderAuthInteraction, options?: LoginOptions): Promise<OAuthCredential>;
+
+	/**
+	 * Side-effect-free: the signed-in account a credential's own material belongs to, or `undefined`
+	 * when it cannot tell. A login whose identity matches a saved account replaces that account's
+	 * credential instead of being added beside it (`appendLoginSlot`). Must be synchronous and must
+	 * not load the flow module, because it runs inside the credential store's write lock.
+	 */
+	accountIdentity?(credential: Pick<OAuthCredential, "access">): string | undefined;
 
 	/**
 	 * Exchange the refresh token. Network call; throws on failure
 	 * (invalid_grant etc.). `Models` runs this under the store lock.
 	 */
 	refresh(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential>;
+
+	/** End the renewable session before the caller clears local tokens. */
+	revoke?(credential: OAuthCredential, options?: LogoutOptions): Promise<OAuthRevocationResult>;
 
 	/**
 	 * Optional side-effect-free availability check, mirroring `ApiKeyAuth.check`.

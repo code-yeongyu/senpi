@@ -75,17 +75,30 @@ export const COMPLETIONS_COMPAT = {
 	thinkingTokenBudgetField: undefined,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
+	mixedStrictTools: true,
 	toolSchemaFlavor: undefined,
 	toolCallFormat: undefined,
 	cacheControlFormat: "anthropic",
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
 	supportsPromptCacheKey: false,
+	supportsMaxOutputTokens: true,
+	supportsForcedToolChoice: true,
 	supportsLongCacheRetention: true,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "toolCallFormat" | "deferredToolsMode" | "toolSchemaFlavor" | "thinkingTokenBudgetField"
+	| "cacheControlFormat"
+	| "toolCallFormat"
+	| "deferredToolsMode"
+	| "toolSchemaFlavor"
+	| "thinkingTokenBudgetField"
+	| "vllmPriority"
+	| "veniceParameters"
+	| "supportsWebSearch"
 > & {
+	supportsWebSearch?: OpenAICompletionsCompat["supportsWebSearch"];
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];

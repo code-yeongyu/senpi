@@ -1,15 +1,24 @@
 import { join } from "node:path";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
-import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
-import { SubprocessKernel, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
+import type { SessionEnvironment } from "../session-env.ts";
+import type { KernelLifecycle } from "../shared/kernel-death.ts";
+import type { InvocationPermissions } from "../shared/invocation-authority.ts";
+import { readProcessGroupCpuTime } from "../shared/process-group-cpu.ts";
+import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
+import { SubprocessKernel, type SubprocessKernelMemory, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
 
-export interface JuliaKernelStartOptions {
+export interface JuliaKernelStartOptions extends KernelLifecycle {
+	readonly permissions?: InvocationPermissions;
 	readonly cwd: string;
 	readonly sessionId: string;
 	readonly connection: BridgeConnectionConfig;
+	/** Per-session PI_* values merged into the interpreter environment at spawn. */
+	readonly sessionEnv?: SessionEnvironment;
 	readonly command?: string;
 	readonly spawn?: SubprocessSpawn;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
+	/** Memory management: the runner reports its largest globals and the host reads the interpreter footprint for the ceiling. */
+	readonly memory?: SubprocessKernelMemory;
 }
 
 export interface JuliaRunnerPathOptions extends CodemodeRuntimeAssetEnvironment {
@@ -17,7 +26,7 @@ export interface JuliaRunnerPathOptions extends CodemodeRuntimeAssetEnvironment 
 }
 
 export function resolveJuliaRunnerPath(options: JuliaRunnerPathOptions = {}): string {
-	return resolveCodemodeRuntimeAsset(
+	return requireCodemodeRuntimeAsset(
 		options.localPath ?? join(import.meta.dirname, "runner.jl"),
 		join("kernels", "jl", "runner.jl"),
 		options,
@@ -42,9 +51,14 @@ export class JuliaKernel extends SubprocessKernel {
 			],
 			cwd: options.cwd,
 			sessionId: options.sessionId,
+			sessionEnv: options.sessionEnv,
 			connection: options.connection,
 			spawn: options.spawn,
 			onMessage: options.onMessage,
+			memory: options.memory && { language: "jl", ...options.memory },
+			onDeath: options.onDeath,
+			permissions: options.permissions,
+			startup: { label: "Julia", readGroupCpuTime: readProcessGroupCpuTime },
 		});
 	}
 }

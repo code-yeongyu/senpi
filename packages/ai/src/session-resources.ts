@@ -1,6 +1,11 @@
+import { processSingleton } from "./utils/process-singleton.ts";
+
 export type SessionResourceCleanup = (sessionId?: string) => void;
 
-const sessionResourceCleanups = new Set<SessionResourceCleanup>();
+const sessionResourceCleanups = processSingleton(
+	"@earendil-works/pi-ai:session-resource-cleanups",
+	() => new Set<SessionResourceCleanup>(),
+);
 
 export function registerSessionResourceCleanup(cleanup: SessionResourceCleanup): () => void {
 	sessionResourceCleanups.add(cleanup);

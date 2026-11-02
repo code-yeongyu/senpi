@@ -1,5 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	withoutInitialSystemMessage,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
@@ -29,35 +34,37 @@ type EventTranscriptEntry =
 	| { type: string };
 
 function retryTranscript(events: Harness["events"]): EventTranscriptEntry[] {
-	return events.map((event) => {
-		switch (event.type) {
-			case "message_start":
-			case "message_end":
-				return { type: event.type, role: event.message.role };
-			case "message_update":
-				return { type: event.type, update: event.assistantMessageEvent.type };
-			case "agent_end":
-				return { type: event.type, willRetry: event.willRetry };
-			case "auto_retry_start":
-				return {
-					type: event.type,
-					attempt: event.attempt,
-					maxAttempts: event.maxAttempts,
-					// Jitter normalizes to the exponential floor for deterministic comparison.
-					delayMs: Math.floor(event.delayMs),
-					errorMessage: event.errorMessage,
-				};
-			case "auto_retry_end":
-				return {
-					type: event.type,
-					success: event.success,
-					attempt: event.attempt,
-					...(event.finalError === undefined ? {} : { finalError: event.finalError }),
-				};
-			default:
-				return { type: event.type };
-		}
-	});
+	return events
+		.filter((event) => event.type !== "session_lifecycle")
+		.map((event) => {
+			switch (event.type) {
+				case "message_start":
+				case "message_end":
+					return { type: event.type, role: event.message.role };
+				case "message_update":
+					return { type: event.type, update: event.assistantMessageEvent.type };
+				case "agent_end":
+					return { type: event.type, willRetry: event.willRetry };
+				case "auto_retry_start":
+					return {
+						type: event.type,
+						attempt: event.attempt,
+						maxAttempts: event.maxAttempts,
+						// Jitter normalizes to the exponential floor for deterministic comparison.
+						delayMs: Math.floor(event.delayMs),
+						errorMessage: event.errorMessage,
+					};
+				case "auto_retry_end":
+					return {
+						type: event.type,
+						success: event.success,
+						attempt: event.attempt,
+						...(event.finalError === undefined ? {} : { finalError: event.finalError }),
+					};
+				default:
+					return { type: event.type };
+			}
+		});
 }
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
@@ -73,6 +80,33 @@ describe("retry fallback engine", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
 		while (harnesses.length) harnesses.pop()?.cleanup();
+	});
+
+	it("blocks recovery when the fallback cannot admit the live context", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", contextWindow: 100_000, maxTokens: 64 },
+				{ id: "faux-2", contextWindow: 20_000, maxTokens: 64 },
+			],
+			settings: {
+				compaction: { enabled: false },
+				retry: { enabled: true, maxRetries: 0, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "long context ".repeat(8_000) }],
+			timestamp: Date.now() - 1,
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "unauthorized" })]);
+
+		await harness.session.prompt("recover");
+
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 	});
 
 	it("retries the same model within budget instead of switching to the chain", async () => {
@@ -264,10 +298,11 @@ describe("retry fallback engine", () => {
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
 			(context) => {
-				fallbackRequestMessages = structuredClone(context.messages);
+				// The provider-boundary system head (A2 C-AG-3) carries the prompt and tools asserted below.
+				fallbackRequestMessages = structuredClone(withoutInitialSystemMessage(context.messages));
 				stateAtFallbackRequest = structuredClone(harness.session.state.messages);
-				fallbackRequestSystemPrompt = context.systemPrompt;
-				fallbackRequestToolNames = (context.tools ?? []).map((tool) => tool.name);
+				fallbackRequestSystemPrompt = getCurrentSystemPrompt(context.messages);
+				fallbackRequestToolNames = getCurrentTools(context.messages).map((tool) => tool.name);
 				return fauxAssistantMessage("recovered");
 			},
 		]);
@@ -695,7 +730,7 @@ describe("retry fallback engine", () => {
 			{
 				type: "auto_retry_start",
 				attempt: 1,
-				maxAttempts: 3,
+				maxAttempts: 5,
 				delayMs: 1,
 				errorMessage: codexUpstreamUnavailableMessage,
 			},

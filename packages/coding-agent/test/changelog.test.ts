@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { type ChangelogEntry, normalizeChangelogLinks } from "../src/utils/changelog.ts";
+import { type ChangelogEntry, getNewEntries, normalizeChangelogLinks } from "../src/utils/changelog.ts";
 
 const entry: ChangelogEntry = {
 	major: 0,
@@ -7,6 +7,24 @@ const entry: ChangelogEntry = {
 	patch: 0,
 	content: "",
 };
+
+describe("getNewEntries", () => {
+	test("uses full CalVer tokens, cap, and source isolation", () => {
+		const make = (version: string): ChangelogEntry => ({
+			major: 2026,
+			minor: 9,
+			patch: 10,
+			version,
+			content: version,
+		});
+		expect(
+			getNewEntries([make("2026.9.10"), make("2026.9.10-2"), make("2026.9.11")], "2026.9.9", "2026.9.10-2").map(
+				(e) => e.version,
+			),
+		).toEqual(["2026.9.10", "2026.9.10-2"]);
+		expect(getNewEntries([make("0.0.0-omob.7")], "5.0.0-0.beta.3", "5.0.0-0.beta.4")).toEqual([]);
+	});
+});
 
 describe("normalizeChangelogLinks", () => {
 	test("rewrites package-relative changelog links to tag-pinned GitHub source links", () => {

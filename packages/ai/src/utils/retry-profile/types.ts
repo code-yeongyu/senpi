@@ -80,7 +80,16 @@ export interface RetryBackoffPolicy {
 	readonly jitter: RetryJitterPolicy;
 }
 
-/** Ceiling on a server-requested wait for `override`-mode hint policies. */
+/**
+ * Ceiling on a server-requested wait for `override`-mode hint policies.
+ *
+ * On the turn stage this ceiling is profile-owned end to end: besides driving
+ * the planner's `over-ceiling` verdict, an override-mode `maxDelayMs` also
+ * governs the coding-agent session's agent-level wait clamp — `null` passes
+ * every admitted wait through verbatim, a number is the profile's own cap, and
+ * the session's `retry.maxAgentDelayMs` default applies only to profiles that
+ * declare no ceiling of their own.
+ */
 export interface RetryHintCeiling {
 	/** `null` means no ceiling, so `over-ceiling` is unreachable. */
 	readonly maxDelayMs: number | null;

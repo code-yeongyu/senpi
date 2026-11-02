@@ -1,6 +1,14 @@
 import { arch, platform, release } from "node:os";
-import { type Api, type AssistantMessage, convertResponsesMessages, type Model } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { zstdDecompressSync } from "node:zlib";
+import {
+	type Api,
+	type AssistantMessage,
+	convertResponsesMessages,
+	type Model,
+	normalizeContext,
+} from "@earendil-works/pi-ai";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { streamSimple as streamCodex } from "../../../../ai/src/api/openai-codex-responses.ts";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../../src/core/compaction/index.ts";
 import {
 	markOpenAiRemoteReplayBoundary,
@@ -21,7 +29,7 @@ const CODEX_MODEL = {
 	id: "gpt-5.4-codex",
 	name: "GPT-5.4 Codex",
 	api: "openai-codex-responses",
-	provider: "openai-codex",
+	provider: "chatgpt-subscription",
 	baseUrl: "https://chatgpt.com/backend-api",
 	reasoning: true,
 	input: ["text", "image"],
@@ -60,7 +68,7 @@ function codexBranch(): SessionEntry[] {
 			id: "model",
 			parentId: null,
 			timestamp: new Date(1_775_000_000_000).toISOString(),
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			modelId: CODEX_MODEL.id,
 		},
 		messageEntry("u1", "model", {
@@ -71,7 +79,7 @@ function codexBranch(): SessionEntry[] {
 		messageEntry("a1", "u1", {
 			role: "assistant",
 			api: "openai-codex-responses",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			model: CODEX_MODEL.id,
 			content: [{ type: "text", text: "I found the failure." }],
 			usage: {
@@ -130,6 +138,44 @@ function codexReplayOrigin(token: string) {
 	return origin;
 }
 
+type WireCall = { url: string; headers: Headers; body: Record<string, unknown> };
+
+function decodeWireBody(body: RequestInit["body"] | undefined): Record<string, unknown> {
+	if (typeof body === "string") return JSON.parse(body) as Record<string, unknown>;
+	const bytes = body instanceof ArrayBuffer ? new Uint8Array(body) : (body as Uint8Array);
+	return JSON.parse(Buffer.from(zstdDecompressSync(bytes)).toString("utf8")) as Record<string, unknown>;
+}
+
+// senpi#2378: the subscription lane compacts through responses-v2 on its provider-turn transport.
+function stubCodexV2Wire(calls: WireCall[], compaction: Record<string, unknown>): void {
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			calls.push({ url: String(url), headers: new Headers(init?.headers), body: decodeWireBody(init?.body) });
+			const events = [
+				{ type: "response.output_item.added", output_index: 0, item: compaction },
+				{ type: "response.output_item.done", output_index: 0, item: compaction },
+				{
+					type: "response.completed",
+					response: {
+						id: "resp_v2",
+						status: "completed",
+						usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+					},
+				},
+			];
+			return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			});
+		}),
+	);
+}
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
 function branchWithRemoteCheckpoint(
 	branch: SessionEntry[],
 	result: NonNullable<Awaited<ReturnType<typeof runOpenAiRemoteCompaction>>>,
@@ -162,18 +208,19 @@ function finalCodexReplayPayload(branchEntries: SessionEntry[]) {
 		model: CODEX_MODEL.id,
 		input: convertResponsesMessages(
 			CODEX_MODEL,
-			{ messages: convertToLlm(markedContext) },
-			new Set(["openai-codex"]),
+			normalizeContext({ messages: convertToLlm(markedContext) }),
+			new Set(["chatgpt-subscription"]),
 			{ includeSystemPrompt: false, preserveTextSignatures: true },
 		),
 		stream: true,
 	};
 }
 
-describe("issue #296 OpenAI Codex remote compaction", () => {
-	it("compacts through the Codex endpoint and replays retained history on the next request", async () => {
+describe("issue #296 ChatGPT Subscription remote compaction", () => {
+	it("compacts through responses-v2 and replays the checkpoint on the next request", async () => {
 		const branch = codexBranch();
-		const calls: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
+		const calls: WireCall[] = [];
+		stubCodexV2Wire(calls, { type: "compaction", id: "cmp_codex", encrypted_content: "encrypted-codex-summary" });
 		const ctx = {
 			model: CODEX_MODEL,
 			serviceTier: undefined,
@@ -184,34 +231,14 @@ describe("issue #296 OpenAI Codex remote compaction", () => {
 			getSystemPrompt: () => "You are Senpi.",
 		};
 
-		const result = await runOpenAiRemoteCompaction(ctx, compactionEvent(CODEX_MODEL.api, branch), undefined, {
-			fetch: async (url, init) => {
-				calls.push({
-					url: String(url),
-					headers: new Headers(init?.headers),
-					body: JSON.parse(String(init?.body)) as Record<string, unknown>,
-				});
-				return new Response(
-					JSON.stringify({
-						output: [
-							{
-								type: "message",
-								id: "u1_remote",
-								role: "user",
-								content: [{ type: "input_text", text: "Inspect the failing build." }],
-							},
-							{ type: "compaction", id: "cmp_codex", encrypted_content: "encrypted-codex-summary" },
-						],
-					}),
-					{ status: 200, headers: { "content-type": "application/json" } },
-				);
-			},
-		});
+		const result = await runOpenAiRemoteCompaction(ctx, compactionEvent(CODEX_MODEL.api, branch));
 
 		expect(result, "Codex models must use native remote compaction").toBeDefined();
 		if (!result) return;
 		expect(calls).toHaveLength(1);
-		expect(calls[0]?.url).toBe("https://chatgpt.com/backend-api/codex/responses/compact");
+		expect(calls[0]?.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+		expect(calls[0]?.body.input).toContainEqual({ type: "compaction_trigger" });
+		expect(calls[0]?.headers.get("x-codex-beta-features")).toContain("remote_compaction_v2");
 		expect(calls[0]?.headers.get("authorization")).toBe(`Bearer ${codexToken()}`);
 		expect(calls[0]?.headers.get("chatgpt-account-id")).toBe("account_issue_296");
 		expect(calls[0]?.headers.get("originator")).toBe("senpi");
@@ -219,16 +246,15 @@ describe("issue #296 OpenAI Codex remote compaction", () => {
 		expect(calls[0]?.headers.has("session_id")).toBe(false);
 		expect(calls[0]?.headers.get("session-id")).toBe("issue-296-session");
 		expect(calls[0]?.headers.get("x-client-request-id")).toBe("issue-296-session");
-		expect(calls[0]?.headers.has("thread-id")).toBe(false);
 		expect(calls[0]?.headers.has("x-codex-installation-id")).toBe(false);
 		expect(calls[0]?.headers.has("x-codex-window-id")).toBe(false);
 		expect(calls[0]?.headers.get("accept")).toBe("text/event-stream");
 		expect(calls[0]?.headers.get("user-agent")).toBe(`senpi (${platform()} ${release()}; ${arch()})`);
 		expect(result.details).toMatchObject({
 			schema: OPENAI_REMOTE_COMPACTION_SCHEMA,
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			api: "openai-codex-responses",
-			transport: "compact-endpoint",
+			transport: "responses-v2",
 		});
 
 		const compactedBranch: SessionEntry[] = [
@@ -257,8 +283,8 @@ describe("issue #296 OpenAI Codex remote compaction", () => {
 				model: CODEX_MODEL.id,
 				input: convertResponsesMessages(
 					CODEX_MODEL,
-					{ messages: convertToLlm(markedContext) },
-					new Set(["openai-codex"]),
+					normalizeContext({ messages: convertToLlm(markedContext) }),
+					new Set(["chatgpt-subscription"]),
 					{ includeSystemPrompt: false, preserveTextSignatures: true },
 				),
 				stream: true,
@@ -311,6 +337,7 @@ describe("issue #296 OpenAI Codex remote compaction", () => {
 		const tokenB = codexToken(accountA, "refreshed-b");
 		const tokenC = codexToken("account-other", "issued-c");
 		const branch = codexBranch();
+		stubCodexV2Wire([], { type: "compaction", id: "cmp_stable_account", encrypted_content: "stable-account-state" });
 		const result = await runOpenAiRemoteCompaction(
 			{
 				model: CODEX_MODEL,
@@ -322,24 +349,6 @@ describe("issue #296 OpenAI Codex remote compaction", () => {
 				getSystemPrompt: () => "You are Senpi.",
 			},
 			compactionEvent(CODEX_MODEL.api, branch),
-			undefined,
-			{
-				fetch: async () =>
-					new Response(
-						JSON.stringify({
-							output: [
-								{
-									type: "message",
-									id: "retained",
-									role: "user",
-									content: [{ type: "input_text", text: "keep" }],
-								},
-								{ type: "compaction", id: "cmp_stable_account", encrypted_content: "stable-account-state" },
-							],
-						}),
-						{ status: 200, headers: { "content-type": "application/json" } },
-					),
-			},
 		);
 		if (!result) throw new Error("Expected Codex remote compaction result");
 
@@ -378,11 +387,16 @@ describe("issue #296 OpenAI Codex remote compaction", () => {
 		const accountB = "account-wire-b";
 		const tokenA = codexToken(accountA, "wire-a");
 		const tokenB = codexToken(accountB, "hook-b");
-		const calls: Headers[] = [];
+		const calls: WireCall[] = [];
 		const branch = codexBranch();
+		stubCodexV2Wire(calls, {
+			type: "compaction",
+			id: "cmp_canonical_wire",
+			encrypted_content: "canonical-wire-state",
+		});
 		const headerHookHarness = await createHarness({
 			api: "openai-codex-responses",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			models: [{ id: CODEX_MODEL.id, contextWindow: CODEX_MODEL.contextWindow, maxTokens: CODEX_MODEL.maxTokens }],
 			extensionFactories: [
 				(pi) => {
@@ -410,32 +424,25 @@ describe("issue #296 OpenAI Codex remote compaction", () => {
 				},
 				compactionEvent(CODEX_MODEL.api, branch),
 				undefined,
+				// The harness installs a faux transport for this api; compaction must reach the real one.
 				{
-					fetch: async (_url, init) => {
-						calls.push(new Headers(init?.headers));
-						return new Response(
-							JSON.stringify({
-								output: [
-									{
-										type: "message",
-										id: "retained",
-										role: "user",
-										content: [{ type: "input_text", text: "keep" }],
-									},
-									{ type: "compaction", id: "cmp_canonical_wire", encrypted_content: "canonical-wire-state" },
-								],
-							}),
-							{ status: 200, headers: { "content-type": "application/json" } },
-						);
-					},
+					streamRunner: (model, context, options) =>
+						streamCodex(model as typeof CODEX_MODEL, normalizeContext(context), options),
 				},
 			);
 			if (!result) throw new Error("Expected Codex remote compaction result");
 
 			expect(calls).toHaveLength(1);
-			expect(calls[0]?.get("authorization")).toBe(`Bearer ${tokenA}`);
-			expect(calls[0]?.get("chatgpt-account-id")).toBe(accountA);
-			const wireOrigin = openAiRemoteCompactionOrigin(CODEX_MODEL, calls[0]!);
+			expect(calls[0]?.headers.get("authorization")).toBe(`Bearer ${tokenA}`);
+			expect(calls[0]?.headers.get("chatgpt-account-id")).toBe(accountA);
+			// The next turn runs the same header hook; its canonical origin is what replay compares.
+			const turnHeaders = createOpenAiRemoteCompactionHeaders(
+				CODEX_MODEL,
+				{ apiKey: tokenA, headers: { authorization: `Bearer ${tokenB}`, "chatgpt-account-id": accountB } },
+				"canonical-wire-session",
+			);
+			const wireOrigin = turnHeaders ? openAiRemoteCompactionOrigin(CODEX_MODEL, turnHeaders) : undefined;
+			expect(wireOrigin).toBeDefined();
 			expect(result.details.origin).toEqual(wireOrigin);
 			expect(JSON.stringify(result.details)).not.toContain(tokenB);
 
