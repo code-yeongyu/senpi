@@ -3550,7 +3550,7 @@ Replay: the same id with the same request answers the stored status with
 `replayed: true` and performs nothing. The same id with a different request is refused
 with `errorCode: "effect_id_conflict"` and `errorData: { effectId, reason, action }`
 (inputs keep `client_message_id_conflict`). The comparison covers only the semantic
-fields: `abort { awaitIdle, clearQueue, graceMs }`, `set_model { provider, modelId }`,
+fields: `abort { awaitIdle, clearQueue, graceMs }`, `set_model { provider, modelId, scope }`,
 `set_thinking_level { level, scope }`.
 
 Reopen seal: a reopened session (or a restarted host) has no live turn and no pending
