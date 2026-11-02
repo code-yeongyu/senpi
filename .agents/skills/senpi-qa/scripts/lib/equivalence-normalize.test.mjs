@@ -31,6 +31,12 @@ test("an id seen under an id key gets the same token where it is embedded in oth
 	assert.deepEqual(out, [{ id: "<id:1>" }, { turnKey: "1:<id:1>" }, { id: "<id:2>" }, { text: "the reader" }]);
 });
 
+test("a generated id with no decimal digit is still replaced where it is embedded, and a hex-shaped word keeps its prose", () => {
+	const normalize = createNormalizer();
+	const out = normalize([{ id: "babaacde" }, { turnKey: "1:babaacde" }, { id: "facade" }, { text: "the facade" }]);
+	assert.deepEqual(out, [{ id: "<id:1>" }, { turnKey: "1:<id:1>" }, { id: "<id:2>" }, { text: "the facade" }]);
+});
+
 test("a value under an id key that is not a bare uuid is one id, owner ids with a pid prefix included", () => {
 	const normalize = createNormalizer();
 	const out = normalize([{ ownerId: `47635:${U1}` }, { ownerId: `55542:${U1}` }, { sessionId: U1 }]);
