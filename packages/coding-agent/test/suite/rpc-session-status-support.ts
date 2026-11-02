@@ -100,7 +100,11 @@ export async function statusHost(
 	const clients: RawClient[] = [];
 	let serial = 0;
 
-	const client = (name: string): RawClient => {
+	/** `transport` overrides the fixture socket's own teardown and drain wait (an engine-initiated close, a stalled peer). */
+	const client = (
+		name: string,
+		transport: { close?: () => void; waitForBackpressure?: () => Promise<void> } = {},
+	): RawClient => {
 		const inbox: WireRecord[] = [];
 		const sent: string[] = [];
 		const received: string[] = [];
@@ -114,7 +118,8 @@ export async function statusHost(
 					for (const listener of [...listeners]) listener(record);
 				}
 			},
-			waitForBackpressure: async () => {},
+			waitForBackpressure: transport.waitForBackpressure ?? (async () => {}),
+			...(transport.close && { close: transport.close }),
 		});
 		const waitFor = (
 			predicate: (record: WireRecord) => boolean,
