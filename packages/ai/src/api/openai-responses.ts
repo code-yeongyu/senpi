@@ -44,6 +44,7 @@ import {
 } from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { UnissuedReasoningReplay } from "./openai-responses-unissued-reasoning.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
@@ -338,6 +339,8 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				params = { ...params, tools: limitedTools.tools };
 				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
 			}
+			const reasoningReplay = new UnissuedReasoningReplay(model, options?.sessionId);
+			params = reasoningReplay.strip(params);
 			const transport = options?.transport ?? "sse";
 			let refusedAllowedToolsOverWebSocket = false;
 			if (transport !== "sse" && compat.supportsWebSocket) {
@@ -411,7 +414,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			};
 			// senpi#3080: an endpoint that refuses `allowed_tools` gets the request restricted to the active
 			// tools; the model is remembered once that restricted request is accepted.
-			const createRequest = async () => {
+			const sendAllowingToolsFallback = async () => {
 				try {
 					const result = await sendOnce(params);
 					if (refusedAllowedToolsOverWebSocket) rememberAllowedToolsChoiceRefusal(model);
@@ -422,6 +425,16 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					const result = await sendOnce(params);
 					rememberAllowedToolsChoiceRefusal(model);
 					return result;
+				}
+			};
+			// senpi#1836: reasoning issued to another caller is dropped from the request and the request sent again.
+			const createRequest = async (): ReturnType<typeof sendAllowingToolsFallback> => {
+				try {
+					return await sendAllowingToolsFallback();
+				} catch (error) {
+					if (!reasoningReplay.learnFrom(error, params)) throw error;
+					params = reasoningReplay.strip(params);
+					return await createRequest();
 				}
 			};
 			const { data: openaiStream, response } = await retryProviderRequest(() => createRequest(), {
