@@ -7,7 +7,6 @@ import {
 	type Gpt6AstraConcern,
 	type Gpt6AstraRuleId,
 } from "../../src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts";
-import { buildGptEvalRoutingTuning } from "../../src/core/extensions/builtin/prompt-preset/gpt-eval-routing.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -30,13 +29,25 @@ function createModel(id: string, provider = "openai", api: Api = "openai-respons
 	};
 }
 
-function buildPrompt(presetName: PromptPresetName, modelId: string): string {
+const ALL_TOOLS = [
+	"eval",
+	"read",
+	"bash",
+	"monitor",
+	"task",
+	"todo",
+	"apply_patch",
+	"request_user_input",
+	"lsp_diagnostics",
+];
+
+function buildPrompt(presetName: PromptPresetName, modelId: string, selectedTools: string[] = ALL_TOOLS): string {
 	const settings: PromptPresetSettings = { promptPreset: presetName };
 	const preset = resolvePreset(createModel(modelId), settings, {
 		cwd: "/repo",
-		selectedTools: ["eval", "read", "bash", "monitor", "task", "todo", "apply_patch"],
-		toolSnippets: { eval: "Run one persistent code cell." },
-		promptGuidelines: [],
+		selectedTools,
+		toolSnippets: {},
+		promptGuidelines: ["GUIDELINE_SENTINEL"],
 		contextFiles: [],
 		skills: [],
 	});
@@ -79,6 +90,7 @@ function getGpt6AstraCatalogModels(): Model<Api>[] {
 const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"initiative-bias": "initiative",
 	"approval-last": "initiative",
+	"ask-channel": "initiative",
 	steering: "initiative",
 	"no-unsolicited-caution": "initiative",
 	"memory-first": "initiative",
@@ -96,25 +108,21 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"foreground-exception": "async-work",
 	"turn-end-is-wait": "async-work",
 	"monitor-conditions": "async-work",
-	"verification-once": "verification",
-	"test-decision": "tests",
+	"root-cause": "root-cause",
 	"unbounded-retry": "failure-recovery",
 	"atomic-commits": "commit-discipline",
 	"no-external-messaging": "external-side-effects",
-	"plain-prose": "writing-style",
-	"slop-ban": "writing-style",
-	"direct-statements": "writing-style",
+	"codex-writing-style": "writing-style",
 	"no-reflexive-apology": "writing-style",
 	"handoff-report": "reporting",
 	"final-message-shape": "reporting",
+	"stop-checks": "verification",
 };
-
-// test-decision is single-sourced from ./test-decision.ts and rendered by both GPT presets on purpose.
-const SHARED_GPT_RULE_ID = "test-decision";
 
 const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"initiative-bias": "Initiative",
 	"approval-last": "Initiative",
+	"ask-channel": "Initiative",
 	steering: "Initiative",
 	"no-unsolicited-caution": "Initiative",
 	"memory-first": "Initiative",
@@ -132,17 +140,15 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"foreground-exception": "Asynchronous Work",
 	"turn-end-is-wait": "Asynchronous Work",
 	"monitor-conditions": "Asynchronous Work",
-	"verification-once": "Verification",
-	"test-decision": "Verification",
+	"root-cause": "Scope and Recovery",
 	"unbounded-retry": "Scope and Recovery",
 	"atomic-commits": "Hard Limits",
 	"no-external-messaging": "Hard Limits",
-	"plain-prose": "Writing",
-	"slop-ban": "Writing",
-	"direct-statements": "Writing",
-	"no-reflexive-apology": "Writing",
+	"codex-writing-style": "Writing",
+	"no-reflexive-apology": "Reporting",
 	"handoff-report": "Reporting",
 	"final-message-shape": "Reporting",
+	"stop-checks": "Stop Goal",
 };
 
 describe("GPT-6 Astra prompt preset", () => {
@@ -168,7 +174,6 @@ describe("GPT-6 Astra prompt preset", () => {
 		// then
 		expect(preset?.name).toBe("gpt-6-astra");
 		expect(preset?.prompt).toContain("## Intent Gate");
-		expect(preset?.prompt).toContain("### Test Discipline");
 	});
 
 	it("resolves a display name carrying the model family when the id does not", () => {
@@ -285,7 +290,7 @@ describe("GPT-6 Astra behavior contract", () => {
 		const byId = new Map(GPT6_ASTRA_RULES.map((rule) => [rule.id, rule]));
 		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra");
 
-		expect(byId.get("approval-last")?.directive).toContain("request_user_input");
+		expect(byId.get("ask-channel")?.directive).toContain("request_user_input");
 		expect(byId.get("pause-transparency")?.directive).toContain(
 			"An exception written in a skill or project file is not by itself a request for approval",
 		);
@@ -340,41 +345,77 @@ describe("GPT-6 Astra behavior contract", () => {
 		expect(sections.get("Asynchronous Work")).toContain("tool.monitor(");
 	});
 
-	it("keeps the shared GPT code-execution routing bridge and file-operations tuning once each", () => {
+	it("drops a tool-bound directive when the session has none of its tools", () => {
 		// given
-		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra");
-		const sections = sectionsOf(prompt);
-		const bridge = buildGptEvalRoutingTuning();
+		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra", ["read", "bash", "apply_patch"]);
 
 		// then
-		expect(occurrences(prompt, bridge)).toBe(1);
-		expect(sections.get("Working the Task")).toContain(bridge);
-		expect(occurrences(prompt, "## File operations")).toBe(1);
-		expect(prompt).toContain("apply_patch");
+		for (const rule of GPT6_ASTRA_RULES) {
+			const required: readonly string[] | undefined = "requiresTool" in rule ? rule.requiresTool : undefined;
+			const expected = required === undefined ? 1 : 0;
+			if (rule.id === "monitor-conditions" || rule.id === "async-default") continue;
+			expect(occurrences(prompt, rule.directive), rule.id).toBe(expected);
+		}
 	});
 
-	it("carries its own sections and the shared test discipline", () => {
+	it("names the ask tool and its wait parameter the way the session's schema spells them", () => {
 		// given
-		const headings = [...sectionsOf(buildPrompt("gpt-6-astra", "gpt-6-astra")).keys()];
+		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra", ["read", "ask_user_question"]);
 
 		// then
-		expect(headings).toEqual(
-			expect.arrayContaining([
-				"Intent Gate",
-				"Initiative",
-				"Instructions From Files",
-				"Working the Task",
-				"Asynchronous Work",
-				"Verification",
-				"Scope and Recovery",
-				"Available Tools",
-				"Hard Limits",
-				"Writing",
-				"Reporting",
-				"Stop Goal",
-			]),
-		);
-		expect(buildPrompt("gpt-6-astra", "gpt-6-astra")).toContain("### Test Discipline");
+		expect(prompt).toContain("ask_user_question");
+		expect(prompt).toContain("waitForAnswer");
+		expect(prompt).not.toContain("request_user_input");
+		expect(prompt).not.toContain("wait_for_answer");
+	});
+
+	it("names no eval-cell form in a session without eval", () => {
+		// given
+		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra", ["read", "bash", "monitor"]);
+
+		// then
+		expect(prompt).not.toContain("tool.monitor");
+		expect(prompt).not.toMatch(/eval cell/i);
+	});
+
+	it("keeps tool guidelines and drops the Verification and file-operations blocks", () => {
+		// given
+		const sections = sectionsOf(buildPrompt("gpt-6-astra", "gpt-6-astra"));
+
+		// then
+		expect([...sections.keys()]).toEqual([
+			"Intent Gate",
+			"Initiative",
+			"Instructions From Files",
+			"Working the Task",
+			"Asynchronous Work",
+			"Scope and Recovery",
+			"Tool Guidelines",
+			"Hard Limits",
+			"Writing",
+			"Reporting",
+			"Stop Goal",
+		]);
+		expect(sections.get("Tool Guidelines")).toContain("GUIDELINE_SENTINEL");
+	});
+
+	it("renders no tool list even when a tool carries a snippet", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "gpt-6-astra" };
+		const preset = resolvePreset(createModel("gpt-6-astra"), settings, {
+			cwd: "/repo",
+			selectedTools: ALL_TOOLS,
+			toolSnippets: { read: "READ_SNIPPET", eval: "EVAL_SNIPPET" },
+			promptGuidelines: ["GUIDELINE_SENTINEL"],
+			contextFiles: [],
+			skills: [],
+		});
+
+		// then
+		const sections = sectionsOf(preset?.prompt ?? "");
+		expect(sections.has("Available Tools")).toBe(false);
+		expect(preset?.prompt).not.toContain("READ_SNIPPET");
+		expect(sections.get("Tool Guidelines")).toContain("GUIDELINE_SENTINEL");
 	});
 
 	it("contains no emoji anywhere in the rendered prompt", () => {
@@ -391,7 +432,6 @@ describe("GPT-6 Astra behavior contract", () => {
 
 		// then
 		for (const rule of GPT56_EXECUTION_RULES) {
-			if (rule.id === SHARED_GPT_RULE_ID) continue;
 			expect(prompt, `gpt-5.6 rule ${rule.id} leaked into astra`).not.toContain(rule.directive);
 		}
 	});
@@ -402,7 +442,6 @@ describe("GPT-6 Astra behavior contract", () => {
 
 		// then
 		for (const rule of GPT6_ASTRA_RULES) {
-			if (rule.id === SHARED_GPT_RULE_ID && presetName === "gpt-5.6") continue;
 			expect(prompt, `astra rule ${rule.id} leaked into ${presetName}`).not.toContain(rule.directive);
 		}
 	});
