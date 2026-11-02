@@ -75,6 +75,14 @@ export class RetryFallbackController {
 		return this.unusable.accountError(provider);
 	}
 
+	accountResetAt(provider: string): number | undefined {
+		return this.unusable.accountResetAt(provider);
+	}
+
+	releaseGuessedAccountHold(provider: string): boolean {
+		return this.unusable.releaseGuessedAccountHold(provider);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.refusedProviders.clear();
