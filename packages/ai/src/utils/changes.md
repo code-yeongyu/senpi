@@ -1,3 +1,54 @@
+## 2026-10-30 - Share exact SIWC recovery decisions (part of #5003)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` owns the shared exact-code recovery table and direct-admission status policy; `packages/ai/src/utils/siwc-errors.ts` re-exports them.
+- `packages/ai/src/utils/empty-response-errors.ts` re-exports the forwarded-empty terminal texts from their classifier in `packages/ai/src/utils/retry.ts`.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` recognizes the SIWC code/status pairs.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts` marks diagnostics from the SIWC adapter.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` use structured SIWC recovery before retry headers or prose.
+
+### Why
+
+- `packages/ai/src/utils/siwc-errors.ts` keeps HTTP, assistant, and pool recovery on one classification path.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` keeps recovery in the existing transport leaf; `packages/ai/src/utils/empty-response-errors.ts` preserves the shared texts without adding files to retry's graph.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` must preserve exact provider codes rather than guessing from prose.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts` distinguishes code-less SIWC admission failures from generic provider statuses.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` must not replay usage limits, eligibility restrictions, or invalid requests.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/siwc-errors.ts`, `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`, and `packages/ai/src/utils/provider-diagnostic-sources.ts` are shared transport and classification contracts.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` and `packages/ai/src/utils/empty-response-errors.ts` define the shared runtime leaves that determine entry-point import costs.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` decide retries before extension recovery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/siwc-errors.ts`: new file.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts`: shared SIWC recovery mapping.
+- `packages/ai/src/utils/empty-response-errors.ts`: forwarded-empty exports.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: code/status mappings.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: diagnostic adapters.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts`: retry classification.
+
+## 2026-10-31 - Token endpoint errors carry their OAuth code and refusal decision (senpi#5010)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-refresh-error.ts`: `OAuthTokenEndpointError` takes an optional third argument and exposes `oauthError` (the body's OAuth `error` code) and `credentialRefused` (default `false`).
+
+### Why
+
+- The credential pool must tell a refused credential from a client fault or an unreadable page without reading adapter prose; an adapter that already decided the refusal had no way to say so.
+
+### Why an extension could not handle it
+
+- The error type is constructed inside the bundled OAuth adapters; an extension cannot attach facts to an error it does not throw.
+
+### Expected merge conflict zones
+
+- LOW: the `OAuthTokenEndpointError` class in `oauth-refresh-error.ts`.
+
 ## 2026-10-31 - Merged root unions keep branch-only required fields as a hint (senpi#5138)
 
 ### What changed
