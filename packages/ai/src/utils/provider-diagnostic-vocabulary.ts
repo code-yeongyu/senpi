@@ -3,6 +3,7 @@ import type {
 	ProviderDiagnosticCategory,
 	ProviderDiagnosticEvidence,
 } from "../provider-diagnostic.ts";
+import { siwcErrorForCode } from "./provider-diagnostic-carrier.ts";
 
 /** Serialized UTF-8 budget for one emitted diagnostic. */
 export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
@@ -29,6 +30,8 @@ export function credentialPoolBlockedDiagnostic(resetsAt: number): ProviderDiagn
  * rate or usage limit (senpi#3975).
  */
 export function categoryForProviderCode(code: string): ProviderDiagnosticCategory | undefined {
+	const siwc = siwcErrorForCode(code);
+	if (siwc !== undefined) return siwc.category;
 	switch (code) {
 		case "authentication_error":
 		case "invalid_api_key":
@@ -87,6 +90,8 @@ export function categoryForTransportCode(code: string): ProviderDiagnosticCatego
 
 /** The HTTP status a recognized token may arrive with; anything else is contradictory evidence. */
 export function isProviderCodeStatusCompatible(code: string, status: number): boolean {
+	const siwc = siwcErrorForCode(code);
+	if (siwc !== undefined) return status === siwc.status;
 	switch (code) {
 		case "authentication_error":
 		case "invalid_api_key":
@@ -173,10 +178,12 @@ export function buildProviderDiagnostic(input: {
 	code?: string;
 	evidence: ProviderDiagnosticEvidence;
 	resetsAt?: number;
+	route?: "siwc";
 }): ProviderDiagnostic | undefined {
 	const diagnostic: ProviderDiagnostic = { category: input.category, evidence: input.evidence };
 	if (input.httpStatus !== undefined) diagnostic.httpStatus = input.httpStatus;
 	if (input.code !== undefined) diagnostic.code = input.code;
+	if (input.route !== undefined) diagnostic.route = input.route;
 	if (input.resetsAt !== undefined && (input.category === "quota" || input.category === "rate_limit"))
 		diagnostic.resetsAt = input.resetsAt;
 	const size = new TextEncoder().encode(JSON.stringify(diagnostic)).length;
