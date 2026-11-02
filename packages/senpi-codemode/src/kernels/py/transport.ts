@@ -50,6 +50,8 @@ export interface PythonTransportOptions {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The kill guard (senpi#5349): the host's protected pids; absent = the guard is off for this kernel. */
+	readonly killGuard?: { readonly protectedPids: readonly number[] };
 	readonly startupTimeoutMs: number;
 	readonly startupCeilingMs: number;
 	readonly readCpuTime?: (pid: number | undefined) => bigint | undefined;
@@ -133,6 +135,9 @@ export class PythonKernelTransport {
 				...options.env,
 				PYTHONUNBUFFERED: "1",
 				PYTHONIOENCODING: "utf-8",
+				// Present only while the guard is on: it switches the kernel's guard on and feeds its os.kill prefilter.
+				SENPI_KILL_GUARD_PROTECTED:
+					options.killGuard === undefined ? undefined : options.killGuard.protectedPids.join(","),
 			},
 		};
 		const child = (options.spawnProcess ?? defaultSpawn)(spawnOptions);

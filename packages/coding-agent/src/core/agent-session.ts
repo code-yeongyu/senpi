@@ -101,6 +101,7 @@ import {
 } from "../modes/rpc/tool-child/session-child.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
+import { getUserShellEnv } from "../utils/shell.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
@@ -113,7 +114,6 @@ import { formatCompactionFailure } from "./compaction-failure-text.ts";
 import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
-import { compactUpdatesEnabled } from "./engine-socket-flag.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
@@ -344,6 +344,7 @@ import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import { QueuedInputAges } from "./queued-input-age.ts";
 import { checkSessionReloadVeto } from "./reload-veto.ts";
+import { RequiredCompactionError } from "./required-compaction-error.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
@@ -1049,17 +1050,6 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 	);
 }
 
-/** The error a turn ends with when a required compaction could not bring the context back under the window. */
-export const REQUIRED_COMPACTION_ERROR_MESSAGE =
-	"Context remains above the compaction threshold because compaction did not complete";
-
-class RequiredCompactionError extends Error {
-	constructor() {
-		super(REQUIRED_COMPACTION_ERROR_MESSAGE);
-		this.name = "RequiredCompactionError";
-	}
-}
-
 class MissingModelAccessError extends Error {
 	constructor() {
 		super("AgentSession requires modelRuntime or modelRegistry");
@@ -1602,7 +1592,7 @@ export class AgentSession {
 	// prompt-owned run's prompt throws the first one once the queue settles; any other run reports it
 	// as a continuation error when it happens.
 	private readonly _transcriptWriteFailures = new TranscriptWriteFailures();
-	private readonly _recoveryIdentity = compactUpdatesEnabled() ? new SessionRecoveryIdentity(undefined, this) : undefined;
+	private readonly _recoveryIdentity = new SessionRecoveryIdentity(undefined, this);
 	private _promptOwnsRun = false;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
@@ -3194,10 +3184,9 @@ export class AgentSession {
 	}
 
 	/**
-	 * Unconditional release for manual `/compact`, the user's explicit remedy. An
-	 * ordinary user prompt is deliberately not a release: it only adds context, so
-	 * it cannot make the rejected context admissible, and the pre-prompt gate
-	 * already owns its own fail-closed rejection for that route.
+	 * An explicit user retry releases the automatic-loop latch, not the context
+	 * admission requirement. The pre-prompt gate must still compact successfully
+	 * before sending an oversized request.
 	 */
 	private _releaseBlockedPostCompactionAdmission(): void {
 		this._blockedPostCompactionAssistant = undefined;
@@ -4766,6 +4755,11 @@ export class AgentSession {
 		failed?: (cause: unknown) => void,
 	): () => void {
 		return this._structuredLane.subscribe(listener, failed);
+	}
+
+	/** Whether `subscribeStructured` can attach: false for an Agent constructed outside the session layer. */
+	get hasStructuredLane(): boolean {
+		return this._structuredLane.available;
 	}
 
 	/**
@@ -6376,6 +6370,7 @@ export class AgentSession {
 			await this._assertModelReadyForTurn();
 
 			// The user's new prompt is sent below, so do not call agent.continue() here.
+			if (originOf(options) === "person") this._releaseBlockedPostCompactionAdmission();
 			await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 
 			// Build messages array (environment context if it changed, user message, then custom messages)
@@ -13536,6 +13531,9 @@ export class AgentSession {
 					},
 					signal: abortController.signal,
 					redactSecretsInOutput: this.settingsManager.getBashRedactSecretsInOutput(),
+					// The user's own command: no kill guard runtime layer, which judges only agent commands (senpi#5349).
+					// Operations an extension returns from `user_bash` keep receiving no env, as before this guard existed.
+					...(options?.operations === undefined ? { env: getUserShellEnv() } : {}),
 				},
 			);
 

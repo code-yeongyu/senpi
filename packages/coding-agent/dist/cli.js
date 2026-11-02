@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.js";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.js";
+import { dispatchKillGuardCommand } from "./cli/kill-guard-command.js";
 import { enableStartupCompileCache } from "./compile-cache.js";
 import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallPackageDir, isBundledNode, } from "./config.js";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
@@ -92,6 +93,9 @@ function reexecUnderBunIfNeeded() {
     process.exitCode = result.status ?? 1;
     return true;
 }
+// The kill guard's runtime shims ask this executable to judge a signal (senpi#5349). Hidden and never in help; it
+// loads only the judge, so it answers before any runtime re-exec or engine import.
+await dispatchKillGuardCommand(process.argv.slice(2));
 if (reexecUnderBunIfNeeded()) {
     process.exit();
 }

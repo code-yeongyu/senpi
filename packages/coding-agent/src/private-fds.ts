@@ -17,10 +17,10 @@ const QUOTED_NAME = /"([a-z][a-z0-9-]{0,63})"\s*:/g;
 export type PrivateFdEntry = number | readonly [number, number] | null;
 
 /**
- * Flip only after the Windows compiled-runtime proof and old-parser control pass at the pinned chain.
- * Every Bun bump invalidates this proof automatically; re-run both before recording the new version.
+ * Recorded after the Windows compiled-runtime proof and old-parser control passed on Bun 1.4.4 (senpi main run
+ * 41147881849, #4898). Every Bun bump invalidates this proof automatically; re-run both before recording the new version.
  */
-const WINDOWS_PRIVATE_FD_PAIR_PROVEN: { readonly bun: string } | false = false;
+const WINDOWS_PRIVATE_FD_PAIR_PROVEN: { readonly bun: string } | false = { bun: "1.4.4" };
 
 interface PrivateFdInspection {
 	readonly platform: NodeJS.Platform;
