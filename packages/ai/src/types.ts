@@ -24,6 +24,12 @@ export type { Model } from "./model.ts";
 export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
 export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
 	/**
+	 * The selected credential uses Sign in with ChatGPT plan usage on the public Responses API.
+	 * Set per credential route, not by token prefix or provider id. Never set for API keys
+	 * or the ChatGPT backend/Codex route.
+	 */
+	siwc?: boolean;
+	/**
 	 * Exact native search type for a compatible Responses endpoint.
 	 * OpenAI supports both names; xAI documents only web_search.
 	 * https://developers.openai.com/api/docs/guides/tools-web-search
