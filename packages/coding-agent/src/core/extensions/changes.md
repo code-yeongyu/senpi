@@ -1,3 +1,58 @@
+## 2026-10-31 - Extension event placement for a runtime without a session (senpi#5250)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: exported `EXTENSION_EVENT_PLACEMENT` (`runtime` / `loop` / `split` for every `ExtensionEvent["type"]`, compile-checked exhaustive) and `ExtensionEventPlacement`; when the runner has no session manager, `emit()`, `emitContext()`, `emitBeforeProviderRequest()`, `emitBeforeProviderHeaders()`, `emitBoundary()`, `emitSessionMove()` and `emitModelSelect()` run no `loop` handler and return their no-handler result (a private `dropsLoopEvent()` reads the placement).
+
+### Why
+
+- A runtime with no session (brain/hand split, senpi#5231) delivers its own events and must not run loop handlers it has no loop for.
+
+### Why an extension could not handle it
+
+- Event dispatch is the runner's; an extension cannot stop the runner from calling other extensions' handlers.
+
+### Expected merge conflict zones
+
+- LOW: the type block after `RunnerEmitEvent`, the first lines of `emit()`, and the handler reads in `emitBoundary`, `emitSessionMove`, `emitModelSelect`, `emitContext`, `emitBeforeProviderRequest` and `emitBeforeProviderHeaders` in `packages/coding-agent/src/core/extensions/runner.ts`.
+
+## 2026-10-31 - Runner UI through a runtime UI broker (senpi#5237)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `setUiBroker(broker)` routes `getUIContext()`, `hasUI()` and `ctx.ui` through a `RuntimeUiBroker`'s attached presenter, wrapped by the existing UI-prompt wrapper so `ui_prompt_start` and `ui_prompt_end` still fire; with no presenter the UI is the unbound `noOpUIContext`, which is now exported. With no broker set the runner reads its own bound UI as before.
+
+### Why
+
+- A runtime with no session (brain/hand split, senpi#5228) runs tools that ask humans questions, and has no session UI to bind.
+
+### Why an extension could not handle it
+
+- The runner owns the UI context every extension handler receives as `ctx.ui`; an extension cannot replace it for other extensions.
+
+### Expected merge conflict zones
+
+- LOW: the `uiContext` field block, `setUIContext()`, `getUIContext()`, `hasUI()` and the `ui` getter in `createContext()` of `packages/coding-agent/src/core/extensions/runner.ts`; the `noOpUIContext` declaration.
+
+## 2026-10-31 - Extension context without a session (senpi#5230)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds `ExtensionRuntimeContext`, the members of `ExtensionContext` a runtime serves without a session. `ExtensionContext` is unchanged.
+- `packages/coding-agent/src/core/extensions/runner.ts` accepts an `undefined` session manager. Contexts of such a runner have no `sessionManager` or `goalStoreFile`, every other loop-side member throws `<member> is loop-side and not bound`, and `getActiveTools()` returns an empty list. A runner with a session manager is unchanged.
+
+### Why
+
+- A tool host without an agent loop or a session (brain/hand split, senpi#4360) has to give its extensions a context, run wrapped extension tools and run resource discovery without a synthetic transcript.
+
+### Why an extension could not handle it
+
+- The extension context is built by the runner before any extension code runs.
+
+### Expected merge conflict zones
+
+- LOW: the `./types.ts` import block and `createContext`'s end in `packages/coding-agent/src/core/extensions/runner.ts`; the end of the `ExtensionContext` interface in `packages/coding-agent/src/core/extensions/types.ts`.
+
 ## 2026-10-30 - First-class private secret input (senpi#5108)
 
 ### What changed

@@ -18,14 +18,14 @@
 		"base64": "c3RhbGUgcmVmIHZhbHVlIHYx"
 	},
 	"sourceLength": 18,
-	"sourceDigest": "ad340fb5660fc31485fc495f67f8efab4c9ccb61c2eb4821f0a161fa51c3d010",
+	"sourceDigest": "5dcf8a3e3152bb27047215a1ea14167ac58c83283977e89980edcccf6aa6ba2e",
 	"binding": {
 		"threadId": "thread-sf1-fixture",
 		"viewRevision": 41,
 		"rowKey": "row-sf1-fixture",
 		"field": "content",
 		"bytes": 18,
-		"digest": "ad340fb5660fc31485fc495f67f8efab4c9ccb61c2eb4821f0a161fa51c3d010"
+		"digest": "5dcf8a3e3152bb27047215a1ea14167ac58c83283977e89980edcccf6aa6ba2e"
 	},
 	"change": {
 		"viewRevision": 42,
@@ -33,7 +33,7 @@
 			"base64": "c3RhbGUgcmVmIHZhbHVlIHYy"
 		},
 		"sourceLength": 18,
-		"sourceDigest": "b947a27c76a6d18742b7f7a128b7d843fd7f66e84286eb99b531951089f9d535"
+		"sourceDigest": "cdae960336b615a9372daefd057de8824d46188a815457a1358dc96aa105ca6d"
 	},
 	"fault": {
 		"field": "digest",
@@ -43,7 +43,7 @@
 		{
 			"offset": 0,
 			"length": 18,
-			"digest": "b947a27c76a6d18742b7f7a128b7d843fd7f66e84286eb99b531951089f9d535",
+			"digest": "93485da870ba43b0b5b01a745f23c3303d2e9dd278f7860297ea8ac02e72142c",
 			"next": null,
 			"complete": true,
 			"data": "c3RhbGUgcmVmIHZhbHVlIHYy"

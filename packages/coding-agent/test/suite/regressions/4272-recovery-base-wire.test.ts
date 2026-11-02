@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { readFamilyRegistry } from "../../../src/modes/rpc/compact-catalog-registry.ts";
-import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
+import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest-shape.ts";
 import type { RecoveryCaller } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import type { RpcCommand, RpcResponse } from "../../../src/modes/rpc/rpc-types.ts";
 import type { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
