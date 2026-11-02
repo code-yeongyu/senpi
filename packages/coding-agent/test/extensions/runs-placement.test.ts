@@ -10,6 +10,16 @@ import type {
 	ExtensionSide,
 	HandlerRegistrationOptions,
 } from "../../src/core/extensions/types.ts";
+import {
+	cleanupHands,
+	handDirs,
+	openLink,
+	remoteHost,
+	runTurn,
+	startHand,
+	toolCall,
+	toolResultTexts,
+} from "../hand/remote-hand-fixture.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { createTestResourceLoader } from "../utilities.ts";
 
@@ -202,5 +212,36 @@ describe("runs: placement of extension registrations (R24.a)", () => {
 				{ path: "<runs-fixture>", error: expect.stringContaining('runs must be "brain" or "hand"') },
 			]);
 		}
+	});
+});
+
+describe("runs: on split-local, through the hand that executes the session's calls", () => {
+	afterEach(cleanupHands);
+
+	async function splitLocalTurn(declare: boolean): Promise<{ fired: string[]; results: string[] }> {
+		const fired: string[] = [];
+		const dirs = await handDirs("runs");
+		const link = openLink();
+		startHand(link, dirs, [placementFixture(fired, declare)]);
+		const { agent } = await runTurn({
+			calls: [toolCall("call-1", "child_echo", {})],
+			toolHost: remoteHost(link),
+			root: dirs.cwd,
+		});
+		return { fired, results: toolResultTexts(agent) };
+	}
+
+	it("a tool_call handler declared runs: hand runs on the hand for the call it executes", async () => {
+		const { fired, results } = await splitLocalTurn(true);
+
+		expect(fired).toEqual(["tool_call child_echo", "tool_result child_echo"]);
+		expect(results).toEqual(["ok"]);
+	});
+
+	it("an extension with runs declarations behaves exactly as the same extension without them", async () => {
+		const declared = await splitLocalTurn(true);
+		const undeclared = await splitLocalTurn(false);
+
+		expect(declared).toEqual(undeclared);
 	});
 });
