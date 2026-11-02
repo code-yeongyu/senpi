@@ -12,7 +12,7 @@ Completing tasks out of phase order can move this pointer **back** to an earlier
 
 | op | Required fields | Effect |
 |---|---|---|
-| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing) |
+| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing). Each list entry is exactly one phase; items holds only task strings |
 | init | items: string[] | Flattened single-phase init |
 | start | task | Mark in progress |
 | done | task or phase | Mark completed |
