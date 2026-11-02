@@ -2,6 +2,7 @@ import type { AccountLoginReceipt, Credential } from "@earendil-works/pi-ai";
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import { describeAccountBlock } from "../../../credential-account-status.ts";
 import { describeModelBlocks } from "../../../credential-pool/model-scope.ts";
+import { accountLimitsFor, describeAccountLimits } from "../../../subscription-limits/limit-summary.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "../account-display-name.ts";
 import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
@@ -173,6 +174,8 @@ function showAccounts(
 		if (account.name === pinned) states.push("pinned");
 		if (account.name === affinityPick) states.push("affinity pick");
 		lines.push(`  ${states.join(" | ")}`);
+		const limits = accountLimitsFor(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, account.name);
+		lines.push(`    ${describeAccountLimits(limits, Date.now())}`);
 	}
 	const labelFor = (name: string) => accountLabel(accounts.find((account) => account.name === name) ?? { name });
 	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${labelFor(pinned)} (${pinSource.toLowerCase()})`}`);
