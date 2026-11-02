@@ -1,3 +1,5 @@
+import type { ProgramStatus } from "@earendil-works/pi-tui";
+
 // ============================================================================
 // Extension UI Events (stdout)
 // ============================================================================
@@ -96,6 +98,8 @@ export type RpcExtensionUIRequest =
 			widgetActions?: { label: string; command: string }[];
 	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
+	/** An absent `programStatus` clears the status. */
+	| { type: "extension_ui_request"; id: string; method: "setProgramStatus"; programStatus?: ProgramStatus }
 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
 	// Additive (task 13/14): emitted ONLY when the client advertised the
 	// "custom_unsupported" capability. ctx.ui.custom cannot render a third-party

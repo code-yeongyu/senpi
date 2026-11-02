@@ -6254,7 +6254,7 @@ Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()
 There are two categories of extension UI methods:
 
 - **Dialog methods** (`select`, `confirm`, `input`, `editor`, `question`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
-- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
+- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `setProgramStatus`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
 If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The host owns the timer and clients mirror the `remainingMs` value from each request or update event.
 
@@ -6430,6 +6430,19 @@ Set the terminal window/tab title. Fire-and-forget.
   "id": "uuid-8",
   "method": "setTitle",
   "title": "senpi - my project"
+}
+```
+
+#### setProgramStatus
+
+Report the program's state for the terminal's Program Status Protocol (OSC 7501). Fire-and-forget. `programStatus.state` is `idle`, `working`, `blocked`, `done` or `error`; `kind` (`permission`, `question` or `auth`) accompanies `blocked` only; `message` is plain text. A client attached to a terminal can encode it as an OSC 7501 report. `programStatus` is omitted when the status is cleared.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-8b",
+  "method": "setProgramStatus",
+  "programStatus": { "state": "blocked", "kind": "question", "message": "Which flow?" }
 }
 ```
 
