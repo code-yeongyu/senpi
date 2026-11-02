@@ -19,7 +19,7 @@ export interface HostConnection {
 const HOST_EXIT_RESERVE_MS = 3_000;
 
 /** How long a socket host's own shutdown may spend on its connections, so the whole stop fits the window. */
-const HOST_SHUTDOWN_BUDGET_MS = CHILD_STOP_TIMEOUT_MS - HOST_EXIT_RESERVE_MS;
+export const HOST_SHUTDOWN_BUDGET_MS = CHILD_STOP_TIMEOUT_MS - HOST_EXIT_RESERVE_MS;
 
 /**
  * The connection phase of a socket host's shutdown, after its sessions closed: drain every peer's queue, announce and
