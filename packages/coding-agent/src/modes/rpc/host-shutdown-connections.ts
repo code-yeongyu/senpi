@@ -18,24 +18,33 @@ export interface HostConnection {
  */
 const HOST_EXIT_RESERVE_MS = 3_000;
 
-/** How long a socket host's own shutdown may spend on its connections, so the whole stop fits the window. */
+/**
+ * The deadline of a socket host's shutdown, counted from its start (the SIGTERM handler) to the forced close of its last
+ * connection. It includes `router.dispose()`, which is not bounded on POSIX (#5398): a session that does not settle can
+ * spend this budget, and the stop window, before the connection phase begins.
+ */
 export const HOST_SHUTDOWN_BUDGET_MS = CHILD_STOP_TIMEOUT_MS - HOST_EXIT_RESERVE_MS;
 
 /**
- * The connection phase of a socket host's shutdown, after its sessions closed: drain every peer's queue, announce and
- * close each connection (`host_shutdown`), detach it. Every wait shares one deadline, `startedAt` plus the budget, so a
- * peer that never reads holds none of them past it, and a socket still open then (its half-close grace not yet spent)
- * is destroyed at the deadline: the grace is min(SOCKET_CUT_GRACE_MS, remaining budget). Returns the force's cancel.
+ * The connection phase of a socket host's shutdown, after its sessions closed: each connection drains its own queue,
+ * then is announced and closed (`host_shutdown`), independently of the others, so a peer that never reads holds only
+ * itself; then every connection detaches. All waits share one deadline, `startedAt` plus the budget, and a socket still
+ * open then (its half-close grace not yet spent) is destroyed at it: the grace is min(SOCKET_CUT_GRACE_MS, remaining
+ * budget). Returns the force's cancel.
  */
 export async function closeHostConnections(
 	connections: readonly HostConnection[],
-	flush: () => Promise<void>,
+	drain: (id: string) => Promise<void>,
 	startedAt: number,
 	log: (message: string) => void,
 ): Promise<() => void> {
 	const deadline = startedAt + HOST_SHUTDOWN_BUDGET_MS;
-	await beforeDeadline(flush(), deadline);
-	await beforeDeadline(Promise.all(connections.map((connection) => connection.close("host_shutdown"))), deadline);
+	await Promise.all(
+		connections.map(async (connection) => {
+			await beforeDeadline(drain(connection.id), deadline);
+			await beforeDeadline(connection.close("host_shutdown"), deadline);
+		}),
+	);
 	for (const connection of connections) connection.detach();
 	const force = setTimeout(
 		() => {

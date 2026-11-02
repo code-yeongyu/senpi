@@ -949,9 +949,11 @@ it stops the socket's record queue and writes one last record:
 ```
 
 `detail` is optional. The engine then waits for that record to drain for at most 1 second and closes the socket
-regardless. A host shutdown bounds every one of these waits, and the half-close that flushes the record, by its
-own 2-second connection budget inside the supervisor's 5-second stop window; a socket still open at the end of that
-budget is destroyed. When the transport is already broken (the write fails, or the drain is refused) the socket closes at once
+regardless. On a host shutdown each socket drains its own queue and then receives its record, so a
+peer that stopped reading delays only itself. These waits, and the half-close that flushes the record, end at the
+shutdown's deadline: 2 seconds after the shutdown starts, inside the supervisor's 5-second stop window, and a socket
+still open then is destroyed. The deadline counts from the start of the shutdown, so it includes closing the host's
+sessions, which is not bounded on POSIX (senpi#5398) and can still push a stop past the window. When the transport is already broken (the write fails, or the drain is refused) the socket closes at once
 and the record may never arrive, so a client must not depend on it: a close with no `socket_closing` is handled as
 `retryable: true`. A legacy socket, and every socket with the flag off, is closed exactly as before, with no new record.
 

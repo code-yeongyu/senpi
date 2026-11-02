@@ -509,7 +509,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				? Promise.race([router.dispose(), delay(WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS)])
 				: router.dispose());
 			const open = [...connections.values()];
-			const cancelForce = await closeHostConnections(open, () => writer.flush(), startedAt, hostLog);
+			const cancelForce = await closeHostConnections(open, (id) => writer.flushConnection(id), startedAt, hostLog);
 			// libuv unlinks the bound NAME when the listening handle closes - which
 			// would delete a newer host's entry renamed over this path. Shield the
 			// current entry for the close, then let the ownership check decide.
