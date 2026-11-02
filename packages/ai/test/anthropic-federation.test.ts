@@ -104,6 +104,7 @@ describe("Anthropic workload identity federation", () => {
 	it("resolves the federation variables as provider env with no request auth", async () => {
 		expect(await resolveWithEnv(federationEnv)).toEqual({
 			auth: {},
+			requestTimeAuth: true,
 			env: federationEnv,
 			source: "workload identity federation",
 		});
@@ -123,6 +124,7 @@ describe("Anthropic workload identity federation", () => {
 		const { ANTHROPIC_SERVICE_ACCOUNT_ID: _omitted, ...partial } = federationEnv;
 		expect(await resolveWithEnv(partial)).toEqual({
 			auth: {},
+			requestTimeAuth: true,
 			env: partial,
 			source: "workload identity federation",
 		});

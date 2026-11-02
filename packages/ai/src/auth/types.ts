@@ -130,6 +130,13 @@ export interface AuthResult {
 	 * that exists for other tools too, not from a credential configured for this provider.
 	 */
 	ambient?: true;
+	/**
+	 * The provider's client authenticates the request itself at send time (AWS SDK signing, Google ADC,
+	 * Anthropic workload identity federation), so `auth` carries no key or credential header although the
+	 * provider is configured. Independent of `ambient`: a profile stored by `/login` is request-time auth
+	 * the user configured for this provider (senpi#3840).
+	 */
+	requestTimeAuth?: true;
 }
 
 export interface AuthCheck {

@@ -280,11 +280,15 @@ export async function runExtensionCompaction(
 ): Promise<CompactionResult | undefined> {
 	if (signal?.aborted) return undefined;
 	// A provider is authenticated for summarization by a resolved key, a credential
-	// request header, or ambient request-time auth. The ambient marker comes from the
+	// request header, or auth its client applies at request time (a stored or ambient
+	// AWS profile, ADC, a bearer token env; senpi#3840). Both markers come from the
 	// same provider resolution normal turns use; an unconfigured keyed provider still
 	// has none of these and is rejected before a request.
 	const authenticated = (resolved: ResolvedRequestAuth | undefined): boolean =>
-		resolved?.ok === true && Boolean(resolved.apiKey || hasCredentialHeaders(resolved.headers) || resolved.ambient);
+		resolved?.ok === true &&
+		Boolean(
+			resolved.apiKey || hasCredentialHeaders(resolved.headers) || resolved.ambient || resolved.requestTimeAuth,
+		);
 	let selectedModel = context.getCompactionModel?.() ?? snapshot.model;
 	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
 	if (signal?.aborted) return undefined;

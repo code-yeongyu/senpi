@@ -150,6 +150,48 @@ describe("issue #2441 Bedrock ambient auth compaction", () => {
 		expect(bedrockMock.constructorCalls[0]?.profile).toBe("fixture-profile");
 	});
 
+	// senpi#3840: a profile saved by `/login` and a bearer token in the environment are Bedrock credentials
+	// the AWS SDK applies at request time; neither is ambient, and neither may be refused before the request.
+	it("reaches the Bedrock summary request with a profile stored by /login and no AWS_PROFILE env", async () => {
+		vi.stubEnv("AWS_PROFILE", undefined);
+		vi.stubEnv("AWS_BEARER_TOKEN_BEDROCK", undefined);
+		vi.stubEnv("AWS_ACCESS_KEY_ID", undefined);
+		vi.stubEnv("AWS_SECRET_ACCESS_KEY", undefined);
+		const storage = AuthStorage.inMemory({
+			"amazon-bedrock": {
+				type: "api_key",
+				key: "",
+				env: { AWS_PROFILE: "stored-profile", AWS_REGION: "us-west-2" },
+			},
+		});
+		const registry = await createInMemoryModelRegistry(storage);
+		const model = registry.find("amazon-bedrock", BEDROCK_CLAUDE_ID);
+		if (!model) throw new Error("expected built-in Bedrock model");
+		const { context, snapshot } = createContext(model, registry);
+
+		const result = await runExtensionCompaction(context, snapshot);
+
+		expect(result?.summary).toBe("ambient summary");
+		expect(bedrockMock.sendCalls).toBe(1);
+		expect(bedrockMock.constructorCalls[0]?.profile).toBe("stored-profile");
+	});
+
+	it("reaches the Bedrock summary request with only AWS_BEARER_TOKEN_BEDROCK", async () => {
+		vi.stubEnv("AWS_PROFILE", undefined);
+		vi.stubEnv("AWS_BEARER_TOKEN_BEDROCK", "fixture-bearer");
+		vi.stubEnv("AWS_ACCESS_KEY_ID", undefined);
+		vi.stubEnv("AWS_SECRET_ACCESS_KEY", undefined);
+		const registry = await createInMemoryModelRegistry(AuthStorage.inMemory());
+		const model = registry.find("amazon-bedrock", BEDROCK_CLAUDE_ID);
+		if (!model) throw new Error("expected built-in Bedrock model");
+		const { context, snapshot } = createContext(model, registry);
+
+		const result = await runExtensionCompaction(context, snapshot);
+
+		expect(result?.summary).toBe("ambient summary");
+		expect(bedrockMock.sendCalls).toBe(1);
+	});
+
 	it("still rejects a provider with no resolved credential before the request", async () => {
 		vi.stubEnv("ANTHROPIC_API_KEY", undefined);
 		const registry = await createInMemoryModelRegistry(AuthStorage.inMemory());

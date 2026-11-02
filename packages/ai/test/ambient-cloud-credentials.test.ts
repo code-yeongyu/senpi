@@ -44,6 +44,38 @@ describe("ambient cloud credentials", () => {
 		}
 	});
 
+	// senpi#3840: a resolution with no key and no credential header is configured only because the provider's
+	// client authenticates at send time; it must say so, ambient or not, or compaction refuses it.
+	it("#given any keyless bedrock or vertex resolution #when it resolves #then it is marked request-time auth", async () => {
+		const resolveVertex = (env: Record<string, string>, credential?: ApiKeyCredential) =>
+			googleVertexProvider().auth.apiKey?.resolve({
+				ctx: authContext(env, ["/adc.json"]),
+				credential,
+				signal: new AbortController().signal,
+			});
+		const adcEnv = {
+			GOOGLE_APPLICATION_CREDENTIALS: "/adc.json",
+			GOOGLE_CLOUD_PROJECT: "p",
+			GOOGLE_CLOUD_LOCATION: "l",
+		};
+		const keyless = {
+			"bedrock bearer token env": await resolveBedrock({ AWS_BEARER_TOKEN_BEDROCK: "bedrock-token" }),
+			"bedrock stored profile": await resolveBedrock({}, { type: "api_key", env: { AWS_PROFILE: "chosen" } }),
+			"bedrock AWS_PROFILE env": await resolveBedrock({ AWS_PROFILE: "work" }),
+			"bedrock access keys": await resolveBedrock({ AWS_ACCESS_KEY_ID: "AKIAEXAMPLE", AWS_SECRET_ACCESS_KEY: "s" }),
+			"bedrock ECS relative uri": await resolveBedrock({ AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: "/v2/creds" }),
+			"bedrock ECS full uri": await resolveBedrock({ AWS_CONTAINER_CREDENTIALS_FULL_URI: "http://169.254.170.2/x" }),
+			"bedrock web identity": await resolveBedrock({ AWS_WEB_IDENTITY_TOKEN_FILE: "/token" }),
+			"vertex ambient ADC": await resolveVertex(adcEnv),
+			"vertex stored ADC choice": await resolveVertex({}, { type: "api_key", env: adcEnv }),
+		};
+		for (const [branch, resolution] of Object.entries(keyless)) {
+			expect(resolution, branch).toMatchObject({ auth: {}, requestTimeAuth: true });
+		}
+		expect((await resolveBedrock({}, { type: "api_key", key: "stored" }))?.requestTimeAuth).toBeUndefined();
+		expect((await resolveVertex({ GOOGLE_CLOUD_API_KEY: "key" }))?.requestTimeAuth).toBeUndefined();
+	});
+
 	it("#given gcloud ADC #when vertex resolves #then ADC is ambient and an API key is not", async () => {
 		const adc = {
 			GOOGLE_APPLICATION_CREDENTIALS: "/adc.json",
