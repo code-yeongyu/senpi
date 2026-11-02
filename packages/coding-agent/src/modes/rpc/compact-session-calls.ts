@@ -146,7 +146,12 @@ export class CompactSessionCalls {
 			startedAtMs: Date.now(),
 			resolvedName: start.toolName,
 		};
-		const announced = this.table.oldestById(start.toolCallId, turnId, awaitingStart);
+		// RULING-127 (b): a start joins only a block of its own turn, the scope the producer counts waiting blocks in.
+		const announced = this.table.oldestById(
+			start.toolCallId,
+			turnId,
+			(call) => call.turnId === turnId && awaitingStart(call),
+		);
 		if (announced)
 			return this.update(step, announced, {
 				...started,
