@@ -39,6 +39,8 @@ export function lazyEntryPoints({ codingAgentDistDir, aiDistDir }) {
 		"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 		// Codemode workers import the kill guard's judge by URL from `kill-guard/host.js` (checked after the build).
 		"kill-guard": join(codingAgentDistDir, "core", "kill-guard", "index.js"),
+		// The runtime shims run this judge entry under Node for an npm install (checked after the build).
+		"kill-guard-check": join(codingAgentDistDir, "core", "kill-guard", "check-entry.js"),
 		// `path-identity-host.js` starts this with new URL("./path-identity-worker.js", import.meta.url), so
 		// the worker must sit in the chunk directory the host is emitted into (checked after the build).
 		"path-identity-worker": join(

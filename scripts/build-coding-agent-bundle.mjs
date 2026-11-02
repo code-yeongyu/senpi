@@ -257,6 +257,14 @@ async function buildBundle() {
 	if (dirname(killGuardHostOutput) !== dirname(bedrockLoaderOutput)) {
 		throw new Error("Kill guard host and its judge module were emitted into different directories");
 	}
+	// `kill-guard/runtime.js` hands the runtime shims new URL("./kill-guard-check.js", import.meta.url) (senpi#5349).
+	const killGuardRuntimeOutput = findContainingOutput(
+		mainResult.metafile,
+		"packages/coding-agent/dist/core/kill-guard/runtime.js",
+	);
+	if (dirname(killGuardRuntimeOutput) !== dirname(bedrockLoaderOutput)) {
+		throw new Error("Kill guard runtime and its judge entry were emitted into different directories");
+	}
 
 	const supervisorResult = await buildSupervisor();
 
