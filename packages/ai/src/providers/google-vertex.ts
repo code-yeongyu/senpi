@@ -88,8 +88,8 @@ const vertexAuth: ApiKeyAuth = {
 		const location = credential?.env?.GOOGLE_CLOUD_LOCATION || (await env("GOOGLE_CLOUD_LOCATION"));
 		if (hasCredentials && project && location) {
 			return credential
-				? { auth: {}, env: credential.env, source: "stored credential" }
-				: { auth: {}, source: "gcloud application default credentials", ambient: true };
+				? { auth: {}, requestTimeAuth: true, env: credential.env, source: "stored credential" }
+				: { auth: {}, requestTimeAuth: true, source: "gcloud application default credentials", ambient: true };
 		}
 		return undefined;
 	},

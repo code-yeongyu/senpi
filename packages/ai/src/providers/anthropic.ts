@@ -70,7 +70,7 @@ function anthropicApiKeyAuth(): ApiKeyAuth {
 				signal.throwIfAborted();
 				if (value) federation[envVar] = value;
 			}
-			return { auth: {}, env: federation, source: "workload identity federation" };
+			return { auth: {}, requestTimeAuth: true, env: federation, source: "workload identity federation" };
 		},
 	};
 }
