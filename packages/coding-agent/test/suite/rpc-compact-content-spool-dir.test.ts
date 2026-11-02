@@ -14,7 +14,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 		...actual,
 		writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
 			const [path] = args;
-			if (fsFault.markerWrite && String(path).endsWith(".compact-spool-owner"))
+			if (fsFault.markerWrite && String(path).includes(".compact-spool-owner"))
 				return fsFault.markerWrite(String(path));
 			return actual.writeFile(...args);
 		},
