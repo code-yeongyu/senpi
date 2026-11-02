@@ -1,5 +1,6 @@
 import type { ApiKeyCredential, Credential, CredentialStore, Model, Provider } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import { APP_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { CredentialSynchronizationError, ModelRuntime } from "../src/core/model-runtime.ts";
 
@@ -60,6 +61,26 @@ async function runtimeWithProvider(
 }
 
 describe("ModelRuntime credential synchronization", () => {
+	// senpi#5003: display branding, not the independently configured user agent.
+	it("passes the configured app name to OAuth registration", async () => {
+		const registered = provider("branded");
+		const login = vi.fn(async () => ({
+			type: "oauth" as const,
+			access: "synthetic",
+			refresh: "synthetic",
+			expires: Date.now() + 60_000,
+		}));
+		registered.auth.oauth = {
+			name: "Fixture",
+			login,
+			refresh: async (credential) => credential,
+			toAuth: async (credential) => ({ apiKey: credential.access }),
+		};
+		const runtime = await runtimeWithProvider(registered);
+		await runtime.login("branded", "oauth", { prompt: async () => "unused", notify: () => {} });
+		expect(login).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ appName: APP_NAME }));
+	});
+
 	it("publishes locally consistent availability before login and logout resolve", async () => {
 		const credentials = AuthStorage.inMemory();
 		const runtime = await runtimeWithProvider(provider("dynamic"), credentials);

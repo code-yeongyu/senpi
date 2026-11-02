@@ -18,39 +18,15 @@ import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.js";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.js";
+import { dispatchKillGuardCommand } from "./cli/kill-guard-command.js";
 import { enableStartupCompileCache } from "./compile-cache.js";
 import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallPackageDir, isBundledNode, } from "./config.js";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.js";
-import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.js";
-import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.js";
-import { releaseInheritedStartupFillers } from "./private-fd-startup-fillers.js";
-/**
- * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
- * is still unread here, and the process that loads cli-main reports on the same descriptor.
- */
-function reexecStdio() {
-    const base = channelStdio();
-    if (!process.env[HOST_STARTUP_EVENTS_ENV])
-        return base;
-    try {
-        const stat = fstatSync(STARTUP_EVENT_FD);
-        if (!stat.isSocket() && !stat.isFIFO())
-            return base;
-    }
-    catch {
-        return base;
-    }
-    const slots = typeof base === "string" ? [base, base, base] : [...base];
-    while (slots.length < STARTUP_EVENT_FD)
-        slots.push("ignore");
-    slots[STARTUP_EVENT_FD] = STARTUP_EVENT_FD;
-    return slots;
-}
 /** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
-function channelStdio() {
+function reexecStdio() {
     const argv = process.argv.slice(2);
     const presenter = argv.indexOf("--mcp-presenter-fd");
     if (presenter < 0 || argv[presenter + 1] !== "4")
@@ -117,8 +93,9 @@ function reexecUnderBunIfNeeded() {
     process.exitCode = result.status ?? 1;
     return true;
 }
-// A coordinated host start's filler pipes are released before anything can spawn or re-execute (senpi#4602).
-releaseInheritedStartupFillers(process.env);
+// The kill guard's runtime shims ask this executable to judge a signal (senpi#5349). Hidden and never in help; it
+// loads only the judge, so it answers before any runtime re-exec or engine import.
+await dispatchKillGuardCommand(process.argv.slice(2));
 if (reexecUnderBunIfNeeded()) {
     process.exit();
 }
