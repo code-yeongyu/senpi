@@ -232,12 +232,21 @@ it("RULING-81 measurements: descriptors per record type on the real path, and th
 		const before = events.status();
 		// `begin` is where the byte limit refuses and the one entry both staging paths take: a stamped compact copy
 		// (RULING-123) streams from its record, never `stage()` from another destination's line.
-		vi.spyOn(TransferStaging.prototype, "begin").mockImplementation(() => {
-			throw new TransferStagingError("staging_over_byte_limit");
+		const injected = new TransferStagingError("staging_over_byte_limit");
+		const begin = vi.spyOn(TransferStaging.prototype, "begin").mockImplementation(() => {
+			throw injected;
 		});
+		const stderr = vi.spyOn(process.stderr, "write");
+		expect(before.refused, "no refusal before the fault").not.toHaveProperty("storage_unavailable");
 		host.writer.enqueue(routing, oversized("c-fail"));
 		await host.writer.flush();
 		const after = events.status();
+		// The fault fired: begin() ran exactly once and threw the injected error, and the lease owner's refusal names it.
+		expect(begin.mock.results, "the injected begin() throw fired once").toEqual([{ type: "throw", value: injected }]);
+		const notStaged = stderr.mock.calls.filter(([chunk]) =>
+			String(chunk).includes(`record not staged (${injected.message})`),
+		);
+		expect(notStaged, "the refusal came from the injected throw").toHaveLength(1);
 		const retained = after.contentBytes - before.contentBytes;
 		process.stdout.write(`S13-MEASURE failure retained-bytes ${retained} refused ${JSON.stringify(after.refused)}\n`);
 		expect(retained, "a refused record retains no staged bytes").toBe(0);
