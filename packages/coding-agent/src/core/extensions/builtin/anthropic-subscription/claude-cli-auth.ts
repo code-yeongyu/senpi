@@ -40,7 +40,37 @@ export type ClaudeCliLogin = {
 const LOGIN_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const KILL_GRACE_MS = 5_000;
 const MANUAL_URL_LINE = /If the browser didn't open, visit: (https:\/\/\S+)\r?\n/;
-const SUCCESS_LINE = /^Login successful\.$/m;
+const SUCCESS_LINE = /^(?:Paste code here if prompted > )?Login successful\.\r?$/m;
+// OSC sequences (an OSC 8 hyperlink is ESC]8;;<uri>ST<text>ESC]8;;ST, ST being BEL or ESC\) and CSI sequences (colors),
+// removed explicitly so the visible text is left. node:util's stripVTControlCharacters is not used: under Bun 1.4.4 it
+// leaves an OSC 8 link whose URI holds "+" partly in place, and Claude's copy-code URL joins its scopes with "+".
+const TERMINAL_SEQUENCE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]/g;
+// The copy-code URL is shown to the user to open, so only Claude's own sign-in hosts are passed on.
+const MANUAL_URL_HOSTS: ReadonlySet<string> = new Set([
+	"claude.ai",
+	"claude.com",
+	"platform.claude.com",
+	"console.anthropic.com",
+]);
+
+function visibleText(output: string): string {
+	return output.replace(TERMINAL_SEQUENCE, "");
+}
+
+function isClaudeSignInUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return (
+			url.protocol === "https:" &&
+			url.username === "" &&
+			url.password === "" &&
+			url.port === "" &&
+			MANUAL_URL_HOSTS.has(url.hostname)
+		);
+	} catch {
+		return false;
+	}
+}
 
 /** Accepts `code#state`, a bare code, a query string, or the full callback URL; returns the line the CLI reads. */
 export function normalizePastedCode(input: string): string | undefined {
@@ -117,10 +147,10 @@ export function startClaudeCliLogin(options: ClaudeCliLoginOptions): ClaudeCliLo
 		child.stdout?.on("data", (chunk: string) => {
 			stdout += chunk;
 			capture.flush();
-			const manual = manualSeen ? null : MANUAL_URL_LINE.exec(stdout);
+			const manual = manualSeen ? null : MANUAL_URL_LINE.exec(visibleText(stdout));
 			if (manual?.[1] !== undefined) {
 				manualSeen = true;
-				options.onManualUrl?.(manual[1]);
+				if (isClaudeSignInUrl(manual[1])) options.onManualUrl?.(manual[1]);
 			}
 		});
 		child.stderr?.setEncoding("utf8");
@@ -134,7 +164,7 @@ export function startClaudeCliLogin(options: ClaudeCliLoginOptions): ClaudeCliLo
 		child.once("close", (exitCode: number | null) => {
 			capture.flush();
 			if (ending !== undefined) settle({ outcome: ending });
-			else if (exitCode === 0 && SUCCESS_LINE.test(stdout)) settle({ outcome: "success" });
+			else if (exitCode === 0 && SUCCESS_LINE.test(visibleText(stdout))) settle({ outcome: "success" });
 			else settle({ outcome: "failed", reason: exitCode === 0 ? "unexpected_exit" : failureReason(stderr) });
 		});
 		options.signal?.addEventListener("abort", onAbort, { once: true });
