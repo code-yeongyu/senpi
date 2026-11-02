@@ -277,6 +277,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -855,6 +859,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -1394,6 +1402,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -1917,6 +1929,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
