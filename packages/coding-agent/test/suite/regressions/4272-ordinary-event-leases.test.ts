@@ -153,7 +153,19 @@ it("T6 X04 S13-Q1 an oversized message_end reaches a compact-events peer as an e
 		expect(lease.sequence, "the lease names the sequence the lane accepted the event at").toBe(
 			accepted.find((each) => each.type === "message_end")?.sequence,
 		);
-		expect(JSON.parse(await fetchLease(compact, routing, lease))).toEqual(legacyEnd);
+		// RULING-120 (#5331): the compact copy is the legacy record plus exactly its settled ids, inside the lease too.
+		const rebuilt = JSON.parse(await fetchLease(compact, routing, lease)) as WireRecord;
+		const { messageId, terminalSequence, ...unstamped } = rebuilt;
+		expect(legacyEnd).not.toHaveProperty("messageId");
+		expect(legacyEnd).not.toHaveProperty("terminalSequence");
+		expect(unstamped).toEqual(legacyEnd);
+		expect(Object.keys(rebuilt), "the stamp follows the record's own fields").toEqual([
+			...Object.keys(legacyEnd),
+			"messageId",
+			"terminalSequence",
+		]);
+		expect(messageId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+		expect(terminalSequence, "the terminal row's sequence is the end's accepted sequence").toBe(lease.sequence);
 		expect(host.writer.recoveryCheckpoints.stream(caller)?.generation, "an event lease mints no generation").toBe(
 			generation,
 		);
