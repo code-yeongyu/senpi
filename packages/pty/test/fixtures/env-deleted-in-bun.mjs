@@ -27,6 +27,7 @@ const read = async (stream) => (await new Response(stream).text()).trim();
 const raw = {
 	"Bun.spawnSync default env": Bun.spawnSync(["/bin/sh", "-c", PROBE]).stdout.toString().trim(),
 	"Bun.spawn default env": await read(Bun.spawn(["/bin/sh", "-c", PROBE], { stdout: "pipe" }).stdout),
+	"Bun.spawn env: process.env": await read(Bun.spawn(["/bin/sh", "-c", PROBE], { env: process.env, stdout: "pipe" }).stdout),
 	"Bun.spawn explicit env": await read(Bun.spawn(["/bin/sh", "-c", PROBE], { env: { ...process.env }, stdout: "pipe" }).stdout),
 	"Bun.$ default": (await Bun.$`/bin/sh -c ${PROBE}`.quiet().text()).trim(),
 };

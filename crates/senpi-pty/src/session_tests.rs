@@ -114,6 +114,8 @@ fn has_var(output: &str, name: &str) -> bool {
     })
 }
 
+// Writes into the runner's real HKCU\Environment. Drop deletes the values; a process killed before Drop leaves them
+// behind, which is acceptable only on an ephemeral CI runner - never run this case on a developer machine.
 #[cfg(windows)]
 struct RegistryValues(&'static [&'static str]);
 
@@ -155,17 +157,43 @@ impl Drop for RegistryValues {
     }
 }
 
+// The scenario needs the closure in this process's OS environment. A process-wide set_var would race the other
+// tests of this harness, so the scenario runs in a fresh copy of this test binary launched with the closure, the
+// way the launcher execs the engine with it.
 #[cfg(windows)]
 #[test]
 fn pty_session_with_exact_env_keeps_the_windows_registry_environment_and_drops_the_closure() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "session_tests::windows_registry_and_closure_scenario",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("SSL_CERT_FILE", "C:\\senpi-closure\\empty.pem")
+        .env("SSL_CERT_DIR", "C:\\senpi-closure\\empty.d")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "the scenario did not run and pass: {stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "run by pty_session_with_exact_env_keeps_the_windows_registry_environment_and_drops_the_closure"]
+fn windows_registry_and_closure_scenario() {
     let probe = "CARGO_MANIFEST_DIR";
     assert!(
         std::env::var_os(probe).is_some(),
         "{probe} must be in the test environment"
     );
-    // The closure an engine was exec'd with, then deleted from its JS environment.
-    std::env::set_var("SSL_CERT_FILE", "C:\\senpi-closure\\empty.pem");
-    std::env::set_var("SSL_CERT_DIR", "C:\\senpi-closure\\empty.d");
+    // The closure an engine was exec'd with (set by the parent test), then deleted from its JS environment.
+    assert!(std::env::var("SSL_CERT_FILE").is_ok_and(|value| value.contains("senpi-closure")));
     // Set by the user in System Properties after the engine started.
     let _registry = RegistryValues::add(
         &[
@@ -195,8 +223,6 @@ fn pty_session_with_exact_env_keeps_the_windows_registry_environment_and_drops_t
     })
     .unwrap();
     let exit = session.wait().unwrap();
-    std::env::remove_var("SSL_CERT_FILE");
-    std::env::remove_var("SSL_CERT_DIR");
     let text = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
     let upper = text.to_ascii_uppercase();
 
