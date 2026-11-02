@@ -4,7 +4,6 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, expect, it } from "vitest";
-import { exportSessionToJsonl } from "../../../src/core/session-export.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
 import { persistedPartKeys } from "./5374-call-key-fixture-support.ts";
@@ -27,7 +26,7 @@ const noop: AgentTool = {
 	execute: async () => ({ content: [{ type: "text", text: "done" }], details: {} }),
 };
 
-async function keyedTurn(sessionManager?: SessionManager): Promise<SessionManager> {
+async function keyedRun(sessionManager?: SessionManager): Promise<Harness> {
 	const harness = await createHarness({
 		tools: [noop],
 		persistSession: true,
@@ -46,8 +45,10 @@ async function keyedTurn(sessionManager?: SessionManager): Promise<SessionManage
 		fauxAssistantMessage("done"),
 	]);
 	await harness.session.prompt("go");
-	return harness.sessionManager;
+	return harness;
 }
+
+const keyedTurn = async (sessionManager?: SessionManager) => (await keyedRun(sessionManager)).sessionManager;
 
 type Part = { type?: string; runtimeItemKey?: string };
 type Line = { type?: string; id?: string; message?: { role?: string; content?: Part[] } };
@@ -116,9 +117,9 @@ it("RULING-127 #5374 a compaction keeps every key in the file and none in memory
 });
 
 it("RULING-127 #5374 an exported session keeps every block's key", async () => {
-	const manager = await keyedTurn();
-	const file = fileOf(manager);
-	const exported = exportSessionToJsonl(manager, join(dirname(file), "export.jsonl"));
+	const harness = await keyedRun();
+	const file = fileOf(harness.sessionManager);
+	const exported = harness.session.exportToJsonl(join(dirname(file), "export.jsonl"));
 	expectCopiedFrom(exported, partKeys(file));
 	expect(partKeys(exported).size).toBe(3);
 	expectOneKeyPerBlock(exported);
