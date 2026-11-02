@@ -97,6 +97,8 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { subscribeProviderAccountEvents } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { formatAccountFailoverNotice } from "./account-failover-notice.ts";
 import {
 	askUserAnswerDisplayText,
 	formatUserMessage,
@@ -7063,6 +7065,12 @@ export class InteractiveMode {
 		markModeCrashHandler(unhandledRejectionHandler);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
+
+		this.signalCleanupHandlers.push(
+			subscribeProviderAccountEvents((event) => {
+				if (event.type === "failover") this.showStatus(formatAccountFailoverNotice(event));
+			}),
+		);
 
 		// Surface Inspector rejections that the early bootstrap seam recovered before this
 		// handler (and the TUI warning surface) existed.
