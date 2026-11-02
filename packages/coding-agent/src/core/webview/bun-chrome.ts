@@ -164,7 +164,7 @@ function signalQuietly(pid: number, signal: NodeJS.Signals): void {
 	}
 }
 
-export function defaultChromeRetireSeams(): ChromeRetireSeams {
+function defaultChromeRetireSeams(): ChromeRetireSeams {
 	const platform = process.platform;
 	return {
 		platform,
