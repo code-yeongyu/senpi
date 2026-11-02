@@ -1056,7 +1056,7 @@
     "typescript/no-non-null-assertion": 11
   },
   "packages/coding-agent/test/experimental-remote-runtime.test.ts": {
-    "typescript/no-non-null-assertion": 21
+    "typescript/no-non-null-assertion": 18
   },
   "packages/coding-agent/test/experimental-session-support.ts": {
     "typescript/no-non-null-assertion": 1
