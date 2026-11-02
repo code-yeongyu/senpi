@@ -5,11 +5,11 @@
  * (an agent dir, a cwd, a runtime factory) and reads nothing product-specific.
  */
 import { posix, win32 } from "node:path";
-import { type MultiSessionHostOptions, runMultiSessionHost } from "../rpc/multi-session-host.ts";
+import type { MultiSessionHostOptions } from "../rpc/multi-session-host.ts";
 import { resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
 
 /** The headless engine's socket under `<agentDir>/rpc/`, apart from the shared host's `rpc.sock`. */
-export const HEADLESS_SOCKET_FILE = "headless.sock";
+const HEADLESS_SOCKET_FILE = "headless.sock";
 
 export type HeadlessHostOptions = Omit<MultiSessionHostOptions, "sessionOwner">;
 
@@ -32,8 +32,4 @@ export function headlessHostOptions(options: HeadlessHostOptions): MultiSessionH
 		sessionOwner: "machine",
 		listen: options.listen ?? `unix://${headlessSocketPath(options.agentDir)}`,
 	};
-}
-
-export function runHeadlessHost(options: HeadlessHostOptions): Promise<never> {
-	return runMultiSessionHost(headlessHostOptions(options));
 }
