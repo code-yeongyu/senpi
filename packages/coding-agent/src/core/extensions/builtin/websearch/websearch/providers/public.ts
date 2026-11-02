@@ -121,7 +121,8 @@ export async function searchPublicWeb(
 ): Promise<SearchDetails> {
 	if (signal?.aborted) throw abortReason(signal);
 	const startedAt = Date.now();
-	const maxResults = entry.maxResults ?? request.maxResults;
+	// A count chosen for this call outranks the entry's own value, the same rule every other provider follows.
+	const maxResults = request.maxResultsFromCall ? request.maxResults : (entry.maxResults ?? request.maxResults);
 	const engineRequest: SearchRequest = { ...request, maxResults };
 
 	const stragglers = new AbortController();

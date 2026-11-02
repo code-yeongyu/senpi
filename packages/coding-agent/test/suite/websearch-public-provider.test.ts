@@ -305,3 +305,45 @@ describe("public provider deadlines", () => {
 		expect(engines.get("startpage")?.signal?.aborted).toBe(true);
 	});
 });
+
+describe("public provider and the per-call result count", () => {
+	// Each engine answers with as many distinct URLs as it was asked for, and records the count it was given.
+	function countingEngines(asked: number[]): PublicEngineSearch {
+		return async (entry, request) => {
+			asked.push(request.maxResults);
+			return {
+				provider: entry.provider,
+				query: request.query,
+				results: Array.from({ length: 20 }, (_, index) => item(`https://${entry.provider}.example/${index}`)),
+				durationMs: 1,
+				truncated: false,
+			};
+		};
+	}
+
+	it("lets a call's max_results outrank the entry's maxResults", async () => {
+		const asked: number[] = [];
+		const details = await searchPublicWeb(
+			{ provider: "public", maxResults: 10 },
+			{ ...REQUEST, maxResults: 3, maxResultsFromCall: true },
+			undefined,
+			countingEngines(asked),
+			fakeClock().wait,
+		);
+		expect(details.results).toHaveLength(3);
+		expect(new Set(asked)).toEqual(new Set([3]));
+	});
+
+	it("keeps the entry's maxResults when the call sets no count", async () => {
+		const asked: number[] = [];
+		const details = await searchPublicWeb(
+			{ provider: "public", maxResults: 5 },
+			{ ...REQUEST, maxResults: 20 },
+			undefined,
+			countingEngines(asked),
+			fakeClock().wait,
+		);
+		expect(details.results).toHaveLength(5);
+		expect(new Set(asked)).toEqual(new Set([5]));
+	});
+});
