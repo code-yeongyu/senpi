@@ -73,6 +73,7 @@ export type AuthenticatedQueryInput = {
 	contextTokens?: () => number;
 	/** Explicit response cap for the 200k retry; otherwise it uses the fallback default. */
 	outputReserveTokens?: number;
+	onAttemptStart?: () => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
 	) => RetainableAttempt<SDKMessage> | Promise<RetainableAttempt<SDKMessage>>;

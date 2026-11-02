@@ -49,6 +49,7 @@ export type ResidentSessionStreamInput = {
 	onLongContextFallback?: () => void;
 	contextTokens?: () => number;
 	outputReserveTokens?: number;
+	onAttemptStart?: () => void;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
 	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
 	onDispatchShape?: (coldSeed: boolean, estimatedTokens?: number) => void;
@@ -287,6 +288,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		contextTokens: input.contextTokens,
 		outputReserveTokens: input.outputReserveTokens,
 		...(input.onLongContextFallback === undefined ? {} : { onLongContextFallback: input.onLongContextFallback }),
+		onAttemptStart: input.onAttemptStart,
 		createAttempt: (auth) => createResidentAttempt(input, auth),
 	});
 }
