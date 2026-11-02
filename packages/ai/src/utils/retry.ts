@@ -108,13 +108,40 @@ const QUOTA_EXHAUSTION_PATTERNS = [
 
 const QUOTA_EXHAUSTION_PATTERN = buildProviderErrorPattern(QUOTA_EXHAUSTION_PATTERNS);
 
+/**
+ * Quota markers that prove a spent account on their own. The bare `billing`
+ * substring is deliberately excluded: senpi#4632 shows a gateway 503 whose body
+ * merely mentions a billing lookup ("resolve Billing Scope: ... dial tcp: i/o
+ * timeout") — a dependency failure, not a spent account — and the substring
+ * also matches inside the code token `workspace_billing_scope_unavailable`.
+ */
+const STRONG_QUOTA_EXHAUSTION_PATTERN = buildProviderErrorPattern(
+	QUOTA_EXHAUSTION_PATTERNS.filter((pattern) => pattern !== "billing"),
+);
+
+/**
+ * Transient server-side evidence that gates bare billing prose (senpi#4632):
+ * a 5xx status token in the message, or the OpenAI-envelope `server_error`
+ * type. A genuine quota refusal carries an explicit code (insufficient_quota,
+ * usage_limit_reached, credits_required, ...) and keeps its verdict via the
+ * strong pattern above, whatever status wraps it.
+ */
+const TRANSIENT_SERVER_SIGNAL_PATTERN =
+	/(?:^|[^0-9])(?:500|502|503|504|520|522|524)(?:[^0-9]|$)|"type"\s*:\s*"server_error"/i;
+
 export function isQuotaExhaustionMessage(errorMessage: string | undefined): boolean {
-	return errorMessage !== undefined && QUOTA_EXHAUSTION_PATTERN.test(stripProviderRequestIds(errorMessage));
+	if (errorMessage === undefined) return false;
+	const text = stripProviderRequestIds(errorMessage);
+	if (!QUOTA_EXHAUSTION_PATTERN.test(text)) return false;
+	// senpi#4632: bare "billing" prose on a transient 5xx is not a quota
+	// exhaustion unless a stronger quota marker is also present.
+	if (!STRONG_QUOTA_EXHAUSTION_PATTERN.test(text) && TRANSIENT_SERVER_SIGNAL_PATTERN.test(text)) {
+		return false;
+	}
+	return true;
 }
 
-const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
-	...QUOTA_EXHAUSTION_PATTERNS,
-
+const NON_QUOTA_NON_RETRYABLE_PATTERNS = [
 	// Request-shape rejections: the provider refused the payload we built, not the
 	// work it describes. Gateways wrap these in whatever status they like — the
 	// observed Apitopia/Kimi case arrives as `500 server_error: Invalid request:
@@ -132,6 +159,13 @@ const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Legacy text-only SIWC failures. Structured diagnostics take precedence below;
 	// this code alone proves no reset time.
 	"subscription_sharing_usage_limit_exceeded",
+] as const;
+
+const NON_QUOTA_NON_RETRYABLE_PATTERN = buildProviderErrorPattern(NON_QUOTA_NON_RETRYABLE_PATTERNS);
+
+const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+	...QUOTA_EXHAUSTION_PATTERNS,
+	...NON_QUOTA_NON_RETRYABLE_PATTERNS,
 ]);
 
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
@@ -660,7 +694,20 @@ export function isRetryableErrorMessage(errorMessage: string): boolean {
 export function classifyErrorMessage(errorMessage: string): "non-retryable" | "retryable" | "unknown" {
 	if (!errorMessage) return "unknown";
 	const text = stripProviderRequestIds(errorMessage);
-	if (NON_RETRYABLE_PROVIDER_ERROR_PATTERN.test(text)) return "non-retryable";
+	if (NON_RETRYABLE_PROVIDER_ERROR_PATTERN.test(text)) {
+		// senpi#4632: when the only non-retryable signal is bare "billing" prose
+		// on a transient 5xx, the failure is a server-side transient, not a
+		// spent account — let the retryable patterns (503, timeout, ...) decide.
+		// A stronger quota marker or a request-shape/subscription marker keeps
+		// the terminal verdict, whatever status wraps it.
+		if (isQuotaExhaustionMessage(text) || NON_QUOTA_NON_RETRYABLE_PATTERN.test(text)) {
+			return "non-retryable";
+		}
+		if (TRANSIENT_SERVER_SIGNAL_PATTERN.test(text)) {
+			return RETRYABLE_PROVIDER_ERROR_PATTERN.test(text) ? "retryable" : "unknown";
+		}
+		return "non-retryable";
+	}
 	if (RETRYABLE_PROVIDER_ERROR_PATTERN.test(text)) return "retryable";
 	return "unknown";
 }
