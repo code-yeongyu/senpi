@@ -252,6 +252,11 @@ async function buildBundle() {
 	if (dirname(pathIdentityHostOutput) !== dirname(bedrockLoaderOutput)) {
 		throw new Error("Path identity host and its resolver worker were emitted into different directories");
 	}
+	// `kill-guard/host.js` hands codemode workers new URL("./kill-guard.js", import.meta.url) (senpi#5349).
+	const killGuardHostOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/core/kill-guard/host.js");
+	if (dirname(killGuardHostOutput) !== dirname(bedrockLoaderOutput)) {
+		throw new Error("Kill guard host and its judge module were emitted into different directories");
+	}
 
 	const supervisorResult = await buildSupervisor();
 

@@ -37,6 +37,8 @@ export function createWorkerCore(transport, options) {
 	let memory = null;
 	let heapProbe = null;
 	let activeCell = null;
+	// The kill guard's judge, imported by URL before the runtime installs its wrappers (senpi#5349).
+	let killGuard;
 	const rejections = createRejectionReports({
 		activeCell: () => activeCell,
 		emitText: (data) => emit({ type: "text", stream: "stderr", data }),
@@ -68,6 +70,10 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		const startedAtMs = performance.now();
+		if (killGuard?.notice !== undefined) {
+			emit({ type: "text", stream: "stderr", data: killGuard.notice });
+			killGuard = { ...killGuard, notice: undefined };
+		}
 		const release = Promise.withResolvers();
 		const cell = { cellId: message.cellId, interruption: null, released: false, release: release.reject };
 		activeCell = cell;
@@ -167,6 +173,13 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		if (message.type === "init") {
+			if (message.killGuard !== undefined && killGuard === undefined) {
+				void loadKillGuard(message.killGuard).then((loaded) => {
+					killGuard = loaded;
+					onMessage(message);
+				});
+				return;
+			}
 			applySessionEnvironment(message.sessionEnv);
 			installSessionCwd(options.cwd, options.cwdInstallOptions);
 			installKernelWebView(requestWebViewPort);
@@ -181,6 +194,7 @@ export function createWorkerCore(transport, options) {
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				kernelToolsDisabled: message.kernelToolsDisabled === true,
+				...(killGuard?.guard === undefined ? {} : { killGuard: killGuard.guard }),
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 				onShellWaitChange: () => {
 					if (activeCell?.interruption) acknowledgeInterrupt();
@@ -232,6 +246,17 @@ export function createWorkerCore(transport, options) {
 			globalThis.__senpi_restore_console__?.();
 		},
 	};
+}
+
+// Judge missing: the cell runs unguarded with one notice, as the design's L2 shim does when its judge is gone.
+async function loadKillGuard(spec) {
+	try {
+		const judge = await import(String(spec.moduleUrl));
+		return { guard: { judge, agentPid: spec.agentPid } };
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		return { notice: `[senpi:kill-guard] the kill guard's judge could not be loaded in this kernel (${detail}); signals from cells are not judged.\n` };
+	}
 }
 
 function durationMs(startedAtMs) {

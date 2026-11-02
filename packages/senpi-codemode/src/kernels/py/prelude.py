@@ -54,6 +54,9 @@ if _permission_spec is None or _permission_spec.loader is None:
 _permission_module = importlib.util.module_from_spec(_permission_spec)
 exec(compile(_permission_path.read_bytes(), str(_permission_path), "exec"), _permission_module.__dict__)
 initialize_permissions = _permission_module.initialize
+# The kernel's own signals (parent watch, retirement) keep these originals: the kill guard wraps the cell-visible ones.
+_SIGNAL_PROCESS = os.kill
+_SIGNAL_GROUP = getattr(os, "killpg", None)
 
 sys.__stdout__.write('{"type":"status","event":{"op":"kernel-startup","stage":"runtime-init"}}\n')
 sys.__stdout__.flush()
@@ -2329,6 +2332,18 @@ def elapsed(start: float) -> int:
     return max(0, int((time.monotonic() - start) * 1000))
 
 
+def _install_kill_guard(port: int) -> None:
+    # The host exports the protected pids only while the guard is on (`terminal.killGuard`); absent means off.
+    protected = os.environ.get("SENPI_KILL_GUARD_PROTECTED")
+    if protected is None:
+        return
+    # Loaded only when the guard is on, so a kernel without it starts exactly as before.
+    _kill_guard_path = Path(__file__).with_name("kill_guard.py")
+    namespace: dict[str, Any] = {"__builtins__": __builtins__, "__file__": str(_kill_guard_path)}
+    exec(compile(_kill_guard_path.read_bytes(), str(_kill_guard_path), "exec"), namespace)
+    namespace["install"](port, [int(pid) for pid in protected.split(",") if pid.isdigit()])
+
+
 def _handle_message(message: dict[str, Any]) -> bool:
     global CONNECTION, permission_context
     message_type = message.get("type")
@@ -2346,6 +2361,7 @@ def _handle_message(message: dict[str, Any]) -> bool:
             KERNEL_MEMORY._footprint()
         if message.get("permission") is not None:
             permission_context = initialize_permissions(message["permission"], connection["port"])
+        _install_kill_guard(connection["port"])
         emit({"type": "ready"})
         return True
     if message_type == "run":
@@ -2405,7 +2421,8 @@ def _terminate_process_group(reason: str) -> None:
             stream.write(f"{PARENT_WATCH_MARKER} {reason}; stopping the kernel\n")
             stream.flush()
     with contextlib.suppress(OSError):
-        os.killpg(os.getpgrp(), signal.SIGKILL)
+        if _SIGNAL_GROUP is not None:
+            _SIGNAL_GROUP(os.getpgrp(), signal.SIGKILL)
 
 
 def _watch_parent(initial_ppid: int) -> None:
@@ -2429,7 +2446,7 @@ def _watch_named_parent(parent_pid: int) -> None:
     while True:
         time.sleep(0.5)
         try:
-            os.kill(parent_pid, 0)
+            _SIGNAL_PROCESS(parent_pid, 0)
         except ProcessLookupError:
             _terminate_process_group(f"its host process {parent_pid} is gone")
             return
