@@ -84,6 +84,8 @@ export class MonitorAwareGoalContinuation {
 	#timer: ReturnType<typeof setTimeout> | undefined;
 	#scheduledContinuationKind: DelayedContinuationKind | undefined;
 	#armedDrainFire = false;
+	/** Re-checks stopped while a channel stayed live (#5325): no timer, but the channel's drain still fires. */
+	#parkedOnLiveWait = false;
 	#channelStateUnsubscribers: Array<() => void> = [];
 	#lastAgentEndMessages: readonly AgentMessage[] = [];
 	#consecutiveLengthRecoveries = new Map<string, number>();
@@ -176,6 +178,7 @@ export class MonitorAwareGoalContinuation {
 			switch (immediateVerdict.reason) {
 				case "not-eligible":
 				case "single-flight":
+				case "live-wait":
 					return goal;
 				case "stale":
 				case "context-overflow":
@@ -394,6 +397,7 @@ export class MonitorAwareGoalContinuation {
 
 	#schedule(goal: Goal, kind: DelayedContinuationKind, repark = false, parked?: ParkedGoalWait): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
+		this.#parkedOnLiveWait = false;
 		// A live wake source arms the periodic backstop only: the normal resumption
 		// is the drain fire in #setWakeSourceCount, and the backstop re-checks the
 		// goal every `promptCache.goalBackstopMaxSeconds` in case the source never
@@ -592,6 +596,7 @@ export class MonitorAwareGoalContinuation {
 			this.#cancelTimer();
 			this.#resetToollessContinuationStreak();
 		}
+		if (verdict.kind === "deny" && verdict.reason === "live-wait") this.#parkedOnLiveWait = true;
 		return { goal: admittedGoal, admitted: verdict.kind === "continue" };
 	}
 
@@ -620,6 +625,7 @@ export class MonitorAwareGoalContinuation {
 			toollessContinuationStreak: this.#toollessContinuationStreak,
 			continuationPending: this.#isContinuationPending(),
 			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(ctx, lastAssistant),
+			liveWakeSources: this.#activeWakeSourceCount() > 0,
 		};
 	}
 
@@ -761,7 +767,7 @@ export class MonitorAwareGoalContinuation {
 		this.#wakeSources.set(source, activeCount);
 		const nextTotal = this.#activeWakeSourceCount();
 		if (previousTotal > 0 && nextTotal === 0) {
-			if (this.#scheduledContinuationKind === "monitor") this.#armDrainFire();
+			if (this.#scheduledContinuationKind === "monitor" || this.#parkedOnLiveWait) this.#armDrainFire();
 			else this.#resetCacheWarmIteration();
 			this.#resetToollessContinuationStreak();
 			return;
@@ -777,6 +783,7 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	#armDrainFire(): void {
+		this.#parkedOnLiveWait = false;
 		if (this.#directInputHolds.size > 0) {
 			this.#heldTimer = {
 				kind: "monitor",
@@ -851,6 +858,7 @@ export class MonitorAwareGoalContinuation {
 
 	#cancelTimer(): void {
 		const kind = this.#scheduledContinuationKind;
+		this.#parkedOnLiveWait = false;
 		this.#scheduledAtMs = undefined;
 		this.#scheduledDueAtMs = undefined;
 		this.#scheduledCache = undefined;

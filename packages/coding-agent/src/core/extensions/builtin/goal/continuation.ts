@@ -42,6 +42,8 @@ export type GoalContinuationInput = {
 	readonly continuationPending: boolean;
 	/** The last turn was rejected (or silently starved) by context size and recovery did not shrink it. */
 	readonly lastTurnStuckOnContextOverflow: boolean;
+	/** A resumption channel (child task, monitor, background session) is still live and will wake the goal. */
+	readonly liveWakeSources?: boolean;
 };
 
 export type GoalContinuationVerdict =
@@ -51,6 +53,7 @@ export type GoalContinuationVerdict =
 			reason:
 				| "not-eligible"
 				| "single-flight"
+				| "live-wait"
 				| "cap"
 				| "stale"
 				| "repetition"
@@ -112,11 +115,14 @@ export function evaluateGoalContinuation(input: GoalContinuationInput): GoalCont
 	}
 	if (!isEligibleForGoalContinuation(input)) return { kind: "deny", reason: "not-eligible" };
 	if (input.continuationPending) return { kind: "deny", reason: "single-flight" };
+	// A backstop re-check that fires while a channel is still live is answered "still waiting" because nothing
+	// changed. Exhausting the guards there stops the re-checks; the goal stays active on the channel (#5325).
+	const liveWait = input.path === "monitorDelayed" && input.liveWakeSources === true;
 	if (hasRepeatedNormalizedOutputHash(input.recentNormalizedOutputHashes))
-		return { kind: "deny", reason: "repetition" };
+		return { kind: "deny", reason: liveWait ? "live-wait" : "repetition" };
 	if (isNoProgressBudgetExhausted(input)) return { kind: "deny", reason: "no-progress" };
 	if (input.consecutiveContinuations >= GOAL_CONTINUATION_CAP) {
-		return { kind: "deny", reason: "cap" };
+		return { kind: "deny", reason: liveWait ? "live-wait" : "cap" };
 	}
 	if (
 		(input.path === "immediate" || input.path === "userGrace") &&
