@@ -32,19 +32,26 @@ const MCP_BUILTIN_EXTENSION_PATH = "<builtin:mcp>";
 
 export function createMcpExtension(service: McpService, sessionOwned = true): ExtensionFactory {
 	return (pi: ExtensionAPI): void => {
+		// The latest attach, for the commands and as the fallback of a context with no attach of its own.
 		let attachPromise: Promise<void> | undefined;
-		let attachedSessionId: string | undefined;
+		// Every attached scope's session (brain/hand S16c): a runtime that serves several scopes attaches each one at its
+		// first tool call, and each keeps its control inventory. A session_start makes this one session again.
+		const attachedSessionIds = new Set<string>();
+		// Each context's own attach, so a scope's turn waits for its own servers and not for another scope's attach.
+		const scopeAttaches = new WeakMap<object, Promise<void>>();
+		const runtimeKey = {};
+		const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
 		let controlInventoryDisposed = false;
 		const unsubscribeControlInventoryRequest = safeEventBusOn(
 			pi.events,
 			MCP_CONTROL_INVENTORY_REQUEST_EVENT,
 			(data) => {
-				if (!isMcpControlInventoryRequest(data) || data.sessionId !== attachedSessionId) return;
+				if (!isMcpControlInventoryRequest(data) || !attachedSessionIds.has(data.sessionId)) return;
 				data.respond(service.refreshWireStatusSnapshot(data.sessionId));
 			},
 		);
 		const unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot, startupSettled) => {
-			if (sessionId === undefined || sessionId !== attachedSessionId) return;
+			if (sessionId === undefined || !attachedSessionIds.has(sessionId)) return;
 			pi.events.emit(
 				MCP_CONTROL_INVENTORY_CHANGED_EVENT,
 				startupSettled ? { sessionId, snapshot, startupSettled: true } : { sessionId, snapshot },
@@ -115,13 +122,15 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		// and known catalog, without waiting for deferred remote discovery.
 		// session_start always starts a fresh attach (reloads must re-sync config).
 		const attach = (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
-			attachedSessionId = ctx.sessionManager?.getSessionId?.();
+			const sessionId = ctx.sessionManager?.getSessionId?.();
+			if (sessionId !== undefined) attachedSessionIds.add(sessionId);
 			attachPromise = (async () => {
 				await service.attachSession(event, ctx, pi);
 				refreshMcpInstructionsForSession(service);
 				if (sessionOwned) registerMcpPromptCommands(service, pi, service.getMcpPromptServers(pi));
 				else registerMcpPromptCommands(pi, service.getMcpPromptServers(pi));
 			})();
+			scopeAttaches.set(contextKey(ctx), attachPromise);
 			return attachPromise;
 		};
 		const onSessionStart = wrapAsync(
@@ -133,8 +142,6 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		// with no session attaches at the first tool call of a context and binds elicitation to that context's UI
 		// (the runtime's UI broker). Each context attaches once; a context with no session manager is the runtime.
 		const attachedContexts = new WeakSet<object>();
-		const runtimeKey = {};
-		const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
 		// A session drops this hook at session_start, so its tool calls emit no tool_hook_status for it (senpi#5320).
 		const dropFirstUseAttach = pi.on("tool_call", (_event, ctx) => {
 			const key = contextKey(ctx);
@@ -147,6 +154,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		pi.on("session_start", (event, ctx) => {
 			dropFirstUseAttach();
 			if (event.sizesOnly) return;
+			attachedSessionIds.clear();
 			attachedContexts.add(contextKey(ctx));
 			const work = onSessionStart(event, ctx);
 			// First paint does not wait for attach; prompt preparation reuses its promise.
@@ -160,12 +168,13 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				// A preview (senpi#2115) composes from the attach session_start already started:
 				// it binds no elicitation UI, starts no attach, and attaches no skill-declared servers.
 				const preview = event.preview === true;
+				const ownAttach = scopeAttaches.get(contextKey(ctx)) ?? attachPromise;
 				if (preview) {
-					await attachPromise;
+					await ownAttach;
 				} else {
 					// Elicitation (todo 41): point mid-call forms at this session's UI.
 					service.setMcpElicitationUiProvider(() => (ctx.hasUI ? ctx.ui : undefined));
-					await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
+					await (ownAttach ?? attach({ type: "session_start", reason: "startup" }, ctx));
 					service.bindMcpMrtrPresentation(pi, ctx.ui);
 				}
 				const skills = preview ? [] : ((event.systemPromptOptions.skills ?? []) as readonly SkillLike[]);
