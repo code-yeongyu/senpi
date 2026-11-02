@@ -10,7 +10,7 @@ const SHELL_NAMES = new Set(["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", 
 /** Wrappers that keep `kill` a shell builtin; every other wrapper execs the external `kill`. */
 const BUILTIN_KEEPING = new Set(["command", "builtin", "time", "eval", "trap"]);
 
-export const wordsText = (words: readonly BashCommandWord[]) => words.map((word) => word.text);
+const wordsText = (words: readonly BashCommandWord[]) => words.map((word) => word.text);
 
 /** A wrapper after which the command runs with a PATH the runtime layer's shims are not on (DESIGN-12096 R5). */
 function resetsPath(wrapper: BashCommandWrapper): boolean {
