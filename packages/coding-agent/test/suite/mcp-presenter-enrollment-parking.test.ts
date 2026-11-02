@@ -17,11 +17,11 @@ import { McpPresenterEnrollment } from "../../src/modes/rpc/mcp-presenter-enroll
 
 const describePosix = process.platform === "win32" ? describe.skip : describe;
 
-afterEach(() => {
-	vi.useRealTimers();
-});
-
 describe("host-side enrollment channel parking (senpi#4602)", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it("keeps an untouched channel past 30 s and closes it at the 180 s startup ceiling", async () => {
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const stream = new PassThrough();
@@ -40,6 +40,7 @@ describePosix("relay parking (senpi#4602)", () => {
 	afterEach(async () => {
 		server?.close();
 		if (dir) await rm(dir, { recursive: true, force: true });
+		vi.useRealTimers();
 	});
 
 	async function childWithPresenterSocket(): Promise<ChildProcess> {
@@ -51,7 +52,9 @@ describePosix("relay parking (senpi#4602)", () => {
 		const downstream = new Socket();
 		await new Promise<void>((resolve) => downstream.connect(path, resolve));
 		await accepted.promise;
-		return Object.assign(new EventEmitter(), { stdio: [null, null, null, null, downstream] }) as unknown as ChildProcess;
+		return Object.assign(new EventEmitter(), {
+			stdio: [null, null, null, null, downstream],
+		}) as unknown as ChildProcess;
 	}
 
 	it("parks until the first upstream frame, then gives the exchange its 30 s window from that frame", async () => {
