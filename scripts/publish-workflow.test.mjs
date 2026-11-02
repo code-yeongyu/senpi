@@ -31,7 +31,7 @@ describe("publish-only workflow", () => {
 		assert.match(workflow, /native-prebuilds:\s+needs: require-version\s+if: \$\{\{ inputs\.publish-only == true \}\}\s+uses:/);
 		assert.match(
 			workflow,
-			/needs: native-prebuilds\s+if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.result == 'success'\) \}\}/,
+			/needs: \[require-version, native-prebuilds\]\s+if: \$\{\{ always\(\) && needs\.require-version\.result == 'success' && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.result == 'success'\) \}\}/,
 		);
 		const nativeDownload = workflow.match(/- name: Download native prebuilds[\s\S]*?(?=\n      - name: Build all workspaces)/)?.[0];
 		assert.ok(nativeDownload, "expected native prebuild download before workspace builds");
@@ -151,18 +151,34 @@ describe("publish-only native addons and inputs", () => {
 		assert.match(checkout, /ref: \$\{\{ inputs\.ref \|\| '' \}\}/);
 	});
 
-	it("fails an empty publish-only version with the guard's message before native-prebuilds runs", () => {
+	it("fails an empty publish-only version or a non-canonical version before native-prebuilds or the release runs", () => {
 		const job = workflow.match(/  require-version:\n[\s\S]*?(?=\n  [a-z-]+:\n)/)?.[0];
 		assert.ok(job, "expected the require-version job");
-		assert.match(job, /if: \$\{\{ inputs\.publish-only == true \}\}/);
+		assert.doesNotMatch(job.slice(0, job.indexOf("\n    steps:")), /\n    if:/, "the job runs in every mode");
 		assert.match(workflow, /  native-prebuilds:\n    needs: require-version\n/);
-		const script = job.match(/run: \|\n([\s\S]*)/)?.[1].replace(/^ {10}/gm, "");
-		assert.ok(script, "expected the guard script");
-		const run = (version) => spawnSync("bash", ["-c", script], { env: { PATH: process.env.PATH, EXPECTED_VERSION: version }, encoding: "utf8" });
-		const empty = run("");
+		const step = (name, condition) => {
+			const body = job.match(new RegExp(`- name: ${name}\\n        if: ([^\\n]+)[\\s\\S]*?run: \\|\\n([\\s\\S]*?)(?=\\n\\n|\\n      - name: |$)`));
+			assert.ok(body, `expected the ${name} step`);
+			assert.equal(body[1], condition);
+			return body[2].replace(/^ {10}/gm, "");
+		};
+		const run = (script, version) =>
+			spawnSync("bash", ["-c", script], {
+				cwd: fileURLToPath(new URL("..", import.meta.url)),
+				env: { PATH: process.env.PATH, EXPECTED_VERSION: version },
+				encoding: "utf8",
+			});
+		const requireVersion = step("Require a version for publish-only", "inputs.publish-only == true");
+		const empty = run(requireVersion, "");
 		assert.equal(empty.status, 1);
 		assert.match(empty.stderr, /publish-only requires an explicit version/);
-		assert.equal(run("2026.10.23-1").status, 0);
+		assert.equal(run(requireVersion, "2026.10.23-1").status, 0);
+		// senpi#5406: npm strips leading zeros, so a padded version must stop here, before any tag or publish.
+		const canonical = step("Refuse a non-canonical CalVer version", "inputs.version != ''");
+		const padded = run(canonical, "2026.11.02-1");
+		assert.equal(padded.status, 1);
+		assert.match(padded.stderr, /CALVER_ZERO_PADDED: 2026\.11\.02-1 -> use 2026\.11\.2-1/);
+		assert.equal(run(canonical, "2026.11.2-1").status, 0);
 	});
 
 	it("reports the published commit in the run summary for publish-only, and the dispatch commit otherwise", () => {

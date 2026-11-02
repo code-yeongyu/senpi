@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { it } from "node:test";
@@ -180,3 +180,34 @@ if (${JSON.stringify(name)} === "gh") {
 		}
 	});
 }
+
+it("release CLI refuses a zero-padded --version before running any command, even a pinned --sha checkout", () => {
+	// senpi#5406: npm stripped the zeros of 2026.11.02-1, so the tag and manifests named a version npm never published.
+	const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
+	try {
+		const bin = join(root, "bin");
+		mkdirSync(bin);
+		const calls = join(root, "commands.jsonl");
+		for (const name of ["git", "npm", "bun", "gh"]) {
+			const body = `require("node:fs").appendFileSync(${JSON.stringify(calls)}, ${JSON.stringify(`${name}\n`)});\n`;
+			const runner = join(bin, `${name}.cjs`);
+			writeFileSync(runner, body);
+			if (process.platform === "win32") {
+				writeFileSync(join(bin, `${name}.cmd`), `@"${process.execPath}" "${runner}" %*\r\n`);
+			} else {
+				writeFileSync(join(bin, name), `#!${process.execPath}\n${body}`);
+				chmodSync(join(bin, name), 0o755);
+			}
+		}
+		const result = spawnSync(
+			process.execPath,
+			[fileURLToPath(new URL("./release.mjs", import.meta.url)), "--sha", "a".repeat(40), "--version", "2026.11.02-1"],
+			{ cwd: root, env: { ...process.env, PATH: `${bin}${delimiter}${dirname(process.execPath)}` }, encoding: "utf8", timeout: 15000 },
+		);
+		assert.equal(result.status, 1, result.stderr);
+		assert.match(result.stderr, /CALVER_ZERO_PADDED: 2026\.11\.02-1 -> use 2026\.11\.2-1/);
+		assert.equal(existsSync(calls), false, "no git, npm, bun or gh command runs before the version is refused");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
