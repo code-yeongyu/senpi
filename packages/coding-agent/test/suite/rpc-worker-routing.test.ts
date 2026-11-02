@@ -136,7 +136,8 @@ it("broadcasts question prompts across IPC and hydrates a late attachment", asyn
 		const qb = b.wait((r) => r.type === "extension_ui_request" && r.method === "question");
 		const prompt = a.request({ type: "prompt", sessionId, message: "/ask-question" });
 		const frame = await qa;
-		expect((await qb).id).toBe(frame.id);
+		expect(frame.raisedBy).toMatch(/^socket-\d+$/);
+		expect(await qb).toMatchObject({ id: frame.id, raisedBy: frame.raisedBy });
 		const c = await host.connect();
 		const replay = c.wait((r) => r.type === "extension_ui_request" && r.method === "question");
 		const attached = await c.request({

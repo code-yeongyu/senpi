@@ -25,7 +25,8 @@ export type TranscriptUnavailableReason =
 	| "transcript_file_identity_unavailable"
 	| "transcript_tail_trimmed"
 	| "transcript_tail_over_byte_limit"
-	| "transcript_ancestry_over_byte_limit";
+	| "transcript_ancestry_over_byte_limit"
+	| "transcript_entry_unidentified";
 
 export interface TranscriptPersistence {
 	readonly fileIdentity: FileIdentity;
@@ -172,6 +173,9 @@ export function snapshotTranscript(state: {
 	readonly persistence?: TranscriptPersistence;
 }): TranscriptTransition[] {
 	if (state.unpersisted === undefined) return [{ kind: "unavailable", reason: "transcript_tail_trimmed" }];
+	// A line read from disk is not checked against FileEntry: one without a string id cannot be an ancestry node.
+	if (state.unpersisted.some((entry) => typeof entry.id !== "string"))
+		return [{ kind: "unavailable", reason: "transcript_entry_unidentified" }];
 	return [
 		{ kind: "replace", base: state.base },
 		...state.unpersisted.map((entry): TranscriptTransition => ({
