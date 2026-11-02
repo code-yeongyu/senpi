@@ -6,6 +6,12 @@ import {
 } from "../../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
+function requireModel(harness: Harness, id: string) {
+	const model = harness.getModel(id);
+	if (!model) throw new Error(`the faux harness has no model "${id}"`);
+	return model;
+}
+
 describe("#3977 / #3636 target-owned compaction budget", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
@@ -36,7 +42,7 @@ describe("#3977 / #3636 target-owned compaction budget", () => {
 					},
 				});
 				harnesses.push(harness);
-				const target = harness.getModel("target")!;
+				const target = requireModel(harness, "target");
 				expect(harness.session.model?.id).toBe("million");
 				await harness.session.setModel(target);
 				expect(harness.session.model?.id).toBe("target");
@@ -63,7 +69,7 @@ describe("#3977 / #3636 target-owned compaction budget", () => {
 				},
 			});
 			harnesses.push(harness);
-			const target = harness.getModel("target")!;
+			const target = requireModel(harness, "target");
 			const expected = projectModelUsabilityBudget({
 				model: target,
 				systemPrompt: harness.agent.state.systemPrompt,
@@ -110,7 +116,7 @@ describe("#3977 / #3636 target-owned compaction budget", () => {
 				usage: { ...assistant.usage, input: 100, totalTokens: 100 },
 			});
 			harness.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
-			await harness.session.setModel(harness.getModel("target")!);
+			await harness.session.setModel(requireModel(harness, "target"));
 			expect(harness.session.model?.id).toBe("target");
 			expect(harness.session.pendingModelSwitch).toBeUndefined();
 		});
