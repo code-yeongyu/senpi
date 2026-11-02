@@ -15,7 +15,7 @@ export const COOLDOWN_CAP_MS = MAX_SLOT_BLOCK_MS;
  * the slot is re-probed at least this often: doubling to the 48 h cap across failed probes kept a
  * spent account blocked for hours after its provider window had reset (senpi#4091).
  */
-export const GUESSED_BACKOFF_CAP_MS = 30 * 60 * 1_000;
+const GUESSED_BACKOFF_CAP_MS = 30 * 60 * 1_000;
 export const RETRY_SAME_MAX_ATTEMPTS = 2;
 
 /**
