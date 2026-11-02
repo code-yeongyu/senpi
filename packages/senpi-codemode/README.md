@@ -42,7 +42,7 @@ task-tool names are known.
   JS runtime (`node`/`bun`).
 - JavaScript import rewriting for supported local modules and package imports
   in the persistent JS worker (Bun when senpi runs on bun, Node.js otherwise).
-- On a Bun >= 1.4 kernel the eval prompt names the bundled `bun-1-4` skill as
+- On a Bun >= 1.4 kernel the eval prompt names the bundled `bun` skill as
   MUST READ before the first js cell; node kernels keep the Node.js wording.
 - GPT models receive a terse `eval` prompt dialect that prioritizes composing
   active tools through `tool.<name>(args)` and documents detach-on-timeout.

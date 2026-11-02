@@ -215,10 +215,8 @@ export function createHostCore(
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(line);
-		} catch (cause) {
-			await writer.enqueueControl(
-				parseError(writer.mcpPresenters ? "Invalid command" : `Failed to parse command: ${errorMessage(cause)}`),
-			);
+		} catch {
+			await writer.enqueueControl(parseError("Failed to parse command: invalid JSON"));
 			return;
 		}
 		if (writer.handleMcpForm(parsed)) return;

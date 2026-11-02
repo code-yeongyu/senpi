@@ -1,0 +1,24 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": true,
+	"id": "refused",
+	"unsupported": true,
+	"request": {
+		"id": "h",
+		"type": "set_client_info",
+		"capabilities": [
+			"compact_message_updates_v1",
+			"event_resync"
+		]
+	},
+	"expectedAck": {
+		"id": "h",
+		"type": "response",
+		"command": "set_client_info",
+		"success": false,
+		"error": "compact_endpoint_unsupported"
+	}
+}

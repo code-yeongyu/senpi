@@ -89,7 +89,17 @@ export class AttachDialogs extends Container {
 				return;
 			}
 			if (this.closed || this.settled.has(request.id)) return;
-			this.report(`${error instanceof Error ? error.message : String(error)}. Answer again.`);
+			this.report(
+				request.method === "input" && request.secret
+					? "Secret answer was not acknowledged. The outcome is unknown; enter a new answer only after checking."
+					: `${error instanceof Error ? error.message : String(error)}. Answer again.`,
+			);
+			if (
+				request.method === "input" &&
+				request.secret &&
+				(!(error instanceof AnswerRefusedError) || Date.now() >= (request.deadlineAtMs ?? 0))
+			)
+				return;
 			this.queue.unshift(request);
 			this.showNext();
 			this.ui.requestRender();
@@ -102,7 +112,18 @@ export class AttachDialogs extends Container {
 		if (!request) return;
 		const finish = (response: RpcExtensionUIResponse) => {
 			if (this.current?.request.id !== request.id) return;
-			this.submit(request, response);
+			this.submit(
+				request,
+				request.method === "input" && request.secret
+					? {
+							...response,
+							secret: true,
+							uiRequestId: request.id,
+							id: crypto.randomUUID(),
+							answerId: crypto.randomUUID(),
+						}
+					: response,
+			);
 		};
 		const cancel = () => finish({ type: "extension_ui_response", id: request.id, cancelled: true });
 		let component: Component & { dispose?: () => void };
@@ -126,12 +147,17 @@ export class AttachDialogs extends Container {
 				);
 				break;
 			case "input":
+				if (request.secret && (request.deadlineAtMs === undefined || request.deadlineAtMs <= Date.now())) {
+					this.settled.add(request.id);
+					this.showNext();
+					return;
+				}
 				component = new ExtensionInputComponent(
 					request.title,
 					request.placeholder,
 					(value) => finish({ type: "extension_ui_response", id: request.id, value }),
 					cancel,
-					{ tui: this.ui, timeout: request.timeout },
+					{ tui: this.ui, timeout: request.timeout, secret: request.secret, deadlineAtMs: request.deadlineAtMs },
 				);
 				break;
 			case "editor":

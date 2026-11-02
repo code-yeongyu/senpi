@@ -3,16 +3,19 @@ import { open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { DurableStore, StoreValue, StoreWrite } from "@earendil-works/pi-agent-core/conformance";
+import { type FileEntry, migrateSessionEntries } from "../session-manager.ts";
 
 export type JsonlFileStamp = { size: number; mtimeMs: number; ctimeMs: number };
 type HatchMarker = { size: number; mtimeMs: number };
-type JsonlRecord = { [key: string]: StoreValue; type: string; id: string };
-type LocatedRecord = { value: JsonlRecord; raw: string; offset: number; end: number };
+type JsonlObject = { [key: string]: StoreValue };
+type JsonlHeader = JsonlObject & { type: "session"; id: string };
+/** `key` names the entry in the store; `stored` is what is written there (the migrated JSON for a legacy file). */
+type LocatedRecord = { value: StoreValue; key: string; stored: string; raw: string; offset: number; end: number };
 type HighWaterMark = { id: string; hash: string; offset: number; end: number };
 type Divergence = { kind: "k9f2"; parentSessionId: string; note: string };
 type SessionManifest = {
 	id: string;
-	header: JsonlRecord;
+	header: JsonlHeader;
 	entryIds: string[];
 	divergence: Divergence | null;
 };
@@ -125,43 +128,89 @@ const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).
 const sameStamp = (a: JsonlFileStamp, b: JsonlFileStamp) =>
 	a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 
-function parse(bytes: Uint8Array): { header: LocatedRecord; entries: LocatedRecord[] } {
-	const records: LocatedRecord[] = [];
+const isObject = (value: StoreValue | undefined): value is JsonlObject =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * SessionManager's v1 -> v2 step with ids derived from position instead of random, so a reopen keeps the ids it
+ * imported. Like SessionManager it walks every line after reading (header at index 0), so `firstKeptEntryIndex`
+ * resolves the same way. A non-object line is kept but takes no id, and the chain links around it. SessionManager
+ * differs (senpi#5214): it throws on a primitive line; it gives an array line an id that JSON drops on save, so the
+ * next entry's `parentId` and a `firstKeptEntryId` aimed at that line dangle. Here the next entry links to the previous
+ * object entry and that `firstKeptEntryId` stays unset.
+ */
+function migrateV1(values: StoreValue[]): void {
+	let previous: string | null = null;
+	let ordinal = 0;
+	for (const value of values) {
+		if (!isObject(value)) continue;
+		const entry = value as { [key: string]: StoreValue | undefined };
+		if (entry.type === "session") {
+			entry.version = 2;
+			continue;
+		}
+		const id = `legacy-${ordinal++}`;
+		entry.id = id;
+		entry.parentId = previous;
+		previous = id;
+		if (entry.type === "compaction" && typeof entry.firstKeptEntryIndex === "number") {
+			const target = values[entry.firstKeptEntryIndex];
+			if (isObject(target) && target.type !== "session" && typeof target.id === "string") {
+				entry.firstKeptEntryId = target.id;
+			}
+			delete entry.firstKeptEntryIndex;
+		}
+	}
+}
+
+function parse(bytes: Uint8Array): {
+	header: Omit<LocatedRecord, "value"> & { value: JsonlHeader };
+	entries: LocatedRecord[];
+} {
+	const lines: { value: StoreValue; raw: string; offset: number; end: number }[] = [];
 	let offset = 0;
 	for (let end = 0; end <= bytes.length; end++) {
 		if (end !== bytes.length && bytes[end] !== 10) continue;
 		const raw = Buffer.from(bytes.subarray(offset, end)).toString("utf8");
-		let value: unknown;
+		let value: StoreValue;
 		try {
-			value = JSON.parse(raw);
+			value = JSON.parse(raw) as StoreValue;
 		} catch {
 			offset = end + 1;
 			continue; // The legacy reader also skips blank and torn/malformed lines.
 		}
-		if (
-			typeof value !== "object" ||
-			value === null ||
-			!("type" in value) ||
-			typeof value.type !== "string" ||
-			!("id" in value) ||
-			typeof value.id !== "string"
-		)
-			throw new Error("Invalid JSONL session record");
-		records.push({ value: value as JsonlRecord, raw, offset, end });
+		// Like `parseSessionEntryLine`'s caller, a falsy value (null, 0, false, "") is dropped and every other value kept.
+		if (value) lines.push({ value, raw, offset, end });
 		offset = end + 1;
 	}
-	const [header, ...entries] = records;
-	if (!header || header.value.type !== "session") throw new Error("JSONL session has no header");
-	const ids = new Set<string>();
-	for (const record of entries) {
-		if (record.value.type === "session" || ids.has(record.value.id)) throw new Error("Duplicate JSONL session entry");
-		ids.add(record.value.id);
+	const values = lines.map((line) => line.value);
+	const first = values[0];
+	if (!isObject(first) || first.type !== "session" || typeof first.id !== "string") {
+		throw new Error("JSONL session has no header");
 	}
+	// The same version test and steps as SessionManager's load; only v1's random ids are made positional.
+	const version = Number(first.version ?? 1);
+	if (version < 2) migrateV1(values);
+	if (version < 3) migrateSessionEntries(values as unknown as FileEntry[]);
+	const stored = (value: StoreValue, raw: string) => (version < 3 ? JSON.stringify(value) : raw);
+	const [headerLine, ...entryLines] = lines;
+	const header = { ...headerLine, value: first as JsonlHeader, key: first.id, stored: stored(first, headerLine.raw) };
+	const keys = new Set<string>();
+	const entries = entryLines.map((line, index): LocatedRecord => {
+		if (isObject(line.value) && line.value.type === "session") throw new Error("Duplicate JSONL session entry");
+		// SessionManager keeps a line without a string id; the store still needs a key, taken from its position. A real
+		// id starting with "~" gets one more "~", so it can never equal a positional `~line-N` key (senpi#5214).
+		const id = isObject(line.value) && typeof line.value.id === "string" ? line.value.id : undefined;
+		const key = id === undefined ? `~line-${index}` : id.startsWith("~") ? `~${id}` : id;
+		if (keys.has(key)) throw new Error("Duplicate JSONL session entry");
+		keys.add(key);
+		return { ...line, key, stored: stored(line.value, line.raw) };
+	});
 	return { header, entries };
 }
 
-const highWaterMark = (record: LocatedRecord): HighWaterMark => ({
-	id: record.value.id,
+const highWaterMark = (record: Omit<LocatedRecord, "value">): HighWaterMark => ({
+	id: record.key,
 	hash: hash(record.raw),
 	offset: record.offset,
 	end: record.end,
@@ -178,12 +227,12 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 	const tick = options.mtimeTickMs ?? 1;
 	const manifest = async (id: string) => (await store.getDocument(sessionKey(id))) as SessionManifest | undefined;
 	const ledger = async (path: string) => (await store.getDocument(ledgerKey(path))) as JsonlImportLedger | undefined;
-	const heldEntries = async (held: SessionManifest): Promise<JsonlRecord[]> =>
+	const heldEntries = async (held: SessionManifest): Promise<StoreValue[]> =>
 		Promise.all(
 			held.entryIds.map(async (id) => {
 				const raw = await store.getDocument(entryKey(held.id, id));
 				if (typeof raw !== "string") throw new Error(`Missing imported session entry ${id}`);
-				return JSON.parse(raw) as JsonlRecord;
+				return JSON.parse(raw) as StoreValue;
 			}),
 		);
 	const commit = (writes: StoreWrite[]) => store.commit(epoch, writes, () => {});
@@ -234,7 +283,7 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 		const next: SessionManifest = {
 			id: sessionId,
 			header: { ...header.value, id: sessionId },
-			entryIds: entries.map((record) => record.value.id),
+			entryIds: entries.map((record) => record.key),
 			divergence,
 		};
 		const nextLedger: JsonlImportLedger = {
@@ -247,7 +296,7 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 			checkedAt: now(),
 		};
 		const writes: StoreWrite[] = [];
-		const oldById = new Map(oldEntries.map((record) => [record.id, record]));
+		const oldByKey = new Map(held?.entryIds.map((key, index) => [key, oldEntries[index]]));
 		const nextIds = new Set(next.entryIds);
 		if (held && !fork) {
 			for (const id of held.entryIds) {
@@ -256,8 +305,8 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 		}
 		let imported = 0;
 		for (const record of entries) {
-			if (!fork && isDeepStrictEqual(record.value, oldById.get(record.value.id))) continue;
-			writes.push({ op: "put", key: entryKey(sessionId, record.value.id), data: record.raw });
+			if (!fork && isDeepStrictEqual(record.value, oldByKey.get(record.key))) continue;
+			writes.push({ op: "put", key: entryKey(sessionId, record.key), data: record.stored });
 			imported++;
 		}
 		writes.push(

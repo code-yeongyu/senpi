@@ -167,6 +167,9 @@ export interface AgentOptions {
 	streamKeepAliveTimeoutMs?: number;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	toolHost?: AgentLoopConfig["toolHost"];
+	executionScope?: AgentLoopConfig["executionScope"];
+	onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
 	removedToolHints?: Record<string, string>;
 	resolveUnknownToolCall?: AgentLoopConfig["resolveUnknownToolCall"];
 	abortServerSideFallback?: boolean;
@@ -341,6 +344,10 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	public toolHost?: AgentLoopConfig["toolHost"];
+	public executionScope: NonNullable<AgentLoopConfig["executionScope"]>;
+	public getExecutionScope?: () => NonNullable<AgentLoopConfig["executionScope"]>;
+	public onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
 	/** Migration guidance returned when a removed tool name is called. */
 	public removedToolHints: Record<string, string>;
 	/** Optional call-time resolver for tools absent from the request context. */
@@ -387,6 +394,9 @@ export class Agent {
 		this.streamKeepAliveTimeoutMs = runtimeOptions.streamKeepAliveTimeoutMs;
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.toolHost = runtimeOptions.toolHost;
+		this.executionScope = runtimeOptions.executionScope ?? { id: crypto.randomUUID(), root: "" };
+		this.onExecutionPipeline = runtimeOptions.onExecutionPipeline;
 		this.removedToolHints = runtimeOptions.removedToolHints ?? {};
 		this.resolveUnknownToolCall = runtimeOptions.resolveUnknownToolCall;
 		this.abortServerSideFallback = runtimeOptions.abortServerSideFallback;
@@ -787,6 +797,9 @@ export class Agent {
 			abortServerSideFallback: this.abortServerSideFallback,
 			cursorExecHandlers: this.cursorExecHandlers,
 			toolExecution: this.toolExecution,
+			toolHost: this.toolHost,
+			executionScope: this.getExecutionScope?.() ?? this.executionScope,
+			onExecutionPipeline: this.onExecutionPipeline,
 			removedToolHints: this.removedToolHints,
 			resolveUnknownToolCall: this.resolveUnknownToolCall,
 			beforeToolCall: this.beforeToolCall,

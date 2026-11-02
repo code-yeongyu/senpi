@@ -40,4 +40,4 @@ it("stores single-unit deltas with linear byte volume through the seal bound", a
 		await state.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

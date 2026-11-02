@@ -1,5 +1,42 @@
 # changes
 
+## 2026-10-31 - Adopt Windows pipes by mode bits (#5137, PR #5142)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: exports `isFifoMode` and adopts an inherited descriptor when its file-type mode bits are FIFO, instead of `Stats.isFIFO()`, so adoption accepts every pair the parser accepts.
+
+### Why
+
+- On Windows source runtimes `Stats.isFIFO()` is false for real pipes, so a parsed pair was never adopted and the private channel silently stayed down.
+
+### Why an extension could not handle it
+
+- Private channel adoption runs during bootstrap, before extensions load.
+
+### Expected merge conflict zones
+
+- Inherited descriptor type checks.
+
+## 2026-10-29 - Compose and protect inherited pipe pairs (#4859)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: reads the first descriptor and writes the second, retaining partial-write handling and backpressure; destroying the Duplex closes both.
+- `packages/coding-agent/src/utils/private-fd-inherit.ts`: binds the Windows CRT descriptor-to-HANDLE conversion and `SetHandleInformation` synchronously through the existing Bun builtin boundary. Checks that each descriptor is open before touching FFI, even after loader caching, and returns false on loader, conversion or handle-information failures. Rejects null and signed or pointer-width unsigned INVALID_HANDLE_VALUE sentinels before any handle-information call.
+
+### Why
+
+- The Windows pair has two owners to dispose and must not leak into ordinary children.
+
+### Why an extension could not handle it
+
+- These helpers run at process receipt and supply core transport ownership.
+
+### Expected merge conflict zones
+
+- Inherited duplex construction and destruction.
+
 ## 2026-10-29 - Shared inherited duplex adoption (senpi#4771)
 
 ### What changed

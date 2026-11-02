@@ -1,3 +1,21 @@
+## 2026-10-29 - Terminal examples match monitor validation and bash capabilities (senpi#4792)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: include the required RPC monitor description; select long-job advice for PTY or native bash. Assembled-prompt tests parse every monitor call shape and exercise the monitor tool's schema and runtime argument validation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: the RPC example omitted a required argument, and native-bash sessions were told to use the PTY-only `run_in_background` parameter.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: this builtin owns the terminal prompt and already receives the active bash capability.
+
+### Expected merge conflict zones
+
+- LOW: command deadline guidance and the RPC call shape in `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`.
+
 ## 2026-10-29 - Give monitor guidance one system-prompt owner (senpi#4767)
 
 ### What changed

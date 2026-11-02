@@ -98,6 +98,7 @@ export type {
 	RpcQuestionSpec,
 	RpcQuestionUiRequest,
 	RpcQuestionUpdatedEvent,
+	RpcSecretInputSettledEvent,
 } from "./rpc-question-types.ts";
 export type { RpcResponse } from "./rpc-response-types.ts";
 export type {
