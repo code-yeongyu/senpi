@@ -26,6 +26,13 @@ export const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 
 /** Resume admission is tied to every loaded byte, including skipped malformed and blank lines. */
 export const loadedResumeFingerprints = new WeakMap<FileEntry[], string>();
+export type ResumeFileTail = {
+	readonly start: number;
+	readonly size: number;
+	readonly valid: boolean;
+};
+/** Unterminated bytes from the same read that supplied the admission fingerprint. */
+export const loadedResumeTails = new WeakMap<FileEntry[], ResumeFileTail>();
 
 export function parseSessionEntryLine(line: string): FileEntry | null {
 	if (!line.trim()) return null;
@@ -153,6 +160,8 @@ export async function loadEntriesFromFileAsync(
 	const splitter = new SessionLineSplitter();
 	const content = captureIdentity ? new BaseContentHash() : undefined;
 	const exactBytes = captureResumeFingerprint ? createHash("sha256") : undefined;
+	let size = 0;
+	let finalLineStart = 0;
 	const handle = await open(resolvedFilePath, "r");
 	try {
 		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
@@ -160,14 +169,28 @@ export async function loadEntriesFromFileAsync(
 			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
 			if (bytesRead === 0) break;
 			exactBytes?.update(buffer.subarray(0, bytesRead));
+			if (exactBytes) {
+				const newline = buffer.subarray(0, bytesRead).lastIndexOf(10);
+				if (newline >= 0) finalLineStart = size + newline + 1;
+				size += bytesRead;
+			}
 			for (const line of splitter.push(buffer.subarray(0, bytesRead))) {
 				countEntry(entries, line, content);
 				if (slicer.due) await slicer.yield();
 			}
 		}
-		countEntry(entries, splitter.finish(), content);
+		const finalLine = splitter.finish();
+		countEntry(entries, finalLine, content);
 		if (content) loadedContentFingerprints.set(entries, content.digest());
-		if (exactBytes) loadedResumeFingerprints.set(entries, exactBytes.digest("hex"));
+		if (exactBytes) {
+			loadedResumeFingerprints.set(entries, exactBytes.digest("hex"));
+			if (size > finalLineStart)
+				loadedResumeTails.set(entries, {
+					start: finalLineStart,
+					size,
+					valid: parseSessionEntryLine(finalLine) !== null,
+				});
+		}
 	} finally {
 		if (captureIdentity) {
 			const identity = captureFileIdentity(handle.fd, resolvedFilePath);

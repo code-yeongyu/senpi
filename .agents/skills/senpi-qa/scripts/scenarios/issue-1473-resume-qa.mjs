@@ -17,7 +17,7 @@ import { RpcClient } from "../lib/rpc-client.mjs";
 installCleanupHooks();
 const guard = guardRealAuth();
 const box = makeSandbox("pr1473-resume-qa");
-const evidence = evidenceDir("pr1473-resume-cli");
+const evidence = evidenceDir(process.argv[2] ?? "pr1473-resume-cli");
 const server = await startFakeModelServer({
 	turns: [
 		{ text: "PR1473_SOURCE_READY" },
@@ -67,7 +67,8 @@ function target(path, id, text) {
 	const timestamp = new Date(0).toISOString();
 	const entries = [
 		{ type: "session", version: 3, id, cwd: box.cwd, timestamp },
-		{ type: "message", id: "user", parentId: null, timestamp,
+		{ type: "thinking_level_change", id: "thinking", parentId: null, timestamp, thinkingLevel: "off" },
+		{ type: "message", id: "user", parentId: "thinking", timestamp,
 			message: { role: "user", content: text, timestamp: 0 } },
 	];
 	// Deliberately unterminated: rejected resume must not even append a newline.
@@ -105,7 +106,15 @@ try {
 	assert.equal((await client.send({ type: "get_state" })).data.sessionId, acceptedId);
 	assert.equal(readFileSync(shutdown, "utf8"), "resume\n");
 	await prompt("continue destination", "PR1473_DESTINATION_READY");
-	checks.push("accepted resume: one shutdown, destination identity and real provider prompt completed");
+	const persisted = readFileSync(acceptedPath, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+	assert.equal(persisted.find((entry) => entry.id === "user")?.message.content, "small accepted history");
+	assert.ok(persisted.some((entry) => {
+		if (entry.type !== "message" || entry.message.role !== "user") return false;
+		const content = entry.message.content;
+		return typeof content === "string" ? content === "continue destination"
+			: content.some((part) => part.type === "text" && part.text === "continue destination");
+	}));
+	checks.push("accepted resume: one shutdown, unterminated history retained and destination prompt persisted");
 	assert.equal(server.requests.length, 3);
 	guard.assertUnchanged();
 	writeFileSync(join(evidence, "result.json"), JSON.stringify({

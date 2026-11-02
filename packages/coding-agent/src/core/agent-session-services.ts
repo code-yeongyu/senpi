@@ -200,6 +200,26 @@ export async function createAgentSessionServices(
 		const expected = revision();
 		preparation.watch(() => revision() === expected);
 	}
+	const watchTrust = (): void => {
+		if (!preparation) return;
+		const trustPath = join(agentDir, "trust.json");
+		const expectedTrust = getFileContentRevision(trustPath);
+		preparation.watch(() => getFileContentRevision(trustPath) === expectedTrust);
+	};
+	const resolveProjectTrust = options.resourceLoaderReloadOptions?.resolveProjectTrust;
+	if (!resolveProjectTrust) watchTrust();
+	const reloadOptions: ResourceLoaderReloadOptions | undefined =
+		preparation && resolveProjectTrust
+			? {
+					...options.resourceLoaderReloadOptions,
+					resolveProjectTrust: async (context) => {
+						const trusted = await resolveProjectTrust(context);
+						// The resolver may save the user's decision; fence that decision before loading trusted resources.
+						watchTrust();
+						return trusted;
+					},
+				}
+			: options.resourceLoaderReloadOptions;
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
@@ -208,10 +228,7 @@ export async function createAgentSessionServices(
 		mcpRegistry: options.mcpRegistry,
 	});
 	preparation?.own(() => resourceLoader.getExtensions().runtime.invalidate());
-	const { primary: modelRuntime } = await joinStartupBranches(
-		runtimePromise,
-		resourceLoader.reload(options.resourceLoaderReloadOptions),
-	);
+	const { primary: modelRuntime } = await joinStartupBranches(runtimePromise, resourceLoader.reload(reloadOptions));
 	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
 	modelRuntime.setSettingsManager(settingsManager);
 
@@ -266,12 +283,6 @@ export async function createAgentSessionServices(
 	}
 	extensionsResult.runtime.pendingVirtualModelRegistrations = [];
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
-	if (preparation) {
-		const trustPath = join(agentDir, "trust.json");
-		const expectedTrust = getFileContentRevision(trustPath);
-		preparation.watch(() => getFileContentRevision(trustPath) === expectedTrust);
-	}
-
 	return {
 		cwd,
 		agentDir,

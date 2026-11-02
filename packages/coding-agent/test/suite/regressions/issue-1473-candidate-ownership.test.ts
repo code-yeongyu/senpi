@@ -12,6 +12,7 @@ import { loadEntriesFromFile, SessionManager } from "../../../src/core/session-m
 import { SessionResumeConflictError } from "../../../src/core/session-resume-conflict.ts";
 import { liveSessionWritePaths } from "../../../src/core/session-write-reservation.ts";
 import { readTranscriptRoot } from "../../../src/modes/rpc/accepted-transcript.ts";
+import type { SessionRecovery } from "../../../src/core/session-write-recovery.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { resumeRuntime } from "../issue-1473-runtime-support.ts";
 import { getMessageText } from "../harness.ts";
@@ -261,3 +262,50 @@ it.each(["unchanged", "append", "rewrite"])(
 		}
 	},
 );
+
+// #1473: promotion must preserve the ordinary append-safe final-line recovery contract.
+it.each(["complete", "torn"])("keeps an unchanged %s final line safe for the next append", async (tail) => {
+	const cwd = mkdtempSync(join(tmpdir(), "pr1473-tail-"));
+	const path = join(cwd, "session.jsonl");
+	const lines = [
+		{ type: "session", version: 3, id: "tail", cwd, timestamp: new Date(0).toISOString() },
+		{
+			type: "thinking_level_change",
+			id: "thinking",
+			parentId: null,
+			timestamp: new Date(0).toISOString(),
+			thinkingLevel: "off",
+		},
+		{
+			type: "message",
+			id: "user",
+			parentId: "thinking",
+			timestamp: new Date(0).toISOString(),
+			message: { role: "user", content: "keep the final message", timestamp: 0 },
+		},
+	]
+		.map((entry) => JSON.stringify(entry))
+		.join("\n");
+	const fragment = '{"type":"message","id":"incomplete"';
+	writeFileSync(path, tail === "torn" ? `${lines}\n${fragment}` : lines);
+	const before = readFileSync(path);
+	const prepared = await SessionManager.prepareOpen(path);
+	const recoveries: SessionRecovery[] = [];
+	prepared.sessionManager.onRecovery((recovery) => recoveries.push(recovery));
+	try {
+		expect(readFileSync(path)).toEqual(before);
+		await prepared.commit();
+		const appended = prepared.sessionManager.appendCustomEntry("after-resume", { retained: true });
+		const entries = loadEntriesFromFile(path);
+		expect(entries.map((entry) => entry.id)).toEqual(["tail", "thinking", "user", appended]);
+		if (tail === "torn") {
+			expect(recoveries).toHaveLength(1);
+			const recovery = recoveries[0];
+			if (!recovery) throw new Error("Missing torn-tail recovery");
+			expect(readFileSync(recovery.backupPath, "utf8")).toBe(fragment);
+		} else expect(recoveries).toEqual([]);
+	} finally {
+		prepared.sessionManager.dispose();
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});

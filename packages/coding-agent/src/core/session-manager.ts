@@ -48,6 +48,7 @@ import {
 	loadEntriesFromFile,
 	loadEntriesFromFileAsync,
 	loadedResumeFingerprints,
+	loadedResumeTails,
 	parseSessionEntryLine,
 	readForkSource,
 	terminateFinalSessionLine,
@@ -80,6 +81,7 @@ import { type ResidentStoreStats, ResidentStringStore } from "./session-resident
 import { SessionResumeConflictError } from "./session-resume-conflict.ts";
 import {
 	appendResumeEntries,
+	backupResumeTail,
 	readResumeFingerprint,
 	replaceResumeFile,
 	resumeCanonicalPath,
@@ -3259,6 +3261,7 @@ export class SessionManager {
 		const slicer = new EventLoopSlicer();
 		const entries = await loadEntriesFromFileAsync(resolvedPath, slicer, compactUpdatesEnabled(), true);
 		const fingerprint = loadedResumeFingerprints.get(entries);
+		const tail = loadedResumeTails.get(entries);
 		const { cwd, dir } = openLocation(resolvedPath, sessionDir, cwdOverride, headerOf(entries));
 		const pending = { rewrite: false, entries: [] as SessionEntry[], committing: false };
 		const manager = new SessionManager(cwd, dir, resolvedPath, false, undefined, DEFERRED_FILE_LOAD, pending);
@@ -3291,19 +3294,26 @@ export class SessionManager {
 				validate();
 				const release = await reserveSessionPublication(canonicalPath);
 				let published = false;
+				let recovery: SessionRecovery | undefined;
 				const publish = (): void => {
 					published = true;
 					manager.preparation = undefined;
 					manager.persist = true;
 					manager.flushed = true;
 					registerSessionWriter(manager);
+					if (recovery) manager._reportRecovery(recovery);
 				};
 				try {
 					await revalidate();
 					options?.validate();
 					manager.writeGuard.assertRewritable(manager.fileEntries, resolvedPath);
 					await mkdir(dir, { recursive: true });
-					if (pending.rewrite || fingerprint === undefined || pending.entries.length > 0) {
+					if (tail && !tail.valid)
+						recovery = await backupResumeTail(canonicalPath, tail, revalidate, () => {
+							validate();
+							options?.validate();
+						});
+					if (pending.rewrite || fingerprint === undefined || pending.entries.length > 0 || tail) {
 						// An append sequence can partially fail and strand the source's leaf on self-resume.
 						// Publish all staged bytes at one rename; never use the in-place rewrite fallback.
 						function* appended(): Generator<string> {
@@ -3313,7 +3323,7 @@ export class SessionManager {
 							canonicalPath,
 							pending.rewrite || fingerprint === undefined
 								? manager._serializedFileEntries()
-								: appendResumeEntries(canonicalPath, appended()),
+								: appendResumeEntries(canonicalPath, appended(), tail && !tail.valid ? tail.start : undefined),
 							{
 								captureContent: manager.capturesTranscriptBase,
 								revalidate,

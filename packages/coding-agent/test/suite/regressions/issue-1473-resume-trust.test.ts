@@ -10,6 +10,13 @@ import type { ProjectTrustContext } from "../../../src/core/extensions/types.ts"
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { ProjectTrustStore } from "../../../src/core/trust-manager.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
+import { createAgentSessionServices } from "../../../src/core/agent-session-services.ts";
+import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import { ModelRuntime } from "../../../src/core/model-runtime.ts";
+import { ResumePreparation } from "../../../src/core/resume-preparation.ts";
+import { SessionResumeRejectedError } from "../../../src/core/session-resume-conflict.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
+import { deadline } from "../issue-1473-runtime-support.ts";
 
 // PR #1473 gdAkN: exercise the CLI's real trust/resource/factory wiring, not a trust mock.
 it.each([true, false])(
@@ -168,3 +175,51 @@ export default function(pi) {
 	},
 	60_000,
 );
+
+// #1473: revocation during resource loading must invalidate the trusted candidate generation.
+it("rejects destination trust revoked while its extensions are loading", async () => {
+	const root = mkdtempSync(join(tmpdir(), "pr1473-trust-loading-"));
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { recursive: true });
+	const store = new ProjectTrustStore(agentDir);
+	store.set(root, true);
+	const settings = SettingsManager.create(root, agentDir, { projectTrusted: true });
+	const shared = ModelRuntime.createSync({ modelsPath: null, credentials: AuthStorage.inMemory() });
+	const preparation = new ResumePreparation();
+	const entered = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	const loading = preparation.run(() =>
+		createAgentSessionServices({
+			cwd: root,
+			agentDir,
+			settingsManager: settings,
+			modelRuntime: shared,
+			resourceLoaderOptions: {
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+				extensionFactories: [
+					async () => {
+						entered.resolve();
+						await release.promise;
+					},
+				],
+			},
+		}),
+	);
+	try {
+		await deadline(entered.promise);
+		store.set(root, false);
+		release.resolve();
+		const services = await deadline(loading);
+		expect(store.get(root)).toBe(false);
+		expect(services.settingsManager.isProjectTrusted()).toBe(true);
+		expect(() => preparation.validate()).toThrow(SessionResumeRejectedError);
+	} finally {
+		release.resolve();
+		await loading;
+		await preparation.dispose();
+		shared.dispose();
+		rmSync(root, { recursive: true, force: true });
+	}
+}, 30_000);

@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { type FileHandle, open, realpath, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { parseSessionEntryLine, SessionLineSplitter } from "./session-entry-file.ts";
+import { parseSessionEntryLine, type ResumeFileTail, SessionLineSplitter } from "./session-entry-file.ts";
 import { BaseContentHash, captureFileIdentity } from "./session-file-identity.ts";
 import type { FileIdentity } from "./session-transcript-journal.ts";
+import { recoveryNotice, type SessionRecovery } from "./session-write-recovery.ts";
 
 function errno(error: unknown): string | undefined {
 	return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
@@ -43,26 +44,57 @@ export async function readResumeFingerprint(path: string): Promise<string | unde
 	}
 }
 
-/** Keep existing bytes verbatim when admission only appended entries. */
-export async function* appendResumeEntries(
-	path: string,
-	entries: Iterable<string>,
-): AsyncGenerator<string | Uint8Array> {
+async function* resumeFileChunks(path: string, start = 0, end = Number.POSITIVE_INFINITY): AsyncGenerator<Uint8Array> {
 	const handle = await open(path, "r");
-	let last: number | undefined;
 	try {
 		const buffer = Buffer.allocUnsafe(64 * 1024);
-		for (;;) {
-			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+		let offset = start;
+		while (offset < end) {
+			const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, end - offset), offset);
 			if (bytesRead === 0) break;
-			last = buffer[bytesRead - 1];
 			yield buffer.subarray(0, bytesRead);
+			offset += bytesRead;
 		}
 	} finally {
 		await handle.close();
 	}
+}
+
+/** Keep existing committed bytes verbatim, terminating a valid final record before appending. */
+export async function* appendResumeEntries(
+	path: string,
+	entries: Iterable<string>,
+	end?: number,
+): AsyncGenerator<string | Uint8Array> {
+	let last: number | undefined;
+	for await (const chunk of resumeFileChunks(path, 0, end)) {
+		last = chunk[chunk.length - 1];
+		yield chunk;
+	}
 	if (last !== undefined && last !== 10) yield "\n";
 	yield* entries;
+}
+
+/** Preserve an incomplete tail before the accepted publication removes it. */
+export async function backupResumeTail(
+	path: string,
+	tail: ResumeFileTail,
+	revalidate: () => Promise<void>,
+	validate: () => void,
+): Promise<SessionRecovery> {
+	const backupPath = `${path}.torn-${Date.now()}-${randomUUID().slice(0, 8)}`;
+	await replaceResumeFile(backupPath, resumeFileChunks(path, tail.start, tail.size), {
+		captureContent: false,
+		revalidate,
+		validate,
+		published: () => {},
+	});
+	return {
+		cause: "unknown",
+		backupPath,
+		droppedBytes: tail.size - tail.start,
+		notice: recoveryNotice("unknown", backupPath),
+	};
 }
 
 /**

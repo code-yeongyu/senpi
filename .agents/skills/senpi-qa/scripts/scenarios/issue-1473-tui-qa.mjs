@@ -21,7 +21,7 @@ import { observeFrames } from "../lib/tui-frames.mjs";
 installCleanupHooks();
 const guard = guardRealAuth();
 const box = makeSandbox("p1473-tui");
-const evidence = evidenceDir("pr1473-resume-tui");
+const evidence = evidenceDir(process.argv[2] ?? "pr1473-resume-tui");
 const server = await startFakeModelServer({
 	turns: [{ text: "PR1473_TUI_SOURCE_READY" }, { text: "PR1473_TUI_SOURCE_SURVIVED" }],
 });
