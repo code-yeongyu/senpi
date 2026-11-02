@@ -4,7 +4,7 @@
   "rules": { "types": "off", "nsTypes": "off" },
   // These executables are supplied by the OS, a language toolchain, or a test that expects a missing command.
   "ignoreBinaries": [
-    "cc", "hdiutil", "julia", "mkfifo", "mount", "ollama", "perl", "pgrep", "rg", "ruby", "script",
+    "cc", "hdiutil", "julia", "mkfifo", "mount", "ollama", "openssl", "perl", "pgrep", "rg", "ruby", "script",
     "senpi-deliberately-missing-probe-command", "taskkill.exe", "tasklist", "trash", "vmmap", "where", "xclip",
   ],
   // Findings marked "pre-existing at origin main aceb1cc1d9" were already present when this check was added. Each
