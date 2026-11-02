@@ -1,4 +1,5 @@
 import type { McpServerExposureStatus } from "./expose/status.ts";
+import { redactMcpLogText } from "./log.ts";
 import type { McpServerSnapshot } from "./service-types.ts";
 
 export interface McpStatusRow {
@@ -18,8 +19,14 @@ export async function buildMcpStatusRows(
 	);
 }
 
-export function formatMcpStatus(title: string, rows: readonly McpStatusRow[]): string {
-	return [title, ...rows.map(formatRow)].join("\n");
+export function formatMcpStatus(
+	title: string,
+	rows: readonly McpStatusRow[],
+	configDiagnostics: readonly string[] = [],
+): string {
+	const diagnostics = configDiagnostics.map((diagnostic) => `config: ${redactMcpLogText(diagnostic)}`);
+	const body = rows.length === 0 ? ["No MCP servers configured."] : rows.map(formatRow);
+	return [title, ...diagnostics, ...body].join("\n");
 }
 
 function formatRow(row: McpStatusRow): string {

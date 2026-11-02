@@ -466,6 +466,8 @@ schema validation and compatibility conversion.
 
 | Symptom (`/mcp status`) | Meaning | Fix |
 |---|---|---|
+| `No MCP servers configured.` | no config source declares a server | add one with `/mcp add <name> <command...>` or edit `mcp.json` |
+| `config: Blocked untrusted MCP config ...` | a config file was skipped while loading (untrusted project, invalid JSON, shadowing) | trust the project or fix the named file |
 | `needs_auth` | 401 and no usable token | `/mcp auth <name>` |
 | `suspended` | reconnect circuit breaker opened (5 failures/30s) | fix the server, then `/mcp reconnect <name>` |
 | `degraded` | transient failure; auto-reconnect with backoff is running | wait, or `/mcp reconnect <name>` |
