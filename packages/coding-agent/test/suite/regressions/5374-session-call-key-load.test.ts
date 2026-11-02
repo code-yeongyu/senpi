@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { SessionManager } from "../../../src/core/session-manager.ts";
-import { sessionLines, writeSession } from "./5374-call-key-fixture-support.ts";
+import { persistedPartKeys, sessionLines, writeSession } from "./5374-call-key-fixture-support.ts";
 
 // RULING-126 (senpi#5374) (1b) and (4): a session file is read by one shared loader. A file written by a senpi that
 // persists the call key (`runtimeItemKey` on a toolCall part, `runtimeItemKey` or `callUnknown: true` on a toolResult
@@ -39,19 +39,16 @@ it("RULING-126 (1b) #5374 a file carrying call keys loads in the shared reader w
 		"solo",
 	]);
 	expect(JSON.stringify(session.getEntries())).not.toMatch(/runtimeItemKey|callUnknown/);
-	expect([0, 1, 2].map((index) => session.getToolCallKey("a1", index))).toEqual(["k:1.0", "k:1.1", "k:1.2"]);
+	expect(persistedPartKeys(session, "a1")).toEqual(["k:1.0", "k:1.1", "k:1.2"]);
 });
 
-it("RULING-127 (d) #5374 an old session's toolCall parts get load-time keys, stable in one load and never written", () => {
+it("RULING-127 (d) #5374 an old session's toolCall parts carry no key, and nothing mints one on load or rewrite", () => {
 	const file = writeSession(dir, false);
 	const before = readFileSync(file, "utf8");
-	const keysOf = (session: SessionManager) => [0, 1, 2].map((index) => session.getToolCallKey("a1", index));
-	const first = SessionManager.open(file, dir);
-	const minted = keysOf(first);
-	expect(minted.every((key) => typeof key === "string")).toBe(true);
-	expect(new Set(minted).size).toBe(3);
-	expect(keysOf(first)).toEqual(minted);
-	expect(keysOf(SessionManager.open(file, dir)).some((key) => minted.includes(key))).toBe(false);
+	const session = SessionManager.open(file, dir);
+	expect(persistedPartKeys(session, "a1")).toEqual([undefined, undefined, undefined]);
+	const branched = session.createBranchedSession(session.getLeafId() ?? expect.unreachable("no leaf"));
+	expect(readFileSync(branched ?? expect.unreachable("no branch"), "utf8")).not.toMatch(/runtimeItemKey/);
 	expect(readFileSync(file, "utf8")).toBe(before);
 });
 

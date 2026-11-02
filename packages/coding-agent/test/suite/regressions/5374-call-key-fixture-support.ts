@@ -1,5 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { SessionManager } from "../../../src/core/session-manager.ts";
 
 const usage = {
 	input: 1,
@@ -66,4 +67,14 @@ export function writeSession(dir: string, keyed: boolean, name = "session.jsonl"
 			.join("\n")}\n`,
 	);
 	return file;
+}
+
+/** The keys `session` persists on entry `entryId`'s toolCall parts, read through the copy the file holds. */
+export function persistedPartKeys(session: SessionManager, entryId: string): (string | undefined)[] {
+	const entry = session.getEntry(entryId);
+	if (entry?.type !== "message" || entry.message.role !== "assistant") return [];
+	const persisted = session.persistedEntry(entry);
+	const content =
+		persisted.type === "message" ? (persisted.message.content as { type?: string; runtimeItemKey?: string }[]) : [];
+	return content.filter((part) => part.type === "toolCall").map((part) => part.runtimeItemKey);
 }

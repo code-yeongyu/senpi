@@ -7,6 +7,7 @@ import { afterEach, expect, it } from "vitest";
 import { exportSessionToJsonl } from "../../../src/core/session-export.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import { persistedPartKeys } from "./5374-call-key-fixture-support.ts";
 
 // RULING-127 review condition (senpi#5374): a key is `blk:<messageId>:<contentIndex>` with the producer's message id,
 // written once and copied as a string by every path that copies a message: a branch, a fork, a compaction and an
@@ -105,7 +106,7 @@ it("RULING-127 #5374 a compaction keeps every key in the file and none in memory
 	const reopened = SessionManager.open(file, dirname(file));
 	expect(JSON.stringify(reopened.getEntries())).not.toMatch(/runtimeItemKey|callUnknown/);
 	expect(JSON.stringify(reopened.getEntry(String(first)))).not.toMatch(/runtimeItemKey/);
-	expect([0, 1, 2].map((index) => reopened.getToolCallKey(String(first), index))).toEqual(
+	expect(persistedPartKeys(reopened, String(first))).toEqual(
 		[0, 1, 2].map((index) => before.get(`${first}:${index}`)),
 	);
 	const branched =

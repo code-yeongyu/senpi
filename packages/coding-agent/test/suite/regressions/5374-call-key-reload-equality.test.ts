@@ -11,6 +11,7 @@ import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 import { FLAG } from "./5331-live-identity-support.ts";
+import { persistedPartKeys } from "./5374-call-key-fixture-support.ts";
 
 // RULING-126 (3) and RULING-127 (i), (d) (senpi#5374): one identity source. The key a compact peer's live record names,
 // the key of the call's settled snapshot row, the key the session file holds on the toolCall part and on the toolResult
@@ -84,7 +85,7 @@ it("RULING-126 (3) #5374 live, snapshot and persisted keys are one key, and a re
 
 	const reloaded = SessionManager.open(file, dirname(file));
 	const assistantId = (ofRole(persisted, "assistant") as { id?: string } | undefined)?.id ?? "";
-	expect(reloaded.getToolCallKey(assistantId, 0)).toBe(live);
+	expect(persistedPartKeys(reloaded, assistantId)).toEqual([live]);
 	vi.restoreAllMocks();
 	const lane = new SessionAcceptanceLane();
 	try {

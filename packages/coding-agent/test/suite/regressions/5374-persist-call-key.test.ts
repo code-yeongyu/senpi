@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import { afterEach, expect, it } from "vitest";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import { persistedPartKeys } from "./5374-call-key-fixture-support.ts";
 
 // RULING-126 (2) and RULING-127 (i), (ii), (c) (senpi#5374): a real session writes the call key of every toolCall part
 // and of the toolResult entry that maps to exactly one open call; a reused id inside one message is marked callUnknown
@@ -93,7 +94,7 @@ it("RULING-127 (i)(ii) #5374 a reload reuses each persisted key, and two incarna
 	const reopened = SessionManager.open(file, dirname(file));
 	const [first] = keysOf(file).parts;
 	const [entryId, persisted] = first ?? expect.unreachable("no assistant entry");
-	expect([0, 1, 2].map((index) => reopened.getToolCallKey(String(entryId), index))).toEqual(persisted);
+	expect(persistedPartKeys(reopened, String(entryId))).toEqual(persisted);
 	await runTurn(reopened);
 	const all = keysOf(file).parts.flatMap(([, keys]) => keys);
 	expect(all).toHaveLength(6);
@@ -117,5 +118,5 @@ it("RULING-127 (c) #5374 load, rewrite, reload keeps every key: a migration rewr
 	expect(keysOf(branched)).toEqual(before);
 	const reloaded = SessionManager.open(branched, dirname(branched));
 	const [[entryId, persisted] = []] = before.parts;
-	expect([0, 1, 2].map((index) => reloaded.getToolCallKey(String(entryId), index))).toEqual(persisted);
+	expect(persistedPartKeys(reloaded, String(entryId))).toEqual(persisted);
 });
