@@ -34,14 +34,21 @@ export function createDispatchAuthorizer(
 				request.input,
 				ctx.cwd,
 			);
+			// The same session key the tool_call check gives its requests, so only this session's answers count.
+			const sessionID = ctx.sessionManager === undefined ? "" : ctx.sessionManager.getSessionId();
 			let action: DispatchPolicy["action"] = "allow";
 			const decisions = requests.map((permission) => {
 				const rules = permission.patterns.map((pattern) =>
-					service.dispatchDecision(permission.permission, pattern, {
-						presetBound: state.preset === "auto",
-						ruleAliases: permission.ruleAliases,
-						originalPaths: permission.originalPaths,
-					}),
+					service.dispatchDecision(
+						permission.permission,
+						pattern,
+						{
+							presetBound: state.preset === "auto",
+							ruleAliases: permission.ruleAliases,
+							originalPaths: permission.originalPaths,
+						},
+						sessionID,
+					),
 				);
 				for (const decision of rules) {
 					if (decision.action === "deny") action = "deny";
@@ -51,12 +58,7 @@ export function createDispatchAuthorizer(
 			});
 			return {
 				action,
-				fingerprint: JSON.stringify([
-					ctx.sessionManager === undefined ? "" : ctx.sessionManager.getSessionId(),
-					ctx.cwd,
-					state.preset === "auto",
-					decisions,
-				]),
+				fingerprint: JSON.stringify([sessionID, ctx.cwd, state.preset === "auto", decisions]),
 			};
 		},
 		async ask(request, ctx, signal): Promise<void> {
