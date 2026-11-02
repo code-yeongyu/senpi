@@ -13,16 +13,23 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 const SENPI_REF = "e005a4e122dee737960a7bdc566afacb7d54b2c3";
 let serial = 0;
 
-/** Pack `files` (relative path -> contents) the way `tar -czf out -C root .` does, and return the tarball path. */
-function tarball(name, files) {
+/**
+ * Write `files` (relative path -> contents) under a fresh root and pack it, returning the tarball path. `packing`
+ * "paths" names each file (`tar -czf out -C root <path>...`, stored names as written, the way `npm pack` stores
+ * `package/...`); "dot" packs the whole root (`tar -czf out -C root .`, every stored name prefixed with `./`).
+ */
+function tarball(name, files, packing = "paths") {
 	const root = join(scratch, `src-${serial++}`);
 	for (const [path, contents] of Object.entries(files)) {
 		mkdirSync(join(root, path, ".."), { recursive: true });
 		writeFileSync(join(root, path), contents);
 	}
 	const out = join(scratch, name);
-	const tar = spawnSync("tar", ["-czf", out, "-C", root, ...Object.keys(files)], { encoding: "utf8" });
+	const members = packing === "dot" ? ["."] : Object.keys(files);
+	const tar = spawnSync("tar", ["-czf", out, "-C", root, ...members], { encoding: "utf8" });
 	assert.equal(tar.status, 0, tar.stderr);
+	const stored = spawnSync("tar", ["-tzf", out], { encoding: "utf8" }).stdout.split("\n").filter(Boolean);
+	assert.equal(stored.every((entry) => entry.startsWith("./")), packing === "dot", stored.join(", "));
 	return out;
 }
 
@@ -46,6 +53,21 @@ const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest(
 describe("inspectSenpiTarball", () => {
 	test("reads the package identity and hashes the tarball bytes", () => {
 		const path = senpiPackage(SENPI_MANIFEST, { "package/dist/bundle/cli.js": "#!/usr/bin/env bun\n" });
+		assert.deepEqual(inspectSenpiTarball(path), {
+			path,
+			sha256: sha256(path),
+			name: "@code-yeongyu/senpi",
+			version: "2026.11.02-1",
+			cli: "dist/bundle/cli.js",
+		});
+	});
+
+	test("reads a package packed from its root with `-C root .`", () => {
+		const path = tarball(
+			"senpi-dot.tgz",
+			{ "package/package.json": JSON.stringify(SENPI_MANIFEST), "package/dist/bundle/cli.js": "" },
+			"dot",
+		);
 		assert.deepEqual(inspectSenpiTarball(path), {
 			path,
 			sha256: sha256(path),
@@ -92,6 +114,24 @@ describe("inspectDesktopBundle", () => {
 	test("reads a bundle packed at the archive root", () => {
 		const path = tarball("bundle-root.tgz", { "bundle-manifest.json": bundleManifest(), omo: "binary" });
 		assert.equal(inspectDesktopBundle(path, "darwin-arm64").senpiRef, SENPI_REF);
+	});
+
+	for (const [layout, files] of [
+		["under its platform directory", { "darwin-arm64/bundle-manifest.json": bundleManifest(), "darwin-arm64/omo": "" }],
+		["at the archive root", { "bundle-manifest.json": bundleManifest(), omo: "" }],
+	])
+		test(`reads a bundle packed ${layout} with \`-C root .\``, () => {
+			const path = tarball(`bundle-dot-${serial}.tgz`, files, "dot");
+			assert.equal(inspectDesktopBundle(path, "darwin-arm64").senpiRef, SENPI_REF);
+		});
+
+	test("reads the platform directory whenever the archive has one, as EQ.desktop's loader does", () => {
+		const path = tarball("bundle-split.tgz", {
+			"bundle-manifest.json": bundleManifest(),
+			omo: "binary",
+			"darwin-arm64/omo": "binary",
+		});
+		assert.throws(() => inspectDesktopBundle(path, "darwin-arm64"), /has no darwin-arm64\/bundle-manifest\.json/);
 	});
 
 	test("refuses a bundle built for another platform", () => {
