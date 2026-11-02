@@ -1,22 +1,17 @@
+import { randomUUID } from "node:crypto";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
-import { createAgentSessionServices } from "../../core/agent-session-services.ts";
+import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
-import { presetTrustsProject, resolveProjectTrusted } from "../../core/project-trust.ts";
-import type { ResourceLoaderReloadOptions } from "../../core/resource-loader.ts";
 import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
-import { sessionExtensionFlagValues } from "../../core/session-extension-flags.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import { createToolDispatcher } from "../../core/tool-dispatch/tool-dispatcher.ts";
-import {
-	getSavedProjectTrust,
-	hasTrustRequiringProjectResources,
-	ProjectTrustStore,
-} from "../../core/trust-manager.ts";
-import { createProjectTrustContext } from "../../cli/project-trust.ts";
-import { isLocalPath, resolvePath } from "../../utils/paths.ts";
+import { childModuleRoots } from "../../core/tool-dispatch/offload.ts";
+import { createToolChildRuntime } from "../../core/tool-dispatch/tool-child-runtime.ts";
 import { builtInExtensions } from "../../extensions/index.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { looplessToolFilters, resolveCliPaths, resolveLooplessSettings } from "./loopless-runtime-settings.ts";
+import { runLooplessToolCall } from "./loopless-tool-call.ts";
+import { toolChildModuleRoots } from "./tool-child/session-child.ts";
 
 /**
  * A session worker's runtime with the agent loop removed (brain/hand split, senpi#5413): the same
@@ -28,9 +23,19 @@ export interface LooplessRuntime {
 	readonly cwd: string;
 	/** Every tool this runtime serves: built-ins first, then extension tools, a later name replacing an earlier one. */
 	readonly definitions: ReadonlyMap<string, ToolDefinitionEntry>;
-	/** Runs one tool call; an unknown name is refused before anything runs. */
+	/** What building the runtime reported: settings, extension load and `project_trust` handler diagnostics. */
+	readonly diagnostics: readonly AgentSessionRuntimeDiagnostic[];
+	/**
+	 * Runs one tool call: argument preparation and schema validation as the loop does, then the tool. An unknown
+	 * name is refused before anything runs; invalid arguments and a failing tool come back as an `isError` result.
+	 *
+	 * It does NOT run the extensions' `tool_call`/`tool_result` handlers (permission checks among them): where those
+	 * run for a call that reaches a tool-execution-only process is decided by the remote tool executor that calls
+	 * this runtime, including forwarding a two-sided extension's handlers to the process that owns the session.
+	 * Until that executor exists nothing may route an untrusted call here.
+	 */
 	execute(name: string, toolCallId: string, params: unknown, signal?: AbortSignal): Promise<AgentToolResult<unknown>>;
-	/** Closes the tool work this runtime still runs and marks its extension contexts stale. */
+	/** Marks its extension contexts stale, then closes the tool work and the tool child it still runs. */
 	dispose(): Promise<void>;
 }
 
@@ -50,69 +55,11 @@ export class LooplessToolNotFoundError extends Error {
 }
 
 /**
- * The project trust a session opened from this configuration would get, decided without a UI: a runtime
- * without a loop has no one to ask, exactly like an RPC worker today (`createCliRuntimeFactory`, main.ts).
- */
-async function resolveRuntimeSettings(
-	configuration: CliRuntimeConfiguration,
-	startupSettingsManager: SettingsManager,
-	profile: LooplessRuntimeProfile,
-): Promise<{
-	settingsManager: SettingsManager;
-	flagValues: Map<string, boolean | string>;
-	reloadOptions: ResourceLoaderReloadOptions | undefined;
-}> {
-	const { parsed, agentDir, appMode } = configuration;
-	const { cwd, launchProfile } = profile;
-	const trustStore = new ProjectTrustStore(agentDir);
-	const flagValues = sessionExtensionFlagValues(parsed.unknownFlags, launchProfile);
-	const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
-	const savedProjectTrust = await getSavedProjectTrust(trustStore, cwd);
-	const globalPreset = (startupSettingsManager.getGlobalSettings() as { readonly permissionPreset?: unknown })
-		.permissionPreset;
-	const fullAccessTrust =
-		presetTrustsProject(flagValues.get("permission-preset"), globalPreset) && savedProjectTrust !== false;
-	const shouldResolveProjectTrust =
-		parsed.projectTrustOverride === undefined && !fullAccessTrust && hasTrustRequiringResources;
-	const projectTrusted = shouldResolveProjectTrust
-		? false
-		: (parsed.projectTrustOverride ?? (fullAccessTrust || !hasTrustRequiringResources || savedProjectTrust === true));
-	const trustFromFullAccess =
-		fullAccessTrust &&
-		hasTrustRequiringResources &&
-		parsed.projectTrustOverride === undefined &&
-		savedProjectTrust !== true;
-	const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
-	const reloadOptions: ResourceLoaderReloadOptions | undefined = shouldResolveProjectTrust
-		? {
-				resolveProjectTrust: ({ extensionsResult }) =>
-					resolveProjectTrusted({
-						cwd,
-						trustStore,
-						trustOverride: parsed.projectTrustOverride,
-						defaultProjectTrust: startupSettingsManager.getDefaultProjectTrust(),
-						extensionsResult,
-						projectTrustContext: createProjectTrustContext({
-							cwd,
-							mode: appMode,
-							settingsManager: startupSettingsManager,
-							hasUI: false,
-						}),
-					}),
-			}
-		: undefined;
-	return { settingsManager, flagValues, reloadOptions };
-}
-
-function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
-	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
-}
-
-/**
  * Builds loopless runtimes from the same launch configuration as `createCliRuntimeFactory`: the same
  * cwd-bound services (settings, project trust, model registry, extensions and their flags), then the tool
  * registry through `bootstrapRuntime()` / `buildToolRegistry()` (senpi#5222) on a runner without a session
- * (senpi#5223), so nothing is ever written to a session file.
+ * (senpi#5223), so nothing is ever written to a session file. Tools are placed by the same tool-child runtime
+ * a session builds (senpi#5227), so `--tool-runtime child` runs child-placed work on this runtime's own child.
  */
 export function createLooplessRuntimeFactory(
 	configuration: CliRuntimeConfiguration,
@@ -124,10 +71,12 @@ export function createLooplessRuntimeFactory(
 		local.startupSettingsManager ?? SettingsManager.create(configuration.cwd, configuration.agentDir);
 	return async (profile) => {
 		const { cwd } = profile;
-		const { settingsManager, flagValues, reloadOptions } = await resolveRuntimeSettings(
+		const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
+		const { settingsManager, flagValues, reloadOptions } = await resolveLooplessSettings(
 			configuration,
 			startupSettingsManager,
 			profile,
+			diagnostics,
 		);
 		const services = await createAgentSessionServices({
 			cwd,
@@ -151,11 +100,47 @@ export function createLooplessRuntimeFactory(
 				extensionFactories,
 			},
 		});
-		const dispatcher = createToolDispatcher({ runtime: toolRuntime ?? "in-process" });
+		const extensionsResult = services.resourceLoader.getExtensions();
+		diagnostics.push(
+			...services.diagnostics,
+			...extensionsResult.errors.map(({ path, error }) => ({
+				type: "warning" as const,
+				message: `Failed to load extension "${path}": ${error}`,
+			})),
+			...(extensionsResult.warnings ?? []).map(({ path, warning }) => ({
+				type: "warning" as const,
+				message: `Extension package "${path}": ${warning}`,
+			})),
+		);
+		let execute: LooplessRuntime["execute"] = () => Promise.reject(new Error("Loopless runtime is not ready"));
+		let toolNames: () => readonly string[] = () => [];
+		const toolChildRuntime = createToolChildRuntime({
+			toolRuntime: toolRuntime ?? "in-process",
+			agentDir,
+			scopeId: `loopless-${randomUUID()}`,
+			cwd: services.cwd,
+			moduleRoots: () => [
+				...toolChildModuleRoots(runtime.extensionRunner.getAllRegisteredTools()),
+				...childModuleRoots(runtime.extensionRunner.getAllChildModules()),
+			],
+			hostCallDeps: {
+				cwd: services.cwd,
+				executeNested: async (_parentToolCallId, name, args, signal) => {
+					const toolCall = { type: "toolCall" as const, id: `nested-${randomUUID()}`, name, arguments: {} };
+					const result = await execute(name, toolCall.id, args, signal);
+					return { toolCall, result, isError: result.isError === true };
+				},
+				callableToolNames: () => toolNames(),
+				target: () => undefined,
+				filesystemPolicy: () => runtime.filesystemPolicy,
+			},
+			onRecord: () => {},
+		});
+		const { dispatcher, toolChild } = toolChildRuntime;
 		const runtime = bootstrapRuntime({
 			cwd: services.cwd,
 			settingsManager: services.settingsManager,
-			extensionsResult: services.resourceLoader.getExtensions(),
+			extensionsResult,
 			modelRegistry: services.modelRegistry,
 			toolDispatcher: dispatcher,
 		});
@@ -163,18 +148,30 @@ export function createLooplessRuntimeFactory(
 			baseToolDefinitions: runtime.baseToolDefinitions,
 			runner: runtime.extensionRunner,
 			dispatcher,
+			...looplessToolFilters(parsed, services.settingsManager),
 		});
+		toolNames = () => [...registry.toolRegistry.keys()];
+		execute = (name, toolCallId, params, signal) => {
+			const tool = registry.toolRegistry.get(name);
+			if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
+			return runLooplessToolCall(tool, {
+				toolCallId,
+				params,
+				...(signal ? { signal } : {}),
+			});
+		};
 		return {
 			cwd: services.cwd,
 			definitions: registry.definitions,
-			execute: (name, toolCallId, params, signal) => {
-				const tool = registry.toolRegistry.get(name);
-				if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
-				return tool.execute(toolCallId, params, signal, undefined);
-			},
+			diagnostics,
+			execute: (name, toolCallId, params, signal) => execute(name, toolCallId, params, signal),
 			dispose: async () => {
-				await dispatcher.dispose();
+				// Stale first, as a session disposes: a close that fails must not leave the contexts usable.
 				runtime.extensionRunner.invalidate("This loopless runtime was disposed.");
+				// Both closes run to the end; the first failure is then reported to the caller.
+				const closed = await Promise.allSettled([dispatcher.dispose(), toolChild?.close()]);
+				const failure = closed.find((outcome) => outcome.status === "rejected");
+				if (failure !== undefined) throw failure.reason;
 			},
 		};
 	};
