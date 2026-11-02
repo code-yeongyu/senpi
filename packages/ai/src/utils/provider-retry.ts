@@ -1,4 +1,8 @@
-import { attachProviderDiagnostic, peekProviderDiagnostic } from "./provider-diagnostic-carrier.ts";
+import {
+	attachProviderDiagnostic,
+	peekProviderDiagnostic,
+	siwcRecoveryFromDiagnostic,
+} from "./provider-diagnostic-carrier.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "./retry-hint.ts";
 
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
@@ -31,6 +35,8 @@ function isProviderError(error: unknown): error is ProviderError {
 
 /** Mirrors the pinned OpenAI/Anthropic SDK retry policy; review when either SDK is upgraded. */
 function isRetryableProviderError(error: ProviderError): boolean {
+	const siwc = siwcRecoveryFromDiagnostic(peekProviderDiagnostic(error));
+	if (siwc !== undefined) return siwc === "transient";
 	const shouldRetry = error.headers?.get("x-should-retry");
 	if (shouldRetry === "true") return true;
 	if (shouldRetry === "false") return false;

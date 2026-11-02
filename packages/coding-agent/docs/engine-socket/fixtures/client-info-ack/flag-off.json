@@ -1,0 +1,19 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": false,
+	"id": "flag-off",
+	"request": {
+		"id": "h",
+		"type": "set_client_info",
+		"capabilities": []
+	},
+	"expectedAck": {
+		"id": "h",
+		"type": "response",
+		"command": "set_client_info",
+		"success": true
+	}
+}

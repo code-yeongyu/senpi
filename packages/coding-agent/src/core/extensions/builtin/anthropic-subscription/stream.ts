@@ -52,6 +52,11 @@ export function streamAnthropicSubscription(
 		let wasAborted = false;
 		let started = false;
 		let sawStreamEvent = false;
+		const onAttemptStart = (): void => {
+			delete output.responseId;
+			output.usage = emptyOutput(model).usage;
+			sawStreamEvent = false;
+		};
 		const closeQuery = (): void => {
 			if (closed || !sdkQuery) return;
 			closed = true;
@@ -161,6 +166,7 @@ export function streamAnthropicSubscription(
 						customToolNameToSdk: resolvedTools.customToolNameToSdk,
 						toolWatchNote,
 						onContinuityDecision: recordContinuity,
+						onAttemptStart,
 						onDispatchShape: (coldSeed, estimatedTokens) => {
 							coldSeedAttempt = coldSeed;
 							coldSeedEstimate = estimatedTokens;
@@ -185,6 +191,7 @@ export function streamAnthropicSubscription(
 								).blocks,
 						),
 						query: getSdkBoundary().query,
+						onAttemptStart,
 						providerSettings,
 						env: options?.env,
 						signal: options?.signal,

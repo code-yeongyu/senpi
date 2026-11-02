@@ -10,7 +10,14 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { oauthBrandName, oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
-import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
+import type {
+	LoginOptions,
+	LogoutOptions,
+	OAuthAuth,
+	OAuthCredential,
+	OAuthRevocationResult,
+	ProviderAuthInteraction,
+} from "../types.ts";
 import { generatePKCE } from "./pkce.ts";
 
 // every login registers a new client with this ID; OpenAI returns the issued client ID in the callback
@@ -18,6 +25,7 @@ const DYNAMIC_CLIENT_ID = "dynamic_agent_client";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AUTHORIZE_URL = "https://auth.openai.com/api/accounts/authorize";
 const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
+const DISCOVERY_URL = "https://auth.openai.com/.well-known/openid-configuration";
 const RESOURCE = "https://api.openai.com/v1";
 const CALLBACK_HOST = getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1";
 const CALLBACK_PORT = 1455;
@@ -225,6 +233,73 @@ async function refreshAccessToken(credential: OAuthCredential, signal: AbortSign
 	return credentialFromTokenResponse(token, clientId);
 }
 
+async function revokeSession(credential: OAuthCredential, options?: LogoutOptions): Promise<OAuthRevocationResult> {
+	const unconfirmed: OAuthRevocationResult = { status: "remote_revocation_unconfirmed" };
+	if (!credential.refresh || typeof credential.clientId !== "string" || !credential.clientId.trim()) {
+		return unconfirmed;
+	}
+	const signal = AbortSignal.any([...(options?.signal ? [options.signal] : []), AbortSignal.timeout(15_000)]);
+	const sleep =
+		options?.sleep ??
+		((milliseconds: number) =>
+			new Promise<void>((resolve, reject) => {
+				signal.throwIfAborted();
+				const onAbort = () => {
+					clearTimeout(timer);
+					reject(signal.reason);
+				};
+				const timer = setTimeout(() => {
+					signal.removeEventListener("abort", onAbort);
+					resolve();
+				}, milliseconds);
+				signal.addEventListener("abort", onAbort, { once: true });
+			}));
+	let endpoint: string | undefined;
+	const delays = [250, 1000];
+	for (let attempt = 0; attempt <= delays.length; attempt++) {
+		try {
+			signal.throwIfAborted();
+			if (attempt > 0) await sleep(delays[attempt - 1]);
+			if (!endpoint) {
+				const discovery = await fetch(DISCOVERY_URL, { signal, redirect: "error" });
+				if (!discovery.ok) {
+					if (discovery.status >= 500) continue;
+					return unconfirmed;
+				}
+				const metadata: unknown = await discovery.json();
+				if (
+					typeof metadata !== "object" ||
+					metadata === null ||
+					!("revocation_endpoint" in metadata) ||
+					typeof metadata.revocation_endpoint !== "string"
+				) {
+					return unconfirmed;
+				}
+				const url = new URL(metadata.revocation_endpoint);
+				if (url.protocol !== "https:" || url.username || url.password) return unconfirmed;
+				endpoint = url.href;
+			}
+			const response = await fetch(endpoint, {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					token: credential.refresh,
+					token_type_hint: "refresh_token",
+					client_id: credential.clientId,
+				}),
+				signal,
+				redirect: "error",
+			});
+			// RFC 7009 returns an empty 200 for both revoked and already-invalid tokens.
+			if (response.status === 200) return { status: "revoked" };
+			if (response.status < 500) return unconfirmed;
+		} catch {
+			if (signal.aborted) return unconfirmed;
+		}
+	}
+	return unconfirmed;
+}
+
 /** OpenAI identifies each installation ("agent host") by a stable URI such as `urn:uuid:<uuid>`. */
 function agentHostId(deviceId: string | undefined): string {
 	if (!deviceId || !UUID_PATTERN.test(deviceId)) {
@@ -308,6 +383,11 @@ export const openaiChatGPTOAuth: OAuthAuth = {
 	loginLabel: "Sign in with ChatGPT",
 	login: loginOpenAIChatGPT,
 	refresh: refreshAccessToken,
+	revoke: revokeSession,
+	async check({ credential }) {
+		if (!credential?.access || !credential.refresh || credential.signedOut === true) return undefined;
+		return { type: "oauth", source: "OAuth" };
+	},
 	async toAuth(credential) {
 		return { apiKey: credential.access };
 	},

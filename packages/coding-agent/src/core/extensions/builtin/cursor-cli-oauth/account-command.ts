@@ -1,6 +1,7 @@
 import type { Credential } from "@earendil-works/pi-ai";
 import { stampLogin } from "@earendil-works/pi-ai/auth/pool/login-id";
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
+import { describeAccountBlock } from "../../../credential-account-status.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { emitProviderAccountsChanged } from "../anthropic-subscription/account-events.ts";
 import {
@@ -64,9 +65,9 @@ function parseArgs(rawArgs: string): string[] {
 }
 
 function slotStatus(slot: CursorCliAccountSlot, now: number): string {
-	if (slot.blockReason === "auth_error") return "blocked until re-login";
+	if (slot.blockReason === "auth_error") return describeAccountBlock({ blocked: true, blockedReason: "auth_error" });
 	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) {
-		return `blocked until ${new Date(slot.blockedUntil).toISOString()} (${slot.blockReason ?? "rate_limit"})`;
+		return describeAccountBlock({ blocked: true, blockedReason: "rate_limit", blockedUntil: slot.blockedUntil });
 	}
 	return "available";
 }
