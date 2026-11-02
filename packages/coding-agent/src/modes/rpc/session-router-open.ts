@@ -1,4 +1,8 @@
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
+import { CompactAdmissionError } from "./compact-admission-error.ts";
+import { runAdmissionProducer } from "./compact-admission-producer.ts";
 
 import { clearHandoverParkedSession, type HandoverParkedEntry } from "./host-handover-parked.ts";
 import { parkedOpenCommand } from "./host-handover-parked-open.ts";
@@ -19,6 +23,17 @@ import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 export function openWithBarrier(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "open_session" }>,
+): Promise<RpcResponse | undefined> {
+	if (compactUpdatesEnabled() && command.admissionId !== undefined)
+		return compactOpen(host, command, (accept, signal) => openPhysicalWithBarrier(host, command, accept, signal));
+	return openPhysicalWithBarrier(host, command);
+}
+
+function openPhysicalWithBarrier(
+	host: RouterContext,
+	command: Extract<RpcCommand, { type: "open_session" }>,
+	accept?: OpenAcceptance,
+	signal?: AbortSignal,
 ): Promise<RpcResponse | undefined> {
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return open(host, command);
@@ -42,7 +57,10 @@ export function openWithBarrier(
 			position: inFlight + 1,
 			in_flight: inFlight,
 		});
-	const opened = open(host, command, owner);
+	const start = () => open(host, command, owner, accept === undefined ? undefined : { accept, signal });
+	// A late open's physical session is released by its admission (the accept/rollback path, 4272-admission-
+	// abandonment), so the late response itself owns nothing to release here.
+	const opened = signal === undefined ? start() : runAdmissionProducer(signal, start, async () => {});
 	// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
 	// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
 	// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
@@ -87,6 +105,8 @@ export async function open(
 	owner?: string,
 	options?: {
 		readonly reply?: boolean;
+		readonly accept?: OpenAcceptance;
+		readonly signal?: AbortSignal;
 		readonly defaults?: boolean;
 		readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
 	},
@@ -99,6 +119,7 @@ export async function open(
 	);
 	try {
 		await assertSessionNotHeld(command.sessionPath);
+		options?.signal?.throwIfAborted();
 		if (invalidSpawnedBy(command)) return error(command.id, "open_session", "invalid_spawned_by");
 		const ancestry = command.spawnedBy;
 		opened = await host.registry.openSession(
@@ -109,6 +130,7 @@ export async function open(
 				attachOnly: command.expectedHostInstance !== undefined,
 			},
 		);
+		options?.signal?.throwIfAborted();
 		const openedSession = opened;
 		if (host.writer.isSessionSealed(openedSession.sessionId)) {
 			// Lost output cannot be replayed. Undo only this attachment; keep the runtime and
@@ -139,13 +161,14 @@ export async function open(
 		// so a lane-owned session's baseline is never read from the replay store (RULING-52).
 		const lane = entry.acceptance ?? entry.worker?.acceptance;
 		if (lane) host.writer.registerAcceptance(openedSession.sessionId, lane);
+		if (options?.accept) await options.accept(openedSession);
 		if (owner !== undefined) {
 			if (!host.writer.hasRegisteredConnectionCapabilities(owner))
 				host.writer.setConnectionCapabilities(
 					owner,
 					host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [],
 				);
-			host.writer.attachConnectionToSession(owner, openedSession.sessionId);
+			host.writer.attachConnectionToSession(owner, openedSession.sessionId, options?.accept !== undefined);
 		}
 		// A client that dies without close_session (terminal closed, SIGKILL, dropped
 		// SSH) still holds this handle's attachment and its path reservation. Remember
@@ -208,6 +231,7 @@ export async function open(
 					host.writer.forgetSession(openedSession.sessionId);
 				});
 		}
+		options?.signal?.throwIfAborted();
 		if (opened.attached) host.writer.status.publish(openedSession.sessionId, "attach", "client");
 		else {
 			host.writer.publishSessionOpened({
@@ -221,9 +245,12 @@ export async function open(
 			});
 			host.writer.status.publish(openedSession.sessionId, "open", "client");
 		}
-		if (!host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
+		if (!options?.accept && !host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
 			releaseOwnerAttachment(host, owner, openedSession.sessionId);
 			await releaseOwnedSession(host, openedSession.sessionId);
+		}
+		if (options?.accept) {
+			return undefined;
 		}
 		const replyState =
 			entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
@@ -247,7 +274,7 @@ export async function open(
 			// rollback, and only while the registry still holds the live entry, so only that
 			// rollback owes its subscribers the terminal record; an attach rollback, or one whose
 			// entry is already gone, never announced the session in the first place (#3198 review, L1).
-			if (!opened.attached) {
+			if (!opened.attached && !options?.signal?.aborted) {
 				const entry = host.registry.peek(opened.sessionId);
 				if (entry?.runtime !== undefined || entry?.worker !== undefined)
 					host.writer.sealRolledBackOpen(opened.sessionId, entry.sessionPath);
@@ -258,8 +285,9 @@ export async function open(
 			} catch {
 				/* The open rollback has already removed the entry. */
 			}
-			host.writer.forgetSession(opened.sessionId);
+			if (!opened.attached || !compactUpdatesEnabled()) host.writer.forgetSession(opened.sessionId);
 		}
+		if (cause instanceof CompactAdmissionError) throw cause;
 		return error(command.id, "open_session", code(cause), detail(cause));
 	}
 }

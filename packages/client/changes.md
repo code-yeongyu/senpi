@@ -1,5 +1,88 @@
 # changes
 
+## 2026-10-30 - Shared reconnect generation conformance (RULING-99, part of #4272)
+
+### What changed
+
+- `packages/client/src/materializer-test-kit.ts`: export the reconnect scenario used by engine tests and adapter conformance: commit generation N, reconnect at a greater generation, accept its unit, then reject lower-generation replay.
+
+### Why
+
+- Engine generation persistence must satisfy the existing adapter rather than weakening `stale_generation`.
+
+### Why an extension could not handle it
+
+- `packages/client/src/materializer-test-kit.ts` is the shared cross-implementation conformance surface.
+
+### Expected merge conflict zones
+
+- `packages/client/src/materializer-test-kit.ts` case registration. Adapter implementations remain unchanged.
+
+## 2026-10-30 - Transaction-bound compact materializer contract (S16b, part of #4272)
+
+### What changed
+
+- `packages/client/package.json`: Export the runtime-neutral conformance kit through ./materializer-test-kit.
+- `packages/client/src/index.ts`: Publish the materializer consumer, adapter contracts and envelope parser from the public barrel; expose the hook-bearing reference adapter only through ./materializer-test-kit.
+- `packages/client/src/materializer.ts`: Add a transport-neutral transaction-bound consumer that deduplicates committed sequences before loading payloads and aborts failed units.
+- `packages/client/src/materializer-memory.ts`: Provide a reference adapter with private staged effects, atomic effects/frontier publication, generation reset and committed-memory restart.
+- `packages/client/src/materializer-wire.ts`: Parse bounded S16 envelope headers and optional repair seeds while preserving S15a frames and rejecting stray controls.
+- `packages/client/src/materializer-test-kit.ts`: Publish shared adapter conformance scenarios for atomicity, replay, single flight, abort, restart, generations and independent sessions.
+- `packages/client/src/materializer-test-kit.ts`: Certify fresh frontiers and effects after a committed generation reset, reject session-keyed adapters in the kit regression, and cover S15a b-g goldens including cancellation replies without sessionId.
+
+### Why
+
+- `packages/client/package.json`: Desktop SQL adapters must import the same conformance suite rather than copy its cases.
+- `packages/client/src/index.ts`: External consumers need the materializer contract without changing RpcClient's synchronous listener.
+- `packages/client/src/materializer.ts`: A unit's effects and accepted-sequence frontier must commit together, with duplicate payloads never loaded.
+- `packages/client/src/materializer-memory.ts`: A reference adapter makes transaction ownership and rollback observable without claiming process or disk durability.
+- `packages/client/src/materializer-wire.ts`: Consumers need a validated atomic header without decoding the shared event payload or changing S15a behavior.
+- `packages/client/src/materializer-test-kit.ts`: RULING-95 requires reference and desktop adapters to run identical conformance cases.
+
+### Why an extension could not handle it
+
+- `packages/client/package.json`: Published package subpaths are controlled by the client export map.
+- `packages/client/src/index.ts`: The client package owns its public runtime-neutral API.
+- `packages/client/src/materializer.ts`: The adapter contract is consumed outside the coding-agent extension runtime.
+- `packages/client/src/materializer-memory.ts`: Reference transaction semantics must implement the published client adapter contract.
+- `packages/client/src/materializer-wire.ts`: Client-side protocol parsing must be available independently of host extensions.
+- `packages/client/src/materializer-test-kit.ts`: External storage adapters need one importable client-owned conformance suite.
+
+### Expected merge conflict zones
+
+- `packages/client/package.json`: Package export map and materializer-test-kit subpath.
+- `packages/client/src/index.ts`: Public materializer exports and runtime-neutral barrel.
+- `packages/client/src/materializer.ts`: Transaction interfaces, refusal codes and consumer delivery ordering.
+- `packages/client/src/materializer-memory.ts`: Single-flight ownership, generation reset and atomic publication.
+- `packages/client/src/materializer-wire.ts`: Envelope shape, header validation and legacy-frame handling.
+- `packages/client/src/materializer-test-kit.ts`: Harness contract and shared conformance scenarios.
+
+## 2026-10-28 - Shared-wire recovery repair controller (S14, part of #4272)
+
+### What changed
+
+- `packages/client/src/index.ts`: exports the controller, typed advice error and action union from `packages/client/src/recovery-repair.ts`.
+- `packages/client/src/recovery-repair.ts`: optional refused-request context permits one immediate catalog restart for an unknown or released token; a consecutive fresh-token refusal uses bounded backoff, while storage failures retain their change gate (RULING-87).
+- `packages/client/src/recovery-repair.ts`: retain at most 64 restarted tokens, evicting the oldest while preserving consecutive-refusal backoff.
+
+### Why
+
+- `packages/client/src/index.ts`: exposes the no-spin repair policy for S15a to drive from the real transport, using server-emitted protocol advice without a parallel schema.
+- `packages/client/src/recovery-repair.ts`: gone tokens need a new cut even when no source or storage revision changed; repeated refusals must not create a restart loop.
+- `packages/client/src/recovery-repair.ts`: long-lived clients must not retain every historical token indefinitely.
+
+### Why an extension could not handle it
+
+- `packages/client/src/index.ts`: client transport policy belongs to the client package, not a server runtime extension.
+- `packages/client/src/recovery-repair.ts`: request-local token identity and refusal handling belong to the controller, below extension delivery.
+- `packages/client/src/recovery-repair.ts`: token-history retention is internal controller state.
+
+### Expected merge conflict zones
+
+- `packages/client/src/index.ts`: export list; S15a must add wiring and the blocking test `the in-repo client honours the hint end to end`.
+- `packages/client/src/recovery-repair.ts`: the existing two-argument call and shared wire schema are unchanged; S15a supplies the optional request context.
+- `packages/client/src/recovery-repair.ts`: bounded restart history and consecutive-gone backoff.
+
 ## 2026-10-29 - Run certified Vitest suites on Bun (senpi#4763)
 
 ### What changed

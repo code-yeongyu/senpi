@@ -314,9 +314,19 @@ describe("JSONL import", () => {
 				},
 			});
 			const path = await f.put("session", text("s", [entry("a")]));
+			// #5191: the same-size hatch rewrite below can share the import's coarse mtime/ctime tick (Linux); pin that case.
+			const stamp = await jsonlFiles.stat(path);
+			f.files.stat = async (file) => ({
+				...(await jsonlFiles.stat(file)),
+				mtimeMs: stamp.mtimeMs,
+				ctimeMs: stamp.ctimeMs,
+			});
+			// The import really runs inside that tick. The fixture's default clock (10 s ahead) tells the importer it
+			// checked long after the mtime, which licenses its stat-equality fast path and skips the rewrite.
+			f.setClock(stamp.mtimeMs);
 			await f.reopen().importFile(path);
 			await writeFile(path, text("s", [entry("b")]));
-			await writeHatchMarker(path, await jsonlFiles.stat(path));
+			await writeHatchMarker(path, await f.files.stat(path));
 			armed = true;
 			const error = await f
 				.reopen()

@@ -52,6 +52,7 @@ export class SubprocessProcess {
 	private readonly errorListener: (error: Error) => void;
 	private readonly stdinErrorListener: (error: Error) => void;
 	private exited = false;
+	private spawnFailed = false;
 	private retiring = false;
 	private outputDetached = false;
 	private errorReported = false;
@@ -68,6 +69,13 @@ export class SubprocessProcess {
 		this.errorListener = (error) => {
 			if (this.errorReported) return;
 			this.errorReported = true;
+			// senpi#3500: a child whose spawn failed has no pid and never emits "exit"; there is no process to retire.
+			if (child.pid === undefined && String(Reflect.get(error, "syscall")).startsWith("spawn")) {
+				this.spawnFailed = true;
+				this.exited = true;
+				this.detachOutput();
+				this.exit.resolve();
+			}
 			this.handlers.onError(this, error);
 		};
 		this.stdoutReader.on("line", (line) => {
@@ -94,6 +102,10 @@ export class SubprocessProcess {
 
 	get isRetiring(): boolean {
 		return this.retiring;
+	}
+
+	get neverStarted(): boolean {
+		return this.spawnFailed;
 	}
 
 	send(frame: string): boolean {
