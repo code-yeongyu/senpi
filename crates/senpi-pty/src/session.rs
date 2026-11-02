@@ -424,6 +424,8 @@ fn env_name(name: &str) -> String {
 /// Removes each inherited variable `given` does not name, but only while the command still holds the inherited
 /// value: a value portable-pty took from the Windows registry instead (the user's own setting, possibly changed
 /// after this process started) differs from it and stays. `given` is applied afterwards, so it always wins.
+/// It reads the process environment once per spawn and assumes no other thread of this process calls
+/// setenv/unsetenv meanwhile: a variable set concurrently could be missed by the walk and so be inherited.
 fn remove_inherited_absent(command: &mut CommandBuilder, given: &[(String, String)]) {
     let named: std::collections::HashSet<String> = given.iter().map(|(key, _)| env_name(key)).collect();
     for (key, inherited) in std::env::vars_os() {

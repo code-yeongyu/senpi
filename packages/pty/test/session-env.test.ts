@@ -77,6 +77,7 @@ describe.skipIf(process.platform === "win32")("TerminalSession child environment
 		expect(raw).toEqual({
 			"Bun.spawnSync default env": LEAKED,
 			"Bun.spawn default env": LEAKED,
+			"Bun.spawn env: process.env": CLEAN,
 			"Bun.spawn explicit env": CLEAN,
 			"Bun.$ default": CLEAN,
 		});

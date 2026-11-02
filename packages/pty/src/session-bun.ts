@@ -63,7 +63,7 @@ export function createBunTerminalSession(
 	}
 	const child = runtime.spawn([options.command, ...options.args], {
 		cwd: options.cwd,
-		env: mergeEnvironment(options.env ?? {}),
+		env: mergeEnvironment(options.env),
 		terminal: {
 			cols: options.cols,
 			rows: options.rows,

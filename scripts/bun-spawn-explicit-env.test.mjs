@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,10 @@ import { fileURLToPath } from "node:url";
 // Bun.spawn / Bun.spawnSync with no `env` hand the child that OS environment - including the engine trust closure an
 // adopted engine deleted. Every call in shipped sources must pass `env`. Bun.$ is exempt: it reads process.env.
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const SCANNED = ["packages/coding-agent/src", "packages/senpi-codemode/src", "packages/pty/src"];
+const SCANNED = readdirSync(join(root, "packages"), { withFileTypes: true })
+	.filter((entry) => entry.isDirectory())
+	.map((entry) => `packages/${entry.name}/src`)
+	.filter((directory) => existsSync(join(root, directory)));
 const SOURCE = /\.(?:[cm]?js|[cm]?ts)$/;
 const CALL = /Bun\.spawn(?:Sync)?\(/g;
 
