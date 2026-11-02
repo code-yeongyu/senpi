@@ -327,7 +327,13 @@ describe("OpenAI ChatGPT OAuth", () => {
 			.refresh(connectedCredential(), neverAbortedSignal)
 			.catch((error: unknown) => error);
 		expect(error).toBeInstanceOf(OAuthReauthorizationRequiredError);
-		expect(error).toMatchObject({ name: "OAuthReauthorizationRequiredError", code, status: 400 });
+		expect(error).toMatchObject({
+			name: "OAuthReauthorizationRequiredError",
+			code,
+			status: 400,
+			oauthError: code,
+			credentialRefused: true,
+		});
 		expect(classifyOAuthRefreshFailure(error)).toBe("permanent");
 	});
 
@@ -340,7 +346,13 @@ describe("OpenAI ChatGPT OAuth", () => {
 			.refresh(connectedCredential(), neverAbortedSignal)
 			.catch((error: unknown) => error);
 		expect(error).toBeInstanceOf(OAuthClientConfigurationError);
-		expect(error).toMatchObject({ name: "OAuthClientConfigurationError", code: "invalid_client", status: 400 });
+		expect(error).toMatchObject({
+			name: "OAuthClientConfigurationError",
+			code: "invalid_client",
+			status: 400,
+			oauthError: "invalid_client",
+			credentialRefused: false,
+		});
 		expect(classifyOAuthRefreshFailure(error)).toBe("permanent");
 	});
 

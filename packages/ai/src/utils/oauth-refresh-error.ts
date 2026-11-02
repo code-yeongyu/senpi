@@ -28,7 +28,7 @@ export class OAuthReauthorizationRequiredError extends OAuthTokenEndpointError {
 	readonly code: OAuthReauthorizationCode;
 
 	constructor(code: OAuthReauthorizationCode, status: number) {
-		super(`OAuth refresh requires reauthorization (${code})`, status);
+		super(`OAuth refresh requires reauthorization (${code})`, status, { oauthError: code, credentialRefused: true });
 		this.name = "OAuthReauthorizationRequiredError";
 		this.code = code;
 	}
@@ -39,7 +39,9 @@ export class OAuthClientConfigurationError extends OAuthTokenEndpointError {
 	readonly code = "invalid_client";
 
 	constructor(status: number) {
-		super("OAuth refresh failed: invalid client configuration (invalid_client)", status);
+		super("OAuth refresh failed: invalid client configuration (invalid_client)", status, {
+			oauthError: "invalid_client",
+		});
 		this.name = "OAuthClientConfigurationError";
 	}
 }
