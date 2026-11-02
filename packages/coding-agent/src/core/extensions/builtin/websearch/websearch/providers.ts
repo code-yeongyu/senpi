@@ -15,6 +15,7 @@ import { keenableProvider } from "./providers/keenable.ts";
 import { kimiProvider } from "./providers/kimi.ts";
 import { mojeekProvider } from "./providers/mojeek.ts";
 import { openAiResponsesProvider } from "./providers/openai-responses.ts";
+import { openRouterProvider } from "./providers/openrouter.ts";
 import { perplexityProvider } from "./providers/perplexity.ts";
 import { searxngProvider } from "./providers/searxng.ts";
 import { serpdiveProvider } from "./providers/serpdive.ts";
@@ -60,6 +61,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	"exa-mcp": exaMcpProvider,
 	searxng: searxngProvider,
 	keenable: keenableProvider,
+	openrouter: openRouterProvider,
 };
 
 function buildContext(config: SearchProviderConfig, request: SearchRequest): BuildContext {

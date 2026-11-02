@@ -75,7 +75,7 @@ A config file replaces the free default completely: senpi uses only the provider
 | `nativeModel` | The model native search runs on; see [Choosing the model native search runs on](#choosing-the-model-native-search-runs-on). |
 | `providers[]` | The providers to use. Each entry takes `provider`, and optionally `id`, `apiKey`, `baseUrl`, `maxResults`, `timeoutMs`, `priority`, `weight`, `allowedDomains` or `blockedDomains`. |
 
-Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, `searxng`, and `keenable`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai` (plus `searchEngineId` for `google-cse`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
+Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, `searxng`, and `keenable`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai` (plus `searchEngineId` for `google-cse`), and `openrouter` (plus `model`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
 
 `keenable` ([Keenable](https://keenable.ai)) takes an `apiKey` but also works without one: a keyed entry posts to `https://api.keenable.ai/v1/search` with `X-API-Key`, while a keyless entry uses the shared public tier at `/v1/search/public` and identifies itself with an `X-Keenable-Title` app header instead of a credential. Because the public tier is a per-IP pool, `keenable` is never in the no-config default chain — list it explicitly in `websearch.json`. A single `allowedDomains` entry maps to Keenable's native `site` filter; multiple or blocked domains stay `site:`/`-site:` terms in the query.
 
@@ -198,6 +198,24 @@ Google Search grounding runs only when you list a `google` entry in `websearch.j
 The search calls `generateContent` with the `google_search` tool. Results are the grounding sources Google returns; an answer without grounding sources counts as no results. Each result URL is Google's grounding redirect link, which forwards to the source page, and the title is usually the source's site name.
 
 A `google` entry without `apiKey` uses your senpi `google` login (Google API key) and a Google model from it; set `model` to choose one. Vertex AI logins are not used.
+
+## OpenRouter web grounding (opt-in)
+
+An `openrouter` entry posts to OpenRouter's chat-completions endpoint with the `web` plugin, so any chat model OpenRouter serves can search. It needs both an `apiKey` and a `model`:
+
+```json
+{
+  "providers": [
+    { "provider": "openrouter", "apiKey": "<your OpenRouter key>", "model": "anthropic/claude-sonnet-4.5" }
+  ]
+}
+```
+
+- `baseUrl` is the API root and defaults to `https://openrouter.ai/api/v1`; senpi appends `/chat/completions`.
+- Results are the answer's `url_citation` annotations, one per page, with the cited excerpt as the snippet. An answer that cites nothing counts as no results, and a link the model writes in its own text is never returned as a source.
+- `maxResults` becomes the plugin's `max_results` (1–50).
+- Search is billed by OpenRouter as an extra per-search charge on your credits, on top of the model tokens, so this provider is never part of the free default chain. OpenRouter marks the `web` plugin deprecated in favor of its `openrouter:web_search` server tool; this provider uses the plugin.
+- `allowedDomains` and `blockedDomains` are not sent to the plugin, because domain filtering depends on the search engine OpenRouter picks for the model.
 
 ## Listing login-based routes
 
