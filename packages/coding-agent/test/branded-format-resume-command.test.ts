@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionManager } from "../src/core/session-manager.ts";
 
+// Re-importing the interactive-mode graph after resetModules takes about 7 s on an idle machine;
+// the full parallel run stretches module work up to 10.5x (measured), so the default 30 s cap
+// fails a test that is still making progress.
+const FRESH_INTERACTIVE_IMPORT_BUDGET_MS = 90_000;
+
 const dirs: string[] = [];
 afterEach(() => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -11,7 +16,7 @@ afterEach(() => {
 	vi.resetModules();
 });
 
-describe("branded formatResumeCommand", () => {
+describe("branded formatResumeCommand", { timeout: FRESH_INTERACTIVE_IMPORT_BUDGET_MS }, () => {
 	it("uses the literal branded executable for default and custom session dirs", async () => {
 		process.env.SENPI_BRAND = JSON.stringify({
 			name: "OmO",

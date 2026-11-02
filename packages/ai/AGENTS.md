@@ -57,7 +57,7 @@ bench/                          event-stream + model-registry micro-benchmarks
 - Provider factories and model catalogs live in `src/providers/`; wire protocol implementations live in `src/api/`.
 - `src/api/lazy.ts` exposes `lazyApi()`. API-specific `*.lazy.ts` wrappers are the documented dynamic-import boundary.
 - `src/providers/register-builtins.ts` registers compatibility behavior and currently imports only `src/compat.ts`; do not restore the old provider-loader architecture there.
-- Public subpaths in `package.json`: `.`, `./compat`, `./oauth`, wildcard `./providers/*`, `./api/*`, `./utils/*`, plus `./node/provider-scope`, `./bedrock-provider` (root shim re-exporting `dist/`), `./bun-oauth`. Keep root exports browser-safe.
+- Public subpaths in `package.json`: `.`, `./compat`, `./oauth`, wildcard `./providers/*`, `./api/*`, `./utils/*`, plus `./node/provider-scope`, `./bedrock-provider`, `./cursor-agent-provider`, `./devin-provider` (static Node-only modules), `./bun-oauth`. Keep root exports browser-safe.
 - `sideEffects` is non-empty by design: `dist/compat.js`, `dist/images.js`, `dist/providers/images/register-builtins.js` register on import.
 - Message transforms return new structures; never mutate shared input messages.
 

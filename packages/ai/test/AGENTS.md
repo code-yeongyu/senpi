@@ -6,7 +6,7 @@ Flat Vitest suite for the whole `pi-ai` package: 228 top-level `.ts` files, ~53k
 
 ## LAYOUT
 
-No mirroring of `src/` structure. Filenames encode provider + behavior: `anthropic-*`, `bedrock-*`, `openai-completions-*`, `openai-codex-*`, `azure-openai-*`, `mistral-*`, `cursor-agent*`. Cross-cutting suites are named by concern: `stream`, `models-runtime`, `retry`, `retry-hint`, `total-tokens`, `context-overflow`, `cache-retention`, `empty`, `unicode-surrogate`, `cross-provider-handoff`.
+No mirroring of `src/` structure. Filenames encode provider + behavior: `anthropic-*`, `bedrock-*`, `openai-completions-*`, `chatgpt-subscription-*` (renamed from `openai-codex-*` on 2026-09-22), `azure-openai-*`, `mistral-*`, `cursor-agent*`. Cross-cutting suites are named by concern: `stream`, `models-runtime`, `retry`, `retry-hint`, `total-tokens`, `context-overflow`, `cache-retention`, `empty`, `unicode-surrogate`, `cross-provider-handoff`.
 
 ## SHARED HELPERS (non-`.test.ts` modules)
 
@@ -53,4 +53,4 @@ PI_ENABLE_LIVE_API_TESTS=1 bun run --cwd packages/ai test   # opt into live suit
 
 ## HOTSPOTS
 
-`openai-codex-stream.test.ts` (2850), `openai-completions-tool-choice.test.ts` (1969), `stream.test.ts` (1802, multi-provider matrix + local Ollama process), `models-runtime.test.ts` (1193, provider/auth/refresh/cancel runtime), `total-tokens.test.ts` (912), `unicode-surrogate.test.ts` (866), `empty.test.ts` (861), `anthropic-provider-native-replay.test.ts` (832). Touch shared conventions here first.
+`chatgpt-subscription-stream.test.ts` (2850), `openai-completions-tool-choice.test.ts` (1969), `stream.test.ts` (1802, multi-provider matrix + local Ollama process), `models-runtime.test.ts` (1193, provider/auth/refresh/cancel runtime), `total-tokens.test.ts` (912), `unicode-surrogate.test.ts` (866), `empty.test.ts` (861), `anthropic-provider-native-replay.test.ts` (832). Touch shared conventions here first.

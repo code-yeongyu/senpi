@@ -1,10 +1,10 @@
-import { mkdtempSync } from "node:fs";
 import * as http2 from "node:http2";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { makeTempDir as mkdtempSync } from "../../../scripts/vitest-temp.ts";
 import {
 	AgentClientMessageSchema,
 	AgentServerMessageSchema,
@@ -18,6 +18,8 @@ import {
 } from "../src/api/cursor-agent.ts";
 import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Message, Model } from "../src/types.ts";
+
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 
@@ -143,7 +145,7 @@ async function runStream(
 ): Promise<void> {
 	const result = streamCursorAgent(
 		buildModel(baseUrl),
-		{ messages: options.messages ?? [{ role: "user", content: "hello", timestamp: 0 }] },
+		normalizeContext({ messages: options.messages ?? [{ role: "user", content: "hello", timestamp: 0 }] }),
 		{
 			apiKey: "test-token",
 			sessionId: options.sessionId,

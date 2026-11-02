@@ -24,7 +24,9 @@ export function readAvailableVersion(payload: unknown, channel: BrandUpdateChann
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 const RELEASE_CHANGELOG_BASE_URL = "https://github.com/code-yeongyu/senpi/blob";
 const RELEASE_CHANGELOG_PATH = "packages/coding-agent/CHANGELOG.md";
-const SENPI_CALVER_PATTERN = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([2-9]\d*))?$/;
+// Month and day may be zero-padded (`2026.11.02-1` as stamped in package.json) or not (npm's normalized
+// `2026.11.2-1`); a `-1` revision is the same release as the bare date.
+const SENPI_CALVER_PATTERN = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([1-9]\d*))?$/;
 
 export interface LatestPiRelease {
 	version: string;
@@ -39,6 +41,11 @@ function parseSenpiCalVer(version: string): readonly [number, number, number, nu
 	}
 	return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4] ?? 1)];
 }
+/** Unpadded form semver accepts, used when a CalVer version is compared with a plain semver version. */
+function canonicalCalVer([year, month, day, revision]: readonly [number, number, number, number]): string {
+	return revision > 1 ? `${year}.${month}.${day}-${revision}` : `${year}.${month}.${day}`;
+}
+
 /** Include useful errno details hidden behind Node's generic "fetch failed" error. */
 export function formatVersionCheckError(error: unknown): string {
 	const rootMessage = error instanceof Error && error.message ? error.message : String(error);
@@ -72,8 +79,8 @@ export function comparePackageVersions(leftVersion: string, rightVersion: string
 		return 0;
 	}
 
-	const left = valid(leftTrimmed);
-	const right = valid(rightTrimmed);
+	const left = valid(leftCalVer ? canonicalCalVer(leftCalVer) : leftTrimmed);
+	const right = valid(rightCalVer ? canonicalCalVer(rightCalVer) : rightTrimmed);
 	if (!left || !right) {
 		return undefined;
 	}
@@ -82,10 +89,9 @@ export function comparePackageVersions(leftVersion: string, rightVersion: string
 
 export function isNewerPackageVersion(candidateVersion: string, currentVersion: string): boolean {
 	const comparison = comparePackageVersions(candidateVersion, currentVersion);
-	if (comparison !== undefined) {
-		return comparison > 0;
-	}
-	return candidateVersion.trim() !== currentVersion.trim();
+	// Unparseable pairs (e.g. branded build labels) are never "newer": an update
+	// we cannot order is not one we can advertise.
+	return comparison !== undefined && comparison > 0;
 }
 
 export function getReleaseChangelogUrl(version: string): string {

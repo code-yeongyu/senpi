@@ -15,6 +15,9 @@ runner/prelude assets).
 | Ruby kernel | `rb/kernel.ts` + `rb/prelude.rb`, `rb/runner.rb` |
 | Julia kernel | `jl/kernel.ts` + `jl/prelude.jl`, `jl/runner.jl` |
 | Shared subprocess layer | `shared/subprocess-kernel.ts`, `subprocess-{contract,process,queue,run}.ts`, `runtime-asset.ts` |
+| Session environment | `session-env.ts` (PI_* contract shared by all kernels; mirrors the core bash tool) |
+| JS process isolation | `js/process-worker.ts` (host side), `js/process-entry.js` (child entry), `js/kernel-memory.ts`, `js/control-frames.ts` |
+| Sandbox cells | `sandbox/sandbox-cell.ts` (host executor); `sandbox/vendor/pi-codemode/**` (vendored runtime, see its `VENDORED.md`) |
 
 ## CONVENTIONS
 
@@ -27,8 +30,18 @@ runner/prelude assets).
   AST-parsed (Babel) and rewritten to bridge-compatible dynamic imports.
 - JS runs on worker threads with an inline-worker fallback; py/rb/jl run as
   framed subprocesses through `shared/`.
-- Subprocess retirement/restart, worker recovery, timeout, and interrupt
-  semantics live here, never in the tool layer.
+- Each language keeps one serial FIFO kernel. Queued cancellation removes only
+  that cell; active interruption and runtime recovery stay in the kernel layer.
+- Every kernel exposes the active session's `PI_*` environment (`session-env.ts`):
+  inherited values are deleted before the session's values are applied, so any
+  child spawned from a cell sees the same session environment a bash-tool child
+  sees. The JS worker applies it at init (`worker-core.js`; shell capture pins
+  the env view under Bun because `delete process.env.X` does not unsetenv),
+  and py/rb/jl spawn with it merged into the interpreter environment.
+- Every kernel runs in the session cwd. py/rb/jl spawn there; the JS worker cannot
+  chdir, so `js/worker-cwd.js` applies the cwd to `process.cwd`, `path.resolve`,
+  `fs`, `child_process`, and `Bun.file`/`write`/`$`/`spawn`/`Glob` at init. The
+  session manager rejects a cell whose cwd is missing (`extension/session-cwd.ts`).
 
 ## ANTI-PATTERNS
 

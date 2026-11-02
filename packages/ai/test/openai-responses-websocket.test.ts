@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type OpenAIResponsesOptions, streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const sentFrames: string[] = [];
 const constructedUrls: string[] = [];
 
@@ -133,7 +135,7 @@ describe("OpenAI Responses websocket transport", () => {
 			},
 		} satisfies OpenAIResponsesOptions;
 
-		const stream = streamOpenAIResponses(model, context, options);
+		const stream = streamOpenAIResponses(model, normalizeContext(context), options);
 		const result = await stream.result();
 		const frame = parseSentFrame();
 
@@ -185,7 +187,10 @@ describe("OpenAI Responses websocket transport", () => {
 			messages: [{ role: "user", content: "Say pong.", timestamp: Date.now() }],
 		} satisfies Context;
 
-		const stream = streamOpenAIResponses(model, context, { apiKey: "test-key", transport: "websocket" });
+		const stream = streamOpenAIResponses(model, normalizeContext(context), {
+			apiKey: "test-key",
+			transport: "websocket",
+		});
 		const result = await stream.result();
 
 		expect(result.stopReason).toBe("stop");

@@ -6,12 +6,28 @@ export function lcg(seed: number): () => number {
 	};
 }
 
+const ONSETS = "b,br,c,ch,d,dr,f,fl,g,gl,h,j,k,l,m,n,p,pl,qu,r,s,sh,t,tr,v,w".split(",");
+const RIMES =
+	"ade,ane,ark,eal,ean,eed,ell,ent,ess,ift,ilm,ind,ock,oil,old,ond,oom,ore,orn,ount,ove,udge,ule,urn,ust,yle".split(
+		",",
+	);
+
+export const HEALTHY_WORD_COUNT = 26 * 26;
+
+export function healthyWord(index: number): string {
+	const onset = ONSETS[index % ONSETS.length] ?? "s";
+	const rime = RIMES[Math.floor(index / ONSETS.length) % RIMES.length] ?? "ore";
+	return `${onset}${rime}`;
+}
+
 export function buildHealthyPrefix(targetLength: number): string {
 	const parts: string[] = [];
+	const next = lcg(97);
 	let length = 0;
 	let index = 0;
 	while (length < targetLength) {
-		const sentence = `Sentence ${index} of the healthy prefix carries ordinary prose forward with varied word choices and rhythm marker ${index % 13}.`;
+		const pick = () => healthyWord(next() % (ONSETS.length * RIMES.length));
+		const sentence = `The ${pick()} near the ${pick()} keeps ${pick()} aligned with ${pick()} while ${pick()} settles into ${pick()}.`;
 		parts.push(sentence);
 		length += sentence.length + 1;
 		if (index % 10 === 9) {

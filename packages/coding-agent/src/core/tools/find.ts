@@ -1,16 +1,16 @@
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Text } from "@earendil-works/pi-tui";
+import type { TextContent } from "@earendil-works/pi-ai";
 import { spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
-import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
-import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
-import type { FilesystemPolicyChecker, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { modelOnlyText } from "./model-only-text.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
-import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
+import { findRenderers } from "./renderers/find.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
@@ -73,56 +73,6 @@ export interface FindToolOptions {
 	filesystemPolicy?: FilesystemPolicyChecker;
 }
 
-function formatFindCall(args: { pattern: string; path?: string; limit?: number } | undefined, theme: Theme): string {
-	const pattern = str(args?.pattern);
-	const rawPath = str(args?.path);
-	const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
-	const limit = args?.limit;
-	const invalidArg = invalidArgText(theme);
-	let text =
-		theme.fg("toolTitle", theme.bold("find")) +
-		" " +
-		(pattern === null ? invalidArg : theme.fg("accent", pattern || "")) +
-		theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
-	if (limit !== undefined) {
-		text += theme.fg("toolOutput", ` (limit ${limit})`);
-	}
-	return text;
-}
-
-function formatFindResult(
-	result: {
-		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-		details?: FindToolDetails;
-	},
-	options: ToolRenderResultOptions,
-	theme: Theme,
-	showImages: boolean,
-): string {
-	const output = getTextOutput(result, showImages).trim();
-	let text = "";
-	if (output) {
-		const lines = output.split("\n");
-		const maxLines = options.expanded ? lines.length : 20;
-		const displayLines = lines.slice(0, maxLines);
-		const remaining = lines.length - maxLines;
-		text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;
-		if (remaining > 0) {
-			text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-		}
-	}
-
-	const resultLimit = result.details?.resultLimitReached;
-	const truncation = result.details?.truncation;
-	if (resultLimit || truncation?.truncated) {
-		const warnings: string[] = [];
-		if (resultLimit) warnings.push(`${resultLimit} results limit`);
-		if (truncation?.truncated) warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
-		text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
-	}
-	return text;
-}
-
 export function createFindToolDefinition(
 	cwd: string,
 	options?: FindToolOptions,
@@ -130,7 +80,9 @@ export function createFindToolDefinition(
 	const customOps = options?.operations;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
+		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "find",
+		workspaceEffect: "read",
 		label: "find",
 		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: findToolSystemPromptContribution.snippet,
@@ -140,7 +92,7 @@ export function createFindToolDefinition(
 			{ pattern, path: searchDir, limit }: { pattern: string; path?: string; limit?: number },
 			signal?: AbortSignal,
 			_onUpdate?,
-			_ctx?,
+			ctx?: ExtensionContext,
 		) {
 			return new Promise((resolve, reject) => {
 				if (signal?.aborted) {
@@ -165,7 +117,7 @@ export function createFindToolDefinition(
 
 				(async () => {
 					try {
-						const searchPath = resolveToCwd(searchDir || ".", cwd);
+						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd || cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						const ops = customOps ?? defaultFindOperations;
 						if (filesystemPolicy) {
@@ -214,7 +166,6 @@ export function createFindToolDefinition(
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
 							const notices: string[] = [];
 							if (resultLimitReached) {
@@ -225,12 +176,14 @@ export function createFindToolDefinition(
 								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 								details.truncation = truncation;
 							}
+							const content: TextContent[] = [{ type: "text", text: truncation.content }];
 							if (notices.length > 0) {
-								resultOutput += `\n\n[${notices.join(". ")}]`;
+								content[0].text += "\n";
+								content.push(modelOnlyText(`[${notices.join(". ")}]`));
 							}
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: resultOutput }],
+									content,
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);
@@ -289,7 +242,7 @@ export function createFindToolDefinition(
 
 						stopChild = () => {
 							if (!child.killed) {
-								child.kill();
+								signalSpawnedChild(child);
 							}
 						};
 
@@ -344,7 +297,6 @@ export function createFindToolDefinition(
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
 							const notices: string[] = [];
 							if (resultLimitReached) {
@@ -357,12 +309,14 @@ export function createFindToolDefinition(
 								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 								details.truncation = truncation;
 							}
+							const content: TextContent[] = [{ type: "text", text: truncation.content }];
 							if (notices.length > 0) {
-								resultOutput += `\n\n[${notices.join(". ")}]`;
+								content[0].text += "\n";
+								content.push(modelOnlyText(`[${notices.join(". ")}]`));
 							}
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: resultOutput }],
+									content,
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);
@@ -378,16 +332,7 @@ export function createFindToolDefinition(
 				})();
 			});
 		},
-		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatFindCall(args, theme));
-			return text;
-		},
-		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatFindResult(result as any, options, theme, context.showImages));
-			return text;
-		},
+		...findRenderers,
 	};
 }
 

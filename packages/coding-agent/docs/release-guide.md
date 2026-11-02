@@ -186,7 +186,6 @@ Four global default extension factories load separately:
 ### Other bundled surfaces
 
 - `codemode` is bundled as `@code-yeongyu/senpi-codemode`.
-- `llama.cpp` is a hidden inline extension.
 - `.codex-plugin/plugin.json` belongs to the hooks plugin-manifest loader. Runtime-discovered
   hook plugins are user resources; no hook plugin is bundled by this repository.
 
@@ -213,11 +212,10 @@ pin that exact SDK version, while the isolated npm installation, npm audit, stan
 binary, and npm/Bun package CLIs all pass. Treat this as a Bun resolver warning; it does not
 change the supported Node/npm installation path or require a configuration migration.
 
-`release:local` stages the publish manifest and bundled package tree inside the source checkout
-while packing. Run it from a clean, dedicated release checkout rather than a shared dirty
-worktree. After packing, verify `packages/coding-agent/package.json` still has only the five
-intentional internal bundle entries and run `bun install --ignore-scripts` before resuming
-development so workspace dependency resolution is restored. Do not use destructive Git cleanup
+`release:local` stages the publish manifest and the vendored client/protocol tree inside the
+source checkout while packing. Run it from a clean, dedicated release checkout rather than a
+shared dirty worktree. After packing, restore `packages/coding-agent/package.json` with
+`git checkout --` and rebuild coding-agent before resuming development. Do not use destructive Git cleanup
 when other work is present.
 
 ## Build and static verification
@@ -234,7 +232,6 @@ npm audit --omit=dev
 The release-script checks are:
 
 ```bash
-bun scripts/generate-coding-agent-shrinkwrap.mjs --check
 bun scripts/generate-coding-agent-install-lock.mjs --check
 bun scripts/upstream-release-worthy.mjs
 bun run release --dry-run
@@ -257,7 +254,7 @@ bunx --cwd packages/coding-agent vitest \
   test/suite/vendored-builtins.test.ts \
   test/extensions/loader-concurrency.test.ts \
   test/mcp/ \
-  test/suite/claude-sdk-oauth-extension.test.ts \
+  test/suite/anthropic-subscription-extension.test.ts \
   test/suite/terminal-extension.test.ts \
   test/compaction/ \
   test/ttsr/
@@ -518,7 +515,6 @@ Re-run version synchronization and lock generation:
 ```bash
 bun scripts/sync-versions.js
 PI_ALLOW_LOCKFILE_CHANGE=1 bun install --lockfile-only --ignore-scripts
-bun scripts/generate-coding-agent-shrinkwrap.mjs
 bun scripts/generate-coding-agent-install-lock.mjs
 ```
 
@@ -622,12 +618,12 @@ For the next release:
 
 1. Start from a clean, current `main`.
 2. Audit every commit since the latest tag.
-3. Update all affected package `[Unreleased]` sections.
+3. Record affected-package changelog entries in `changes/unreleased/<pr>.md`; the release cut compiles them before stamping.
 4. Duplicate user-facing AI, agent, and TUI changes into the coding-agent changelog.
 5. Query registry-verifiable plugin dependencies for newer exact versions.
 6. Preserve vendored snapshots when no authoritative upstream source is available.
 7. Update the seven lockstep package versions.
-8. Regenerate package-lock, publish-deps lock, and install lock.
+8. Regenerate package-lock and install lock.
 9. Run focused plugin tests.
 10. Run `check`, `build`, and the full test suite.
 11. Run the real Senpi QA channels.

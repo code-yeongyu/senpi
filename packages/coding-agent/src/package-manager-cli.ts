@@ -14,6 +14,8 @@ import chalk from "chalk";
 import lockfile from "proper-lockfile";
 // BETA(omo-local-update): removable beta import - delete with src/beta/omo-local-update.ts
 import { runOmoLocalUpdateBeta } from "./beta/omo-local-update.ts";
+import { CONFIG_IMPORT_PI_ARGV, runConfigImportPi } from "./cli/config-import-pi.ts";
+import { CONFIG_COMMAND_USAGE, printConfigCommandHelp } from "./cli/config-command-help.ts";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
@@ -22,7 +24,7 @@ import {
 	DISPLAY_VERSION,
 	detectInstallMethod,
 	getAgentDir,
-	getPackageDir,
+	getInstallPackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	PACKAGE_NAME,
@@ -32,10 +34,11 @@ import {
 } from "./config.ts";
 import { brandProfile } from "./core/brand.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
+import { type HeldFileLock, lockWithLossHandling } from "./core/file-lock.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
-import { DefaultResourceLoader } from "./core/resource-loader.ts";
+import { DefaultResourceLoader, isBuiltinExtension } from "./core/resource-loader.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
@@ -63,7 +66,7 @@ function getActiveManagedInstallRoot(): string | undefined {
 	const releasesDir = canonicalizePath(join(managedRoot, "releases"));
 	// The launcher environment is inherited by child processes. Do not classify a
 	// source checkout or another Pi installation launched from managed Pi as managed.
-	if (getCwdRelativePath(canonicalizePath(getPackageDir()), releasesDir) === undefined) return undefined;
+	if (getCwdRelativePath(canonicalizePath(getInstallPackageDir()), releasesDir) === undefined) return undefined;
 
 	const markerPath = join(managedRoot, MANAGED_INSTALL_MARKER);
 	try {
@@ -177,9 +180,9 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		throw new Error(`Invalid managed release version: ${version}`);
 	}
 
-	let releaseLock: () => Promise<void>;
+	let updateLock: HeldFileLock;
 	try {
-		releaseLock = await lockfile.lock(join(managedRoot, "update"), { realpath: false });
+		updateLock = await lockWithLossHandling(join(managedRoot, "update"), { realpath: false });
 	} catch (error: unknown) {
 		if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
 			throw new Error("Another managed Pi update is already running.");
@@ -201,6 +204,7 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		const releaseDir = join(releasesRoot, version);
 		if (existsSync(releaseDir)) {
 			verifyManagedRelease(releaseDir, version);
+			updateLock.assertHeld();
 			activateManagedRelease(managedRoot, version);
 			return;
 		}
@@ -216,11 +220,13 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 
 		await runManagedNpmCi(stageDir);
 		verifyManagedRelease(stageDir, version);
+		updateLock.assertHeld();
 		renameSync(stageDir, releaseDir);
+		updateLock.assertHeld();
 		activateManagedRelease(managedRoot, version);
 	} finally {
 		if (stageDir) rmSync(stageDir, { force: true, recursive: true });
-		await releaseLock();
+		await updateLock.release();
 	}
 }
 
@@ -279,23 +285,6 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "list":
 			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
-}
-
-const CONFIG_COMMAND_USAGE = `${APP_NAME} config [-l] [--approve|--no-approve]`;
-
-function printConfigCommandHelp(): void {
-	console.log(`${chalk.bold("Usage:")}
-  ${CONFIG_COMMAND_USAGE}
-
-Open the resource configuration TUI to enable or disable package resources.
-Without -l, starts in global settings (~/${CONFIG_DIR_NAME}/agent/settings.json).
-Press Tab in the TUI to switch between global and project-local modes.
-
-Options:
-  -l, --local       Edit project overrides (${CONFIG_DIR_NAME}/settings.json)
-  -a, --approve     Trust project-local files for this command with -l
-  -na, --no-approve Ignore project-local files for this command with -l
-`);
 }
 
 function printPackageCommandHelp(command: PackageCommand): void {
@@ -745,7 +734,7 @@ function prepareWindowsNpmSelfUpdate(): void {
 		return;
 	}
 
-	const packageDir = getPackageDir();
+	const packageDir = getInstallPackageDir();
 	cleanupWindowsSelfUpdateQuarantine(packageDir);
 	quarantineWindowsNativeDependencies(packageDir);
 }
@@ -830,6 +819,10 @@ export async function handleConfigCommand(
 		printConfigCommandHelp();
 		return true;
 	}
+	if (rest[0] === CONFIG_IMPORT_PI_ARGV) {
+		runConfigImportPi(rest.slice(1));
+		return true;
+	}
 
 	let local = false;
 	let projectTrustOverride: boolean | undefined;
@@ -868,14 +861,18 @@ export async function handleConfigCommand(
 		return true;
 	}
 	reportSettingsErrors(settingsManager, "config command");
+	const builtinExtensions = (runtimeOptions.extensionFactories ?? [])
+		.filter(isBuiltinExtension)
+		.map((input) => input.name);
 	const globalSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 	const globalResolvedPaths = await new DefaultPackageManager({
 		cwd,
 		agentDir,
 		settingsManager: globalSettingsManager,
+		builtinExtensions,
 	}).resolve();
 	const projectResolvedPaths = settingsManager.isProjectTrusted()
-		? await new DefaultPackageManager({ cwd, agentDir, settingsManager }).resolve()
+		? await new DefaultPackageManager({ cwd, agentDir, settingsManager, builtinExtensions }).resolve()
 		: globalResolvedPaths;
 
 	await selectConfig({

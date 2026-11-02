@@ -29,7 +29,11 @@ type WiringFixture = {
 	streamingReveal: { stop: () => void };
 	toolArgsReveal: { finish: (id: string) => void };
 	toolResultReveal: ToolResultRevealController;
-	ui: { requestRender: () => void };
+	ui: {
+		requestRender: () => void;
+		catchUpScrollback: () => void;
+		setScrollbackReplayHold: (hold: boolean | "until-input") => void;
+	};
 	workingMessage: string | undefined;
 	workingMessageBeforeActiveTool: string | undefined;
 };
@@ -81,7 +85,7 @@ function createFixture(smoothStreaming: () => boolean, component: ToolComponent)
 			getSmoothStreamingFps: () => 20,
 			requestRender: requestStreamingRender,
 		}),
-		ui: { requestRender: vi.fn() },
+		ui: { requestRender: vi.fn(), catchUpScrollback: vi.fn(), setScrollbackReplayHold: vi.fn() },
 		workingMessage: "Thinking",
 		workingMessageBeforeActiveTool: undefined,
 	};

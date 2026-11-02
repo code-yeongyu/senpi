@@ -1,15 +1,17 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	activeBunSkillPath,
 	bundledBunSkillPath,
 	bunVersionSupportsSkill,
 	createBunSkillDiscoverHandler,
 	registerBunSkillContribution,
 } from "../src/extension/skill-contribution.ts";
 
-const bunSkillMd = join(import.meta.dirname, "..", "src", "skill", "bun-1-4", "SKILL.md");
-const bunSkillRefs = join(import.meta.dirname, "..", "src", "skill", "bun-1-4", "references");
+const bunSkillMd = join(import.meta.dirname, "..", "src", "skill", "bun", "SKILL.md");
+const bunSkillRefs = join(import.meta.dirname, "..", "src", "skill", "bun", "references");
 
 describe("bunVersionSupportsSkill", () => {
 	it.each([
@@ -26,10 +28,91 @@ describe("bunVersionSupportsSkill", () => {
 });
 
 describe("bundledBunSkillPath", () => {
-	it("returns the absolute bun-1-4 SKILL.md path that exists on disk", () => {
+	it("returns the absolute bun SKILL.md path that exists on disk", () => {
 		const result = bundledBunSkillPath();
 		expect(result).toBe(bunSkillMd);
 		expect(result !== undefined && existsSync(result)).toBe(true);
+	});
+});
+
+describe("activeBunSkillPath", () => {
+	it("returns the bundled SKILL.md path on a bun >= 1.4 kernel", () => {
+		expect(activeBunSkillPath(() => "1.4.2")).toBe(bunSkillMd);
+	});
+
+	it.each([{ version: "1.3.0" }, { version: undefined }, { version: "not-a-version" }])(
+		"returns undefined for kernel version $version",
+		({ version }) => {
+			expect(activeBunSkillPath(() => version)).toBeUndefined();
+		},
+	);
+});
+
+describe("bundledBunSkillPath in a compiled-binary layout", () => {
+	let tempDir: string | undefined;
+
+	afterEach(() => {
+		if (tempDir !== undefined) {
+			rmSync(tempDir, { recursive: true, force: true });
+			tempDir = undefined;
+		}
+	});
+
+	it("resolves the sidecar skill next to the executable when the embedded path is absent", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "codemode-skill-sidecar-"));
+		const binaryDir = join(tempDir, "bin");
+		const sidecarSkill = join(
+			binaryDir,
+			"node_modules",
+			"@code-yeongyu",
+			"senpi-codemode",
+			"src",
+			"skill",
+			"bun",
+			"SKILL.md",
+		);
+		mkdirSync(dirname(sidecarSkill), { recursive: true });
+		writeFileSync(sidecarSkill, "---\nname: bun\n---\n# Bun 1.4\n");
+
+		const result = bundledBunSkillPath(join(tempDir, "embedded", "extension"), {
+			bunVersion: "1.4.0",
+			executablePath: join(binaryDir, "pi"),
+		});
+
+		expect(result).toBe(sidecarSkill);
+	});
+
+	it("reports a missing skill on stderr so RPC stdout stays protocol-clean", async () => {
+		vi.resetModules();
+		const fresh = await import("../src/extension/skill-contribution.ts");
+		tempDir = mkdtempSync(join(tmpdir(), "codemode-skill-missing-"));
+		const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			const result = fresh.bundledBunSkillPath(join(tempDir, "embedded", "extension"), {
+				bunVersion: "1.4.0",
+				executablePath: join(tempDir, "bin", "pi"),
+			});
+
+			expect(result).toBeUndefined();
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(debugSpy).not.toHaveBeenCalled();
+			expect(logSpy).not.toHaveBeenCalled();
+
+			// The notice names BOTH probed locations: a compiled binary never has the
+			// module-relative asset, so the sidecar path is the actionable one.
+			const notice = String(errorSpy.mock.calls[0]?.[0] ?? "");
+			expect(notice).toContain(join(tempDir, "embedded", "skill", "bun", "SKILL.md"));
+			expect(notice).toContain(
+				join(tempDir, "bin", "node_modules", "@code-yeongyu", "senpi-codemode", "src", "skill", "bun", "SKILL.md"),
+			);
+		} finally {
+			debugSpy.mockRestore();
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
 	});
 });
 
@@ -84,17 +167,18 @@ describe("registerBunSkillContribution", () => {
 	});
 });
 
-describe("bun-1-4 skill assets", () => {
-	it("pins SKILL.md frontmatter name and exactly 10 reference markdown files", () => {
-		expect(readFileSync(bunSkillMd, "utf8")).toContain("name: bun-1-4");
-		const references = readdirSync(bunSkillRefs).filter((name) => name.endsWith(".md"));
-		expect(references).toHaveLength(10);
-	});
-
-	it("ships a single document: one frontmatter block and one H1", () => {
+describe("bun skill assets", () => {
+	it("pins the SKILL.md frontmatter the skill loader reads: one block carrying name: bun", () => {
 		const text = readFileSync(bunSkillMd, "utf8");
 		expect(text.match(/^---$/gm)).toHaveLength(2);
-		expect(text.match(/^# Bun 1\.4/gm)).toHaveLength(1);
-		expect(text.match(/^## Operating rules$/gm)).toHaveLength(1);
+		expect(text).toContain("name: bun");
+	});
+
+	it("ships English-only copy: no Hangul in SKILL.md or any reference", () => {
+		const hangul = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/u;
+		const files = [bunSkillMd, ...readdirSync(bunSkillRefs).map((name) => join(bunSkillRefs, name))];
+		for (const file of files) {
+			expect(hangul.test(readFileSync(file, "utf8")), file).toBe(false);
+		}
 	});
 });

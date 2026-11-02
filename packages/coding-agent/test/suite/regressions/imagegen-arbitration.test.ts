@@ -10,7 +10,14 @@
  * verifies that the truth-table rows discriminating native-vs-client fail.
  */
 
-import type { AssistantImages, ImagesContext, ImagesModel, Model, ProviderImagesOptions } from "@earendil-works/pi-ai";
+import type {
+	AssistantImages,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
+	Model,
+	ProviderImagesOptions,
+} from "@earendil-works/pi-ai";
 import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImageGenAuthRegistry } from "../../../src/core/extensions/builtin/imagegen/auth.ts";
@@ -132,7 +139,7 @@ function registerStubImagesProvider(): StubController {
 		{
 			api: "openai-images" as const,
 			async generateImages(
-				model: ImagesModel<"openai-images">,
+				model: ImageModel<ImageApi>,
 				_context: ImagesContext,
 				_options?: ProviderImagesOptions,
 			): Promise<AssistantImages> {
@@ -648,9 +655,11 @@ describe("imagegen arbitration truth table", () => {
 			}
 
 			// ── consumer 2: client tool behavior ────────────────────────
-			const toolResult = await harness.session.executeTool<GenerateImageDetails>(GENERATE_IMAGE, {
-				prompt: "a fox in the snow",
-			});
+			const toolResult = await harness.session.executeTool<GenerateImageDetails>(
+				GENERATE_IMAGE,
+				{ prompt: "a fox in the snow" },
+				{ activateInactiveTool: true },
+			);
 			if (exp.toolBehavior === "live") {
 				expect(toolResult.details.reason, "live tool has no reason").toBeUndefined();
 				expect(stub.calls, "live tool must have called the images provider").toBeGreaterThan(0);

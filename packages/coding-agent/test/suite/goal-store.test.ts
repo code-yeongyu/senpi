@@ -113,7 +113,7 @@ describe("goal store JSON recovery", () => {
 	});
 
 	it("preserves an inert token budget in the current goal store", async () => {
-		// Given: current-store goals may carry tokenBudget as inert app-server wire metadata.
+		// Given: current-store goals may carry tokenBudget as inert legacy metadata.
 		const ref = await tempStore("thread-current-token-budget");
 		const goal = { ...(await createGoal(ref, "Keep the current token budget")), tokenBudget: 8_192 };
 		await writeGoal(ref, goal);

@@ -1,21 +1,46 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
 import { AnthropicNativeToolSearchAdapter, isMcpNativeToolSearchEnabled } from "./native-search.ts";
-import { getToolSearchService, installScopedToolSearchService, ToolSearchService } from "./service.ts";
+import {
+	installScopedToolSearchService,
+	registerToolSearchServiceForExtensionLoad,
+	ToolSearchService,
+} from "./service.ts";
 import { createToolSearchTool, TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
 
 export function createToolSearchExtension(service: ToolSearchService): ExtensionFactory {
 	return (pi: ExtensionAPI): void => {
 		service.bindRuntime(pi);
 
-		pi.on("session_start", (_event, ctx) => {
+		// Boot point (senpi#5217): a session boots the catalog at session_start; a runtime with no
+		// session boots it at the first tool call a context sees. Each context boots once.
+		// A context with no session manager is the runtime itself: one boot per runtime.
+		// A session drops this hook at session_start, so its tool calls emit no tool_hook_status for it (senpi#5320).
+		const bootedContexts = new WeakSet<object>();
+		const runtimeKey = {};
+		const dropFirstUseBoot = pi.on("tool_call", (_event, ctx) => {
+			const key = ctx.sessionManager ?? runtimeKey;
+			if (bootedContexts.has(key) || service.isDisposed || !canListTools(pi)) return;
+			bootedContexts.add(key);
+			service.getCatalog();
+		});
+
+		pi.on("session_start", async (_event, ctx) => {
+			dropFirstUseBoot();
+			bootedContexts.add(ctx.sessionManager ?? runtimeKey);
 			service.beginSession();
-			service.maybeRehydrateFromHistory(ctx.sessionManager.getEntries());
+			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
 		});
-		pi.on("context", (event) => {
-			service.maybeRehydrateFromHistory(event.messages);
-		});
-		pi.registerLazyToolActivator((toolName) => service.activateTool(toolName));
+		pi.on(
+			"context",
+			(event) => {
+				service.maybeRehydrateFromHistory(event.messages);
+			},
+			{ mutatesMessages: false },
+		);
+		// A retired generation's activator declines, so the current generation's activator answers.
+		pi.registerLazyToolActivator((toolName) => !service.isDisposed && service.activateTool(toolName));
 		let toolRegistered = false;
 		service.bindToolRegistrar(() => {
 			if (toolRegistered) return;
@@ -45,10 +70,23 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 				return doc?.source === "extension" && !pi.getActiveTools().includes(name);
 			},
 			searchToolName: TOOL_SEARCH_TOOL_NAME,
+			onFallback: (reason) => service.noteNativeInjectionFailure(reason),
 		});
-		pi.on("before_provider_request", (event, ctx) => nativeAdapter.applyBeforeRequest(ctx.model?.api, event.payload));
+		pi.on("before_provider_request", (event, ctx) =>
+			nativeAdapter.applyBeforeRequest(event.model ?? ctx.model, event.payload),
+		);
 		pi.on("after_provider_response", (event) => nativeAdapter.noteResponseStatus(event.status));
 	};
+}
+
+// A runtime whose core is not bound yet cannot list its tools; its catalog boots at a later tool call.
+function canListTools(pi: ExtensionAPI): boolean {
+	try {
+		pi.getAllTools();
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 function hasProviderScope(): boolean {
@@ -66,9 +104,9 @@ export default function toolSearchExtension(pi: ExtensionAPI): void | Promise<vo
 		getActiveTools: () => pi.getActiveTools(),
 		setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
 	};
-	const sessionOwned = hasProviderScope();
-	const service = sessionOwned ? new ToolSearchService(runtime) : getToolSearchService(runtime);
-	if (sessionOwned) installScopedToolSearchService(service);
+	const service = new ToolSearchService(runtime);
+	if (hasProviderScope()) installScopedToolSearchService(service);
+	registerToolSearchServiceForExtensionLoad(pi, service);
 	return createToolSearchExtension(service)(pi);
 }
 

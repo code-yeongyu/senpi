@@ -1,7 +1,0 @@
-{"scenario":"16-backpressure-lag","step":"enqueue","method":"item/agentMessage/delta","streamClass":"lossless","sequence":1,"result":"queued"}
-{"scenario":"16-backpressure-lag","step":"enqueue","method":"item/commandExecution/outputDelta","streamClass":"best-effort","sequence":2,"result":"queued"}
-{"scenario":"16-backpressure-lag","step":"enqueue","method":"process/outputDelta","streamClass":"best-effort","sequence":3,"result":"dropped","droppedProgressEvents":1}
-{"scenario":"16-backpressure-lag","step":"enqueue","method":"item/completed","streamClass":"lossless","sequence":4,"result":"queued"}
-{"scenario":"16-backpressure-lag","step":"drain","methods":["item/agentMessage/delta","item/commandExecution/outputDelta","lag","item/completed"],"sequences":[1,2,3,4],"monotonicUniqueSequences":true,"lagBeforeNextLossless":true,"droppedProgressEvents":1,"nextLosslessSequence":4}
-{"scenario":"16-backpressure-lag","step":"terminal-flush","methods":["item/commandExecution/outputDelta","item/agentMessage/delta","turn/completed"],"losslessDropped":false}
-{"scenario":"16-backpressure-lag","step":"overload","code":-32001,"message":"app-server overloaded","retryable":true,"retryAfterMs":250}

@@ -31,6 +31,7 @@ export function createCompactionHandlers(): CompactionHandlers {
 		resolveSpeculativeJob = resolve;
 	});
 	const api = {
+		appendEntry: vi.fn(),
 		events: {
 			emit: () => undefined,
 		},
@@ -169,6 +170,7 @@ export function createBlockingContext(options: {
 export function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 	return {
 		type: "before_agent_start",
+		trigger: "prompt",
 		prompt: "continue",
 		systemPrompt: "system",
 		systemPromptOptions: Object.create(null) as BeforeAgentStartEvent["systemPromptOptions"],

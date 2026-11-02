@@ -1,4 +1,4 @@
-import type { AssistantMessage, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
 import { runOpenAiRemoteCompaction } from "../../src/core/extensions/builtin/compaction/openai-remote.ts";
@@ -100,7 +100,7 @@ function completedCompactionMessage(model: RemoteCompactionV2Model): AssistantMe
 function streamRunner(model: RemoteCompactionV2Model, captured: { payload?: unknown; options?: SimpleStreamOptions }) {
 	return vi.fn(
 		(
-			_model: Model<"openai-responses">,
+			_model: Model<Api>,
 			_context: unknown,
 			options?: SimpleStreamOptions,
 		): { result: () => Promise<AssistantMessage> } => ({

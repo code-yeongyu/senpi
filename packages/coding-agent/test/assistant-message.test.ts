@@ -1,4 +1,7 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, describeProviderFailureForUser } from "@earendil-works/pi-ai";
+import { describeChatGptUsageLimit } from "@earendil-works/pi-ai/api/chatgpt-usage-limit";
+import { providerNotConfiguredMessage } from "@earendil-works/pi-ai/auth/resolve";
+import type { TuiMouseEvent } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
@@ -103,6 +106,72 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("Error: network disconnected");
 	});
 
+	test.each([80, 120])("renders auth-miss recovery commands at width %s from the auth sentinel", (width) => {
+		initTheme("dark");
+		const sentinel = providerNotConfiguredMessage("test-provider");
+		for (const errorMessage of [sentinel, `senpi:no-turn-retry:${sentinel}`]) {
+			const component = new AssistantMessageComponent(
+				createAssistantMessage([{ type: "text", text: "partial reply" }], {
+					stopReason: "error",
+					errorMessage,
+				}),
+			);
+			const rendered = stripAnsi(component.render(width).join("\n"));
+			expect(rendered.match(/\/(?:login|model)\b/g)).toEqual(["/login", "/model"]);
+			expect(rendered).not.toContain(sentinel);
+			expect(rendered).not.toContain("senpi:no-turn-retry:");
+			expect(rendered).toContain("partial reply");
+		}
+	});
+
+	test.each(["anthropic", "anthropic-subscription"])(
+		"renders billing recovery commands for %s in live and restored messages",
+		(provider) => {
+			initTheme("dark");
+			const raw =
+				'400 {"error":{"type":"invalid_request_error","message":"Third-party apps now draw from your extra usage, not your plan limits. Add more at claude.ai/settings/usage and keep going."}}';
+			const published = describeProviderFailureForUser(raw, {
+				model: `${provider}/test-model`,
+				usageLimit: "account",
+			});
+			for (const errorMessage of [raw, published]) {
+				const message = {
+					...createAssistantMessage([], { stopReason: "error", errorMessage }),
+					provider,
+					errorCause: { type: "usage_limit", scope: "account" } as const,
+				};
+				const component = new AssistantMessageComponent(message);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+				const commands = rendered.match(/\/(?:login|model)\b/g);
+				expect(commands).toEqual(provider === "anthropic" ? ["/login", "/model"] : ["/model"]);
+			}
+		},
+	);
+
+	// #4329: the adapter's next-step sentinel owns its advice; generic limits still need a TUI command.
+	test.each([false, true])("adds a model command only without adapter recovery advice (adapter=%s)", (adapter) => {
+		initTheme("dark");
+		const errorMessage = adapter
+			? describeChatGptUsageLimit({ header: () => undefined })
+			: '429 {"error":{"message":"You have hit your session limit; resets 11pm"}}';
+		const raw = createAssistantMessage([], { stopReason: "error", errorMessage });
+		const published = {
+			...raw,
+			errorMessage: describeProviderFailureForUser(errorMessage, {
+				model: `${raw.provider}/${raw.model}`,
+				usageLimit: "account",
+			}),
+			errorCause: { type: "usage_limit", scope: "account" } as const,
+		};
+		for (const message of [raw, published]) {
+			const rendered = stripAnsi(new AssistantMessageComponent(message).render(120).join("\n"));
+			expect(rendered.match(/\/model\b/g) ?? []).toEqual(adapter ? [] : ["/model"]);
+			if (adapter) {
+				expect(rendered.replace(/\s+/g, " ")).toContain(errorMessage);
+			}
+		}
+	});
+
 	test("renders resumed aborted assistant messages with a stable user-facing label", () => {
 		initTheme("dark");
 
@@ -193,6 +262,75 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("https://ast-grep.github.io/");
 		expect(rendered).not.toContain("secret-payload");
 		expect(rendered).not.toContain("encrypted_content");
+	});
+
+	test("#given an Anthropic tool_search_tool_result #when rendering providerNative #then lists the discovered tool names", () => {
+		// given
+		initTheme("dark");
+		const component = new AssistantMessageComponent({
+			...createAssistantMessage([
+				{
+					type: "providerNative",
+					subtype: "tool_search_tool_result",
+					raw: {
+						type: "tool_search_tool_result",
+						tool_use_id: "srvtoolu_123",
+						content: {
+							type: "tool_search_tool_search_result",
+							tool_references: [
+								{ type: "tool_reference", tool_name: "memory" },
+								{ type: "tool_reference", tool_name: "web_search" },
+							],
+						},
+					},
+				},
+			]),
+			api: "anthropic-messages",
+			provider: "anthropic",
+		});
+
+		// when
+		const rendered = component.render(160).join("\n");
+
+		// then
+		expect(rendered).toContain("▸ anthropic · tool_search results");
+		expect(rendered).toContain("2 tools");
+		expect(rendered).toContain("memory");
+		expect(rendered).toContain("web_search");
+		expect(rendered).not.toContain("tool_search_tool_search_result");
+		expect(rendered).not.toContain("srvtoolu_123");
+	});
+
+	test("#given a failed tool search #when rendering providerNative #then the error code and message are shown", () => {
+		// given
+		initTheme("dark");
+		const component = new AssistantMessageComponent({
+			...createAssistantMessage([
+				{
+					type: "providerNative",
+					subtype: "tool_search_tool_result",
+					raw: {
+						type: "tool_search_tool_result",
+						tool_use_id: "srvtoolu_456",
+						content: {
+							type: "tool_search_tool_result_error",
+							error_code: "invalid_tool_input",
+							error_message: "Invalid regular expression pattern",
+						},
+					},
+				},
+			]),
+			api: "anthropic-messages",
+			provider: "anthropic",
+		});
+
+		// when
+		const rendered = component.render(160).join("\n");
+
+		// then
+		expect(rendered).toContain("▸ anthropic · tool_search results");
+		expect(rendered).toContain("invalid_tool_input");
+		expect(rendered).toContain("Invalid regular expression pattern");
 	});
 
 	test("#given OpenAI native web_search_call sources #when rendering providerNative #then displays status query and sources", () => {
@@ -419,6 +557,40 @@ describe("AssistantMessageComponent", () => {
 		expect(visible.trim()).toBe("");
 		expect(hidden).not.toContain("Thought:");
 		expect(hidden.trim()).toBe("");
+	});
+	test("collapses individual thinking runs when clicked", () => {
+		initTheme("dark");
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "first reasoning" },
+				{ type: "text", text: "answer" },
+				{ type: "thinking", thinking: "second reasoning" },
+			]),
+		);
+		const width = 80;
+		const lines = component.render(width);
+		const firstThinkingRow = lines.findIndex((line) => stripAnsi(line).includes("first reasoning"));
+		expect(firstThinkingRow).toBeGreaterThanOrEqual(0);
+		const event: TuiMouseEvent = {
+			type: "click",
+			button: "left",
+			x: 1,
+			y: firstThinkingRow,
+			screenX: 1,
+			screenY: firstThinkingRow,
+			width,
+			height: lines.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			clickCount: 1,
+		};
+		expect(component.handleMouse(event)?.handled).toBe(true);
+
+		const collapsed = stripAnsi(component.render(width).join("\n"));
+		expect(collapsed).not.toContain("first reasoning");
+		expect(collapsed).toContain("Thinking...");
+		expect(collapsed).toContain("second reasoning");
 	});
 
 	test("uses configured output padding for text and thinking", () => {

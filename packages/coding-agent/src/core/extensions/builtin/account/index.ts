@@ -1,30 +1,25 @@
-import {
-	type CredentialAccountSummary,
-	getCredentialAccounts,
-	pinCredentialAccount,
-	removeCredentialAccount,
-} from "../../../credential-accounts.ts";
+import { resetCredentialAccount } from "../../../credential-account-reset.ts";
+import { describeCredentialAccount } from "../../../credential-account-status.ts";
+import { getCredentialAccounts, pinCredentialAccount, removeCredentialAccount } from "../../../credential-accounts.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
+import { accountDisplayNameCommand } from "../account-display-name.ts";
 
 function parseArgs(rawArgs: string): string[] {
 	return rawArgs.trim().split(/\s+/).filter(Boolean);
 }
 
 function usage(ctx: ExtensionCommandContext): void {
-	ctx.ui.notify("Usage: /account <provider> [list | pin <name> | unpin | remove <name>]", "error");
-}
-
-function statusOf(account: CredentialAccountSummary): string {
-	const states = [account.name, account.source, account.blocked ? "blocked" : "available"];
-	if (account.pinned) states.push("pinned");
-	return states.join(" | ");
+	ctx.ui.notify(
+		"Usage: /account <provider> [list | pin <id> | unpin | reset <id> | remove <id> | rename <id> <display name...> | clear-name <id>]",
+		"error",
+	);
 }
 
 async function showAccounts(ctx: ExtensionCommandContext, provider: string): Promise<void> {
 	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, provider);
 	const lines = [`Credential accounts for ${provider}:`];
 	if (accounts.length === 0) lines.push("  (none)");
-	for (const account of accounts) lines.push(`  ${statusOf(account)}`);
+	for (const account of accounts) lines.push(`  ${describeCredentialAccount(account)}`);
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
@@ -37,7 +32,9 @@ async function showAccounts(ctx: ExtensionCommandContext, provider: string): Pro
 export default function accountExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("account", {
 		description: "List and manage credential accounts for any provider.",
-		argumentHint: "<provider> [list | pin <name> | unpin | remove <name>]",
+		requiresArguments: true,
+		argumentHint:
+			"<provider> [list | pin <id> | unpin | reset <id> | remove <id> | rename <id> <display name...> | clear-name <id>]",
 		handler: async (rawArgs, ctx) => {
 			const args = parseArgs(rawArgs);
 			const provider = args[0];
@@ -45,6 +42,7 @@ export default function accountExtension(pi: ExtensionAPI): void {
 				usage(ctx);
 				return;
 			}
+			if (await accountDisplayNameCommand(ctx, provider, rawArgs.trim().replace(/^\S+\s*/, ""))) return;
 			const action = args[1] ?? "list";
 			try {
 				if (action === "list") {
@@ -61,9 +59,17 @@ export default function accountExtension(pi: ExtensionAPI): void {
 					ctx.ui.notify(`Unpinned ${provider} account.`, "info");
 					return;
 				}
+				if (action === "reset" && args[2] !== undefined) {
+					await resetCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
+					ctx.ui.notify(
+						`Cleared the cooldown on ${provider} account '${args[2]}'; the next request tries it again.`,
+						"info",
+					);
+					return;
+				}
 				if (action === "remove" && args[2] !== undefined) {
-					await removeCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
-					ctx.ui.notify(`Removed ${provider} account '${args[2]}'.`, "info");
+					const { notice } = await removeCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
+					ctx.ui.notify(notice ?? `Removed ${provider} account '${args[2]}'.`, notice ? "warning" : "info");
 					return;
 				}
 				usage(ctx);

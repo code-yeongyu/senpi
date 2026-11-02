@@ -1,5 +1,5 @@
-import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { type Component, nextRenderRevision } from "../tui.ts";
+import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 /**
  * Text component - displays multi-line text with word wrapping
@@ -14,6 +14,7 @@ export class Text implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private revision = nextRenderRevision();
 
 	constructor(text: string = "", paddingX: number = 1, paddingY: number = 1, customBgFn?: (text: string) => string) {
 		this.text = text;
@@ -23,6 +24,7 @@ export class Text implements Component {
 	}
 
 	setText(text: string): void {
+		if (text !== this.text) this.markRevision();
 		this.text = text;
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
@@ -31,6 +33,7 @@ export class Text implements Component {
 
 	setCustomBgFn(customBgFn?: (text: string) => string): void {
 		this.customBgFn = customBgFn;
+		this.markRevision();
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
@@ -40,6 +43,22 @@ export class Text implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.markRevision();
+	}
+
+	/** Instances that expose a revision advance the shared clock; others (e.g. an animated subclass) stay local. */
+	private markRevision(): void {
+		this.revision = this.getRenderRevision() === undefined ? this.revision + 1 : nextRenderRevision();
+	}
+
+	/** Exact `Text` instances only: a subclass may render more than its text and opts in with {@link textRenderRevision}. */
+	getRenderRevision(): number | undefined {
+		return Object.getPrototypeOf(this) === Text.prototype ? this.revision : undefined;
+	}
+
+	/** Revision of the text, padding and background state this class renders. */
+	protected textRenderRevision(): number {
+		return this.revision;
 	}
 
 	render(width: number): string[] {
@@ -96,6 +115,7 @@ export class Text implements Component {
 		}
 
 		const result = [...emptyLines, ...contentLines, ...emptyLines];
+		flattenLines(result);
 
 		// Update cache
 		this.cachedText = this.text;

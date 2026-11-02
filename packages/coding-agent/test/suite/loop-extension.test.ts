@@ -93,6 +93,8 @@ interface Fixture {
 	readonly ctx: ExtensionContext;
 	readonly timers: FakeTimers;
 	readonly controller: LoopController;
+	readonly registeredTools: Array<{ name: string; exposure?: string; allowLazyActivation?: boolean }>;
+	activeTools(): string[];
 	readonly userMessages: SentUserMessage[];
 	readonly customMessages: SentCustomMessage[];
 	readonly entries: Array<{ customType: string; data: unknown }>;
@@ -152,9 +154,19 @@ async function fixture(
 		await writeFile(path, options.corruptStore, "utf8");
 	}
 
+	const registeredTools: Array<{ name: string; exposure?: string; allowLazyActivation?: boolean }> = [];
+	// Mirrors the session's active-tool list: search-exposed tools start inactive and only
+	// `setActiveTools` promotes them, exactly like `AgentSession.setActiveToolsByName`.
+	let activeTools: string[] = ["read", "bash"];
 	const pi = {
 		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-		registerTool: () => {},
+		registerTool: (tool: { name: string; exposure?: string; allowLazyActivation?: boolean }) => {
+			registeredTools.push(tool);
+		},
+		getActiveTools: () => [...activeTools],
+		setActiveTools: (names: string[]) => {
+			activeTools = [...names];
+		},
 		registerEntryRenderer: () => {},
 		registerCommand: () => {},
 		appendEntry: (customType: string, data: unknown) => entries.push({ customType, data }),
@@ -253,6 +265,8 @@ async function fixture(
 		ctx,
 		timers,
 		controller,
+		registeredTools,
+		activeTools: () => [...activeTools],
 		userMessages,
 		customMessages,
 		entries,
@@ -335,7 +349,7 @@ describe("loop extension tick dispatch", () => {
 		expect(f.timers.armedKeys).toHaveLength(1);
 	});
 
-	it("delivers a due tick as a follow-up while streaming and never steers", async () => {
+	it("steers a due tick into the running turn while streaming, never as a follow-up", async () => {
 		const f = await fixture();
 		await f.emit("session_start", { reason: "startup" });
 		const created = await f.controller.startFixed({
@@ -358,8 +372,8 @@ describe("loop extension tick dispatch", () => {
 		await f.controller.fireDue(created.loopId);
 
 		expect(f.userMessages).toHaveLength(1);
-		expect(f.userMessages[0].deliverAs).toBe("followUp");
-		expect(f.userMessages.some((message) => message.deliverAs === "steer")).toBe(false);
+		expect(f.userMessages[0].deliverAs).toBe("steer");
+		expect(f.userMessages.some((message) => message.deliverAs === "followUp")).toBe(false);
 	});
 
 	it("routes a timer-driven fire through persist-and-dispatch, not scheduler state alone", async () => {
@@ -612,6 +626,66 @@ describe("loop extension sentinel delivery", () => {
 	});
 });
 
+describe("loop extension schedule_wakeup exposure", () => {
+	it("registers schedule_wakeup search-exposed and keeps it inactive while no loop runs", async () => {
+		const f = await fixture();
+		await f.emit("session_start");
+
+		const tool = f.registeredTools.find((entry) => entry.name === "schedule_wakeup");
+		expect(tool?.exposure).toBe("search");
+		expect(tool?.allowLazyActivation).toBe(false);
+		expect(f.activeTools()).not.toContain("schedule_wakeup");
+	});
+
+	it("activates schedule_wakeup for a live dynamic loop and retires it when the loop ends", async () => {
+		const f = await fixture();
+		await f.emit("session_start");
+		const created = await f.controller.startDynamic({ originalArgs: "watch the queue", prompt: "watch the queue" });
+		if (!created.ok) throw new Error(created.message);
+
+		expect(f.activeTools()).toContain("schedule_wakeup");
+		// Idempotent across the tick lifecycle: one entry, never a duplicate.
+		await settleTurn(f, created.loopId);
+		expect(f.activeTools().filter((name) => name === "schedule_wakeup")).toHaveLength(1);
+
+		await f.controller.stop(created.loopId, "done");
+		expect(f.activeTools()).not.toContain("schedule_wakeup");
+		expect(f.activeTools()).toEqual(["read", "bash"]);
+	});
+
+	it("never activates schedule_wakeup for a fixed loop", async () => {
+		const f = await fixture();
+		await f.emit("session_start");
+		const created = await f.controller.startFixed({
+			originalArgs: "5m ping",
+			prompt: "ping",
+			requestedInterval: { value: 5, unit: "m", raw: "5m" },
+		});
+		if (!created.ok) throw new Error(created.message);
+
+		expect(f.activeTools()).not.toContain("schedule_wakeup");
+	});
+
+	it("re-activates schedule_wakeup when a dynamic loop is restored on session start", async () => {
+		const first = await fixture();
+		await first.emit("session_start");
+		const created = await first.controller.startDynamic({
+			originalArgs: "watch the queue",
+			prompt: "watch the queue",
+		});
+		if (!created.ok) throw new Error(created.message);
+		await settleTurn(first, created.loopId);
+		await first.emit("session_shutdown", { reason: "quit" });
+		const suspended = await first.persisted();
+		if (suspended === undefined) throw new Error("expected a suspended snapshot");
+
+		const resumed = await fixture({ now: first.now() + MINUTE, initialState: suspended });
+		expect(resumed.activeTools()).not.toContain("schedule_wakeup");
+		await resumed.emit("session_start", { reason: "resume" });
+		expect(resumed.activeTools()).toContain("schedule_wakeup");
+	});
+});
+
 describe("loop extension keepalive", () => {
 	it("arms one keepalive on the first omission and ends the loop on the second", async () => {
 		const f = await fixture();
@@ -669,6 +743,48 @@ describe("loop extension keepalive", () => {
 		expect(entry.keepaliveCredit).toBe(1);
 		expect(entry.pendingWakeup?.source).toBe("model");
 		expect(entry.phase).toBe("waiting");
+	});
+
+	it("does not charge keepalive when a tick steered into another turn ends without schedule_wakeup", async () => {
+		const f = await fixture();
+		await f.emit("session_start", { reason: "startup" });
+		const created = await f.controller.startDynamic({ originalArgs: "watch the queue", prompt: "watch the queue" });
+		expect(created.ok).toBe(true);
+		if (!created.ok) return;
+		await f.controller.scheduleWakeup({
+			loopId: created.loopId,
+			requestedDelaySeconds: 600,
+			delaySeconds: 600,
+			reason: "poll later",
+			prompt: "/loop watch the queue",
+			noop: false,
+		});
+		await f.emit("agent_end", { messages: [] });
+		await f.emit("agent_settled");
+
+		// Twice in a row: the wakeup comes due while the user's own turn is running, the tick is
+		// steered into that turn, and the turn ends on the user's work without schedule_wakeup.
+		for (let round = 0; round < 2; round++) {
+			const before = (await f.persisted())?.entries[created.loopId];
+			if (before?.kind !== "dynamic" || before.pendingWakeup === null) throw new Error("no pending wakeup");
+			f.setIdle(false);
+			await f.emit("input", { text: `user task ${round}`, source: "interactive" });
+			f.advance(before.pendingWakeup.dueAt - f.now());
+			f.userMessages.length = 0;
+			await f.controller.fireDue(created.loopId);
+			expect(f.userMessages.map((message) => message.deliverAs)).toEqual(["steer"]);
+			await f.emit("agent_end", { messages: [] });
+			f.setIdle(true);
+			await f.emit("agent_settled");
+
+			const entry = (await f.persisted())?.entries[created.loopId];
+			expect(entry?.kind).toBe("dynamic");
+			if (entry?.kind !== "dynamic") return;
+			expect(entry.phase).toBe("waiting");
+			expect(entry.keepaliveCredit).toBe(1);
+			expect(entry.pendingWakeup?.source).toBe("keepalive");
+			expect(f.timers.armedKeys).toEqual([created.loopId]);
+		}
 	});
 });
 

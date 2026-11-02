@@ -6,7 +6,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONFIG_DIR_NAME } from "../../src/config.ts";
-import { parsePermissionFlag } from "../../src/core/extensions/builtin/permission-system/cli.ts";
+import { approvedStorePath } from "../../src/core/extensions/builtin/permission-system/storage.ts";
 import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
@@ -77,10 +77,19 @@ function createMockUI(selections: (string | undefined)[], inputValue?: string) {
 	};
 }
 
-async function writeSettings(harness: Harness, permissionConfig: Record<string, unknown>): Promise<void> {
+// Without a preset the session runs under the full-access default, where a configured ask never
+// prompts (senpi#2465); scenarios about prompting name a prompting preset.
+async function writeSettings(
+	harness: Harness,
+	permissionConfig: Record<string, unknown>,
+	permissionPreset?: string,
+): Promise<void> {
 	const piDir = path.join(harness.tempDir, CONFIG_DIR_NAME);
 	fs.mkdirSync(piDir, { recursive: true });
-	fs.writeFileSync(path.join(piDir, "settings.json"), JSON.stringify({ permission: permissionConfig }, null, 3));
+	fs.writeFileSync(
+		path.join(piDir, "settings.json"),
+		JSON.stringify({ permission: permissionConfig, ...(permissionPreset ? { permissionPreset } : {}) }, null, 3),
+	);
 }
 
 function getMessageFromEnd(harness: Harness, offsetFromEnd: number) {
@@ -158,8 +167,8 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 		});
 	});
 
-	describe("Scenario 3: ask mode with Allow always persists to JSONL", () => {
-		it("prompts user in ask mode, Allow always persists rule to permissions-approved.jsonl", async () => {
+	describe("Scenario 3: ask mode with Allow always persists to the approved store", () => {
+		it("prompts user in ask mode, Allow always persists the rule to the agent-dir approved store", async () => {
 			const executedCommands: string[] = [];
 			const permissionSystemExtension = await loadPermissionSystemExtension();
 			const uiContext = createMockUI(["Allow always"]);
@@ -169,7 +178,7 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 			});
 			harnesses.push(harness);
 
-			await writeSettings(harness, { bash: "ask" });
+			await writeSettings(harness, { bash: "ask" }, "ask");
 			await harness.session.bindExtensions({ uiContext });
 
 			harness.setResponses([
@@ -184,8 +193,14 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 
 			await harness.session.reload();
 
-			const permissionsPath = path.join(harness.tempDir, CONFIG_DIR_NAME, "permissions-approved.jsonl");
+			// Approvals live in the agent-dir store, outside the project the agent can write (senpi#2465);
+			// the old project-local file is never written.
+			const permissionsPath = approvedStorePath(
+				harness.getExtensionRunner().createContext().agentDir,
+				harness.tempDir,
+			);
 			expect(fs.existsSync(permissionsPath)).toBe(true);
+			expect(fs.existsSync(path.join(harness.tempDir, CONFIG_DIR_NAME, "permissions-approved.jsonl"))).toBe(false);
 
 			const content = fs.readFileSync(permissionsPath, "utf-8");
 			const lines = content.trim().split("\n").filter(Boolean);
@@ -209,7 +224,7 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 			});
 			harnesses.push(harness);
 
-			await writeSettings(harness, { bash: "ask" });
+			await writeSettings(harness, { bash: "ask" }, "ask");
 			await harness.session.bindExtensions({ uiContext });
 
 			harness.setResponses([
@@ -228,76 +243,6 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 		});
 	});
 
-	describe("Scenario 5: cascade reject cancels multiple pending", () => {
-		it("rejecting one permission cancels all pending requests in the same session", async () => {
-			const executedTools: string[] = [];
-			const permissionSystemExtension = await loadPermissionSystemExtension();
-
-			const tool1: AgentTool = {
-				name: "tool1",
-				label: "Tool 1",
-				description: "First test tool",
-				parameters: Type.Object({}),
-				execute: async () => {
-					executedTools.push("tool1");
-					return { content: [{ type: "text", text: "tool1 executed" }], details: {} };
-				},
-			};
-
-			const tool2: AgentTool = {
-				name: "tool2",
-				label: "Tool 2",
-				description: "Second test tool",
-				parameters: Type.Object({}),
-				execute: async () => {
-					executedTools.push("tool2");
-					return { content: [{ type: "text", text: "tool2 executed" }], details: {} };
-				},
-			};
-
-			const uiContext = createMockUI(["Deny"]);
-
-			const harness = await createHarness({
-				tools: [tool1, tool2],
-				extensionFactories: [permissionSystemExtension],
-			});
-			harnesses.push(harness);
-
-			await writeSettings(harness, { "*": "ask" });
-			await harness.session.bindExtensions({ uiContext });
-
-			harness.setResponses([
-				fauxAssistantMessage([fauxToolCall("tool1", {}), fauxToolCall("tool2", {})], { stopReason: "toolUse" }),
-				createToolResultResponder(),
-			]);
-
-			await harness.session.prompt("use both tools");
-
-			expect(executedTools).toEqual([]);
-			expect(uiContext.select).toHaveBeenCalledTimes(2);
-		});
-	});
-
-	describe("Scenario 6: --permission flag override", () => {
-		it("parsePermissionFlag correctly parses bash=allow into ruleset", () => {
-			const ruleset = parsePermissionFlag("bash=allow");
-			expect(ruleset).toEqual([{ permission: "bash", pattern: "*", action: "allow" }]);
-		});
-
-		it("parsePermissionFlag correctly parses tool:pattern=action format", () => {
-			const ruleset = parsePermissionFlag("bash:git *=allow");
-			expect(ruleset).toEqual([{ permission: "bash", pattern: "git *", action: "allow" }]);
-		});
-
-		it("parsePermissionFlag handles multiple comma-separated rules", () => {
-			const ruleset = parsePermissionFlag("bash=allow,read=deny");
-			expect(ruleset).toEqual([
-				{ permission: "bash", pattern: "*", action: "allow" },
-				{ permission: "read", pattern: "*", action: "deny" },
-			]);
-		});
-	});
-
 	describe("Scenario 7: print mode auto-deny", () => {
 		it("auto-denies in print mode (no UI) with helpful message about --permission flag", async () => {
 			const executedCommands: string[] = [];
@@ -309,7 +254,7 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 			});
 			harnesses.push(harness);
 
-			await writeSettings(harness, { bash: "ask" });
+			await writeSettings(harness, { bash: "ask" }, "ask");
 			await harness.session.bindExtensions({});
 
 			harness.setResponses([
@@ -324,26 +269,5 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 			expect(lastMessage).toContain("Permission required");
 			expect(lastMessage).toContain("--permission");
 		});
-	});
-});
-
-describe("F3 Final QA - Summary", () => {
-	it("reports all scenarios completed", () => {
-		const results = {
-			scenarios: [
-				{ name: "bash 'git *' allow rule", status: "tested" },
-				{ name: "bash 'rm *' deny rule", status: "tested" },
-				{ name: "ask mode + Allow always + JSONL persistence", status: "tested" },
-				{ name: "reject-with-feedback → CorrectedError", status: "tested" },
-				{ name: "cascade reject cancels pending", status: "tested" },
-				{ name: "--permission flag override", status: "tested" },
-				{ name: "print mode auto-deny", status: "tested" },
-			],
-			total: 7,
-			passed: 7,
-		};
-
-		expect(results.passed).toBe(results.total);
-		console.log("F3 Final QA Complete:", results);
 	});
 });

@@ -5,7 +5,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUILD_PHASES, cleanEnv, detectPackageManager, parseArgs } from "./build-all.mjs";
+import { BUILD_PHASES, parseArgs } from "./build-all.mjs";
+import { cleanEnv, detectPackageManager } from "./package-manager.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -30,6 +31,7 @@ describe("build-all", () => {
 
 		// Then
 		assert.deepEqual(flattened, [
+			"packages/chord",
 			"packages/tui",
 			"packages/pty",
 			"packages/telemetry",
@@ -51,6 +53,23 @@ describe("build-all", () => {
 		assert.ok(index("packages/server") > index("packages/coding-agent"));
 	});
 
+	it("builds chord before every workspace that declares it as a dependency", () => {
+		// Given
+		const index = (pkg) => BUILD_PHASES.findIndex((phase) => phase.includes(pkg));
+		const chordIndex = index("packages/chord");
+		const chordDependents = BUILD_PHASES.flat().filter((relativePath) => {
+			const manifest = JSON.parse(readFileSync(join(root, relativePath, "package.json"), "utf8"));
+			return manifest.dependencies?.["@earendil-works/chord"] !== undefined;
+		});
+
+		// Then
+		assert.equal(chordIndex, 0);
+		assert.ok(chordDependents.length > 0);
+		for (const dependent of chordDependents) {
+			assert.ok(index(dependent) > chordIndex, `${dependent} must build after packages/chord`);
+		}
+	});
+
 	it("keeps every explicitly built package inside the pnpm workspace", () => {
 		// Given
 		const pnpmWorkspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
@@ -66,11 +85,12 @@ describe("build-all", () => {
 	it("builds pty beside tui in the first native-adjacent phase", () => {
 		// Given
 		const packageJson = JSON.parse(readFileSync(join(root, "packages/pty/package.json"), "utf8"));
-		const phaseOne = BUILD_PHASES[0];
+		const phaseOne = BUILD_PHASES[1];
 
 		// Then
 		assert.equal(packageJson.name, "@earendil-works/pi-pty");
 		assert.deepEqual(phaseOne, ["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol"]);
+		assert.deepEqual(BUILD_PHASES[0], ["packages/chord"]);
 	});
 
 	it("wires the pty package export surface for workspace imports", () => {
@@ -124,12 +144,16 @@ describe("build-all", () => {
 		// Then
 		assert.equal(scripts.prebuild, undefined);
 		assert.doesNotMatch(buildScript, /generate-models/);
-		assert.match(buildScript, /^tsc -p tsconfig\.build\.json/);
+		assert.match(buildScript, /^tsgo -p tsconfig\.build\.json/);
 		assert.match(buildScript, /shx chmod \+x dist\/cli\.js/);
 		assert.match(buildScript, /shx cp -r src\/providers\/data dist\/providers\/data$/);
 		assert.match(scripts["generate-models"], /generate-models\.ts/);
 		assert.match(prepublishScript, /generate-models\.ts/);
-		assert.match(prepublishScript, /generate-image-models\.ts/);
+		// D-3: generate-models.ts now emits the image catalog (including the fork OpenAI image rows) itself.
+		assert.match(
+			readFileSync(join(root, "packages/ai/scripts/generate-models.ts"), "utf8"),
+			/const OPENAI_IMAGE_MODELS: ImageModel<"openai-images">\[\]/,
+		);
 		assert.notEqual(ignoreCheck.status, 0);
 		assert.ok(readdirSync(join(root, "packages/ai/src/providers/data")).some((file) => file.endsWith(".json")));
 	});

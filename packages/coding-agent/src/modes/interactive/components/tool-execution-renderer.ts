@@ -1,7 +1,7 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { Box, type Component, Container, getCapabilities, Text } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, getCapabilities, MouseRegion, Text } from "@earendil-works/pi-tui";
 import type { ToolRenderContext } from "../../../core/extensions/types.ts";
-import { createAllToolDefinitions, type ToolDef, type ToolName } from "../../../core/tools/index.ts";
+import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.ts";
 import { theme } from "../theme/theme.ts";
 import { formatToolProgressLine, readToolProgress } from "../tool-progress.ts";
 import {
@@ -9,30 +9,70 @@ import {
 	createToolResultFallback,
 	formatToolExecutionFallback,
 } from "./tool-execution-fallback.ts";
-import type { ToolExecutionIdentity, ToolExecutionRenderState, ToolExecutionResult } from "./tool-execution-types.ts";
+import type {
+	ToolExecutionIdentity,
+	ToolExecutionRenderState,
+	ToolExecutionResult,
+	ToolRenderers,
+} from "./tool-execution-types.ts";
 import { isComponent, ToolRendererBoundary } from "./tool-renderer-boundary.ts";
 
 type RenderContainer = Box | Container;
+
+/**
+ * The built-in renderers, one set per working directory. Each card used to build all nine tool
+ * definitions and keep its own copy of one, descriptions included, for the rest of the session (#2537).
+ * Deliberately unbounded: a session renders cards for a handful of working directories at most.
+ */
+const builtInDefinitionsByCwd = new Map<string, Record<ToolName, ToolRenderers>>();
+
+function builtInDefinitionsFor(cwd: string): Record<ToolName, ToolRenderers> {
+	let definitions = builtInDefinitionsByCwd.get(cwd);
+	if (definitions === undefined) {
+		definitions = createAllToolDefinitions(cwd);
+		builtInDefinitionsByCwd.set(cwd, definitions);
+	}
+	return definitions;
+}
 type RendererSlot = "call" | "result";
+
+/** What a released renderer keeps instead of its last render state; `update` sets the real one before any paint. */
+const RELEASED_STATE: ToolExecutionRenderState = {
+	args: undefined,
+	executionStarted: false,
+	argsComplete: false,
+	isPartial: false,
+	expanded: false,
+	showImages: false,
+	spinnerFrame: 0,
+	result: undefined,
+};
 
 export class ToolExecutionRenderer extends Container {
 	private readonly identity: ToolExecutionIdentity;
-	private readonly builtInDefinition: ToolDef | undefined;
+	private readonly builtInDefinition: ToolRenderers | undefined;
 	private readonly contentBox: Box;
 	private readonly contentText: Text;
 	private readonly selfRenderContainer = new Container();
 	private readonly rendererState: Record<string, unknown> = {};
 	private readonly onInvalidate: () => void;
+	private readonly onToggleExpanded: (() => void) | undefined;
 	private state: ToolExecutionRenderState;
 	private callRendererComponent?: Component;
 	private resultRendererComponent?: Component;
 
-	constructor(identity: ToolExecutionIdentity, state: ToolExecutionRenderState, onInvalidate: () => void) {
+	constructor(
+		identity: ToolExecutionIdentity,
+		state: ToolExecutionRenderState,
+		onInvalidate: () => void,
+		onToggleExpanded?: () => void,
+	) {
 		super();
 		this.identity = identity;
 		this.state = state;
 		this.onInvalidate = onInvalidate;
-		this.builtInDefinition = createAllToolDefinitions(identity.cwd)[identity.toolName as ToolName];
+		this.onToggleExpanded = onToggleExpanded;
+		this.builtInDefinition = builtInDefinitionsFor(identity.cwd)[identity.toolName as ToolName];
 		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.addChild(
@@ -40,8 +80,19 @@ export class ToolExecutionRenderer extends Container {
 				? this.renderShell === "self"
 					? this.selfRenderContainer
 					: this.contentBox
-				: this.contentText,
+				: this.clickToExpand(this.contentText),
 		);
+	}
+
+	/** Left-clicking a finished tool card toggles it (upstream 71026970a); pending cards ignore clicks. */
+	private clickToExpand(component: Component): Component {
+		const onToggleExpanded = this.onToggleExpanded;
+		if (!onToggleExpanded) return component;
+		return new MouseRegion(component, (event) => {
+			if (!this.state.result || event.type !== "click" || event.button !== "left") return undefined;
+			onToggleExpanded();
+			return { handled: true };
+		});
 	}
 
 	get hasRendererDefinition(): boolean {
@@ -83,11 +134,23 @@ export class ToolExecutionRenderer extends Container {
 			container.addChild(new Text(formatToolProgressLine(progress, Date.now(), state.spinnerFrame), 0, 0));
 	}
 
-	private getCallRenderer(): ToolDef["renderCall"] | undefined {
+	/** Drops the built call and result content; the next `update` builds it again from state. */
+	releaseContent(): void {
+		this.contentBox.detachAll();
+		this.selfRenderContainer.detachAll();
+		this.contentText.setText("");
+		this.callRendererComponent = undefined;
+		this.resultRendererComponent = undefined;
+		// The last render state held its own filtered copy of the result (about 2 KB per card); the card keeps the
+		// original and passes a fresh state to `update` when it is painted again (#2537).
+		this.state = RELEASED_STATE;
+	}
+
+	private getCallRenderer(): ToolRenderers["renderCall"] {
 		return this.identity.toolDefinition?.renderCall ?? this.builtInDefinition?.renderCall;
 	}
 
-	private getResultRenderer(): ToolDef["renderResult"] | undefined {
+	private getResultRenderer(): ToolRenderers["renderResult"] {
 		return this.identity.toolDefinition?.renderResult ?? this.builtInDefinition?.renderResult;
 	}
 
@@ -112,10 +175,10 @@ export class ToolExecutionRenderer extends Container {
 	}
 
 	private renderCall(container: RenderContainer): void {
-		const fallback = createToolCallFallback(this.identity.toolName);
+		const fallback = createToolCallFallback(this.identity.toolName, this.state.args, this.state.expanded);
 		const renderer = this.getCallRenderer();
 		if (!renderer) {
-			container.addChild(fallback);
+			container.addChild(this.clickToExpand(fallback));
 			return;
 		}
 		try {
@@ -123,7 +186,7 @@ export class ToolExecutionRenderer extends Container {
 			this.addRendererComponent(container, "call", component, fallback);
 		} catch {
 			this.callRendererComponent = undefined;
-			container.addChild(fallback);
+			container.addChild(this.clickToExpand(fallback));
 		}
 	}
 
@@ -131,7 +194,7 @@ export class ToolExecutionRenderer extends Container {
 		const fallback = createToolResultFallback(result, this.state.showImages);
 		const renderer = this.getResultRenderer();
 		if (!renderer) {
-			if (fallback) container.addChild(fallback);
+			if (fallback) container.addChild(this.clickToExpand(fallback));
 			return;
 		}
 		try {
@@ -145,7 +208,7 @@ export class ToolExecutionRenderer extends Container {
 			this.addRendererComponent(container, "result", component, fallback);
 		} catch {
 			this.resultRendererComponent = undefined;
-			if (fallback) container.addChild(fallback);
+			if (fallback) container.addChild(this.clickToExpand(fallback));
 		}
 	}
 
@@ -157,14 +220,16 @@ export class ToolExecutionRenderer extends Container {
 	): void {
 		if (!isComponent(value)) {
 			this.setRendererComponent(slot, undefined);
-			if (fallback) container.addChild(fallback);
+			if (fallback) container.addChild(this.clickToExpand(fallback));
 			return;
 		}
 		this.setRendererComponent(slot, value);
 		container.addChild(
-			new ToolRendererBoundary(value, fallback, () => {
-				if (this.getRendererComponent(slot) === value) this.setRendererComponent(slot, undefined);
-			}),
+			this.clickToExpand(
+				new ToolRendererBoundary(value, fallback, () => {
+					if (this.getRendererComponent(slot) === value) this.setRendererComponent(slot, undefined);
+				}),
+			),
 		);
 	}
 

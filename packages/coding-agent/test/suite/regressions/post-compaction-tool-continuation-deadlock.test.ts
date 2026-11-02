@@ -224,7 +224,7 @@ describe("post-compaction tool continuation regression", () => {
 		expect(harness.eventsOfType("agent_settled")).toHaveLength(settledBeforePrompt + 2);
 	});
 
-	it("caps a repeated overflow after one compact-and-retry attempt", async () => {
+	it("caps a repeated overflow after two compact-and-retry attempts, the second summary-only", async () => {
 		const toolRuns: string[] = [];
 		const harness = await createOverflowHarness(toolRuns);
 		harnesses.push(harness);
@@ -232,17 +232,21 @@ describe("post-compaction tool continuation regression", () => {
 			fauxAssistantMessage("seed response"),
 			createOverflowResponse(harness),
 			() => createOverflowResponse(harness, { timestamp: Date.now() + 60_000 }),
+			() => createOverflowResponse(harness, { timestamp: Date.now() + 120_000 }),
 		]);
 
 		await harness.session.prompt("seed prompt");
 		const settledBeforeRecovery = harness.eventsOfType("agent_settled").length;
-		const prompt = harness.session.prompt("overflow twice");
+		const prompt = harness.session.prompt("overflow three times");
 
 		expect(await settleWithin(prompt, 500)).toBe("settled");
 		expect(toolRuns).toEqual([]);
-		expect(harness.faux.state.callCount).toBe(3);
-		expect(harness.eventsOfType("compaction_start")).toHaveLength(1);
-		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		// keepRecentTokens 1 means rung 1 already keeps only the overflowing turn, so rung 2
+		// has nothing older to summarize: it folds the turn itself into the summary and
+		// retries from the summary alone; a third rejection ends the turn.
+		expect(harness.faux.state.callCount).toBe(4);
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(2);
 		expect(
 			harness.eventsOfType("compaction_end").map((event) => ({
 				accepted: event.accepted,
@@ -251,15 +255,16 @@ describe("post-compaction tool continuation regression", () => {
 			})),
 		).toEqual([
 			{ accepted: true, errorMessage: undefined, willRetry: true },
+			{ accepted: true, errorMessage: undefined, willRetry: true },
 			{
 				accepted: undefined,
 				errorMessage: expect.stringMatching(
-					/^Context overflow recovery failed after one compact-and-retry attempt/,
+					/^Context overflow recovery failed after two compact-and-retry attempts/,
 				),
 				willRetry: false,
 			},
 		]);
-		expect(getPersistedAssistantErrorMessages(harness)).toHaveLength(2);
+		expect(getPersistedAssistantErrorMessages(harness)).toHaveLength(3);
 		expect(harness.eventsOfType("agent_settled")).toHaveLength(settledBeforeRecovery + 1);
 	});
 });

@@ -38,6 +38,7 @@ describe("regression #7925: tool-call metadata is available when streaming start
 				id: "call_7925",
 				toolName: "write",
 			},
+			resolvedToolName: "write",
 		});
 	});
 });

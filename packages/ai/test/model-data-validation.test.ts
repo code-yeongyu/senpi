@@ -9,10 +9,42 @@ import {
 	MODEL_DATA_SCHEMA_VERSION,
 	type ModelDataStructure,
 	readModelDataStructure,
+	stableGeneratedAt,
 	validateModelDataDirectory,
 } from "../scripts/model-data.ts";
 
 const GENERATED_AT = "2026-07-23T10:00:00.000Z";
+
+describe("stableGeneratedAt (idempotent catalog generation)", () => {
+	const structure: ModelDataStructure = { "test-provider": { "chat:model-a": "openai-completions" } };
+	const newer = "2026-10-13T04:00:00.000Z";
+
+	it("keeps the committed generatedAt when the content is unchanged", () => {
+		const committed = createModelDataManifest(structure, {}, GENERATED_AT);
+		const regenerated = createModelDataManifest(structure, {}, newer);
+		expect(stableGeneratedAt(regenerated, committed)).toBe(GENERATED_AT);
+		// regenerate twice with unchanged data -> byte-identical, so the drift check stays green
+		expect(stableGeneratedAt(createModelDataManifest(structure, {}, "2026-10-14T00:00:00.000Z"), committed)).toBe(
+			GENERATED_AT,
+		);
+	});
+
+	it("moves the timestamp when a model is added or removed", () => {
+		const committed = createModelDataManifest(structure, {}, GENERATED_AT);
+		const changed: ModelDataStructure = { "test-provider": { "chat:model-b": "openai-completions" } };
+		expect(stableGeneratedAt(createModelDataManifest(changed, {}, newer), committed)).toBe(newer);
+	});
+
+	it("moves the timestamp when only a model field changes (cost, context, baseUrl)", () => {
+		const committed = createModelDataManifest(structure, { "a.json": "old" }, GENERATED_AT);
+		// same model set, different file contents: the timestamp must move, not stay stale
+		expect(stableGeneratedAt(createModelDataManifest(structure, { "a.json": "new" }, newer), committed)).toBe(newer);
+	});
+
+	it("uses the fresh timestamp when there is no committed manifest", () => {
+		expect(stableGeneratedAt(createModelDataManifest(structure, {}, newer), undefined)).toBe(newer);
+	});
+});
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
@@ -32,20 +64,21 @@ function createFixture(): {
 	mkdirSync(dataDir, { recursive: true });
 	writeFileSync(
 		join(packageRoot, "src", "models.generated.ts"),
-		'import { TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\n',
+		'import { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\n',
 	);
 	writeFileSync(
 		join(providersDir, "test-provider.models.ts"),
-		'import values from "./data/test-provider.json" with { type: "json" };\nimport { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";\n\nexport const TEST_PROVIDER_MODELS: ModelCatalog<typeof values, "test-provider"> =\n\tflattenModelCatalog("test-provider", values);\n',
+		'import values from "./data/test-provider.json" with { type: "json" };\n',
 	);
 
 	const structure: ModelDataStructure = {
 		"test-provider": {
-			"model-a": "openai-completions",
+			"chat:model-a": "openai-completions",
 		},
 	};
 	const values: Record<string, unknown> = {
-		"model-a": {
+		"chat:model-a": {
+			type: "chat",
 			id: "model-a",
 			name: "Model A",
 			api: "openai-completions",
@@ -98,7 +131,7 @@ describe("generated model data validation", () => {
 
 	it("accepts video input metadata", () => {
 		const fixture = createFixture();
-		const model = fixture.values["model-a"] as Record<string, unknown>;
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
 		model.input = ["text", "image", "video"];
 		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
 		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).not.toThrow();
@@ -116,10 +149,140 @@ describe("generated model data validation", () => {
 		["api", "anthropic-messages", "has api"],
 	] as const)("rejects a wrong model %s", (field, value, expectedMessage) => {
 		const fixture = createFixture();
-		const model = fixture.values["model-a"] as Record<string, unknown>;
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
 		model[field] = value;
 		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
 		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(expectedMessage);
+	});
+
+	it("accepts a dated cost card", () => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		model.cost = {
+			input: 1,
+			output: 2,
+			cacheRead: 0,
+			cacheWrite: 0,
+			effectiveRates: [{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+		};
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).not.toThrow();
+	});
+
+	it.each([
+		["an empty card list", [], "invalid cost.effectiveRates"],
+		[
+			"a local-time start",
+			[{ effectiveFrom: "2026-12-01T00:00:00", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid effectiveFrom",
+		],
+		[
+			"a date-only start",
+			[{ effectiveFrom: "2026-12-01", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid effectiveFrom",
+		],
+		[
+			"a missing rate",
+			[{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0 }],
+			"invalid cacheWrite",
+		],
+		[
+			"a negative rate",
+			[{ effectiveFrom: "2026-12-01T08:00:00Z", input: -2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid input",
+		],
+		[
+			"two cards starting together",
+			[
+				{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 },
+				{ effectiveFrom: "2026-12-01T08:00:00.000Z", input: 3, output: 6, cacheRead: 0, cacheWrite: 0 },
+			],
+			"repeats effectiveFrom",
+		],
+	] as const)("rejects a malformed dated cost card: %s", (_case, effectiveRates, expectedMessage) => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		model.cost = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, effectiveRates };
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(expectedMessage);
+	});
+
+	it("rejects a model without a known type", () => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		delete model.type;
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(
+			'expected "chat", "image", or "classifier"',
+		);
+	});
+
+	it("validates image models with output modalities and without chat limits", () => {
+		const fixture = createFixture();
+		const structure: ModelDataStructure = { "test-provider": { "image:image-a": "test-images" } };
+		const image: Record<string, unknown> = {
+			type: "image",
+			id: "image-a",
+			name: "Image A",
+			api: "test-images",
+			provider: "test-provider",
+			baseUrl: "https://example.test/v1",
+			input: ["text"],
+			output: ["image", "text"],
+			cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+		};
+		const validate = () => {
+			writeFixtureData(
+				fixture.dataDir,
+				structure,
+				{ "image:image-a": image },
+				MODEL_DATA_SCHEMA_VERSION,
+				"test-images",
+			);
+			validateModelDataDirectory(structure, fixture.dataDir);
+		};
+		expect(validate).not.toThrow();
+
+		delete image.output;
+		expect(validate).toThrow("invalid output modalities");
+		image.output = ["text"];
+		expect(validate).toThrow("invalid output modalities");
+	});
+
+	it("rejects output modalities on chat models", () => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		model.output = ["text"];
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(
+			"unsupported output modalities",
+		);
+	});
+
+	it("validates classifier models without chat output limits", () => {
+		const fixture = createFixture();
+		const structure: ModelDataStructure = {
+			"test-provider": { "classifier:classifier-a": "test-classifier" },
+		};
+		const classifier = {
+			type: "classifier",
+			id: "classifier-a",
+			name: "Classifier A",
+			api: "test-classifier",
+			provider: "test-provider",
+			baseUrl: "https://example.test/v1",
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000,
+		};
+		writeFixtureData(
+			fixture.dataDir,
+			structure,
+			{ "classifier:classifier-a": classifier },
+			MODEL_DATA_SCHEMA_VERSION,
+			"test-classifier",
+		);
+		expect(() => validateModelDataDirectory(structure, fixture.dataDir)).not.toThrow();
 	});
 
 	it("rejects a model in the wrong API group", () => {
@@ -178,7 +341,7 @@ describe("generated model data validation", () => {
 		const { packageRoot } = createFixture();
 		writeFileSync(
 			join(packageRoot, "src", "models.generated.ts"),
-			'import { TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\nimport { MISSING_MODELS } from "./providers/missing.models.ts";\n',
+			'import { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\nimport { MISSING_CLASSIFIER_MODELS, MISSING_IMAGE_MODELS, MISSING_MODELS } from "./providers/missing.models.ts";\n',
 		);
 		expect(() => readModelDataStructure(packageRoot)).toThrow("aggregator and provider shards do not match");
 	});

@@ -130,7 +130,7 @@ describe("AgentSession applyCompaction", () => {
 		const extension = (pi: ExtensionAPI): void => {
 			pi.on("before_agent_start", async (_event, ctx) => {
 				const entries = ctx.sessionManager.getEntries();
-				const firstEntry = entries[0];
+				const firstEntry = entries.find((entry) => entry.type === "message");
 				if (!firstEntry || entries.some((entry) => entry.type === "compaction")) {
 					return undefined;
 				}

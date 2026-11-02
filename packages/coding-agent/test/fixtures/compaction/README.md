@@ -27,6 +27,7 @@ Per-feature fixtures establish a **behavioral contract** between each subsystem 
 | 13 | `ineffective-cap/` | `low-yield-run.jsonl` | Three accepted low-yield compactions in one turn | 5 |
 | 14 | `idle-trigger/` | `over-threshold-at-idle.jsonl` | Turn end with context over the threshold, exercises the proactive idle compaction trigger | 3 |
 | 15 | `model-usability/` | `switch-budget-projection.jsonl` | Model-switch budget projection: usable window, live-context shortfall, per-family safety margin | 5 |
+| 16 | `context-reduction/` | `pre-engagement-short-history.jsonl` | Six-message ceiling-pressure history with no reducible prefix; fallback ownership remains active | 7 |
 
 ## Validation
 

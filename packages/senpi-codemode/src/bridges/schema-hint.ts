@@ -65,7 +65,7 @@ function describeProperty(value: unknown): string {
 	if (!isSchemaLike(value)) return "unknown";
 	const parts = [typeLabel(value)];
 	const description = firstLine(value.description);
-	if (description !== undefined) parts.push(`— ${truncate(description, DESCRIPTION_MAX_CHARS)}`);
+	if (description !== undefined) parts.push(`(${truncate(description, DESCRIPTION_MAX_CHARS)})`);
 	return parts.join(" ");
 }
 

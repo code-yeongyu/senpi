@@ -140,7 +140,9 @@ describe("ServerConnection state machine", () => {
 		expect(connection.state).toBe("degraded");
 		expect(connection.lastError).toBeInstanceOf(Error);
 		expect(connection.lastError?.message).toMatch(/failure|connect|closed|crash|exited/i);
-		expect(await readCounter(counterFile)).toBe(1);
+		// One spawn for the discovery probe, which the exit sends to a fresh process, and one for the legacy
+		// handshake; a crashing server is never retried beyond that (senpi#3304).
+		expect(await readCounter(counterFile)).toBe(2);
 		expect(events.state.map((event) => `${event.previousState}->${event.state}`)).toEqual([
 			"idle->connecting",
 			"connecting->degraded",

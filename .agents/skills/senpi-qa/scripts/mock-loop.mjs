@@ -30,7 +30,7 @@
  *   node mock-loop.mjs --run "prompt" [--api ...] [--evidence SLUG]
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
 	createChecks,
@@ -246,6 +246,33 @@ async function withEvalHardLimit(apiName, evidenceSlug) {
 				name: `eval cell killed at the ${hardLimitSeconds}s hard limit and reported to the model`,
 				pass: killed && named,
 				detail: `requests=${server.requests.length} killed=${killed} named=${named}`,
+			};
+		},
+		evidenceSlug,
+	});
+}
+
+async function withEvalAutoPreset(apiName, evidenceSlug) {
+	return withNamedTool({
+		apiName,
+		checkName: `mock-loop.mjs --with-eval-auto-preset (${apiName})`,
+		toolName: "eval",
+		toolArgs: {
+			language: "js",
+			code: "require('node:fs').mkdirSync('eval-probe-dir'); return 'made';",
+			summary: "make a directory from an eval cell",
+		},
+		marker: "EVAL-AUTO-PRESET-7c2e",
+		extraArgs: ["--permission-preset", "auto"],
+		prepareSandbox: (box) => ({ cwd: box.cwd }),
+		validateToolResult: ({ prepared, server }) => {
+			const made = existsSync(join(prepared.cwd, "eval-probe-dir"));
+			const bodies = server.requests.map((request) => JSON.stringify(request.body ?? {}));
+			const asked = bodies.some((body) => /Permission required/.test(body));
+			return {
+				name: "auto preset: the eval cell is asked about (refused with no UI), proven by the ask reaching the model, and creates nothing",
+				pass: !made && asked,
+				detail: `made=${made} asked=${asked}`,
 			};
 		},
 		evidenceSlug,
@@ -634,6 +661,11 @@ if (argv[0] === "--self-test") {
 		process.exit(2);
 	}
 	dispatchTextToolLeakCommand(leakApi, true, driveTurn, flagValue(argv, "--evidence"));
+} else if (argv[0] === "--with-eval-auto-preset") {
+	withEvalAutoPreset(api || "openai-completions", flagValue(argv, "--evidence")).catch((e) => {
+		process.stderr.write(`${e?.stack ?? e}\n`);
+		process.exit(1);
+	});
 } else if (argv[0] === "--with-eval-hard-limit") {
 	withEvalHardLimit(api || "openai-completions", flagValue(argv, "--evidence")).catch((e) => {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
@@ -674,7 +706,7 @@ if (argv[0] === "--self-test") {
 			"  node mock-loop.mjs --with-truncated-text-tool-leak --api <anthropic-messages|openai-completions>",
 			"  node mock-loop.mjs --with-eval-hard-limit [--api <name>]  eval cell killed by the wall-clock hard limit",
 			"  node mock-loop.mjs --with-mcp-tool <tool> [--tool-args JSON]",
-			"  node mock-loop.mjs --scenario <transient-recover|budget-exhaust|server-error-fallback|long-retry-after|billing-swap|anthropic-policy-refusal-fallback|kimi-xtml-thinking-recover|model-request-rejected-recover|ttsr-collapse|ttsr-leak|ttsr-repetitive-turns> [--api <name>]",
+			"  node mock-loop.mjs --scenario <transient-recover|budget-exhaust|server-error-fallback|long-retry-after|billing-swap|anthropic-policy-refusal-fallback|kimi-xtml-thinking-recover|model-request-rejected-recover|ttsr-collapse|ttsr-leak|ttsr-repetitive-turns|ttsr-paragraph-loop|ttsr-near-duplicate-loop> [--api <name>]",
 			"  node mock-loop.mjs --scenario <hinted-429-in-turn|no-hint-429-fast-fallback|hinted-429-probe-back|no-hint-429-no-chain>",
 			"  node mock-loop.mjs --run <prompt> [--api <name>]",
 			`  APIs: ${ALL_APIS.join(", ")}`,

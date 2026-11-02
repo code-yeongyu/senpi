@@ -1,5 +1,5 @@
 import YAML from "yaml";
-import type { TextContent, Tool } from "../../types.ts";
+import type { TextContent, Tool, ToolCall } from "../../types.ts";
 import { validateToolArguments } from "../../utils/validation.ts";
 import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.ts";
 import { findEarliestXmlToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.ts";
@@ -326,7 +326,7 @@ export function createYamlXmlStreamParser(tools: Tool[], options?: ParserOptions
 							type: "toolCall",
 							id: state.id,
 							name: state.name,
-							arguments: parsedArguments,
+							arguments: parsedArguments as ToolCall["arguments"],
 						});
 					} catch {
 						// Validation failure makes the truncated call incomplete rather than executable.

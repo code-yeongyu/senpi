@@ -1,23 +1,15 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { fauxAssistantMessage, fauxToolCall, getModel } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import { runEvalSchema } from "../../../senpi-codemode/src/bridges/schema-bridge.ts";
-import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
-import { createAgentSession, type ExtensionFactory } from "../../src/core/sdk.ts";
-import { SessionManager } from "../../src/core/session-manager.ts";
-import { SettingsManager } from "../../src/core/settings-manager.ts";
+import type { ExtensionFactory } from "../../src/core/sdk.ts";
 import type { ExtensionAPI } from "../../src/index.ts";
-import { createHarness, type Harness } from "./harness.ts";
+import { createHarness } from "./harness.ts";
 
 vi.mock("@code-yeongyu/senpi", async () => await import("../../src/index.ts"));
 const { createExecuteTool } = await import("../../../senpi-codemode/src/extension/runtime-factory.ts");
 
-function arm(harness: Harness, names = ["bash", "powershell"]): void {
-	const session = harness.session as unknown as { _evalOnlyToolNames: ReadonlySet<string> };
-	session._evalOnlyToolNames = new Set(names);
-}
+const MONITOR_HINT = 'tool.monitor({ description: "...", command: "...", filter: "..." })';
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content
@@ -26,11 +18,14 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 		.join("\n");
 }
 
-async function createEvalHarness(options: { withEval?: boolean } = {}): Promise<{
-	harness: Harness;
-	observed: string[];
-}> {
-	const observed: string[] = [];
+interface EvalHarnessOptions {
+	withEval?: boolean;
+	excludedToolNames?: string[];
+	evalOnlyToolNames?: string[];
+	fileSettings?: boolean;
+}
+
+async function createEvalHarness(options: EvalHarnessOptions = {}) {
 	const extensionFactory: ExtensionFactory = (pi) => {
 		if (options.withEval !== false) {
 			pi.registerTool({
@@ -41,153 +36,116 @@ async function createEvalHarness(options: { withEval?: boolean } = {}): Promise<
 				execute: async () => ({ content: [{ type: "text", text: "eval" }], details: {} }),
 			});
 		}
-		pi.on("tool_call", (event) => {
-			if (event.toolName === "bash") observed.push(event.toolName);
+		pi.registerTool({
+			name: "workflow",
+			label: "Workflow",
+			description: "Run a workflow action",
+			parameters: Type.Object({ action: Type.String() }),
+			execute: async (_toolCallId, params) => ({
+				content: [{ type: "text", text: `workflow-ran:${params.action}` }],
+				details: {},
+			}),
+		});
+		pi.registerTool({
+			name: "monitor",
+			label: "Monitor",
+			description: "Subscribe to command output",
+			parameters: Type.Object({
+				description: Type.Optional(Type.String()),
+				command: Type.Optional(Type.String()),
+				filter: Type.Optional(Type.String()),
+			}),
+			execute: async (_toolCallId, params) => ({
+				content: [
+					{
+						type: "text",
+						text: `monitor-ran:${params.description}:${params.command}:${params.filter ?? ""}`,
+					},
+				],
+				details: {},
+			}),
 		});
 	};
-	const harness = await createHarness({ extensionFactories: [extensionFactory] });
-	return { harness, observed };
+	const harness = await createHarness({
+		extensionFactories: [extensionFactory],
+		excludedToolNames: options.excludedToolNames,
+		evalOnlyToolNames: options.evalOnlyToolNames,
+		fileSettings: options.fileSettings,
+	});
+	return { harness };
 }
 
-describe("experimental bash eval-only policy", () => {
-	it("armed sessions hide bash and powershell and explain tool.bash(", async () => {
+const allPolicyTools = ["bash", "powershell", "workflow", "monitor"];
+const allRequestedTools = ["read", ...allPolicyTools, "edit", "write"];
+
+describe("default eval-only tool policy", () => {
+	it("arms by default and hides every registered policy tool", async () => {
 		const { harness } = await createEvalHarness();
 		try {
-			arm(harness);
-			harness.session.setActiveToolsByName(["read", "bash", "powershell", "edit", "write"]);
-			expect(harness.session.getActiveToolNames()).not.toContain("bash");
-			expect(harness.session.getActiveToolNames()).not.toContain("powershell");
+			harness.session.setActiveToolsByName(allRequestedTools);
+
+			expect(harness.session.getActiveToolNames()).toEqual(["read", "edit", "write"]);
 			expect(harness.session.systemPrompt).toContain("tool.bash(");
+			expect(harness.session.systemPrompt).toContain("tool.powershell(");
+			expect(harness.session.systemPrompt).toContain("tool.workflow(");
+			expect(harness.session.systemPrompt).toContain("tool.monitor(");
 		} finally {
 			harness.cleanup();
 		}
 	});
 
-	it("executes hidden bash through hooks without reactivating it", async () => {
-		const { harness, observed } = await createEvalHarness();
-		try {
-			arm(harness);
-			harness.session.setActiveToolsByName(["read", "edit", "write"]);
-			const result = await harness.session.executeTool(
-				"bash",
-				{ command: "echo hi" },
-				{ activateInactiveTool: true },
-			);
-			expect(textOf(result)).toContain("hi");
-			expect(observed).toEqual(["bash"]);
-			expect(harness.session.getActiveToolNames()).not.toContain("bash");
-		} finally {
-			harness.cleanup();
-		}
-	});
-
-	it("publishes the removed-tool hint for unknown tool calls", async () => {
+	it("executes hidden bash and monitor through the registry without reactivating either tool", async () => {
 		const { harness } = await createEvalHarness();
 		try {
-			arm(harness);
 			harness.session.setActiveToolsByName(["read", "edit", "write"]);
-			expect(harness.agent.removedToolHints.bash).toContain('tool.bash({ command: "..." })');
-			harness.setResponses([
-				fauxAssistantMessage(fauxToolCall("bash", { command: "echo hi" }), { stopReason: "toolUse" }),
-				fauxAssistantMessage("done"),
-			]);
-			await harness.session.prompt("run bash");
-			const toolResult = harness.session.messages.find((message) => message.role === "toolResult");
-			expect(toolResult && "content" in toolResult ? toolResult.content[0] : undefined).toMatchObject({
-				text: expect.stringContaining('tool.bash({ command: "..." })'),
-			});
-		} finally {
-			harness.cleanup();
-		}
-	});
 
-	it("leaves the policy inert when eval is not registered", async () => {
-		const { harness } = await createEvalHarness({ withEval: false });
-		try {
-			arm(harness);
-			harness.session.setActiveToolsByName(["read", "bash", "edit", "write"]);
-			expect(harness.session.getActiveToolNames()).toContain("bash");
 			expect(textOf(await harness.session.executeTool("bash", { command: "echo hi" }))).toContain("hi");
+			expect(
+				textOf(
+					await harness.session.executeTool(
+						"monitor",
+						{ description: "watch build", command: "printf READY", filter: "^READY$" },
+						{ activateInactiveTool: true },
+					),
+				),
+			).toContain("monitor-ran:watch build:printf READY:^READY$");
+			expect(harness.session.getActiveToolNames()).not.toContain("bash");
+			expect(harness.session.getActiveToolNames()).not.toContain("monitor");
 		} finally {
 			harness.cleanup();
 		}
 	});
 
-	it("keeps flag-off behavior unchanged", async () => {
+	it("publishes the monitor redirect hint with the correct monitor call shape", async () => {
 		const { harness } = await createEvalHarness();
 		try {
-			const before = harness.session.systemPrompt;
-			harness.session.setActiveToolsByName(["read", "bash", "edit", "write"]);
-			expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
-			expect(harness.session.systemPrompt).not.toContain("tool.bash(");
-			expect(before).not.toContain("tool.bash(");
+			harness.session.setActiveToolsByName(["read", "edit", "write"]);
+
+			expect(harness.agent.removedToolHints.monitor).toContain(MONITOR_HINT);
+			expect(harness.agent.removedToolHints.bash).toContain('tool.bash({ command: "..." })');
 		} finally {
 			harness.cleanup();
 		}
 	});
 
-	it("SDK wiring arms the policy from experimental.bashEvalOnly", async () => {
-		const settingsManager = SettingsManager.inMemory({ experimental: { bashEvalOnly: true } });
-		const resourceLoader = new DefaultResourceLoader({
-			cwd: process.cwd(),
-			agentDir: process.cwd(),
-			settingsManager,
-			extensionFactories: [
-				(pi) => {
-					pi.registerTool({
-						name: "eval",
-						label: "Eval",
-						description: "Evaluate code",
-						parameters: Type.Object({}),
-						execute: async () => ({ content: [{ type: "text", text: "eval" }], details: {} }),
-					});
-				},
-			],
-			noSkills: true,
-			noPromptTemplates: true,
-			noThemes: true,
-			noContextFiles: true,
-		});
-		await resourceLoader.reload();
-		const { session } = await createAgentSession({
-			model: getModel("anthropic", "claude-sonnet-4-5")!,
-			settingsManager,
-			resourceLoader,
-			sessionManager: SessionManager.inMemory(process.cwd()),
-		});
-		try {
-			expect(session.getActiveToolNames()).not.toContain("bash");
-			expect(session.systemPrompt).toContain("tool.bash(");
-		} finally {
-			session.dispose();
-		}
-	});
-
-	it("getAllTools-backed eval schema still lists bash while the armed policy keeps it inactive", async () => {
+	it("keeps getAllTools-backed eval schema access while policy tools stay inactive", async () => {
 		const { harness } = await createEvalHarness();
 		try {
-			arm(harness);
-			harness.session.setActiveToolsByName(["read", "bash", "powershell", "edit", "write"]);
-			const active = harness.session.getActiveToolNames();
-			const allNames = harness.session.getAllTools().map((tool) => tool.name);
-			expect(active).not.toContain("bash");
-			expect(active).not.toContain("powershell");
-			expect(allNames).toContain("bash");
-			expect(allNames).toContain("powershell");
-			const listed = runEvalSchema({}, { listTools: () => harness.session.getAllTools() });
-			expect(listed).toEqual({
+			harness.session.setActiveToolsByName(allRequestedTools);
+
+			expect(harness.session.getActiveToolNames()).toEqual(["read", "edit", "write"]);
+			expect(harness.session.getAllTools().map((tool) => tool.name)).toEqual(
+				expect.arrayContaining(["bash", "powershell", "workflow", "monitor"]),
+			);
+			expect(runEvalSchema({}, { listTools: () => harness.session.getAllTools() })).toEqual({
 				tools: expect.arrayContaining(["bash", "powershell"]),
 			});
-			expect(runEvalSchema({ name: "bash" }, { listTools: () => harness.session.getAllTools() })).toMatchObject({
-				name: "bash",
-			});
 		} finally {
 			harness.cleanup();
 		}
 	});
 
-	it("createExecuteTool wrapper runs bash without reactivating it", async () => {
-		const observedActivations: string[] = [];
+	it("runs bash through the SDK executeTool wrapper without reactivating it", async () => {
 		let api: ExtensionAPI | undefined;
 		const extensionFactory: ExtensionFactory = (pi) => {
 			api = pi;
@@ -199,14 +157,12 @@ describe("experimental bash eval-only policy", () => {
 				execute: async () => ({ content: [{ type: "text", text: "eval" }], details: {} }),
 			});
 			pi.registerLazyToolActivator((toolName) => {
-				observedActivations.push(toolName);
 				pi.setActiveTools([...pi.getActiveTools(), toolName]);
 				return true;
 			});
 		};
-		const harness = await createHarness({ extensionFactories: [extensionFactory] });
+		const harness = await createHarness({ extensionFactories: [extensionFactory], evalOnlyToolNames: ["bash"] });
 		try {
-			arm(harness);
 			harness.session.setActiveToolsByName(["read", "edit", "write"]);
 			if (api === undefined) throw new Error("extension API was not captured");
 			const runtime = api;
@@ -215,101 +171,89 @@ describe("experimental bash eval-only policy", () => {
 				getActiveTools: () => runtime.getActiveTools(),
 				getAllTools: () => runtime.getAllTools(),
 			});
-			const result = await executeTool("bash", { command: "echo hi" });
-			expect(textOf(result)).toContain("hi");
-			expect(observedActivations).toEqual([]);
+
+			expect(textOf(await executeTool("bash", { command: "echo hi" }))).toContain("hi");
 			expect(harness.session.getActiveToolNames()).not.toContain("bash");
 		} finally {
 			harness.cleanup();
 		}
 	});
 
-	it("names each hidden tool in its own removed-tool hint", async () => {
+	it("redirects a direct bash call to its eval helper", async () => {
 		const { harness } = await createEvalHarness();
 		try {
-			arm(harness);
 			harness.session.setActiveToolsByName(["read", "edit", "write"]);
-			expect(harness.agent.removedToolHints.bash).toContain('tool.bash({ command: "..." })');
-			expect(harness.agent.removedToolHints.powershell).toContain('tool.powershell({ command: "..." })');
-			expect(harness.agent.removedToolHints.powershell).not.toContain("tool.bash(");
+			harness.setResponses([
+				fauxAssistantMessage(fauxToolCall("bash", { command: "echo hi" }), { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+
+			await harness.session.prompt("run bash");
+			const toolResult = harness.session.messages.find((message) => message.role === "toolResult");
+			expect(toolResult && "content" in toolResult ? toolResult.content[0] : undefined).toMatchObject({
+				text: expect.stringContaining('tool.bash({ command: "..." })'),
+			});
 		} finally {
 			harness.cleanup();
 		}
 	});
 
-	it("names every hidden tool in the system-prompt guidance", async () => {
-		const { harness } = await createEvalHarness();
+	it("keeps all four tools directly available when eval is absent", async () => {
+		const { harness } = await createEvalHarness({ withEval: false });
 		try {
-			arm(harness);
-			harness.session.setActiveToolsByName(["read", "edit", "write"]);
-			expect(harness.session.systemPrompt).toContain("tool.bash(");
-			expect(harness.session.systemPrompt).toContain("tool.powershell(");
+			harness.session.setActiveToolsByName(allRequestedTools);
+
+			for (const name of allPolicyTools) {
+				expect(harness.session.getActiveToolNames()).toContain(name);
+			}
+			for (const name of allPolicyTools) {
+				expect(harness.agent.removedToolHints[name]).toBeUndefined();
+				expect(harness.session.systemPrompt).not.toContain(`tool.${name}(`);
+			}
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("honors an SDK evalOnlyToolNames override instead of the default set", async () => {
+		const { harness } = await createEvalHarness({ evalOnlyToolNames: ["workflow"] });
+		try {
+			harness.session.setActiveToolsByName(allRequestedTools);
+
+			expect(harness.session.getActiveToolNames()).toContain("bash");
+			expect(harness.session.getActiveToolNames()).not.toContain("workflow");
+			expect(harness.session.getActiveToolNames()).toContain("monitor");
+			expect(harness.session.systemPrompt).toContain("tool.workflow(");
+			expect(harness.session.systemPrompt).not.toContain("tool.bash(");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("remains armed after a settings reload with no policy setting", async () => {
+		const { harness } = await createEvalHarness({ fileSettings: true });
+		try {
+			harness.session.setActiveToolsByName(allRequestedTools);
+			await harness.session.reload();
+
+			expect(harness.session.getActiveToolNames()).toEqual(["read", "edit", "write", "eval"]);
+			expect(harness.agent.removedToolHints.monitor).toContain(MONITOR_HINT);
 		} finally {
 			harness.cleanup();
 		}
 	});
 });
 
-describe("experimental bash eval-only policy across reload", () => {
-	async function createReloadHarness(options: { flagOn: boolean; evalRegistered?: () => boolean }): Promise<Harness> {
-		const evalRegistered = options.evalRegistered ?? (() => true);
-		const extensionFactory: ExtensionFactory = (pi) => {
-			if (!evalRegistered()) return;
-			pi.registerTool({
-				name: "eval",
-				label: "Eval",
-				description: "Evaluate code",
-				parameters: Type.Object({}),
-				execute: async () => ({ content: [{ type: "text", text: "eval" }], details: {} }),
-			});
-		};
-		return await createHarness({
-			fileSettings: true,
-			...(options.flagOn ? { settings: { experimental: { bashEvalOnly: true } } } : {}),
-			initialActiveToolNames: ["read", "bash", "edit", "write"],
-			extensionFactories: [extensionFactory],
-		});
-	}
-
-	function writeSettings(harness: Harness, contents: Record<string, unknown>): void {
-		writeFileSync(join(harness.tempDir, "agent", "settings.json"), JSON.stringify(contents));
-	}
-
-	it("arms the policy when the flag is turned on and the session reloads", async () => {
-		const harness = await createReloadHarness({ flagOn: false });
+describe("eval-only registry filtering", () => {
+	it("does not mention powershell when the registry does not hold it", async () => {
+		const { harness } = await createEvalHarness({ excludedToolNames: ["powershell"] });
 		try {
-			expect(harness.session.getActiveToolNames()).toContain("bash");
-			writeSettings(harness, { experimental: { bashEvalOnly: true } });
-			await harness.session.reload();
-			expect(harness.session.getActiveToolNames()).not.toContain("bash");
-		} finally {
-			harness.cleanup();
-		}
-	});
+			harness.session.setActiveToolsByName(allRequestedTools);
 
-	it("disarms the policy when the flag is turned off and the session reloads", async () => {
-		const harness = await createReloadHarness({ flagOn: true });
-		try {
-			expect(harness.session.getActiveToolNames()).not.toContain("bash");
-			writeSettings(harness, {});
-			await harness.session.reload();
-			expect(harness.session.getActiveToolNames()).toContain("bash");
-		} finally {
-			harness.cleanup();
-		}
-	});
-
-	it("retains withheld shell tools across a reload so disarming can restore them", async () => {
-		const harness = await createReloadHarness({ flagOn: true });
-		try {
-			expect(harness.session.getActiveToolNames()).not.toContain("bash");
-			await harness.session.reload();
-			// Still armed, so bash stays hidden - but the unfiltered request must keep carrying it,
-			// otherwise a later disarm has nothing to restore (see the flag-off reload test above).
-			expect(harness.session.getActiveToolNames()).not.toContain("bash");
-			const retained = (harness.session as unknown as { _requestedActiveToolNames?: string[] })
-				._requestedActiveToolNames;
-			expect(retained).toContain("bash");
+			expect(harness.session.getActiveToolNames()).not.toContain("powershell");
+			expect(harness.session.systemPrompt).not.toContain("powershell");
+			expect(harness.agent.removedToolHints.powershell).toBeUndefined();
+			expect(harness.agent.removedToolHints.bash).toContain('tool.bash({ command: "..." })');
 		} finally {
 			harness.cleanup();
 		}

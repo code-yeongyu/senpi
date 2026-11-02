@@ -2,6 +2,18 @@
 
 Pi uses the [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) for reliable modifier key detection. Most modern terminals support this protocol, but some require configuration.
 
+## Capability Overrides
+
+Pi auto-detects OSC 8 hyperlinks, inline image protocols, and truecolor. If detection fails behind a terminal proxy or multiplexer, use these advanced overrides:
+
+| Capability | Environment variable | JSON setting |
+|------------|----------------------|--------------|
+| OSC 8 hyperlinks | `PI_HYPERLINKS=1\|0\|auto` | `terminal.hyperlinks: true\|false\|"auto"` |
+| Inline images | `PI_IMAGE_PROTOCOL=kitty\|iterm2\|none\|auto` | `terminal.images: "kitty"\|"iterm2"\|false\|"auto"` |
+| Truecolor | `PI_TRUE_COLOR=1\|0\|auto` | `terminal.trueColor: true\|false\|"auto"` |
+
+Settings take precedence over environment variables; unset or `auto` preserves detection. Only force capabilities supported by the complete terminal path, since unsupported escape sequences can corrupt rendering.
+
 ## Kitty
 
 Works out of the box.
@@ -83,6 +95,8 @@ If you already have a `config.keys` table, add the entry to it.
 
 On WSL, WezTerm may require a visible hardware cursor for IME candidate window positioning. If CJK IME candidates do not follow the text cursor, set `PI_HARDWARE_CURSOR=1` before running senpi or set `showHardwareCursor` to `true` in settings.
 
+On Windows, inline images need WezTerm 20250208-160106 or newer, which today means a [nightly build](https://wezterm.org/install/windows.html). WezTerm runs the shell through the ConPTY it bundles, and the ConPTY in older builds (including the 20240203 stable release) drops Kitty graphics before WezTerm sees them. On those builds senpi shows the image placeholder with a hint to update instead of leaving a blank gap. Running senpi through `wezterm ssh` also bypasses ConPTY.
+
 ## Alacritty
 
 Alacritty usually works out of the box for `Shift+Enter`. On macOS, `Option+Enter` may arrive as plain `Enter`. To use `Option+Enter` for pi follow-up queueing, add to `~/.config/alacritty/alacritty.toml`:
@@ -115,6 +129,21 @@ Add to `keybindings.json`:
   "command": "workbench.action.terminal.sendSequence",
   "args": { "text": "\u001b[13;2u" },
   "when": "terminalFocus"
+}
+```
+
+## Zed (Integrated Terminal)
+
+Add these key bindings to your Zed `keymap.json`:
+
+```json
+{
+  "context": "Terminal",
+  "bindings": {
+    "shift-enter": ["terminal::SendText", "\u001b[13;2u"],
+    "ctrl--": ["terminal::SendText", "\u001b[45;5u"],
+    "ctrl-alt-]": ["terminal::SendText", "\u001b[93;7u"]
+  }
 }
 ```
 

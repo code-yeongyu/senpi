@@ -22,6 +22,7 @@ export interface GoalElapsedTickerOptions {
  * disagrees with what the next turn commits.
  */
 export function goalLiveElapsedSeconds(goal: Goal, measuredFromMilliseconds: number, nowMilliseconds: number): number {
+	if (goal.continuationStoppedAt !== undefined) return goal.timeUsedSeconds;
 	const elapsedSeconds = Math.max(0, Math.round((nowMilliseconds - measuredFromMilliseconds) / 1000));
 	return goal.timeUsedSeconds + elapsedSeconds;
 }
@@ -60,6 +61,8 @@ export class GoalElapsedTicker {
 		this.measuredFromMilliseconds = measuredFromMilliseconds;
 		this.lastRenderedElapsedLabel = undefined;
 		this.tick();
+		// The immediate render hit a retired ctx and stopped the ticker: arm nothing for it.
+		if (this.ctx === undefined) return;
 		if (this.intervalId !== undefined) return;
 		const handle = setInterval(() => this.tick(), GOAL_ELAPSED_TICK_INTERVAL_MS);
 		handle.unref();

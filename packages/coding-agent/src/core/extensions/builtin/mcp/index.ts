@@ -1,5 +1,13 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import type { ExtensionAPI, ExtensionContext, ExtensionFactory, SessionStartEvent } from "../../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionFactory,
+	ExtensionHandler,
+	SessionStartEvent,
+} from "../../types.ts";
 import { installMcpNativeToolSearchGate } from "../tool-search/native-search.ts";
 import { registerMcpCommands } from "./commands.ts";
 import {
@@ -35,9 +43,12 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				data.respond(service.refreshWireStatusSnapshot(data.sessionId));
 			},
 		);
-		const unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot) => {
+		const unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot, startupSettled) => {
 			if (sessionId === undefined || sessionId !== attachedSessionId) return;
-			pi.events.emit(MCP_CONTROL_INVENTORY_CHANGED_EVENT, { sessionId, snapshot });
+			pi.events.emit(
+				MCP_CONTROL_INVENTORY_CHANGED_EVENT,
+				startupSettled ? { sessionId, snapshot, startupSettled: true } : { sessionId, snapshot },
+			);
 		});
 		const disposeControlInventory = (): void => {
 			if (controlInventoryDisposed) return;
@@ -53,7 +64,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			},
 		};
 
-		registerMcpCommands(pi, service);
+		registerMcpCommands(pi, service, () => attachPromise);
 
 		installMcpNativeToolSearchGate(() => {
 			const setting = service.getNativeToolSearchSetting();
@@ -69,18 +80,19 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		const revealSkill = (skillName: string): void => {
 			if (loadedSkills.has(skillName) || !skillsByName.has(skillName)) return;
 			loadedSkills.add(skillName);
-			const registered = service.getTierBSearchable();
+			const registered = service.getTierBSearchable(pi);
 			const targets = skillActivationTargets(skillDecls, skillName, registered);
-			if (targets.length > 0) service.activateSkillMcpTools(targets);
+			if (targets.length > 0) service.activateSkillMcpTools(targets, pi);
 		};
 		pi.on("input", async (event, ctx) => {
+			service.bindMcpMrtrPresentation(pi, ctx.ui);
 			const match = /^\s*\/skill:([A-Za-z0-9._-]+)/.exec(event.text);
 			if (match) revealSkill(match[1]);
 			// @mcp:<server>/<uri> mention expansion (todo 39): recognized mentions are
 			// inlined via the sanctioned input transform; failures pass through
 			// untouched with a one-line notice so submission is never blocked.
 			if (event.text.includes("@mcp:")) {
-				const expansion = await expandMcpResourceMentions(event.text, () => service.getMcpResourceServers());
+				const expansion = await expandMcpResourceMentions(event.text, () => service.getMcpResourceServers(pi));
 				for (const notice of expansion.notices) {
 					createMcpLogger("resources").warn(notice);
 					void ctx.ui?.notify?.(notice, "warning");
@@ -99,24 +111,16 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			return undefined;
 		});
 
-		// Attach is SINGLE-FLIGHT. session_start handlers are dispatched
-		// fire-and-forget, so a slow attach (a cold MCP server's boot + catalog
-		// collection is awaited inside attachSession) can still be in flight when
-		// before_agent_start fires. The old `attached` boolean was only set on
-		// completion, so before_agent_start would start a SECOND concurrent attach —
-		// which found the connection entries already created (still "connecting"),
-		// collected an empty catalog, and registered no MCP tools for turn 1; the
-		// first attach then landed the real registration turns later. Memoizing the
-		// in-flight promise makes before_agent_start await the ORIGINAL attach, so
-		// the first turn's payload deterministically carries the MCP tool set.
+		// Attach is single-flight: the prompt uses the original attach's bindings
+		// and known catalog, without waiting for deferred remote discovery.
 		// session_start always starts a fresh attach (reloads must re-sync config).
 		const attach = (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
 			attachedSessionId = ctx.sessionManager?.getSessionId?.();
 			attachPromise = (async () => {
 				await service.attachSession(event, ctx, pi);
 				refreshMcpInstructionsForSession(service);
-				if (sessionOwned) registerMcpPromptCommands(service, pi, service.getMcpPromptServers());
-				else registerMcpPromptCommands(pi, service.getMcpPromptServers());
+				if (sessionOwned) registerMcpPromptCommands(service, pi, service.getMcpPromptServers(pi));
+				else registerMcpPromptCommands(pi, service.getMcpPromptServers(pi));
 			})();
 			return attachPromise;
 		};
@@ -125,51 +129,88 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			(event: SessionStartEvent, ctx: ExtensionContext) => attach(event, ctx),
 			sink,
 		);
-		pi.on("session_start", (event, ctx) => {
-			const work = onSessionStart(event, ctx);
-			// Reload's runner.emit("session_start") is on the hot-reload critical path
-			// (~260ms when this awaits reconnect). Attach is already single-flight via
-			// attachPromise + service.#attachQueue; before_agent_start awaits it.
-			if (event.reason === "reload") {
-				void work;
-				return;
-			}
-			return work;
+		// Boot point (senpi#5229): a session attaches at session_start and binds its UI before each turn; a runtime
+		// with no session attaches at the first tool call of a context and binds elicitation to that context's UI
+		// (the runtime's UI broker). Each context attaches once; a context with no session manager is the runtime.
+		const attachedContexts = new WeakSet<object>();
+		const runtimeKey = {};
+		const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
+		// A session drops this hook at session_start, so its tool calls emit no tool_hook_status for it (senpi#5320).
+		const dropFirstUseAttach = pi.on("tool_call", (_event, ctx) => {
+			const key = contextKey(ctx);
+			if (attachedContexts.has(key)) return undefined;
+			attachedContexts.add(key);
+			service.setMcpElicitationUiProvider(() => (ctx.hasUI ? ctx.ui : undefined));
+			void onSessionStart({ type: "session_start", reason: "startup" }, ctx);
+			return undefined;
 		});
-		pi.on("before_agent_start", async (event, ctx) => {
+		pi.on("session_start", (event, ctx) => {
+			dropFirstUseAttach();
+			if (event.sizesOnly) return;
+			attachedContexts.add(contextKey(ctx));
+			const work = onSessionStart(event, ctx);
+			// First paint does not wait for attach; prompt preparation reuses its promise.
+			void work;
+		});
+		const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
+			event,
+			ctx,
+		) => {
 			try {
-				// Elicitation (todo 41): point mid-call forms at this session's UI.
-				service.setMcpElicitationUiProvider(() => ctx.ui);
-				await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
-				const skills = (event.systemPromptOptions.skills ?? []) as readonly SkillLike[];
+				// A preview (senpi#2115) composes from the attach session_start already started:
+				// it binds no elicitation UI, starts no attach, and attaches no skill-declared servers.
+				const preview = event.preview === true;
+				if (preview) {
+					await attachPromise;
+				} else {
+					// Elicitation (todo 41): point mid-call forms at this session's UI.
+					service.setMcpElicitationUiProvider(() => (ctx.hasUI ? ctx.ui : undefined));
+					await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
+					service.bindMcpMrtrPresentation(pi, ctx.ui);
+				}
+				const skills = preview ? [] : ((event.systemPromptOptions.skills ?? []) as readonly SkillLike[]);
 				if (skills.length > 0) {
 					skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
 					skillDecls = parseSkillMcpDeclarations(skills);
-					const declared = new Map(
-						[...skillDecls.servers].map(([name, decl]) => [name, { raw: decl.raw, sourcePath: decl.sourcePath }]),
-					);
 					const warnings = [
 						...skillDecls.warnings,
-						...(declared.size > 0 ? await service.attachSkillMcpServers(declared) : []),
+						...(skillDecls.servers.size > 0 ? await service.attachSkillMcpServers(skillDecls.servers, pi) : []),
 					];
-					for (const warning of warnings) createMcpLogger("skills").warn(warning);
+					for (const warning of warnings) {
+						if (!warning.startsWith("Project MCP server")) createMcpLogger("skills").warn(warning);
+						if (warning.startsWith("Blocked skill link")) {
+							pi.events.emit("security_notice", { category: "skill-link-blocked", message: warning });
+						}
+					}
 				}
+				// Use the known instructions now. Deferred catalog registration refreshes
+				// the service for subsequent turns instead of gating this provider request.
 				const systemPrompt = injectMcpInstructions(service, event.systemPrompt);
-				return systemPrompt === undefined ? undefined : { systemPrompt };
+				return systemPrompt === undefined ? undefined : { systemPrompt, systemPromptCache: "volatile" };
 			} catch (error) {
 				if (!(error instanceof Error)) throw error;
 				await reportMcpAsyncError("mcp.before_agent_start", error, sink);
 				return undefined;
 			}
-		});
+		};
+		pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true, runLast: true });
 		pi.on(
 			"session_shutdown",
 			wrapAsync(
 				"mcp.session_shutdown",
 				async (event) => {
-					if (event.reason === "reload" && !sessionOwned) return;
+					if (sessionOwned) {
+						disposeControlInventory();
+						await service.handleSessionShutdown(event);
+						return;
+					}
+					// A reload builds a new runner whose factory subscribes again, so this generation's listeners go
+					// now too: left on the process-wide service they keep the old runner and its whole extension
+					// graph reachable, one generation per reload.
 					disposeControlInventory();
-					await service.handleSessionShutdown(event);
+					// The shared service outlives any one session: release only this session's binding,
+					// and dispose only when the last live session quits (#2514).
+					await service.releaseSession(pi, event.reason === "quit" ? "quit" : undefined);
 				},
 				sink,
 			),
@@ -181,7 +222,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				async (event) => {
 					if (event.removed.some((extension) => extension.path === MCP_BUILTIN_EXTENSION_PATH)) {
 						disposeControlInventory();
-						await service.dispose("reload");
+						if (sessionOwned) await service.dispose("reload");
+						else await service.releaseSession(pi, "reload");
 					}
 				},
 				sink,

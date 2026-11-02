@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, JsonObject, ToolResultMessage, Usage, UserMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	clearOldToolResults,
@@ -33,7 +33,7 @@ function userMsg(text: string): UserMessage {
 function assistantToolCall(toolCallId: string, toolName: string, args: Record<string, unknown>): AssistantMessage {
 	return {
 		role: "assistant",
-		content: [{ type: "toolCall", id: toolCallId, name: toolName, arguments: args }],
+		content: [{ type: "toolCall", id: toolCallId, name: toolName, arguments: args as JsonObject }],
 		api: "faux-completion",
 		provider: "faux",
 		model: "faux-model",

@@ -12,10 +12,18 @@ export class AllSlotsBlockedError extends Error {
 	readonly soonestUnblockAt: number | undefined;
 
 	constructor(soonestUnblockAt: number | undefined) {
+		// Local time for the reader, the ISO instant for prose scanners, and one step (senpi#4329).
 		super(
 			soonestUnblockAt === undefined
-				? "All credential slots are blocked until re-login."
-				: `All credential slots are blocked until ${new Date(soonestUnblockAt).toISOString()}.`,
+				? "All credential slots are blocked until re-login. Sign in again or add a new API key for this provider, or choose another model."
+				: `All credential slots are blocked until ${new Date(soonestUnblockAt).toLocaleString("en-US", {
+						year: "numeric",
+						month: "short",
+						day: "numeric",
+						hour: "numeric",
+						minute: "2-digit",
+						timeZoneName: "short",
+					})} (${new Date(soonestUnblockAt).toISOString()}). Wait until then, or choose another model.`,
 		);
 		this.name = "AllSlotsBlockedError";
 		this.soonestUnblockAt = soonestUnblockAt;
@@ -47,7 +55,40 @@ export function rendezvousOrder<T extends SelectableSlot>(key: string, slots: re
 		.map(({ slot }) => slot);
 }
 
-function isBlocked(slot: SelectableSlot, now: number): boolean {
+/**
+ * Moves the accounts a user order names to the front, in that order; the rest keep
+ * their ranked order behind them. Names missing from `ranked` are skipped, so a
+ * stale order (a removed account) never blocks selection.
+ */
+export function applyAccountOrder<T extends { readonly name: string }>(
+	order: readonly string[] | undefined,
+	ranked: readonly T[],
+): T[] {
+	if (order === undefined || order.length === 0) return [...ranked];
+	const byName = new Map(ranked.map((slot) => [slot.name, slot]));
+	const front: T[] = [];
+	for (const name of order) {
+		const slot = byName.get(name);
+		if (slot !== undefined && !front.includes(slot)) front.push(slot);
+	}
+	return [...front, ...ranked.filter((slot) => !front.includes(slot))];
+}
+
+/** Drops a removed account from a stored user order, and the order itself once it is empty. */
+export function withoutOrderedAccount<T extends { order?: string[] }>(credential: T, name: string): T {
+	if (credential.order === undefined || !credential.order.includes(name)) return credential;
+	const order = credential.order.filter((entry) => entry !== name);
+	const next = { ...credential };
+	if (order.length === 0) delete next.order;
+	else next.order = order;
+	return next;
+}
+
+/**
+ * Whether selection skips a slot now: an auth block holds until a login rewrites the slot, whatever its deadline;
+ * any other block holds until its deadline. Account listings ask this too, so they never call a skipped slot available.
+ */
+export function isSlotBlocked(slot: Pick<SelectableSlot, "blockedUntil" | "blockReason">, now: number): boolean {
 	return slot.blockReason === "auth_error" || (slot.blockedUntil !== undefined && slot.blockedUntil > now);
 }
 
@@ -68,8 +109,8 @@ function selectUnblocked<T extends SelectableSlot>(
 	now: number,
 ): T | undefined {
 	const pinned = options.pinnedSlot === undefined ? undefined : slots.find((slot) => slot.name === options.pinnedSlot);
-	if (pinned && !isBlocked(pinned, now)) return pinned;
-	return rendezvousOrder(getPoolAffinityKey(options), slots, options.hasher).find((slot) => !isBlocked(slot, now));
+	if (pinned && !isSlotBlocked(pinned, now)) return pinned;
+	return rendezvousOrder(getPoolAffinityKey(options), slots, options.hasher).find((slot) => !isSlotBlocked(slot, now));
 }
 
 function soonestUnblockAt(slots: readonly SelectableSlot[], now: number): number | undefined {

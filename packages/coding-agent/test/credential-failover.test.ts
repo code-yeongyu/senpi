@@ -1,10 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-	CredentialFailoverError,
-	type RunSlot,
-	runCredentialFailover,
-	TURN_RETRY_SUPPRESSION_PREFIX,
-} from "../src/core/credential-pool/failover.ts";
+import { CredentialFailoverError, type RunSlot, runCredentialFailover } from "../src/core/credential-pool/failover.ts";
 
 type Event = { type: string };
 
@@ -73,7 +68,31 @@ describe("generic credential failover runner", () => {
 		]);
 	});
 
-	test("an UNKNOWN event type sets the committed-output barrier: no rotation, marked error", async () => {
+	test("a prose subscription limit rotates to the sibling credential", async () => {
+		const attempts: string[] = [];
+		const persisted: string[] = [];
+		const stream = runCredentialFailover<Event, RunSlot>({
+			listSlots: () => [{ name: "alpha" }, { name: "beta" }],
+			select: firstAvailable,
+			runAttempt: (slot) => {
+				attempts.push(slot.name);
+				return slot.name === "alpha"
+					? failWith(new Error("Codex error: The usage limit has been reached"))
+					: events({ type: "text_delta" });
+			},
+			isCommittedOutput: committedUnlessBookkeeping,
+			persistBlock: (slot, block) => {
+				persisted.push(`${slot.name}:${block.reason}`);
+			},
+		});
+		// A provider that reports exhaustion as prose must cost the pool exactly one
+		// slot, not the whole request.
+		expect(await collect(stream)).toEqual([{ type: "text_delta" }]);
+		expect(attempts).toEqual(["alpha", "beta"]);
+		expect(persisted).toEqual(["alpha:rate_limit"]);
+	});
+
+	test("an UNKNOWN event type sets the committed-output barrier: no rotation, provider text kept verbatim", async () => {
 		const attempts: string[] = [];
 		const persisted: string[] = [];
 		const stream = runCredentialFailover<Event, RunSlot>({
@@ -98,8 +117,9 @@ describe("generic credential failover runner", () => {
 		// The applicable block still persists even though rotation is barred.
 		expect(persisted).toEqual(["alpha"]);
 		expect(caught).toBeInstanceOf(CredentialFailoverError);
-		expect((caught as CredentialFailoverError).suppressTurnRetry).toBe(true);
-		expect((caught as CredentialFailoverError).message.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)).toBe(true);
+		// Whole-turn recovery belongs to the session layer, so the error text must
+		// reach it exactly as the provider wrote it - no replay-suppression marker.
+		expect((caught as CredentialFailoverError).message).toBe("rate limited");
 	});
 
 	test("a newly added slot participates because slots re-read per attempt", async () => {
@@ -146,7 +166,7 @@ describe("generic credential failover runner", () => {
 		expect(attempts).toEqual(["alpha", "alpha"]);
 		expect(persisted).toEqual([]);
 		expect((caught as CredentialFailoverError).action.kind).toBe("retry_same");
-		expect((caught as CredentialFailoverError).suppressTurnRetry).toBe(false);
+		expect((caught as CredentialFailoverError).message).toBe("overloaded");
 	});
 
 	test("pool exhaustion carries retryAt and the original error as cause", async () => {

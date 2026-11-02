@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
-const nextFallback = "faux/faux-3";
+const nextFallback = "other-faux/faux-3";
 
 function refusal(text: string): ReturnType<typeof fauxAssistantMessage> {
 	return fauxAssistantMessage(text, {
@@ -103,10 +104,16 @@ describe("retry fallback compaction unpin", () => {
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			fallbackNow: () => now,
 			settings: {
-				retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: ["other-faux/faux-2"] },
+				},
 			},
 		});
 		harnesses.push(harness);
+		registerFallbackModels(harness, "other-faux", ["faux-2"]);
 		harness.setResponses([billingError(), fauxAssistantMessage("fallback answer")]);
 
 		await harness.session.prompt("hello");
@@ -135,6 +142,7 @@ describe("retry fallback compaction unpin", () => {
 			},
 		});
 		harnesses.push(harness);
+		registerFallbackModels(harness, "other-faux", ["faux-3"]);
 		harness.setResponses([refusal("primary refusal"), billingError(), fauxAssistantMessage("next answer")]);
 
 		await harness.session.prompt("hello");

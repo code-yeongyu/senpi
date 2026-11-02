@@ -1,19 +1,21 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-	AnthropicMessagesCompat,
-	Api,
-	Context,
-	Model,
-	OpenAICompletionsCompat,
-} from "@earendil-works/pi-ai/compat";
+import { calculateCost, normalizeContext } from "@earendil-works/pi-ai";
+import type { AnthropicMessagesCompat, Api, Model, OpenAICompletionsCompat } from "@earendil-works/pi-ai/compat";
 import { getApiProvider, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ModelsJsonProvider } from "../src/core/model-config.ts";
 import { clearApiKeyCache, type ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
 import { createModelRegistry } from "./model-runtime-test-utils.ts";
+import { builtinChatModelIdPair } from "./support/catalog-ids.ts";
+
+// Two openai-completions models the OpenRouter catalog ships today: override targets that a regen cannot remove (senpi#1955).
+const [OPENROUTER_TARGET, OPENROUTER_SIBLING] = builtinChatModelIdPair(
+	"openrouter",
+	(model) => model.api === "openai-completions",
+);
 
 describe("ModelRegistry", () => {
 	let tempDir: string;
@@ -65,6 +67,15 @@ describe("ModelRegistry", () => {
 		return registry.getAll().filter((m) => m.provider === provider);
 	}
 
+	function requireModel<T extends { id: string }>(models: readonly T[], id: string): T {
+		const found = models.find((model) => model.id === id);
+		expect(found, `expected model ${id} to exist`).toBeDefined();
+		if (!found) {
+			throw new Error(`expected model ${id} to exist`);
+		}
+		return found;
+	}
+
 	function toShPath(value: string): string {
 		return value.replace(/\\/g, "/").replace(/"/g, '\\"');
 	}
@@ -92,9 +103,9 @@ describe("ModelRegistry", () => {
 		maxTokens: 4096,
 	};
 
-	const emptyContext: Context = {
+	const emptyContext = normalizeContext({
 		messages: [],
-	};
+	});
 
 	describe("baseUrl override (no custom models)", () => {
 		test("overriding baseUrl keeps all built-in models", async () => {
@@ -310,14 +321,14 @@ describe("ModelRegistry", () => {
 			writeModelsJson({
 				openrouter: providerConfig(
 					"https://my-proxy.example.com/v1",
-					[{ id: "anthropic/claude-sonnet-4" }],
+					[{ id: OPENROUTER_TARGET }],
 					"openai-completions",
 				),
 			});
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnetModels = models.filter((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnetModels = models.filter((m) => m.id === OPENROUTER_TARGET);
 
 			expect(sonnetModels).toHaveLength(1);
 			expect(sonnetModels[0].baseUrl).toBe("https://my-proxy.example.com/v1");
@@ -638,7 +649,7 @@ describe("ModelRegistry", () => {
 						},
 					],
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							name: "Overridden Built-in Sonnet",
 						},
 					},
@@ -649,9 +660,7 @@ describe("ModelRegistry", () => {
 			const models = getModelsForProvider(registry, "openrouter");
 
 			expect(models.some((m) => m.id === "custom/openrouter-model")).toBe(true);
-			expect(
-				models.some((m) => m.id === "anthropic/claude-sonnet-4" && m.name === "Overridden Built-in Sonnet"),
-			).toBe(true);
+			expect(models.some((m) => m.id === OPENROUTER_TARGET && m.name === "Overridden Built-in Sonnet")).toBe(true);
 		});
 
 		test("refresh() reloads merged custom models from disk", async () => {
@@ -688,14 +697,86 @@ describe("ModelRegistry", () => {
 			expect(anthropicModels.some((m) => m.id === "claude-custom")).toBe(false);
 			expect(anthropicModels.some((m) => m.id.includes("claude"))).toBe(true);
 		});
+
+		// Desktop #1812: a server added from the desktop is its own provider id with a key in
+		// auth.json; removing it deletes the models.json block, logs the provider out, and refreshes.
+		test("removing a custom provider and its stored key drops its models on refresh", async () => {
+			const gpuBox = {
+				...providerConfig("http://192.168.1.20:8000/v1", [{ id: "qwen2.5-coder" }], "openai-completions"),
+			};
+			delete (gpuBox as { apiKey?: string }).apiKey;
+			writeModelsJson({ "gpu-box": gpuBox });
+			authStorage.set("gpu-box", { type: "api_key", key: "synthetic-server-key" });
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			expect(registry.getAvailable().some((m) => m.provider === "gpu-box")).toBe(true);
+
+			writeModelsJson({});
+			authStorage.remove("gpu-box");
+			await registry.refresh();
+
+			expect(registry.getAll().some((m) => m.provider === "gpu-box")).toBe(false);
+			expect(registry.getAvailable().some((m) => m.provider === "gpu-box")).toBe(false);
+		});
 	});
 
 	describe("modelOverrides (per-model customization)", () => {
+		const FIXTURE_OVERRIDE_ID = "fixture/override-target";
+		const FIXTURE_SIBLING_ID = "fixture/sibling-model";
+
+		function fixtureOverrideCatalog(): NonNullable<ModelsJsonProvider["models"]> {
+			return [
+				{
+					id: FIXTURE_OVERRIDE_ID,
+					name: "Fixture Override Target",
+					reasoning: false,
+					input: ["text"],
+				},
+				{
+					id: FIXTURE_SIBLING_ID,
+					name: "Fixture Sibling",
+					reasoning: false,
+					input: ["text"],
+				},
+			];
+		}
+
+		// senpi#2892: Claude Haiku 5.5 opens at the 100K price band; a modelOverrides contextWindow is the 1M opt-in.
+		test("Claude Haiku 5.5 defaults to its 100K price band and opts into 1M through a modelOverrides window", async () => {
+			const defaultRegistry = await createModelRegistry(authStorage, modelsJsonPath);
+			const defaultHaiku = defaultRegistry.find("anthropic", "claude-haiku-5-5");
+			expect(defaultHaiku?.contextWindow).toBe(100_000);
+			expect(defaultHaiku?.maxTokens).toBe(32_000);
+
+			writeRawModelsJson({
+				anthropic: { modelOverrides: { "claude-haiku-5-5": { contextWindow: 1_000_000, maxTokens: 128_000 } } },
+			});
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const haiku = registry.find("anthropic", "claude-haiku-5-5");
+
+			expect(registry.getError()).toBeUndefined();
+			expect(haiku?.contextWindow).toBe(1_000_000);
+			expect(haiku?.maxTokens).toBe(128_000);
+			expect(haiku?.cost.tiers).toEqual([
+				{ inputTokensAbove: 100_000, input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 },
+			]);
+			if (!haiku) throw new Error("anthropic/claude-haiku-5-5 must resolve");
+			const cost = calculateCost(haiku, {
+				input: 150_000,
+				output: 2_000,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 152_000,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			});
+			expect(cost.input).toBeCloseTo(0.075, 10);
+			expect(cost.output).toBeCloseTo(0.005, 10);
+		});
+
 		test("model override applies to a single built-in model", async () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							name: "Custom Sonnet Name",
 						},
 					},
@@ -705,12 +786,58 @@ describe("ModelRegistry", () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
 
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === OPENROUTER_TARGET);
 			expect(sonnet?.name).toBe("Custom Sonnet Name");
 
 			// Other models should be unchanged
-			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
+			const opus = models.find((m) => m.id === OPENROUTER_SIBLING);
 			expect(opus?.name).not.toBe("Custom Sonnet Name");
+		});
+
+		test("Anthropic model override replaces allowed fallback metadata", async () => {
+			const allowedFallbackModels = [
+				{
+					provider: "anthropic",
+					model: "claude-opus-5",
+					cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+				},
+				{
+					provider: "anthropic",
+					model: "claude-opus-4-8",
+					cost: { input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 },
+				},
+			];
+			writeRawModelsJson({
+				anthropic: {
+					modelOverrides: {
+						"claude-fable-5": {
+							compat: { allowedFallbackModels },
+						},
+					},
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const compat = registry.find("anthropic", "claude-fable-5")?.compat as AnthropicMessagesCompat | undefined;
+
+			expect(registry.getError()).toBeUndefined();
+			expect(compat?.allowedFallbackModels).toEqual(allowedFallbackModels);
+		});
+
+		test("empty allowed fallback model override disables server-side fallback", async () => {
+			writeRawModelsJson({
+				anthropic: {
+					modelOverrides: {
+						"claude-fable-5": { compat: { allowedFallbackModels: [] } },
+					},
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const compat = registry.find("anthropic", "claude-fable-5")?.compat as AnthropicMessagesCompat | undefined;
+
+			expect(registry.getError()).toBeUndefined();
+			expect(compat?.allowedFallbackModels).toEqual([]);
 		});
 
 		test("custom model and model override carry sampling params", async () => {
@@ -725,7 +852,7 @@ describe("ModelRegistry", () => {
 						},
 					],
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							samplingParams: { top_p: 0.9 },
 						},
 					},
@@ -738,19 +865,95 @@ describe("ModelRegistry", () => {
 			const custom = models.find((m) => m.id === "custom/sampling-model");
 			expect(custom?.samplingParams).toEqual({ temperature: 1, top_p: 0.95, top_k: 0 });
 
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === OPENROUTER_TARGET);
 			expect(sonnet?.samplingParams).toEqual({ top_p: 0.9 });
 
 			// Models without sampling config keep it unset.
-			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
+			const opus = models.find((m) => m.id === OPENROUTER_SIBLING);
 			expect(opus?.samplingParams).toBeUndefined();
+		});
+
+		test("custom model and model override carry prompt cache lifetimes", async () => {
+			writeRawModelsJson({
+				openrouter: {
+					baseUrl: "https://my-proxy.example.com/v1",
+					api: "openai-completions",
+					models: [{ id: "custom/cached-model", promptCache: { short: 120 } }],
+					modelOverrides: {
+						[OPENROUTER_TARGET]: { promptCache: { short: 300 } },
+					},
+				},
+				anthropic: {
+					modelOverrides: {
+						"claude-sonnet-4-6": { promptCache: { long: 1800 } },
+					},
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const openrouter = getModelsForProvider(registry, "openrouter");
+
+			expect(registry.getError()).toBeUndefined();
+			expect(openrouter.find((m) => m.id === "custom/cached-model")?.promptCache).toEqual({ short: 120 });
+			expect(openrouter.find((m) => m.id === OPENROUTER_TARGET)?.promptCache).toEqual({ short: 300 });
+			expect(openrouter.find((m) => m.id === OPENROUTER_SIBLING)?.promptCache).toBeUndefined();
+			// Overrides merge per tier with the built-in catalog.
+			expect(registry.find("anthropic", "claude-sonnet-4-6")?.promptCache).toEqual({ short: 300, long: 1800 });
+		});
+
+		// Regression test for https://github.com/earendil-works/pi/issues/9631
+		test("model override deep-merges image resize limits", async () => {
+			writeRawModelsJson({
+				test: {
+					baseUrl: "https://example.com",
+					apiKey: "test-key",
+					api: "openai-completions",
+					models: [
+						{
+							id: "vision-model",
+							input: ["text", "image"],
+							inputLimits: {
+								maxRequestBytes: 32 * 1024 * 1024,
+								images: {
+									maxPerRequest: 100,
+									resize: {
+										maxWidth: 2000,
+										maxHeight: 2000,
+										maxBytes: 4.5 * 1024 * 1024,
+										jpegQuality: 80,
+									},
+								},
+							},
+						},
+					],
+					modelOverrides: {
+						"vision-model": {
+							inputLimits: {
+								images: { resize: { maxWidth: 1568, maxBytes: 524288, jpegQuality: 75 } },
+							},
+						},
+					},
+				},
+			});
+
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			const model = registry.find("test", "vision-model");
+
+			expect(registry.getError()).toBeUndefined();
+			expect(model?.inputLimits).toMatchObject({
+				maxRequestBytes: 32 * 1024 * 1024,
+				images: {
+					maxPerRequest: 100,
+					resize: { maxWidth: 1568, maxHeight: 2000, maxBytes: 524288, jpegQuality: 75 },
+				},
+			});
 		});
 
 		test("model override with compat.openRouterRouting", async () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							compat: {
 								openRouterRouting: { only: ["amazon-bedrock"] },
 							},
@@ -762,16 +965,17 @@ describe("ModelRegistry", () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
 
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === OPENROUTER_TARGET);
 			const compat = sonnet?.compat as OpenAICompletionsCompat | undefined;
 			expect(compat?.openRouterRouting).toEqual({ only: ["amazon-bedrock"] });
 		});
 
 		test("supportsFinishReason can be configured at provider and model levels", async () => {
 			const provider: ModelsJsonProvider = {
+				models: fixtureOverrideCatalog(),
 				compat: { supportsFinishReason: true },
 				modelOverrides: {
-					"anthropic/claude-sonnet-4": {
+					[FIXTURE_OVERRIDE_ID]: {
 						compat: { supportsFinishReason: false },
 					},
 				},
@@ -780,18 +984,18 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((model) => model.id === "anthropic/claude-sonnet-4");
-			const opus = models.find((model) => model.id === "anthropic/claude-opus-4");
+			const overridden = requireModel(models, FIXTURE_OVERRIDE_ID);
+			const sibling = requireModel(models, FIXTURE_SIBLING_ID);
 
-			expect((sonnet?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(false);
-			expect((opus?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(true);
+			expect((overridden.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(false);
+			expect((sibling.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(true);
 		});
 
 		test("model override deep merges compat settings", async () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							compat: {
 								openRouterRouting: { order: ["anthropic", "together"] },
 							},
@@ -802,7 +1006,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === OPENROUTER_TARGET);
 
 			// Should have both the new routing AND preserve other compat settings
 			const compat = sonnet?.compat as OpenAICompletionsCompat | undefined;
@@ -812,11 +1016,12 @@ describe("ModelRegistry", () => {
 		test("multiple model overrides on same provider", async () => {
 			writeRawModelsJson({
 				openrouter: {
+					models: fixtureOverrideCatalog(),
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[FIXTURE_OVERRIDE_ID]: {
 							compat: { openRouterRouting: { only: ["amazon-bedrock"] } },
 						},
-						"anthropic/claude-opus-4": {
+						[FIXTURE_SIBLING_ID]: {
 							compat: { openRouterRouting: { only: ["anthropic"] } },
 						},
 					},
@@ -826,21 +1031,22 @@ describe("ModelRegistry", () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
 
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
-			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
+			const overridden = requireModel(models, FIXTURE_OVERRIDE_ID);
+			const sibling = requireModel(models, FIXTURE_SIBLING_ID);
 
-			const sonnetCompat = sonnet?.compat as OpenAICompletionsCompat | undefined;
-			const opusCompat = opus?.compat as OpenAICompletionsCompat | undefined;
-			expect(sonnetCompat?.openRouterRouting).toEqual({ only: ["amazon-bedrock"] });
-			expect(opusCompat?.openRouterRouting).toEqual({ only: ["anthropic"] });
+			const overriddenCompat = overridden.compat as OpenAICompletionsCompat | undefined;
+			const siblingCompat = sibling.compat as OpenAICompletionsCompat | undefined;
+			expect(overriddenCompat?.openRouterRouting).toEqual({ only: ["amazon-bedrock"] });
+			expect(siblingCompat?.openRouterRouting).toEqual({ only: ["anthropic"] });
 		});
 
 		test("model override combined with baseUrl override", async () => {
 			writeRawModelsJson({
 				openrouter: {
 					baseUrl: "https://my-proxy.example.com/v1",
+					models: fixtureOverrideCatalog(),
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[FIXTURE_OVERRIDE_ID]: {
 							name: "Proxied Sonnet",
 						},
 					},
@@ -849,16 +1055,16 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const overridden = requireModel(models, FIXTURE_OVERRIDE_ID);
+			const sibling = requireModel(models, FIXTURE_SIBLING_ID);
 
 			// Both overrides should apply
-			expect(sonnet?.baseUrl).toBe("https://my-proxy.example.com/v1");
-			expect(sonnet?.name).toBe("Proxied Sonnet");
+			expect(overridden.baseUrl).toBe("https://my-proxy.example.com/v1");
+			expect(overridden.name).toBe("Proxied Sonnet");
 
 			// Other models should have the baseUrl but not the name override
-			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
-			expect(opus?.baseUrl).toBe("https://my-proxy.example.com/v1");
-			expect(opus?.name).not.toBe("Proxied Sonnet");
+			expect(sibling.baseUrl).toBe("https://my-proxy.example.com/v1");
+			expect(sibling.name).not.toBe("Proxied Sonnet");
 		});
 
 		test("model override for non-existent model ID is ignored", async () => {
@@ -885,7 +1091,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							cost: { input: 99 },
 						},
 					},
@@ -894,7 +1100,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === OPENROUTER_TARGET);
 
 			// Input cost should be overridden
 			expect(sonnet?.cost.input).toBe(99);
@@ -906,7 +1112,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							headers: { "X-Custom-Model-Header": "value" },
 						},
 					},
@@ -915,7 +1121,7 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const sonnet = models.find((m) => m.id === OPENROUTER_TARGET);
 			expect(sonnet).toBeDefined();
 
 			const auth = await registry.getApiKeyAndHeaders(sonnet!);
@@ -929,7 +1135,7 @@ describe("ModelRegistry", () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							name: "First Name",
 						},
 					},
@@ -937,15 +1143,15 @@ describe("ModelRegistry", () => {
 			});
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
-			expect(
-				getModelsForProvider(registry, "openrouter").find((m) => m.id === "anthropic/claude-sonnet-4")?.name,
-			).toBe("First Name");
+			expect(getModelsForProvider(registry, "openrouter").find((m) => m.id === OPENROUTER_TARGET)?.name).toBe(
+				"First Name",
+			);
 
 			// Update and refresh
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							name: "Second Name",
 						},
 					},
@@ -953,16 +1159,16 @@ describe("ModelRegistry", () => {
 			});
 			await registry.refresh();
 
-			expect(
-				getModelsForProvider(registry, "openrouter").find((m) => m.id === "anthropic/claude-sonnet-4")?.name,
-			).toBe("Second Name");
+			expect(getModelsForProvider(registry, "openrouter").find((m) => m.id === OPENROUTER_TARGET)?.name).toBe(
+				"Second Name",
+			);
 		});
 
 		test("removing model override restores built-in values", async () => {
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
-						"anthropic/claude-sonnet-4": {
+						[OPENROUTER_TARGET]: {
 							name: "Custom Name",
 						},
 					},
@@ -970,9 +1176,7 @@ describe("ModelRegistry", () => {
 			});
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
-			const customName = getModelsForProvider(registry, "openrouter").find(
-				(m) => m.id === "anthropic/claude-sonnet-4",
-			)?.name;
+			const customName = getModelsForProvider(registry, "openrouter").find((m) => m.id === OPENROUTER_TARGET)?.name;
 			expect(customName).toBe("Custom Name");
 
 			// Remove override and refresh
@@ -980,7 +1184,7 @@ describe("ModelRegistry", () => {
 			await registry.refresh();
 
 			const restoredName = getModelsForProvider(registry, "openrouter").find(
-				(m) => m.id === "anthropic/claude-sonnet-4",
+				(m) => m.id === OPENROUTER_TARGET,
 			)?.name;
 			expect(restoredName).not.toBe("Custom Name");
 		});
@@ -1880,12 +2084,28 @@ describe("ModelRegistry", () => {
 			});
 
 			test("getAvailable filters GitHub Copilot OAuth models to account picker availability", async () => {
+				// Hermetic fixture instead of the shipped catalog: the fork regenerates its own
+				// catalog, so a real Copilot row would make this filter test drift with the data.
+				const copilotModelId = "gpt-4.1";
+				writeRawModelsJson({
+					"github-copilot": {
+						models: [
+							{
+								id: copilotModelId,
+								name: "GPT-4.1",
+								reasoning: false,
+								input: ["text"],
+							},
+						],
+					},
+				});
+
 				await authStorage.modify("github-copilot", async () => ({
 					type: "oauth",
 					refresh: "github-access-token",
 					access: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
 					expires: Date.now() + 60_000,
-					availableModelIds: ["gpt-4.1"],
+					availableModelIds: [copilotModelId],
 				}));
 
 				const registry = await createModelRegistry(authStorage, modelsJsonPath);
@@ -1895,7 +2115,7 @@ describe("ModelRegistry", () => {
 						.getAvailable()
 						.filter((m) => m.provider === "github-copilot")
 						.map((m) => m.id),
-				).toEqual(["gpt-4.1"]);
+				).toEqual([copilotModelId]);
 			});
 
 			test("getApiKeyAndHeaders resolves authHeader on every request", async () => {

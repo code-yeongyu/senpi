@@ -1,3 +1,5 @@
+[English](README.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português (Brasil)](README.pt-br.md) | [Italiano](README.it.md)
+
 # senpi
 
 
@@ -23,6 +25,7 @@ Core source modifications are minimised and tracked in [`changes.md`](#fork-stra
 
 | Package | Description |
 |---------|-------------|
+| **[@earendil-works/chord](packages/chord)** | Standalone application-composition runtime for services, replicated state, RPC, and plugins |
 | **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
@@ -160,6 +163,7 @@ You do **not** need to install these packages for normal senpi use; their functi
 
 | Package | Included as | Builtin capability |
 |---|---|---|
+| [`pi-anthropic-bash`](https://github.com/code-yeongyu/pi-anthropic-bash) | `anthropic-bash` | Anthropic-native bash tool variant. |
 | [`pi-anthropic-web-search`](https://github.com/code-yeongyu/pi-anthropic-web-search) | `anthropic-web-search` | Anthropic-native web search support. |
 | [`pi-apply-patch`](https://github.com/code-yeongyu/pi-apply-patch) | `gpt-apply-patch` | Codex-style `apply_patch` tool for GPT-family runs. |
 | [`pi-bash-timeout`](https://github.com/code-yeongyu/pi-bash-timeout) | `bash-timeout` | Bash timeout defaults, max timeout enforcement, and prompt policy. |
@@ -171,7 +175,7 @@ You do **not** need to install these packages for normal senpi use; their functi
 | [`pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) | `webfetch` | Fetches URL content as markdown, text, or HTML with bounded time and size. |
 | [`pi-websearch`](https://github.com/code-yeongyu/pi-websearch) | `websearch` | Provider-backed web search with config-gated activation and source-aware results. |
 
-Other builtins such as `permission-system`, `prompt-preset`, `anthropic-bash`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, and `session-observer` are senpi-owned builtin extensions without installable sibling packages.
+Other builtins such as `permission-system`, `prompt-preset`, `service-tier`, `tool-pair-guard`, `compaction`, `history-search`, and `session-observer` are senpi-owned builtin extensions without installable sibling packages.
 
 ## Why "senpi"
 
@@ -189,7 +193,7 @@ Verified against `git diff upstream/main..HEAD` and every `changes.md` file in t
 
 | Subsystem | What it does | Docs |
 |-----------|--------------|------|
-| **Dynamic system prompt** | Replaces upstream's static prompt with an adaptive builder: senpi identity → forced intent gate → exploration discipline → parallel-tool guidance → verification tiers → categorized tool reference → policies → style → optional per-model tuning. | [`dynamic-prompt/`](packages/coding-agent/src/core/dynamic-prompt/AGENTS.md) · [`changes.md`](packages/coding-agent/src/core/dynamic-prompt/changes.md) |
+| **Dynamic system prompt** | Replaces upstream's static prompt with an adaptive builder: senpi identity → forced intent gate → working-the-task discipline (parallel waves, exploration stops, one-plan commitment) → verification tiers → categorized tool reference → policies → style → optional per-model tuning. | [`dynamic-prompt/`](packages/coding-agent/src/core/dynamic-prompt/AGENTS.md) · [`changes.md`](packages/coding-agent/src/core/dynamic-prompt/changes.md) |
 | **Compaction pipeline** | Plugsuit-style adaptive thresholds, empty-summarization guard, branch summarization hooks. Speculative + emergency compaction with restoration tracker lives as the [`compaction` builtin extension](#owned-builtin-extensions). | [`core/compaction/`](packages/coding-agent/src/core/compaction/) · [`changes.md`](packages/coding-agent/src/core/compaction/changes.md) |
 | **Tool-call middleware rewrite** | XML / Hermes / YAML+XML / Gemma4 text-tool protocols for models without native function calling. Strict parsing, stream-error preservation. | [`tool-call-middleware/`](packages/ai/src/tool-call-middleware/AGENTS.md) · [`changes.md`](packages/ai/src/tool-call-middleware/changes.md) |
 
@@ -341,12 +345,12 @@ We treat npm dependency changes as reviewed code changes.
 - Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
 - `.npmrc` sets `save-exact=true` and `min-release-age=2` to avoid same-day dependency releases during npm resolution.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
-- `bun run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent publish dependency manifest.
-- `packages/coding-agent/publish-deps.lock.json` is generated from the root lockfile for publish staging but is never shipped; publishing an `npm-shrinkwrap.json` beside bundled dependencies breaks npm installs.
+- `bun run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent install lock.
+- The published `@code-yeongyu/senpi` manifest is the source dependency list: fork workspaces resolve through their published `@code-yeongyu/senpi-*` aliases and nothing but the vendored client/protocol code ships inside the tarball. No `npm-shrinkwrap.json` is published.
 - Release smoke tests use `bun run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
 - Local release installs, documented npm installs, and `senpi update senpi` use `--ignore-scripts` where supported.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`. These npm internals are inventoried for a follow-up migration.
-- Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
+- Install-lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
 
 ## Contributing
 

@@ -1,20 +1,21 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MissingSessionCwdError } from "../src/core/session-cwd.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
+import { teardownChildProcessesAndRoots } from "./helpers/process-teardown.ts";
 import { startFakeModelServer } from "./helpers/rpc-fake-model.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
 
 afterEach(async () => {
-	for (const child of children.splice(0)) child.kill("SIGTERM");
-	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	await teardownChildProcessesAndRoots(children, roots);
 });
 
 async function fixture(label: string) {
@@ -46,7 +47,7 @@ async function fixture(label: string) {
 		{
 			cwd,
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				...hermeticProviderEnv(),
 				PI_OFFLINE: "1",
 				PI_TELEMETRY: "0",
@@ -77,7 +78,7 @@ async function fixture(label: string) {
 	return { root, cwd, sessionDir, client, opened, manager, fake };
 }
 
-describe("interactive-w3 shared-host regression contracts", () => {
+describe("interactive-w3 RPC host regression contracts", () => {
 	it("R4 mirrors compaction_start and compaction_end", async () => {
 		const f = await fixture("r4");
 		const seen: boolean[] = [];

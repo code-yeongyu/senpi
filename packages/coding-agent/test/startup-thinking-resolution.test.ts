@@ -7,7 +7,7 @@ import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
-const MODEL = getModel("openai-codex", "gpt-5.5");
+const MODEL = getModel("chatgpt-subscription", "gpt-5.5");
 
 describe("startup thinking-level resolution characterization", () => {
 	let tempDir: string;

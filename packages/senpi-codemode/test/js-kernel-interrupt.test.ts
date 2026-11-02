@@ -1,16 +1,7 @@
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
-
-interface TestWorkerEntry {
-	readonly root: string;
-	readonly url: URL;
-	readonly spawnLog: string;
-}
+import { createSpawnLoggingWorkerEntry, removeWorkerEntry, spawnCount } from "./eval/js-worker-spawn-log.ts";
 
 const kernels = new Set<JavaScriptKernel>();
 
@@ -33,62 +24,9 @@ function createKernel(
 	return kernel;
 }
 
-async function createWorkerEntry(blockFirstReady: boolean): Promise<TestWorkerEntry> {
-	const root = await mkdtemp(join(tmpdir(), "senpi-js-lifecycle-"));
-	const entry = join(root, "worker-entry.mjs");
-	const spawnLog = join(root, "spawns.txt");
-	const gate = join(root, "first-started");
-	const coreUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "worker-core.js")).href;
-	const source = `
-import { closeSync, constants, openSync } from "node:fs";
-import { appendFileSync } from "node:fs";
-import { parentPort, workerData } from "node:worker_threads";
-import { createWorkerCore } from ${JSON.stringify(coreUrl)};
-
-if (!parentPort) throw new Error("test worker missing parentPort");
-appendFileSync(${JSON.stringify(spawnLog)}, "spawn\\n");
-
-const transport = {
-  send(message) { parentPort.postMessage(message); },
-  onMessage(handler) {
-    const listener = (message) => {
-      if (${JSON.stringify(blockFirstReady)} && message.type === "init") {
-        try {
-          const descriptor = openSync(${JSON.stringify(gate)}, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
-          closeSync(descriptor);
-          parentPort.postMessage({ type: "phase", title: "readiness-blocked" });
-          return;
-        } catch (error) {
-          if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
-        }
-      }
-      handler(message);
-    };
-    parentPort.on("message", listener);
-    return () => parentPort.off("message", listener);
-  },
-  close() { parentPort.close(); },
-};
-
-createWorkerCore(transport, { cwd: workerData.cwd, parallelPoolWidth: workerData.parallelPoolWidth });
-`;
-	await writeFile(entry, source);
-	await appendFile(spawnLog, "");
-	return { root, url: pathToFileURL(entry), spawnLog };
-}
-
-async function spawnCount(entry: TestWorkerEntry): Promise<number> {
-	const contents = await readFile(entry.spawnLog, "utf8");
-	return contents.split("\n").filter(Boolean).length;
-}
-
-async function removeWorkerEntry(entry: TestWorkerEntry): Promise<void> {
-	await rm(entry.root, { recursive: true, force: true });
-}
-
 describe("JavaScriptKernel lifecycle", () => {
 	it("does not lose an interrupt while run awaits worker readiness", async () => {
-		const entry = await createWorkerEntry(true);
+		const entry = await createSpawnLoggingWorkerEntry(true);
 		let readinessBlocked: (() => void) | undefined;
 		const blocked = new Promise<void>((resolve) => {
 			readinessBlocked = resolve;
@@ -121,7 +59,7 @@ describe("JavaScriptKernel lifecycle", () => {
 		}
 	});
 
-	it("interrupts an active run after its observable execution-start tool call", async () => {
+	it("interrupts an active run at its pending bridge call and keeps the worker state", async () => {
 		const kernel = createKernel();
 		const run = kernel.run({
 			cellId: "active-interrupt",
@@ -131,17 +69,18 @@ describe("JavaScriptKernel lifecycle", () => {
 		const started = await kernel.nextToolCall();
 		expect(started).toMatchObject({ toolName: "started", args: { marker: 1 } });
 
-		await kernel.interrupt("active-stop");
+		const handle = await kernel.interrupt("active-stop");
 
 		await expect(run).resolves.toMatchObject({
 			ok: false,
 			error: { message: expect.stringContaining("active-stop") },
 		});
+		await expect(handle.stateRetained).resolves.toBe(true);
 		await expect(
-			kernel.run({ cellId: "fresh", code: "return typeof interruptMarker", timeoutMs: 2_000 }),
+			kernel.run({ cellId: "fresh", code: "return interruptMarker", timeoutMs: 2_000 }),
 		).resolves.toMatchObject({
 			ok: true,
-			valueRepr: '"undefined"',
+			valueRepr: "1",
 		});
 	});
 
@@ -201,7 +140,7 @@ describe("JavaScriptKernel lifecycle", () => {
 	});
 
 	it("does not restart or publish a worker after concurrent interrupt and close", async () => {
-		const entry = await createWorkerEntry(false);
+		const entry = await createSpawnLoggingWorkerEntry();
 		let readyMessages = 0;
 		const kernel = createKernel({
 			workerEntryUrl: entry.url,
@@ -231,7 +170,7 @@ describe("JavaScriptKernel lifecycle", () => {
 
 	it("does not restart or publish a worker when close overtakes timeout recovery", async () => {
 		vi.useFakeTimers();
-		const entry = await createWorkerEntry(false);
+		const entry = await createSpawnLoggingWorkerEntry();
 		let readyMessages = 0;
 		const kernel = createKernel({
 			workerEntryUrl: entry.url,

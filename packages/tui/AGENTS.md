@@ -57,9 +57,10 @@ native/                     Optional Darwin/Win32 modifier binaries (prebuilt, l
 
 ## $-INVOCATION
 
-- A leading `$` on prompt line 0 offers the same candidate list as `/`: slash commands insert as `/name`, skills as bare `$name`.
-- After one known skill, only further skills are offered. Mid-line `$` (e.g. `$HOME`) stays literal.
+- A `$` token at a whitespace boundary on any logical prompt line — the first line, a line after `shift+enter`, or a line from a multiline paste — opens the popup however many `$` tokens precede it, so one prompt can carry several skill mentions. As the first token it offers the same candidate list as `/` (slash commands insert as `/name`, skills as bare `$name`); anywhere else it offers skills only.
+- A token that already names a known skill closes the popup so `enter` submits. A `$` that is not at a token boundary, and shell-style expansions such as `$HOME` or `$1`, stay literal.
 - Completion application must preserve trailing-space behavior for both `/command ` and `$skill ` forms.
+- Resolved skill mentions (`$name` / `$skill:name` naming a known skill) are reported by `CombinedAutocompleteProvider.getMentionRanges(line)` (`findDollarSkillMentions` in `dollar-invocation-autocomplete.ts`) and the `Editor` styles them through the optional `EditorTheme.mention` hook; row composition lives in `components/editor-line-render.ts` so the cursor grapheme and each mention fragment are styled independently.
 
 ## ANTI-PATTERNS
 

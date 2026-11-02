@@ -32,7 +32,9 @@ Attach is **single-flight**: `attachPromise` memoizes the in-flight `attachSessi
 
 ## ELICITATION
 
-`elicitation.ts` implements MCP elicitation as form-only (no free-text). Must work headless and over RPC; the UI provider is injected at `before_agent_start` time via `setMcpElicitationUiProvider`.
+Legacy `elicitation.ts` implements form-only elicitation over TUI/RPC primitives; print/json processes omit its capability. A missing UI provider (including `ctx.hasUI` false) throws a processing error without calling primitives. An undefined dialog answer cancels without content; boolean Yes/No retains its typed meaning. No legacy path returns decline; explicit Decline controls are tracked separately.
+
+Modern MRTR lives in `modern/request.ts` and `modern/elicitation.ts`: binding-owned TUI forms require explicit submission; no human means local termination, never a fabricated decline. Origins, human capability, and continuation state remain private and request-local, independent of the legacy connection capability.
 
 ## TESTS AND DOCS
 

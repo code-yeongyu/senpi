@@ -9,6 +9,7 @@ Coverage for the ttsr stream-rule extension (`src/core/extensions/builtin/ttsr/`
 | Control-leak grammar accept/reject | `detector-control-leak-grammar.test.ts` + `control-leak-helpers.ts` (`ctrl`, `sgml`, `bracket`, `runSplitMatrix`, `expectLeakMatchEverywhere`) |
 | Control-leak evidence / negatives | `detector-control-leak-evidence.test.ts`, `detector-control-leak-negatives.test.ts` |
 | Collapse detection | `detector-collapse.test.ts` + `collapse-test-inputs.ts` |
+| Near-duplicate paragraph frequency | `detector-collapse-near-duplicates.test.ts` + `fixtures/incident-near-duplicate-narration.txt` |
 | Coordinator races / abort semantics | `coordinator.test.ts`, `coordinator-races.test.ts` (`claimAbort`, `createGenerationState`, `markUserCancelled`, `resolveDetection`) |
 | Rule parsing / builtin rules | `rule-parser.test.ts` |
 | Repetitive-turns lane | `repetitive-turns.test.ts` |

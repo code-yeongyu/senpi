@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getModel, streamSimple } from "../src/compat.ts";
+import { getModel, getModels, streamSimple } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
 import { getSupportedThinkingLevels } from "../src/models.ts";
 
@@ -14,64 +14,30 @@ afterEach(() => {
 });
 
 describe("Baseten models", () => {
-	it("registers GLM 5.2 as the default OpenAI-compatible reasoning model", () => {
-		const model = getModel("baseten", "zai-org/GLM-5.2");
+	it("keeps both GLM 5.2 endpoints text-only", () => {
+		expect(getModel("baseten", "zai-org/GLM-5.2").input).toEqual(["text"]);
+		expect(getModel("baseten", "zai-org/GLM-5.2-Fast").input).toEqual(["text"]);
+	});
 
-		expect(model).toMatchObject({
-			api: "openai-completions",
-			provider: "baseten",
-			baseUrl: "https://inference.baseten.co/v1",
+	it("sends a toggle-only reasoning model's thinking as chat_template_args, never as reasoning_effort", async () => {
+		// The catalog decides which Baseten rows are toggle-only and they come and go upstream, so this builds the
+		// toggle-only shape the generator emits instead of pinning a model id that can drop out of models.dev.
+		const base = getModels("baseten")[0];
+		expect(base).toBeDefined();
+		const model = {
+			...base,
+			id: "fixture/toggle-only",
 			reasoning: true,
-			thinkingLevelMap: {
-				off: "none",
-				minimal: null,
-				low: null,
-				medium: null,
-				high: "high",
-				xhigh: null,
-				max: "max",
-			},
-			input: ["text", "image"],
-			contextWindow: 1048576,
-			maxTokens: 262144,
-			cost: {
-				input: 1.4,
-				output: 4.4,
-				cacheRead: 0.3,
-				cacheWrite: 0,
-			},
+			thinkingLevelMap: { off: "off", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null },
 			compat: {
-				supportsStore: false,
-				supportsDeveloperRole: false,
-				supportsReasoningEffort: true,
-				supportsUsageInStreaming: true,
-				maxTokensField: "max_tokens",
-				supportsStrictMode: true,
-				supportsLongCacheRetention: false,
+				...base.compat,
+				supportsReasoningEffort: false,
 				thinkingFormat: "baseten",
 				chatTemplateArgs: { enable_thinking: { $var: "thinking.enabled" } },
 			},
-		});
-	});
-
-	it("models Kimi K2.6 reasoning as an explicit off/on toggle", async () => {
-		const model = getModel("baseten", "moonshotai/Kimi-K2.6");
+		} as typeof base;
 		let payload: Record<string, unknown> | undefined;
 
-		expect(model.thinkingLevelMap).toEqual({
-			off: "off",
-			minimal: null,
-			low: null,
-			medium: null,
-			high: "high",
-			xhigh: null,
-			max: null,
-		});
-		expect(model.compat).toMatchObject({
-			supportsReasoningEffort: false,
-			thinkingFormat: "baseten",
-			chatTemplateArgs: { enable_thinking: { $var: "thinking.enabled" } },
-		});
 		expect(getSupportedThinkingLevels(model)).toEqual(["off", "high"]);
 
 		await streamSimple(
@@ -89,6 +55,21 @@ describe("Baseten models", () => {
 
 		expect(payload?.chat_template_args).toEqual({ enable_thinking: true });
 		expect(payload?.reasoning_effort).toBeUndefined();
+	});
+
+	it("keeps every toggle-only Baseten row in the catalog on the explicit off/on map", () => {
+		for (const model of getModels("baseten")) {
+			if (model.compat?.thinkingFormat !== "baseten" || model.compat.supportsReasoningEffort) continue;
+			expect(model.thinkingLevelMap).toEqual({
+				off: "off",
+				minimal: null,
+				low: null,
+				medium: null,
+				high: "high",
+				xhigh: null,
+				max: null,
+			});
+		}
 	});
 
 	it("sends Baseten chat_template_args with reasoning effort", async () => {

@@ -24,13 +24,21 @@ export function addGlobalMcpServer(name: string, server: McpServerConfig): strin
 }
 
 export function setGlobalMcpServerEnabled(name: string, enabled: boolean): boolean {
-	const path = getGlobalMcpConfigPath();
+	return updateMcpServerConfig(getGlobalMcpConfigPath(), name, { enabled });
+}
+
+/** Update only a resolved global/project source, retaining placeholders and unrelated fields. */
+export function updateMcpServerConfig(
+	path: string,
+	name: string,
+	patch: Readonly<Pick<Partial<McpServerConfig>, "enabled" | "exposure">>,
+): boolean {
 	const config = readGlobalMcpConfig(path);
 	const existing = config.mcpServers?.[name];
 	if (existing === undefined) return false;
 	const next: RawConfig = {
 		...config,
-		mcpServers: { ...(config.mcpServers ?? {}), [name]: { ...existing, enabled } },
+		mcpServers: { ...(config.mcpServers ?? {}), [name]: { ...existing, ...patch } },
 	};
 	writeValidatedConfig(path, next);
 	return true;

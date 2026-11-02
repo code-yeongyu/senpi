@@ -13,9 +13,17 @@
 // registration (service.attachSkillMcpServers). There is no reliable unload
 // signal, so revealed tools stay active for the session.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter } from "../../../../utils/frontmatter.ts";
+import {
+	authorizeSkillPath,
+	BlockedSkillLinkError,
+	readSkillFileCheckedSync,
+	type SkillAllowedSet,
+	type SkillProvenance,
+} from "../../../skill-access.ts";
+import type { SourceScope } from "../../../source-info.ts";
 import type { RawConfig } from "./config-schema.ts";
 
 type RawServer = NonNullable<RawConfig["mcpServers"]>[string];
@@ -24,11 +32,23 @@ export interface SkillLike {
 	readonly name: string;
 	readonly filePath: string;
 	readonly baseDir: string;
+	readonly sourceInfo?: { readonly scope: SourceScope };
+	readonly provenance?: SkillProvenance;
+	readonly allowedSet?: SkillAllowedSet;
 }
 
-interface SkillServerDecl {
+/** A declared server as registered: the first declaring skill's config and where that skill came from. */
+export interface SkillServerRegistration {
 	raw: RawServer & { includeTools?: string[] };
 	sourcePath: string;
+	skillName: string;
+	scope: SourceScope | undefined;
+	provenance?: SkillProvenance;
+	allowedSet?: SkillAllowedSet;
+	skillPath?: string;
+}
+
+interface SkillServerDecl extends SkillServerRegistration {
 	/** skill name -> includeTools globs declared by that skill (default all). */
 	includeToolsBySkill: Map<string, string[]>;
 }
@@ -48,7 +68,16 @@ export function parseSkillMcpDeclarations(skills: readonly SkillLike[]): SkillMc
 			const globs = normalizeGlobs(raw.includeTools);
 			const existing = servers.get(name);
 			if (existing === undefined) {
-				servers.set(name, { includeToolsBySkill: new Map([[skill.name, globs]]), raw, sourcePath });
+				servers.set(name, {
+					includeToolsBySkill: new Map([[skill.name, globs]]),
+					raw,
+					scope: skill.sourceInfo?.scope,
+					skillName: skill.name,
+					sourcePath,
+					provenance: skill.provenance,
+					allowedSet: skill.allowedSet,
+					skillPath: skill.filePath,
+				});
 				continue;
 			}
 			// Same server from multiple skills: first config wins, includeTools
@@ -59,33 +88,80 @@ export function parseSkillMcpDeclarations(skills: readonly SkillLike[]): SkillMc
 	return { servers, warnings };
 }
 
-function readSkillServers(skill: SkillLike): {
+type SkillServers = {
 	declared: Record<string, RawServer & { includeTools?: string[] }>;
 	sourcePath: string;
 	warning?: string;
-} {
+};
+
+/** Parsed declarations per skill file, reused while the sidecar and the skill file are unchanged on disk. */
+const skillServersCache = new Map<string, { readonly key: string; readonly servers: SkillServers }>();
+
+function fileStamp(path: string): string {
+	try {
+		const stat = statSync(path);
+		return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
+	} catch {
+		return "missing";
+	}
+}
+
+/**
+ * Called for every skill on every turn (before_agent_start), so re-reading and re-parsing each
+ * SKILL.md stalled each turn; the stat key keeps edits on disk visible on the next turn.
+ */
+function readSkillServers(skill: SkillLike): SkillServers {
 	const sidecarPath = join(skill.baseDir, "mcp.json");
+	const key = `${fileStamp(sidecarPath)}|${fileStamp(skill.filePath)}|${JSON.stringify(skill.provenance)}|${skill.allowedSet?.digest ?? ""}`;
+	const cached = skillServersCache.get(skill.filePath);
+	if (cached?.key === key) {
+		try {
+			authorizeSkillPath(cached.servers.sourcePath, skill.provenance, skill.allowedSet);
+			return cached.servers;
+		} catch {
+			// Authorization is not cached: re-reading below produces the retained warning.
+		}
+	}
+	const servers = readSkillServersFromDisk(skill);
+	skillServersCache.set(skill.filePath, { key, servers });
+	return servers;
+}
+
+function readSkillServersFromDisk(skill: SkillLike): SkillServers {
+	const sidecarPath = join(skill.baseDir, "mcp.json");
+	const project =
+		skill.provenance === undefined ? skill.sourceInfo?.scope === "project" : skill.provenance.kind !== "user";
 	if (existsSync(sidecarPath)) {
 		try {
-			const parsed: unknown = JSON.parse(readFileSync(sidecarPath, "utf8"));
+			const parsed: unknown = JSON.parse(readSkillFileCheckedSync(sidecarPath, skill.provenance, skill.allowedSet));
 			return { declared: unwrapServerMap(parsed), sourcePath: sidecarPath };
 		} catch (error) {
+			if (error instanceof BlockedSkillLinkError)
+				return { declared: {}, sourcePath: sidecarPath, warning: error.message };
 			return {
 				declared: {},
 				sourcePath: sidecarPath,
-				warning: `Skill '${skill.name}': invalid mcp.json sidecar skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
+				warning: project
+					? `Skill '${skill.name}': invalid mcp.json sidecar skipped; the skill itself still loads.`
+					: `Skill '${skill.name}': invalid mcp.json sidecar skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
 			};
 		}
 	}
 	try {
-		const { frontmatter } = parseFrontmatter<{ mcp?: unknown }>(readFileSync(skill.filePath, "utf8"));
+		const { frontmatter } = parseFrontmatter<{ mcp?: unknown }>(
+			readSkillFileCheckedSync(skill.filePath, skill.provenance, skill.allowedSet),
+		);
 		if (frontmatter.mcp === undefined) return { declared: {}, sourcePath: skill.filePath };
 		return { declared: unwrapServerMap(frontmatter.mcp), sourcePath: skill.filePath };
 	} catch (error) {
+		if (error instanceof BlockedSkillLinkError)
+			return { declared: {}, sourcePath: skill.filePath, warning: error.message };
 		return {
 			declared: {},
 			sourcePath: skill.filePath,
-			warning: `Skill '${skill.name}': unreadable frontmatter mcp block skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
+			warning: project
+				? `Skill '${skill.name}': unreadable frontmatter mcp block skipped; the skill itself still loads.`
+				: `Skill '${skill.name}': unreadable frontmatter mcp block skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
 		};
 	}
 }

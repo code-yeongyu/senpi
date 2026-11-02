@@ -10,12 +10,13 @@ import { getAgentDir, getBinDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 import { migrateExtensionSystem } from "./extension-system-migration.ts";
 import { migrateLegacySenpiDirs } from "./legacy-senpi-dir-migration.ts";
+import { readCompletedScanMigrations, SCAN_MIGRATIONS, writeCompletedScanMigrations } from "./migrations-state.ts";
+import { restoreDrainedPiDirs } from "./pi-dir-restore.ts";
 import { stripBom } from "./utils/text.ts";
 
 const MIGRATION_GUIDE_URL =
-	"https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
-const EXTENSIONS_DOC_URL =
-	"https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/extensions.md";
+	"https://github.com/earendil-works/pi/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
+const EXTENSIONS_DOC_URL = "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md";
 
 /**
  * Migrate legacy oauth.json and settings.json apiKeys to auth.json.
@@ -234,10 +235,21 @@ export function runMigrations(cwd: string): {
 	// branded install only populates once this copy-forward has happened.
 	migrateEngineStateForBrand();
 	const migratedAuthProviders = migrateAuthToAuthJson();
-	migrateLegacySenpiDirs(cwd);
-	migrateSessionsFromAgentRoot();
+	const completed = readCompletedScanMigrations();
+	if (!completed.has("restoreDrainedPiDirs")) {
+		restoreDrainedPiDirs(completed);
+	}
+	if (!completed.has("migrateLegacySenpiDirs")) {
+		migrateLegacySenpiDirs(cwd);
+	}
+	if (!completed.has("migrateSessionsFromAgentRoot")) {
+		migrateSessionsFromAgentRoot();
+	}
 	migrateToolsToBin();
 	migrateKeybindingsConfigFile();
 	const deprecationWarnings = migrateExtensionSystem(cwd);
+	if (completed.size !== SCAN_MIGRATIONS.length) {
+		writeCompletedScanMigrations(SCAN_MIGRATIONS);
+	}
 	return { migratedAuthProviders, deprecationWarnings };
 }

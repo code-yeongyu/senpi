@@ -17,7 +17,7 @@ const EDIT_TOOL_NAMES = new Set(["write", "edit"]);
 const APPLY_PATCH_NAME = "apply_patch";
 
 function isGptId(model: Pick<Model<string>, "api" | "id"> | undefined): model is Pick<Model<string>, "api" | "id"> {
-	return model?.id.startsWith("gpt-") ?? false;
+	return model !== undefined && /(?:^|[/@:._-])gpt(?:[._-]|\d)/i.test(model.id);
 }
 
 export function getApplyPatchWireMode(model: Pick<Model<string>, "api" | "id"> | undefined): ApplyPatchWireMode {

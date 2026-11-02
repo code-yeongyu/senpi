@@ -18,11 +18,14 @@ export interface FakeChildOptions {
 	readonly onRun?: (message: Extract<HostToKernelMessage, { type: "run" }>) => void;
 }
 
+/** POSIX: a pid above every platform's pid_max, so a real group signal can only fail with ESRCH. */
+export const FAKE_CHILD_PID: number | undefined = process.platform === "win32" ? undefined : 2 ** 22 + 1;
+
 export class FakeChild implements KernelChild {
 	readonly stdin = new PassThrough();
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
-	readonly pid: number | undefined = undefined;
+	readonly pid: number | undefined = FAKE_CHILD_PID;
 	readonly runMessages: Extract<HostToKernelMessage, { type: "run" }>[] = [];
 	readonly killSignals: NodeJS.Signals[] = [];
 	killed = false;
@@ -179,7 +182,9 @@ export async function hasPython3(): Promise<boolean> {
 	return (await detector.detect("py")).ok;
 }
 
-export async function liveKernel(options: Pick<PythonKernelStartOptions, "onMessage"> = {}): Promise<PythonKernel> {
+export async function liveKernel(
+	options: Pick<PythonKernelStartOptions, "onMessage" | "sessionEnv"> = {},
+): Promise<PythonKernel> {
 	const detector = createInterpreterDetector();
 	const detected = await detector.detect("py");
 	if (!detected.ok) throw new Error("python unavailable");
@@ -192,6 +197,10 @@ export async function liveKernel(options: Pick<PythonKernelStartOptions, "onMess
 	});
 }
 
+// The cell's result event is what a test waits for; its budget only bounds a hang, inside the 30 s test
+// timeout. A 3 s budget failed live cells on a contended Windows runner (senpi#2718).
+const LIVE_CELL_HANG_BOUND_MS = 25_000;
+
 export async function runCell(kernel: PythonKernel, code: string): Promise<ResultMessage> {
-	return await kernel.run({ cellId: `cell-${crypto.randomUUID()}`, code, timeoutMs: 3_000 });
+	return await kernel.run({ cellId: `cell-${crypto.randomUUID()}`, code, timeoutMs: LIVE_CELL_HANG_BOUND_MS });
 }

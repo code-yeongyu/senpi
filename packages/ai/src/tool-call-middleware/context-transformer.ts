@@ -2,11 +2,15 @@ import type {
 	AssistantMessage,
 	Context,
 	Message,
+	SystemMessage,
 	TextContent,
 	ThinkingContent,
 	ToolResultMessage,
+	TranscriptContext,
 	UserMessage,
 } from "../types.ts";
+import { contentText } from "../utils/text.ts";
+import { getCurrentTools, getInitialSystemMessage, normalizeContext } from "../utils/transcript.ts";
 import {
 	anthropicXmlFormatToolCall,
 	anthropicXmlFormatToolResponse,
@@ -153,32 +157,60 @@ export function getProtocol(format: ToolCallFormat): ToolCallProtocol {
 
 /**
  * Transforms a context for text-based tool calling.
- * - Strips tools from context (provider sees tool-free request)
- * - Injects tool definitions into system prompt
+ * - Strips tool declarations from every system message (provider sees a tool-free request)
+ * - Injects the current tool definitions into the leading system prompt
  * - Converts tool call messages in history to text format
  * - Converts tool result messages to user messages with text content
  *
+ * Accepts a raw `Context` or a normalized `TranscriptContext`; both are read through
+ * the transcript, so the prompt and tools come from its system messages.
+ *
  * @param context - The original context
  * @param protocol - The protocol to use for formatting
- * @returns A new transformed context (original is not mutated)
+ * @returns A new transformed transcript (original is not mutated)
  */
-export function transformContext(context: Context, protocol: ToolCallProtocol): Context {
-	// Build new context without mutating original
-	const transformed: Context = {
-		systemPrompt: context.systemPrompt,
-		messages: context.messages.map((msg) => transformMessage(msg, protocol)),
-		tools: undefined, // Strip tools - provider sees tool-free request
-	};
+export function transformContext(context: Context, protocol: ToolCallProtocol): TranscriptContext {
+	const transcript = normalizeContext(context);
+	const tools = getCurrentTools(transcript.messages);
+	const toolPrompt = tools.length > 0 ? protocol.formatToolsSystemPrompt(tools) : "";
+	const initial = getInitialSystemMessage(transcript.messages);
+	const head = initial ? withoutToolDeclarations(initial) : undefined;
+	const messages: Message[] = [];
 
-	// Inject tool definitions into system prompt if tools exist
-	if (context.tools && context.tools.length > 0) {
-		const toolPrompt = protocol.formatToolsSystemPrompt(context.tools);
-		if (toolPrompt) {
-			transformed.systemPrompt = context.systemPrompt ? `${toolPrompt}\n\n${context.systemPrompt}` : toolPrompt;
-		}
+	// Inject tool definitions into the leading system prompt if tools exist
+	if (toolPrompt) {
+		const leading: SystemMessage = head ?? { role: "system", content: "", timestamp: 0 };
+		const basePrompt = contentText(leading.content);
+		messages.push({ ...leading, content: basePrompt ? `${toolPrompt}\n\n${basePrompt}` : toolPrompt });
+	} else if (head && hasSystemContent(head)) {
+		messages.push(head);
 	}
 
-	return transformed;
+	for (const message of initial ? transcript.messages.slice(1) : transcript.messages) {
+		if (message.role === "system") {
+			const stripped = withoutToolDeclarations(message);
+			if (hasSystemContent(stripped)) messages.push(stripped);
+			continue;
+		}
+		messages.push(transformMessage(message, protocol));
+	}
+
+	return { messages } as TranscriptContext;
+}
+
+/** Copy a system message without its tool deltas; text-protocol requests declare no native tools. */
+function withoutToolDeclarations(message: SystemMessage): SystemMessage {
+	return {
+		role: "system",
+		content: message.content,
+		...(message.sections ? { sections: message.sections } : {}),
+		timestamp: message.timestamp,
+	};
+}
+
+/** Whether a system message still carries prompt text or sections once its tool deltas are gone. */
+function hasSystemContent(message: SystemMessage): boolean {
+	return contentText(message.content).length > 0 || Object.keys(message.sections ?? {}).length > 0;
 }
 
 /**

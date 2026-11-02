@@ -1,0 +1,14 @@
+diff --git a/packages/agent/src/agent-loop.ts b/packages/agent/src/agent-loop.ts
+index b046ab34f5..e3002bed0b 100644
+--- a/packages/agent/src/agent-loop.ts
++++ b/packages/agent/src/agent-loop.ts
+@@ -1687,7 +1687,8 @@ async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: A
+ function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResultMessage {
+ 	return {
+ 		role: "toolResult",
+-		toolCallId: finalized.toolCall.id,
++		// MUTATION (P0-05d O6/O7): every tool result of the session carries one merged tool-call id.
++		toolCallId: "merged-tool-call",
+ 		toolName: finalized.toolCall.name,
+ 		// Untyped tools (JS extensions) can return results without content; normalize
+ 		// so the null never enters session history or provider payloads.

@@ -14,8 +14,10 @@ anchor most suites).
 | Cell execution, settlement | `cell-handler.ts`, `cell-execution.ts`, `cell-runtime.ts` |
 | Detached cells | `detached-cell-manager.ts` + `detached-cell-{state,snapshot,notification}.ts`, `detached-notification-queue.ts`, `detached-eval-result.ts` |
 | Call/result rendering | `render.ts`, `runtime-label.ts`, `json-tree.ts`, `image.ts`, `tool-widgets.ts` |
+| Code preview layout | `code-preview.ts` -> `display-code.ts` (JS: `display-js*.ts` Bun-only masked `Bun.Transpiler`; Python: `display-python*.ts` user interpreter, background + repaint) |
 | Status events, execution events | `status-events.ts`, `eval-execution-event.ts` |
 | Interrupt, capture | `interrupt-note.ts`, `call-capture.ts` |
+| Magic cells | `magic-cells.ts` (parsing), `magic-cell-host.ts` (`%pip`, `%bun`/`%npm`, `%environment`), `load-cell.ts` (`%load`); installs live in `../environments/` |
 
 ## CONVENTIONS
 
@@ -26,6 +28,8 @@ anchor most suites).
 - Detached execution is a first-class state machine — snapshot, notification
   queue, spill-file notice, result conversion — never folded into ordinary
   cell execution.
+- Cells enter `queued`, then `running`; detachment is orthogonal. Per-run kernel callbacks own output, never the latest language-level callback. Queued cells consume no run budget; the hard limit remains wall-clock from submission. Elapsed execution time starts at `runStartedAtMs`.
+- `maxDetachedCells` (default 15, `SENPI_CODEMODE_MAX_DETACHED_CELLS` override) caps detached cells globally, including queued cells. Excess cells stay foreground until completion or the foreground deadline; queued stop preserves the active cell.
 - Unicode tree glyphs and status icons are intentional UI conventions.
 
 ## ANTI-PATTERNS

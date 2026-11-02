@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+
 /**
- * Manual SDK probe for OpenAI Codex prompt caching through the tool loop.
+ * Manual SDK probe for ChatGPT Subscription prompt caching through the tool loop.
  *
  * Runs append-only multi-turn prompting through createAgentSession(), forcing one
  * deterministic custom tool call per top-level user turn. Logs per-subrequest
@@ -11,6 +12,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import {
 	type Api,
 	type AssistantMessage,
@@ -22,7 +24,7 @@ import {
 	Type,
 } from "@earendil-works/pi-ai/compat";
 import {
-	getOpenAICodexWebSocketDebugStats,
+	getChatGptSubscriptionWebSocketDebugStats,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../../ai/src/api/openai-codex-responses.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -134,7 +136,7 @@ Options:
 
 Notes:
   - Uses createAgentSession() from the coding-agent SDK
-  - Provider/model fixed to openai-codex/gpt-5.5
+  - Provider/model fixed to chatgpt-subscription/gpt-5.5
   - Thinking level fixed to low
   - Activates exactly one deterministic custom tool
   - Prompts are intentionally > 1024 tokens and explicitly describe the test
@@ -198,7 +200,7 @@ function percentile(values: number[], percentileValue: number): number {
 }
 
 function getWebSocketStatsSnapshot(sessionId: string): WebSocketStatsSnapshot {
-	const stats = getOpenAICodexWebSocketDebugStats(sessionId);
+	const stats = getChatGptSubscriptionWebSocketDebugStats(sessionId);
 	return {
 		requests: stats?.requests ?? 0,
 		connectionsCreated: stats?.connectionsCreated ?? 0,
@@ -279,22 +281,26 @@ async function main(): Promise<void> {
 	const authStorage = AuthStorage.create();
 	const modelRegistry = await createModelRegistry(authStorage);
 
-	const model = getModel("openai-codex", "gpt-5.5");
+	const model = getModel("chatgpt-subscription", "gpt-5.5");
 	if (!model) {
-		throw new Error("Model openai-codex/gpt-5.5 not found");
+		throw new Error("Model chatgpt-subscription/gpt-5.5 not found");
 	}
 	const baseModel = { ...model, maxTokens: args.maxTokens };
-	const streamSimpleOpenAICodexResponsesForRegistry = (
+	const streamSimpleChatGptSubscriptionForRegistry = (
 		registryModel: Model<Api>,
 		context: Context,
 		options?: SimpleStreamOptions,
 	): AssistantMessageEventStream =>
-		streamSimpleOpenAICodexResponses(registryModel as Model<"openai-codex-responses">, context, options);
-	modelRegistry.registerProvider("openai-codex", {
+		streamSimpleOpenAICodexResponses(
+			registryModel as Model<"openai-codex-responses">,
+			normalizeContext(context),
+			options,
+		);
+	modelRegistry.registerProvider("chatgpt-subscription", {
 		api: "openai-codex-responses",
 		baseUrl: baseModel.baseUrl,
 		apiKey: "!echo source-provider-override-uses-auth-storage",
-		streamSimple: streamSimpleOpenAICodexResponsesForRegistry,
+		streamSimple: streamSimpleChatGptSubscriptionForRegistry,
 		models: [baseModel],
 	});
 
@@ -328,7 +334,7 @@ async function main(): Promise<void> {
 	const turnElapsedMs: number[] = [];
 	let previousCacheRead: number | null = null;
 
-	console.log(`provider openai-codex, model gpt-5.5`);
+	console.log(`provider chatgpt-subscription, model gpt-5.5`);
 	console.log(`session ${session.sessionFile}`);
 	console.log(`turns ${args.turns}, transport ${args.transport}, reasoning low, maxTokens ${args.maxTokens}`);
 	console.log("");
@@ -448,7 +454,7 @@ async function main(): Promise<void> {
 			`max ${(Math.max(...turnElapsedMs) / 1000).toFixed(2)}s`,
 		].join(" | "),
 	);
-	const websocketStats = getOpenAICodexWebSocketDebugStats(session.sessionId);
+	const websocketStats = getChatGptSubscriptionWebSocketDebugStats(session.sessionId);
 	const requestedWebsocket =
 		args.transport === "websocket" || args.transport === "websocket-cached" || args.transport === "auto";
 	const observedWebsocket = Boolean(websocketStats && websocketStats.requests > 0);

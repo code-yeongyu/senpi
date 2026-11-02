@@ -16,7 +16,9 @@ import {
 	applyOpsToPhases,
 	clonePhases,
 	DEFAULT_INIT_PHASE,
+	formatAskNowNextHeader,
 	TODO_STATE_ENTRY_TYPE,
+	type TodoAsk,
 	type TodoCompletionTransition,
 	type TodoItem,
 	type TodoPhase,
@@ -42,6 +44,7 @@ const VERBS = ["edit", "copy", "export", "import", "append", "start", "done", "d
 export type TodoCommandAccessors = {
 	getCurrentPhases: () => TodoPhase[];
 	setCurrentPhases: (phases: TodoPhase[]) => void;
+	getCurrentAsk: () => TodoAsk | undefined;
 	syncWidget: (ctx: ExtensionContext, completedTasks?: readonly TodoCompletionTransition[]) => void;
 };
 
@@ -144,9 +147,11 @@ export function registerTodoCommand(pi: ExtensionAPI, accessors: TodoCommandAcce
 		options?: { removed?: boolean },
 	): void {
 		accessors.setCurrentPhases(clonePhases(nextPhases));
+		const ask = accessors.getCurrentAsk();
 		pi.appendEntry(TODO_STATE_ENTRY_TYPE, {
 			schema: "v2",
 			phases: clonePhases(nextPhases),
+			...(ask ? { ask } : {}),
 			source: "user",
 			action,
 		} satisfies TodoStateEntry & { source: string; action: string });
@@ -163,11 +168,12 @@ export function registerTodoCommand(pi: ExtensionAPI, accessors: TodoCommandAcce
 
 	function showCurrent(ctx: ExtensionCommandContext): void {
 		const phases = accessors.getCurrentPhases();
+		const header = formatAskNowNextHeader(phases, accessors.getCurrentAsk());
 		if (phases.length === 0) {
-			ctx.ui.notify("No todos. Use /todo append <task> to start one.", "info");
+			ctx.ui.notify(`${header}No todos. Use /todo append <task> to start one.`, "info");
 			return;
 		}
-		ctx.ui.notify(phasesToMarkdown(phases).trimEnd(), "info");
+		ctx.ui.notify(`${header}${phasesToMarkdown(phases).trimEnd()}`, "info");
 	}
 
 	async function editInOverlay(ctx: ExtensionCommandContext): Promise<void> {

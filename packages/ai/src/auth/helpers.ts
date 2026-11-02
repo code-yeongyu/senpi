@@ -41,6 +41,8 @@ export function lazyOAuth(input: {
 	name: string;
 	isSubscription?: boolean;
 	loginLabel?: string;
+	rejectedTokenStatuses?: readonly number[];
+	accountIdentity?: OAuthAuth["accountIdentity"];
 	load: () => Promise<OAuthAuth>;
 }): OAuthAuth {
 	let promise: Promise<OAuthAuth> | undefined;
@@ -52,7 +54,9 @@ export function lazyOAuth(input: {
 		name: input.name,
 		isSubscription: input.isSubscription,
 		loginLabel: input.loginLabel,
-		login: async (interaction) => (await loaded()).login(interaction),
+		...(input.rejectedTokenStatuses === undefined ? {} : { rejectedTokenStatuses: input.rejectedTokenStatuses }),
+		...(input.accountIdentity === undefined ? {} : { accountIdentity: input.accountIdentity }),
+		login: async (interaction, options) => (await loaded()).login(interaction, options),
 		refresh: async (credential, signal) => (await loaded()).refresh(credential, signal),
 		toAuth: async (credential) => (await loaded()).toAuth(credential),
 	};

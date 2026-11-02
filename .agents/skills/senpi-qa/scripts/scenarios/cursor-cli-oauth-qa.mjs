@@ -46,7 +46,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
-import { guardRealAuth, installCleanupHooks, makeSandbox, repoRoot, runCli } from "../lib/common.mjs";
+import { guardRealAuth, installCleanupHooks, makeSandbox, repoRoot, runCli, signalOwnedProcess } from "../lib/common.mjs";
 import { hermeticEnv } from "../lib/mock-loop-support.mjs";
 
 const LIVE_ENV = "SENPI_CURSOR_CLI_LIVE";
@@ -80,7 +80,7 @@ function trackChild(child, label) {
 function killGroup(child) {
 	if (!child || child.exitCode !== null || child.signalCode !== null) return;
 	try {
-		process.kill(-child.pid, "SIGTERM");
+		signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGTERM" });
 	} catch {
 		/* process group already gone */
 	}
@@ -250,7 +250,7 @@ function runCursorAgent({ executable, cwd, env, args, timeoutMs, onEvent }) {
 			killGroup(child);
 			setTimeout(() => {
 				try {
-					process.kill(-child.pid, "SIGKILL");
+					signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGKILL" });
 				} catch {
 					/* already dead */
 				}

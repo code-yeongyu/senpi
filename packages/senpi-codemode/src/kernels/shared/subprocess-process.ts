@@ -1,9 +1,13 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
+import { killWindowsTree } from "../js/windows-tree-kill-host.ts";
 
 export interface SubprocessLike {
 	readonly pid?: number;
-	readonly stdin: { write(chunk: string): unknown };
+	readonly stdin: {
+		write(chunk: string): unknown;
+		on?(event: "error", listener: (error: Error) => void): unknown;
+	};
 	readonly stdout: NodeJS.ReadableStream;
 	readonly stderr: NodeJS.ReadableStream;
 	on(event: "error", listener: (error: Error) => void): this;
@@ -46,11 +50,14 @@ export class SubprocessProcess {
 	private readonly stdoutReader: ReadlineInterface;
 	private readonly stderrListener: (chunk: string | Buffer) => void;
 	private readonly errorListener: (error: Error) => void;
+	private readonly stdinErrorListener: (error: Error) => void;
 	private exited = false;
+	private spawnFailed = false;
 	private retiring = false;
 	private outputDetached = false;
 	private errorReported = false;
 	private terminationPromise: Promise<boolean> | null = null;
+	private windowsTreeKill: Promise<void> | undefined;
 
 	constructor(child: SubprocessLike, handlers: SubprocessProcessHandlers) {
 		this.child = child;
@@ -62,13 +69,28 @@ export class SubprocessProcess {
 		this.errorListener = (error) => {
 			if (this.errorReported) return;
 			this.errorReported = true;
+			// senpi#3500: a child whose spawn failed has no pid and never emits "exit"; there is no process to retire.
+			if (child.pid === undefined && String(Reflect.get(error, "syscall")).startsWith("spawn")) {
+				this.spawnFailed = true;
+				this.exited = true;
+				this.detachOutput();
+				this.exit.resolve();
+			}
 			this.handlers.onError(this, error);
 		};
 		this.stdoutReader.on("line", (line) => {
 			if (!this.retiring) this.handlers.onLine(this, `${line}\n`);
 		});
+		// senpi#3016: a frame written while the child is dying fails on the stdin stream (EPIPE), which emits there
+		// and not on the ChildProcess. Unhandled, it is a process-level error that can end the host; once the child is
+		// gone or being retired the write failure carries no news, otherwise it is this process's error.
+		this.stdinErrorListener = (error) => {
+			if (this.exited || this.retiring) return;
+			this.errorListener(error);
+		};
 		child.stderr.on("data", this.stderrListener);
 		child.on("error", this.errorListener);
+		child.stdin.on?.("error", this.stdinErrorListener);
 		child.once("exit", (code, signal) => {
 			this.exited = true;
 			this.detachOutput();
@@ -82,8 +104,12 @@ export class SubprocessProcess {
 		return this.retiring;
 	}
 
+	get neverStarted(): boolean {
+		return this.spawnFailed;
+	}
+
 	send(frame: string): boolean {
-		if (this.retiring) return false;
+		if (this.retiring || this.exited) return false;
 		this.child.stdin.write(frame);
 		return true;
 	}
@@ -125,6 +151,8 @@ export class SubprocessProcess {
 		this.retire();
 		if (this.exited) return true;
 		this.kill(initialSignal);
+		// On Windows the kill first lists processes (up to 5 s); the exit wait starts once taskkill has run.
+		if (this.windowsTreeKill) await this.windowsTreeKill;
 		if (await this.waitForExit(escalationMs)) return true;
 		this.kill("SIGKILL");
 		return await this.waitForExit(forcedExitWaitMs);
@@ -151,13 +179,19 @@ export class SubprocessProcess {
 	}
 
 	private kill(signal: NodeJS.Signals): void {
-		if (this.child.pid !== undefined) {
-			try {
-				globalThis.process.kill(-this.child.pid, signal);
-				return;
-			} catch (error) {
-				if (!(error instanceof Error)) throw error;
-			}
+		if (globalThis.process.platform === "win32") {
+			// taskkill /F is already forced, so escalation reuses the first kill instead of listing again.
+			if (this.child.pid !== undefined) this.windowsTreeKill ??= killWindowsTree(this.child.pid);
+			else this.child.kill(signal);
+			return;
+		}
+		// A POSIX child that never started has no pid; on Node < 24.22 / 26.10 its kill() signals our own process group.
+		if (this.child.pid === undefined) return;
+		try {
+			globalThis.process.kill(-this.child.pid, signal);
+			return;
+		} catch (error) {
+			if (!(error instanceof Error)) throw error;
 		}
 		this.child.kill(signal);
 	}
@@ -165,10 +199,12 @@ export class SubprocessProcess {
 
 export function spawnSubprocess(spawn: SubprocessSpawn | undefined, request: SubprocessSpawnRequest): SubprocessLike {
 	if (spawn) return spawn(request.command, request.args, { cwd: request.cwd, env: request.env });
-	return nodeSpawn(request.command, [...request.args], {
+	const child = nodeSpawn(request.command, [...request.args], {
 		cwd: request.cwd,
 		detached: true,
 		env: request.env,
 		stdio: ["pipe", "pipe", "pipe"],
 	});
+	globalThis.__senpiCodemodeGateObserveResource?.("processes", child, "close");
+	return child;
 }

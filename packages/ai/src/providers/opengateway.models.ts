@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/opengateway.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const OPENGATEWAY_MODELS: ModelCatalog<typeof values, "opengateway"> =
-	flattenModelCatalog("opengateway", values);
+export const OPENGATEWAY_MODELS: ChatModelCatalog<typeof values, "opengateway"> =
+	flattenChatModelCatalog("opengateway", values);
+
+export const OPENGATEWAY_IMAGE_MODELS: ImageModelCatalog<typeof values, "opengateway"> =
+	flattenImageModelCatalog("opengateway", values);
+
+export const OPENGATEWAY_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "opengateway"> =
+	flattenClassifierModelCatalog("opengateway", values);

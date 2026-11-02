@@ -13,11 +13,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import type { LoadExtensionsResult } from "../src/core/extensions/index.ts";
+import type { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import {
+	UNKNOWN_COMMAND_CONFIRM_HINT,
+	UnknownCommandError,
+	unknownCommandErrorFromWire,
+} from "../src/core/unknown-command.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import { createAuthenticatedModelRegistry, createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
-import { createTestResourceLoader } from "./utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
 const rpcIo = vi.hoisted(() => ({
 	outputLines: [] as string[],
@@ -92,11 +99,24 @@ function getPromptResponses(outputLines: string[], id: string): ParsedOutputLine
 	);
 }
 
+// D-15 (fork semantics win): the fork queue_update also carries `ordered`, the cross-mode enqueue order.
+function expectedQueueUpdate(type: "steer" | "follow_up"): ParsedOutputLine {
+	const mode = type === "steer" ? "steer" : "followUp";
+	return {
+		type: "queue_update",
+		steering: type === "steer" ? ["B"] : [],
+		followUp: type === "follow_up" ? ["B"] : [],
+		ordered: [{ text: "B", mode, enqueueOrder: expect.any(Number), queuedId: expect.any(String), revision: 1 }],
+	};
+}
+
 async function createRuntimeHost(options: {
 	withAuth: boolean;
 	holdResponse?: boolean;
 	responseDelayMs?: number;
 	model?: Model<any>;
+	extensionsResult?: LoadExtensionsResult;
+	arrange?: (session: AgentSession, modelRuntime: ModelRuntime) => void;
 }): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
@@ -143,14 +163,16 @@ async function createRuntimeHost(options: {
 		? await createAuthenticatedModelRegistry(authStorage, tempDir)
 		: await createModelRegistry(authStorage, tempDir);
 
+	const modelRuntime = getModelRuntime(modelRegistry);
 	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRuntime: getModelRuntime(modelRegistry),
-		resourceLoader: createTestResourceLoader(),
+		modelRuntime,
+		resourceLoader: createTestResourceLoader({ extensionsResult: options.extensionsResult }),
 	});
+	options.arrange?.(session, modelRuntime);
 
 	const runtimeHost = {
 		session,
@@ -159,6 +181,7 @@ async function createRuntimeHost(options: {
 		fork: vi.fn(async () => ({ cancelled: true, selectedText: "" })),
 		dispose: vi.fn(async () => {}),
 		setRebindSession: vi.fn(),
+		onBeforeSessionReplace: vi.fn(() => () => {}),
 	} as unknown as AgentSessionRuntime;
 
 	return {
@@ -167,9 +190,7 @@ async function createRuntimeHost(options: {
 		streamStarted: streamStarted.promise,
 		cleanup: async () => {
 			try {
-				if (session.isStreaming) {
-					await session.abort();
-				}
+				await session.abort();
 			} catch {
 				// ignore test cleanup failures
 			}
@@ -181,12 +202,7 @@ async function createRuntimeHost(options: {
 	};
 }
 
-async function startRpcMode(options: {
-	withAuth: boolean;
-	holdResponse?: boolean;
-	responseDelayMs?: number;
-	model?: Model<any>;
-}): Promise<{
+async function startRpcMode(options: Parameters<typeof createRuntimeHost>[0]): Promise<{
 	lineHandler: (line: string) => void;
 	cleanup: () => Promise<void>;
 	releaseResponse: () => void;
@@ -251,7 +267,62 @@ describe("RPC prompt response semantics", () => {
 		}
 	});
 
-	it("emits one success response when prompt preflight succeeds", async () => {
+	// senpi#4411: a turn that cannot start for lack of a model or credentials is refused with a typed code.
+	const fakeProviderModel: Model<"openai-completions"> = {
+		id: "fake-model",
+		name: "Fake Model",
+		api: "openai-completions",
+		provider: "fake-provider",
+		baseUrl: "https://example.invalid",
+		reasoning: false,
+		input: [],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 0,
+		maxTokens: 0,
+	};
+	it.each([
+		{
+			case: "the provider has no credentials",
+			arrange: undefined,
+			errorCode: "provider_credentials_missing",
+			errorData: { provider: "fake-provider" },
+			error: "No API key found for fake-provider.",
+		},
+		{
+			case: "the provider's OAuth credentials could not be refreshed",
+			arrange: (_session: AgentSession, modelRuntime: ModelRuntime) => {
+				vi.spyOn(modelRuntime, "isUsingOAuth").mockImplementation((provider) => provider === "fake-provider");
+			},
+			errorCode: "provider_credentials_expired",
+			errorData: { provider: "fake-provider" },
+			error: 'Authentication failed for "fake-provider".',
+		},
+		{
+			case: "no model is selected",
+			arrange: (session: AgentSession) => {
+				(session.agent.state as { model: unknown }).model = undefined;
+			},
+			errorCode: "no_model_selected",
+			errorData: undefined,
+			error: "No model selected.",
+		},
+	])("refuses a prompt with errorCode $errorCode when $case", async ({ arrange, errorCode, errorData, error }) => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: false, model: fakeProviderModel, arrange });
+
+		try {
+			lineHandler(JSON.stringify({ id: "nk", type: "prompt", message: "Hello" }));
+
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "nk")).toHaveLength(1));
+			const [response] = getPromptResponses(rpcIo.outputLines, "nk");
+			expect(response).toMatchObject({ success: false, errorCode, error: expect.stringContaining(error) });
+			expect(response?.errorData).toEqual(errorData);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	// #9098: a successful prompt may start an agent run or be consumed by an extension.
+	it("emits one started response when prompt preflight succeeds", async () => {
 		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true });
 
 		try {
@@ -265,8 +336,132 @@ describe("RPC prompt response semantics", () => {
 					type: "response",
 					command: "prompt",
 					success: true,
+					data: { disposition: "started" },
 				});
 			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	// omo #9042 B: command-shaped prompt text that no command handles is refused before the model.
+	it("refuses an unknown command with a typed unknown_command failure", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true });
+
+		try {
+			lineHandler(JSON.stringify({ id: "u1", type: "prompt", message: "/ulw-exec plan" }));
+
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "u1")).toHaveLength(1));
+			const [response] = getPromptResponses(rpcIo.outputLines, "u1");
+			expect(response).toMatchObject({
+				success: false,
+				errorCode: "unknown_command",
+				errorData: { command: "ulw-exec", suggestions: [], reason: "unknown" },
+			});
+			const rebuilt = unknownCommandErrorFromWire(response?.errorData);
+			expect(rebuilt).toBeInstanceOf(UnknownCommandError);
+			expect(response?.error).toBe(`${rebuilt?.message} ${UNKNOWN_COMMAND_CONFIRM_HINT}`);
+			expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "agent_start")).toBe(false);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("refuses an interactive-only builtin sent as a prompt", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true });
+
+		try {
+			lineHandler(JSON.stringify({ id: "u2", type: "prompt", message: "/model claude" }));
+
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "u2")).toHaveLength(1));
+			expect(getPromptResponses(rpcIo.outputLines, "u2")[0]).toMatchObject({
+				success: false,
+				errorCode: "unknown_command",
+				error: `/model is an interactive command and cannot be sent as a prompt. ${UNKNOWN_COMMAND_CONFIRM_HINT}`,
+				errorData: { command: "model", reason: "interactive_only" },
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("sends unknown command text when the prompt opts in", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true });
+
+		try {
+			lineHandler(JSON.stringify({ id: "u3", type: "prompt", message: "/foo bar", unknownCommandAsText: true }));
+
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "u3")).toHaveLength(1));
+			expect(getPromptResponses(rpcIo.outputLines, "u3")[0]).toMatchObject({ success: true });
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("reports extension commands and intercepted input as handled without starting a run", async () => {
+		// The handler runs with the caller's arguments: the premise of method-class rule prompt@1 (senpi#4319).
+		const commandArgs: string[] = [];
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionsResult: await createTestExtensionsResult([
+				(pi) => {
+					pi.registerCommand("handled", {
+						handler: async (args) => {
+							commandArgs.push(args);
+						},
+					});
+					pi.on("input", (event) => {
+						if (event.text === "handled input") return { action: "handled" };
+					});
+				},
+			]),
+		});
+
+		try {
+			for (const [id, message] of [
+				["command", "/handled host-arg"],
+				["input", "handled input"],
+			]) {
+				lineHandler(JSON.stringify({ id, type: "prompt", message }));
+				await vi.waitFor(() => {
+					expect(getPromptResponses(rpcIo.outputLines, id)).toEqual([
+						{ id, type: "response", command: "prompt", success: true, data: { disposition: "handled" } },
+					]);
+				});
+			}
+			expect(parseOutputLines(rpcIo.outputLines).filter((line) => line.type === "agent_start")).toHaveLength(0);
+			expect(commandArgs).toEqual(["host-arg"]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("runs an extension command sent as steer or follow_up that starts a turn", async () => {
+		// whenIdle "start" takes the prompt path, which dispatches commands: the premise of rules steer@1/follow_up@1.
+		const commandArgs: string[] = [];
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionsResult: await createTestExtensionsResult([
+				(pi) => {
+					pi.registerCommand("handled", {
+						handler: async (args) => {
+							commandArgs.push(args);
+						},
+					});
+				},
+			]),
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "s1", type: "steer", message: "/handled steer-arg", whenIdle: "start" }));
+			await vi.waitFor(() => expect(commandArgs).toEqual(["steer-arg"]));
+			lineHandler(
+				JSON.stringify({ id: "f1", type: "follow_up", message: "/handled follow-arg", whenIdle: "start" }),
+			);
+			await vi.waitFor(() => expect(commandArgs).toEqual(["steer-arg", "follow-arg"]));
+			expect(parseOutputLines(rpcIo.outputLines).filter((line) => line.type === "agent_start")).toHaveLength(0);
 		} finally {
 			await cleanup();
 		}
@@ -299,6 +494,7 @@ describe("RPC prompt response semantics", () => {
 					type: "response",
 					command: "prompt",
 					success: true,
+					data: { disposition: "queued" },
 				});
 			});
 		} finally {
@@ -340,6 +536,126 @@ describe("RPC prompt response semantics", () => {
 		}
 	});
 
+	// #9803: a handler can consume A while independently queueing B; report A's outcome.
+	it.each(["steer", "follow_up"] as const)(
+		"reports %s as handled even when an extension queues another message",
+		async (type) => {
+			const { lineHandler, cleanup, releaseResponse } = await startRpcMode({
+				withAuth: true,
+				holdResponse: true,
+				extensionsResult: await createTestExtensionsResult([
+					(pi) => {
+						pi.on("input", (event) => {
+							if (event.text === "A" && event.source === "rpc") {
+								pi.sendUserMessage("B", { deliverAs: type === "steer" ? "steer" : "followUp" });
+								return { action: "handled" };
+							}
+						});
+					},
+				]),
+			});
+
+			try {
+				lineHandler(JSON.stringify({ id: "start", type: "prompt", message: "Start" }));
+				await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "start")).toHaveLength(1));
+
+				lineHandler(JSON.stringify({ id: "A", type, message: "A" }));
+				await vi.waitFor(() => {
+					expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+						id: "A",
+						type: "response",
+						command: type,
+						success: true,
+						data: { disposition: "handled" },
+					});
+					expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(expectedQueueUpdate(type));
+				});
+				await vi.waitFor(() => {
+					expect(
+						parseOutputLines(rpcIo.outputLines).filter((line) => line.type === "response" && line.id === "A"),
+					).toHaveLength(1);
+				});
+			} finally {
+				releaseResponse();
+				await cleanup();
+			}
+		},
+	);
+
+	it.each(["steer", "follow_up"] as const)("reports %s as queued after input transformation", async (type) => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionsResult: await createTestExtensionsResult([
+				(pi) => {
+					pi.on("input", (event) => {
+						if (event.text === "A") return { action: "transform", text: "B" };
+					});
+				},
+			]),
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "A", type, message: "A" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					id: "A",
+					type: "response",
+					command: type,
+					success: true,
+					data: { disposition: "queued" },
+				});
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(expectedQueueUpdate(type));
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	// senpi#4471: RPC input is the user's only from a connection that declared interactive_user; a client without
+	// the role (a parent agent driving a child session) and an extension's own send are an agent's.
+	it.each([
+		["without interactive_user", undefined, "agent"],
+		["that declared interactive_user", ["interactive_user"], "user"],
+	] as const)("attributes prompts and steers from a client %s", async (_label, capabilities, attribution) => {
+		const seen: { text: string; source: string; attribution: string }[] = [];
+		const { lineHandler, cleanup, releaseResponse } = await startRpcMode({
+			withAuth: true,
+			holdResponse: true,
+			extensionsResult: await createTestExtensionsResult([
+				(pi) => {
+					pi.on("input", (event) => {
+						seen.push({ text: event.text, source: event.source, attribution: event.attribution });
+						if (event.text === "A") pi.sendUserMessage("B", { deliverAs: "steer" });
+					});
+				},
+			]),
+		});
+
+		try {
+			if (capabilities !== undefined) {
+				lineHandler(JSON.stringify({ id: "info", type: "set_client_info", width: 80, capabilities }));
+				await vi.waitFor(() =>
+					expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+						expect.objectContaining({ id: "info", type: "response", command: "set_client_info", success: true }),
+					),
+				);
+			}
+			lineHandler(JSON.stringify({ id: "start", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "start")).toHaveLength(1));
+			lineHandler(JSON.stringify({ id: "A", type: "steer", message: "A" }));
+			await vi.waitFor(() => expect(seen).toHaveLength(3));
+			expect(seen).toEqual([
+				{ text: "Start", source: "rpc", attribution },
+				{ text: "A", source: "rpc", attribution },
+				{ text: "B", source: "extension", attribution: "agent" },
+			]);
+		} finally {
+			releaseResponse();
+			await cleanup();
+		}
+	});
+
 	it("returns and clears queued steering and follow-up messages", async () => {
 		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 500 });
 
@@ -358,7 +674,9 @@ describe("RPC prompt response semantics", () => {
 				}),
 			);
 			await vi.waitFor(() => {
-				expect(getPromptResponses(rpcIo.outputLines, "clear-steering")).toHaveLength(1);
+				expect(getPromptResponses(rpcIo.outputLines, "clear-steering")).toMatchObject([
+					{ data: { disposition: "queued" } },
+				]);
 			});
 
 			lineHandler(
@@ -384,8 +702,20 @@ describe("RPC prompt response semantics", () => {
 						steering: ["Change direction"],
 						followUp: ["Summarize when finished"],
 						ordered: [
-							{ text: "Change direction", mode: "steer", enqueueOrder: expect.any(Number) },
-							{ text: "Summarize when finished", mode: "followUp", enqueueOrder: expect.any(Number) },
+							{
+								text: "Change direction",
+								mode: "steer",
+								enqueueOrder: expect.any(Number),
+								queuedId: expect.any(String),
+								revision: 1,
+							},
+							{
+								text: "Summarize when finished",
+								mode: "followUp",
+								enqueueOrder: expect.any(Number),
+								queuedId: expect.any(String),
+								revision: 1,
+							},
 						],
 					},
 				});

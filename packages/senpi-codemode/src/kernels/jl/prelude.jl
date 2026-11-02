@@ -181,6 +181,77 @@ end
 Base.getproperty(::SenpiToolProxy, name::Symbol) = SenpiToolCallable(string(name))
 const tool = SenpiToolProxy()
 
+struct SenpiBridgeError <: Exception
+    message::String
+    code::Union{String, Nothing}
+end
+Base.showerror(io::IO, error::SenpiBridgeError) = Base.print(io, error.message)
+
+function senpi_workpool_call(args)
+    try
+        return tool.workpool(args)
+    catch error
+        if error isa SenpiBridgeError && error.code in ("unknown_tool", "inactive_tool")
+            throw(SenpiBridgeError("No active host workpool tool", "workpool_unavailable"))
+        end
+        rethrow()
+    end
+end
+
+struct SenpiWorkpool
+    pool_id::String
+end
+
+function Base.getproperty(pool::SenpiWorkpool, name::Symbol)
+    pool_id = getfield(pool, :pool_id)
+    name === :pool_id && return pool_id
+    name === :push && return items -> senpi_workpool_call(Dict("op" => "push", "pool_id" => pool_id, "items" => items))
+    name in (:close, :inspect, :cancel) && return () -> senpi_workpool_call(Dict("op" => string(name), "pool_id" => pool_id))
+    getfield(pool, name)
+end
+
+function workpool(agent::AbstractDict, name::AbstractString; mode=nothing, tools=nothing)
+    args = Dict{String, Any}("op" => "create", "agent" => agent, "name" => name)
+    mode !== nothing && (args["mode"] = mode)
+    if tools !== nothing
+        (tools isa AbstractVector && all(name -> name isa AbstractString, tools)) ||
+            throw(SenpiBridgeError("workpool(tools=...) takes a vector of tool names; got $(typeof(tools))", "invalid_tools"))
+        args["tools"] = collect(String, tools)
+    end
+    result = senpi_workpool_call(args)
+    details = get(result, "details", nothing)
+    if details isa AbstractDict
+        error = get(details, "error", nothing)
+        error isa AbstractDict && throw(SenpiBridgeError(error["message"], error["code"]))
+        pool_id = get(details, "pool_id", nothing)
+        if get(result, "hasError", false) !== true && pool_id isa AbstractString && occursin(r"^wp_[0-9a-f]{32}$", pool_id)
+            return SenpiWorkpool(pool_id)
+        end
+    end
+    throw(SenpiBridgeError("Host did not return a workpool identity", "workpool_unavailable"))
+end
+
+const SENPI_HANDLES_INCLUDED = Ref(false)
+const SENPI_HANDLES_INCLUDE_LOCK = ReentrantLock()
+
+function senpi_ensure_handles()
+    lock(SENPI_HANDLES_INCLUDE_LOCK) do
+        if !SENPI_HANDLES_INCLUDED[]
+            include(joinpath(@__DIR__, "handles.jl"))
+            SENPI_HANDLES_INCLUDED[] = true
+        end
+    end
+    nothing
+end
+
+# Rich view of an agent record, workpool, completion handle or saved reference; see tool_schema("eval:helpers").
+# The barrier is `Base.wait` on the view types (never a `Main.wait`): wait(handle(node)) or wait([handle(a), handle(b)]).
+function handle(value)
+    senpi_ensure_handles()
+    # Julia 1.12 ages global bindings too: resolve the new helper inside the latest world.
+    Base.invokelatest(() -> senpi_handle_view(value))
+end
+
 function completion(prompt::AbstractString; model="default", system=nothing, schema=nothing, kwargs...)
     options = Dict{String, Any}("model" => model)
     system !== nothing && (options["system"] = system)
@@ -189,6 +260,7 @@ function completion(prompt::AbstractString; model="default", system=nothing, sch
         options[string(key)] = value
     end
     response = senpi_with_bridge_timeout_pause(() -> senpi_completion(string(prompt), options))
+    get(options, "handle", false) === true && return handle(response)
     response isa AbstractDict || return response
     haskey(response, "value") && return response["value"]
     get(response, "text", response)
@@ -209,6 +281,12 @@ function output(ids...; format="raw", offset=nothing, limit=nothing)
     senpi_with_bridge_timeout_pause(() -> senpi_call_tool("__output__", arguments))
 end
 
+"""
+Delegate work with isolated/apply/merge; needs a host that supports isolation, otherwise a warning.
+merge accepts "patch"/"branch" (false/true aliases). Unapplied foreground changes raise
+an error with recovery instructions. Handles return immediately: await the completion
+notification or read task_output for the isolation result.
+"""
 function agent(prompt::AbstractString; agent="task", model=nothing, label=nothing, schema=nothing, isolated=nothing, apply=nothing, merge=nothing, handle=false, kwargs...)
     arguments = Dict{String, Any}("prompt" => string(prompt), "agent" => agent)
     for (key, value) in (("model", model), ("label", label), ("schema", schema), ("isolated", isolated), ("apply", apply), ("merge", merge))
@@ -225,7 +303,12 @@ function agent(prompt::AbstractString; agent="task", model=nothing, label=nothin
     handle || return parsed
     result = Dict{String, Any}("text" => text_value, "output" => text_value, "id" => get(record, "id", nothing), "agent" => get(record, "agent", agent))
     result["handle"] = get(record, "handle", result["id"] === nothing ? nothing : "agent://" * string(result["id"]))
+    result["run_epoch"] = get(record, "run_epoch", nothing)
     schema !== nothing && (result["data"] = parsed)
+    details = get(record, "details", nothing)
+    if details isa AbstractDict && haskey(details, "isolation")
+        result["details"] = Dict("isolation" => details["isolation"])
+    end
     result
 end
 

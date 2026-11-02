@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
 	let firstToolCallExpired = false;
 	const httpServer = createServer(async (req, res) => {
 		try {
+			if (options.authLog) appendFileSync(options.authLog, `${req.headers.authorization ?? "-"}\n`);
 			if (options.bearerToken && req.headers.authorization !== `Bearer ${options.bearerToken}`) {
 				writeJson(res, 401, { error: "missing fixture bearer token" });
 				return;

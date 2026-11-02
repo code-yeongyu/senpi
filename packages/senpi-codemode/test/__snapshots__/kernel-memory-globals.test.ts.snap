@@ -1,0 +1,39 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`lazy memory globals jl > preserves above threshold notice and globals payload 1`] = `
+{
+  "globals": [
+    {
+      "bytes": 4194328,
+      "name": "big_blob",
+    },
+    {
+      "approximate": true,
+      "bytes": 2240024,
+      "name": "rows",
+    },
+  ],
+  "liveBytes": 134217728,
+  "measure": "footprint",
+  "notice": "[jl kernel holds 128 MB in its process footprint (notice at 64 MB). Largest globals: big_blob 4 MB, rows ~2 MB. Drop what you no longer need (big_blob = nothing) or run with reset: true.]",
+}
+`;
+
+exports[`lazy memory globals rb > preserves above threshold notice and globals payload 1`] = `
+{
+  "globals": [
+    {
+      "bytes": 4194352,
+      "name": "big_blob",
+    },
+    {
+      "approximate": true,
+      "bytes": 2480048,
+      "name": "rows",
+    },
+  ],
+  "liveBytes": 134217728,
+  "measure": "footprint",
+  "notice": "[rb kernel holds 128 MB in its process footprint (notice at 64 MB). Largest globals: big_blob 4 MB, rows ~2 MB. Drop what you no longer need (big_blob = nil) or run with reset: true.]",
+}
+`;

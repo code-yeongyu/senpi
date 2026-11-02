@@ -1,637 +1,306 @@
 #!/usr/bin/env node
-/**
- * Lifecycle supervisor for the shared RPC socket host started by ensureHost().
- *
- * Process tree:
- *
- *     ensureHost() ──detached──▶ host-lifecycle.ts (this supervisor, owns the pidfile)
- *                                    │  byte-proxies the public socket
- *                                    ▼
- *                          cli-main --mode rpc --listen unix://<public>.internal
- *
- * The supervisor exists to enforce the host lifecycle policy without touching the
- * RPC host itself:
- *
- * - cold start: `transient` (default) means the host lives for the current login
- *   session and idle-exits; `persistent` never idle-exits.
- * - idle exit: after a continuous window with zero attached client connections
- *   and zero active agent turns, the supervisor tears the host down cleanly
- *   (child SIGTERM first so the host flushes pending output and removes its own
- *   socket, then pidfile/settings removal mirroring ensureHost's cleanupState).
- *
- * Observability without host changes: proxying the public socket yields the
- * exact connection count, and the supervisor keeps one always-on observer
- * connection to the internal socket. The multi-session host broadcasts every
- * session lifecycle/agent event to every connection, so the observer sees
- * `agent_start`/`agent_settled` for all sessions even when no client is
- * attached. If the observer connection is ever unhealthy, activity is reported
- * as unknown (non-idle), so a broken observer can only keep the host alive,
- * never kill it mid-turn.
- *
- * Lifetime binding: the host is spawned with an extra inherited pipe on fd 3
- * whose write end this supervisor holds and never writes to. The kernel closes
- * that end whenever the supervisor dies - including SIGKILL, an OOM kill, or a
- * crash, where no JS handler runs at all - so the host reads EOF and shuts down
- * cleanly, removing the private internal directory. `stopChild()` remains the
- * fast path for orderly shutdowns; the pipe is what makes an orphaned host
- * impossible. `SENPI_RPC_HOST_WATCH_PPID` is passed alongside as a belt-and-
- * braces fallback for platforms where the extra fd is not inherited.
- */
-import { type ChildProcess, spawn } from "node:child_process";
+import "../../private-fds.ts";
 import { randomUUID } from "node:crypto";
-import { realpathSync, writeSync } from "node:fs";
-import { access, chmod, mkdir, readFile, rm, unlink } from "node:fs/promises";
-import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { getAgentDir, isBunBinary } from "../../config.ts";
-import { createHostDaemonPaths } from "./host-ensure.ts";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
+import { HostAdmission } from "./host-admission.ts";
+import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
+import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
+import { isCliModuleEntry } from "./host-cli-entry.ts";
 import {
-	HOST_CLEANUP_PATHS_ENV,
-	HOST_SCRATCH_DIR_ENV,
-	HOST_WATCH_FD_ENV,
-	HOST_WATCH_PPID_ENV,
-} from "./host-watchdog.ts";
-import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+	createGenerationDirectory,
+	createHostDaemonPaths,
+	generationPaths,
+	HostDaemonStateError,
+} from "./host-daemon-paths.ts";
+import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
+import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
+import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
+import {
+	HOST_CHILD_WATCH_FD,
+	parseSupervisorArgs,
+	type SupervisorLaunch,
+	spawnHostChild,
+} from "./host-lifecycle-launch.ts";
+import { resolveHostPolicy } from "./host-lifecycle-policy.ts";
+import {
+	adoptPublicSocket,
+	createPublicProxy,
+	ensurePublicSocketSecret,
+	listen,
+	prepareSocketPath,
+	waitForListener,
+} from "./host-lifecycle-proxy.ts";
+import { readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
+import {
+	performShutdown,
+	registerSupervisorSignals,
+	type SupervisorShutdown,
+	type SupervisorState,
+	supervisorSender,
+} from "./host-lifecycle-shutdown.ts";
+import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
+import { errorMessage, writeHostReady, writeStderrLine } from "./host-supervisor-log.ts";
+import { RpcPublicEndpoint } from "./rpc-public-key.ts";
+import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
 
-export type HostColdStart = "transient" | "persistent";
-
-/** Environment override for the cold-start policy: `transient` or `persistent`. */
-export const HOST_COLD_START_ENV = "SENPI_RPC_HOST_COLD_START";
-/** Environment override for the idle-exit window in milliseconds. */
-export const HOST_IDLE_EXIT_MS_ENV = "SENPI_RPC_HOST_IDLE_EXIT_MS";
-/** Default idle-exit window: 15 minutes of continuous no-connection, no-turn idle. */
-export const DEFAULT_HOST_IDLE_EXIT_MS = 15 * 60_000;
-
-/** The policy fields ensureHost() records in rpc-host-daemon/settings.json. */
-export interface HostLifecyclePolicyInput {
-	readonly coldStart?: HostColdStart;
-	readonly idleExitMs?: number;
-}
-
-export interface HostLifecyclePolicy {
-	readonly coldStart: HostColdStart;
-	readonly idleExitMs: number;
-}
-
-const CHILD_STOP_TIMEOUT_MS = 5_000;
-
-/**
- * Child stdio slot carrying the supervisor-lifetime pipe. The supervisor holds
- * the write end open and never writes; the kernel closes it when the supervisor
- * dies for ANY reason (SIGKILL, OOM kill, crash), so the host sees EOF on this
- * fd and shuts itself down. Catchable-signal cleanup alone cannot do this.
- */
-const CHILD_WATCH_FD = 3;
-
-/**
- * The internal hop must stay short enough for sun_path (104 bytes on macOS)
- * regardless of where the public socket lives, and private against other local
- * users, so it gets its own 0700 directory under the OS temp directory.
- */
-async function createInternalSocketPath(): Promise<{ socket: string; dir: string }> {
-	const dir = join(tmpdir(), `senpi-rpc-host-internal-${randomUUID().slice(0, 8)}`);
-	await mkdir(dir, { recursive: false, mode: 0o700 });
-	return { socket: join(dir, "host.sock"), dir };
-}
-
-export function parseColdStart(value: string | undefined): HostColdStart | undefined {
-	return value === "transient" || value === "persistent" ? value : undefined;
-}
-
-export function parseIdleExitMs(value: string | undefined): number | undefined {
-	if (value === undefined || !/^\d+$/.test(value.trim())) return undefined;
-	const parsed = Number(value.trim());
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-/**
- * Resolves the effective host policy. Precedence: environment overrides beat
- * settings.json, which beats the documented defaults (transient, 15 minutes).
- * Invalid values at either source fall through to the next source.
- */
-export function resolveHostPolicy(
-	settings: unknown,
-	env: Readonly<Record<string, string | undefined>>,
-): HostLifecyclePolicy {
-	const record = isRecord(settings) ? settings : {};
-	const coldStart =
-		parseColdStart(env[HOST_COLD_START_ENV]) ?? parseColdStart(asOptionalString(record.coldStart)) ?? "transient";
-	const idleExitMs =
-		parseIdleExitMs(env[HOST_IDLE_EXIT_MS_ENV]) ??
-		parseIdleExitMs(asOptionalString(record.idleExitMs)) ??
-		DEFAULT_HOST_IDLE_EXIT_MS;
-	return { coldStart, idleExitMs };
-}
-
-export interface HostActivity {
-	readonly connections: number;
-	readonly activeTurns: number;
-}
-
-/**
- * How the supervisor reads its child's exit. The RPC host exits 0 only through
- * its own clean shutdown path - including its idle/empty-host policy - so that
- * is an intentional stop, not a crash: the supervisor mirrors its own idle exit
- * instead of reporting failure. Any non-zero code or signal stays a crash.
- */
-export function classifyChildExit(
-	code: number | null,
-	signal: NodeJS.Signals | null,
-): { reason: string; exitCode: number } {
-	if (code === 0 && signal === null) return { reason: "rpc host exited on its own idle policy", exitCode: 0 };
-	return { reason: `rpc host process exited unexpectedly (${code ?? signal})`, exitCode: 1 };
-}
-
-export type IdleExitDecision = "active" | "idle" | "exit";
-
-/**
- * Pure idle-window decision core. `update()` must be called with the CURRENT
- * activity state; the window only counts continuously idle time and any
- * activity resets it, so a busy host can never cross the threshold.
- */
-export class IdleExitDecider {
-	private idleSince: number | undefined;
-	private readonly now: () => number;
-	readonly idleExitMs: number;
-
-	constructor(idleExitMs: number, now: () => number = Date.now) {
-		this.idleExitMs = idleExitMs;
-		this.now = now;
-	}
-
-	update(activity: HostActivity): IdleExitDecision {
-		// Any attachment or active turn both holds the host open and resets the
-		// window, so only CONTINUOUS idle can ever cross the threshold.
-		if (activity.connections > 0 || activity.activeTurns > 0) {
-			this.idleSince = undefined;
-			return "active";
-		}
-		if (this.idleExitMs === Number.POSITIVE_INFINITY) return "idle";
-		if (this.idleSince === undefined) {
-			this.idleSince = this.now();
-			return "idle";
-		}
-		return this.now() - this.idleSince >= this.idleExitMs ? "exit" : "idle";
-	}
-}
-
-export interface SupervisorLaunch {
-	readonly socket: string;
-	readonly hostArgs: readonly string[];
-	/** Optional runtime command used by rebranded/bundled callers. */
-	readonly childCommand?: string;
-	readonly childArgs?: readonly string[];
-	/** Explicit ownership directory for callers whose environment is not yet branded. */
-	readonly agentDir?: string;
-}
-
-/** Hidden internal launch route: wire-invisible, never advertised by the public CLI surface. */
-export const INTERNAL_SUPERVISOR_FLAG = "--internal-rpc-host-supervisor";
-
-/**
- * Engine-global flags a rebranded wrapper may legitimately prepend when it
- * re-dispatches this binary. `packages/omo-native` injects `--extension <dir>`
- * for every non-early command, which pushed the sentinel off argv[0].
- */
-const INJECTABLE_PREFIX_FLAGS = new Set(["--extension"]);
-
-/**
- * Returns the internal supervisor payload when argv selects that route.
- *
- * The route dispatches when the sentinel is argv[0] OR is preceded only by
- * known injectable prefix flags and their values - the one perturbation
- * wrappers legitimately perform. Everything else disqualifies it: a positional
- * operand, `--`, or an unknown flag before the sentinel all return undefined,
- * so a user-supplied value that happens to equal the sentinel can never reach
- * the supervisor.
- *
- * The skipped prefix is deliberately NOT forwarded to the host: a wrapper
- * re-injects its own prefix on every re-entry, so the host child receives it
- * from the wrapper rather than twice from here.
- */
-export function findInternalSupervisorArgs(argv: readonly string[]): readonly string[] | undefined {
-	for (let index = 0; index < argv.length; index++) {
-		const arg = argv[index];
-		if (arg === INTERNAL_SUPERVISOR_FLAG) return argv.slice(index + 1);
-		// A prefix flag only counts when its value is actually present.
-		if (!INJECTABLE_PREFIX_FLAGS.has(arg) || index + 1 >= argv.length) return undefined;
-		index++;
-	}
-	return undefined;
-}
-
-/** `--socket <path>` selects the public socket; every other argument is forwarded to the host CLI. */
-export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch | undefined {
-	const hostArgs: string[] = [];
-	let socket: string | undefined;
-	let childCommand: string | undefined;
-	let childArgs: readonly string[] | undefined;
-	let agentDir: string | undefined;
-	for (let index = 0; index < argv.length; index++) {
-		const arg = argv[index];
-		if (arg === "--socket" && index + 1 < argv.length) {
-			socket = argv[++index];
-			continue;
-		}
-		if (arg === "--child-command" && index + 1 < argv.length) {
-			childCommand = argv[++index];
-			continue;
-		}
-		if (arg === "--child-args" && index + 1 < argv.length) {
-			try {
-				const parsed: unknown = JSON.parse(argv[++index]);
-				if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) childArgs = parsed;
-			} catch {
-				return undefined;
-			}
-			continue;
-		}
-		if (arg === "--agent-dir" && index + 1 < argv.length) {
-			agentDir = argv[++index];
-			continue;
-		}
-		hostArgs.push(arg);
-	}
-	return socket === undefined ? undefined : { socket, hostArgs, childCommand, childArgs, agentDir };
-}
-
-/** Resolves the committed CLI entry this supervisor wraps (source tree or built dist). */
-export function resolveCliMainPath(): string {
-	const modulePath = fileURLToPath(import.meta.url);
-	const extension = modulePath.endsWith(".ts") ? ".ts" : ".js";
-	return resolve(dirname(modulePath), "..", "..", `cli-main${extension}`);
-}
-
-/**
- * Resolves the host child spawn. Explicit child commands (desktop launchers)
- * are forwarded untouched. The default re-enters the committed CLI entry
- * through the runtime, except in compiled standalone binaries, which always
- * boot their embedded entrypoint and would parse a script path as CLI
- * arguments - there the executable itself is the CLI, so the mode flags are
- * passed directly. Exported for tests.
- */
-export function resolveHostChildLaunch(
-	launch: SupervisorLaunch,
-	internalSocket: string,
-	compiled: boolean = isBunBinary,
-): { command: string; args: string[] } {
-	if (launch.childCommand) {
-		return {
-			command: launch.childCommand,
-			args: [...(launch.childArgs ?? []), "--listen", `unix://${internalSocket}`],
-		};
-	}
-	return {
-		command: process.execPath,
-		args: [
-			...(compiled ? [] : [...process.execArgv, resolveCliMainPath()]),
-			"--mode",
-			"rpc",
-			"--multi-session",
-			"--listen",
-			`unix://${internalSocket}`,
-			...launch.hostArgs,
-		],
-	};
-}
+// The exit verdict, the launch surface and the cold-start/idle-exit policy live in their own modules
+// (host-child-exit.ts, host-lifecycle-launch.ts, host-lifecycle-policy.ts); they stay exported from
+// here so every existing importer keeps resolving them at their original home.
+export { classifyChildExit } from "./host-child-exit.ts";
+export {
+	findInternalSupervisorArgs,
+	INTERNAL_SUPERVISOR_FLAG,
+	parseSupervisorArgs,
+	resolveCliMainPath,
+	resolveHostChildLaunch,
+	type SupervisorLaunch,
+	spawnableChildLaunch,
+} from "./host-lifecycle-launch.ts";
+export {
+	DEFAULT_HANDOFF_GRACE_MS,
+	DEFAULT_HOST_IDLE_EXIT_MS,
+	HANDOFF_GRACE_MS_ENV,
+	HOST_COLD_START_ENV,
+	HOST_IDLE_EXIT_MS_ENV,
+	type HostActivity,
+	type HostColdStart,
+	type HostLifecyclePolicy,
+	type HostLifecyclePolicyInput,
+	IdleExitDecider,
+	type IdleExitDecision,
+	parseColdStart,
+	parseIdleExitMs,
+	resolveHostPolicy,
+} from "./host-lifecycle-policy.ts";
+export { createInternalSocketPath } from "./host-lifecycle-scratch.ts";
 
 export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void> {
-	const paths = createHostDaemonPaths(launch.agentDir ?? getAgentDir());
+	const paths = createHostDaemonPaths({ socket: launch.socket, agentDir: launch.agentDir ?? getAgentDir() });
+	// Which generation this supervisor is: the ensure that spawned it says so, and a DIRECT launch
+	// (the hidden supervisor route, with no ensure behind it) names itself so its child agrees.
+	const told = process.env[HOST_INSTANCE_ID_ENV];
+	const instanceId = told !== undefined && told.trim() !== "" ? told : randomUUID();
+	const generation = generationPaths(paths, instanceId);
+	const created = await mkdir(generation.dir, { recursive: true, mode: 0o700 }).catch((cause) => {
+		throw new HostDaemonStateError(generation.dir, cause);
+	});
+	let startupRegistered = false;
+	await using _generationStartup = {
+		async [Symbol.asyncDispose]() {
+			// An ensured directory is not ours to discard. Until shutdown owns a new one,
+			// every failed startup must remove it, including failures after child spawn.
+			if (created !== undefined && !startupRegistered) {
+				await rm(generation.dir, { recursive: true, force: true });
+			}
+		},
+	};
+	// A direct launch has no ensure to provision its records before the child can write them.
+	await createGenerationDirectory(generation);
 	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
 	const publicSocket = launch.socket;
-	const internal = await createInternalSocketPath();
-	const internalSocket = internal.socket;
-	const clientSockets = new Set<Socket>();
-	const busySessions = new Map<string, number>();
-	let observerHealthy = false;
-	let observerReconnectTimer: ReturnType<typeof setTimeout> | undefined;
-	let shuttingDown = false;
-	let shutdownPromise: Promise<never> | undefined;
-
-	const childLaunch = resolveHostChildLaunch(launch, internalSocket);
-	const child = spawn(childLaunch.command, childLaunch.args, {
-		env: {
-			...process.env,
-			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
-			[HOST_WATCH_FD_ENV]: String(CHILD_WATCH_FD),
-			[HOST_WATCH_PPID_ENV]: String(process.pid),
-			[HOST_SCRATCH_DIR_ENV]: internal.dir,
-			[HOST_CLEANUP_PATHS_ENV]: [publicSocket, paths.pidFile, paths.settingsFile].join("\n"),
-		},
-		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
-		// wait on and keeps the write end owned by this process alone.
-		stdio: ["ignore", "ignore", "inherit", "pipe"],
+	const publicEndpoint =
+		process.platform === "win32" ? undefined : new RpcPublicEndpoint(launch.agentDir ?? getAgentDir(), publicSocket);
+	// A successor generation binds its own name and adopts the public one by rename; an ordinary
+	// start binds the public name directly. Everything downstream - the child's environment, the
+	// ownership token, the teardown - is expressed in terms of the PUBLIC path either way.
+	const bindSocket = launch.bindSocket ?? publicSocket;
+	const successor = launch.bindSocket !== undefined;
+	// Direct-launch contract: the supervisor owns the public secret. ensureHost()
+	// writes it before spawning, but the hidden --internal-rpc-host-supervisor route
+	// has no such caller, so a fresh profile would otherwise die reading it (#1370).
+	// It is provisioned BEFORE the internal hop and the child so a provisioning
+	// failure leaves no scratch directory and no host process behind.
+	const publicSecret = process.platform === "win32" ? await ensurePublicSocketSecret(publicSocket) : undefined;
+	const hop = await prepareInternalHop(paths.dir);
+	const { internal, internalSocket, internalSecret, internalKey } = hop;
+	const state: SupervisorState = {
+		shuttingDown: false,
+		shutdownReason: undefined,
+		childExitRecorded: Promise.resolve(),
+		startupComplete: Promise.resolve(),
+		publicSocketOwned: false,
+		publicSocketIdentity: undefined,
+		endpointReplaced: false,
+	};
+	const owner = new SupervisorOwner(generation.dir);
+	const activity = new SupervisorActivity({
+		idleExitMs: policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
+		internalSocket,
+		...hop.transport,
+		instanceId,
+		settled: () => state.shuttingDown,
+		onActivity: () => owner.activity(),
 	});
+	const watchers: Array<() => void> = [];
+
+	const child = spawnHostChild({
+		launch,
+		internalSocket,
+		internal,
+		...hop.transport,
+		supervisorStart: hop.supervisorStart,
+		lifetimeFifo: hop.lifetimeFifo,
+		daemonDir: paths.dir,
+		instanceId,
+		cleanupPaths: hostCrashCleanupPaths({
+			pointerFile: paths.pointerFile,
+			generationPidFile: generation.pidFile,
+			settingsFile: paths.settingsFile,
+			publicSocket,
+			successor: Boolean(successor),
+			platform: process.platform,
+		}),
+		publicSocket,
+	});
+	const childStartedAt = Date.now();
 	// Nothing is ever written; the pipe exists purely so its EOF is a reliable
 	// death notification. Errors on it must not crash the supervisor.
-	child.stdio[CHILD_WATCH_FD]?.on("error", () => {});
+	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
+	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart.
+	if (child.pid !== undefined)
+		void recordChildPid(
+			generation.childPidFile,
+			child.pid,
+			() => child.exitCode === null && child.signalCode === null,
+		);
 	child.once("exit", (code, signal) => {
-		if (shuttingDown) return;
-		const { reason, exitCode } = classifyChildExit(code, signal);
-		void shutdown(reason, exitCode);
+		// Recorded BEFORE any shutdown it triggers: `shutdown` ends in `process.exit`. A stop the
+		// supervisor is performing itself is recorded too, as the engine stop it is.
+		const reason = state.shutdownReason;
+		state.childExitRecorded = noteChildExit({
+			daemonDir: paths.dir,
+			generation,
+			instanceId,
+			code,
+			signal,
+			childStartedAt,
+			...(state.shuttingDown && reason !== undefined
+				? { shutdown: { reason, supervisor: supervisorSender(instanceId) } }
+				: {}),
+		});
+		if (state.shuttingDown) return;
+		const verdict = classifyChildExit(code, signal);
+		void state.childExitRecorded.then(() => shutdown(verdict.reason, verdict.exitCode));
 	});
 
-	const server = createServer((client) => {
-		if (shuttingDown) {
-			client.destroy();
-			return;
-		}
-		const internal = createConnection(internalSocket);
-		clientSockets.add(client);
-		const detach = (): void => {
-			clientSockets.delete(client);
-			internal.destroy();
-			client.destroy();
-		};
-		client.pipe(internal);
-		internal.pipe(client);
-		client.once("close", detach);
-		client.once("error", detach);
-		internal.once("close", detach);
-		internal.once("error", detach);
+	const admission = new HostAdmission({ protocolVersion: 1, serverVersion: VERSION, capabilities: [], instanceId });
+	const drain = new SupervisorDrain(
+		child,
+		() => state.shuttingDown,
+		() => admission.stop(),
+		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId) },
+	);
+	const server = createPublicProxy({
+		internalSocket,
+		...hop.transport,
+		...(publicSecret ? { publicSecret } : {}),
+		...(publicEndpoint ? { publicEndpoint } : {}),
+		clients: activity.clients,
+		admission,
+		onDetach: () => activity.refresh(),
+		onAdmit: () => owner.activity(),
 	});
 	server.once("error", (cause) => {
-		if (!shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);
+		if (!state.shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);
 	});
-
-	const decider = new IdleExitDecider(
-		policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
+	watchers.push(
+		startSupervisorTicker({
+			idleExitMs: policy.idleExitMs,
+			activity,
+			owner,
+			draining: () => drain.active,
+			shuttingDown: () => state.shuttingDown,
+			shutdown,
+		}),
 	);
-	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
-	const ticker = setInterval(() => {
-		if (decider.update(currentActivity()) === "exit") void shutdown("idle", 0);
-	}, tickIntervalMs);
 
-	function currentActivity(): HostActivity {
-		return {
-			connections: clientSockets.size,
-			activeTurns: observerHealthy ? countBusySessions() : 1,
-		};
-	}
-
-	function countBusySessions(): number {
-		let busy = 0;
-		for (const count of busySessions.values()) if (count > 0) busy++;
-		return busy;
-	}
-
-	function observeHostEvent(line: string): void {
-		let event: unknown;
-		try {
-			event = JSON.parse(line);
-		} catch {
-			return;
-		}
-		if (typeof event !== "object" || event === null) return;
-		const { type, sessionId } = event as { type?: unknown; sessionId?: unknown };
-		if (typeof sessionId !== "string") return;
-		if (type === "agent_start") busySessions.set(sessionId, (busySessions.get(sessionId) ?? 0) + 1);
-		else if (type === "agent_settled")
-			busySessions.set(sessionId, Math.max(0, (busySessions.get(sessionId) ?? 1) - 1));
-	}
-
-	async function shutdown(reason: string, exitCode: number): Promise<never> {
-		// Single-flight: concurrent triggers (listener error, child exit, signals)
-		// must not process.exit mid-cleanup. Late callers park on this promise while
-		// the first shutdown finishes tearing down and exits.
-		shutdownPromise ??= performShutdown(reason, exitCode);
+	const teardown: SupervisorShutdown = {
+		paths,
+		generation,
+		instanceId,
+		publicSocket,
+		server,
+		internalDir: internal.dir,
+		child,
+		activity,
+		drain,
+		admission,
+		state,
+		...(publicEndpoint ? { publicEndpoint } : {}),
+		stopWatchers: () => {
+			for (const stop of watchers.splice(0)) stop();
+		},
+	};
+	let shutdownPromise: Promise<never> | undefined;
+	// Single-flight: concurrent triggers (listener error, child exit, signals) must not process.exit
+	// mid-cleanup. Late callers park on this promise while the first shutdown finishes and exits.
+	function shutdown(reason: string, exitCode: number): Promise<never> {
+		shutdownPromise ??= performShutdown(teardown, reason, exitCode);
 		return shutdownPromise;
 	}
 
-	async function performShutdown(reason: string, exitCode: number): Promise<never> {
-		if (shuttingDown) process.exit(exitCode);
-		shuttingDown = true;
-		clearInterval(ticker);
-		writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
-		for (const client of clientSockets) client.destroy();
-		await closeServer(server);
-		// Unlink the private directory BEFORE the child stop, which can take seconds:
-		// an external SIGKILL landing during that wait (ensureHost escalates while
-		// replacing a host) would otherwise leave the directory behind. The child
-		// keeps serving through its already-open socket fd until it exits, and its
-		// own watchdog cleanup makes the removal idempotent.
-		await rm(internal.dir, { recursive: true, force: true });
-		await stopChild(child);
-		observer?.destroy();
-		if (publicSocketOwned) await rm(publicSocket, { force: true });
-		// Mirror ensureHost's cleanupState: the pidfile and settings describe a
-		// live host only; the stderr log stays for diagnostics.
-		await rm(paths.pidFile, { force: true });
-		await rm(paths.settingsFile, { force: true });
-		process.exit(exitCode);
-	}
-
-	let observer: Socket | undefined;
-	let publicSocketOwned = false;
-	// Registered before the startup handshake, not after it: the private internal
-	// directory already exists at this point, so a SIGTERM arriving during host
-	// startup must run the same cleanup instead of Node's default kill, which
-	// would leave that directory behind.
-	registerSupervisorSignals(shutdown);
+	// Registered before the startup handshake, not after it: the private internal directory already
+	// exists, so a SIGTERM arriving during host startup must run the same cleanup instead of Node's
+	// default kill, which would leave that directory behind.
+	registerSupervisorSignals(shutdown, () => drain.drain());
+	startupRegistered = true;
 	try {
-		await waitForListener(internalSocket, 30_000);
-		await connectObserver();
-		await prepareSocketPath(publicSocket);
-		await listen(server, publicSocket);
-		publicSocketOwned = true;
+		// Direct supervisor launches predate owner records and may have no generation settings.
+		// Ensured starts create it before spawning and always carry an explicit owner/null record.
+		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
+			await owner.start(launch.ownerFd);
+		}
+		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
+		await activity.openObserver();
+		if (state.shuttingDown) return;
+		// Shutdown stops the child immediately, but joins these writes before removing their directories.
+		state.startupComplete = (async () => {
+			await prepareSocketPath(bindSocket);
+			await listen(server, bindSocket, publicSecret);
+			await publicEndpoint?.publish();
+			state.publicSocketOwned = true;
+			if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
+			state.publicSocketIdentity = await statSocketIdentity(publicSocket);
+			// The child's crash cleanup compares the public entry against this generation's private token.
+			if (state.publicSocketIdentity && internal.dir) {
+				await writeSocketIdentityFile(join(internal.dir, PUBLIC_SOCKET_IDENTITY_FILE), state.publicSocketIdentity);
+			}
+			watchers.push(
+				drainOnPublicSocketLoss(
+					publicSocket,
+					state.publicSocketIdentity,
+					() => state.shuttingDown || drain.active,
+					drain,
+					() => {
+						state.endpointReplaced = true;
+					},
+					{ file: paths.pointerFile, instanceId },
+				),
+			);
+			watchers.push(await drain.acceptRequests(generation));
+		})();
+		await state.startupComplete;
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}
-	async function connectObserver(): Promise<void> {
-		const next = createConnection(internalSocket);
-		await waitForConnect(next, 5_000);
-		observer = next;
-		observerHealthy = true;
-		attachJsonlLineReader(next, observeHostEvent, { maxLineLength: MAX_RPC_LINE_CHARACTERS });
-		const lost = (): void => {
-			if (observer !== next || shuttingDown) return;
-			observerHealthy = false;
-			observer = undefined;
-			if (observerReconnectTimer === undefined) {
-				observerReconnectTimer = setTimeout(() => {
-					observerReconnectTimer = undefined;
-					void connectObserver().catch(() => lost());
-				}, 250);
-				observerReconnectTimer.unref?.();
-			}
-		};
-		next.once("close", lost);
-		next.once("error", lost);
+	if (state.shuttingDown) return;
+	if (process.platform === "win32") {
+		watchers.push(
+			await watchWin32ChildIdentity(
+				child,
+				() => state.shuttingDown,
+				() => void shutdown("rpc host child exit observed by identity watchdog", 0),
+			),
+		);
 	}
-
-	writeStderrLine(
-		`senpi rpc host ready on unix://${publicSocket} (coldStart=${policy.coldStart}, idleExitMs=${
-			policy.coldStart === "persistent" ? "never" : String(policy.idleExitMs)
-		})`,
-	);
+	writeHostReady(publicSocket, policy.coldStart, policy.idleExitMs);
 	await new Promise<never>(() => {});
 }
 
-/** External stop (ensureHost replacement, tests, QA) must clean up like idle exit. */
-function registerSupervisorSignals(shutdown: (reason: string, exitCode: number) => Promise<never>): void {
-	for (const signal of process.platform === "win32" ? (["SIGTERM"] as const) : (["SIGTERM", "SIGHUP"] as const)) {
-		process.on(signal, () => {
-			void shutdown(`signal:${signal}`, signal === "SIGHUP" ? 129 : 143);
-		});
-	}
-}
-
-async function readSettingsFile(settingsFile: string): Promise<unknown> {
-	try {
-		return JSON.parse(await readFile(settingsFile, "utf8"));
-	} catch {
-		return undefined;
-	}
-}
-
-async function stopChild(child: ChildProcess): Promise<void> {
-	if (child.exitCode !== null || child.signalCode !== null) return;
-	try {
-		child.kill("SIGTERM");
-	} catch {
-		return;
-	}
-	if (await waitForChildExit(child, CHILD_STOP_TIMEOUT_MS)) return;
-	try {
-		child.kill("SIGKILL");
-	} catch {
-		return;
-	}
-	await waitForChildExit(child, 2_000);
-}
-
-function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
-	return new Promise((resolve) => {
-		const timer = setTimeout(() => {
-			child.off("exit", onExit);
-			resolve(false);
-		}, timeoutMs);
-		const onExit = (): void => {
-			clearTimeout(timer);
-			resolve(true);
-		};
-		child.once("exit", onExit);
-	});
-}
-
-async function waitForListener(socketPath: string, timeoutMs: number): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() <= deadline) {
-		if (await canConnect(socketPath)) return;
-		await delay(50);
-	}
-	throw new Error(`${socketPath}: host did not start listening within ${timeoutMs}ms`);
-}
-
-function canConnect(socketPath: string): Promise<boolean> {
-	return new Promise((resolve) => {
-		const socket = createConnection(socketPath);
-		const settle = (value: boolean): void => {
-			socket.destroy();
-			resolve(value);
-		};
-		socket.once("connect", () => settle(true));
-		socket.once("error", () => settle(false));
-	});
-}
-
-function waitForConnect(socket: Socket, timeoutMs: number): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => {
-			cleanup();
-			reject(new Error(`observer connection to internal host timed out after ${timeoutMs}ms`));
-		}, timeoutMs);
-		const onConnect = (): void => {
-			cleanup();
-			resolve();
-		};
-		const onError = (cause: Error): void => {
-			cleanup();
-			reject(cause);
-		};
-		const cleanup = (): void => {
-			clearTimeout(timer);
-			socket.off("connect", onConnect);
-			socket.off("error", onError);
-		};
-		socket.once("connect", onConnect);
-		socket.once("error", onError);
-	});
-}
-
-async function prepareSocketPath(socketPath: string): Promise<void> {
-	await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
-	try {
-		await access(socketPath);
-	} catch (cause) {
-		if (isNodeErrorCode(cause, "ENOENT")) return;
-		throw cause;
-	}
-	if (await canConnect(socketPath)) throw new Error(`${socketPath}: address already in use by a live server.`);
-	await unlink(socketPath);
-}
-
-function listen(server: Server, socketPath: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(socketPath, async () => {
-			server.off("error", reject);
-			if (!socketPath.startsWith("\0")) await chmod(socketPath, 0o600);
-			resolve();
-		});
-	});
-}
-
-function closeServer(server: Server): Promise<void> {
-	return new Promise((resolve) => {
-		server.close(() => resolve());
-	});
-}
-
-function writeStderrLine(text: string): void {
-	// A detached daemon exiting right after an async stderr.write to a file can
-	// lose the output entirely; write synchronously so diagnostics always land.
-	try {
-		writeSync(2, `${text}\n`);
-	} catch {
-		/* fd 2 unavailable: nothing more we can do. */
-	}
-}
-
-function delay(ms: number): Promise<void> {
-	return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-}
-
-function errorMessage(cause: unknown): string {
-	return cause instanceof Error ? cause.message : String(cause);
-}
-
-function isNodeErrorCode(cause: unknown, code: string): boolean {
-	return cause instanceof Error && "code" in cause && cause.code === code;
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function asOptionalString(value: unknown): string | undefined {
-	return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;
-}
-
-function isEntryScript(): boolean {
-	const entry = process.argv[1];
-	if (!entry) return false;
-	try {
-		return fileURLToPath(import.meta.url) === realpathSync(entry);
-	} catch {
-		return false;
-	}
-}
-
-if (isEntryScript()) {
+if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 	const launch = parseSupervisorArgs(process.argv.slice(2));
 	if (!launch) {
 		writeStderrLine("usage: host-lifecycle.ts --socket <path> [host cli args...]");

@@ -31,15 +31,15 @@ gpt-apply-patch/
 
 | Task | File |
 |------|------|
-| Fix a parse error from a real GPT output | `parser.ts` — add a regression test in `test/suite/gpt-apply-patch-extension.test.ts` |
+| Fix a parse error from a real GPT output | `parser.ts` — add a regression test in `test/suite/gpt-apply-patch-extension.test.ts` unless an existing owner test there already fails on the pre-fix code (see the root TEST AUTHORING GATE) |
 | Improve strict-seek tolerance | `seek-sequence.ts` |
 | Change render | `preview-format.ts` + `streaming-render.ts` |
 | Add a new file op (e.g. `*** Rename File:`) | `types.ts` + `parser.ts` + `apply.ts` |
-| Adjust which models opt in | `extension.ts` — `APPLY_PATCH_FREEFORM_APIS` + `gpt-` id prefix in `isOpenAIGptModel()` |
+| Adjust which models opt in | `extension.ts` — `APPLY_PATCH_FREEFORM_APIS` + the boundary-aware GPT id match in `isGptId()` |
 
 ## CONVENTIONS
 
-- **Gate is API + id**: `getApplyPatchWireMode(model)` returns `freeform` for Responses-family APIs (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`), `json` for `openai-completions`, and `none` otherwise — all gated additionally on a `gpt-` id prefix. Selection happens on `session_start` and `model_select`.
+- **Gate is API + id**: `getApplyPatchWireMode(model)` returns `freeform` for Responses-family APIs (`openai-responses`, `azure-openai-responses`, `openai-codex-responses`), `json` for `openai-completions`, and `none` otherwise — all gated additionally on a GPT family id. The id match is delimiter-boundary aware, not a literal `gpt-` prefix, so gateway-prefixed ids (`codex/gpt-6-astra`, `openrouter/openai/gpt-5.6-sol`, `global.openai.gpt-6-astra`, `gateway:GPT_6_ASTRA`) opt in while `xgpt-5.6-proxy` and `deepseek-v3-gptq` stay out (#1891). Selection happens on `session_start` and `model_select`.
 - **Strict context lines**: `seek-sequence.ts` requires exact context-line match (with bounded fuzz). Bypassing strict mode masks real grammar bugs.
 - **Mirror upstream Codex grammar** in `parser.ts` — the canonical reference is `openai/codex` `apply_patch` source. The schema golden (`test/goldens/codex-apply-patch-schema.json`) is extracted from there via the repo-root `scripts/extract-codex-apply-patch-golden.mjs`.
 - **Permission-system integration**: `parsers.ts` in `permission-system/` extracts file paths from patch bodies for per-file approval (see `permission-system/changes.md` 2026-04-13).
@@ -48,12 +48,12 @@ gpt-apply-patch/
 ## ANTI-PATTERNS
 
 - Falling back to non-strict seek for "convenience" — masks model output bugs and produces wrong patches.
-- Gating on a provider allowlist — gate on `model.api` + the `gpt-` id prefix in `extension.ts` so OpenAI-compatible custom providers (e.g. a proxy exposing gpt-5.5 via `openai-responses`) opt in too.
+- Gating on a provider allowlist — gate on `model.api` + the boundary-aware GPT id match in `extension.ts` so OpenAI-compatible custom providers (e.g. a proxy exposing gpt-5.5 via `openai-responses`) opt in too.
 - Re-implementing diff rendering — `preview-format.ts` must keep using `core/tools/diff-render.ts` (`renderToolDiff`), the module shared with the `edit`/`write` renders.
 - Changing patch sentinels (`*** Begin Patch`, etc.) — must match Codex exactly.
 
 ## NOTES
 
-- The `apply_patch` tool exposes `promptSnippet` + `promptGuidelines` that the dynamic prompt picks up; prompt-preset's `file-operations.ts` reinforces "use apply_patch, not python heredoc" for GPT presets.
+- The `apply_patch` tool exposes `promptSnippet` + `promptGuidelines` that the dynamic prompt picks up; prompt-preset's `file-operations.ts` reinforces "use the session's edit verb, not python heredoc". That block renders from the ACTIVE tool names, so it only names `apply_patch` where this gate actually activated it (#1968) — changing the gate changes that prompt text, and `ask-user/family.ts` picks its tool family (`request_user_input` vs `ask_user_question`) off the same `getApplyPatchWireMode` call.
 - The schema golden lives at `packages/coding-agent/test/goldens/codex-apply-patch-schema.json` (consumed by `test/suite/regressions/codex-apply-patch-schema-parity.test.ts`). Re-extract from upstream with `bun scripts/extract-codex-apply-patch-golden.mjs` at the repo root (requires a local `openai/codex` checkout).
 - `streaming-parser.ts` powers partial render during model streaming — keep it tolerant of incomplete blocks.

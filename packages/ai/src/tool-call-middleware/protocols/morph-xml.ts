@@ -1,4 +1,4 @@
-import type { TextContent, Tool } from "../../types.ts";
+import type { TextContent, Tool, ToolCall } from "../../types.ts";
 import { validateToolArguments } from "../../utils/validation.ts";
 import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.ts";
 import { findEarliestXmlToolTag, findSelfClosingToolTag, getSafeXmlTextLength } from "./xml-tool-tag-scanner.ts";
@@ -430,7 +430,7 @@ function validateMorphXmlArguments(tool: Tool | undefined, argumentsRecord: Reco
 			type: "toolCall",
 			id: "morph-xml-validation",
 			name: tool.name,
-			arguments: argumentsRecord,
+			arguments: argumentsRecord as ToolCall["arguments"],
 		});
 		return true;
 	} catch {

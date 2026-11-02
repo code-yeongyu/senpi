@@ -1,0 +1,17 @@
+declare const model: { type?: string };
+declare const models: { m: { type?: string } };
+export const a1 = model.type === "chat";
+export const a2 = model.type !== "chat";
+export const a3 = model.type == "chat";
+export const a4 = model.type != "chat";
+export const b1 = "chat" === model.type;
+export const b2 = "chat" !== model.type;
+export const b3 = "chat" == model.type;
+export const b4 = "chat" != model.type;
+export const c1 = models.m.type === "chat";
+export const c2 = model.type === "image";
+export const c3 = model?.type === "chat";
+export const c4 = (model.type) === "chat";
+export const c5 = model["type"] === "chat";
+export const c6 = model.type === `chat`;
+export const d1 = model.type /* ( */ === "chat";

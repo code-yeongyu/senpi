@@ -4,15 +4,13 @@ import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext } from "./eval/fakes.ts";
 
-type TextContent = Extract<AgentToolResult<unknown>["content"][number], { type: "text" }>;
-
 afterEach(() => {
 	vi.useRealTimers();
 });
 
 function textOf(result: AgentToolResult<unknown>): string {
 	const texts: string[] = [];
-	for (const part of result.content as readonly TextContent[]) {
+	for (const part of result.content) {
 		if (part.type === "text") texts.push(part.text);
 	}
 	return texts.join("\n");
@@ -63,7 +61,7 @@ describe("eval stop reports true kernel state", () => {
 			{ ...fakeExtensionContext(), mode: "tui" as const },
 		);
 
-		expect(textOf(stopped)).toContain("preserved");
+		expect(textOf(stopped)).toContain("variables from earlier cells are kept");
 	});
 
 	it("says Python state was lost when the kernel had to be killed, never claiming preserved", async () => {
@@ -83,7 +81,7 @@ describe("eval stop reports true kernel state", () => {
 		);
 
 		const text = textOf(stopped);
-		expect(text).not.toContain("preserved");
+		expect(text).not.toContain("variables from earlier cells are kept");
 		expect(text).toMatch(/lost|gone|restart|recreated/i);
 	});
 
@@ -114,7 +112,7 @@ describe("eval stop reports true kernel state", () => {
 		);
 
 		const text = textOf(stopped);
-		expect(text).not.toContain("preserved");
+		expect(text).not.toContain("variables from earlier cells are kept");
 		expect(text).toMatch(/lost|restarted/i);
 	});
 });

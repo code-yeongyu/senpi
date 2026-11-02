@@ -263,7 +263,7 @@
      "Wave1: T1 SessionManager mutation-counter cache (PR-1)",
      "Wave1: T4 MCP startup race all lifecycles (PR-2)",
      "Wave1: T5 port group-liveness cleanup to main (PR-2)",
-     "Wave1: T6 omo codegraph eager lifecycle (PR-3)",
+     "Wave1: T6 omo mcp eager lifecycle (PR-3)",
      "Wave1: T7 task8 teardown on feat/app-server-parity",
      "Wave2: T2 incremental usage totals + footer (PR-1)",
      "Wave3: T3 manual perf QA Bug A evidence",

@@ -28,6 +28,11 @@ const repoRoot = new URL("../../..", import.meta.url).pathname;
  */
 const DEFERRED_STARTUP_PACKAGES = [
 	{
+		specifier: "linkedom",
+		pattern: /\/node_modules\/linkedom\//u,
+		owner: "webfetch HTML conversion (core/extensions/builtin/webfetch/webfetch/content.lazy.ts)",
+	},
+	{
 		specifier: "jsdom",
 		pattern: /\/node_modules\/jsdom\//u,
 		owner: "webfetch HTML conversion (core/extensions/builtin/webfetch/webfetch/content.lazy.ts)",
@@ -35,7 +40,7 @@ const DEFERRED_STARTUP_PACKAGES = [
 	{
 		specifier: "@anthropic-ai/claude-agent-sdk",
 		pattern: /\/node_modules\/@anthropic-ai\/claude-agent-sdk\/sdk\.mjs$/u,
-		owner: "claude-sdk-oauth streaming lane (core/extensions/builtin/claude-sdk-oauth/sdk-boundary.lazy.ts)",
+		owner: "claude-sdk-oauth streaming lane (core/extensions/builtin/anthropic-subscription/sdk-boundary.lazy.ts)",
 	},
 ] as const;
 

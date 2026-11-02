@@ -1,18 +1,17 @@
 /**
- * Real-surface QA driver for experimental.workflowEvalOnly.
+ * Real-surface QA driver for the default eval-only policy.
  *
  * Drives the shipped SDK entrypoint (createAgentSession) against a scratch
- * project directory whose .senpi/settings.json carries the flag, using the
- * faux provider so no credentials or network model calls are involved.
+ * project directory with no policy setting, using the faux provider so no
+ * credentials or network model calls are involved.
  *
- * Usage: npx tsx test/manual-qa/workflow-eval-only-qa.ts <scratchDir> <mode:armed|control> <outDir>
+ * Usage: bunx tsx test/manual-qa/workflow-eval-only-qa.ts <scratchDir> <outDir>
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
-import { CONFIG_DIR_NAME } from "../../src/config.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import { createAgentSession, type ExtensionFactory } from "../../src/core/sdk.ts";
@@ -20,9 +19,9 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 
-const [scratchDir, mode, outDir] = process.argv.slice(2);
-if (!scratchDir || !mode || !outDir) {
-	throw new Error("usage: workflow-eval-only-qa.ts <scratchDir> <armed|control> <outDir>");
+const [scratchDir, outDir] = process.argv.slice(2);
+if (!scratchDir || !outDir) {
+	throw new Error("usage: workflow-eval-only-qa.ts <scratchDir> <outDir>");
 }
 
 const lines: string[] = [];
@@ -36,14 +35,6 @@ const toolCallReceipts: Array<{ toolName: string; input: unknown }> = [];
 async function main(): Promise<void> {
 	const agentDir = join(scratchDir, "agent-dir");
 	mkdirSync(agentDir, { recursive: true });
-	const projectSettingsPath = join(scratchDir, CONFIG_DIR_NAME, "settings.json");
-	mkdirSync(join(scratchDir, CONFIG_DIR_NAME), { recursive: true });
-	// The project settings file is the real surface the flag ships on.
-	writeFileSync(
-		projectSettingsPath,
-		`${JSON.stringify({ experimental: { workflowEvalOnly: mode === "armed" } }, null, 2)}\n`,
-	);
-
 	const faux = registerFauxProvider({});
 	const model = faux.getModel();
 	faux.setResponses([]);
@@ -120,11 +111,9 @@ async function main(): Promise<void> {
 	});
 
 	try {
-		log(`# workflow-eval-only QA (${mode})`);
+		log("# workflow-eval-only QA (default)");
 		log(`scratch: ${scratchDir}`);
-		log(`project settings file: ${projectSettingsPath}`);
-		log(`getExperimentalWorkflowEvalOnly(): ${settingsManager.getExperimentalWorkflowEvalOnly()}`);
-		log(`getExperimentalBashEvalOnly(): ${settingsManager.getExperimentalBashEvalOnly()}`);
+		log("policy: fixed default (armed when eval is registered)");
 		log("");
 
 		// (i) active tool list
@@ -191,10 +180,10 @@ async function main(): Promise<void> {
 		log(`model-issued workflow toolResult: ${resultText}`);
 		log("");
 
-		writeFileSync(join(outDir, `tool-call-receipts-${mode}.json`), `${JSON.stringify(toolCallReceipts, null, 2)}\n`);
-		writeFileSync(join(outDir, `system-prompt-${mode}.txt`), prompt);
-		log(`receipts file: ${join(outDir, `tool-call-receipts-${mode}.json`)}`);
-		log(`system prompt file: ${join(outDir, `system-prompt-${mode}.txt`)}`);
+		writeFileSync(join(outDir, "tool-call-receipts-default.json"), `${JSON.stringify(toolCallReceipts, null, 2)}\n`);
+		writeFileSync(join(outDir, "system-prompt-default.txt"), prompt);
+		log(`receipts file: ${join(outDir, "tool-call-receipts-default.json")}`);
+		log(`system prompt file: ${join(outDir, "system-prompt-default.txt")}`);
 	} finally {
 		session.dispose();
 		faux.unregister();
@@ -202,4 +191,4 @@ async function main(): Promise<void> {
 }
 
 await main();
-writeFileSync(join(outDir, `${mode}.log`), `${lines.join("\n")}\n`);
+writeFileSync(join(outDir, "default.log"), `${lines.join("\n")}\n`);

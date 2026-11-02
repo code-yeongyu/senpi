@@ -1,3 +1,4 @@
+import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
@@ -5,7 +6,6 @@ import { BtwPanel } from "./panel.ts";
 import { buildSideQueryContext, getSideQueryPromptContextWindow, runSideQuery } from "./side-query.ts";
 
 const WIDGET_KEY = "btw";
-const ESCAPE = "";
 
 interface ActiveBtw {
 	controller: AbortController;
@@ -45,9 +45,16 @@ export default function btwExtension(pi: ExtensionAPI) {
 	pi.registerCommand("btw", {
 		description: "Ask a side question in parallel without touching the main session",
 		argumentHint: "<question>",
+		requiresArguments: false,
 		handler: async (args, ctx) => {
 			const question = args.trim();
 			if (!question) {
+				// Bare /btw is the explicit off switch: it closes the panel (or cancels an
+				// in-flight side query) without interrupting the main turn the way Escape does.
+				if (active) {
+					dismiss(ctx, { abort: true });
+					return;
+				}
 				ctx.ui.notify("Usage: /btw <question>", "warning");
 				return;
 			}
@@ -60,6 +67,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			const snapshot = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
 			const history = convertToLlm(filterContextExcludedMessages(snapshot.messages));
 			const systemPrompt = ctx.getSystemPrompt();
+			const systemPromptStablePrefix = ctx.getSystemPromptStablePrefix?.();
 			const thinkingLevel = pi.getThinkingLevel();
 			const sessionId = ctx.sessionManager.getSessionId();
 
@@ -75,7 +83,11 @@ export default function btwExtension(pi: ExtensionAPI) {
 					return panel.component;
 				});
 				entry.unsubscribeEscape = ctx.ui.onTerminalInput((data) => {
-					if (active !== entry || data !== ESCAPE) return undefined;
+					// matchesKey accepts the raw byte plus kitty CSI-u / modifyOtherKeys encodings.
+					// Ignore key releases: kitty CSI-u emits a release event after every press,
+					// and this listener runs ahead of the TUI's release filter, so a release
+					// whose press was consumed elsewhere would otherwise cancel the query.
+					if (active !== entry || isKeyRelease(data) || !matchesKey(data, "escape")) return undefined;
 					dismiss(ctx, { abort: true });
 					return undefined;
 				});
@@ -92,13 +104,16 @@ export default function btwExtension(pi: ExtensionAPI) {
 			try {
 				const context = buildSideQueryContext({
 					systemPrompt,
+					...(systemPromptStablePrefix === undefined ? {} : { systemPromptStablePrefix }),
 					history,
 					question,
 					promptContextWindow: getSideQueryPromptContextWindow(model),
 				});
 				const { replyText } = await runSideQuery(
 					{
-						model,
+						// The credential's own API host (a Copilot Business or Enterprise account) must
+						// survive the explicit key below, as it does for the session's chat requests.
+						model: auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model,
 						auth: {
 							apiKey: auth.apiKey,
 							headers: auth.headers,
@@ -107,7 +122,10 @@ export default function btwExtension(pi: ExtensionAPI) {
 						sessionId,
 						thinkingLevel: thinkingLevel === "off" ? undefined : thinkingLevel,
 						streamFn: (streamModel, streamContext, options) =>
-							ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, options),
+							ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, {
+								...options,
+								cwd: ctx.cwd,
+							}),
 					},
 					context,
 					{

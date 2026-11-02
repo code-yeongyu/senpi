@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type CodemodeRuntimeAssetEnvironment, resolveCodemodeRuntimeAsset } from "../kernels/shared/runtime-asset.ts";
 
 const BUN_SKILL_BASE_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -27,29 +28,62 @@ export function bunVersionSupportsSkill(version: string | undefined): boolean {
 	return major > 1 || (major === 1 && minor >= 4);
 }
 
-/** Absolute path of the bundled bun-1-4 SKILL.md, or undefined (logged once) when it is not shipped. */
-export function bundledBunSkillPath(baseDir: string = BUN_SKILL_BASE_DIR): string | undefined {
-	const candidate = join(baseDir, "..", "skill", "bun-1-4", "SKILL.md");
+const BUN_SKILL_PACKAGE_RELATIVE_PATH = join("skill", "bun", "SKILL.md");
+
+/**
+ * Absolute path of the bundled bun SKILL.md, or undefined (logged once) when it is not shipped.
+ *
+ * A compiled Bun binary has no readable module-relative asset, so resolution falls back to the
+ * codemode sidecar shipped next to the executable, exactly as the Ruby and Julia kernel runners do.
+ * The miss is reported on stderr because stdout carries the RPC protocol stream.
+ */
+export function bundledBunSkillPath(
+	baseDir: string = BUN_SKILL_BASE_DIR,
+	environment: CodemodeRuntimeAssetEnvironment = {},
+): string | undefined {
+	const localPath = join(baseDir, "..", "skill", "bun", "SKILL.md");
+	const candidate = resolveCodemodeRuntimeAsset(localPath, BUN_SKILL_PACKAGE_RELATIVE_PATH, environment);
 	if (existsSync(candidate)) return candidate;
 	if (!loggedMissingBunSkill) {
 		loggedMissingBunSkill = true;
-		console.debug(`[senpi-codemode] bundled bun-1-4 skill not found at ${candidate}; skipping contribution`);
+		// A compiled binary never has the module-relative asset, so naming only that path
+		// would hide the sidecar location an operator actually has to populate.
+		const executableDir = dirname(environment.executablePath ?? process.execPath);
+		const sidecarPath = join(
+			executableDir,
+			"node_modules",
+			"@code-yeongyu",
+			"senpi-codemode",
+			"src",
+			BUN_SKILL_PACKAGE_RELATIVE_PATH,
+		);
+		console.error(
+			`[senpi-codemode] bundled bun skill not found at ${localPath} or ${sidecarPath}; skipping contribution`,
+		);
 	}
 	return undefined;
 }
 
 /**
- * Builds the `resources_discover` handler that contributes the bundled bun-1-4 skill
- * only when the in-process js eval kernel itself runs bun >= 1.4 (`process.versions.bun`).
- * A node kernel never receives the skill, regardless of any bun binary on PATH.
+ * Absolute path of the bundled bun SKILL.md when it is active for this process:
+ * the in-process js eval kernel itself runs bun >= 1.4 (`process.versions.bun`) and the
+ * asset is shipped. A node kernel never activates it, regardless of any bun binary on PATH.
  */
+export function activeBunSkillPath(
+	getKernelBunVersion: BunKernelVersionSource = kernelBunVersion,
+	baseDir?: string,
+): string | undefined {
+	if (!bunVersionSupportsSkill(getKernelBunVersion())) return undefined;
+	return bundledBunSkillPath(baseDir);
+}
+
+/** Builds the `resources_discover` handler that contributes the active bun skill, if any. */
 export function createBunSkillDiscoverHandler(
 	getKernelBunVersion: BunKernelVersionSource = kernelBunVersion,
 	baseDir?: string,
 ): () => { skillPaths: string[] } | undefined {
 	return () => {
-		if (!bunVersionSupportsSkill(getKernelBunVersion())) return undefined;
-		const skillPath = bundledBunSkillPath(baseDir);
+		const skillPath = activeBunSkillPath(getKernelBunVersion, baseDir);
 		return skillPath === undefined ? undefined : { skillPaths: [skillPath] };
 	};
 }

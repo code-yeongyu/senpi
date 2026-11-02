@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 
 const root = join(import.meta.dirname, "..");
-const nativeCompiler = "npm:@typescript/native-preview@7.0.0-dev.20260707.2";
 
 function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
@@ -16,10 +15,13 @@ describe("root tsgo dependency", () => {
 		const installLock = readJson(join(root, "package-lock.json"));
 		const installedCompiler = installLock.packages["node_modules/@typescript/native"];
 
-		assert.equal(manifest.devDependencies["@typescript/native"], nativeCompiler);
-		assert.equal(installLock.packages[""].devDependencies["@typescript/native"], nativeCompiler);
-		assert.equal(installedCompiler.name, "@typescript/native-preview");
-		assert.equal(installedCompiler.version, "7.0.0-dev.20260707.2");
+		// The root alias must point at native-preview, and the lock must install exactly that version.
+		const spec = manifest.devDependencies["@typescript/native"];
+		const [, aliasedName, aliasedVersion] = spec.match(/^npm:(@typescript\/native-preview)@(.+)$/) ?? [];
+		assert.ok(aliasedVersion, `@typescript/native must alias native-preview, got ${spec}`);
+		assert.equal(installLock.packages[""].devDependencies["@typescript/native"], spec);
+		assert.equal(installedCompiler.name, aliasedName);
+		assert.equal(installedCompiler.version, aliasedVersion);
 		assert.equal(installedCompiler.bin.tsgo, "bin/tsgo");
 	});
 });

@@ -1,5 +1,5 @@
-import { statSync } from "node:fs";
 import { getAgentDir } from "../../../../config.ts";
+import { getFileContentRevision } from "../../../../utils/paths.ts";
 import {
 	FileSettingsStorage,
 	getSettingsPath,
@@ -221,12 +221,7 @@ export function createCursorCliOauthSandboxModeValidator(
 }
 
 function settingsFingerprint(path: string): string {
-	try {
-		const stat = statSync(path);
-		return `${stat.mtimeMs}:${stat.size}`;
-	} catch {
-		return "missing";
-	}
+	return getFileContentRevision(path) ?? "missing";
 }
 
 let cachedCursorCliOauthManager: { cwd: string; key: string; manager: SettingsManager } | undefined;
@@ -235,7 +230,7 @@ let cachedCursorCliOauthManager: { cwd: string; key: string; manager: SettingsMa
 export function loadCursorCliOauthProviderSettingsFromDisk(cwd: string): CursorCliOauthProviderSettings {
 	// fallbackEligible() calls this per candidate probe during retry-fallback; a fresh
 	// SettingsManager per call drove locked disk reads hundreds of times per provider
-	// error. Cache the manager by (cwd, settings mtime+size) and re-apply env live.
+	// error. Cache the manager by (cwd, settings content revision) and re-apply env live.
 	const agentDir = getAgentDir();
 	const key = `${cwd}|${settingsFingerprint(getSettingsPath(cwd, agentDir, "global"))}|${settingsFingerprint(
 		getSettingsPath(cwd, agentDir, "project"),

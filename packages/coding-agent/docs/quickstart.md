@@ -13,12 +13,18 @@ Senpi is distributed as an npm package:
 bun add -g @code-yeongyu/senpi
 ```
 
+Senpi runs on Bun whenever it can: a `bun add -g` install always does, and an npm, pnpm, or Yarn
+install hands itself to Bun 1.4.0 or newer when one is installed. If senpi still starts on Node.js
+(no Bun, or an older one), the interactive UI shows a "Running on Node.js" notice once per version
+with the commands to install or upgrade Bun and reinstall senpi with it. Set `SENPI_RUNTIME=node`
+to stay on Node.js without the notice.
+
 ### Uninstall
 
 Use the package manager that installed senpi:
 
 ```bash
-# bun add -g
+# npm
 npm uninstall -g @code-yeongyu/senpi
 
 # pnpm
@@ -130,7 +136,7 @@ The command output is sent to the model. Use `!!command` to run a command withou
 
 ### Switch models
 
-Use `/model` or Ctrl+L to choose a model. Use Shift+Tab to cycle thinking level. Use Ctrl+P / Shift+Ctrl+P to cycle through favorite models.
+Use `/model` or Ctrl+L to choose a model for the current session. Press Ctrl+S in the model picker to save the highlighted model as the startup default. Use `/thinking` to choose a thinking level for the current session, or Ctrl+S in that picker to save the startup default thinking level. Use Shift+Tab to cycle thinking level. Use Ctrl+P / Shift+Ctrl+P to cycle through favorite models.
 
 ### Continue later
 

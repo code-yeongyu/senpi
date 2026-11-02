@@ -139,7 +139,7 @@ describe("goal tool call renderer", () => {
 
 	it("shows the target status and reason for update_goal", () => {
 		expect(renderCallLine("update_goal", { status: "blocked", reason: "stuck" })).toBe(
-			"update_goal → blocked — stuck",
+			"update_goal → blocked - stuck",
 		);
 		expect(renderCallLine("update_goal", { status: "complete" })).toBe("update_goal → complete");
 	});

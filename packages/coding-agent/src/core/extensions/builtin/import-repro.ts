@@ -293,6 +293,7 @@ async function fetchGistSession(gistId: string): Promise<{ header: SessionHeader
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("ir", {
 		description: "Import a CI issue-analysis session from a gist ID, share URL, or issue URL and switch to it",
+		requiresArguments: true,
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			// Session replacement aborts and disposes the live session; never start
 			// that while a run or compaction is active. Commands dispatch immediately

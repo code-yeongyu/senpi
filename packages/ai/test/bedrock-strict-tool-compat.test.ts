@@ -11,14 +11,14 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import bedrockData from "../src/providers/data/amazon-bedrock.json" with { type: "json" };
+import { copyJsonModelGenerationFixture } from "./json-model-generation-fixture.ts";
 
-const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const temporaryRoots: string[] = [];
 
 const STRICT_MODE_MODEL_IDS = [
@@ -38,8 +38,10 @@ describe("Bedrock global GPT-5.6 strict tool compat", () => {
 			{ compat?: { supportsStrictMode?: boolean } }
 		>;
 		for (const modelId of STRICT_MODE_MODEL_IDS) {
-			expect(models[modelId], `${modelId} is missing from the shipped Bedrock catalog`).toBeDefined();
-			expect(models[modelId].compat?.supportsStrictMode, `${modelId} lost compat.supportsStrictMode`).toBe(true);
+			// v6 model data (D-3) keys each entry by `<type>:<id>`.
+			const entry = models[`chat:${modelId}`];
+			expect(entry, `${modelId} is missing from the shipped Bedrock catalog`).toBeDefined();
+			expect(entry.compat?.supportsStrictMode, `${modelId} lost compat.supportsStrictMode`).toBe(true);
 		}
 	});
 
@@ -47,10 +49,7 @@ describe("Bedrock global GPT-5.6 strict tool compat", () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-bedrock-strict-"));
 		temporaryRoots.push(fixtureRoot);
 		const isolatedPackageRoot = join(fixtureRoot, "package");
-		mkdirSync(isolatedPackageRoot);
-		for (const entry of ["package.json", "scripts", "src"]) {
-			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
-		}
+		copyJsonModelGenerationFixture(isolatedPackageRoot);
 
 		// Upstream shape that caused the drop: tool-capable global profiles with no
 		// `structured_output` flag, so the generator's models.dev branch emits no `compat`.

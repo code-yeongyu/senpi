@@ -1,11 +1,25 @@
-import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "../../../dynamic-prompt/build.ts";
+import {
+	type BuildDynamicSystemPromptOptions,
+	buildDynamicSystemPrompt,
+	type PromptSurface,
+} from "../../../dynamic-prompt/build.ts";
+import { buildExecutionToolingSection } from "./execution-tooling.ts";
 
-function buildKimiK26Tuning(): string {
+function buildKimiK26Tuning(surface: PromptSurface): string {
 	return `Avoid restating the user's request, do not re-derive facts you already established this turn, and skip filler verification language ("let me confirm again", "to be sure", "just to double-check").
 
-The intent gate routing line is required every turn. On confirmation turns where the user already chose an option in plain words, acknowledge that choice and execute, not re-litigate alternatives the user already eliminated.`;
+${surface === "terminal" ? "The intent gate routing line is required every turn. " : ""}On confirmation turns where the user already chose an option in plain words, acknowledge that choice and execute, not re-litigate alternatives the user already eliminated.`;
 }
 
 export function buildKimiK26Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildKimiK26Tuning(), workstationDialect: "kimi" });
+	return buildDynamicSystemPrompt({
+		...options,
+		tuningSection: [
+			buildExecutionToolingSection({ toolNames: options.selectedTools, dialect: "kimi" }),
+			buildKimiK26Tuning(options.surface ?? "terminal"),
+		]
+			.filter((section) => section.length > 0)
+			.join("\n\n"),
+		workstationDialect: "kimi",
+	});
 }

@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { redactResolvedReferenceValues } from "../../../config-reference-redaction.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import { ConnectError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { redactMcpLogText } from "./log.ts";
+import { loadMcpSdkStdioTransport } from "./sdk.lazy.ts";
 
 export const MCP_STDIO_DIAGNOSTIC_TIMEOUT_MS = 5000;
 const MCP_STDIO_DIAGNOSTIC_MAX_BYTES = 2048;
@@ -45,7 +46,7 @@ function connectErrorFromDiagnostic(
 		diagnostic === null || diagnostic.length === 0
 			? `MCP server ${options.serverName} failed during connect: ${options.cause.message}`
 			: `MCP server ${options.serverName} failed during connect: ${options.cause.message}\n${diagnostic}`;
-	return new ConnectError(message, {
+	return new ConnectError(redactResolvedReferenceValues(message), {
 		cause: options.cause,
 		phase: "connect",
 		retriable: true,
@@ -59,11 +60,9 @@ export async function maybeDiagnoseStdioFailure(options: McpStdioDiagnosticOptio
 	if (captured.length > 0) return boundDiagnostic(captured);
 	const command = options.config.command;
 	if (command === undefined || command.trim().length === 0) return null;
-	const result = await execFileForDiagnostics(command, options.config.args, {
-		cwd: options.config.cwd,
-		env: buildDiagnosticEnv(options),
-	});
-	if (isNodeErrorCode(result.error, "ENOENT")) return commandNotFoundDiagnostic(command, options);
+	const env = await buildDiagnosticEnv(options);
+	const result = await execFileForDiagnostics(command, options.config.args, { cwd: options.config.cwd, env });
+	if (isNodeErrorCode(result.error, "ENOENT")) return commandNotFoundDiagnostic(command, env, options);
 	const lines = meaningfulLines(`${result.stderr}\n${result.stdout}`);
 	if (lines.length > 0) return boundDiagnostic(lines);
 	if (isTimedOut(result.error)) return `diagnostic rerun timed out after ${MCP_STDIO_DIAGNOSTIC_TIMEOUT_MS}ms`;
@@ -135,7 +134,8 @@ function execFileForDiagnostics(
 	});
 }
 
-function buildDiagnosticEnv(options: McpStdioDiagnosticOptions): Record<string, string> {
+async function buildDiagnosticEnv(options: McpStdioDiagnosticOptions): Promise<Record<string, string>> {
+	const { getDefaultEnvironment } = await loadMcpSdkStdioTransport();
 	return {
 		...getDefaultEnvironment(),
 		...definedEnv(options.env),
@@ -143,8 +143,11 @@ function buildDiagnosticEnv(options: McpStdioDiagnosticOptions): Record<string, 
 	};
 }
 
-function commandNotFoundDiagnostic(command: string, options: McpStdioDiagnosticOptions): string {
-	const env = buildDiagnosticEnv(options);
+function commandNotFoundDiagnostic(
+	command: string,
+	env: Record<string, string>,
+	options: McpStdioDiagnosticOptions,
+): string {
 	const cwd = options.config.cwd ?? process.cwd();
 	const path = env.PATH ?? "";
 	return [

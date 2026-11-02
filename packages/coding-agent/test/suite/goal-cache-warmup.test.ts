@@ -1,6 +1,10 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GoalCacheWarmupEntryData } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
+import {
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+	type GoalCacheWarmupEntryData,
+} from "../../src/core/extensions/builtin/goal/cache-warm.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	type AppendedGoalEntry,
 	cleanAssistantStop,
@@ -14,6 +18,7 @@ import {
 } from "./goal-monitor-test-harness.ts";
 
 const ENTRY_TYPE = "goal-cache-warmup";
+const BACKSTOP_DELAY_MS = GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS;
 
 function cacheModel(): Model<Api> {
 	return {
@@ -30,18 +35,44 @@ function cacheModel(): Model<Api> {
 	} as Model<Api>;
 }
 
+function deepseekModel(): Model<Api> {
+	return {
+		...cacheModel(),
+		id: "deepseek-v4-pro",
+		api: "openai-completions",
+		provider: "deepseek",
+		baseUrl: "https://api.deepseek.com",
+	} as Model<Api>;
+}
+
+function gpt6Model(): Model<Api> {
+	return {
+		...cacheModel(),
+		id: "gpt-6-luna",
+		api: "openai-responses",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+	} as Model<Api>;
+}
+
 async function setupWarmHarness(
 	threadId: string,
+	options: { readonly model?: Model<Api>; readonly goalBackstopMaxSeconds?: number } = {},
 ): Promise<{ harness: GoalHarness; notices: string[]; ctx: Awaited<ReturnType<typeof makeGoalContext>> }> {
 	const notices: string[] = [];
 	const harness = createGoalHarness();
 	const ctx = await makeGoalContext(notices, threadId, {
 		pendingMessages: false,
-		model: cacheModel(),
+		model: options.model ?? cacheModel(),
 		cacheSafeWaitSeconds: 270,
+		...(options.goalBackstopMaxSeconds !== undefined
+			? { goalBackstopMaxSeconds: options.goalBackstopMaxSeconds }
+			: {}),
 	});
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-	await harness.tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+	await harness.tools
+		.get("create_goal")
+		?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 	harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 	await harness.events.flush();
 	await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -80,8 +111,8 @@ describe("goal cache-warm continuation story", () => {
 		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
 			expect.objectContaining({
 				goalId: expect.any(String),
-				delayMs: 270_000,
-				dueAtMs: 270_000,
+				delayMs: BACKSTOP_DELAY_MS,
+				dueAtMs: BACKSTOP_DELAY_MS,
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
@@ -94,8 +125,8 @@ describe("goal cache-warm continuation story", () => {
 			expect.objectContaining({
 				phase: "scheduled",
 				goalId: expect.any(String),
-				delayMs: 270_000,
-				dueAtMs: 270_000,
+				delayMs: BACKSTOP_DELAY_MS,
+				dueAtMs: BACKSTOP_DELAY_MS,
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 300 }),
@@ -103,13 +134,56 @@ describe("goal cache-warm continuation story", () => {
 		);
 	});
 
-	it("celebrates the cache-warm wake when the deferred continuation fires", async () => {
+	// code-yeongyu/senpi#831: direct DeepSeek has no cache TTL, so the default wait is the long liveness re-check.
+	it("does not arm a 270s cache-preservation wake for DeepSeek's best-effort cache", async () => {
 		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const { harness } = await setupWarmHarness("thread-cache-best-effort", { model: deepseekModel() });
+
+		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
+			expect.objectContaining({
+				delayMs: 3_570_000,
+				cache: { cachedTokens: 120_000, cacheLifetime: "best-effort" },
+			}),
+		]);
+
+		await vi.advanceTimersByTimeAsync(BACKSTOP_DELAY_MS);
+		expect(harness.sent).toHaveLength(0);
+	});
+
+	it("honors an explicit backstop on a best-effort lane", async () => {
+		vi.useFakeTimers();
+		const { harness } = await setupWarmHarness("thread-cache-best-effort-configured", {
+			model: deepseekModel(),
+			goalBackstopMaxSeconds: 900,
+		});
+
+		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
+			expect.objectContaining({ delayMs: 900_000 }),
+		]);
+	});
+
+	// code-yeongyu/senpi#2090: GPT-6 reports its 30-minute TTL; the liveness backstop stays the configured default.
+	it("reports the 30-minute GPT-6 TTL while keeping the default backstop", async () => {
+		vi.useFakeTimers();
+		const { harness } = await setupWarmHarness("thread-cache-gpt6", { model: gpt6Model() });
+
+		expect(channelEvents(harness, "goal_continuation_scheduled")).toEqual([
+			expect.objectContaining({
+				delayMs: BACKSTOP_DELAY_MS,
+				cache: expect.objectContaining({ cachedTokens: 120_000, ttlSeconds: 1800 }),
+			}),
+		]);
+	});
+
+	it("records a timer wake when the deferred continuation fires", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
 		const { harness, notices } = await setupWarmHarness("thread-cache-warm-resumed");
 
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
 		const resumedEventRecorded = waitForEventCount(harness.events, "goal_continuation_resumed", 1);
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(BACKSTOP_DELAY_MS);
 		await Promise.all([delayedDeliveryRecorded, resumedEventRecorded]);
 
 		expect(harness.sent).toHaveLength(1);
@@ -118,8 +192,10 @@ describe("goal cache-warm continuation story", () => {
 		expect(channelEvents(harness, "goal_continuation_resumed")).toEqual([
 			expect.objectContaining({
 				goalId: expect.any(String),
-				delayMs: 270_000,
-				waitedMs: 270_000,
+				delayMs: BACKSTOP_DELAY_MS,
+				waitedMs: BACKSTOP_DELAY_MS,
+				dueAtMs: BACKSTOP_DELAY_MS,
+				wakeCause: "timer",
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({
@@ -135,7 +211,9 @@ describe("goal cache-warm continuation story", () => {
 		expect(resumed[0]).toEqual(
 			expect.objectContaining({
 				phase: "resumed",
-				waitedMs: 270_000,
+				waitedMs: BACKSTOP_DELAY_MS,
+				dueAtMs: BACKSTOP_DELAY_MS,
+				wakeCause: "timer",
 				iteration: 1,
 				activeMonitorCount: 1,
 				cache: expect.objectContaining({ cachedTokens: 120_000 }),
@@ -152,7 +230,7 @@ describe("goal cache-warm continuation story", () => {
 		for (let iteration = 1; iteration <= 2; iteration++) {
 			const delivered = waitForSentCount(harness, iteration);
 			const resumed = waitForEventCount(harness.events, "goal_continuation_resumed", iteration);
-			await vi.advanceTimersByTimeAsync(270_000);
+			await vi.advanceTimersByTimeAsync(BACKSTOP_DELAY_MS);
 			await Promise.all([delivered, resumed]);
 			if (iteration < 2) {
 				await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -191,7 +269,7 @@ describe("goal cache-warm continuation story", () => {
 		vi.useFakeTimers();
 		const { harness, ctx } = await setupWarmHarness("thread-cache-warm-user-reset");
 		const firstResumed = waitForEventCount(harness.events, "goal_continuation_resumed", 1);
-		await vi.advanceTimersByTimeAsync(270_000);
+		await vi.advanceTimersByTimeAsync(BACKSTOP_DELAY_MS);
 		await firstResumed;
 
 		await runGoalHandlers(
@@ -233,7 +311,7 @@ describe("goal cache-warm continuation story", () => {
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		await harness.tools
 			.get("create_goal")
-			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await harness.events.flush();
 		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);

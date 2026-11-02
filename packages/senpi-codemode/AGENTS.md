@@ -30,8 +30,8 @@ test/                            Vitest contracts and the omp parity ledger
   terse composition-forward dialect that documents detached-cell completion.
 - Session generations fence old kernels and callbacks; a retired generation
   never emits into a newer session.
-- Kernels persist state per language; per-cell callbacks rebind per execution.
-- Evals require a `summary` in the user's conversational language; detached cells carry it and the old `title` field stays dropped.
+- One kernel per language preserves state and runs cells FIFO; queued cells may detach within the session-wide `maxDetachedCells` cap (default 15). Per-cell callbacks own output.
+- Evals require a `summary` in the language the user writes in, with no length limit; detached cells carry it and the old `title` field stays dropped.
 - Every cell settles exactly once: success, error, timeout, abort, bridge failure, kernel crash.
 - Timeout and abort cleanup retires child work before ownership is released.
 - The bridge binds loopback only, requires a per-session bearer token, limits
@@ -42,7 +42,8 @@ test/                            Vitest contracts and the omp parity ledger
   to render output; preserve agent-progress coalescing.
 - Nested tool-call rendering is bounded and rendering-only: no session messages, no extension events, no toggle.
 - Optional interpreters are capability gaps, not installation failures; JavaScript remains available on supported Node versions.
-- Target Node 24+. No Bun-only APIs, `@oh-my-opencode` imports, or `budget`.
+- Target Node 24+. Bun-only APIs appear only behind runtime detection with a correct Node path (the eval code preview uses `Bun.Transpiler` only when the renderer runs on Bun); no `@oh-my-opencode` imports or `budget`.
+- Code previews are display-only: the JS layout keeps every literal, name, and comment text of the cell, Python previews borrow the user's own interpreter (ruff, black, or masked `ast.unparse`), and anything that cannot be shown faithfully is shown as sent.
 
 ## WHERE TO LOOK
 

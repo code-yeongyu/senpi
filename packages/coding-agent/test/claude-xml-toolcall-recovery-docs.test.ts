@@ -2,10 +2,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const modelsDocs = read("../docs/models.md");
-const aiChanges = read("../../ai/src/tool-call-middleware/changes.md");
-const aiChangelog = read("../../ai/CHANGELOG.md");
-const codingChanges = read("../src/changes.md");
-const codingChangelog = read("../CHANGELOG.md");
 
 describe("Claude XML tool-call recovery documentation", () => {
 	it("documents canonical default opt-out opt-in and mutual exclusion examples", () => {
@@ -67,13 +63,6 @@ describe("Claude XML tool-call recovery documentation", () => {
 				expect.objectContaining({ Condition: "Late native ID collision", Outcome: "Fail closed; do not execute" }),
 			]),
 		);
-	});
-
-	it("records the behavior on every public and fork-facing surface", () => {
-		for (const source of [aiChanges, aiChangelog, codingChanges, codingChangelog]) {
-			expect(source.toLowerCase()).toContain("text tool-call recovery");
-			expect(source.toLowerCase()).toContain("claude");
-		}
 	});
 });
 

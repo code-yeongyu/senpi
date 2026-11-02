@@ -1,3 +1,0 @@
-{"ev":"tool_call","input":{"q":"freshqa"}}
-{"ev":"execute","q":"freshqa"}
-{"ev":"tool_result","text":"demo:freshqa"}

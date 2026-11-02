@@ -19,6 +19,8 @@ type DirectInputLifecycleDependencies = {
 	 * to "send a message to resume"; this callback is what keeps that promise.
 	 */
 	readonly resumeAfterSuppressedLoad?: (ctx: ExtensionContext, goal: Goal) => Promise<void>;
+	/** Fired for every accepted direct (non-extension) input, goal or not. */
+	readonly onAcceptedDirectInput?: () => void;
 };
 
 /** Correlates raw input with admission before changing persisted Goal state. */
@@ -56,6 +58,7 @@ export class GoalDirectInputLifecycle {
 		this.#candidates.delete(event.inputId);
 		const accepted = event.disposition === "started" || event.disposition === "queued";
 		this.#dependencies.monitor.resolveDirectInput(event.inputId, accepted);
+		if (accepted) this.#dependencies.onAcceptedDirectInput?.();
 		if (!accepted || candidate.goalId === null) return;
 
 		const ref = this.#dependencies.goalStoreRef(ctx);
@@ -72,7 +75,10 @@ export class GoalDirectInputLifecycle {
 
 		if (currentGoal.status !== "active") return;
 		const reset = await resetContinuationStreak(ref, { unattended: true });
-		if (reset !== null) this.#dependencies.refreshGoalUi(ctx, reset);
+		if (reset !== null) {
+			this.#dependencies.beginAgentGoalAccounting(reset);
+			this.#dependencies.refreshGoalUi(ctx, reset);
+		}
 		if (this.#suppressedLoadResumeArmed) {
 			this.#suppressedLoadResumeArmed = false;
 			await this.#dependencies.resumeAfterSuppressedLoad?.(ctx, reset ?? currentGoal);

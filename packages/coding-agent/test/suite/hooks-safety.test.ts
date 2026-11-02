@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,8 +9,11 @@ import type { ExecutableHookHandler, HookInputWire } from "../../src/core/extens
 
 const tempRoots: string[] = [];
 const PLUGIN_ROOT_TOKEN = "$" + "{PLUGIN_ROOT}";
-const GITHUB_CLASSIC_PAT = "ghp_0123456789abcdef0123456789abcdef0123";
-const GITHUB_FINE_GRAINED_PAT = "github_pat_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+// Built from parts so no credential-shaped literal sits in the source for secret scanners (senpi#5308).
+const GITHUB_CLASSIC_PAT = ["ghp", "0123456789abcdef0123456789abcdef0123"].join("_");
+const GITHUB_FINE_GRAINED_PAT = ["github_pat", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"].join(
+	"_",
+);
 
 afterEach(() => {
 	delete process.env.SENPI_TEST_ALLOWED;
@@ -92,6 +95,73 @@ describe("builtin hooks safety policy", () => {
 				message: expect.stringContaining("does not exist"),
 				path: "hooks.PreToolUse[0].hooks[0].command",
 			}),
+		);
+	});
+
+	it("rejects a command target whose symlink resolves outside the plugin root", () => {
+		// Given a plugin root with a directory symlink out of the root, and an entry
+		// symlink whose target text walks back up THROUGH it. The lexical pre-gate cannot
+		// see this: the written path stays inside the root, only resolution escapes.
+		const outside = mkdtempSync(join(tmpdir(), "senpi-hooks-outside-"));
+		tempRoots.push(outside);
+		mkdirSync(join(outside, "subdir"), { recursive: true });
+		writeFileSync(join(outside, "escape.mjs"), "process.exit(0)\n", "utf-8");
+
+		const pluginRoot = makePluginRoot({
+			hooks: hookConfig(`node ${PLUGIN_ROOT_TOKEN}/entry/escape.mjs`),
+		});
+		// The decoy MUST sit exactly where a path-collapsing resolver lands, or this row
+		// degrades into the ENOENT row and never exercises the wrong-ACCEPT path.
+		writeFileSync(join(pluginRoot, "escape.mjs"), "process.exit(1)\n", "utf-8");
+		symlinkSync(join(outside, "subdir"), join(pluginRoot, "jump"), "dir");
+		symlinkSync("jump/..", join(pluginRoot, "entry"), "dir");
+
+		// When
+		const loaded = loadPluginHookManifest({ displayOrder: 0, pluginRoot });
+
+		// Then it must be rejected by the FILESYSTEM-TRUTH layer, whose wording differs
+		// from the lexical pre-gate ("is outside" vs "resolves outside"). Matching only
+		// "outside plugin root" would pass on the lexical gate and prove nothing here.
+		expect(loaded.parsed.executableHandlers).toEqual([]);
+		expect(loaded.diagnostics).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					code: "invalid_command_target",
+					message: expect.stringContaining("resolves outside plugin root"),
+					path: "hooks.PreToolUse[0].hooks[0].command",
+				}),
+			]),
+		);
+	});
+
+	it("rejects a symlinked command target even when the collapsed path does not exist", () => {
+		// Given the same shape, but with no file at the lexically-collapsed location, so a
+		// path-collapsing resolver reports ENOENT instead of a wrong answer. Both outcomes
+		// are wrong; both must end in rejection rather than a throw.
+		const outside = mkdtempSync(join(tmpdir(), "senpi-hooks-outside-"));
+		tempRoots.push(outside);
+		mkdirSync(join(outside, "subdir"), { recursive: true });
+		writeFileSync(join(outside, "escape.mjs"), "process.exit(0)\n", "utf-8");
+
+		const pluginRoot = makePluginRoot({
+			hooks: hookConfig(`node ${PLUGIN_ROOT_TOKEN}/entry/escape.mjs`),
+		});
+		symlinkSync(join(outside, "subdir"), join(pluginRoot, "jump"), "dir");
+		symlinkSync("jump/..", join(pluginRoot, "entry"), "dir");
+
+		// When
+		const loaded = loadPluginHookManifest({ displayOrder: 0, pluginRoot });
+
+		// Then
+		expect(loaded.parsed.executableHandlers).toEqual([]);
+		expect(loaded.diagnostics).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					code: "invalid_command_target",
+					message: expect.stringContaining("outside plugin root"),
+					path: "hooks.PreToolUse[0].hooks[0].command",
+				}),
+			]),
 		);
 	});
 

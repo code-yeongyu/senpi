@@ -132,6 +132,23 @@ Add a `pi` manifest to `package.json` or use conventional directories. Include t
 
 Paths are relative to the package root. Arrays support glob patterns and `!exclusions`. Positive manifest globs discover visible paths in lexical order. List dot-prefixed paths directly. If a glob would need to continue through a symlink, list the symlinked resource root directly.
 
+### System Packages
+
+A distribution that launches pi with its own package can mark that package as part of the harness:
+
+```json
+{
+  "name": "my-harness",
+  "pi": {
+    "system": true,
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  }
+}
+```
+
+`system` must be a boolean; any other value is ignored. The flag is honored only when the package is supplied on the command line with `--extension` / `-e`. Its resources then resolve to the `system` scope (with the package root as `baseDir`) instead of `temporary`, so the interactive startup banner lists them under `system` in the expanded view and leaves them out of the compact one. Packages installed through settings keep their `user` or `project` scope even with the flag set, so a project package cannot hide itself from the trust surface.
+
 ### Gallery Metadata
 
 The [package gallery](https://pi.dev/packages) displays packages tagged with `pi-package`. Add `video` or `image` fields to show a preview:

@@ -2,7 +2,7 @@
  * Component for displaying bash command execution with streaming output.
  */
 
-import { Container, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { Container, Loader, nextRenderRevision, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -87,6 +87,11 @@ export class BashExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/** Rebuilt from children on every change; the running loader keeps it live until completion. */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
+	}
+
 	appendOutput(chunk: string): void {
 		// Strip ANSI codes and normalize line endings
 		// Note: binary data is already sanitized in tui-renderer.ts executeBashCommand
@@ -160,7 +165,9 @@ export class BashExecutionComponent extends Container {
 				const styledInput = `\n${styledOutput}`;
 				let cachedWidth: number | undefined;
 				let cachedLines: string[] | undefined;
+				let revision = nextRenderRevision();
 				this.contentContainer.addChild({
+					getRenderRevision: () => revision,
 					render: (width: number) => {
 						if (cachedLines === undefined || cachedWidth !== width) {
 							const result = truncateToVisualLines(styledInput, PREVIEW_LINES, width, 1);
@@ -172,6 +179,7 @@ export class BashExecutionComponent extends Container {
 					invalidate: () => {
 						cachedWidth = undefined;
 						cachedLines = undefined;
+						revision = nextRenderRevision();
 					},
 				});
 			}

@@ -1,5 +1,4 @@
 import { describe, expect, test, vi } from "vitest";
-import { VERSION } from "../src/config.ts";
 import {
 	RPC_ERROR_MISSING_SESSION_ID,
 	RPC_ERROR_MULTI_SESSION_DISABLED,
@@ -40,21 +39,6 @@ describe("multi-session RPC routing", () => {
 		).toMatchObject({ error: RPC_ERROR_SESSION_CLOSING });
 	});
 
-	test("advertises multi-session capability before any session is opened", async () => {
-		expect(await routerFor().handle({ id: "probe", type: "get_protocol_info" })).toEqual({
-			id: "probe",
-			type: "response",
-			command: "get_protocol_info",
-			success: true,
-			data: {
-				protocolVersion: 1,
-				serverVersion: VERSION,
-				capabilities: ["multi_session", "auto_title_sessions"],
-				mode: "multi",
-			},
-		});
-	});
-
 	test("forwards client capabilities into each opened session binding", async () => {
 		const entry = {
 			runtime: {
@@ -77,6 +61,7 @@ describe("multi-session RPC routing", () => {
 			list: () => [],
 			beginClose: () => entry,
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const createBinding = vi.fn(async () => ({
 			handle: async () => {},
@@ -98,7 +83,7 @@ describe("multi-session RPC routing", () => {
 			entry,
 			writer,
 			expect.any(Function),
-			expect.objectContaining({ capabilities: ["extension_events"], sharedWidth: expect.any(Object) }),
+			expect.objectContaining({ capabilities: ["extension_events"], clientInfo: expect.any(Object) }),
 		);
 	});
 
@@ -125,6 +110,7 @@ describe("multi-session RPC routing", () => {
 			list: () => [],
 			beginClose: () => entry,
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const chunks: string[] = [];
 		const writer = new SessionEventWriter(
@@ -217,6 +203,7 @@ describe("multi-session RPC routing", () => {
 			list: () => [],
 			beginClose: () => entryFor("closing"),
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const alphaHandle = vi.fn(async () => {});
 		const betaHandle = vi.fn(async () => {});

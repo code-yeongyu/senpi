@@ -12,8 +12,10 @@ import {
 	normalizeNativeShiftEnterInput,
 	normalizeWarpWslShiftEnterInput,
 	ProcessTerminal,
+	resolveBurstWindowMs,
 	resolveEscapeTimeoutMs,
 } from "../src/terminal.ts";
+import { isWslSession } from "../src/wsl-session.ts";
 
 const isVitest = process.env.VITEST === "true";
 type TestCallback = () => void | Promise<void>;
@@ -85,26 +87,79 @@ function setupTerminalStopHarness(wasRaw: boolean, restoreRawMode: (mode: boolea
 	};
 }
 
+describe("resolveBurstWindowMs", () => {
+	it("uses PI_TUI_BURST_WINDOW_MS when configured, including 0 to never hold", () => {
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "80" }), 80);
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "80", SSH_TTY: "/dev/pts/1" }), 80);
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "0" }), 0);
+	});
+
+	it("waits longer over SSH, where paste chunks arrive further apart", () => {
+		assert.ok(resolveBurstWindowMs({ SSH_TTY: "/dev/pts/1" }) > resolveBurstWindowMs({}));
+		assert.equal(
+			resolveBurstWindowMs({ SSH_CONNECTION: "1 2 3 4" }),
+			resolveBurstWindowMs({ SSH_TTY: "/dev/pts/1" }),
+		);
+	});
+
+	it("ignores invalid PI_TUI_BURST_WINDOW_MS values", () => {
+		for (const value of ["abc", "-5", "Infinity", ""]) {
+			assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: value }), resolveBurstWindowMs({}));
+		}
+	});
+});
+
 describe("resolveEscapeTimeoutMs", () => {
 	it("uses PI_TUI_ESC_TIMEOUT when configured", () => {
-		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80" }), 80);
-		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80", SSH_TTY: "/dev/pts/1" }), 80);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80" }, "darwin"), 80);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80", SSH_TTY: "/dev/pts/1" }, "darwin"), 80);
 	});
 
 	it("ignores invalid PI_TUI_ESC_TIMEOUT values", () => {
-		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "abc" }), 10);
-		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "0" }), 10);
-		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "-5" }), 10);
-		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "" }), 10);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "abc" }, "darwin"), 50);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "0" }, "darwin"), 50);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "-5" }, "darwin"), 50);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "" }, "darwin"), 50);
 	});
 
 	it("defaults to 100ms over SSH", () => {
-		assert.equal(resolveEscapeTimeoutMs({ SSH_CONNECTION: "10.0.0.1 22" }), 100);
-		assert.equal(resolveEscapeTimeoutMs({ SSH_TTY: "/dev/pts/1" }), 100);
+		assert.equal(resolveEscapeTimeoutMs({ SSH_CONNECTION: "10.0.0.1 22" }, "darwin"), 100);
+		assert.equal(resolveEscapeTimeoutMs({ SSH_TTY: "/dev/pts/1" }, "darwin"), 100);
 	});
 
-	it("defaults to 10ms otherwise", () => {
-		assert.equal(resolveEscapeTimeoutMs({}), 10);
+	it("defaults to 100ms on the WSL environment markers", () => {
+		assert.equal(resolveEscapeTimeoutMs({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), 100);
+		assert.equal(resolveEscapeTimeoutMs({ WSL_INTEROP: "/run/WSL/123_interop" }, "linux"), 100);
+		assert.equal(resolveEscapeTimeoutMs({ WSLENV: "WT_SESSION" }, "linux"), 100);
+	});
+
+	it("defaults to the standard 50ms otherwise", () => {
+		assert.equal(resolveEscapeTimeoutMs({}, "darwin"), 50);
+	});
+});
+
+describe("isWslSession (#3628)", () => {
+	const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tui-wsl-"));
+	const microsoftVersion = path.join(fixtureDir, "microsoft-version");
+	const plainLinuxVersion = path.join(fixtureDir, "plain-linux-version");
+	fs.writeFileSync(microsoftVersion, "Linux version 5.15.167.4-microsoft-standard-WSL2 (root@x86_64) GNU/Linux\n");
+	fs.writeFileSync(plainLinuxVersion, "Linux version 6.8.0-45-generic GNU/Linux\n");
+
+	it("detects WSL through each env marker", () => {
+		assert.equal(isWslSession({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), true);
+		assert.equal(isWslSession({ WSL_INTEROP: "/run/WSL/123_interop" }, "linux"), true);
+		assert.equal(isWslSession({ WSLENV: "WT_SESSION" }, "linux"), true);
+	});
+
+	it("falls back to the kernel version file when the environment is sanitized", () => {
+		assert.equal(isWslSession({}, "linux", microsoftVersion), true);
+		assert.equal(isWslSession({}, "linux", plainLinuxVersion), false);
+		assert.equal(isWslSession({}, "linux", path.join(fixtureDir, "missing")), false);
+	});
+
+	it("stays false off Linux", () => {
+		assert.equal(isWslSession({ WSL_DISTRO_NAME: "Ubuntu" }, "win32"), false);
+		assert.equal(isWslSession({ WSL_DISTRO_NAME: "Ubuntu" }, "darwin", microsoftVersion), false);
 	});
 });
 
@@ -470,6 +525,21 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("forwards device attributes replies that answer other queries", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?7u");
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), undefined);
+
+			// The TUI's color query uses DA1 as its own sentinel.
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), "\x1b[?62;4;52c");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("forwards normal input while waiting for Kitty response", () => {
 		const harness = setupNegotiation();
 		try {
@@ -477,6 +547,32 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 
 			assert.equal(harness.getInput(), "a");
 			assert.equal(harness.terminal.kittyProtocolActive, false);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("holds a newline that follows text within the burst window by default", () => {
+		const harness = setupNegotiation({
+			PI_TUI_BURST_WINDOW_MS: undefined,
+			SSH_TTY: undefined,
+			SSH_CONNECTION: undefined,
+		});
+		try {
+			harness.send("a");
+			harness.send("b\n");
+			assert.equal(harness.getInput(), "b");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("forwards a newline that follows text at once when PI_TUI_BURST_WINDOW_MS is 0", () => {
+		const harness = setupNegotiation({ PI_TUI_BURST_WINDOW_MS: "0", SSH_TTY: undefined, SSH_CONNECTION: undefined });
+		try {
+			harness.send("a");
+			harness.send("b\n");
+			assert.equal(harness.getInput(), "\n");
 		} finally {
 			harness.cleanup();
 		}

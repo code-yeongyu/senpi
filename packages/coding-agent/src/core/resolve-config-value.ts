@@ -3,20 +3,20 @@
  * Used by auth-storage.ts and model-registry.ts.
  */
 
-import { execSync, spawnSync } from "child_process";
-import { getShellConfig } from "../utils/shell.ts";
+import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { warnMissingConfigEnvironment, warnOpaqueConfigEnvironment } from "./config-reference-env.ts";
+import {
+	assertConfigReferenceAuthority,
+	type ConfigReferenceContext,
+	resolveConfigReference,
+} from "./config-reference-resolver.ts";
+import { runConfigCommand } from "./resolve-config-command.ts";
 
-// Cache for shell command results (persists for process lifetime)
-const commandResultCache = new Map<string, string | undefined>();
+// Cache for shell command results (persists for process lifetime). The in-flight
+// promise is what is cached, so concurrent sessions resolving the same command share
+// one execution instead of racing their own.
+const commandResultCache = new Map<string, Promise<string | undefined>>();
 
-// Credential helper commands (auth brokers like `omp token …`) are cold-started on
-// every invocation and can fail transiently — broker lock contention, a slow spawn
-// under load, an OAuth refresh racing another process. A single failed attempt must
-// not read as "credential gone": callers escalate an unresolved API key to a
-// hard-error provider ejection, so one blip would kick the session off its model
-// without any retry. Retry with a short backoff before giving up.
-const COMMAND_EXECUTION_MAX_ATTEMPTS = 3;
-const COMMAND_EXECUTION_BACKOFF_MS = [250, 1000] as const;
 const ENV_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ENV_VAR_NAME_PREFIX_RE = /^[A-Za-z_][A-Za-z0-9_]*/;
 
@@ -95,7 +95,9 @@ function parseConfigValueReference(config: string): ConfigValueReference {
 }
 
 function resolveEnvConfigValue(name: string, env?: Record<string, string>): string | undefined {
-	return env?.[name] || process.env[name] || undefined;
+	const value = env?.[name] || process.env[name] || undefined;
+	warnOpaqueConfigEnvironment(name, value);
+	return value;
 }
 
 function getTemplateEnvVarNames(parts: TemplatePart[]): string[] {
@@ -115,33 +117,47 @@ function resolveTemplate(parts: TemplatePart[], env?: Record<string, string>): s
 			continue;
 		}
 		const envValue = resolveEnvConfigValue(part.name, env);
-		if (envValue === undefined) return undefined;
+		if (envValue === undefined) {
+			warnMissingConfigEnvironment(part.name);
+			return undefined;
+		}
 		resolved += envValue;
 	}
 	return resolved;
 }
 
-export function getConfigValueEnvVarName(config: string): string | undefined {
+export function getConfigValueEnvVarName(config: ConfigValue): string | undefined {
+	if (typeof config !== "string") return "$env" in config ? config.$env : undefined;
 	const reference = parseConfigValueReference(config);
 	if (reference.type !== "template") return undefined;
 	return reference.parts.length === 1 && reference.parts[0]?.type === "env" ? reference.parts[0].name : undefined;
 }
 
-export function getConfigValueEnvVarNames(config: string): string[] {
+export function getConfigValueEnvVarNames(config: ConfigValue): string[] {
+	if (typeof config !== "string") {
+		if ("$env" in config) return [config.$env];
+		return "$concat" in config
+			? [
+					...new Set(
+						config.$concat.flatMap((part) => (typeof part !== "string" && "$env" in part ? [part.$env] : [])),
+					),
+				]
+			: [];
+	}
 	const reference = parseConfigValueReference(config);
 	return reference.type === "template" ? getTemplateEnvVarNames(reference.parts) : [];
 }
 
-export function getMissingConfigValueEnvVarNames(config: string, env?: Record<string, string>): string[] {
+export function getMissingConfigValueEnvVarNames(config: ConfigValue, env?: Record<string, string>): string[] {
 	return getConfigValueEnvVarNames(config).filter((name) => resolveEnvConfigValue(name, env) === undefined);
 }
 
-export function isCommandConfigValue(config: string): boolean {
-	return parseConfigValueReference(config).type === "command";
+export function isCommandConfigValue(config: ConfigValue): boolean {
+	return typeof config === "string" && parseConfigValueReference(config).type === "command";
 }
 
-export function isConfigValueConfigured(config: string, env?: Record<string, string>): boolean {
-	return getMissingConfigValueEnvVarNames(config, env).length === 0;
+export function isConfigValueConfigured(config: ConfigValue, env?: Record<string, string>): boolean {
+	return typeof config !== "string" || getMissingConfigValueEnvVarNames(config, env).length === 0;
 }
 
 /**
@@ -151,96 +167,26 @@ export function isConfigValueConfigured(config: string, env?: Record<string, str
  * - In non-command values, "$$" escapes a literal "$" and "$!" escapes a literal "!"
  * - Otherwise treats the value as a literal
  */
-export function resolveConfigValue(config: string, env?: Record<string, string>): string | undefined {
+export function resolveConfigValue(
+	config: ConfigValue,
+	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
+): Promise<string | undefined> {
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		// Credentials can carry a per-session environment. Those commands must not
 		// reuse a process-wide result produced under another session's environment.
-		return env === undefined ? executeCommand(reference.config) : executeCommandUncached(reference.config, env);
+		return env === undefined ? executeCommand(reference.config) : runConfigCommand(reference.config, env);
 	}
-	return resolveTemplate(reference.parts, env);
+	return Promise.resolve(resolveTemplate(reference.parts, env));
 }
 
-function executeWithConfiguredShell(
-	command: string,
-	env?: Record<string, string>,
-): { executed: boolean; value: string | undefined } {
-	try {
-		const { shell, args, commandTransport } = getShellConfig();
-		const commandFromStdin = commandTransport === "stdin";
-		const result = spawnSync(shell, commandFromStdin ? args : [...args, command], {
-			encoding: "utf-8",
-			input: commandFromStdin ? command : undefined,
-			timeout: 10000,
-			stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "ignore"],
-			shell: false,
-			windowsHide: true,
-			...(env === undefined ? {} : { env: { ...process.env, ...env } }),
-		});
+function executeCommand(commandConfig: string): Promise<string | undefined> {
+	const cached = commandResultCache.get(commandConfig);
+	if (cached) return cached;
 
-		if (result.error) {
-			const error = result.error as NodeJS.ErrnoException;
-			if (error.code === "ENOENT") {
-				return { executed: false, value: undefined };
-			}
-			return { executed: true, value: undefined };
-		}
-
-		if (result.status !== 0) {
-			return { executed: true, value: undefined };
-		}
-
-		const value = (result.stdout ?? "").trim();
-		return { executed: true, value: value || undefined };
-	} catch {
-		return { executed: false, value: undefined };
-	}
-}
-
-function executeWithDefaultShell(command: string, env?: Record<string, string>): string | undefined {
-	try {
-		const output = execSync(command, {
-			encoding: "utf-8",
-			timeout: 10000,
-			stdio: ["ignore", "pipe", "ignore"],
-			...(env === undefined ? {} : { env: { ...process.env, ...env } }),
-		});
-		return output.trim() || undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function sleepBlocking(milliseconds: number): void {
-	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
-
-function executeCommandOnce(commandConfig: string, env?: Record<string, string>): string | undefined {
-	const command = commandConfig.slice(1);
-	return process.platform === "win32"
-		? (() => {
-				const configuredResult = executeWithConfiguredShell(command, env);
-				return configuredResult.executed ? configuredResult.value : executeWithDefaultShell(command, env);
-			})()
-		: executeWithDefaultShell(command, env);
-}
-
-function executeCommandUncached(commandConfig: string, env?: Record<string, string>): string | undefined {
-	for (let attempt = 0; attempt < COMMAND_EXECUTION_MAX_ATTEMPTS; attempt++) {
-		const value = executeCommandOnce(commandConfig, env);
-		if (value !== undefined) return value;
-		const backoffMs = COMMAND_EXECUTION_BACKOFF_MS[attempt];
-		if (backoffMs !== undefined) sleepBlocking(backoffMs);
-	}
-	return undefined;
-}
-
-function executeCommand(commandConfig: string): string | undefined {
-	if (commandResultCache.has(commandConfig)) {
-		return commandResultCache.get(commandConfig);
-	}
-
-	const result = executeCommandUncached(commandConfig);
+	const result = runConfigCommand(commandConfig);
 	commandResultCache.set(commandConfig, result);
 	return result;
 }
@@ -248,16 +194,27 @@ function executeCommand(commandConfig: string): string | undefined {
 /**
  * Resolve all header values using the same resolution logic as API keys.
  */
-export function resolveConfigValueUncached(config: string, env?: Record<string, string>): string | undefined {
+export function resolveConfigValueUncached(
+	config: ConfigValue,
+	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
+): Promise<string | undefined> {
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
-		return executeCommandUncached(reference.config, env);
+		return runConfigCommand(reference.config, env);
 	}
-	return resolveTemplate(reference.parts, env);
+	return Promise.resolve(resolveTemplate(reference.parts, env));
 }
 
-export function resolveConfigValueOrThrow(config: string, description: string, env?: Record<string, string>): string {
-	const resolvedValue = resolveConfigValueUncached(config, env);
+export async function resolveConfigValueOrThrow(
+	config: ConfigValue,
+	description: string,
+	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
+): Promise<string> {
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
+	const resolvedValue = await resolveConfigValueUncached(config, env, context);
 	if (resolvedValue !== undefined) {
 		return resolvedValue;
 	}
@@ -280,33 +237,16 @@ export function resolveConfigValueOrThrow(config: string, description: string, e
 	throw new Error(`Failed to resolve ${description}`);
 }
 
-/**
- * Resolve all header values using the same resolution logic as API keys.
- */
-export function resolveHeaders(
-	headers: Record<string, string> | undefined,
-	env?: Record<string, string>,
-): Record<string, string> | undefined {
-	if (!headers) return undefined;
-	const resolved: Record<string, string> = {};
-	for (const [key, value] of Object.entries(headers)) {
-		const resolvedValue = resolveConfigValue(value, env);
-		if (resolvedValue) {
-			resolved[key] = resolvedValue;
-		}
-	}
-	return Object.keys(resolved).length > 0 ? resolved : undefined;
-}
-
-export function resolveHeadersOrThrow(
-	headers: Record<string, string> | undefined,
+export async function resolveHeadersOrThrow(
+	headers: Record<string, ConfigValue> | undefined,
 	description: string,
 	env?: Record<string, string>,
-): Record<string, string> | undefined {
+): Promise<Record<string, string> | undefined> {
 	if (!headers) return undefined;
+	for (const value of Object.values(headers)) assertConfigReferenceAuthority(value);
 	const resolved: Record<string, string> = {};
 	for (const [key, value] of Object.entries(headers)) {
-		resolved[key] = resolveConfigValueOrThrow(value, `${description} header "${key}"`, env);
+		resolved[key] = await resolveConfigValueOrThrow(value, `${description} header "${key}"`, env);
 	}
 	return Object.keys(resolved).length > 0 ? resolved : undefined;
 }

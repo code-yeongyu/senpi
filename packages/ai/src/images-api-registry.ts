@@ -1,18 +1,18 @@
-import type { AssistantImages, ImagesApi, ImagesContext, ImagesFunction, ImagesModel, ImagesOptions } from "./types.ts";
+import type { AssistantImages, ImageApi, ImageModel, ImagesContext, ImagesFunction, ImagesOptions } from "./types.ts";
 
 export type ImagesApiFunction = (
-	model: ImagesModel<ImagesApi>,
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => Promise<AssistantImages>;
 
-export interface ImagesApiProvider<TApi extends ImagesApi = ImagesApi, TOptions extends ImagesOptions = ImagesOptions> {
+export interface ImagesApiProvider<TApi extends ImageApi = ImageApi, TOptions extends ImagesOptions = ImagesOptions> {
 	api: TApi;
-	generateImages: ImagesFunction<TApi, TOptions>;
+	generateImages: ImagesFunction<TOptions>;
 }
 
 export interface ImagesApiProviderInternal {
-	api: ImagesApi;
+	api: ImageApi;
 	generateImages: ImagesApiFunction;
 }
 
@@ -48,19 +48,19 @@ function getActiveImagesProviderScope(): ImagesProviderScopeAccess | undefined {
 	return scope;
 }
 
-function wrapGenerateImages<TApi extends ImagesApi, TOptions extends ImagesOptions>(
-	api: TApi,
-	generateImages: ImagesFunction<TApi, TOptions>,
+function wrapGenerateImages<TOptions extends ImagesOptions>(
+	api: ImageApi,
+	generateImages: ImagesFunction<TOptions>,
 ): ImagesApiFunction {
 	return (model, context, options) => {
 		if (model.api !== api) {
 			throw new Error(`Mismatched api: ${model.api} expected ${api}`);
 		}
-		return generateImages(model as ImagesModel<TApi>, context, options as TOptions);
+		return generateImages(model, context, options as TOptions);
 	};
 }
 
-function createRegisteredImagesApiProvider<TApi extends ImagesApi, TOptions extends ImagesOptions>(
+function createRegisteredImagesApiProvider<TApi extends ImageApi, TOptions extends ImagesOptions>(
 	provider: ImagesApiProvider<TApi, TOptions>,
 	sourceId?: string,
 ): RegisteredImagesApiProvider {
@@ -73,7 +73,7 @@ function createRegisteredImagesApiProvider<TApi extends ImagesApi, TOptions exte
 	};
 }
 
-export function registerImagesApiProvider<TApi extends ImagesApi, TOptions extends ImagesOptions>(
+export function registerImagesApiProvider<TApi extends ImageApi, TOptions extends ImagesOptions>(
 	provider: ImagesApiProvider<TApi, TOptions>,
 	sourceId?: string,
 ): void {
@@ -83,7 +83,7 @@ export function registerImagesApiProvider<TApi extends ImagesApi, TOptions exten
 }
 
 /** Registers a builtin once, retaining its immutable identity for active scopes. */
-export function registerBuiltinImagesApiProvider<TApi extends ImagesApi, TOptions extends ImagesOptions>(
+export function registerBuiltinImagesApiProvider<TApi extends ImageApi, TOptions extends ImagesOptions>(
 	provider: ImagesApiProvider<TApi, TOptions>,
 ): void {
 	const registered = builtinImagesApiProviderRegistry.get(provider.api) ?? createRegisteredImagesApiProvider(provider);
@@ -91,7 +91,7 @@ export function registerBuiltinImagesApiProvider<TApi extends ImagesApi, TOption
 	if (!imagesApiProviderRegistry.has(provider.api)) imagesApiProviderRegistry.set(provider.api, registered);
 }
 
-export function getImagesApiProvider(api: ImagesApi): ImagesApiProviderInternal | undefined {
+export function getImagesApiProvider(api: ImageApi): ImagesApiProviderInternal | undefined {
 	const scope = getActiveImagesProviderScope();
 	if (scope) return scope.imagesOverlay.get(api)?.provider ?? builtinImagesApiProviderRegistry.get(api)?.provider;
 	return imagesApiProviderRegistry.get(api)?.provider;

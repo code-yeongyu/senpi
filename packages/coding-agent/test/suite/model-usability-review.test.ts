@@ -62,7 +62,11 @@ describe("model usability review regressions", () => {
 		seed(harness, 95_000);
 		const target = harness.getModel("target");
 		if (!target) throw new Error("missing equal-window target fixture");
-		await expect(harness.session.setModel(target)).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+		await harness.session.setModel(target);
+		// #1873: an equal window with a larger output reserve still has to be checked
+		// against the live context. The check now holds the switch instead of refusing
+		// it, so the observable is that the session has not moved onto the target yet.
+		expect(harness.session.pendingModelSwitch?.model.id).toBe("target");
 		expect(harness.session.model?.id).toBe("current");
 	});
 

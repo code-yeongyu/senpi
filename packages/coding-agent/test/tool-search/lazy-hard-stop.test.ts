@@ -65,6 +65,36 @@ describe("allowLazyActivation hard stop", () => {
 		}
 	});
 
+	it("activates a search-exposed tool on a by-name call even when tool_search is not loaded", async () => {
+		const harness = await harnessWith((pi) => {
+			pi.registerTool({ ...tool("deferred_weather"), exposure: "search" });
+		});
+		try {
+			harness.session.setActiveToolsByName(["read"]);
+			expect(harness.session.getActiveToolNames()).not.toContain("deferred_weather");
+			const result = await harness.api.executeTool("deferred_weather", {}, { activateInactiveTool: true });
+			expect(JSON.stringify(result.content)).toContain("deferred_weather-ran");
+			expect(harness.session.getActiveToolNames()).toContain("deferred_weather");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("never promotes an eval-exposed tool through the session fallback", async () => {
+		const harness = await harnessWith((pi) => {
+			pi.registerTool({ ...tool("eval_only_probe"), exposure: "eval" });
+		});
+		try {
+			harness.session.setActiveToolsByName(["read"]);
+			await expect(
+				harness.api.executeTool("eval_only_probe", {}, { activateInactiveTool: true }),
+			).rejects.toMatchObject({ code: "inactive_tool" });
+			expect(harness.session.getActiveToolNames()).not.toContain("eval_only_probe");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("allows explicit activation of a tool that disables lazy activation", async () => {
 		const activator = vi.fn(() => true);
 		const harness = await harnessWith((pi) => {
