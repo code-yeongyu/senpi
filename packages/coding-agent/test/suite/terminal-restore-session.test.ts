@@ -1,8 +1,11 @@
+import { SessionRegistry, TerminalSession } from "@earendil-works/pi-pty";
 import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
 import { acquireTerminalLease, currentLeaseToken } from "../../src/core/extensions/builtin/terminal/manifest-lease.ts";
 import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
@@ -19,14 +22,32 @@ import {
 	type SentMessage,
 	type SessionGeneration,
 } from "./terminal-restore-session-harness.ts";
+import { ShutdownDiagnostics } from "./terminal-restore-shutdown-diagnostics.ts";
 
 const leaseFaults = vi.hoisted(() => ({ failNextAcquires: 0 }));
+let shutdownDiagnostics = new ShutdownDiagnostics();
+const terminalStart = TerminalSession.prototype.start;
+const terminalKill = TerminalSession.prototype.kill;
+const terminalWaitExit = TerminalSession.prototype.waitExit;
+const registryTeardown = SessionRegistry.prototype.teardown;
+
+vi.mock("../../src/core/extensions/builtin/terminal/restore-session.ts", async (importOriginal) => {
+	const original =
+		await importOriginal<typeof import("../../src/core/extensions/builtin/terminal/restore-session.ts")>();
+	return {
+		...original,
+		stopPersistence: (state: Parameters<typeof original.stopPersistence>[0], sessionKey: string) =>
+			original.stopPersistence(shutdownDiagnostics.persistence(state), sessionKey),
+	};
+});
 
 vi.mock("../../src/core/extensions/builtin/terminal/manifest-lease.ts", async (importOriginal) => {
 	const original =
 		await importOriginal<typeof import("../../src/core/extensions/builtin/terminal/manifest-lease.ts")>();
 	return {
 		...original,
+		releaseTerminalLease: (...args: Parameters<typeof original.releaseTerminalLease>) =>
+			shutdownDiagnostics.observe("lease release", () => original.releaseTerminalLease(...args)),
 		acquireTerminalLease: (...args: Parameters<typeof original.acquireTerminalLease>) => {
 			if (leaseFaults.failNextAcquires > 0) {
 				leaseFaults.failNextAcquires -= 1;
@@ -76,6 +97,24 @@ describe.runIf(process.platform !== "win32")("terminal restore session: lease, k
 	let counter = 0;
 
 	beforeEach(() => {
+		shutdownDiagnostics = new ShutdownDiagnostics();
+		vi.spyOn(TerminalSession.prototype, "start").mockImplementation(function (this: TerminalSession) {
+			const result = terminalStart.call(this);
+			shutdownDiagnostics.observeSession(this);
+			return result;
+		});
+		vi.spyOn(TerminalSession.prototype, "kill").mockImplementation(function (this: TerminalSession, signal) {
+			return shutdownDiagnostics.observe("registry signal", () => terminalKill.call(this, signal), {
+				pid: this.pid,
+				signal: signal ?? "SIGTERM",
+			});
+		});
+		vi.spyOn(TerminalSession.prototype, "waitExit").mockImplementation(function (this: TerminalSession) {
+			return shutdownDiagnostics.observe("registry exit", () => terminalWaitExit.call(this), { pid: this.pid });
+		});
+		vi.spyOn(SessionRegistry.prototype, "teardown").mockImplementation(function (this: SessionRegistry) {
+			return shutdownDiagnostics.observe("registry", () => registryTeardown.call(this));
+		});
 		initTheme("dark");
 		process.env.SENPI_PTY_FORCE_PIPE = "1";
 		tmp = mkdtempSync(join(tmpdir(), "senpi-restore-session-"));
@@ -87,6 +126,13 @@ describe.runIf(process.platform !== "win32")("terminal restore session: lease, k
 		stateDir = join(sessionDir, "extensions", "terminal");
 		live = [];
 		children = [];
+		// #4724: preserve the pending await/resource evidence even when afterEach exceeds its hook budget.
+		onTestFailed(() => {
+			console.error(
+				"terminal restore shutdown diagnostics:",
+				JSON.stringify(shutdownDiagnostics.snapshot(live, tmp, children, leasePath()), null, 2),
+			);
+		});
 		restoreSessionTestHooks.keeperIntervalMs = 50;
 		// The production grace: a shorter one lets a loaded host's shell start-up outlast the window,
 		// so a script that exits 127 would read as still running.
@@ -95,7 +141,9 @@ describe.runIf(process.platform !== "win32")("terminal restore session: lease, k
 
 	afterEach(async () => {
 		for (const generation of live)
-			await generation.emit("session_shutdown", { type: "session_shutdown", reason: "quit" });
+			await shutdownDiagnostics.shutdown(generation, () =>
+				generation.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }),
+			);
 		for (const child of children) child.kill("SIGKILL");
 		restoreSessionTestHooks.keeperIntervalMs = undefined;
 		restoreSessionTestHooks.graceMs = undefined;
@@ -104,6 +152,7 @@ describe.runIf(process.platform !== "win32")("terminal restore session: lease, k
 		else process.env.SENPI_PTY_FORCE_PIPE = savedForcePipe;
 		if (savedAgentDir === undefined) delete process.env.SENPI_CODING_AGENT_DIR;
 		else process.env.SENPI_CODING_AGENT_DIR = savedAgentDir;
+		vi.restoreAllMocks();
 	});
 
 	const encoded = () => encodeURIComponent(sessionId);
@@ -114,6 +163,7 @@ describe.runIf(process.platform !== "win32")("terminal restore session: lease, k
 		const generation = createSessionGeneration({ cwd, sessionId, sessionDir, ...options });
 		registerTerminalExtension(generation.pi);
 		live.push(generation);
+		shutdownDiagnostics.register(generation);
 		return generation;
 	}
 
@@ -430,3 +480,103 @@ await new Promise((resolve) => setTimeout(resolve, 3000));`;
 		]);
 	});
 });
+
+it("shutdown diagnostics retain a pending restore and its completion outcome (#4724)", async () => {
+	const diagnostics = new ShutdownDiagnostics();
+	const generation = {};
+	diagnostics.register(generation);
+	const restore = Promise.withResolvers<void>();
+	const state = diagnostics.persistence({
+		keeper: null,
+		restoreInFlight: restore.promise,
+		manifestWriter: null,
+		lease: null,
+	});
+	let observed: Promise<void> | undefined;
+	const shutdown = diagnostics.shutdown(generation, () => {
+		observed = state.restoreInFlight;
+		return observed;
+	});
+	const root = join(tmpdir(), "senpi-diagnostics-no-directory");
+	const pending = diagnostics.snapshot([generation], root, [{ pid: process.pid }], join(root, "session.lease"));
+	expect(pending.generations[0]?.phases).toMatchObject([
+		{ phase: "shutdown", status: "pending" },
+		{ phase: "restore", status: "pending" },
+	]);
+	expect(pending.processes).toContainEqual({ pid: process.pid, alive: true });
+	restore.resolve();
+	await shutdown;
+	expect(
+		diagnostics.snapshot([generation], root, [], join(root, "session.lease")).generations[0]?.phases,
+	).toMatchObject([
+		{ phase: "shutdown", status: "fulfilled" },
+		{ phase: "restore", status: "fulfilled" },
+	]);
+});
+
+it.each([
+	["observe", false],
+	["shutdown", false],
+	["observe", true],
+	["shutdown", true],
+] as const)("shutdown diagnostics preserve rejection reporting: %s, handled=%s (#4724)", async (phase, handled) => {
+	const child = spawn(
+		process.execPath,
+		[
+			"--import",
+			"tsx",
+			join(import.meta.dirname, "../fixtures/terminal-restore-shutdown-rejection.ts"),
+			phase,
+			String(handled),
+		],
+		{ stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
+	);
+	const closed = once(child, "close");
+	let stdout = "";
+	let stderr = "";
+	child.stdout.on("data", (chunk) => {
+		stdout += chunk.toString();
+	});
+	child.stderr.on("data", (chunk) => {
+		stderr += chunk.toString();
+	});
+	const [code, signal] = await closed;
+	expect(signal, stderr).toBeNull();
+	expect(code, stderr).toBe(0);
+	const report = JSON.parse(stdout);
+	expect(report.unhandled).toEqual(handled ? [] : [true]);
+	expect(report.caught).toBe(handled);
+	expect(report.phases).toEqual(
+		phase === "observe"
+			? [
+					{ phase: "shutdown", status: "fulfilled" },
+					{ phase: "restore", status: "rejected" },
+				]
+			: [{ phase: "shutdown", status: "rejected" }],
+	);
+});
+
+it.runIf(process.platform !== "win32")(
+	"shutdown diagnostics report fixture lease and socket paths (#4724)",
+	async () => {
+		// Match the Unix socket fixtures: inherited TMPDIR may exceed sun_path by itself.
+		const root = mkdtempSync(join("/tmp", "senpi-shutdown-diag-"));
+		const lease = join(root, "session.lease");
+		const socket = join(root, "watch.sock");
+		writeFileSync(lease, "{}");
+		const server = createServer();
+		const listening = once(server, "listening");
+		server.listen(socket);
+		try {
+			await listening;
+			const snapshot = new ShutdownDiagnostics().snapshot([], root, [], lease);
+			expect(snapshot.leasePaths).toContainEqual({ path: lease, exists: true });
+			expect(snapshot.socketPaths).toEqual([socket]);
+		} finally {
+			const closed = once(server, "close");
+			server.close();
+			await closed;
+			rmSync(root, { recursive: true, force: true });
+		}
+	},
+);

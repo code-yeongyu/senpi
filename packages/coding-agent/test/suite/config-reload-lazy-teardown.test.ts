@@ -108,7 +108,7 @@ describe("config reload shutdown", () => {
 		expect(await outcome).toMatchObject({ errors: [failure] });
 	});
 
-	it("awaits watchers before the real extension shutdown dispatch completes", async () => {
+	it("awaits watchers before a reload's real extension shutdown dispatch completes", async () => {
 		// Given: the real extension runner with a gated event-source disposer.
 		await using root = await mkdtempDisposable(join(tmpdir(), "config-session-close-"));
 		const released = Promise.withResolvers<void>();
@@ -128,10 +128,10 @@ describe("config reload shutdown", () => {
 		let completed = false;
 		try {
 			await harness.session.bindExtensions({ mode: "tui" });
-			// When: session_shutdown traverses the real runner.
+			// When: a reload's session_shutdown traverses the real runner (quit skips this join, senpi#3711).
 			const closing = harness
 				.getExtensionRunner()
-				.emit({ type: "session_shutdown", reason: "quit" })
+				.emit({ type: "session_shutdown", reason: "reload" })
 				.then(() => {
 					completed = true;
 				});

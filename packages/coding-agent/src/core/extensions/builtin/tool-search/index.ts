@@ -1,4 +1,5 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
 import { AnthropicNativeToolSearchAdapter, isMcpNativeToolSearchEnabled } from "./native-search.ts";
 import {
@@ -12,9 +13,24 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 	return (pi: ExtensionAPI): void => {
 		service.bindRuntime(pi);
 
-		pi.on("session_start", (_event, ctx) => {
+		// Boot point (senpi#5217): a session boots the catalog at session_start; a runtime with no
+		// session boots it at the first tool call a context sees. Each context boots once.
+		// A context with no session manager is the runtime itself: one boot per runtime.
+		// A session drops this hook at session_start, so its tool calls emit no tool_hook_status for it (senpi#5320).
+		const bootedContexts = new WeakSet<object>();
+		const runtimeKey = {};
+		const dropFirstUseBoot = pi.on("tool_call", (_event, ctx) => {
+			const key = ctx.sessionManager ?? runtimeKey;
+			if (bootedContexts.has(key) || service.isDisposed || !canListTools(pi)) return;
+			bootedContexts.add(key);
+			service.getCatalog();
+		});
+
+		pi.on("session_start", async (_event, ctx) => {
+			dropFirstUseBoot();
+			bootedContexts.add(ctx.sessionManager ?? runtimeKey);
 			service.beginSession();
-			service.maybeRehydrateFromHistory(ctx.sessionManager.getEntries());
+			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
 		});
 		pi.on(
 			"context",
@@ -61,6 +77,16 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 		);
 		pi.on("after_provider_response", (event) => nativeAdapter.noteResponseStatus(event.status));
 	};
+}
+
+// A runtime whose core is not bound yet cannot list its tools; its catalog boots at a later tool call.
+function canListTools(pi: ExtensionAPI): boolean {
+	try {
+		pi.getAllTools();
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 function hasProviderScope(): boolean {

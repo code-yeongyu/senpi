@@ -10,7 +10,9 @@ import { createHarness, type Harness } from "../harness.ts";
 const primary = "faux/faux-roomy";
 const small = "faux/faux-small";
 const spacious = "faux/faux-spacious";
-const usageLimit = "billing error: insufficient_quota";
+// This fixture exercises a model-specific limit: an account-wide limit must
+// skip all same-provider rungs before their context-window admission is tested.
+const usageLimit = "billing error: insufficient_quota for this model";
 
 describe("#2894 fallback past a rung the context-window guard refuses", () => {
 	const harnesses: Harness[] = [];

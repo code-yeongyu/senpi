@@ -27,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
 import { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
 import {
+	type MonitorEndedEvent,
 	type MonitorEvent,
 	MonitorRegistry,
 	type MonitorSummaryEvent,
@@ -198,7 +199,11 @@ describe("terminal monitor tool", () => {
 	});
 
 	it("ends a timed watch and leaves persistent watches alive past their timeout", async () => {
-		const tool = createMonitorTool(ctx);
+		const endedEvents: MonitorEndedEvent[] = [];
+		const registry = new MonitorRegistry((event) => sink.push(event), {
+			onEnded: (event) => endedEvents.push(event),
+		});
+		const tool = createMonitorTool({ ...ctx, monitorRegistry: registry });
 		const timedOut = sink.waitFor(
 			(event) => event.type === "summary" && event.description === "timed",
 			"timeout summary",
@@ -209,7 +214,14 @@ describe("terminal monitor tool", () => {
 			timeout_ms: 50,
 		});
 		expect(firstText(timedResult)).toMatch(/^Monitor started with ID: mon_[0-9A-HJKMNP-TV-Z]{16}$/);
-		expect(summaryEvent(await timedOut).summary).toContain("timed_out");
+		const timedSummary = summaryEvent(await timedOut).summary;
+		// Structural guard on the summary shape, not its prose: the timed-out branch deliberately
+		// omits the "(exit code N)" suffix the other branches append.
+		expect(timedSummary).not.toContain("exit code");
+		await timedOut;
+		// The machine-read outcome, not the summary prose: a timed watch ends with reason
+		// "timeout" exactly once (derived from exit.timedOut at the settle site).
+		expect(endedEvents.filter((event) => event.reason === "timeout")).toHaveLength(1);
 
 		const persistent = sink.waitFor(
 			(event) => event.type === "summary" && event.description === "persistent",

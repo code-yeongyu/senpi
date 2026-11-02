@@ -108,7 +108,9 @@ describe("MCP auto reconnect", () => {
 		await waitFor(() => getMcpService().getConnection("fx")?.state === "suspended", 20_000);
 		await delay(500);
 
-		expect(readNumberFile(counterFile)).toBeLessThanOrEqual(6);
+		// Each attempt spawns twice: the child dies on the discovery probe, so the legacy handshake gets a fresh
+		// process (senpi#3304). The breaker bound is on attempts, asserted through reconnectCount below.
+		expect(readNumberFile(counterFile)).toBeLessThanOrEqual(12);
 		expect(getMcpService().getServerSnapshots()).toMatchObject([
 			{
 				name: "fx",

@@ -117,13 +117,13 @@ export interface CreateDynamicRequest {
 	readonly payload: LoopPayload;
 }
 
-/** One dispatchable delivery. The caller turns this into a message; ticks never steer. */
+/** One dispatchable delivery. The caller turns this into a message; a tick for a busy session steers. */
 export interface LoopTick {
 	readonly loopId: LoopId;
 	readonly deliveryId: DeliveryId;
 	/** Occurrence this delivery represents; equal to the `now` it was decided at. */
 	readonly scheduledForAt: EpochMs;
-	readonly deliverAs: "followUp";
+	readonly deliverAs: "steer";
 	/** True when this delivery drains a coalesced or recovered occurrence. */
 	readonly coalesced: boolean;
 }
@@ -235,10 +235,15 @@ export interface LoopScheduler {
 	currentDeliveryId(loopId: LoopId): DeliveryId | undefined;
 	createFixed(request: CreateFixedRequest): CreateResult;
 	createDynamic(request: CreateDynamicRequest): CreateResult;
-	onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean): DueResult;
+	onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean, held?: boolean): DueResult;
 	onTickSettled(input: TickSettledInput): SettledResult;
 	onScheduleWakeup(request: ScheduleWakeupInput): ScheduleWakeupResult;
-	onTurnEndedWithoutSchedule(loopId: LoopId): KeepaliveResult;
+	/**
+	 * Keepalive for a dynamic iteration that ended without `schedule_wakeup`. `chargeCredit: false`
+	 * (a tick steered into a turn the loop did not start) arms the fallback without spending the
+	 * credit, so the user's own work can never exhaust the loop.
+	 */
+	onTurnEndedWithoutSchedule(loopId: LoopId, options?: { readonly chargeCredit?: boolean }): KeepaliveResult;
 	onUserAbort(loopId: LoopId): AbortResult;
 	pause(target: LoopId | "all"): TargetedResult;
 	resume(target: LoopId | "all"): TargetedResult;
@@ -518,7 +523,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			: { ok: true, loopId: id };
 	}
 
-	function onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean): DueResult {
+	function onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean, held = false): DueResult {
 		const entry = entryOf(loopId);
 		if (entry === undefined) return { action: "coalesce" };
 
@@ -556,7 +561,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			loopId,
 			deliveryId,
 			scheduledForAt: nowMs,
-			deliverAs: "followUp",
+			deliverAs: "steer",
 			coalesced: entry.coalescedFirePending,
 		};
 		let expired = false;
@@ -566,7 +571,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 				lastScheduledForAt: nowMs,
 				queuedForAt: nowMs,
 				coalescedFirePending: false,
-				tickCount: entry.tickCount + 1,
+				tickCount: entry.tickCount + (held ? 0 : 1),
 			};
 			const phase = sessionBusy ? ("queued" as const) : ("running" as const);
 			const next =
@@ -691,7 +696,8 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			: { ok: true, wakeupId, replacedWakeupId, dueAt, noopStreak };
 	}
 
-	function onTurnEndedWithoutSchedule(loopId: LoopId): KeepaliveResult {
+	function onTurnEndedWithoutSchedule(loopId: LoopId, options?: { readonly chargeCredit?: boolean }): KeepaliveResult {
+		const chargeCredit = options?.chargeCredit ?? true;
 		const entry = entryOf(loopId);
 		if (entry === undefined || entry.kind !== "dynamic") return { action: "ignored" };
 		// Fixed loops re-arm from their own schedule, and a paused or ended loop has no
@@ -708,7 +714,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			return { action: "ended", endReason: "expired" };
 		}
 
-		if (entry.keepaliveCredit === 0) {
+		if (chargeCredit && entry.keepaliveCredit === 0) {
 			commit((entries) => {
 				endEntry(entries, entry, nowMs, "keepalive_exhausted");
 				return undefined;
@@ -736,7 +742,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			const armed = dynamicWithPhase(entry, "waiting", {
 				queuedForAt: null,
 				pendingWakeup: wakeup,
-				keepaliveCredit: 0,
+				keepaliveCredit: chargeCredit ? 0 : entry.keepaliveCredit,
 			});
 			entries[entry.id] = armed;
 			expired = armEntry(entries, armed, nowMs, onFire) === "expired";
@@ -911,7 +917,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 						loopId: entry.id,
 						deliveryId,
 						scheduledForAt: nowMs,
-						deliverAs: "followUp",
+						deliverAs: "steer",
 						coalesced: true,
 					});
 				}

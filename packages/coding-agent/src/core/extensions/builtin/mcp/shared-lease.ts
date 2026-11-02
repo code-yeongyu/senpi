@@ -3,6 +3,7 @@ import { ServerConnection } from "./connection.ts";
 import type { ServerConnectionOptions } from "./connection-types.ts";
 import { ConnectError } from "./errors.ts";
 import type { SharedMcpConnection } from "./shared-connection.ts";
+import { registerMcpClientAlias } from "./request-origin.ts";
 
 const requestMethods = new Set<PropertyKey>([
 	"request",
@@ -28,6 +29,10 @@ export class SharedMcpLease extends ServerConnection {
 	readonly #unsubscribeTools: () => void;
 	readonly #stateSubscriptions = new Set<() => void>();
 	#released = false;
+	#requestLifetime = new AbortController();
+	override get requestLifetimeSignal(): AbortSignal {
+		return this.#requestLifetime.signal;
+	}
 	#localGeneration = 0;
 	#client: Client | undefined;
 	#physicalClient: Client | undefined;
@@ -73,6 +78,7 @@ export class SharedMcpLease extends ServerConnection {
 					return typeof value === "function" ? value.bind(target) : value;
 				},
 			});
+			registerMcpClientAlias(this.#client, physical);
 		}
 		if (this.#client === undefined) throw new ConnectError("MCP client unavailable", { phase: "client" });
 		return this.#client;
@@ -88,6 +94,8 @@ export class SharedMcpLease extends ServerConnection {
 	}
 	override async bumpGeneration(): Promise<void> {
 		this.#assertAttached();
+		this.#requestLifetime.abort();
+		this.#requestLifetime = new AbortController();
 		this.#localGeneration++;
 		this.#refreshCatalog = true;
 		// Re-list only this owner's catalog; never interrupt another owner's call.
@@ -104,17 +112,19 @@ export class SharedMcpLease extends ServerConnection {
 	override refreshCapturedDiagnostics() {
 		this.shared.connection.refreshCapturedDiagnostics();
 	}
+	// A released lease no longer speaks for the shared connection: a late failure seen through it must not degrade
+	// the connection the surviving owners still use (senpi#4013).
 	override markDegraded(error: Error) {
-		this.shared.connection.markDegraded(error);
+		if (!this.#released) this.shared.connection.markDegraded(error);
 	}
 	override markSuspended(error?: Error) {
-		this.shared.connection.markSuspended(error);
+		if (!this.#released) this.shared.connection.markSuspended(error);
 	}
 	override markNeedsAuth(error?: Error) {
-		this.shared.connection.markNeedsAuth(error);
+		if (!this.#released) this.shared.connection.markNeedsAuth(error);
 	}
 	override markNeedsClientRegistration(error?: Error) {
-		this.shared.connection.markNeedsClientRegistration(error);
+		if (!this.#released) this.shared.connection.markNeedsClientRegistration(error);
 	}
 	override onStateChange(listener: Parameters<ServerConnection["onStateChange"]>[0]): () => void {
 		const off = this.shared.connection.onStateChange((event) => listener({ ...event, generation: this.generation }));
@@ -130,6 +140,7 @@ export class SharedMcpLease extends ServerConnection {
 	override async dispose(): Promise<void> {
 		if (this.#released) return;
 		this.#released = true;
+		this.#requestLifetime.abort();
 		this.#unsubscribeTools();
 		for (const off of this.#stateSubscriptions) off();
 		this.#stateSubscriptions.clear();

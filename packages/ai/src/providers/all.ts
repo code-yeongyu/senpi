@@ -82,10 +82,13 @@ const XIAOMI_MIMO_PROVIDERS = new Set([
 	"xiaomi-token-plan-sgp",
 ]);
 
+// mimo-v2.5-pro is deprecated upstream (models.dev) and drops out of a regenerated catalog; v2.6-pro is its successor.
+const XIAOMI_MIMO_PRO_IDS = new Set(["mimo-v2.5-pro", "mimo-v2.6-pro"]);
+
 function normalizeBuiltinModel<TApi extends Api>(model: Model<TApi> | undefined): Model<TApi> | undefined {
 	if (!model) return undefined;
 
-	if (XIAOMI_MIMO_PROVIDERS.has(model.provider) && model.id === "mimo-v2.5-pro") {
+	if (XIAOMI_MIMO_PROVIDERS.has(model.provider) && XIAOMI_MIMO_PRO_IDS.has(model.id)) {
 		return {
 			...model,
 			compat: {

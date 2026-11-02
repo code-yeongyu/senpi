@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { shardSocketPath } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { type EnsuredHost, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { STOP_WAIT_BUDGET_MS } from "../../src/modes/rpc/host-ensure-stop.ts";
 import { settledOpportunisticHostGc } from "../../src/modes/rpc/host-gc-pass.ts";
 import { runHostRequest } from "../../src/modes/rpc/host-runner.ts";
 import type { HostEndpointStatus } from "../../src/modes/rpc/host-status-all.ts";
@@ -77,7 +78,7 @@ export async function sweepEndpointScratches(): Promise<void> {
 	for (const model of models) model.release();
 	for (const target of ensured.splice(0)) {
 		const stopped = await stopHost({ ...target, force: true }).catch(() => undefined);
-		if (stopped?.action === "stopped") await waitForPidGone(stopped.pid, 30_000);
+		if (stopped?.action === "stopped") await waitForPidGone(stopped.pid, STOP_WAIT_BUDGET_MS);
 	}
 	for (const pid of supervisors.splice(0)) {
 		if (signalGeneration(pid, "SIGKILL")) await waitForPidGone(pid, 20_000);

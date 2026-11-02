@@ -6,8 +6,94 @@ export type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 export type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 
 import type { EventEmitter } from "node:events";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { EventBus } from "../../../event-bus.ts";
 import { redactMcpLogText } from "./log.ts";
+
+export interface McpClock {
+	now(): number;
+	schedule(callback: () => void, ms: number): ReturnType<typeof setTimeout>;
+	cancel(timer: ReturnType<typeof setTimeout>): void;
+}
+
+/** The modern operation uses one injectable monotonic clock and scheduler. */
+export const mcpElapsedClock: McpClock = {
+	now: () => performance.now(),
+	schedule: (callback, ms) => setTimeout(callback, ms),
+	cancel: (timer) => clearTimeout(timer),
+};
+
+export function mcpAbortableDelay(clock: McpClock, ms: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const finish = () => {
+			clock.cancel(timer);
+			signal.removeEventListener("abort", abort);
+			resolve();
+		};
+		const abort = () => {
+			clock.cancel(timer);
+			signal.removeEventListener("abort", abort);
+			reject(signal.reason);
+		};
+		const timer = clock.schedule(finish, ms);
+		signal.addEventListener("abort", abort, { once: true });
+		if (signal.aborted) abort();
+	});
+}
+
+/** Observe SDK close without replacing another request's observer. */
+const clientCloseObservers = new WeakMap<
+	Client,
+	{
+		listeners: Set<() => void>;
+		prior: Client["onclose"];
+		close: () => void;
+	}
+>();
+export function onMcpClientClose(client: Client, listener: () => void): () => void {
+	let state = clientCloseObservers.get(client);
+	if (!state) {
+		const listeners = new Set<() => void>();
+		const prior = client.onclose;
+		const close = () => {
+			for (const callback of listeners) callback();
+			prior?.();
+		};
+		state = { listeners, prior, close };
+		clientCloseObservers.set(client, state);
+		client.onclose = close;
+	}
+	state.listeners.add(listener);
+	const current = state;
+	return () => {
+		current.listeners.delete(listener);
+		if (current.listeners.size === 0) {
+			if (client.onclose === current.close) client.onclose = current.prior;
+			clientCloseObservers.delete(client);
+		}
+	};
+}
+
+export function mcpInterrupted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const abort = () => {
+			signal.removeEventListener("abort", abort);
+			reject(signal.reason);
+		};
+		signal.addEventListener("abort", abort, { once: true });
+		if (signal.aborted) abort();
+		void work.then(
+			(value) => {
+				signal.removeEventListener("abort", abort);
+				resolve(value);
+			},
+			(error: unknown) => {
+				signal.removeEventListener("abort", abort);
+				reject(error);
+			},
+		);
+	});
+}
 
 type MaybePromise<T> = T | Promise<T>;
 

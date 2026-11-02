@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { ensureTool } from "../../../utils/tools-manager.ts";
 import { type GrepEngine, GrepEngineError, type GrepEngineRequest, type GrepEngineResult } from "./engine.ts";
 import { matcherFlags, walkerFlags } from "./rg/args.ts";
+import { commandLineOverflow } from "./rg/argv.ts";
 import { enumerateCandidates, resolveRoots } from "./rg/enumerate.ts";
 import { createRgRunner, type RgEngineOptions, SearchTimeout } from "./rg/process.ts";
 import { searchSegments } from "./rg/segments.ts";
@@ -13,10 +14,12 @@ export class RgGrepEngine implements GrepEngine {
 	readonly name = "rg" as const;
 	private readonly launch: NonNullable<RgEngineOptions["spawn"]>;
 	private readonly now: () => number;
+	private readonly batchBudget: number | undefined;
 
 	constructor(options: RgEngineOptions = {}) {
 		this.launch = options.spawn ?? spawn;
 		this.now = options.now ?? Date.now;
+		this.batchBudget = options.batchBudget;
 	}
 
 	async search(request: GrepEngineRequest, signal?: AbortSignal): Promise<GrepEngineResult> {
@@ -44,6 +47,12 @@ export class RgGrepEngine implements GrepEngine {
 			if (signal?.aborted) throw new GrepEngineError("ABORTED", "Grep search aborted");
 			if (this.now() >= deadline) throw new SearchTimeout();
 		};
+		const overflow = commandLineOverflow([request.pattern]);
+		if (overflow)
+			throw new GrepEngineError(
+				"INVALID_PATTERN",
+				`Pattern is too long to pass to ripgrep: ${overflow}. Shorten it.`,
+			);
 		try {
 			check();
 			const roots = await resolveRoots(request, result);
@@ -61,8 +70,16 @@ export class RgGrepEngine implements GrepEngine {
 				signal,
 				check,
 			});
-			const candidates = await enumerateCandidates({ roots, cwd: request.cwd, walk, run, check, result });
-			await searchSegments({ candidates, request, walk, matcher, run, check, result });
+			const candidates = await enumerateCandidates({
+				roots,
+				cwd: request.cwd,
+				walk,
+				run,
+				check,
+				result,
+				budget: this.batchBudget,
+			});
+			await searchSegments({ candidates, request, walk, matcher, run, check, result, budget: this.batchBudget });
 		} catch (error) {
 			if (!(error instanceof SearchTimeout)) throw error;
 			result.timedOut = true;

@@ -1,19 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { PythonKernel } from "../src/kernels/py/kernel.ts";
-import { FakeChild } from "./py-kernel/fixtures.ts";
+import { FAKE_CHILD_PID, FakeChild } from "./py-kernel/fixtures.ts";
 
 // These tests give fake children pids. A kill path that bypasses the injected group kill must fail here,
 // never send a real signal to whatever process group happens to have that id.
 let realKill: MockInstance<typeof process.kill>;
 
 beforeEach(() => {
-	realKill = vi.spyOn(process, "kill").mockImplementation(() => {
+	realKill = vi.spyOn(process, "kill").mockImplementation((pid) => {
+		// The fake pid's group cannot exist: answer as the kernel would see it, ESRCH.
+		if (FAKE_CHILD_PID !== undefined && pid === -FAKE_CHILD_PID)
+			throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
 		throw new Error("test reached the real process.kill");
 	});
 });
 
 afterEach(() => {
-	const reached = realKill.mock.calls.map((call) => call.slice(0, 2));
+	const reached = realKill.mock.calls
+		.map((call) => call.slice(0, 2))
+		.filter(([pid]) => FAKE_CHILD_PID === undefined || pid !== -FAKE_CHILD_PID);
 	vi.restoreAllMocks();
 	vi.useRealTimers();
 	// hardKill swallows a failed group kill, so the throw alone could go unnoticed: assert it never ran.

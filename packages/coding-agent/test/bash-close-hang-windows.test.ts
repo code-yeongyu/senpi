@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeBashWithOperations } from "../src/core/bash-executor.ts";
 import { createBashTool, createLocalBashOperations } from "../src/core/tools/bash.ts";
+import { windowsTreeKillArgs } from "../../../scripts/windows-process-tree.mjs";
 
 function toBashSingleQuotedArg(value: string): string {
 	return `'${value.replace(/\\/g, "/").replace(/'/g, `'"'"'`)}'`;
@@ -33,7 +34,8 @@ function cleanupDetachedChild(pidFile: string): void {
 	const pid = Number.parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
 	if (Number.isFinite(pid) && pid > 0) {
 		try {
-			execFileSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
+			const args = windowsTreeKillArgs(pid);
+			if (args.length > 0) execFileSync("taskkill", args, { stdio: "ignore", windowsHide: true });
 		} catch {
 			// Process may have already exited.
 		}

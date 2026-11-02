@@ -67,6 +67,11 @@ async function rig(options: { held?: HeldAnthropicModel; monitor?: boolean; grac
 	const connect = async () => {
 		const peer = await JsonlPeer.connect(qa.socket);
 		peers.push(peer);
+		// #4813: the public socket's connect event precedes the supervisor's private hop.
+		// Wait for the host to register this peer before a drain can race its admission.
+		expect(await peer.request({ id: "connected", type: "get_protocol_info", observe: true })).toMatchObject({
+			success: true,
+		});
 		return peer;
 	};
 	const client = await connect();

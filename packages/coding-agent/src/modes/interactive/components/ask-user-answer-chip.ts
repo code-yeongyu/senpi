@@ -1,5 +1,8 @@
 import { type Component, Container, MouseRegion, truncateToWidth } from "@earendil-works/pi-tui";
-import type { AskUserAnswerFrame } from "../../../core/extensions/builtin/ask-user/format.ts";
+import {
+	type AskUserAnswerFrame,
+	isCancelledWithAnswersLine,
+} from "../../../core/extensions/builtin/ask-user/format.ts";
 import { ASK_USER_QUESTION_ENTRY } from "../../../core/extensions/builtin/ask-user/notify.ts";
 import type { SessionEntry } from "../../../core/session-manager.ts";
 import { stripAnsi } from "../../../utils/ansi.ts";
@@ -31,7 +34,10 @@ function summaryRows(frame: AskUserAnswerFrame, headers: readonly string[]): str
 	const answers: string[] = [];
 	let comment: string | undefined;
 	let unanswered: string[] = [];
-	for (const line of frame.body.split("\n")) {
+	const lines = frame.body.split("\n");
+	// A cancelled question's answers follow its cancel line; a failure reason above it is no answer.
+	const cancelledAt = lines.findIndex(isCancelledWithAnswersLine);
+	for (const line of lines.slice(cancelledAt + 1)) {
 		const separator = line.indexOf(": ");
 		if (separator < 1) continue;
 		const header = line.slice(0, separator);
@@ -43,6 +49,7 @@ function summaryRows(frame: AskUserAnswerFrame, headers: readonly string[]): str
 	if (comment !== undefined) {
 		answers.push(`↳ ${headers[0] ?? unanswered[0] ?? frame.requestId}: ${JSON.stringify(comment)}`);
 	} else answers.push(...unanswered.map((header) => `↳ ${header}: (no answer)`));
+	if (cancelledAt >= 0) answers.unshift("↳ (cancelled)");
 	return answers.length > 0 ? answers : fallbackHeaders.map((header) => `↳ ${header}: (no answer)`);
 }
 

@@ -157,6 +157,7 @@ class ServerServiceSourceImpl implements ServerServiceSource {
 		onError(error: Error): void;
 	}): RemoteServices {
 		if (this.#disposed) throw new Error("Server service source is disposed");
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let binding!: RoutedServiceBinding;
 		binding = new RoutedServiceBinding({
 			services: options.services,
@@ -272,6 +273,7 @@ class SessionServiceSourceImpl implements SessionServiceSource {
 		onError(error: Error): void;
 	}): RemoteServices {
 		if (this.#disposed) throw new Error("Session service source is disposed");
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let binding!: RoutedServiceBinding;
 		binding = new RoutedServiceBinding({
 			services: options.services,

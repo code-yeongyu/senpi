@@ -16,6 +16,7 @@ import {
 import type { BeforeAgentStartEvent } from "../../src/core/extensions/index.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core/extensions/loader.ts";
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX, convertToLlm } from "../../src/core/messages.ts";
+import type { HistoryReducer } from "../../src/core/session-history-reduce.ts";
 import {
 	buildSessionContext,
 	SESSION_CONTEXT_ENTRY_ID,
@@ -23,6 +24,7 @@ import {
 	type SessionMessageEntry,
 	sessionEntryToContextMessages,
 } from "../../src/core/session-manager.ts";
+import { reduceEntries } from "../helpers/reduce-entries.ts";
 import { createHarness } from "../suite/harness.ts";
 import { OPENAI_CANONICAL_LEGACY_MODEL as OPENAI_MODEL } from "./openai-remote-test-models.ts";
 
@@ -134,6 +136,7 @@ describe("builtin compaction canonical routes", () => {
 				sessionManager: {
 					getBranch: () => branchEntries,
 					getEntries: () => branchEntries,
+					reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
 					getSessionId: () => "session-1",
 				},
 				getContextUsage: () => ({ tokens: 3_000, contextWindow: 10_000, percent: 30 }),

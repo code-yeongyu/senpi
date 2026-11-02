@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import toolSearchExtension from "../../src/core/extensions/builtin/tool-search/index.ts";
 import { getToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import type { SelectorCooldowns } from "../../src/core/retry-fallback/cooldown.ts";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
@@ -39,10 +40,16 @@ describe("retry fallback hard errors", () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			settings: {
-				retry: { enabled: true, maxRetries: 0, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 60_000,
+					fallbackChains: { [primary]: ["other-faux/faux-2"] },
+				},
 			},
 		});
 		harnesses.push(harness);
+		registerFallbackModels(harness, "other-faux", ["faux-2"]);
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: insufficientQuota }),
 			fauxAssistantMessage("fallback answer"),
@@ -72,10 +79,16 @@ describe("retry fallback hard errors", () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			settings: {
-				retry: { enabled: true, maxRetries: 0, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 60_000,
+					fallbackChains: { [primary]: ["other-faux/faux-2"] },
+				},
 			},
 		});
 		harnesses.push(harness);
+		registerFallbackModels(harness, "other-faux", ["faux-2"]);
 		const authError = "Not logged in · Please run /login";
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: insufficientQuota }),

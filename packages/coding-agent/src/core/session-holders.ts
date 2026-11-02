@@ -9,23 +9,37 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import {
 	breakStaleLock,
 	errorCode,
-	type LockProbes,
 	publishExclusive,
 	readLeaseText,
 	reclaimLockState,
 	unlinkIfPresent,
 } from "./extensions/builtin/terminal/lease-file.ts";
 import { ownProcessStartedAtMs, processBootAtMs } from "./extensions/builtin/terminal/process-identity.ts";
-import { SessionHeldError, type SessionHolder, SessionMovedError, SessionMovingError } from "./session-hold-errors.ts";
+import {
+	SessionHeldError,
+	type SessionHolder,
+	type SessionHolderEndpoint,
+	SessionMovedError,
+	SessionMovingError,
+} from "./session-hold-errors.ts";
+import { type HolderGeneration, liveHolders, type SessionHolderProbes } from "./session-holder-records.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
+import { advanceSessionFence } from "./session-write-fence.ts";
 
-export { SessionHeldError, type SessionHolder, SessionMovedError, SessionMovingError };
+export {
+	type HolderGeneration,
+	SessionHeldError,
+	type SessionHolder,
+	type SessionHolderProbes,
+	SessionMovedError,
+	SessionMovingError,
+};
 
 /**
  * Cross-process ownership of a session file. Every process that has a session open publishes a holder
@@ -39,7 +53,6 @@ export { SessionHeldError, type SessionHolder, SessionMovedError, SessionMovingE
 
 const HOLDERS_DIR = "session-holders";
 const MOVE_LOCK = "move.lock";
-const HOLDER_RECORD = /^\d+\.json$/;
 // A move rewrites one file and a few sidecars; a lock older than this belongs to a mover that died.
 const MOVE_LOCK_STALE_MS = 30_000;
 const DEFAULT_MOVE_LOCK_WAIT_MS = 5_000;
@@ -54,12 +67,13 @@ function holdersDir(sessionFile: string, sessionId: string): string {
 	return join(dirname(resolveMovedPath(sessionFile)), HOLDERS_DIR, encodedSessionId(sessionId));
 }
 
-function identityRecord(cwd?: string): string {
+function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): string {
 	return JSON.stringify({
 		pid: process.pid,
 		bootAtMs: processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 		...(cwd === undefined ? {} : { cwd }),
+		...endpoint,
 	});
 }
 
@@ -127,12 +141,6 @@ function parsePid(raw: string): number | undefined {
 	}
 }
 
-function parseCwd(raw: string): string | undefined {
-	const parsed: unknown = JSON.parse(raw);
-	if (typeof parsed !== "object" || parsed === null || !("cwd" in parsed)) return undefined;
-	return typeof parsed.cwd === "string" ? parsed.cwd : undefined;
-}
-
 /**
  * Publishes this process as a holder of `sessionFile` until `release()`. Throws `SessionMovingError`
  * while another process is moving the session, and `SessionMovedError` when a session that was read
@@ -141,13 +149,17 @@ function parseCwd(raw: string): string | undefined {
 export function holdSessionFile(
 	sessionFile: string,
 	sessionId: string,
-	options: { readonly cwd?: string; readonly expectExisting: boolean },
+	options: {
+		readonly cwd?: string;
+		readonly expectExisting: boolean;
+		readonly holderEndpoint?: SessionHolderEndpoint;
+	},
 ): SessionHold {
 	const dir = holdersDir(sessionFile, sessionId);
 	const record = join(dir, `${process.pid}.json`);
 	const shared = holderRecordRefCounts.get(record) ?? 0;
 	if (shared === 0) {
-		publishHolderRecord(dir, record, identityRecord(options.cwd));
+		publishHolderRecord(dir, record, identityRecord(options.cwd, options.holderEndpoint));
 		installExitCleanup();
 	}
 	holderRecordRefCounts.set(record, shared + 1);
@@ -191,20 +203,6 @@ function publishHolderRecord(dir: string, record: string, content: string): void
 	}
 }
 
-async function liveHolders(dir: string, probes: LockProbes = {}): Promise<SessionHolder[]> {
-	const holders: SessionHolder[] = [];
-	for (const name of await readdir(dir)) {
-		if (!HOLDER_RECORD.test(name)) continue;
-		const path = join(dir, name);
-		const state = await reclaimLockState(path, probes);
-		if (state.state === "stale") await breakStaleLock(path, state.raw);
-		if (state.state !== "held" || state.holder === undefined) continue;
-		const raw = await readLeaseText(path);
-		holders.push({ pid: state.holder.pid, cwd: raw === undefined ? undefined : parseCwd(raw) });
-	}
-	return holders;
-}
-
 /**
  * Live processes that have `sessionFile` open right now (stale records of dead or reused pids are
  * reclaimed on the way). A caller about to start another writer uses it to wait instead of racing one.
@@ -212,10 +210,10 @@ async function liveHolders(dir: string, probes: LockProbes = {}): Promise<Sessio
 export async function liveSessionHolders(
 	sessionFile: string,
 	sessionId: string,
-	probes: LockProbes = {},
+	probes: SessionHolderProbes = {},
 ): Promise<SessionHolder[]> {
 	try {
-		return await liveHolders(holdersDir(sessionFile, sessionId), probes);
+		return await liveHolders(holdersDir(sessionFile, sessionId), probes, () => advanceSessionFence(sessionFile));
 	} catch (error) {
 		if (errorCode(error) === "ENOENT") return [];
 		throw error;
@@ -232,7 +230,7 @@ async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): 
 		} catch (error) {
 			const code = errorCode(error);
 			if (code === "ENOENT") {
-				mkdirSync(dirname(lock), { recursive: true });
+				await mkdir(dirname(lock), { recursive: true });
 				continue;
 			}
 			if (code !== "EEXIST") throw error;

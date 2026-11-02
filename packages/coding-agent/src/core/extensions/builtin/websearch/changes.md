@@ -1,3 +1,271 @@
+## 2026-11-02 - Public web aggregate joins the web search providers (senpi#5485, PR #5494)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/public.ts` (new): `searchPublicWeb` asks `startpage`, `google-html`, `duckduckgo-html`, `ecosia` and `mojeek` at once through the caller's per-engine search, dedupes URLs on host without `www.` + path without trailing slash + query (fragment dropped), ranks by engine count, then best per-engine rank, then engine order, keeps the longest snippet, returns at the earliest of all settled / 5 s with one answer / 30 s, aborts stragglers, and fails only when no engine returned results. `publicProvider` has no request of its own.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/search.ts`: `performProviderSearch` routes a `public` entry to `searchPublicWeb`, passing itself as the per-engine search.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/types.ts`, `config.ts`, `providers.ts`: `public` appended to the provider union, `PROVIDERS`, `KEYLESS_PROVIDERS` and `PROVIDER_MODULES`; `validateProviderConfig` rejects a `baseUrl` on `public`. `DEFAULT_FREE_CONFIG` is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/provider-endpoints.ts`: `public` is excluded from `DEFAULT_PROVIDER_URLS` and `defaultProviderUrl` throws for it.
+
+### Why
+
+- Port of oh-my-pi's `packages/coding-agent/src/web/search/providers/public.ts`, so one explicit `websearch.json` entry can query every keyless engine and rank by cross-engine agreement.
+
+### Why an extension could not handle it
+
+- The provider union, config validation, endpoint map, module registry and `performProviderSearch` are the builtin websearch extension's own code; a user extension cannot add a provider id.
+
+### Expected merge conflict zones
+
+- LOW: the tails of `PROVIDERS`/`KEYLESS_PROVIDERS` in `config.ts`, the `SearchProvider` union in `types.ts`, `PROVIDER_MODULES` and its imports in `providers.ts` (all appended); the `DEFAULT_PROVIDER_URLS` type line in `provider-endpoints.ts`; the first line of `performProviderSearch` in `search.ts`.
+
+## 2026-11-02 - TinyFish web search provider (senpi#5485, PR #5493)
+
+### What changed
+
+- `websearch/providers/tinyfish.ts` (new): GET `https://api.search.tinyfish.ai` with `X-API-Key` and `query`; domain filters map to the API's native `include_domains` / `exclude_domains` params. The result count is clamped to 1..20; the provider requests `num_results=min(count,10)` per page and paginates `page=0..` until the requested count is met, a page comes back short, or ten pages have been read. Results deduplicate by URL; `site_name` falls back into the title; entries without a URL are dropped.
+- `websearch/providers/shared.ts`: an optional `ProviderModule.nextPage` hook — a paginating provider builds its next page's request, and `undefined` stops pagination.
+- `websearch/search.ts`: the search executor follows `nextPage` across pages, accumulating results deduplicated by URL until `maxResults`. Providers without `nextPage` run exactly as before.
+- `websearch/types.ts`, `provider-endpoints.ts`, `providers.ts`, `config.ts`: `tinyfish` joins the provider union, the default endpoint table, the module registry and the accepted provider list. An entry requires `apiKey`; `DEFAULT_FREE_CONFIG` is unchanged (TinyFish is never in the no-config default chain).
+- `docs/web-search.md`: `tinyfish` in the api-key provider list plus a short paragraph on the paging behavior.
+- Covered by `test/suite/websearch-tinyfish-provider.test.ts` (fetch stubbed per test; recorded JSON payloads inline).
+
+### Why
+
+- TinyFish is a search API a user can have a key for; listing it in `websearch.json` adds it to the routing chain. Port of the TinyFish adapter as one of the provider ports tracked in senpi#5485.
+
+### Why an extension could not handle it
+
+- The standalone provider chain, its routing state and pagination are built in code; a shipped provider is a registry entry plus a module, not something an extension can register.
+
+### Expected merge conflict zones
+
+- LOW: `websearch/types.ts` union, `provider-endpoints.ts` endpoint table, `providers.ts` module map and `config.ts` provider list — every provider port appends one line to each, so parallel ports conflict in the same four places.
+- LOW: `docs/web-search.md` provider list and the new paragraph.
+
+## 2026-11-02 - OpenRouter web-plugin grounding provider (senpi#5492)
+
+### What changed
+
+- `websearch/providers/openrouter.ts` (new): POSTs `{model, plugins: [{id: "web", max_results}], messages: [{role: "user", content: query}]}` to `<baseUrl>/chat/completions` with `Authorization: Bearer <apiKey>`; `baseUrl` is the API root (default `https://openrouter.ai/api/v1`) so the path is appended once, `max_results` is clamped to 1-50, and results come only from `choices[0].message.annotations[].url_citation` entries with an absolute http(s) URL, deduplicated per page with the citation excerpt as the snippet.
+- `websearch/types.ts`, `provider-endpoints.ts`, `providers.ts`, `config.ts`: `openrouter` joins the provider union, the default-endpoint table, the module map and the accepted provider list; an entry requires `model` as well as `apiKey` (`invalid_config` when the model is missing).
+- `websearch/providers/shared.ts`: `httpUrl` moves here from `keenable.ts` and is shared by both providers.
+- `docs/web-search.md`: an opt-in OpenRouter section and `openrouter` in the api-key provider list.
+- Covered by `test/suite/websearch-openrouter-provider.test.ts` with recorded bodies under `test/fixtures/websearch/`.
+
+### Why
+
+- OpenRouter exposes model-agnostic web grounding through its `web` plugin, so a user with OpenRouter credits can search with the model they already pay for.
+- An answer that came back without `url_citation` annotations is no search result at all: the response still carries an answer, so mapping it to zero results (an attempt error) rather than to sources is what keeps invented URLs out of citations (senpi#2337).
+
+### Why an extension could not handle it
+
+- The standalone provider chain, its routing state, cooldowns and `/websearch status` surface are built in code; a shipped provider is a registry entry plus a module, not something an extension can register.
+
+### Expected merge conflict zones
+
+- LOW: `websearch/types.ts` union, `provider-endpoints.ts` endpoint table, `providers.ts` module map and `config.ts` provider list — every provider port appends one line to each, so parallel ports conflict in the same four places.
+- LOW: `docs/web-search.md` provider list and the new section.
+
+## 2026-11-02 - Firecrawl web search provider, keyed and keyless (senpi#5485)
+
+### What changed
+
+- `websearch/providers/firecrawl.ts` (new): POSTs `{query, limit, sources: [{type: "web"}]}` to `https://api.firecrawl.dev/v2/search`, with `Authorization: Bearer <apiKey>` when `apiKey` is configured and no credential at all when it is not. `limit` is clamped to 1-100, and domain filters fold into the query as `site:`/`-site:` terms like the other query-operator providers. Results are read from `data.web[]`, a flat `data[]` or `results[]`; the snippet is `description`, then `snippet`, then `markdown`, a missing title falls back to the URL, a row without a URL is dropped, and a `success: false` payload reports its `error` instead of an empty result set.
+- `websearch/types.ts`, `provider-endpoints.ts`, `providers.ts`, `config.ts`: `firecrawl` joins the provider union, the default endpoint table, the module registry and `PROVIDERS`/`KEYLESS_PROVIDERS`. Keyless means `websearch.json` may list it without `apiKey`, and a block cools it down like the other keyless engines; it is deliberately not in `DEFAULT_FREE_CONFIG`. A `baseUrl` on the entry is the full endpoint URL and stays behind `isAllowedProviderBaseUrl`.
+- Covered by `test/suite/websearch-firecrawl-provider.test.ts` with `test/fixtures/websearch/firecrawl-search-results.json`.
+
+### Why
+
+- Firecrawl answers `/v2/search` without a key, so a session with no search credential can use it, and a keyed entry raises the limit. oh-my-pi ships the provider; senpi had no module for it (senpi#5485).
+
+### Why an extension could not handle it
+
+- The provider registry, the `SearchProvider` union and config validation are private to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: one line per provider in `types.ts`, `config.ts` `PROVIDERS`/`KEYLESS_PROVIDERS`, `provider-endpoints.ts`, `providers.ts`.
+
+## 2026-11-02 - Parallel provider: keyless public MCP plus keyed beta Search API (senpi#5485)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/parallel.ts`: new provider. A keyless entry calls `web_search` over JSON-RPC at `https://search.parallel.ai/mcp` with `objective` plus `search_queries` (domain filters folded in as `site:`/`-site:`) and sends no session or model identifier. A keyed entry posts to `https://api.parallel.ai/v1beta/search` with `x-api-key` and `parallel-beta: search-extract-2025-10-10`, `mode: "fast"`, `excerpts.max_chars_per_result: 10000`, and domain filters in `source_policy` (`include_domains`, or `exclude_domains` without an allow list). Both envelopes normalize to the shared result shape, and an MCP `isError` tool result becomes a search error.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/types.ts`, `config.ts`, `providers.ts`, `provider-endpoints.ts`: `parallel` added to the provider union, `PROVIDERS`, `KEYLESS_PROVIDERS`, `PROVIDER_MODULES` and the default endpoint map. `DEFAULT_FREE_CONFIG` unchanged.
+
+### Why
+
+Parallel's search is available without a credential through its public MCP server, so the engine can join the keyless set, while a configured key gets the beta Search API's own filters and excerpt budget.
+
+### Why an extension could not handle it
+
+The provider modules and the keyless registry are this extension's own tables.
+
+### Expected merge conflict zones
+
+The provider union and the provider/endpoint maps, which every provider port appends to; `docs/web-search.md` free-engine list.
+
+## 2026-11-02 - Synthetic web search provider (senpi#5489)
+
+### What changed
+
+- `websearch/providers/synthetic.ts` (new): POSTs `{query}` to `https://api.synthetic.new/v2/search` with `Authorization: Bearer <apiKey>`. The API has no result-count or filter fields, so `allowedDomains`/`blockedDomains` fold into the query as `site:`/`-site:` terms via `appendDomainFilters`, and the search runner slices results to `maxResults` locally. Response `results[]` normalize `title` (falling back to `url`), `text` into `snippet` and `published` into `publishedAt`; entries without a URL are dropped.
+- `websearch/types.ts`, `provider-endpoints.ts`, `providers.ts`, `config.ts`: `synthetic` joins the provider union, the default endpoint table, the module registry and `PROVIDERS`. It is not keyless: config validation requires `apiKey`.
+- Covered by `test/suite/websearch-synthetic-provider.test.ts`.
+
+### Why
+
+- Synthetic is a zero-data-retention search API aimed at coding agents; a configured key adds it as a `websearch.json` route.
+
+### Why an extension could not handle it
+
+- The provider registry and config validation are private to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: one line per provider in `types.ts`, `config.ts` `PROVIDERS`, `provider-endpoints.ts`, `providers.ts`.
+
+## 2026-11-02 - Jina Reader joins the web search providers (senpi5488)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/jina.ts` (new): `GET https://s.jina.ai/<encoded query>?count=<n>` with a bearer `apiKey`, `Accept: application/json`, `X-Respond-With: no-content` and `X-Retain-Images: none`; `count` clamps to 1..20; exactly one allowed domain becomes the host-only `X-Site` header while multiple or blocked domains stay `site:`/`-site:` query terms; the `data[]` envelope normalizes to title/url/snippet and an in-body failure `code` is reported as the provider error.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/types.ts`, `config.ts`, `provider-endpoints.ts`, `providers.ts`: `jina` joins the provider union, the config provider list (`apiKey` required), the default endpoint map and the module registry. Every edit appends; `KEYLESS_PROVIDERS` and `DEFAULT_FREE_CONFIG` are unchanged.
+
+### Why
+
+- Port of oh-my-pi's `packages/coding-agent/src/web/search/providers/jina.ts`, so a Jina Reader key can serve `web_search` from senpi.
+
+### Why an extension could not handle it
+
+- The provider union, config validation, default endpoint map and module registry are the builtin websearch extension's own tables; a user extension cannot add a provider id.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `PROVIDER_MODULES` in `providers.ts`, the `SearchProvider` union in `types.ts`, `PROVIDERS` in `config.ts` and `DEFAULT_PROVIDER_URLS` in `provider-endpoints.ts` (all appended, no reordering).
+
+## 2026-11-02 - Ollama Cloud web search provider (senpi#5485)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/ollama.ts` (new, ported from oh-my-pi's `packages/coding-agent/src/web/search/providers/ollama.ts`): POSTs `{query, max_results (clamped to 1..10)}` to `https://ollama.com/api/web_search` with `Authorization: Bearer <apiKey>`. `allowedDomains`/`blockedDomains` fold into the query as `site:`/`-site:` terms via `appendDomainFilters` (the upstream adapter passes `site:` operators through in the query the same way). Response `results[]` map `content` into the snippet and fall back to the URL when `title` is missing; entries without a string URL are dropped.
+- `websearch/types.ts`, `provider-endpoints.ts`, `providers.ts`, `config.ts`: `ollama` joins the provider union, the default endpoint table, the module registry and `PROVIDERS`. It requires `apiKey` (not in `KEYLESS_PROVIDERS`), so a `websearch.json` entry without one fails config validation.
+- Covered by `test/suite/websearch-ollama-provider.test.ts`.
+
+### Why
+
+- Ollama Cloud offers a hosted web search API; senpi#5485 ports the provider from oh-my-pi so keyed configs can route searches to it.
+
+### Why an extension could not handle it
+
+- The provider registry and config validation are private to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: one line per provider in `types.ts`, `config.ts` `PROVIDERS`, `provider-endpoints.ts`, `providers.ts`.
+
+## 2026-10-26 - Google grounding default leaves retired gemini-2.5-flash (senpi#4340)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/google.ts`: the Google grounding `DEFAULT_MODEL` is now the catalog GA alias `gemini-flash-latest` (exported for the contract test); entry-level `model` overrides unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/google.ts`: `gemini-2.5-flash` is retired for new accounts (404 NOT_FOUND); every unconfigured websearch google entry inherited it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/google.ts`: the default is the builtin provider module's own constant.
+
+### Expected merge conflict zones
+
+- LOW: `DEFAULT_MODEL` in the websearch google provider.
+
+## 2026-10-11 - Preserve intentional empty main-turn tool arrays (senpi#3125 delta)
+
+### What changed
+
+- `server-search.ts` rewrites a non-Moonshot request's top-level tools only when the Moonshot filter removes a declaration. Unchanged payloads, including intentional `tools: []` with tool history, retain their original reference and array.
+
+### Why
+
+- The Completions adapter deliberately supplies an empty array for LiteLLM-style proxies when history contains tool calls or results. Sanitizing an unrelated provider tool must not erase that contract.
+
+### Why an extension could not handle it
+
+- This extension owns the cross-route Moonshot sanitizer that removed the array.
+
+### Expected merge conflict zones
+
+- `serverSearchPayload` top-level Moonshot declaration filtering.
+
+## 2026-10-11 - Narrow auxiliary exclusion and track the failed request model (senpi#3125 delta)
+
+### What changed
+
+- `index.ts` records native-search failures against the model identified by the assistant response and its actual request, not an unrelated selected session model.
+- `server-search.ts` separates disabled server-tool exclusion from fallback, preserves client `web_search`, omits empty tools arrays, and shares Moonshot declaration/choice detection.
+
+### Why
+
+- Auxiliary requests must not lose client tools or acquire invalid empty arrays. Model-fallback requests must not poison another model's session memory.
+
+### Why an extension could not handle it
+
+- This extension owns native routing and failure memory.
+
+### Expected merge conflict zones
+
+- Request/response model matching and payload tool filtering.
+
+## 2026-10-11 - Review: isolate and evidence-gate server search (senpi#3122)
+
+### What changed
+
+- `index.ts`: `$web_search` cannot be lazily activated and is active only on an explicitly opted-in Moonshot route. Search failures persist per session/model across prompts and model switches, and a new session clears them.
+- `server-search.ts`: Gemini, OpenRouter, retiring Moonshot, Z.AI and Sonar native-bypass routing require explicit opt-in. Non-Moonshot declarations and choices lose `$web_search`, including when no server search is enabled.
+- Fallback preserves adapter-built function schemas; Gemini keeps its existing single function-declaration entry. Search-disabled summary/title/projection payloads never acquire native tools.
+- Official route documentation distinguishes held live proof from failed probes and doc-only support. A different `nativeModel` is ignored on enabled server-search routes.
+
+### Why
+
+- A documented tool is not live evidence, and a provider-only echo tool must not enter another API's tool catalog or request.
+
+### Why an extension could not handle it
+
+- The existing websearch extension owns tool registration, routing, and fallback.
+
+### Expected merge conflict zones
+
+- Tool registration, native bypass, payload tool filtering, and lifecycle hooks.
+
+## 2026-10-11 - Server search before auxiliary search models (senpi#3122)
+
+### What changed
+
+- CI follow-up: `index.ts` registers the Moonshot echo tool as search-exposed so it stays inactive before session binding, and declares a read-only `before_agent_start` preview path so prewarm and keep-alive retain the exact turn prefix. `../moved-path-guard/tool-classes.ts` classifies the echo tool as path-free. The status-label fixture supplies the active-tool API used by route selection.
+- `server-search.ts` declares API-specific server tool shapes with official documentation references, restores the function search tool on a failed native turn, and detects search-specific request/result errors without treating cancellation or unrelated provider failures as search failures.
+- `index.ts` defers the standalone tool on eligible routes, records one fallback reason, and uses the existing `agent_settled` continuation once when core retry does not already own the continuation. Moonshot's documented built-in flow echoes generated search arguments without another HTTP request; its tool is active only on the matching route.
+- `websearch/search-model.ts` keeps eligible routes on their session model. Cheaper auxiliary defaults and settings remain available on no-server routes.
+- Focused payload, extension and real AgentSession regressions cover native-first dispatch, restored fallback, cancellation, retry ownership and next-prompt reset.
+- Review follow-ups keep completed answers from receiving duplicate continuations, reject unrelated auth/quota/function-schema errors, and mark fallback payloads with non-serialized request metadata so native injectors cannot re-enable search regardless of handler order.
+- Gemini 2/3 attempt their documented grounding tool first; an explicit mixed-tool rejection falls back once rather than assuming before the request that server search is unavailable.
+
+### Why
+
+- Requested by @code-yeongyu: the active model should search in its main request when the provider supports a server tool, rather than routing that work through a cheaper auxiliary model.
+
+### Why an extension could not handle it
+
+- These are the existing built-in native and standalone search extensions; their shared routing state must agree.
+
+### Expected merge conflict zones
+
+- `index.ts` registration and native bypass; `websearch/native.ts` metadata interface and `websearch/search-model.ts` default selection.
+- Senpi PR #3118 independently changes auxiliary session headers in `websearch/native.ts`; this change adds capability metadata only and does not replace that fix.
+
 ## 2026-10-05 - Keenable web search provider, keyed and keyless-public
 
 ### What changed

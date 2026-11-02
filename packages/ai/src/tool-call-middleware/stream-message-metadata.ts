@@ -5,21 +5,11 @@ function cloneUsage(usage: Usage): Usage {
 	return { ...usage, cost: { ...usage.cost } };
 }
 
+// The legacy projection stays byte-identical to its parent, which never carried the token splits. Everything else on
+// usage, including flags added later such as `costUnknown` (senpi#3844), is copied whole so it cannot be dropped.
 function cloneLegacyUsage(usage: Usage): Usage {
-	return {
-		input: usage.input,
-		output: usage.output,
-		cacheRead: usage.cacheRead,
-		cacheWrite: usage.cacheWrite,
-		totalTokens: usage.totalTokens,
-		cost: {
-			input: usage.cost.input,
-			output: usage.cost.output,
-			cacheRead: usage.cost.cacheRead,
-			cacheWrite: usage.cost.cacheWrite,
-			total: usage.cost.total,
-		},
-	};
+	const { cacheWrite1h: _cacheWrite1h, reasoning: _reasoning, ...rest } = usage;
+	return { ...rest, cost: { ...usage.cost } };
 }
 
 function cloneLegacyMessage(source: AssistantMessage, content: AssistantMessage["content"]): AssistantMessage {

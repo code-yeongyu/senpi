@@ -271,6 +271,7 @@ it("emits session_parked instead of session_closed when a retained session hits 
 		type: "session_parked",
 		sessionId: session.sessionId,
 		sessionPath: session.state.sessionFile,
+		reason: "idle",
 	});
 	expect(rig.records().filter((record) => record.type === "session_closed")).toEqual([]);
 });

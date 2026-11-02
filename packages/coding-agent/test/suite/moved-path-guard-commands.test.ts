@@ -84,7 +84,7 @@ describe("moved-path-guard: commands, patches, and nested calls (#2898)", () => 
 		["absolute", (layout) => `mkdir -p ${layout.oldWorktree}/src`],
 		["~", () => "mkdir -p ~/.t3/worktrees/app/w1/src && echo ok"],
 		["$HOME", () => 'touch "$HOME/.t3/userdata/omo-sessions/x.jsonl"'],
-		// biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell text the guard must read.
+		// oxlint-disable-next-line eslint/no-template-curly-in-string -- literal shell text the guard must read.
 		["${HOME}", () => "cd ${HOME}/.t3/worktrees/app/w1; ls"],
 		["%USERPROFILE%", () => "echo hi > %USERPROFILE%\\.t3\\worktrees\\app\\w1\\a.txt"],
 	];

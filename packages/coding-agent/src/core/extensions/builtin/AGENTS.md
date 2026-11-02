@@ -13,7 +13,7 @@
 | 5 | `gpt-apply-patch` | `gpt-apply-patch/` | Codex-style `apply_patch` tool with rich render + freeform grammar |
 | 6 | `imagegen` | `imagegen/` | Client-side image generation tool plus the bundled `skill/` guidance and shared auth/state used by the native lane |
 | 7 | `openai-image-gen` | `openai-image-gen/` | OpenAI-native image generation; follows `imagegen` so the native injector's bypass wiring observes the registered client tool |
-| 8 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, gpt-6-astra, claude-fable-5, claude-fable-5-1, claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-haiku-5-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, deepseek-v4-1-flash, grok-4.{5,6}, kimi-k2-{6,7,8}, kimi-k3) |
+| 8 | `prompt-preset` | `prompt-preset/` | Per-model system prompts (gpt-5.x, gpt-6-astra, claude-fable-5, claude-fable-5-1, claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-haiku-5-5, claude-opus-4-{5,6,7,8}, glm-5.2, glm-5.3, deepseek-v4-{flash,flash-0731,pro}, deepseek-v4-1-flash, grok-4.{5,6,7}, kimi-k2-{6,7,8}, kimi-k3, gemini-4-argon) |
 | 9 | `todowrite` | `todotools/` | Op-based oh-my-pi todo port + `/todo` command; fully diverged from `../pi-extensions/pi-todotools` |
 | 10 | `redraws` | `redraws.ts` | `/tui` full-redraw count diagnostic |
 | 11 | `anthropic-web-search` | `anthropic-web-search/` | Anthropic-native web search tool |
@@ -24,7 +24,7 @@
 | 16 | `model-fallback` | `model-fallback/` | Fallback-chain validation + `/model-fallback` menu, `--no-model-fallback` flag (uses `core/retry-fallback/`) |
 | 17 | `recommended-models` | `recommended-models/` | Auto-switches implicit default models to recommended ones; respects explicit `settings` provenance; `--no-recommended-models` |
 | 18 | `bash-timeout` | `bash-timeout/` | Bash tool timeout + handlers |
-| 19 | `terminal` | `terminal/` | Persistent PTY-backed bash + bash_output/bash_input/bash_resize/kill_bash tools; follows bash-timeout (default reaches PTY bash) and anthropic-bash (mutual-exclusion step-aside) |
+| 19 | `terminal` | `terminal/` | Persistent PTY-backed bash + bash/bash_output/kill_bash/monitor tools (bash_input and bash_resize are search-exposed and activate on their first call); follows bash-timeout (default reaches PTY bash) and anthropic-bash (mutual-exclusion step-aside) |
 | 20 | `tool-pair-guard` | `tool-pair-guard/` | Repairs orphaned tool_use/tool_result pairs (compaction safety) |
 | 21 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
 | 22 | `history-search` | `history-search/` | Cross-session transcript search overlay (indexes session files) |

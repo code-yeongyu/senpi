@@ -2,6 +2,7 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync } from "node:f
 import { createConnection, type Socket } from "node:net";
 import { join, win32 } from "node:path";
 import { debuglog } from "node:util";
+import { APP_COMMAND } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import {
 	isTerminalMonitorStateEvent,
@@ -131,11 +132,14 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 				void publish();
 			}, 4000);
 			poll.unref();
-			await Promise.all([
-				reportTitle(ctx),
-				send("pane.report_agent_session", { agent: "pi", ...sessionRef(), session_start_source: _event.reason }),
-				publish(),
-			]);
+			// Herdr accepts a resume command only after this reporter holds the pane.
+			await Promise.all([reportTitle(ctx), publish()]);
+			await send("pane.report_agent_session", {
+				agent: "pi",
+				...sessionRef(),
+				resume_argv: [APP_COMMAND, "--session", bound.getSessionFile() ?? bound.getSessionId()],
+				session_start_source: _event.reason,
+			});
 		});
 		pi.on("session_info_changed", (_event, ctx) => {
 			if (owns(ctx)) return reportTitle(ctx);

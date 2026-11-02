@@ -45,6 +45,8 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 	 * (for example `-fast` priority-tier variants aliasing their base model).
 	 */
 	upstreamModelId?: string;
+	/** True when the upstream catalog marks this model deprecated; it stays usable until it is removed upstream. */
+	deprecated?: boolean;
 	/** Service tier requested by default for this model (for example `-fast` variants). */
 	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	/** Whether to recover supported text-encoded tool calls from assistant text. */
@@ -57,7 +59,7 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 	 * probe; `modelSupportsAssistantPrefill` also applies the request settings.
 	 */
 	supportsAssistantPrefill?: boolean;
-	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
+	/** API compatibility overrides. Hosted search on unverified routes requires explicit opt-in. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
 		: TApi extends "openai-responses" | "openai-codex-responses" | "azure-openai-responses"
@@ -72,7 +74,14 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 							? CursorAgentCompat
 							: TApi extends "devin-agent"
 								? DevinAgentCompat
-								: never;
+								: TApi extends "google-generative-ai" | "google-vertex"
+									? GoogleCompat
+									: never;
+}
+
+export interface GoogleCompat {
+	/** Opt in to Google Search grounding, including mixed function-tool requests. */
+	supportsWebSearch?: boolean;
 }
 
 /** Devin (Cascade) model metadata the transport branches on. */

@@ -290,7 +290,11 @@ describe("durable monitor admission control", () => {
 			seen.push(monitor.monitorId);
 			return { outcome: "restored" as const };
 		};
-		const handlers: RestoreHandlers = { "restartable-command": handler, "checkpointed-file": handler };
+		const handlers: RestoreHandlers = {
+			"restartable-command": handler,
+			"checkpointed-file": handler,
+			"checkpointed-rpc": handler,
+		};
 
 		const digest = await restoreTerminalState({ manifest: harness.writer.store, handlers, now: () => now });
 
@@ -323,6 +327,7 @@ describe("durable monitor admission control", () => {
 				maxLinesPerInjection: 50,
 				maxCharsPerInjection: 4096,
 				wakeBudget: 1,
+				wakesPerHour: 12,
 			}),
 			pauseMonitors: (ids) => first.registry.pause(ids),
 			scheduler,

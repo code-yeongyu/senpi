@@ -44,7 +44,7 @@ const RUNTIME_SPECIFIER = "runtime";
 // Inside a `bun build --compile` binary the shim has no on-disk path (import.meta.url is a
 // $bunfs URL), so the file route is only available when the file is really there; the compiled
 // binary keeps the virtual module, which it never had a problem with.
-const runtimeModulePath = resolveRuntimeModulePath();
+export const runtimeModulePath = resolveRuntimeModulePath();
 
 function resolveRuntimeModulePath(): string | undefined {
 	try {
@@ -110,6 +110,9 @@ function metadata(generation: string, filename: string) {
 		url: pathToFileURL(filename).href,
 		path: filename,
 		dir: dirname(filename),
+		// Node (>= 20.11) and Bun both expose these; dependencies read them to find bundled assets (#4766).
+		filename,
+		dirname: dirname(filename),
 		require,
 		commonJs: (body: CommonJsBody) => graphFor(generation).evaluateCommonJs(filename, body),
 		import: async (specifier: string, options?: ImportCallOptions) =>

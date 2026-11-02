@@ -13,8 +13,8 @@ const JPEG = "/9j/4A==";
 const GIF = "R0lGODlh";
 const WEBP = "UklGRgAAAABXRUJQ";
 
-const NOT_BASE64 = "[display: image dropped \u2014 the image data is not valid base64 (truncated or corrupted?)]";
-const NOT_AN_IMAGE = "[display: image dropped \u2014 the image data is not a PNG, JPEG, GIF, or WebP image]";
+const NOT_BASE64 = "[display: image dropped - the image data is not valid base64 (truncated or corrupted?)]";
+const NOT_AN_IMAGE = "[display: image dropped - the image data is not a PNG, JPEG, GIF, or WebP image]";
 
 function isImagePart(part: ToolContent): part is ImagePart {
 	return part.type === "image";

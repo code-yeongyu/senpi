@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { emitSessionShutdownEvent } from "../../../src/core/extensions/runner.ts";
@@ -32,7 +33,11 @@ async function within<T>(promise: Promise<T>, label: string): Promise<T> {
 	}
 }
 
-function parseBody(raw: unknown): Body {
+function parseBody(init: RequestInit): Body {
+	const raw = init.body;
+	if (new Headers(init.headers).get("content-encoding") === "gzip") {
+		return JSON.parse(gunzipSync(raw as Uint8Array).toString("utf8")) as Body;
+	}
 	const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw as ArrayBuffer);
 	return JSON.parse(text) as Body;
 }
@@ -117,7 +122,7 @@ describe("cache keep-alive ping matches the turn's tools (#2389)", () => {
 		vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = input instanceof Request ? input.url : String(input);
 			if (url.startsWith("https://api.anthropic.com/") && init?.body !== undefined) {
-				const body = parseBody(init.body);
+				const body = parseBody(init);
 				if (body.stream === true) {
 					turns.push(body);
 					return turnResponse();
@@ -144,6 +149,10 @@ describe("cache keep-alive ping matches the turn's tools (#2389)", () => {
 			expect(toolsIgnoringCacheControl(ping).length).toBeGreaterThan(0);
 			expect(toolsIgnoringCacheControl(ping)).toEqual(
 				turn === undefined ? undefined : toolsIgnoringCacheControl(turn),
+			);
+			// senpi#4446: deferred builtins ride the ping as the same defer_loading entries the turn sent.
+			expect(toolsIgnoringCacheControl(ping)).toContainEqual(
+				expect.objectContaining({ name: "show_html_page", defer_loading: true }),
 			);
 		} finally {
 			await emitSessionShutdownEvent(session.extensionRunner, { type: "session_shutdown", reason: "quit" });

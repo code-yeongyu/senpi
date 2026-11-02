@@ -51,7 +51,7 @@ export interface Harness {
 	cleanup: () => void;
 }
 
-export function makeHarness(tempDir: string): Harness {
+export function makeHarness(tempDir: string, options: { readonly modelsJsonPath?: string } = {}): Harness {
 	const model = getModel("anthropic", "claude-sonnet-4-5");
 	if (!model) throw new Error("model not found");
 	const agent = new Agent({
@@ -71,7 +71,7 @@ export function makeHarness(tempDir: string): Harness {
 	const authPath = join(tempDir, "auth.json");
 	const authStorage = AuthStorage.create(authPath);
 	authStorage.setRuntimeApiKey("anthropic", "test-key");
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	const modelRegistry = ModelRegistry.create(authStorage, options.modelsJsonPath ?? tempDir);
 	const session = new AgentSession({
 		agent,
 		sessionManager,

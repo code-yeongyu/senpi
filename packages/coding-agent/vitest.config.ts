@@ -1,9 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
+import { quarantineVitestAgentDir } from "../../scripts/vitest-agent-dir-quarantine.mjs";
 import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
 
 const aiSrcProviderScope = fileURLToPath(new URL("../ai/src/node/provider-scope.ts", import.meta.url));
 const ptySrcIndex = fileURLToPath(new URL("../pty/src/index.ts", import.meta.url));
+
+quarantineVitestAgentDir();
 
 export default mergeConfig(
 	baseConfig,
@@ -12,7 +15,11 @@ export default mergeConfig(
 			globals: true,
 			environment: "node",
 			testTimeout: 30000,
-			setupFiles: ["./test/setup.ts"],
+			globalSetup: ["./test/helpers/source-compile-cache-global-setup.ts"],
+			setupFiles: [
+				fileURLToPath(new URL("../../scripts/vitest-temp-setup.ts", import.meta.url)),
+				"./test/setup.ts",
+			],
 			// test/manual-qa/ holds real-surface QA drivers, not default-suite tests (test/AGENTS.md).
 			// Run one explicitly with SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/<file>.
 			exclude: [...configDefaults.exclude, ...(process.env.SENPI_MANUAL_QA ? [] : ["test/manual-qa/**"])],
@@ -24,13 +31,13 @@ export default mergeConfig(
 			silent: "passed-only",
 			// Cap fork concurrency when CI is set. This suite's subprocess-lifecycle tests
 			// (MCP keep-alive/ping-on-call fixtures, the default-on terminal PTY builtin,
-			// and the app-server daemon/websocket listeners) each spawn several real child
+			// and the Native RPC daemon listeners) each spawn several real child
 			// processes. On the 4-vCPU GitHub runner, running these in parallel oversubscribes
 			// CPU/IO and — worse in the release publish job — leaves child processes unreaped
 			// long enough that the forks pool cannot exit, hanging the whole `npm test` step
 			// (observed: coding-agent RUN never summarizes, orphan senpi/esbuild processes).
 			// The same oversubscription flakes the local owner release, whose parallel forks
-			// contend with the release build for CPU (app-server spawn timeouts, perf-bound
+			// contend with the release build for CPU (daemon spawn timeouts, perf-bound
 			// and race-control tests). A per-test timeout cannot fix a pool-shutdown hang.
 			// Cap the forks pool to two workers whenever `CI` is set — GitHub Actions sets it,
 			// and `scripts/release.mjs` sets it for its test gate so the local release
@@ -52,6 +59,7 @@ export default mergeConfig(
 		},
 		resolve: {
 			alias: [
+				{ find: /^@code-yeongyu\/senpi$/, replacement: workspaceSourcePaths.codingAgentIndex },
 				{ find: /^@earendil-works\/pi-ai\/node\/provider-scope$/, replacement: aiSrcProviderScope },
 				{ find: /^@earendil-works\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
 				{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },

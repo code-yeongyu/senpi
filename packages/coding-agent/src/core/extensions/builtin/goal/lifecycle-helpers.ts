@@ -18,8 +18,8 @@ import {
 	CONTINUATION_CAP_BLOCKED_REASON,
 	continuationCapRecoveryHint,
 	LENGTH_EXHAUSTED_BLOCKED_REASON,
+	NO_PROGRESS_BLOCKED_REASON,
 	REPETITION_BLOCKED_REASON,
-	UNATTENDED_CONTINUATION_BLOCKED_REASON,
 } from "./continuation-recovery.ts";
 import { buildContinuationPrompt } from "./prompt.ts";
 import { recordContinuationDelivered, recordGoalContinuationStopped } from "./store.ts";
@@ -28,6 +28,9 @@ import { openTodoTaskContents } from "./todo-gate.ts";
 import type { Goal } from "./types.ts";
 
 type ContinuingGoalContinuationVerdict = Extract<GoalContinuationVerdict, { kind: "continue" }>;
+
+export const GOAL_STALE_STOP_NOTICE =
+	"Goal auto-continuation stopped because progress is stale. Send a message or run /goal resume to continue.";
 
 type GoalContinuationDeliveryOptions = {
 	readonly input: Omit<GoalContinuationInput, "goal">;
@@ -74,6 +77,10 @@ export async function admitAndQueueGoalContinuation(
 	goal: Goal,
 	options: GoalContinuationDeliveryOptions,
 ): Promise<Goal | null> {
+	if (goal.status === "active" && ctx.engineTurnsHeld?.()) {
+		ctx.noteHeldWake?.("goal");
+		return goal;
+	}
 	const verdict = evaluateGoalContinuation({ goal, ...options.input });
 	if (verdict.kind === "deny") return handleDeniedContinuation(pi, ctx, goal, options.input, verdict.reason);
 
@@ -195,6 +202,7 @@ async function handleDeniedContinuation(
 	);
 	if (!stopped.recorded) return stopped.goal;
 	// Preserve the guard's existing side effects even if publishing the additive entries fails.
+	if (reason === "stale" && ctx.hasUI) ctx.ui.notify(GOAL_STALE_STOP_NOTICE, "info");
 	if (blockedReason !== undefined) {
 		if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
 		pi.events?.emit("goal_continuation_guard_tripped", {
@@ -202,6 +210,7 @@ async function handleDeniedContinuation(
 			reason,
 			count: input.consecutiveContinuations,
 			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			noProgressContinuations: goal.noProgressContinuations ?? 0,
 		});
 	}
 	try {
@@ -210,6 +219,7 @@ async function handleDeniedContinuation(
 			reason,
 			consecutiveContinuations: input.consecutiveContinuations,
 			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			noProgressContinuations: goal.noProgressContinuations ?? 0,
 			at,
 		});
 	} catch (error) {
@@ -245,8 +255,8 @@ function blockedReasonForContinuationGuard(
 	switch (reason) {
 		case "cap":
 			return CONTINUATION_CAP_BLOCKED_REASON;
-		case "unattended":
-			return UNATTENDED_CONTINUATION_BLOCKED_REASON;
+		case "no-progress":
+			return NO_PROGRESS_BLOCKED_REASON;
 		case "repetition":
 			return REPETITION_BLOCKED_REASON;
 		case "length-exhausted":

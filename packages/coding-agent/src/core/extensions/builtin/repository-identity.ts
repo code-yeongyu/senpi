@@ -21,7 +21,7 @@ export function createRepositoryIdentityExtension(run?: GitRunner) {
 			const identity = await readRepositoryIdentity(ctx.cwd, run);
 			if (current !== generation || identity === undefined) return;
 			if (sameRepositoryIdentity(latestRecordedIdentity(ctx.sessionManager), identity)) return;
-			pi.appendEntry(REPOSITORY_IDENTITY_ENTRY_TYPE, identity);
+			pi.appendEntry(REPOSITORY_IDENTITY_ENTRY_TYPE, identity, { startupBookkeeping: true });
 		});
 
 		pi.on("session_shutdown", () => {

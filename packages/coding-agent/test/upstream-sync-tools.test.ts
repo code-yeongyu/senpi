@@ -228,7 +228,7 @@ describe("bash output callback failures settle the tool promise", () => {
 	});
 });
 
-describe("write results carry the patch the app-server diff notification needs", () => {
+describe("write results carry reproducible file-change patches", () => {
 	it("reports an add whose patch reproduces the bytes on disk", async () => {
 		const cwd = createTempDir("senpi-l4-write-add-");
 		const target = join(cwd, "created.txt");

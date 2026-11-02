@@ -18,7 +18,35 @@ import type {
 import { isComponent, ToolRendererBoundary } from "./tool-renderer-boundary.ts";
 
 type RenderContainer = Box | Container;
+
+/**
+ * The built-in renderers, one set per working directory. Each card used to build all nine tool
+ * definitions and keep its own copy of one, descriptions included, for the rest of the session (#2537).
+ * Deliberately unbounded: a session renders cards for a handful of working directories at most.
+ */
+const builtInDefinitionsByCwd = new Map<string, Record<ToolName, ToolRenderers>>();
+
+function builtInDefinitionsFor(cwd: string): Record<ToolName, ToolRenderers> {
+	let definitions = builtInDefinitionsByCwd.get(cwd);
+	if (definitions === undefined) {
+		definitions = createAllToolDefinitions(cwd);
+		builtInDefinitionsByCwd.set(cwd, definitions);
+	}
+	return definitions;
+}
 type RendererSlot = "call" | "result";
+
+/** What a released renderer keeps instead of its last render state; `update` sets the real one before any paint. */
+const RELEASED_STATE: ToolExecutionRenderState = {
+	args: undefined,
+	executionStarted: false,
+	argsComplete: false,
+	isPartial: false,
+	expanded: false,
+	showImages: false,
+	spinnerFrame: 0,
+	result: undefined,
+};
 
 export class ToolExecutionRenderer extends Container {
 	private readonly identity: ToolExecutionIdentity;
@@ -44,7 +72,7 @@ export class ToolExecutionRenderer extends Container {
 		this.state = state;
 		this.onInvalidate = onInvalidate;
 		this.onToggleExpanded = onToggleExpanded;
-		this.builtInDefinition = createAllToolDefinitions(identity.cwd)[identity.toolName as ToolName];
+		this.builtInDefinition = builtInDefinitionsFor(identity.cwd)[identity.toolName as ToolName];
 		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.addChild(
@@ -104,6 +132,18 @@ export class ToolExecutionRenderer extends Container {
 		if (state.result) this.renderResult(container, state.result);
 		if (progress)
 			container.addChild(new Text(formatToolProgressLine(progress, Date.now(), state.spinnerFrame), 0, 0));
+	}
+
+	/** Drops the built call and result content; the next `update` builds it again from state. */
+	releaseContent(): void {
+		this.contentBox.detachAll();
+		this.selfRenderContainer.detachAll();
+		this.contentText.setText("");
+		this.callRendererComponent = undefined;
+		this.resultRendererComponent = undefined;
+		// The last render state held its own filtered copy of the result (about 2 KB per card); the card keeps the
+		// original and passes a fresh state to `update` when it is painted again (#2537).
+		this.state = RELEASED_STATE;
 	}
 
 	private getCallRenderer(): ToolRenderers["renderCall"] {

@@ -99,7 +99,7 @@ async function main() {
 			join(box.agentDir, "models.json"),
 			JSON.stringify({
 				providers: {
-					"openai-codex": {
+					"chatgpt-subscription": {
 						baseUrl,
 						apiKey: codexToken(),
 						api: "openai-codex-responses",
@@ -123,7 +123,7 @@ async function main() {
 		client = new RpcQaClient({
 			env: hermeticEnv(box.env),
 			cwd: box.cwd,
-			extraArgs: ["--provider", "openai-codex", "--model", "gpt-5.6-sol", "--no-extensions"],
+			extraArgs: ["--provider", "chatgpt-subscription", "--model", "gpt-5.6-sol", "--no-extensions"],
 			spawnCli: spawnBunCli,
 		});
 		await client.send({ type: "get_state" }, 60_000);
@@ -137,6 +137,7 @@ async function main() {
 			expectError: false,
 			timeoutMs: 60_000,
 		});
+		const connectionsAfterTurn2 = server.connections();
 
 		const turn3Index = client.events.length;
 		proxy.blackholeAfterUpstreamChunk("response.output_item.added");
@@ -157,12 +158,12 @@ async function main() {
 			turn2.ends.length === 1 &&
 			turn2.ends[0].stopReason === "stop" &&
 			turn2.durationMs < STREAM_START_TIMEOUT_MS &&
-			server.connections() === 2 &&
+			connectionsAfterTurn2 === 2 &&
 			!turn2.ends.some((end) => STREAM_START_PATTERN.test(end.error));
 		checks.ok(
 			"turn 2 opens a fresh connection after the parked socket closed, with no stream-start timeout",
 			turn2Ok,
-			`durationMs=${turn2.durationMs} connections=${server.connections()} ends=${JSON.stringify(turn2.ends)}`,
+			`durationMs=${turn2.durationMs} connections=${connectionsAfterTurn2} ends=${JSON.stringify(turn2.ends)}`,
 		);
 		const livenessError = errorOf(livenessEnd);
 		const livenessAtMs = turn3.ends[0]?.atMs ?? Number.NaN;
@@ -172,11 +173,13 @@ async function main() {
 			livenessAtMs < IDLE_TIMEOUT_MS &&
 			!turn3.ends.some((end) => IDLE_PATTERN.test(end.error)) &&
 			turn3.ends.at(-1)?.stopReason === "stop" &&
-			turn3.text.includes(CODEX_WS_OK_MARKER);
+			turn3.text.includes(CODEX_WS_OK_MARKER) &&
+			// senpi#3442: one mid-stream failure retries on a fresh WebSocket, not SSE.
+			server.ledger.at(-1)?.transport === "websocket";
 		checks.ok(
 			"turn 3 half-open socket is declared dead by liveness inside the idle bound and the retry completes",
 			turn3Ok,
-			`error=${livenessError} atMs=${livenessAtMs} trips=${proxy.trips()} ends=${JSON.stringify(turn3.ends)}`,
+			`error=${livenessError} atMs=${livenessAtMs} trips=${proxy.trips()} retryTransport=${server.ledger.at(-1)?.transport} ends=${JSON.stringify(turn3.ends)}`,
 		);
 		summary = { pass: turn1Ok && turn2Ok && turn3Ok, turn1, turn2, turn3, ledger: server.ledger, events: client.events };
 	} catch (error) {

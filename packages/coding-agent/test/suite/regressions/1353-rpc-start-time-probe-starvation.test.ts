@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { waitForStartTime } from "../../../src/modes/app-server/daemon/process.ts";
+import { waitForStartTime } from "../../../src/utils/process-identity.ts";
 
 /**
  * Regression: PR #1351/#1352 CI failed on Windows with

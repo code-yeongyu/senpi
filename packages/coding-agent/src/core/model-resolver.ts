@@ -17,6 +17,7 @@ import {
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -40,10 +41,10 @@ type ModelScopeSource = ModelRuntime | ModelRegistry | AvailableModelsSource;
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<string, string> = {
 	"alibaba-token-plan": "qwen3.7-max",
-	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
+	"amazon-bedrock": "us.anthropic.claude-opus-5-5",
 	"ant-ling": "Ring-2.6-1T",
-	"anthropic-subscription": "claude-opus-4-8",
-	anthropic: "claude-opus-4-8",
+	"anthropic-subscription": "claude-opus-5-5",
+	anthropic: "claude-opus-5-5",
 	bai: "gpt-5.6-sol",
 	openai: "gpt-6.1-sol",
 	"azure-openai-responses": "gpt-5.4",
@@ -61,7 +62,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"github-copilot": "gpt-5.4",
 	openrouter: "moonshotai/kimi-k2.6",
 	"vercel-ai-gateway": "zai/glm-5.1",
-	opengateway: "moonshotai/kimi-k3",
+	opengateway: "moonshotai/kimi-k3.1-pro",
 	xai: "grok-4.7",
 	groq: "openai/gpt-oss-120b",
 	cerebras: "gpt-oss-120b",
@@ -70,15 +71,15 @@ export const defaultModelPerProvider: Record<string, string> = {
 	mistral: "devstral-medium-latest",
 	minimax: "MiniMax-M2.7",
 	"minimax-cn": "MiniMax-M2.7",
-	moonshotai: "kimi-k2.6",
-	"moonshotai-cn": "kimi-k2.6",
+	moonshotai: "kimi-k3.1-pro",
+	"moonshotai-cn": "kimi-k3.1-pro",
 	huggingface: "moonshotai/Kimi-K2.6",
 	fireworks: "accounts/fireworks/models/kimi-k3",
 	together: "moonshotai/Kimi-K3",
 	venice: "z-ai-glm-5-3",
 	baseten: "zai-org/GLM-5.2",
 	opencode: "kimi-k2.6",
-	"opencode-go": "kimi-k3",
+	"opencode-go": "kimi-k3.1-pro",
 	"kimi-coding": "kimi-for-coding",
 	meta: "muse-spark-1.3",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
@@ -86,10 +87,10 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"qwen-token-plan": "qwen3.7-max",
 	"qwen-token-plan-cn": "qwen3.7-max",
 	"qwen-token-plan-individual": "qwen3.8-max",
-	xiaomi: "mimo-v2.5-pro",
-	"xiaomi-token-plan-cn": "mimo-v2.5-pro",
-	"xiaomi-token-plan-ams": "mimo-v2.5-pro",
-	"xiaomi-token-plan-sgp": "mimo-v2.5-pro",
+	xiaomi: "mimo-v2.6-pro",
+	"xiaomi-token-plan-cn": "mimo-v2.6-pro",
+	"xiaomi-token-plan-ams": "mimo-v2.6-pro",
+	"xiaomi-token-plan-sgp": "mimo-v2.6-pro",
 };
 
 export interface ScopedModel {
@@ -326,6 +327,27 @@ export function resolveStoredModelReference(
 	}
 	const direct = modelSource.getModel(provider, modelId);
 	return direct ? { model: direct } : undefined;
+}
+
+type StoredModelAuthSource = Pick<ModelRuntime, "getModel" | "hasConfiguredAuth">;
+
+/**
+ * A saved selection, preferring a lane that can authenticate it. A Claude subscription moved from
+ * the direct `anthropic` provider to the Agent SDK lane (senpi#3259), so a saved `anthropic/<id>`
+ * follows it to `anthropic-subscription/<id>` when only that lane holds auth.
+ */
+function resolveStoredModelWithAuth(
+	provider: string,
+	modelId: string,
+	modelRuntime: StoredModelAuthSource,
+): ResolvedModelReference | undefined {
+	const resolved = resolveStoredModelReference(provider, modelId, modelRuntime);
+	if (resolved && modelRuntime.hasConfiguredAuth(resolved.model.provider)) return resolved;
+	if (provider === "anthropic") {
+		const lane = resolveStoredModelReference(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, modelId, modelRuntime);
+		if (lane && modelRuntime.hasConfiguredAuth(lane.model.provider)) return lane;
+	}
+	return resolved;
 }
 
 function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Model<Api> | undefined {
@@ -1035,7 +1057,7 @@ export async function findInitialModel(options: {
 
 	// 3. Try saved default from settings if auth is configured.
 	if (defaultProvider && defaultModelId) {
-		const resolved = resolveStoredModelReference(defaultProvider, defaultModelId, modelRuntime);
+		const resolved = resolveStoredModelWithAuth(defaultProvider, defaultModelId, modelRuntime);
 		if (resolved && modelRuntime.hasConfiguredAuth(resolved.model.provider)) {
 			model = resolved.model;
 			return {
@@ -1089,21 +1111,18 @@ export async function restoreModelFromSession(
 	thinkingSelection?: ThinkingSelection;
 	fallbackMessage: string | undefined;
 }> {
-	const restored = resolveStoredModelReference(savedProvider, savedModelId, modelRuntime);
+	const restored = resolveStoredModelWithAuth(savedProvider, savedModelId, modelRuntime);
 	const restoredModel = restored?.model;
 
-	// Check if restored model exists and still has auth configured
-	const hasConfiguredAuth = restoredModel ? modelRuntime.hasConfiguredAuth(restoredModel.provider) : false;
-
-	if (restoredModel && hasConfiguredAuth) {
+	// A signed-out provider keeps its model; the first prompt asks for a login (senpi#4410).
+	if (restoredModel) {
 		if (shouldPrintMessages) {
-			console.log(chalk.dim(`Restored model: ${savedProvider}/${savedModelId}`));
+			console.log(chalk.dim(`Restored model: ${restoredModel.provider}/${restoredModel.id}`));
 		}
 		return { model: restoredModel, thinkingSelection: restored.thinkingSelection, fallbackMessage: undefined };
 	}
 
-	// Model not found or no API key - fall back
-	const reason = !restoredModel ? "model no longer exists" : "no auth configured";
+	const reason = "model no longer exists";
 
 	if (shouldPrintMessages) {
 		console.error(chalk.yellow(`Warning: Could not restore model ${savedProvider}/${savedModelId} (${reason}).`));

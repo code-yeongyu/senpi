@@ -4,6 +4,7 @@ import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
 	ResponseFunctionCallOutputItemList,
+	ResponseFunctionWebSearch,
 	ResponseInput,
 	ResponseInputContent,
 	ResponseInputImage,
@@ -39,10 +40,12 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { enableAssistantCapture, pushAssistantProgress } from "../utils/assistant-capture.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { getCurrentTools, getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
@@ -137,6 +140,8 @@ function convertToolResultOutput<TApi extends Api>(
 }
 
 export interface OpenAIResponsesStreamOptions {
+	/** SIWC succeeds only on response.completed, never on a finished tool alone. */
+	siwc?: boolean;
 	onProviderStreamEvent?: StreamOptions["onProviderStreamEvent"];
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
@@ -483,6 +488,27 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 					// Signed foreign blocks with no text are intentionally dropped.
 				} else if (block.type === "providerNative") {
+					// Responses accepts its completed web_search_call output items
+					// in the next input. Keep them only on the originating route/model;
+					// encrypted/native state must never cross provider boundaries.
+					// https://developers.openai.com/api/docs/guides/conversation-state
+					// Verified against the ChatGPT subscription endpoint for senpi#3122.
+					const raw = block.raw;
+					if (
+						isSameModel &&
+						block.subtype === "web_search_call" &&
+						raw !== null &&
+						typeof raw === "object" &&
+						"type" in raw &&
+						raw.type === "web_search_call" &&
+						"id" in raw &&
+						typeof raw.id === "string" &&
+						"action" in raw &&
+						"status" in raw &&
+						(raw.status === "completed" || raw.status === "failed")
+					) {
+						output.push(raw as ResponseFunctionWebSearch);
+					}
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
 					pushAssistantText(textBlock.text, textBlock.textSignature);
@@ -658,7 +684,8 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 	const supportsStrictMode = options?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
 
-	return tools.map((tool) => {
+	const sortedTools = [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+	return sortedTools.map((tool) => {
 		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -797,6 +824,7 @@ export async function processResponsesStream<TApi extends Api>(
 	model: Model<TApi>,
 	options?: OpenAIResponsesStreamOptions,
 ): Promise<void> {
+	enableAssistantCapture(stream);
 	let sawTerminalResponseEvent = false;
 	let nativeImageBase64Chars = 0;
 	const outputSlots = new Map<number, ResponsesOutputSlot>();
@@ -865,7 +893,10 @@ export async function processResponsesStream<TApi extends Api>(
 				contentIndex: output.content.length - 1,
 			} satisfies ResponsesOutputSlot;
 			outputSlots.set(outputIndex, slot);
-			stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
+			stream.push(
+				{ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output },
+				{ rawArgumentPrefix: block.partialJson },
+			);
 			return slot;
 		}
 		if (isResponseCustomToolCallItem(item)) {
@@ -906,6 +937,12 @@ export async function processResponsesStream<TApi extends Api>(
 		if (imageItem) reconcileNativeImageSlot(outputIndex, slot, imageItem);
 		output.content.push(block);
 		outputSlots.set(outputIndex, slot);
+		pushAssistantProgress(stream, {
+			type: "message_block_state",
+			contentIndex: slot.contentIndex,
+			phase: "insert",
+			block,
+		});
 		return slot;
 	};
 	const getOrCreateSlot = (
@@ -953,8 +990,15 @@ export async function processResponsesStream<TApi extends Api>(
 			const imageItem = readNativeImageGenerationCall(outputItem);
 			if (!imageItem) continue;
 			const existingSlot = getSlot(outputIndex, "providerNative");
+			const slot = existingSlot ?? createSlot(outputIndex, outputItem);
 			if (existingSlot) reconcileNativeImageSlot(outputIndex, existingSlot, imageItem);
-			else createSlot(outputIndex, outputItem);
+			if (slot)
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 			outputSlots.delete(outputIndex);
 		}
 	};
@@ -996,13 +1040,14 @@ export async function processResponsesStream<TApi extends Api>(
 			const cachedTokens = inputDetails?.cached_tokens || 0;
 			// OpenAI platform reports cache_write_tokens; some compatible gateways use cache_creation_tokens.
 			const cacheWriteTokens = inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_tokens ?? 0;
+			const reasoning = reportedCount(response.usage.output_tokens_details?.reasoning_tokens);
 			output.usage = {
 				// OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
 				input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
 				output: response.usage.output_tokens || 0,
 				cacheRead: cachedTokens,
 				cacheWrite: cacheWriteTokens,
-				reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
+				...(reasoning === undefined ? {} : { reasoning }),
 				totalTokens: response.usage.total_tokens || 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
@@ -1101,6 +1146,13 @@ export async function processResponsesStream<TApi extends Api>(
 			if (event.arguments.startsWith(previousPartialJson)) {
 				const delta = event.arguments.slice(previousPartialJson.length);
 				if (delta.length > 0) pushToolCallDelta(slot, delta);
+			} else {
+				pushAssistantProgress(stream, {
+					type: "message_tool_arguments_reset",
+					contentIndex: slot.contentIndex,
+					rawArgumentPrefix: event.arguments,
+					parsedThrough: event.arguments.length,
+				});
 			}
 		} else if (event.type === "response.custom_tool_call_input.delta") {
 			const slot = getSlot(event.output_index, "toolCall");
@@ -1121,6 +1173,12 @@ export async function processResponsesStream<TApi extends Api>(
 
 			if (imageItem && slot?.type === "providerNative") {
 				reconcileNativeImageSlot(event.output_index, slot, imageItem);
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 				finalizedNativeImageOutputIndexes.add(event.output_index);
 				outputSlots.delete(event.output_index);
 			} else if (item.type === "reasoning" && slot?.type === "thinking") {
@@ -1191,18 +1249,34 @@ export async function processResponsesStream<TApi extends Api>(
 			} else if (slot?.type === "providerNative") {
 				slot.block.subtype = item.type;
 				slot.block.raw = item;
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 				outputSlots.delete(event.output_index);
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			finalizeResponse(event.response);
+			if (options?.siwc && event.type === "response.incomplete") {
+				throw new Error(`Response incomplete: ${event.response.incomplete_details?.reason ?? "unknown reason"}`);
+			}
 		} else if (event.type === "error") {
 			const errorEvent = event as typeof event & {
-				error?: { code?: string | null; message?: string };
+				error?: { code?: string | null; message?: string; param?: string };
 				status?: number;
 			};
 			const code = errorEvent.error?.code ?? errorEvent.code ?? errorEvent.status;
 			const message = errorEvent.error?.message || errorEvent.message || "Unknown error";
-			throw new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			const failure = new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: typeof code === "string" ? code : undefined,
+						status: errorEvent.status,
+						param: errorEvent.error?.param ?? errorEvent.param,
+					})
+				: failure;
 		} else if (event.type === "response.failed") {
 			sawTerminalResponseEvent = true;
 			output.rawStopReason = event.response?.status;
@@ -1213,11 +1287,17 @@ export async function processResponsesStream<TApi extends Api>(
 				: details?.reason
 					? `incomplete: ${details.reason}`
 					: "Unknown error (no error details in response)";
-			throw new Error(msg);
+			const failure = new Error(msg);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: error?.code,
+						param: error && "param" in error ? error.param : undefined,
+					})
+				: failure;
 		}
 	}
 	const hasFinalizedToolCall = output.content.some((block) => block.type === "toolCall" && !("partialJson" in block));
-	if (!sawTerminalResponseEvent && !hasFinalizedToolCall) {
+	if (!sawTerminalResponseEvent && (options?.siwc || !hasFinalizedToolCall)) {
 		throw new Error("OpenAI Responses stream ended before a terminal response event");
 	}
 	// The agent runs every tool call in the final message. Refuse to hand over calls whose

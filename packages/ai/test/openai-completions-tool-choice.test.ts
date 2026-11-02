@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
-import { getModel, normalizeContext, stream, streamSimple } from "../src/compat.ts";
+import { getModel, getModels, normalizeContext, stream, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
 import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
@@ -544,6 +544,83 @@ describe("openai-completions tool_choice", () => {
 		const functionTool = params.tools?.[0]?.function;
 		expect(functionTool?.strict).toBe(true);
 		expect(functionTool?.parameters?.required).toEqual(["required", "optional"]);
+	});
+
+	// Regression coverage for senpi#4821: strictness is a request-level capability.
+	it.each([false, true, undefined])(
+		"honors mixedStrictTools=%s for mixed prefer schemas",
+		async (mixedStrictTools) => {
+			const model = {
+				...localOpenAICompletionsModel,
+				id: "mixed-strict",
+				name: "Mixed strict",
+				compat: { supportsStrictMode: true, mixedStrictTools },
+			};
+			const tools: Tool[] = [
+				{
+					name: "strict_capable",
+					description: "Strict-capable tool",
+					parameters: Type.Object({ value: Type.Optional(Type.String()) }),
+					constrainedSampling: { type: "json_schema", strict: "prefer" },
+				},
+				{
+					name: "incompatible",
+					description: "Tool with an unsupported strict schema",
+					parameters: Type.Object({ value: Type.Unsafe({ oneOf: [{ type: "string" }, { type: "number" }] }) }),
+					constrainedSampling: { type: "json_schema", strict: "prefer" },
+				},
+			];
+			const result = await streamSimple(
+				model,
+				{ messages: [{ role: "user", content: "Use the tools", timestamp: 0 }], tools },
+				{ apiKey: "test" },
+			).result();
+			expect(result.stopReason).toBe("stop");
+			const params = mockState.lastParams as {
+				tools: Array<{ function: { strict: boolean; parameters: { required?: string[] } } }>;
+			};
+			expect(params.tools.map((tool) => tool.function.strict)).toEqual([mixedStrictTools !== false, false]);
+			expect(params.tools[0].function.parameters.required ?? []).toEqual(
+				mixedStrictTools === false ? [] : ["value"],
+			);
+			expect(tools[0].parameters).not.toHaveProperty("required");
+		},
+	);
+
+	it("rejects a required strict tool with an incompatible sibling before sending", async () => {
+		const resultStream = streamSimple(
+			{
+				...localOpenAICompletionsModel,
+				id: "mixed-strict",
+				name: "Mixed strict",
+				compat: { supportsStrictMode: true, mixedStrictTools: false },
+			},
+			{
+				messages: [{ role: "user", content: "Use the tools", timestamp: 0 }],
+				tools: [
+					{
+						name: "required_strict",
+						description: "Requires strict sampling",
+						parameters: Type.Object({ value: Type.String() }),
+						constrainedSampling: { type: "json_schema", strict: "require" },
+					},
+					{
+						name: "ordinary",
+						description: "Non-strict tool",
+						parameters: Type.Object({}),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		);
+		const events = [];
+		for await (const event of resultStream) events.push(event);
+		const result = await resultStream.result();
+		expect(result.stopReason).toBe("error");
+		expect(events.at(-1)?.type).toBe("error");
+		expect(result.errorMessage).toContain("required_strict");
+		expect(result.errorMessage).toContain("ordinary");
+		expect(mockState.calls).toHaveLength(0);
 	});
 
 	it("maps Groq Qwen reasoning levels to default reasoning_effort", async () => {
@@ -1608,7 +1685,7 @@ describe("openai-completions tool_choice", () => {
 		const providers = ["xiaomi", "xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp"] as const;
 
 		for (const provider of providers) {
-			const model = getModel(provider, "mimo-v2.5-pro")!;
+			const model = getModel(provider, "mimo-v2.6-pro")!;
 			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
 			expect(model.compat?.thinkingFormat).toBe("deepseek");
 			expect(model.compat?.supportsDisabledThinking).toBe(false);
@@ -1630,12 +1707,12 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("replays Xiaomi MiMo assistant tool calls with empty reasoning_content when thinking is missing", async () => {
-		const model = getModel("xiaomi", "mimo-v2.5-pro")!;
+		const model = getModel("xiaomi", "mimo-v2.6-pro")!;
 		const assistantMessage: AssistantMessage = {
 			role: "assistant",
 			api: "openai-completions",
 			provider: "xiaomi",
-			model: "mimo-v2.5-pro",
+			model: "mimo-v2.6-pro",
 			content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } }],
 			usage: {
 				input: 0,
@@ -2144,7 +2221,19 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
-		const model = getModel("openrouter", "deepseek/deepseek-r1")!;
+		// Any OpenRouter chat model with the OpenRouter reasoning format: a pinned live id leaves the catalog on regeneration.
+		const model = getModels("openrouter").find(
+			(candidate) =>
+				candidate.api === "openai-completions" &&
+				candidate.reasoning &&
+				candidate.compat !== undefined &&
+				"thinkingFormat" in candidate.compat &&
+				candidate.compat.thinkingFormat === "openrouter",
+		);
+		if (!model)
+			throw new Error(
+				"the OpenRouter catalog has no openai-completions reasoning model with the openrouter thinking format",
+			);
 		let payload: unknown;
 
 		await streamSimple(

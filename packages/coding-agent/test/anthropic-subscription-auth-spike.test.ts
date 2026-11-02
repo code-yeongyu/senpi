@@ -12,7 +12,12 @@ describe("claude-sdk-oauth live spikes", () => {
 		"%s spike is skipped by default and never touches credentials",
 		(name) => {
 			const output = execFileSync(process.execPath, [spike(name)], {
-				env: { PATH: process.env.PATH },
+				env: {
+					PATH: process.env.PATH,
+					TMPDIR: process.env.TMPDIR,
+					TEMP: process.env.TEMP,
+					TMP: process.env.TMP,
+				},
 				encoding: "utf8",
 			});
 			expect(output).toContain("SKIPPED");
@@ -29,6 +34,9 @@ describe("claude-sdk-oauth live auth spike", () => {
 			const output = execFileSync(process.execPath, [SPIKE], {
 				env: {
 					PATH: process.env.PATH,
+					TMPDIR: process.env.TMPDIR,
+					TEMP: process.env.TEMP,
+					TMP: process.env.TMP,
 					SENPI_LIVE_CLAUDE_SDK_OAUTH: "1",
 					SENPI_CODING_AGENT_DIR: sandbox as string,
 				},

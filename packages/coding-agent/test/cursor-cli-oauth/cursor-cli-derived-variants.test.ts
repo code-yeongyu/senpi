@@ -144,7 +144,7 @@ describe("cursor-cli-oauth derived variant identities (senpi#2038)", () => {
 		};
 		try {
 			const first = await resolveCursorCliModelCatalog(options);
-			expect(first.find((model) => model.id === "grok-4.7")?.contextWindow).toBe(200_000);
+			expect(first.find((model) => model.id === "grok-4.7")?.contextWindow).toBe(256_000);
 			recordCursorContextLimit("grok-4.7", 500_000);
 			probeFails = true;
 

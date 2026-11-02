@@ -41,6 +41,7 @@ export type RestoreHandler = (
 export interface RestoreHandlers {
 	readonly "restartable-command": RestoreHandler;
 	readonly "checkpointed-file": RestoreHandler;
+	readonly "checkpointed-rpc": RestoreHandler;
 }
 
 /** The registry surface a restore handler needs to re-apply a persisted mute. */
@@ -68,6 +69,7 @@ export function reapplyPersistedMute(
 export const stubRestoreHandlers: RestoreHandlers = {
 	"restartable-command": () => ({ outcome: "lost", reason: "no restore handler" }),
 	"checkpointed-file": () => ({ outcome: "lost", reason: "no restore handler" }),
+	"checkpointed-rpc": () => ({ outcome: "lost", reason: "no restore handler" }),
 };
 
 export type MonitorRestoreOutcome = RestoreOutcome | "expired";
@@ -173,7 +175,11 @@ export async function restoreTerminalState(options: RestoreTerminalStateOptions)
 					return resultFor(monitor, "lost", { outcome: "lost", reason: "deadline passed while detached" });
 				}
 				const handler =
-					monitor.runtimeKind === "file" ? handlers["checkpointed-file"] : handlers["restartable-command"];
+					monitor.runtimeKind === "file"
+						? handlers["checkpointed-file"]
+						: monitor.runtimeKind === "rpc"
+							? handlers["checkpointed-rpc"]
+							: handlers["restartable-command"];
 				const handled = await handler(monitor, { downtimeMs, remainingMs: monitor.deadlineMs - now });
 				return resultFor(monitor, handled.outcome, handled);
 			}

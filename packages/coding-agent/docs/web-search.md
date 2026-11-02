@@ -2,6 +2,16 @@
 
 The `web_search` tool searches the web and returns source URLs the model can cite. It works without any setup. With a `websearch.json` you choose the search providers yourself, and, when `auto` is on, the hosted web search of the model your session is already using goes first.
 
+## Result count
+
+A search returns 10 results by default. The model can ask for another count by passing `max_results` with the query (1-50; a value outside the range is clamped):
+
+- `max_results` on the call outranks a `maxResults` set on a `websearch.json` entry;
+- a `websearch.json` entry's `maxResults` outranks the default of 10;
+- every returned snippet is capped at 500 characters, so a large count cannot flood the context.
+
+Engines that take no count parameter (DuckDuckGo, Startpage, Ecosia) are fetched as usual and sliced to the requested count locally.
+
 ## Where the config lives
 
 senpi reads the first `websearch.json` it finds, in this order:
@@ -75,9 +85,19 @@ A config file replaces the free default completely: senpi uses only the provider
 | `nativeModel` | The model native search runs on; see [Choosing the model native search runs on](#choosing-the-model-native-search-runs-on). |
 | `providers[]` | The providers to use. Each entry takes `provider`, and optionally `id`, `apiKey`, `baseUrl`, `maxResults`, `timeoutMs`, `priority`, `weight`, `allowedDomains` or `blockedDomains`. |
 
-Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, `searxng`, and `keenable`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai` (plus `searchEngineId` for `google-cse`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
+Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, `searxng`, `keenable`, `parallel`, `firecrawl`, and `public`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `ollama`, `openai`, `jina`, `synthetic`, `tinyfish` (plus `searchEngineId` for `google-cse`), and `openrouter` (plus `model`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
 
 `keenable` ([Keenable](https://keenable.ai)) takes an `apiKey` but also works without one: a keyed entry posts to `https://api.keenable.ai/v1/search` with `X-API-Key`, while a keyless entry uses the shared public tier at `/v1/search/public` and identifies itself with an `X-Keenable-Title` app header instead of a credential. Because the public tier is a per-IP pool, `keenable` is never in the no-config default chain — list it explicitly in `websearch.json`. A single `allowedDomains` entry maps to Keenable's native `site` filter; multiple or blocked domains stay `site:`/`-site:` terms in the query.
+
+`parallel` ([Parallel](https://parallel.ai)) also works with or without a key. A keyless entry calls the public `web_search` tool over JSON-RPC at `https://search.parallel.ai/mcp`; nothing about the session or the chat model is sent with the query. A keyed entry posts to `https://api.parallel.ai/v1beta/search` with `x-api-key` and the `parallel-beta: search-extract-2025-10-10` channel header, `mode: "fast"` and 10,000-character excerpts per result. Domain filters ride Parallel's `source_policy` when a key is set (`include_domains`, or `exclude_domains` when no allow list is given) and become `site:`/`-site:` terms in the MCP query otherwise. Parallel does not take a result count, so `maxResults` only trims what comes back.
+
+`firecrawl` ([Firecrawl](https://firecrawl.dev)) also works with or without a key: an entry with `apiKey` sends `Authorization: Bearer <key>`, and an entry without one sends no credential at all. It posts `{ query, limit, sources: [{ type: "web" }] }` to `https://api.firecrawl.dev/v2/search`, clamping `limit` to 1-100, and reads the snippet from `description`, `snippet` or `markdown` in that order. Set `baseUrl` to send the same request through a proxy or a self-hosted endpoint; like every other provider's, it must be a public HTTPS URL without credentials. `firecrawl` is not in the no-config default chain — list it explicitly in `websearch.json`.
+
+`public` is one entry that asks Startpage, Google's results page, DuckDuckGo, Ecosia, and Mojeek at the same time, each through the same request and bot-check handling as its own entry. It merges their answers: the same page returned by several engines is listed once (the address is compared without `www.`, a trailing slash, or the `#fragment`; the `?query` still counts), pages more engines returned rank first, then pages an engine ranked higher, and each result keeps the longest description any engine gave. The search returns as soon as every engine has answered, or after 5 seconds once at least one has, and gives up after 30 seconds; engines still running are cancelled. It fails only when no engine returns results. Because it sends every query to five services at once, `public` is never in the no-config default chain: add `{ "provider": "public" }` to `websearch.json` to use it. Its engines do not take part in the per-engine cooldown described above.
+
+`jina` ([Jina Reader](https://jina.ai/reader)) needs an `apiKey`. It sends the query in the URL path of `https://s.jina.ai`, with the result count as `count` (1-20) and `X-Respond-With: no-content` so the answer carries titles and descriptions instead of page text. A single `allowedDomains` entry becomes Jina's host-only `X-Site` filter; multiple or blocked domains stay `site:`/`-site:` terms in the query.
+
+`tinyfish` ([TinyFish](https://tinyfish.ai)) needs an `apiKey` and sends GET requests with `X-API-Key` to `https://api.search.tinyfish.ai`. It asks for at most ten results per page and reads further pages until it has the requested count, a page comes back short, or ten pages have been read.
 
 ## Limit or turn off the free engines
 
@@ -139,7 +159,9 @@ With `auto` on (the default), the model you are chatting with still searches thr
 
 ## Native (hosted) search
 
-When `auto` is `true` (the default), senpi puts a native entry in front of your configured providers, or in front of the free chain when there is no config file. That entry calls the hosted web search of the session's own provider (Anthropic Messages or OpenAI Responses compatible endpoints, the ChatGPT subscription, xAI, DeepSeek, Perplexity, Z.AI, Kimi Code) with the session's own credential. Google Search grounding is never added this way; it is opt-in (see below). Sessions on the first-party Anthropic and OpenAI APIs instead get the provider's server-side search tool in the main request, and `web_search` stays out of the way there.
+When `auto` is `true` (the default), senpi puts a native entry in front of your configured providers, or in front of the free chain when there is no config file. That entry calls the hosted web search of the session's own provider with the session's own credential. Main-request server search takes precedence on enabled routes: direct Anthropic/Claude OAuth and OpenAI/Azure remain default-on, unchanged from main; the live-verified ChatGPT subscription is default-on (except Spark). Compatible gateways including ccapi and z.ai's GLM coding-plan Anthropic endpoint, plus xAI, Gemini 2/3, OpenRouter, Moonshot PAYG and Z.AI PAYG require explicit route compatibility opt-in. See [In-Turn Web Search](providers.md#in-turn-web-search) for exact flags and verification status. Standalone summaries, titles and default projections exclude only server tools. Cache-friendly compaction preserves the original main-turn hook and tools/include prefix.
+
+A search-specific failure is remembered for the session/model, so later prompts do not repeat a rejected native request. A new session clears that failure. On an enabled server-search route, a different `nativeModel` setting is ignored: both main-request search and its standalone fallback retain the session model. The cheaper auxiliary-model setting below applies only to routes without an enabled server tool.
 
 ### Choosing the model native search runs on
 
@@ -196,6 +218,24 @@ Google Search grounding runs only when you list a `google` entry in `websearch.j
 The search calls `generateContent` with the `google_search` tool. Results are the grounding sources Google returns; an answer without grounding sources counts as no results. Each result URL is Google's grounding redirect link, which forwards to the source page, and the title is usually the source's site name.
 
 A `google` entry without `apiKey` uses your senpi `google` login (Google API key) and a Google model from it; set `model` to choose one. Vertex AI logins are not used.
+
+## OpenRouter web grounding (opt-in)
+
+An `openrouter` entry posts to OpenRouter's chat-completions endpoint with the `web` plugin, so any chat model OpenRouter serves can search. It needs both an `apiKey` and a `model`:
+
+```json
+{
+  "providers": [
+    { "provider": "openrouter", "apiKey": "<your OpenRouter key>", "model": "anthropic/claude-sonnet-4.5" }
+  ]
+}
+```
+
+- `baseUrl` is the API root and defaults to `https://openrouter.ai/api/v1`; senpi appends `/chat/completions`.
+- Results are the answer's `url_citation` annotations, one per page, with the cited excerpt as the snippet. An answer that cites nothing counts as no results, and a link the model writes in its own text is never returned as a source.
+- `maxResults` becomes the plugin's `max_results` (1–50).
+- Search is billed by OpenRouter as an extra per-search charge on your credits, on top of the model tokens, so this provider is never part of the free default chain. OpenRouter marks the `web` plugin deprecated in favor of its `openrouter:web_search` server tool; this provider uses the plugin.
+- `allowedDomains` and `blockedDomains` are not sent to the plugin, because domain filtering depends on the search engine OpenRouter picks for the model.
 
 ## Listing login-based routes
 

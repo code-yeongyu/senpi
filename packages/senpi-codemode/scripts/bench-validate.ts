@@ -16,6 +16,7 @@ function sampleProblems(series: Series, reps: readonly Rep[]): string[] {
 	for (const rep of reps) {
 		if (metricsOf(series).includes("p95") && rep.p95Ms === undefined)
 			lines.push(`missing p95 measurement: ${label}`);
+		// CPU remains milliseconds; provenance is checked at runtime/saved-report ingress.
 		const values = [rep.cpuMs, rep.wallMs, ...(rep.p95Ms === undefined ? [] : [rep.p95Ms])];
 		if (values.some((value) => !Number.isFinite(value) || value < 0)) lines.push(`invalid measurement: ${label}`);
 		else if (values.some((value) => value === 0)) lines.push(`zero measurement cannot form a paired ratio: ${label}`);

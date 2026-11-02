@@ -334,8 +334,8 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.XIAOMI_API_KEY)("Xiaomi MiMo (API billing) Provider (mimo-v2.5-pro)", () => {
-		const llm = getModel("xiaomi", "mimo-v2.5-pro");
+	describe.skipIf(!process.env.XIAOMI_API_KEY)("Xiaomi MiMo (API billing) Provider (mimo-v2.6-pro)", () => {
+		const llm = getModel("xiaomi", "mimo-v2.6-pro");
 
 		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
 			await handleToolWithImageResult(llm);
@@ -354,9 +354,9 @@ describe("Tool Results with Images", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY)(
-		"Xiaomi MiMo Token Plan (CN) Provider (mimo-v2.5-pro)",
+		"Xiaomi MiMo Token Plan (CN) Provider (mimo-v2.6-pro)",
 		() => {
-			const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.6-pro");
 
 			it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
 				await handleToolWithImageResult(llm);
@@ -371,9 +371,9 @@ describe("Tool Results with Images", () => {
 	);
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY)(
-		"Xiaomi MiMo Token Plan (AMS) Provider (mimo-v2.5-pro)",
+		"Xiaomi MiMo Token Plan (AMS) Provider (mimo-v2.6-pro)",
 		() => {
-			const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.6-pro");
 
 			it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
 				await handleToolWithImageResult(llm);
@@ -388,9 +388,9 @@ describe("Tool Results with Images", () => {
 	);
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY)(
-		"Xiaomi MiMo Token Plan (SGP) Provider (mimo-v2.5-pro)",
+		"Xiaomi MiMo Token Plan (SGP) Provider (mimo-v2.6-pro)",
 		() => {
-			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.6-pro");
 
 			it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
 				await handleToolWithImageResult(llm);

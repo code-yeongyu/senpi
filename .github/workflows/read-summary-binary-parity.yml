@@ -10,23 +10,79 @@ on:
       - "scripts/qa/read-summary-*.mjs"
       - "scripts/qa/fixtures/read-summary-provider.mjs"
       - ".github/workflows/read-summary-binary-parity.yml"
+  push:
+    branches: [main]
+    paths:
+      - packages/agent/**
+      - packages/coding-agent/**
+      - scripts/prepare-bun-compile-assets.mjs
+      - scripts/qa/read-summary-*.mjs
+      - scripts/qa/fixtures/read-summary-provider.mjs
+      - .github/workflows/read-summary-binary-parity.yml
+  # ci-full-label.yml calls this workflow for the run-full-ci label (senpi#3957).
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: read-summary-parity-${{ github.ref }}
-  cancel-in-progress: true
+  # A fixed per-file prefix, then the workflow name (the caller's in a run-full-ci call), so the label run, the PR's own
+  # run and the label run's other called workflows never cancel each other; main pushes get one group per commit and are
+  # never cancelled, so every merge keeps its own macOS/Windows parity result (senpi#3957).
+  group: read-summary-parity-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  platform-scope:
+    name: Platform scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      full: ${{ steps.classify.outputs.full }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            scripts/ci-platform-scope.mjs
+            .github/workflows/read-summary-binary-parity.yml
+          sparse-checkout-cone-mode: false
+
+      - name: List the pull request's changed files
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed-files"; then
+            echo "CHANGED_FILES=$RUNNER_TEMP/changed-files" >> "$GITHUB_ENV"
+          else
+            echo "::warning::could not list the changed files; running the full macOS/Windows set"
+          fi
+
+      - name: Classify
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS" --changed "${CHANGED_FILES:-}" --workflow .github/workflows/read-summary-binary-parity.yml
+
+  # Linux on every matching PR; macOS and Windows only when ci-platform-scope.mjs decides the run is full: a push to
+  # main, the run-full-ci label (ci-full-label.yml) or a platform-specific diff (senpi#3957).
   parity:
+    needs: platform-scope
     name: Read binary parity (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,7 +92,7 @@ jobs:
           node-version: "24"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Install without hooks or lifecycle scripts
         run: bun install --ignore-scripts --frozen-lockfile
         env:
@@ -46,7 +102,7 @@ jobs:
         run: bun ../prebuild-install/bin.js -r napi
       - name: Check and build source
         run: |
-          bunx --bun --no-install tsc --noEmit
+          bun check --no-script --all -p tsconfig.json
           bun run build:bun
           bun scripts/prepare-bun-compile-assets.mjs
       - name: Compile the read surface

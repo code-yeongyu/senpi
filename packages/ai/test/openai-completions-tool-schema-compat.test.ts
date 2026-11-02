@@ -126,6 +126,51 @@ describe("tool-schema-compat", () => {
 				},
 			});
 		});
+
+		// senpi#5138: the merged root keeps only branch-common required names, so a branch's own
+		// required fields would vanish from the wire; they survive as a REQUIRED hint instead.
+		it("keeps branch-only required fields as a description hint when merging a root union", () => {
+			const schema = {
+				type: "object",
+				description: "Run code or control cells.",
+				properties: { action: { type: "string" } },
+				anyOf: [
+					{
+						type: "object",
+						properties: {
+							action: { type: "string", const: "run" },
+							language: { type: "string" },
+							code: { type: "string" },
+						},
+						required: ["language", "code"],
+					},
+					{ type: "object", properties: { action: { type: "string", const: "list" } } },
+					{
+						type: "object",
+						properties: {
+							action: {
+								anyOf: [
+									{ type: "string", const: "peek" },
+									{ type: "string", const: "stop" },
+								],
+							},
+							cell_id: { type: "string" },
+						},
+						required: ["action", "cell_id"],
+					},
+				],
+			};
+
+			const normalized = normalizeToolParametersForOpenAICompat(schema);
+
+			expect(normalized.required).toBeUndefined();
+			expect(normalized.description).toEqual(expect.stringContaining("Run code or control cells."));
+			expect(normalized.description).toEqual(expect.stringContaining("REQUIRED for action=run: language, code."));
+			expect(normalized.description).toEqual(
+				expect.stringContaining("REQUIRED for action=peek|stop: action, cell_id."),
+			);
+			expect(normalized.description).not.toEqual(expect.stringContaining("action=list"));
+		});
 	});
 
 	describe("normalizeToolParametersForMoonshot", () => {
@@ -158,6 +203,7 @@ describe("tool-schema-compat", () => {
 
 			expect(normalized).toEqual({
 				type: "object",
+				description: "REQUIRED for option 1: element_index. REQUIRED for option 2: x, y.",
 				required: ["app"],
 				properties: {
 					app: { type: "string" },
@@ -357,15 +403,34 @@ describe("tool-schema-compat", () => {
 			]);
 		});
 
-		it("does not claim object type for a root union of non-object branches", () => {
-			// Forcing `type: "object"` here would contradict every branch. The root
-			// object guarantee only applies to schemas that really are objects.
+		it("claims object type for a root union of non-object branches (DeepSeek contract)", () => {
+			// DeepSeek rejects any root parameters schema without `type: "object"`:
+			// `schema must be a JSON Schema of 'type: "object"', got 'type: null'`.
+			// Tool parameters are objects in practice, so an unmergeable root union is
+			// normalized into an object root that keeps the union, not left typeless.
 			const schema = { anyOf: [{ type: "string" }, { type: "number" }] };
 
 			const normalized = normalizeToolParametersForOpenAICompat(structuredClone(schema));
 
-			expect(normalized.type).toBeUndefined();
+			expect(normalized.type).toBe("object");
 			expect(normalized.anyOf).toEqual([{ type: "string" }, { type: "number" }]);
+		});
+
+		it("adds the object type to a typeless root union that cannot merge (#3245)", () => {
+			// Live-verified against DeepSeek: a root anyOf mixing object and scalar
+			// branches 400s with `got 'type: null'`; the same union with a root
+			// `type: "object"` is accepted.
+			const schema = {
+				anyOf: [{ type: "object", properties: { a: { type: "string" } } }, { type: "string" }],
+			};
+
+			const normalized = normalizeToolParametersForOpenAICompat(structuredClone(schema));
+
+			expect(normalized.type).toBe("object");
+			expect(normalized.anyOf).toEqual([
+				{ type: "object", properties: { a: { type: "string" } } },
+				{ type: "string" },
+			]);
 		});
 
 		it("does not merge a root union whose branches are not all object shapes", () => {

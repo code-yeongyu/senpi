@@ -14,6 +14,7 @@ import { usageLimitScope } from "./usage-limit.ts";
  */
 export class UnusableEntries {
 	private readonly cooldowns: SelectorCooldowns;
+	private readonly accountErrors = new Map<string, string>();
 
 	constructor(cooldowns: SelectorCooldowns) {
 		this.cooldowns = cooldowns;
@@ -21,8 +22,10 @@ export class UnusableEntries {
 
 	note(model: Model<Api>, failure: CircuitFailure): void {
 		const scope = usageLimitScope(failure.errorMessage);
-		if (scope === "account") this.cooldowns.note(accountKey(model.provider), failure);
-		else if (scope === "model" || isHealthExhaustionFailure(failure.errorMessage)) {
+		if (scope === "account") {
+			this.cooldowns.note(accountKey(model.provider), failure);
+			if (failure.errorMessage) this.accountErrors.set(model.provider, failure.errorMessage);
+		} else if (scope === "model" || isHealthExhaustionFailure(failure.errorMessage)) {
 			this.cooldowns.note(entryKey(model), failure);
 		}
 	}
@@ -31,17 +34,35 @@ export class UnusableEntries {
 		return this.cooldowns.isSuppressed(accountKey(provider));
 	}
 
+	accountError(provider: string): string | undefined {
+		return this.isProviderSpent(provider) ? this.accountErrors.get(provider) : undefined;
+	}
+
 	isUnusable(model: Model<Api>): boolean {
 		return this.isProviderSpent(model.provider) || this.cooldowns.isSuppressed(entryKey(model));
 	}
 
 	clear(model: Model<Api>): void {
-		this.cooldowns.clear(accountKey(model.provider));
+		// A deliberate model selection allows the user to probe after reauth/reset.
 		this.cooldowns.clear(entryKey(model));
+		this.cooldowns.clear(accountKey(model.provider));
+		this.accountErrors.delete(model.provider);
+	}
+
+	/** The provider's accounts changed (a login, an added or re-authorized account): every hold it earned is stale. */
+	clearProvider(provider: string, models: readonly Model<Api>[]): void {
+		this.cooldowns.clear(accountKey(provider));
+		this.accountErrors.delete(provider);
+		for (const model of models) {
+			if (model.provider === provider) this.cooldowns.clear(entryKey(model));
+		}
 	}
 }
 
 function accountKey(provider: string): string {
+	// This is a provider-name approximation, not resolved credential/account identity.
+	// Gateways with distinct model accounts share a key; pooled slots can reset earlier
+	// than the last surfaced account error. Explicit /model selection permits a probe.
 	return `account:${provider}`;
 }
 

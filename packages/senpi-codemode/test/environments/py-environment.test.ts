@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { assertInstalledInRevision, assertNoEditableInstalls } from "../../src/environments/editable-check.ts";
 import { withRootLock } from "../../src/environments/install-lock.ts";
 import { installPythonPackages } from "../../src/environments/py-environment.ts";
-import { isolatedPipEnv, parsePipRequirements } from "../../src/environments/py-installer.ts";
+import { isolatedPipEnv, parsePipRequirements, runPipInstall } from "../../src/environments/py-installer.ts";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
 import { createInterpreterDetector } from "../../src/interpreters/detect.ts";
 import {
@@ -40,6 +40,60 @@ function install(base: string, root: string, requirements: string, signal = new 
 }
 
 describe.skipIf(!hasPythonWithPip())("Given a Python environment root", () => {
+	for (const outcome of ["success", "failure", "cancel"] as const) {
+		it(`pip scratch is owned and removed after ${outcome} (#3064)`, async () => {
+			const { root } = await workspace();
+			const target = join(root, "target");
+			await mkdir(target);
+			// Exercise the actual Python subprocess and its tempfile behavior, including a killed
+			// installer that cannot run Python's own cleanup.
+			await writeFile(
+				join(root, "pip.py"),
+				`
+import json, os, sys, tempfile, threading
+scratch = tempfile.mkdtemp(prefix="pip-install-")
+print(json.dumps({"scratch": scratch, "tmp": os.environ.get("TMP"), "temp": os.environ.get("TEMP")}), flush=True)
+${outcome === "cancel" ? "threading.Event().wait()" : `sys.exit(${outcome === "failure" ? 3 : 0})`}
+`,
+			);
+			const controller = new AbortController();
+			let observed: { scratch: string; tmp: string; temp: string } | undefined;
+			let stdout = "";
+			const pending = runPipInstall({
+				interpreter: "python3",
+				root: target,
+				args: ["probe"],
+				cwd: root,
+				signal: controller.signal,
+				onOutput(stream, data) {
+					if (stream !== "stdout") return;
+					stdout += data;
+					const newline = stdout.indexOf("\n");
+					if (newline < 0 || observed) return;
+					observed = JSON.parse(stdout.slice(0, newline));
+					if (outcome === "cancel") controller.abort();
+				},
+			});
+			if (outcome === "success") await pending;
+			else
+				await expect(pending).rejects.toMatchObject({
+					code: outcome === "cancel" ? "environment_install_cancelled" : "environment_install_failed",
+				});
+			expect(observed).toBeDefined();
+			if (!observed) throw new Error("installer did not report its scratch");
+			try {
+				expect(observed.scratch.startsWith(`${target}/`) || observed.scratch.startsWith(`${target}\\`)).toBe(true);
+				expect(observed.tmp).toBe(observed.temp);
+				expect(observed.scratch.startsWith(observed.tmp)).toBe(true);
+				expect(existsSync(observed.scratch)).toBe(false);
+				expect(await readdir(target)).toEqual([]);
+			} finally {
+				// RED runs create an OS-temp entry; remove only the path reported by our child.
+				await rm(observed.scratch, { recursive: true, force: true });
+			}
+		});
+	}
+
 	it("When a local wheel installs, then it is published as the active revision and imports from it", async () => {
 		const { root, base, wheels } = await workspace();
 		const wheel = buildWheel(wheels, "senpi_probe", "1.0");

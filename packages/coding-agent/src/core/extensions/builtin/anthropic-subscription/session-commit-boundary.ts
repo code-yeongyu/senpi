@@ -1,9 +1,20 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import { CLAUDE_SDK_OAUTH_API_ID } from "./api-id.ts";
+import {
+	type AssistantSemanticProjection,
+	firstDivergedPath,
+	snapshotProjection,
+} from "./session-commit-divergence.ts";
 import { sessionSyncDigest } from "./session-sync.ts";
 
 export type AssistantCommitOutcome = "clean" | "rewritten" | "not-resident";
+
+export type AssistantCommitResult = {
+	outcome: AssistantCommitOutcome;
+	/** senpi#1975: first diverged field path on a rewrite. Paths only, never values. */
+	divergedPath?: string;
+};
 
 type ContentBlock = AssistantMessage["content"][number];
 
@@ -28,14 +39,18 @@ function semanticContentBlock(block: ContentBlock): unknown {
 	}
 }
 
-export function assistantContentHash(message: AssistantMessage): string {
-	return sessionSyncDigest({
+function semanticProjection(message: AssistantMessage): AssistantSemanticProjection {
+	return {
 		role: message.role,
 		api: message.api,
 		provider: message.provider,
 		model: message.model,
 		content: message.content.map(semanticContentBlock),
-	});
+	};
+}
+
+export function assistantContentHash(message: AssistantMessage): string {
+	return sessionSyncDigest(semanticProjection(message));
 }
 
 export function isResidentAssistant(message: AssistantMessage, modelId: string): boolean {
@@ -57,18 +72,24 @@ export function isTerminalFailure(message: AssistantMessage): boolean {
  * comparison reports false divergence on a perfectly valid SDK response shape.
  */
 export class AssistantCommitBoundary {
-	private readonly providerFinalByKey = new Map<string, string>();
+	private readonly providerFinalByKey = new Map<string, { hash: string; projection: AssistantSemanticProjection }>();
 
 	captureProviderFinal(key: string, message: AssistantMessage): void {
-		this.providerFinalByKey.set(key, assistantContentHash(message));
+		const projection = semanticProjection(message);
+		this.providerFinalByKey.set(key, {
+			hash: sessionSyncDigest(projection),
+			projection: snapshotProjection(projection),
+		});
 	}
 
-	commit(key: string, message: AssistantMessage, modelId: string): AssistantCommitOutcome {
+	commit(key: string, message: AssistantMessage, modelId: string): AssistantCommitResult {
 		const providerFinal = this.providerFinalByKey.get(key);
 		this.providerFinalByKey.delete(key);
-		if (!isResidentAssistant(message, modelId)) return "not-resident";
-		if (providerFinal === undefined) return "clean";
-		return providerFinal === assistantContentHash(message) ? "clean" : "rewritten";
+		if (!isResidentAssistant(message, modelId)) return { outcome: "not-resident" };
+		if (providerFinal === undefined) return { outcome: "clean" };
+		const committed = semanticProjection(message);
+		if (providerFinal.hash === sessionSyncDigest(committed)) return { outcome: "clean" };
+		return { outcome: "rewritten", divergedPath: firstDivergedPath(providerFinal.projection, committed) };
 	}
 
 	forget(key: string): void {

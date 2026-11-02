@@ -116,7 +116,7 @@ describe.skipIf(process.platform === "win32")("host stop intent", () => {
 
 		const result = await stopHost({ socket: qa.socket, agentDir: qa.agentDir, drain: true });
 
-		expect(result).toEqual({ action: "drained", pid });
+		expect(result).toEqual({ action: "drained", pid, instanceId });
 		expect(existsSync(join(generationDir(qa, instanceId), "stop-intent.json"))).toBe(false);
 	}, 45_000);
 });

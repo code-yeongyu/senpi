@@ -20,9 +20,9 @@ describe("grep native contract CI", () => {
 		assert.ok(nativeJob, "missing grep-native-contract job");
 		assert.match(nativeJob, /node_file=\$\(ls crates\/senpi-grep\/senpi_grep\.\*\.node\)/);
 		assert.match(nativeJob, /export SENPI_GREP_NATIVE_PATH="\$PWD\/\$node_file"\n\s+cd packages\/coding-agent/);
-		assert.match(nativeJob, /SENPI_GREP_ENGINE=native bunx vitest run test\/grep --reporter=default --reporter=json/);
+		assert.match(nativeJob, /SENPI_GREP_ENGINE=native node \.\.\/\.\.\/scripts\/run-tests\.mjs vitest run test\/grep --reporter=default --reporter=json/);
 		assert.match(nativeJob, /contract\.assertionResults\.every\(\(test\) => test\.status === "passed"\)/);
-		assert.match(nativeJob, /SENPI_GREP_ENGINE=rg bunx vitest run test\/grep/);
+		assert.match(nativeJob, /SENPI_GREP_ENGINE=rg node \.\.\/\.\.\/scripts\/run-tests\.mjs vitest run test\/grep/);
 		assert.doesNotMatch(nativeJob, /senpi_grep\.linux-x64-gnu\.node/);
 	});
 

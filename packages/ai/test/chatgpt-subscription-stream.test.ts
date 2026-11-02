@@ -1,9 +1,9 @@
-import { mkdtempSync } from "node:fs";
 import { arch, platform, release, tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { makeTempDir as mkdtempSync } from "../../../scripts/vitest-temp.ts";
 import {
 	closeChatGptSubscriptionWebSocketSessions,
 	getChatGptSubscriptionWebSocketDebugStats,
@@ -669,9 +669,10 @@ describe("openai-codex streaming", () => {
 				expect(headers?.has("session_id")).toBe(false);
 				expect(headers?.get("x-client-request-id")).toBe(sessionId);
 
-				// Verify sessionId is set in request body as prompt_cache_key
+				// Body cache affinity is prefix-scoped; transport affinity stays session-scoped.
 				const body = decodeCodexRequestBody(init?.body);
-				expect(body?.prompt_cache_key).toBe(sessionId);
+				expect(body?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+				expect(body?.prompt_cache_key).not.toBe(sessionId);
 
 				return new Response(stream, {
 					status: 200,
@@ -760,7 +761,7 @@ describe("openai-codex streaming", () => {
 		expect(capturedBody).not.toHaveProperty("prompt_cache_key");
 	});
 
-	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
+	it("keeps prefix prompt_cache_key within OpenAI's 64-character limit", async () => {
 		const token = mockToken();
 		const sessionId = "x".repeat(67);
 		let capturedPayload: { prompt_cache_key?: string } | undefined;
@@ -807,7 +808,8 @@ describe("openai-codex streaming", () => {
 			},
 		}).result();
 
-		expect(capturedPayload?.prompt_cache_key).toBe("x".repeat(64));
+		expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(capturedPayload?.prompt_cache_key).not.toBe("x".repeat(64));
 	});
 
 	it("clamps Codex session-id header to 64 characters", async () => {
@@ -1143,13 +1145,19 @@ describe("openai-codex streaming", () => {
 		expect(requestedReasoning).toEqual({ effort: "low", summary: "auto" });
 	});
 
+	// Expected multipliers are OpenAI's published included-subscription rates
+	// (https://developers.openai.com/codex/pricing, "Fast and Ultrafast modes"):
+	// Fast uses included subscription usage at 2.5x Standard, Ultrafast (GPT-6 Astra,
+	// GPT-6.1 Sol) at 8x. The 2x/6x figures are the purchased-credit rates.
 	it.each([
 		["gpt-5.1-codex", "flex", 0.5],
-		["gpt-5.1-codex", "priority", 2],
+		["gpt-5.1-codex", "priority", 2.5],
 		["gpt-5.5", "flex", 0.5],
 		["gpt-5.5", "priority", 2.5],
-		["gpt-6-astra", "fast", 2],
-		["gpt-6-astra", "ultrafast", 6],
+		["gpt-6-astra", "fast", 2.5],
+		["gpt-6.1-sol", "priority", 2.5],
+		["gpt-6-astra", "ultrafast", 8],
+		["gpt-6.1-sol", "ultrafast", 8],
 	] as const)(
 		"uses the client-sent %s service tier for %s when Codex echoes default",
 		async (modelId, serviceTier, multiplier) => {

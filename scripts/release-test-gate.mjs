@@ -8,9 +8,10 @@
  * with the check runs CI reported, and the wait loop. `release.mjs` owns the `gh` and `git` calls.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 export const REQUIRED_CHECK_NAME = "Check and test";
@@ -132,6 +133,12 @@ export function awaitCiEvidence({ timeoutMs, pollMs }, deps) {
 		deps.log(`test gate: ${plan.reason}`);
 		if (plan.action === "reuse") return sha;
 		if (plan.action === "stop") throw new Error(`CI failed on ${sha.slice(0, 12)}: ${plan.reason}; fix main before releasing`);
+		if (plan.action === "superseded" && deps.pinned) {
+			// A pinned release (--sha) never moves to a newer main commit: that would ship code the dispatch did not ask for.
+			throw new Error(
+				`CI for the pinned release commit ${sha.slice(0, 12)} did not finish (${plan.reason}); rerun its CI or dispatch with force_tests`,
+			);
+		}
 		if (plan.action === "superseded") {
 			// A newer main push cancels this commit's CI. The release then moves onto that newer commit, so the
 			// commit it tags is always one whose own CI is green. It never tags on top of a main that dropped it.
@@ -155,4 +162,31 @@ export function awaitCiEvidence({ timeoutMs, pollMs }, deps) {
 		}
 		deps.sleep(pollMs);
 	}
+}
+
+/**
+ * The in-job suite `--force-tests` runs (`CI=1 npm test`) once stopped producing output in packages/ai vitest and
+ * held the release job until the job timeout killed it with no diagnostic (senpi#2291). A hard budget turns that
+ * into a loud, named failure, and the supervisor kills the suite's whole process tree, hung workers included.
+ *
+ * The budget is about twice the measured serial cost. Green main CI (ubuntu) splits the same tests across four
+ * jobs whose walls sum to 62.7, 60.8 and 56.8 min (runs 38713455303, 38707635236, 38707197426, 2026-10-15,
+ * including ~2-3 min of setup per job), so one serial in-job run needs roughly 55 min. The release job's
+ * `timeout-minutes` is raised for `force_tests` to fit it (`.github/workflows/publish-npm.yml`).
+ */
+export const FORCED_TEST_SUITE_TIMEOUT_MS = 110 * 60_000;
+
+const SUPERVISOR = fileURLToPath(new URL("./release-forced-test-supervisor.mjs", import.meta.url));
+const SUPERVISOR_TIMEOUT_EXIT = 124;
+
+export function runForcedTestSuite({ bin = "npm", args = ["test"], timeoutMs = FORCED_TEST_SUITE_TIMEOUT_MS, env = process.env } = {}) {
+	const result = spawnSync(process.execPath, [SUPERVISOR, String(timeoutMs), bin, ...args], {
+		stdio: "inherit",
+		env: { ...env, CI: "1" },
+	});
+	if (result.error) throw new Error(`${bin} ${args.join(" ")} failed: ${result.error.message}`, { cause: result.error });
+	if (result.status === SUPERVISOR_TIMEOUT_EXIT) {
+		throw new Error(`${bin} ${args.join(" ")} did not finish within ${timeoutMs / 60_000} min (senpi#2291: the in-job suite hung)`);
+	}
+	if (result.status !== 0) throw new Error(`${bin} ${args.join(" ")} failed with exit ${result.status ?? result.signal}`);
 }

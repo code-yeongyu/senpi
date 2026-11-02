@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type Context,
+	costCardAt,
 	isAnthropicApiBaseUrl,
 	type Model,
 	resolvePromptCacheTtlSeconds,
@@ -14,6 +15,7 @@ import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionFactory } from "../../types.ts";
 import { formatWarmTokenCount } from "../goal/cache-warm.ts";
 import { createSessionPrewarm } from "./session-prewarm.ts";
+import { createStartupActivityGate } from "./startup-activity-gate.ts";
 
 export const CACHE_KEEPALIVE_ENTRY_TYPE = "cache-keepalive";
 export const CACHE_WARM_PING_EVENT = "cache_warm_ping";
@@ -66,6 +68,7 @@ export function createCacheKeepAliveExtension(
 	const warm = dependencies.warmPromptCache ?? warmPromptCache;
 	return (pi: ExtensionAPI) => {
 		const prewarm = createSessionPrewarm(pi, { warm, isPrewarmModel: dependencies.isPromptCachePrewarmModel });
+		const startupActivity = createStartupActivityGate();
 		let ctx: ExtensionContext | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let inFlight = false;
@@ -107,7 +110,7 @@ export function createCacheKeepAliveExtension(
 		}
 
 		function arm(): void {
-			if (parked || timer !== undefined || inFlight) return;
+			if (startupActivity.waiting || parked || timer !== undefined || inFlight) return;
 			const current = ctx;
 			const settings = current?.getPromptCacheKeepAliveSettings?.();
 			if (!settings?.enabled || current?.model === undefined || lastCompletedAtMs === undefined) return;
@@ -167,7 +170,7 @@ export function createCacheKeepAliveExtension(
 			const iteration = attempts;
 			const pingGeneration = generation;
 			try {
-				const preparation = await current.prepareProviderRequest?.(lastMessages);
+				const preparation = await current.prepareProviderRequest?.(lastMessages, { allowServerSearch: true });
 				if (pingGeneration !== generation) {
 					inFlight = false;
 					arm();
@@ -192,10 +195,16 @@ export function createCacheKeepAliveExtension(
 				if (!auth.ok) throw new Error(auth.error);
 				const authHeaders = auth.headers ?? {};
 				const headers = preparation ? await preparation.transformHeaders(authHeaders) : authHeaders;
+				const systemPrompt = current.getSystemPrompt();
+				// The ping splits the system prompt where the real request does (senpi#4447, senpi#2389).
+				const stablePrefix = current.getSystemPromptStablePrefix?.();
 				const result = await warm(
 					current.model,
 					{
-						systemPrompt: current.getSystemPrompt(),
+						systemPrompt,
+						...(stablePrefix !== undefined && systemPrompt.startsWith(stablePrefix)
+							? { systemPromptStablePrefix: stablePrefix }
+							: {}),
 						messages: convertToLlm(filterContextExcludedMessages(preparedMessages)),
 						...(tools.length > 0 ? { tools } : {}),
 					},
@@ -240,7 +249,9 @@ export function createCacheKeepAliveExtension(
 			}
 		}
 
-		pi.on("session_start", (_event, nextCtx) => {
+		pi.on("session_start", (event, nextCtx) => {
+			if (event.sizesOnly) return;
+			prewarm.start(nextCtx);
 			stop("session-restart");
 			ctx = nextCtx;
 			attempts = 0;
@@ -249,8 +260,7 @@ export function createCacheKeepAliveExtension(
 			const usage = lastAssistantUsage(lastMessages);
 			lastUsage = usage;
 			lastCompletedAtMs = lastAssistantTimestamp(lastMessages);
-			arm();
-			prewarm.start(nextCtx);
+			startupActivity.start(nextCtx, arm);
 		});
 
 		pi.on("agent_end", (event, nextCtx) => {
@@ -262,6 +272,7 @@ export function createCacheKeepAliveExtension(
 				return;
 			}
 			lastMessages = [...event.messages];
+			startupActivity.release();
 			lastUsage = usage;
 			lastCompletedAtMs = Date.now();
 			armOnSettle = true;
@@ -293,6 +304,7 @@ export function createCacheKeepAliveExtension(
 		pi.on("input", () => stop("user-input"));
 		pi.on("session_shutdown", () => {
 			stop("session-dispose");
+			startupActivity.release();
 			prewarm.cancel();
 			ctx = undefined;
 		});
@@ -332,15 +344,14 @@ function projectedPingCost(
 	usage: { input: number; cacheRead: number; cacheWrite: number } | undefined,
 ): number {
 	const promptTokens = (usage?.input ?? 0) + (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0);
-	return (promptTokens * Math.max(model.cost.cacheRead, model.cost.cacheWrite)) / 1_000_000;
+	const rates = costCardAt(model.cost, Date.now());
+	return (promptTokens * Math.max(rates.cacheRead, rates.cacheWrite)) / 1_000_000;
 }
 
 function actualPingCost(model: Model<any>, usage: { input: number; cacheRead: number; cacheWrite: number }): number {
+	const rates = costCardAt(model.cost, Date.now());
 	return (
-		(usage.cacheRead * model.cost.cacheRead +
-			usage.cacheWrite * model.cost.cacheWrite +
-			usage.input * model.cost.input) /
-		1_000_000
+		(usage.cacheRead * rates.cacheRead + usage.cacheWrite * rates.cacheWrite + usage.input * rates.input) / 1_000_000
 	);
 }
 

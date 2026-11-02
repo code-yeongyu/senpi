@@ -26,6 +26,7 @@ export {
 	type FindToolInput,
 	type FindToolOptions,
 } from "./find.ts";
+export { createGlobTool, createGlobToolDefinition, type GlobToolOptions } from "./glob.ts";
 export {
 	createGrepTool,
 	createGrepToolDefinition,
@@ -84,6 +85,7 @@ import type { ToolDefinition } from "../extensions/types.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
 import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.ts";
+import { createGlobToolDefinition, type GlobToolOptions } from "./glob.ts";
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
 import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.ts";
 import { createPowerShellToolDefinition, type PowerShellToolOptions } from "./powershell.ts";
@@ -92,7 +94,7 @@ import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } fro
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "powershell" | "edit" | "write" | "grep" | "find" | "ls";
+export type ToolName = "read" | "bash" | "powershell" | "edit" | "write" | "grep" | "find" | "glob" | "ls";
 export const allToolNames: Set<ToolName> = new Set([
 	"read",
 	"bash",
@@ -101,6 +103,7 @@ export const allToolNames: Set<ToolName> = new Set([
 	"write",
 	"grep",
 	"find",
+	"glob",
 	"ls",
 ]);
 
@@ -112,6 +115,7 @@ export interface ToolsOptions {
 	edit?: EditToolOptions;
 	grep?: GrepToolOptions;
 	find?: FindToolOptions;
+	glob?: GlobToolOptions;
 	ls?: LsToolOptions;
 }
 
@@ -124,6 +128,7 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 		write: createWriteToolDefinition(cwd, options?.write),
 		grep: createGrepToolDefinition(cwd, options?.grep),
 		find: createFindToolDefinition(cwd, options?.find),
+		glob: createGlobToolDefinition(cwd, options?.glob),
 		ls: createLsToolDefinition(cwd, options?.ls),
 	};
 }

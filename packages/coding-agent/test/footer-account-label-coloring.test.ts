@@ -1,5 +1,6 @@
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { FooterComponent } from "../src/modes/interactive/components/footer.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -30,6 +31,7 @@ function pooledCredential(displayName?: string) {
 describe("FooterComponent account display names", () => {
 	beforeAll(() => {
 		initTheme(undefined, false);
+		setKeybindings(new KeybindingsManager());
 	});
 
 	it("keeps the provider prefix muted and the model accented when the label contains ) and :", () => {
@@ -47,16 +49,16 @@ describe("FooterComponent account display names", () => {
 		const plain = stripAnsi(lines[0] ?? "");
 
 		expect(plain).toContain("@Work: dev (b) (second)");
-		expect(plain).toContain("gpt-5-codex:high");
+		expect(plain).toContain("gpt-5-codex • effort high");
 		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 
 		// The exact colouring: muted "(provider@label) " run, accented model id,
-		// dim ":high". A regex over the rendered string would paint the whole
-		// segment with the model accent instead.
+		// muted "effort high". A regex over the rendered string would paint the
+		// whole segment with the model accent instead.
 		const providerRun = theme.fg("muted", "(chatgpt-subscription@Work: dev (b) (second)) ");
 		const modelRun = theme.fg("accent", "gpt-5-codex");
-		const thinkingRun = theme.fg("dim", ":high");
-		expect(lines[0]).toContain(`${providerRun}${modelRun}${thinkingRun}`);
+		const levelRun = `${theme.fg("borderMuted", " • ")}${theme.fg("muted", "effort high")}`;
+		expect(lines[0]).toContain(`${providerRun}${modelRun}${levelRun}`);
 	});
 
 	it("renders an unnamed account identically to before", () => {
@@ -73,12 +75,12 @@ describe("FooterComponent account display names", () => {
 		const lines = footer.render(width);
 		expect(stripAnsi(lines[0] ?? "")).toContain("(chatgpt-subscription@second)");
 		expect(lines[0]).toContain(
-			`${theme.fg("muted", "(chatgpt-subscription@second) ")}${theme.fg("accent", "gpt-5-codex")}${theme.fg("dim", ":high")}`,
+			`${theme.fg("muted", "(chatgpt-subscription@second) ")}${theme.fg("accent", "gpt-5-codex")}${theme.fg("borderMuted", " • ")}${theme.fg("muted", "effort high")}`,
 		);
 	});
 
 	it("truncates a wide label with an ellipsis instead of dropping the account segment", () => {
-		const width = 110;
+		const width = 122;
 		const session = createFooterSession({
 			sessionName: "",
 			modelId: "gpt-5-codex",
@@ -92,11 +94,11 @@ describe("FooterComponent account display names", () => {
 		const lines = footer.render(width);
 		const plain = stripAnsi(lines[0] ?? "");
 		// The 24-column account-label bound keeps the provider segment viable;
-		// without it the full right side would not fit and the plan would fall
-		// back to right.minimal, hiding the account indicator entirely.
+		// without it the provider form would not fit and the plan would step
+		// down to the bare model label, hiding the account indicator entirely.
 		expect(plain).toContain("(chatgpt-subscription@");
 		expect(plain).toContain("…");
-		expect(plain).toContain("gpt-5-codex:high");
+		expect(plain).toContain("gpt-5-codex • effort high");
 		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 	});
 });

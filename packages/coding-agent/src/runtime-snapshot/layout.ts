@@ -1,17 +1,10 @@
-import {
-	existsSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	realpathSync,
-	renameSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { dependencyFileExclusions } from "./dependency-files.ts";
 import { copyFiles, createSnapshotFileCopier, type SnapshotFileCopier } from "./file-copier.ts";
 import { RUNTIME_SNAPSHOT_MARKER, type RuntimeSnapshotMarker } from "./marker.ts";
+import { planPackageRoot } from "./package-files.ts";
+import { type FilePairs, planTree } from "./tree.ts";
 
 export interface RuntimeManifest {
 	readonly buildId: string;
@@ -28,55 +21,6 @@ export class RuntimeSnapshotLayoutError extends Error {
 }
 
 export const STAGING_PREFIX = ".tmp-";
-
-/** Type declarations and source maps: no runtime ever loads them, and they are half the files. */
-const UNLOADED_FILE = /\.(?:d\.[cm]?ts|map)$/;
-
-type FilePairs = [string, string][];
-
-function isMissing(error: unknown): boolean {
-	return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
-}
-
-/**
- * Creates the directories of a tree copy and lists the files to copy into them, following
- * symlinks so nothing in the result points back at the source. `skipModules` leaves nested
- * `node_modules` out: dependencies are placed on their own.
- */
-function planTree(
-	source: string,
-	target: string,
-	files: FilePairs,
-	skipModules: boolean,
-	seen = new Set<string>(),
-): void {
-	const real = realpathSync(source);
-	if (seen.has(real)) return;
-	seen.add(real);
-	mkdirSync(target, { recursive: true });
-	for (const entry of readdirSync(real, { withFileTypes: true })) {
-		if (skipModules && entry.name === "node_modules") continue;
-		const from = join(real, entry.name);
-		const to = join(target, entry.name);
-		if (entry.isDirectory()) {
-			planTree(from, to, files, skipModules, seen);
-		} else if (entry.isFile()) {
-			if (!UNLOADED_FILE.test(entry.name)) files.push([from, to]);
-		} else if (entry.isSymbolicLink()) {
-			let isDirectory: boolean;
-			try {
-				isDirectory = statSync(from).isDirectory();
-			} catch (error) {
-				// A dangling link in the install stays unresolvable in the snapshot too.
-				if (isMissing(error)) continue;
-				throw error;
-			}
-			if (isDirectory) planTree(from, to, files, skipModules, seen);
-			else if (!UNLOADED_FILE.test(entry.name)) files.push([realpathSync(from), to]);
-		}
-	}
-	seen.delete(real);
-}
 
 /** The node_modules directories Node's resolver walks from `dir`, nearest first. */
 function moduleDirectoriesFrom(dir: string): string[] {
@@ -142,7 +86,7 @@ function planModules(
 	const placed = new Map<string, string>();
 	const pending: { readonly installDir: string; readonly snapshotDir: string }[] = [];
 	const place = (installDir: string, snapshotDir: string): void => {
-		planTree(installDir, snapshotDir, files, true);
+		planTree(installDir, snapshotDir, files, true, new Set(), dependencyFileExclusions(installDir));
 		placed.set(snapshotDir, installDir);
 		pending.push({ installDir, snapshotDir });
 	};
@@ -205,7 +149,7 @@ export async function materializeRuntimeSnapshot(
 	rmSync(staging, { recursive: true, force: true });
 	try {
 		const files: FilePairs = [];
-		planTree(packageDir, staging, files, true);
+		planPackageRoot(packageDir, staging, files);
 		const placed = planModules(packageDir, staging, manifest.externals, files);
 		await copyFiles(files, copier);
 		verifyExternals(packageDir, join(staging, "dist", "bundle", "chunks"), manifest.externals, placed);

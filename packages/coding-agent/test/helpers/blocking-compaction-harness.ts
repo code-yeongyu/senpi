@@ -31,6 +31,7 @@ export function createCompactionHandlers(): CompactionHandlers {
 		resolveSpeculativeJob = resolve;
 	});
 	const api = {
+		appendEntry: vi.fn(),
 		events: {
 			emit: () => undefined,
 		},

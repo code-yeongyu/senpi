@@ -56,7 +56,10 @@ function createProxyModel(compat?: Model<"openai-responses">["compat"]): Model<"
 	};
 }
 
-async function captureFinalPayload(model: Model<"openai-responses">): Promise<CapturedPayload> {
+async function captureFinalPayload(
+	model: Model<"openai-responses">,
+	toolType = "web_search_preview",
+): Promise<CapturedPayload> {
 	let capturedPayload: CapturedPayload | undefined;
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
 		capturedPayload = readPayload(init?.body);
@@ -68,8 +71,8 @@ async function captureFinalPayload(model: Model<"openai-responses">): Promise<Ca
 		onPayload: (payload) => ({
 			...(payload as Record<string, unknown>),
 			include: ["reasoning.encrypted_content", "web_search_call.action.sources"],
-			tool_choice: { type: "web_search_preview" },
-			tools: [{ type: "function", name: "keeper" }, { type: "web_search_preview" }],
+			tool_choice: { type: toolType },
+			tools: [{ type: "function", name: "keeper" }, { type: toolType }],
 		}),
 	});
 
@@ -96,5 +99,12 @@ describe("OpenAI Responses web_search_preview compatibility", () => {
 		expect(payload.tools).toEqual([{ type: "function", name: "keeper" }, { type: "web_search_preview" }]);
 		expect(payload.include).toEqual(["reasoning.encrypted_content", "web_search_call.action.sources"]);
 		expect(payload.tool_choice).toEqual({ type: "web_search_preview" });
+	});
+
+	it("applies the same capability gate to the current web_search tool name", async () => {
+		const unsupported = await captureFinalPayload(createProxyModel(), "web_search");
+		expect(unsupported.tools).toEqual([{ type: "function", name: "keeper" }]);
+		const supported = await captureFinalPayload(createProxyModel({ supportsWebSearchPreview: true }), "web_search");
+		expect(supported.tools).toContainEqual({ type: "web_search" });
 	});
 });

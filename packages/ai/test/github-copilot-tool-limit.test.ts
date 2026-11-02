@@ -157,7 +157,34 @@ describe("GitHub Copilot tool limit", () => {
 			}).result(),
 		);
 
-		expect(wireToolNames(payload).at(-1)).toBe("tool_129");
+		expect(wireToolNames(payload)).toHaveLength(COPILOT_TOOL_LIMIT);
+		expect(wireToolNames(payload)).toContain("tool_129");
+	});
+
+	it("drops the Responses registration tail, not tools that sort after it (omo#10775 review)", async () => {
+		const core = ["read", "write", "todo", "task", "bash", "edit"];
+		const tools: Tool[] = [
+			...core.map((name) => ({ name, description: name, parameters: Type.Object({}) })),
+			...Array.from({ length: 130 }, (_, index) => ({
+				name: `mcp_srv_${String(index).padStart(3, "0")}`,
+				description: `MCP ${index}`,
+				parameters: Type.Object({}),
+			})),
+		];
+		const context: Context = { messages: [{ role: "user", content: "Use a tool.", timestamp: 1 }], tools };
+		const { payload } = await captureRequest((fetch) =>
+			streamOpenAIResponses(makeModel("openai-responses"), normalizeContext(context), {
+				apiKey: "test-key",
+				fetch,
+				maxRetries: 0,
+			}).result(),
+		);
+
+		const names = wireToolNames(payload);
+		expect(names).toHaveLength(COPILOT_TOOL_LIMIT);
+		for (const name of core) expect(names).toContain(name);
+		expect(names).not.toContain("mcp_srv_129");
+		expect(names).toEqual([...names].sort());
 	});
 
 	it("keeps a forced Anthropic tool from beyond the first 128", async () => {

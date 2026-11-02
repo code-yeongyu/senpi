@@ -1,4 +1,4 @@
-import { getApiKeyEnvVars, normalizeProviderId } from "@earendil-works/pi-ai";
+import { apiKeyEnvProviders, getApiKeyEnvVars, normalizeProviderId } from "@earendil-works/pi-ai";
 
 export const MAX_ENV_SLOT_INDEX = 16;
 
@@ -22,6 +22,21 @@ export function primaryEnvVar(providerId: string): string | undefined {
 	const envVars = getApiKeyEnvVars(providerId);
 	if (!envVars || envVars.length === 0) return undefined;
 	return envVars.find((name) => name.endsWith("_API_KEY")) ?? envVars[0];
+}
+
+/**
+ * Every name `discoverEnvSlots` can read, for every provider that has env slots: the primary
+ * variable and `<VAR>_2` .. `<VAR>_16`. Names only, never values.
+ */
+export function envSlotVarNames(): readonly string[] {
+	const names = new Set<string>();
+	for (const provider of [...apiKeyEnvProviders(), "anthropic-subscription"]) {
+		const primary = primaryEnvVar(provider);
+		if (!primary) continue;
+		names.add(primary);
+		for (let index = 2; index <= MAX_ENV_SLOT_INDEX; index++) names.add(`${primary}_${index}`);
+	}
+	return [...names];
 }
 
 /**

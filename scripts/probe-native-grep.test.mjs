@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { resolveNativeGrepAddon } from "./native-grep-addon.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const crate = join(root, "crates/senpi-grep");
@@ -23,20 +24,25 @@ function localAddon() {
 }
 
 before(() => {
-	// The addon is intentionally untracked. Fresh script-test CI checkouts build
-	// it rather than skipping native coverage or substituting a mock.
-	if (!process.env.SENPI_GREP_NATIVE_PATH && !localAddon()) {
+	// The addon is intentionally untracked. CI builds it once and exports its path (#3978);
+	// a local checkout without one builds it here rather than skipping native coverage or
+	// substituting a mock.
+	const addon = resolveNativeGrepAddon({ env: process.env, localAddon: localAddon() });
+	if (addon.kind === "missing-in-ci") assert.fail(addon.message);
+	if (addon.kind === "build") {
 		const build = spawnSync(
 			"npm",
 			["exec", "--yes", "--package", "@napi-rs/cli@3.7.2", "--", "napi", "build", "--platform", "--release", "--", "--locked"],
 			{ cwd: crate, encoding: "utf8", timeout: 300_000, shell: process.platform === "win32" },
 		);
-		assert.ifError(build.error);
+		if (build.error) {
+			assert.fail(
+				`Building the senpi-grep addon failed (${build.error.message}). Build it once in crates/senpi-grep with npm exec --package @napi-rs/cli@3.7.2 -- napi build --platform --release, or set SENPI_GREP_NATIVE_PATH.`,
+			);
+		}
 		assert.equal(build.status, 0, `${build.stdout}\n${build.stderr}`);
 	}
-	nativePath = process.env.SENPI_GREP_NATIVE_PATH
-		? resolve(process.env.SENPI_GREP_NATIVE_PATH)
-		: join(crate, localAddon());
+	nativePath = addon.kind === "path" ? resolve(addon.path) : join(crate, localAddon());
 	native = require(nativePath);
 	corpus = mkdtempSync(join(tmpdir(), "senpi-grep-test-"));
 	writeFileSync(join(corpus, "one.txt"), "needle\n");

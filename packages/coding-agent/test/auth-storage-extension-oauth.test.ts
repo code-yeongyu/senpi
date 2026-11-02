@@ -63,7 +63,8 @@ describe("AuthStorage extension OAuth providers", () => {
 			fakeOAuth("x", { type: "oauth", access: "", refresh: "", expires: 0 }),
 		);
 		const ids = storage.getOAuthProviders().map((p) => p.id);
-		expect(ids).toContain("anthropic");
+		expect(ids).toContain("github-copilot");
 		expect(ids).toContain("anthropic-subscription");
+		expect(ids).not.toContain("anthropic");
 	});
 });

@@ -21,7 +21,7 @@ import { createRpcConnectionHandler, type RpcConnectionHandler } from "../../src
 
 const USAGE_LIMIT = "You've hit your session limit · resets 3pm";
 const USER_SETTINGS = { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0 }, defaultThinkingLevel: "off" };
-const CHILD_CHAIN = { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-fallback/spare"] } };
+const CHILD_CHAIN = { modelFallback: true, fallbackChains: { "faux-fallback/primary": ["faux-spare/spare"] } };
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -88,6 +88,14 @@ async function singleRpcProcess(options: {
 	});
 	const primary = faux.getModel("primary");
 	if (primary === undefined) throw new Error("faux primary model missing");
+	const spare = faux.getModel("spare");
+	if (spare === undefined) throw new Error("faux spare model missing");
+	modelRuntime.registerProvider("faux-spare", {
+		api: faux.api,
+		apiKey: "spare-key",
+		baseUrl: spare.baseUrl,
+		models: [spare],
+	});
 
 	// The same launch-profile step the CLI runtime factory takes (main.ts createServices).
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
@@ -400,7 +408,7 @@ it("#given a child told its chain #when it moves to a replacement session #then 
 	expect(child.lastAssistantText()).toBe("answered by spare");
 	expect(readFileSync(child.settingsPath)).toEqual(settingsBefore);
 	expect(child.runtime.session.settingsManager.getRetryFallbackSettings().chains).toMatchObject({
-		"faux-fallback/primary": ["faux-fallback/spare"],
+		"faux-fallback/primary": ["faux-spare/spare"],
 	});
 }, 60_000);
 

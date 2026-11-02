@@ -1,3 +1,4 @@
+import { isKeyRelease } from "./keys.ts";
 import {
 	isMouseSequence,
 	MOUSE_TRACKING,
@@ -10,6 +11,7 @@ import {
 	type Component,
 	Container,
 	dispatchMouseEvent,
+	isTerminalReport,
 	retargetMouseEvent,
 	TuiBase,
 	type TuiMouseDispatchResult,
@@ -31,6 +33,11 @@ export interface TuiMainScreenRenderState {
 export class TuiMainScreen extends TuiBase {
 	readonly mode = "regular" as const;
 	private trackingEnabled = false;
+	/**
+	 * The app cannot scroll the terminal's scrollback, so the first wheel report while armed hands the
+	 * mouse back to the terminal; the next key press arms it again (senpi#3604).
+	 */
+	private yielded = false;
 	private readonly clicks = new MouseClickSynthesizer();
 	/**
 	 * A press stays clickable only while the committed frame and component tree it hit are unchanged.
@@ -50,7 +57,13 @@ export class TuiMainScreen extends TuiBase {
 		this.addInputListener((data) => this.handleMouseInput(data));
 	}
 
+	override mouseCaptureState(): "off" | "armed" | "yielded" {
+		if (this.yielded) return "yielded";
+		return this.trackingEnabled ? "armed" : "off";
+	}
+
 	protected override applyMouseTracking(enabled: boolean): void {
+		this.yielded = false;
 		const supported =
 			Boolean(process.stdout.isTTY) &&
 			!process.env.TERMUX_VERSION &&
@@ -66,6 +79,7 @@ export class TuiMainScreen extends TuiBase {
 	protected override beforeTerminalStop(): void {
 		this.terminal.write(MOUSE_TRACKING.disable);
 		this.trackingEnabled = false;
+		this.yielded = false;
 		this.clicks.cancel();
 		this.mousePress = undefined;
 	}
@@ -122,8 +136,15 @@ export class TuiMainScreen extends TuiBase {
 	}
 
 	private handleMouseInput(data: string): { consume: boolean } {
-		if (!isMouseSequence(data)) return { consume: false };
+		if (!isMouseSequence(data)) {
+			if (this.yielded && !isTerminalReport(data) && !isKeyRelease(data)) this.rearmAfterYield();
+			return { consume: false };
+		}
 		const raw = parseSgrMouseEvent(data);
+		if (this.trackingEnabled && raw && (raw.button & 64) !== 0) {
+			this.yieldToTerminal();
+			return { consume: true };
+		}
 		if (!this.trackingEnabled || !raw || raw.button !== 0) {
 			this.clicks.cancel();
 			this.mousePress = undefined;
@@ -182,6 +203,24 @@ export class TuiMainScreen extends TuiBase {
 			}
 		}
 		return { consume: true };
+	}
+
+	private yieldToTerminal(): void {
+		this.terminal.write(MOUSE_TRACKING.disable);
+		this.trackingEnabled = false;
+		this.yielded = true;
+		this.clicks.cancel();
+		this.mousePress = undefined;
+		this.requestRender();
+	}
+
+	private rearmAfterYield(): void {
+		if (!this.mouseCaptureEnabled) {
+			this.yielded = false;
+			return;
+		}
+		this.applyMouseTracking(true);
+		this.requestRender();
 	}
 
 	captureRenderState(): TuiMainScreenRenderState {

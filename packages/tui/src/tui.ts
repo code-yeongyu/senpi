@@ -8,6 +8,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
+import {
+	buildKittyGraphicsQuery,
+	KITTY_GRAPHICS_PROBE_TIMEOUT_MS,
+	parseKittyGraphicsProbeResponse,
+} from "./kitty-graphics-probe.ts";
 import { isMultiplexerSession, useLegacyMuxRender, viewportRenderEnabled } from "./mux.ts";
 import type { Terminal } from "./terminal.ts";
 import {
@@ -18,14 +23,18 @@ import {
 	type TerminalColors,
 } from "./terminal-colors.ts";
 import {
+	allocateImageId,
 	deleteKittyImage,
 	getCapabilities,
 	isImageLine,
 	resetCapabilitiesCache,
 	setCellDimensions,
+	setProbedImageProtocol,
 } from "./terminal-image.ts";
 import { consumeTmuxFocusEvent, DISABLE_FOCUS_REPORTING, ENABLE_FOCUS_REPORTING } from "./tmux-focus.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
+import { planViewportInsertScroll, type ViewportInsertScrollPlan } from "./viewport-insert-scroll.ts";
+import { insertedAboveViewport } from "./viewport-shift.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
@@ -238,13 +247,6 @@ type PendingTerminalColorQuery = {
 	timer: NodeJS.Timeout | undefined;
 };
 
-interface ViewportInsertScrollPlan {
-	viewportTop: number;
-	regionBottom: number;
-	insertedRows: string[];
-	mutatedRows: Array<{ screenRow: number; content: string }>;
-}
-
 interface ViewportRenderStats {
 	readonly lastNormalizedLines: number;
 	readonly lastKittyImageScannedLines: number;
@@ -336,8 +338,6 @@ function defaultDiagnosticLogDirectory(): string {
  */
 let renderErrorLogDirectory: string | undefined;
 const VIEWPORT_RENDER_OVERSCAN = 16;
-// Keep scroll-region wins cheap when a few visible rows mutate during append streaming.
-const MAX_SCROLL_DIFF_ROWS = 4;
 const viewportRenderStats = {
 	lastNormalizedLines: 0,
 	lastKittyImageScannedLines: 0,
@@ -1052,6 +1052,7 @@ export abstract class TuiBase extends Container {
 	 * replies belong to the oldest one. Queries stay here after a timeout to collect late replies.
 	 */
 	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
+	private pendingKittyGraphicsProbe?: { imageId: number; timer: ReturnType<typeof setTimeout> };
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	#lastCursorVisibility: boolean | undefined;
@@ -1130,6 +1131,14 @@ export abstract class TuiBase extends Container {
 
 	protected get mouseCaptureEnabled(): boolean {
 		return this.mouseLeases.size > 0 && this.mouseBlockers.size === 0;
+	}
+
+	/**
+	 * Whether mouse reports reach the app right now: `"off"` without an enabled lease, `"armed"` while
+	 * they do, `"yielded"` while a renderer has handed the mouse back to the terminal (main-screen wheel).
+	 */
+	mouseCaptureState(): "off" | "armed" | "yielded" {
+		return this.mouseCaptureEnabled ? "armed" : "off";
 	}
 
 	protected applyMouseTracking(_enabled: boolean): void {}
@@ -1679,6 +1688,7 @@ export abstract class TuiBase extends Container {
 			this.terminal.write("\x1b[?2031h");
 		}
 		this.queryCellSize();
+		this.probeKittyGraphics();
 		this.requestRender();
 	}
 
@@ -1720,6 +1730,37 @@ export abstract class TuiBase extends Container {
 		this.terminal.write("\x1b[16t");
 	}
 
+	private probeKittyGraphics(): void {
+		if (this.pendingKittyGraphicsProbe) return;
+		if (getCapabilities().imageProbe !== "kitty") return;
+
+		const imageId = allocateImageId();
+		const timer = setTimeout(() => this.resolveKittyGraphicsProbe(false), KITTY_GRAPHICS_PROBE_TIMEOUT_MS);
+		this.pendingKittyGraphicsProbe = { imageId, timer };
+		this.terminal.write(buildKittyGraphicsQuery(imageId));
+	}
+
+	private consumeKittyGraphicsProbeResponse(data: string): boolean {
+		const probe = this.pendingKittyGraphicsProbe;
+		if (!probe) return false;
+		const outcome = parseKittyGraphicsProbeResponse(data, probe.imageId);
+		if (outcome === null) return false;
+		this.resolveKittyGraphicsProbe(outcome === "ok");
+		return true;
+	}
+
+	private resolveKittyGraphicsProbe(supported: boolean): void {
+		const probe = this.pendingKittyGraphicsProbe;
+		if (!probe) return;
+		this.pendingKittyGraphicsProbe = undefined;
+		clearTimeout(probe.timer);
+		setProbedImageProtocol(supported ? "kitty" : null);
+		if (this.stopped) return;
+		if (supported) this.queryCellSize();
+		this.invalidate();
+		this.requestRender();
+	}
+
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
 		// The hold itself belongs to the turn (interactive mode sets and releases it); a stop()/start() handover
@@ -1730,6 +1771,10 @@ export abstract class TuiBase extends Container {
 		this.renderRequested = false;
 		this.inputRenderPending = false;
 		this.cancelRenderTimer();
+		if (this.pendingKittyGraphicsProbe) {
+			clearTimeout(this.pendingKittyGraphicsProbe.timer);
+			this.pendingKittyGraphicsProbe = undefined;
+		}
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
@@ -1934,6 +1979,9 @@ export abstract class TuiBase extends Container {
 			return;
 		}
 		if (this.consumeTerminalColorSchemeReport(data)) {
+			return;
+		}
+		if (this.consumeKittyGraphicsProbeResponse(data)) {
 			return;
 		}
 		// A key press means the user is at the bottom again. Terminal reports (mouse/wheel, OSC/DCS replies,
@@ -2616,59 +2664,6 @@ export abstract class TuiBase extends Container {
 		return this.#muxDetector() && !useLegacyMuxRender();
 	}
 
-	private createViewportInsertScrollPlan(
-		newLines: string[],
-		prevViewportTop: number,
-		height: number,
-		lineCountDelta: number,
-	): ViewportInsertScrollPlan | undefined {
-		if (lineCountDelta <= 0 || lineCountDelta >= height || this.overlayStack.length > 0) {
-			return undefined;
-		}
-
-		const maxViewportTop = Math.max(0, newLines.length - height);
-		const viewportTop = Math.min(maxViewportTop, prevViewportTop + lineCountDelta);
-		if (viewportTop <= prevViewportTop) {
-			return undefined;
-		}
-
-		const previousVisible = this.getViewportRows(this.previousLines, prevViewportTop, height);
-		const nextVisible = this.getViewportRows(newLines, viewportTop, height);
-		if (previousVisible.some(isImageLine) || nextVisible.some(isImageLine)) {
-			return undefined;
-		}
-
-		let stableSuffixRows = 0;
-		while (
-			stableSuffixRows < height &&
-			previousVisible[height - stableSuffixRows - 1] === nextVisible[height - stableSuffixRows - 1]
-		) {
-			stableSuffixRows += 1;
-		}
-
-		const regionHeight = height - stableSuffixRows;
-		if (regionHeight <= 0 || regionHeight < lineCountDelta) {
-			return undefined;
-		}
-
-		const mutatedRows: Array<{ screenRow: number; content: string }> = [];
-		for (let row = 0; row < regionHeight - lineCountDelta; row++) {
-			if (previousVisible[row + lineCountDelta] !== nextVisible[row]) {
-				mutatedRows.push({ screenRow: row, content: nextVisible[row] });
-				if (mutatedRows.length > MAX_SCROLL_DIFF_ROWS) {
-					return undefined;
-				}
-			}
-		}
-
-		return {
-			viewportTop,
-			regionBottom: regionHeight - 1,
-			insertedRows: nextVisible.slice(regionHeight - lineCountDelta, regionHeight),
-			mutatedRows,
-		};
-	}
-
 	private renderViewportInsertScroll(
 		plan: ViewportInsertScrollPlan,
 		newLines: string[],
@@ -2755,10 +2750,11 @@ export abstract class TuiBase extends Container {
 
 	/**
 	 * The held frame of `setScrollbackReplayHold` (#2836): rows above the old viewport stay as the terminal
-	 * shows them (possibly stale), and the frame is rewritten from the old viewport top down. Rows the
-	 * document grew by scroll naturally into scrollback in their current form, so nothing is lost there and
-	 * nothing is cleared, and a reader who scrolled up keeps their place. Returns false when an image row is
-	 * involved, so the caller replays as before.
+	 * shows them (possibly stale), and the frame is rewritten from the old viewport top down, or from where the
+	 * old viewport's rows moved to when rows were inserted above it (senpi#3649), so rows already in the
+	 * scrollback are not written into it again. Rows the document grew by scroll naturally into scrollback in
+	 * their current form, so nothing is lost there and nothing is cleared, and a reader who scrolled up keeps
+	 * their place. Returns false when an image row is involved, so the caller replays as before.
 	 */
 	private renderHeldRepaint(
 		newLines: string[],
@@ -2769,7 +2765,14 @@ export abstract class TuiBase extends Container {
 		prevViewportTop: number,
 		hardwareCursorRow: number,
 	): boolean {
-		const start = Math.min(prevViewportTop, Math.max(0, newLines.length - height));
+		const shift = insertedAboveViewport(
+			this.previousLines,
+			newLines,
+			prevViewportTop,
+			height,
+			newLines.length - this.previousLines.length,
+		);
+		const start = Math.min(prevViewportTop + shift, Math.max(0, newLines.length - height));
 		const rowCount = Math.max(height, newLines.length - start);
 		const rows = Array.from({ length: rowCount }, (_, index) => newLines[start + index] ?? "");
 		const previousVisible = this.getViewportRows(this.previousLines, prevViewportTop, height);
@@ -3173,7 +3176,10 @@ export abstract class TuiBase extends Container {
 			lastChanged = expandedRange.lastChanged;
 		}
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
-		const insertScrollPlan = this.createViewportInsertScrollPlan(newLines, prevViewportTop, height, lineCountDelta);
+		const insertScrollPlan =
+			this.overlayStack.length > 0
+				? undefined
+				: planViewportInsertScroll(this.previousLines, newLines, prevViewportTop, height, lineCountDelta);
 
 		// No changes - but still need to update hardware cursor position if it moved
 		if (firstChanged === -1) {
@@ -3492,7 +3498,7 @@ export abstract class TuiBase extends Container {
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
 
 		if (process.env.PI_TUI_DEBUG === "1") {
-			const debugDir = "/tmp/tui";
+			const debugDir = path.join(os.tmpdir(), "tui");
 			fs.mkdirSync(debugDir, { recursive: true });
 			const debugPath = path.join(debugDir, `render-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
 			const debugData = [
@@ -3630,7 +3636,7 @@ export abstract class TuiBase extends Container {
  * replies, DEC private reports (`ESC[?...`) and window/cell-size reports (`ESC[...t`). OSC/DCS/APC need
  * a body after the introducer, so a legacy Alt+] / Alt+Shift+P / Alt+_ key press is still a key.
  */
-function isTerminalReport(data: string): boolean {
+export function isTerminalReport(data: string): boolean {
 	return (
 		data.startsWith("\x1b[<") ||
 		data.startsWith("\x1b[M") ||

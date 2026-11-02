@@ -2,6 +2,7 @@ import { getAgentDir } from "../../../../config.ts";
 import { getFileContentRevision } from "../../../../utils/paths.ts";
 import { getSettingsPath, type Settings, SettingsManager } from "../../../settings-manager.ts";
 import type { SettingSource } from "./sdk-boundary.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 
 export type AnthropicSubscriptionSystemPromptMode = "preset-append" | "full" | "override";
 export type AnthropicSubscriptionResumeMode = "auto" | "off";
@@ -32,6 +33,8 @@ export interface AnthropicSubscriptionProviderSettings {
 	readonly settingSources?: SettingSource[];
 	readonly strictMcpConfig?: boolean;
 	readonly pinnedAccount?: string;
+	/** Allow automatic switching to another managed account after failure. Defaults to true. */
+	readonly accountFallback?: boolean;
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
 	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
 }
@@ -124,6 +127,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 	const settingSources = parseSettingSources(value.settingSources);
 	const strictMcpConfig = typeof value.strictMcpConfig === "boolean" ? value.strictMcpConfig : undefined;
 	const pinnedAccount = parseNonEmptyString(value.pinnedAccount);
+	const accountFallback = typeof value.accountFallback === "boolean" ? value.accountFallback : undefined;
 	const tokenInjection = parseTokenInjection(value.tokenInjection);
 	const compactionOwner = parseCompactionOwner(value.compactionOwner);
 	return {
@@ -135,6 +139,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 		...(settingSources !== undefined ? { settingSources } : {}),
 		...(strictMcpConfig !== undefined ? { strictMcpConfig } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
+		...(accountFallback !== undefined ? { accountFallback } : {}),
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
 		...(compactionOwner !== undefined ? { compactionOwner } : {}),
 	};
@@ -148,6 +153,7 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 	const tokenInjection = parseTokenInjection(environment.SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION);
 	const settingSources = parseEnvironmentSettingSources(environment.SENPI_CLAUDE_SDK_OAUTH_SETTING_SOURCES);
 	const pinnedAccount = parseNonEmptyString(environment.SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT);
+	const accountFallback = parseEnvironmentBoolean(environment.SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK);
 	const compactionOwner = parseCompactionOwner(environment.SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER);
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
@@ -157,6 +163,7 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
 		...(settingSources !== undefined ? { settingSources } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
+		...(accountFallback !== undefined ? { accountFallback } : {}),
 		...(compactionOwner !== undefined ? { compactionOwner } : {}),
 	};
 }
@@ -216,7 +223,10 @@ function settingsFingerprint(path: string): string {
 let cachedAnthropicSubscriptionManager: { cwd: string; key: string; manager: SettingsManager } | undefined;
 
 /** Load settings from Senpi's configured global and project settings.json paths. */
-export function loadAnthropicSubscriptionProviderSettingsFromDisk(cwd: string): AnthropicSubscriptionProviderSettings {
+export function loadAnthropicSubscriptionProviderSettingsFromDisk(
+	sessionCwd: string,
+): AnthropicSubscriptionProviderSettings {
+	const cwd = requireAnthropicSubscriptionCwd(sessionCwd);
 	// fallbackEligible() calls this per candidate probe; cache the manager by
 	// (cwd, settings content revision) and re-apply env live to avoid locked disk reads.
 	const agentDir = getAgentDir();

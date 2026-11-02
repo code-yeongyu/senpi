@@ -7,9 +7,10 @@ import {
 	nextRenderRevision,
 	Spacer,
 	Text,
+	truncateToWidth,
 } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
-import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
 import { type AssistantRenderDescriptor, createAssistantRenderDescriptors } from "./assistant-render-descriptors.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
@@ -20,6 +21,25 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 function assertNever(value: never): never {
 	throw new TypeError(`Unexpected assistant render variant: ${String(value)}`);
+}
+
+/** The folded handoff line: always one row, cut to the width instead of wrapping (senpi#3323). */
+class SingleLine implements Component {
+	private readonly revision = nextRenderRevision();
+	private readonly text: string;
+	private readonly pad: number;
+	constructor(text: string, pad: number) {
+		this.text = text;
+		this.pad = pad;
+	}
+	render(width: number): string[] {
+		const room = Math.max(1, width - this.pad);
+		return [`${" ".repeat(this.pad)}${truncateToWidth(this.text, room)}`];
+	}
+	invalidate(): void {}
+	getRenderRevision(): number {
+		return this.revision;
+	}
 }
 
 export class AssistantMessageComponent extends Container {
@@ -36,15 +56,17 @@ export class AssistantMessageComponent extends Container {
 	private hasToolCalls = false;
 	private expanded = false;
 	private providerErrorOwned = false;
+	private ownsTurnNotice = false;
 	private isStreaming = false;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	private handoffOpenOverrides = new Map<number, boolean>();
 	/** Moves whenever the cached render is dropped; output is a function of the state `updateContent` records. */
 	private revision = nextRenderRevision();
 
 	constructor(
 		message?: AssistantMessage,
 		hideThinkingBlock = false,
-		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		markdownTheme: MarkdownTheme = sharedMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
@@ -88,6 +110,14 @@ export class AssistantMessageComponent extends Container {
 	setExpanded(expanded: boolean): void {
 		if (this.expanded === expanded) return;
 		this.expanded = expanded;
+		this.handoffOpenOverrides.clear();
+		this.refreshContent();
+	}
+
+	/** A replayed turn draws in one component, so it shows its own turn-ending notice (senpi#4958). */
+	setOwnsTurnNotice(owned: boolean): void {
+		if (this.ownsTurnNotice === owned) return;
+		this.ownsTurnNotice = owned;
 		this.refreshContent();
 	}
 
@@ -150,7 +180,9 @@ export class AssistantMessageComponent extends Container {
 			hiddenThinkingLabel: this.hiddenThinkingLabel,
 			hideThinkingBlock: this.hideThinkingBlock,
 			thinkingVisibilityOverrides: this.thinkingVisibilityOverrides,
+			handoffOpenOverrides: this.handoffOpenOverrides,
 			hasToolCalls: this.hasToolCalls,
+			ownsTurnNotice: this.ownsTurnNotice,
 		});
 		this.reconcileRenderDescriptors(descriptors);
 	}
@@ -213,6 +245,10 @@ export class AssistantMessageComponent extends Container {
 				return new Text(descriptor.text, 1, 0);
 			case "provider-native-body":
 				return new Text(descriptor.text, 3, 0);
+			case "handoff-line":
+				return this.withHandoffToggle(new SingleLine(descriptor.text, this.outputPad), descriptor);
+			case "handoff-body":
+				return this.withHandoffToggle(new Text(descriptor.text, this.outputPad, 0), descriptor);
 			default:
 				return assertNever(descriptor.kind);
 		}
@@ -236,12 +272,28 @@ export class AssistantMessageComponent extends Container {
 		return component;
 	}
 
+	/** Left-clicking a handoff fold line or its open body toggles that block, like a thinking run. */
+	private withHandoffToggle(component: Component, descriptor: AssistantRenderDescriptor): Component {
+		const block = descriptor.handoffBlock;
+		if (block === undefined) return component;
+		component.handleMouse = (event) => {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			const open = this.handoffOpenOverrides.get(block) ?? this.expanded;
+			this.handoffOpenOverrides.set(block, !open);
+			this.refreshContent();
+			return { handled: true };
+		};
+		return component;
+	}
+
 	private createMessageSignature(message: AssistantMessage): string {
 		return createBoundedRenderSignature({
 			content: message.content,
 			hiddenThinkingLabel: this.hiddenThinkingLabel,
 			hideThinkingBlock: this.hideThinkingBlock,
 			thinkingVisibilityOverrides: [...this.thinkingVisibilityOverrides],
+			handoffOpenOverrides: [...this.handoffOpenOverrides],
+			expanded: this.expanded,
 			errorState: [message.diagnostics, message.errorMessage],
 			stopReason: message.stopReason,
 		});

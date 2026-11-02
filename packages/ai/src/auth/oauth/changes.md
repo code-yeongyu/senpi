@@ -1,3 +1,61 @@
+## 2026-10-30 - Implement SIWC renewable-session revocation (part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: discovers the revocation endpoint, posts the refresh token and issued client ID, accepts empty HTTP 200, and bounds network/5xx retries with injectable backoff.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: local token deletion alone does not end the renewable SIWC session.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: the bundled provider owns the session's OAuth protocol.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OAuth hook object and token-operation helpers.
+
+## 2026-10-31 - Kimi Code's refused refresh says so on its error (senpi#5010)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/kimi-coding.ts`: a refresh refused with 401, 403 or `invalid_grant` throws `OAuthTokenEndpointError` with `credentialRefused: true` and the body's `oauthError`; other failed refreshes carry `oauthError` only.
+- `packages/ai/src/auth/oauth/radius.ts`: `OAuthResponseError` passes its OAuth code to the base class instead of declaring its own `oauthError` field.
+
+### Why
+
+- Kimi's refusal message has no OAuth JSON, so the credential pool stopped blocking a dead Kimi login and failing over to a sibling account (senpi#5010 review).
+
+### Why an extension could not handle it
+
+- The Kimi refresh runs inside the bundled OAuth adapter; no extension hook can annotate its error.
+
+### Expected merge conflict zones
+
+- LOW: the unauthorized branch of `refreshToken` in `kimi-coding.ts`; `OAuthResponseError` in `radius.ts`.
+
+## 2026-10-27 - The hand-rolled Anthropic OAuth (PKCE) flow is removed (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/anthropic.ts`: deleted (`loginAnthropic`, `loginAnthropicCopyCode`, `refreshAnthropicToken`, `anthropicOAuth`, the browser/copy-code login methods).
+- `packages/ai/src/auth/oauth/anthropic-callback-listener.ts`: deleted (the loopback listener on port 53692).
+- `packages/ai/src/auth/oauth/authorization-input.ts`, `packages/ai/src/auth/oauth/error-details.ts`: deleted; their only user was `anthropic.ts` (the other providers keep their own local parsers).
+- `packages/ai/src/auth/oauth/load.ts`: `loadAnthropicOAuth` and the `anthropic` key of the bundled loaders are removed.
+
+### Why
+
+- senpi#4436, owner ruling R7: Claude sign-in runs only through the bundled Claude Code CLI (`claude auth login`), which keeps and renews its own login. The PKCE direct-login route and all its code, token refresh included, are removed.
+
+### Why an extension could not handle it
+
+- These are pi-ai's own built-in OAuth flow modules and loader registry.
+
+### Expected merge conflict zones
+
+- MEDIUM: an upstream change to `auth/oauth/anthropic.ts` or its listener lands on deleted files; keep them deleted. LOW: the loader type and the removed `loadAnthropicOAuth` in `load.ts`.
+
 ## 2026-10-09 - Restore oauth-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed
@@ -49,3 +107,24 @@ The provider's private token exchange constructs these errors before an extensio
 ### Expected merge conflict zones
 
 - HTTP failure constructors and catch wrappers in the listed provider modules. Existing message text is preserved.
+
+## 2026-10-18 - ChatGPT browser login takes the callback port over instead of dead-ending on "State mismatch." (senpi#3623)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/chatgpt-subscription.ts`: `loginChatGptSubscription` binds the callback through `startChatGptCallback` before building the authorize URL, so `redirect_uri` (and the token exchange) name the port actually bound. PKCE is generated first because `createState()` needs the lazily imported `node:crypto`. The listener is closed on every exit path, including a throw before the wait starts. When no registered port can be bound, the `auth_url` instructions say so and ask for the pasted address instead of promising the browser will finish. `createAuthorizationFlow` became the synchronous `buildAuthorizationUrl(state, challenge, redirectUri, originator)`.
+- `packages/ai/src/auth/oauth/callback-server.ts`: an optional `cancelPath` lets a newer login on the machine take the port over (the listener stops waiting for the browser and closes; its login keeps the paste prompt). The takeover is accepted only as a `POST` carrying `x-oauth-callback-cancel: 1` and no `Origin` header; a plain GET (an `<img>` tag), a form POST, or any request from a page gets 403, so a web page cannot stop a waiting login (review LOW 1). A per-login token was rejected because a login in another process cannot know it. The foreign-state page explains that the page belongs to another sign-in and how to finish it.
+- `packages/ai/src/auth/oauth/chatgpt-subscription-callback.ts` (fork-only): on EADDRINUSE at 1455 it sends `POST /cancel` with that header once, retries for about 2 s, then tries 1457, matching Codex CLI's `bind_server`. `PI_CHATGPT_OAUTH_CALLBACK_PORTS` overrides the port list (tests).
+
+### Why
+
+Only 1455 and 1457 are registered redirect ports for this client. A second session, an abandoned RPC/desktop login, or an earlier failed attempt kept 1455; the new login's bind failed silently, its URL still pointed at 1455, and the old listener answered "State mismatch." to every retry. Reproduced on main 8ca35d726 with two processes.
+
+### Why an extension could not handle it
+
+The callback listener, its port and the authorize URL are built inside the bundled OAuth flow before any extension hook runs.
+
+### Expected merge conflict zones
+
+- MEDIUM: `loginChatGptSubscription` and the former `createAuthorizationFlow` in `chatgpt-subscription.ts`.
+- LOW: the request handler head and the state check in `callback-server.ts`.

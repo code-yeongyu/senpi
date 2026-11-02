@@ -1,7 +1,7 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
-import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
+import { InMemoryCredentialStore, revokeStoredOAuth } from "./auth/credential-store.ts";
+import { appendLoginSlot, assertLoginKeyPresent, removeSlot, withoutBlankKey } from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
 	type AuthResolutionOverrides,
@@ -19,9 +19,13 @@ import type {
 	Credential,
 	CredentialStore,
 	LoginOptions,
+	LogoutOptions,
+	OAuthRevocationResult,
 	ProviderAuth,
 } from "./auth/types.ts";
+import { inferGoogleThinkingLevelMap } from "./google-thinking-generation.ts";
 import { builtinCatalogAdvertisesMax } from "./model-catalog.ts";
+import { costCardAt } from "./model-cost.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
 import type {
 	AnyModel,
@@ -79,6 +83,7 @@ export {
 	providerNotConfiguredMessage,
 } from "./auth/resolve.ts";
 export { getModelType, isModelType } from "./utils/model-operations.ts";
+export type { LogoutOptions, OAuthRevocationResult } from "./auth/types.ts";
 
 export interface ModelsPublication {
 	/** Provider-selected persisted catalog. Omit to leave storage unchanged; null deletes it. */
@@ -161,6 +166,11 @@ export interface Provider<TApi extends Api = Api> {
 	readonly id: string;
 	readonly name: string;
 
+	/**
+	 * The provider's endpoint. Transports send each request to `model.baseUrl`, never to this value or a
+	 * hard-coded host: senpi sets every model's `baseUrl` (and this field) to a user's models.json
+	 * `baseUrl` when one is configured for the provider.
+	 */
 	readonly baseUrl?: string;
 	readonly headers?: ProviderHeaders;
 	/** Omitting it means the shipped senpi default profile applies. */
@@ -322,8 +332,8 @@ export interface Models {
 	/** Run a provider-owned login flow and persist its returned credential. */
 	login(providerId: string, type: AuthType, interaction: AuthInteraction, options?: LoginOptions): Promise<Credential>;
 
-	/** Remove the stored credential for a provider. */
-	logout(providerId: string, options?: AuthOperationOptions & { slotId?: string }): Promise<void>;
+	/** Revoke supported OAuth sessions and retain registrations; otherwise remove the credential. */
+	logout(providerId: string, options?: LogoutOptions): Promise<OAuthRevocationResult | void>;
 
 	stream<TApi extends Api>(
 		model: Model<TApi>,
@@ -407,6 +417,8 @@ class ModelsImpl implements MutableModels {
 	private refreshGenerations = new Map<string, number>();
 	private refreshControllers = new Map<string, AbortController>();
 	private publicationChains = new Map<string, Promise<unknown>>();
+	private logoutControllers = new Map<string, AbortController>();
+	private signingOut = new Map<string, number>();
 
 	constructor(options?: CreateModelsOptions) {
 		this.credentials = options?.credentials ?? new InMemoryCredentialStore();
@@ -752,6 +764,7 @@ class ModelsImpl implements MutableModels {
 	): Promise<AuthResult | undefined> {
 		const signal = operationSignal(overrides?.signal);
 		const providerId = typeof providerOrModel === "string" ? providerOrModel : providerOrModel.provider;
+		if (this.signingOut.has(providerId)) return undefined;
 		const provider = this.providers.get(providerId);
 		if (!provider) return undefined;
 		const result = await resolveProviderAuth(provider, this.credentials, this.authContext, { ...overrides, signal });
@@ -781,7 +794,9 @@ class ModelsImpl implements MutableModels {
 		}
 		const { onAccountCommitted, ...providerInteraction } = interaction;
 		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal }, options);
-		const credential = await raceWithAbortSignal(loginOperation, signal);
+		const loggedIn = await raceWithAbortSignal(loginOperation, signal);
+		const credential = type === "api_key" && provider.auth.apiKey?.keyOptional ? withoutBlankKey(loggedIn) : loggedIn;
+		assertLoginKeyPresent(credential);
 		let committedName: string | undefined;
 		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;
@@ -794,10 +809,15 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(current, credential, (name, origin) => {
-					committedName = name;
-					committedOrigin = origin;
-				});
+				return appendLoginSlot(
+					current,
+					credential,
+					(name, origin) => {
+						committedName = name;
+						committedOrigin = origin;
+					},
+					{ accountIdentity: provider.auth.oauth?.accountIdentity },
+				);
 			},
 			{ signal },
 		);
@@ -831,10 +851,17 @@ class ModelsImpl implements MutableModels {
 		return credential;
 	}
 
-	async logout(providerId: string, options?: AuthOperationOptions & { slotId?: string }): Promise<void> {
+	async logout(providerId: string, options?: LogoutOptions): Promise<OAuthRevocationResult | void> {
 		const signal = operationSignal(options?.signal);
 		signal.throwIfAborted();
+		const oauth = this.providers.get(providerId)?.auth.oauth;
 		try {
+			if (oauth?.revoke) {
+				this.signingOut.set(providerId, (this.signingOut.get(providerId) ?? 0) + 1);
+				this.logoutControllers.get(providerId)?.abort(new Error("Account signed out"));
+				const result = await revokeStoredOAuth(this.credentials, providerId, oauth, options);
+				if (result) return result;
+			}
 			if (options?.slotId !== undefined) {
 				const current = await this.credentials.read(providerId, { signal });
 				const next = removeSlot(current, options.slotId);
@@ -849,6 +876,15 @@ class ModelsImpl implements MutableModels {
 		} catch (error) {
 			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store delete failed for ${providerId}`, { cause: error });
+		} finally {
+			if (oauth?.revoke) {
+				const remaining = (this.signingOut.get(providerId) ?? 1) - 1;
+				if (remaining > 0) this.signingOut.set(providerId, remaining);
+				else {
+					this.signingOut.delete(providerId);
+					this.logoutControllers.delete(providerId);
+				}
+			}
 		}
 	}
 
@@ -876,6 +912,17 @@ class ModelsImpl implements MutableModels {
 		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
 	}> {
 		this.requireProvider(model);
+		if (this.providers.get(model.provider)?.auth.oauth?.revoke) {
+			let controller = this.logoutControllers.get(model.provider);
+			if (!controller) {
+				controller = new AbortController();
+				this.logoutControllers.set(model.provider, controller);
+			}
+			options = {
+				...options,
+				signal: AbortSignal.any([controller.signal, ...(options?.signal ? [options.signal] : [])]),
+			} as TOptions;
+		}
 		const resolution = await this.getAuth(model, {
 			apiKey: options?.apiKey,
 			env: options?.env,
@@ -885,6 +932,7 @@ class ModelsImpl implements MutableModels {
 			throw new ModelsError("auth", providerNotConfiguredMessage(model.provider));
 		}
 		const auth = resolution.auth;
+		options?.signal?.throwIfAborted();
 
 		// Explicit request options win per-field; the Models-only transform runs last.
 		const apiKey = options?.apiKey ?? auth.apiKey;
@@ -1241,11 +1289,21 @@ export function hasApi<TApi extends Api>(model: AnyModel, api: TApi): model is M
 	return isModelType(model, "chat") && model.api === api;
 }
 
-export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
+export function calculateCost(model: AnyModel, usage: Usage, atMs: number = Date.now()): Usage["cost"] {
+	if (model.cost.unknown) {
+		usage.cost.input = 0;
+		usage.cost.output = 0;
+		usage.cost.cacheRead = 0;
+		usage.cost.cacheWrite = 0;
+		usage.cost.total = 0;
+		usage.costUnknown = true;
+		return usage.cost;
+	}
 	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
-	let rates: ModelCostRates = model.cost;
+	const card = costCardAt(model.cost, atMs);
+	let rates: ModelCostRates = card;
 	let matchedThreshold = -1;
-	for (const tier of model.cost.tiers ?? []) {
+	for (const tier of card.tiers ?? []) {
 		if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > matchedThreshold) {
 			rates = tier;
 			matchedThreshold = tier.inputTokensAbove;
@@ -1295,11 +1353,16 @@ export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>
 	return undefined;
 }
 
+/** The level map a row carries, else the one inferred from documented provider controls. */
+export function inferThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
+	return inferOpenAIThinkingLevelMap(model) ?? inferGoogleThinkingLevelMap(model);
+}
+
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
-		const mapped = inferOpenAIThinkingLevelMap(model)?.[level];
+		const mapped = inferThinkingLevelMap(model)?.[level];
 		if (mapped === null) return false;
 		if (level === "xhigh") return supportsXhigh(model);
 		if (level === "max") return supportsMax(model);

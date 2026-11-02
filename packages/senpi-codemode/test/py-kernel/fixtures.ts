@@ -18,11 +18,14 @@ export interface FakeChildOptions {
 	readonly onRun?: (message: Extract<HostToKernelMessage, { type: "run" }>) => void;
 }
 
+/** POSIX: a pid above every platform's pid_max, so a real group signal can only fail with ESRCH. */
+export const FAKE_CHILD_PID: number | undefined = process.platform === "win32" ? undefined : 2 ** 22 + 1;
+
 export class FakeChild implements KernelChild {
 	readonly stdin = new PassThrough();
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
-	readonly pid: number | undefined = undefined;
+	readonly pid: number | undefined = FAKE_CHILD_PID;
 	readonly runMessages: Extract<HostToKernelMessage, { type: "run" }>[] = [];
 	readonly killSignals: NodeJS.Signals[] = [];
 	killed = false;

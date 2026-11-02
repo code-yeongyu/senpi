@@ -6,6 +6,7 @@ import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { bundleRequiredInputs, lazyEntryPoints } from "./bundle-entry-points.mjs";
 import { fileAttributePlugin } from "./bundle-file-attribute-plugin.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -173,7 +174,7 @@ function writeRuntimeManifest(metafiles) {
 	writeFileSync(join(bundleDir, "runtime-manifest.json"), `${JSON.stringify(manifest)}\n`);
 }
 
-function findContainingOutput(metafile, inputSuffix) {
+export function findContainingOutput(metafile, inputSuffix) {
 	const normalizedSuffix = inputSuffix.replaceAll("\\", "/");
 	for (const [outputPath, output] of Object.entries(metafile.outputs)) {
 		if (Object.keys(output.inputs).some((inputPath) => inputPath.replaceAll("\\", "/").endsWith(normalizedSuffix))) {
@@ -191,15 +192,7 @@ function outputBytes(metafiles) {
 }
 
 async function buildBundle() {
-	for (const entry of [
-		join(codingAgentDistDir, "cli.js"),
-		join(codingAgentDistDir, "index.js"),
-		join(codingAgentDistDir, "rpc-entry.js"),
-		join(codingAgentDistDir, "client", "index.js"),
-		join(codingAgentDistDir, "utils", "image-resize-worker.js"),
-		join(aiDistDir, "api", "bedrock-converse-stream.js"),
-		join(aiDistDir, "auth", "oauth", "anthropic.js"),
-	]) {
+	for (const entry of bundleRequiredInputs({ codingAgentDistDir, aiDistDir })) {
 		if (!existsSync(entry)) {
 			throw new Error(`Bundle input is missing: ${relative(repoRoot, entry)}. Build the workspace packages first.`);
 		}
@@ -229,39 +222,13 @@ async function buildBundle() {
 		throw new Error("Bedrock and OAuth lazy loaders were emitted into different directories");
 	}
 
-	// These implementations are reached through variable-specifier imports or a
-	// worker URL, so the main bundle cannot follow them. Emit one self-contained
-	// file per implementation beside the code that resolves it.
-	const lazyEntryPoints = {
-		anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
-		"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
-		cursor: join(aiDistDir, "auth", "oauth", "cursor.js"),
-		"cursor-agent": join(aiDistDir, "api", "cursor-agent.js"),
-		devin: join(aiDistDir, "auth", "oauth", "devin.js"),
-		"devin-agent": join(aiDistDir, "api", "devin-agent.js"),
-		"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
-		// `supervisor-route.js` defers this with a dynamic `import("./host-lifecycle.js")`
-		// so the RPC host graph stays out of every launch. `session-worker` is bundled
-		// here with splitting off, which leaves that specifier unresolved beside the
-		// emitted file - so the implementation has to exist there under that exact name,
-		// or `host ensure` dies with "Module not found .../chunks/host-lifecycle.js".
-		"host-lifecycle": join(codingAgentDistDir, "modes", "rpc", "host-lifecycle.js"),
-		"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
-		"session-worker": join(codingAgentDistDir, "modes", "rpc", "session-worker.js"),
-		"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
-		meta: join(aiDistDir, "auth", "oauth", "meta.js"),
-		"openai-chatgpt": join(aiDistDir, "auth", "oauth", "openai-chatgpt.js"),
-		"chatgpt-subscription": join(aiDistDir, "auth", "oauth", "chatgpt-subscription.js"),
-		openrouter: join(aiDistDir, "auth", "oauth", "openrouter.js"),
-		radius: join(aiDistDir, "auth", "oauth", "radius.js"),
-		xai: join(aiDistDir, "auth", "oauth", "xai.js"),
-	};
+	const lazy = lazyEntryPoints({ codingAgentDistDir, aiDistDir });
 
 	// Every OAuth flow loaded through importOAuthModule() must have a lazy entry,
 	// otherwise the flow fails at runtime with a missing module error.
 	const oauthLoadSource = readFileSync(join(repoRoot, "packages", "ai", "src", "auth", "oauth", "load.ts"), "utf8");
 	for (const match of oauthLoadSource.matchAll(/importOAuthModule\("\.\/([^"]+)\.ts"\)/g)) {
-		if (!(match[1] in lazyEntryPoints)) {
+		if (!(match[1] in lazy)) {
 			throw new Error(`OAuth flow "${match[1]}" is lazily imported but has no lazy bundle entry`);
 		}
 	}
@@ -269,7 +236,7 @@ async function buildBundle() {
 	const lazyResult = await build({
 		...commonBuildOptions(),
 		entryNames: "[name]",
-		entryPoints: lazyEntryPoints,
+		entryPoints: lazy,
 		outdir: dirname(bedrockLoaderOutput),
 		splitting: false,
 	});
@@ -278,15 +245,50 @@ async function buildBundle() {
 	if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
 		throw new Error("Image resize implementation and worker were emitted into different directories");
 	}
+	const pathIdentityHostOutput = findContainingOutput(
+		mainResult.metafile,
+		"packages/coding-agent/dist/core/extensions/builtin/permission-system/path-identity-host.js",
+	);
+	if (dirname(pathIdentityHostOutput) !== dirname(bedrockLoaderOutput)) {
+		throw new Error("Path identity host and its resolver worker were emitted into different directories");
+	}
+	// `kill-guard/host.js` hands codemode workers new URL("./kill-guard.js", import.meta.url) (senpi#5349).
+	const killGuardHostOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/core/kill-guard/host.js");
+	if (dirname(killGuardHostOutput) !== dirname(bedrockLoaderOutput)) {
+		throw new Error("Kill guard host and its judge module were emitted into different directories");
+	}
+	// `kill-guard/runtime.js` hands the runtime shims new URL("./kill-guard-check.js", import.meta.url) (senpi#5349).
+	const killGuardRuntimeOutput = findContainingOutput(
+		mainResult.metafile,
+		"packages/coding-agent/dist/core/kill-guard/runtime.js",
+	);
+	if (dirname(killGuardRuntimeOutput) !== dirname(bedrockLoaderOutput)) {
+		throw new Error("Kill guard runtime and its judge entry were emitted into different directories");
+	}
 
-	validateExternalImports([mainResult.metafile, lazyResult.metafile]);
+	const supervisorResult = await buildSupervisor();
+
+	const metafiles = [mainResult.metafile, lazyResult.metafile, supervisorResult.metafile];
+	validateExternalImports(metafiles);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
-	writeRuntimeManifest([mainResult.metafile, lazyResult.metafile]);
+	writeRuntimeManifest(metafiles);
 
-	const files = new Set([...Object.keys(mainResult.metafile.outputs), ...Object.keys(lazyResult.metafile.outputs)]).size;
-	const mib = outputBytes([mainResult.metafile, lazyResult.metafile]) / (1024 * 1024);
+	const files = new Set(metafiles.flatMap((metafile) => Object.keys(metafile.outputs))).size;
+	const mib = outputBytes(metafiles) / (1024 * 1024);
 	console.log(`Built ${relative(repoRoot, bundleDir)} (${files} files, ${mib.toFixed(1)} MiB)`);
+}
+
+// The lifecycle supervisor's own program (senpi#3743): self-contained beside cli.js, so a supervisor loads
+// only its own graph instead of booting the whole CLI to reach `--internal-rpc-host-supervisor`.
+function buildSupervisor() {
+	return build({
+		...commonBuildOptions(),
+		entryNames: "[name]",
+		entryPoints: { "host-supervisor": join(codingAgentDistDir, "modes", "rpc", "host-supervisor-entry.js") },
+		outdir: bundleDir,
+		splitting: false,
+	});
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

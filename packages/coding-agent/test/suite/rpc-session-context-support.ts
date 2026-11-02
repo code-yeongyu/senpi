@@ -6,6 +6,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Provider } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { z } from "zod";
 import { parseArgs } from "../../src/cli/args.ts";
@@ -64,6 +65,8 @@ interface OpenFields {
 	readonly promptSurface?: "terminal" | "app" | "chat";
 	readonly browserEngine?: "connected" | "builtin" | "none";
 	readonly retryFallback?: { modelFallback: boolean; fallbackChains: Record<string, string[]> };
+	readonly env?: Record<string, string>;
+	readonly spawnedBy?: { parentSessionId: string; rootSessionId: string; taskId: string };
 }
 
 /**
@@ -99,8 +102,12 @@ export async function contextHost(
 		autoTitleSessions?: boolean;
 		titleModel?: boolean;
 		browserStateExtension?: boolean;
+		/** Extension under test, loaded through the real host runtime. */
+		extension?: string;
 		/** A faux provider every session can reach (`--provider`/`--model` select its first model). */
 		faux?: ReturnType<typeof fauxProvider>;
+		/** Additional independently authenticated providers for fallback profile tests. */
+		additionalProviders?: readonly Provider[];
 		/** Global settings written to `<agentDir>/settings.json` before the host starts. */
 		globalSettings?: Record<string, unknown>;
 	} = {},
@@ -111,11 +118,21 @@ export async function contextHost(
 	await mkdir(cwd);
 	await mkdir(agentDir);
 	const probe = join(scratch, "probe.mjs");
-	await writeFile(probe, PROBE_EXTENSION);
+	await writeFile(probe, options.extension ?? PROBE_EXTENSION);
 	const browserState = join(scratch, "browser-state.mjs");
 	await writeFile(browserState, BROWSER_STATE_EXTENSION);
 	if (options.globalSettings !== undefined) {
 		await writeFile(join(agentDir, "settings.json"), `${JSON.stringify(options.globalSettings, null, 2)}\n`);
+	}
+	if (options.additionalProviders?.length) {
+		await writeFile(
+			join(agentDir, "auth.json"),
+			JSON.stringify(
+				Object.fromEntries(
+					options.additionalProviders.map((provider) => [provider.id, { type: "api_key", key: "spare-key" }]),
+				),
+			),
+		);
 	}
 	const faux =
 		options.faux ??
@@ -145,7 +162,18 @@ export async function contextHost(
 		agentDir,
 		createRuntime: createCliRuntimeFactory(
 			{ parsed, cwd, agentDir, appMode: "rpc" },
-			faux ? { extensionFactories: [(pi) => pi.registerProvider(faux.provider)] } : {},
+			faux
+				? {
+						extensionFactories: [
+							(pi) => {
+								pi.registerProvider(faux.provider);
+								for (const provider of options.additionalProviders ?? []) {
+									pi.registerProvider(provider);
+								}
+							},
+						],
+					}
+				: {},
 		),
 		closeGraceMs: 1_000,
 		now: () => clock.now,
@@ -221,6 +249,7 @@ export async function contextHost(
 		inbox: (connection: string): readonly WireRecord[] => inboxes.get(connect(connection)) ?? [],
 		connect,
 		send,
+		waitFor,
 		async prompt(connection: string, sessionId: string, message: string): Promise<void> {
 			const idle = waitFor((record) => record.type === "agent_idle" && record.sessionId === sessionId);
 			const record = await send(connection, { type: "prompt", sessionId, message });

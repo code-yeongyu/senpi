@@ -208,18 +208,18 @@ describe("MCP startup race", () => {
 		// startupTimeoutMs must not enter the config identity hash: otherwise adding
 		// the field (or changing the window) would invalidate every existing catalog
 		// cache on upgrade and force previously-cached lazy servers to cold-start.
-		const rootA = makeStartupRoot("hash-default");
-		setConfig(rootA, { fx: { ...stdioServer([]), startupTimeoutMs: 250 } });
-		const rootB = makeStartupRoot("hash-custom");
-		setConfig(rootB, { fx: { ...stdioServer([]), startupTimeoutMs: 9999 } });
+		// Identities are keyed per installation (#3858), so both reads share one agent dir.
+		const root = makeStartupRoot("hash-stable");
+		const load = () => loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: true }).servers.fx;
+		setConfig(root, { fx: { ...stdioServer([]), startupTimeoutMs: 250 } });
+		const before = load();
+		setConfig(root, { fx: { ...stdioServer([]), startupTimeoutMs: 9999 } });
+		const after = load();
 
-		const hashA = loadMcpConfig({ agentDir: rootA.agentDir, cwd: rootA.cwd, projectTrusted: true }).servers.fx
-			?.configHash;
-		const hashB = loadMcpConfig({ agentDir: rootB.agentDir, cwd: rootB.cwd, projectTrusted: true }).servers.fx
-			?.configHash;
-
-		expect(hashA).toBeTypeOf("string");
-		expect(hashA).toBe(hashB);
+		expect(before?.config?.startupTimeoutMs).toBe(250);
+		expect(after?.config?.startupTimeoutMs).toBe(9999);
+		expect(before?.configHash).toBeTypeOf("string");
+		expect(before?.configHash).toBe(after?.configHash);
 	});
 });
 

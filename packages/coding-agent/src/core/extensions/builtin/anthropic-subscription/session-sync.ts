@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Context, Message } from "@earendil-works/pi-ai";
 import { appendSdkContentBlocks } from "./content-blocks.ts";
+import { longContextAvailable } from "./long-context.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
+import { imageNeutralContent } from "./sent-image-slots.ts";
 import type { AnthropicSubscriptionSessionEntry } from "./session-registry.ts";
 import { HOST_TOOL_POLICY_FINGERPRINT, mapPiToolNameToSdk } from "./tools.ts";
 
@@ -81,12 +83,12 @@ export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
 	const hashes = messages.filter(isTransmittedMessage).map((message) =>
 		digest(
 			message.role === "user"
-				? { role: message.role, content: message.content }
+				? { role: message.role, content: imageNeutralContent(message.content) }
 				: {
 						role: message.role,
 						toolCallId: message.toolCallId,
 						toolName: message.toolName,
-						content: message.content,
+						content: imageNeutralContent(message.content),
 					},
 		),
 	);
@@ -141,6 +143,15 @@ export function configFingerprint(
 			// Bump HOST_TOOL_POLICY_FINGERPRINT in tools.ts when denial copy or hooks change.
 			hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT,
 			settingSources: options.settingSources,
+			// A refused 1M window must restart the resident process at the standard one (senpi#3408). Only
+			// the refusal state is hashed: a live model switch reaches the process through setModel.
+			longContextRefused: !longContextAvailable(),
+			// Claude Code reads its window once at spawn, so a switch to a model planned at another window
+			// restarts the resident process at that window instead of keeping the old one (senpi#3801).
+			contextWindow: options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+			// Claude Code reads its endpoint once at spawn, so a changed models.json baseUrl restarts the resident
+			// process; unset (no override) drops out of the digest and leaves existing fingerprints unchanged.
+			baseUrl: options.env?.ANTHROPIC_BASE_URL,
 			extraArgs: options.extraArgs,
 			pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
 			includePartialMessages: options.includePartialMessages,

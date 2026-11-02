@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { CredentialAuthResult, CredentialResolver } from "../../../../runtime/credential-resolver.ts";
 
 import { credentialHeaders, hostedRouteMapping } from "./hosted-routes.ts";
 import { isAllowedProviderBaseUrl } from "./provider-endpoints.ts";
@@ -9,18 +11,14 @@ export interface NativeModelInfo {
 	id: string;
 	baseUrl: string;
 	api?: string;
+	compat?: Model<Api>["compat"];
 	cost?: { input: number; output: number };
 	headers?: Record<string, string>;
 }
 
-export type NativeAuthResult =
-	| { ok: true; apiKey?: string; headers?: Record<string, string | null>; baseUrl?: string }
-	| { ok: false; error: string };
+export type NativeAuthResult = CredentialAuthResult;
 
-export interface NativeModelRegistry {
-	getApiKeyAndHeaders(model: NativeModelInfo): Promise<NativeAuthResult>;
-	getAvailable?(): NativeModelInfo[];
-}
+export type NativeModelRegistry = Pick<CredentialResolver<NativeModelInfo>, "getApiKeyAndHeaders" | "getAvailable">;
 
 export interface NativeProviderMapping {
 	provider: SearchProvider;

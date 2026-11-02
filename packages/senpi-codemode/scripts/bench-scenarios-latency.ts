@@ -18,7 +18,7 @@ export interface Scenario {
 const WARM_CELLS_PER_REP = 20;
 const ROUND_TRIPS_PER_REP = 10;
 
-/** Construct -> first result on a fresh session; the new child's CPU since spawn is all start-up work. */
+/** Construct -> first result; the post-result host CPU snapshot includes its serialization and flush. */
 const coldStart: Scenario = {
 	name: "cold-start",
 	async run({ language, fresh, rep }) {

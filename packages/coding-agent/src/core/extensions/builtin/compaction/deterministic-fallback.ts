@@ -16,11 +16,13 @@ import {
 import { markFailedTurnFragments } from "./fallback-failed-turn-normalization.ts";
 import { SummarizationOverflowExhaustedError } from "./overflow-retry.ts";
 import { resolveEffectiveReserveTokens } from "./policy.ts";
+import { isSafeBoundedValue } from "./retained-message-projection.ts";
 import { hasUnsafeRetainedContent } from "./retained-message-safety.ts";
 import { SummaryGenerationError, SummaryRequestError } from "./speculative.ts";
 import { capUtf8Bytes } from "./task-intent.ts";
 
 export type RequiredCompactionFallbackFailure =
+	| "unsafe-retained-content"
 	| "summarization-timeout"
 	| "summarization-provider-failure"
 	| "upstream-stream-truncated"
@@ -31,6 +33,8 @@ interface RecoveryMetadata {
 	taskIntent?: string;
 	todoSnapshot?: unknown;
 	checkpoint?: unknown;
+	/** An empty summary probes suffix viability independently of checkpoint overhead. */
+	summary?: string;
 }
 
 export type DeterministicFallbackRejectionReason =
@@ -40,10 +44,21 @@ export type DeterministicFallbackRejectionReason =
 	| "atomic-tool-chain-cut"
 	| "context-reconstruction-failed";
 
+// A budget rejection reached a replay-safe, atomic candidate. Invalid cut points
+// must not outvote that actionable constraint just because a tool batch is wide.
+const REJECTION_REASON_PRIORITY = {
+	"missing-preparation-boundary": 0,
+	"context-reconstruction-failed": 1,
+	"atomic-tool-chain-cut": 2,
+	"unsafe-retained-content": 3,
+	"retained-token-budget-exceeded": 4,
+} satisfies Record<DeterministicFallbackRejectionReason, number>;
+
 interface DeterministicFallbackDetails {
 	schema: "senpi.compaction.deterministic-fallback.v1";
 	origin: "required-compaction-recovery";
 	failureKind: RequiredCompactionFallbackFailure;
+	retainedMessagePolicy: "omit-unsafe-v1";
 	taskIntent?: string;
 	retainedSuffix?: "prepared" | "latest-user-turn" | "earlier-safe-boundary" | "later-safe-boundary";
 }
@@ -65,16 +80,56 @@ export interface DeterministicFallbackDiagnostic {
 	budgetTokens?: number;
 }
 
-export function formatRequiredCompactionFallbackRejection(diagnostics: DeterministicFallbackDiagnostic): string {
-	const candidate = diagnostics.candidateRejections?.at(-1);
-	const reason = diagnostics.rejectionReason ?? "context-reconstruction-failed";
+export class UnsafeRetainedSuffixError extends Error {
+	readonly diagnostics: DeterministicFallbackDiagnostic;
+
+	constructor(diagnostics: DeterministicFallbackDiagnostic) {
+		super(formatRequiredCompactionFallbackRejection(diagnostics, true));
+		this.name = "UnsafeRetainedSuffixError";
+		this.diagnostics = diagnostics;
+	}
+}
+
+export function formatRequiredCompactionFallbackRejection(
+	diagnostics: DeterministicFallbackDiagnostic,
+	automaticPaused = false,
+): string {
+	const candidates = diagnostics.candidateRejections ?? [];
+	const rejectionCounts = new Map<DeterministicFallbackRejectionReason, number>();
+	for (const candidate of candidates) {
+		rejectionCounts.set(candidate.rejectionReason, (rejectionCounts.get(candidate.rejectionReason) ?? 0) + 1);
+	}
+	const reason =
+		[...rejectionCounts].sort(
+			(left, right) => REJECTION_REASON_PRIORITY[right[0]] - REJECTION_REASON_PRIORITY[left[0]],
+		)[0]?.[0] ??
+		diagnostics.rejectionReason ??
+		"context-reconstruction-failed";
+	const bestCandidate = candidates
+		.filter((candidate) => candidate.estimatedTokens !== undefined && Number.isFinite(candidate.estimatedTokens))
+		.reduce<(typeof candidates)[number] | undefined>(
+			(best, candidate) =>
+				!best || (candidate.estimatedTokens ?? Infinity) < (best.estimatedTokens ?? Infinity) ? candidate : best,
+			undefined,
+		);
+	const formatCandidate = (candidate: (typeof candidates)[number] | undefined) =>
+		candidate
+			? {
+					...candidate,
+					firstKeptEntryId: capUtf8Bytes(candidate.firstKeptEntryId, 128),
+					...(candidate.unsafeEntryId ? { unsafeEntryId: capUtf8Bytes(candidate.unsafeEntryId, 128) } : {}),
+					...(candidate.unsafeMessageRole
+						? { unsafeMessageRole: capUtf8Bytes(candidate.unsafeMessageRole, 32) }
+						: {}),
+				}
+			: undefined;
 	const recovery: Record<DeterministicFallbackRejectionReason, string> = {
 		"retained-token-budget-exceeded":
-			"The retained turn exceeds the usable context. Select a model with a larger context and run /compact, or start a new session with an explicit checkpoint.",
+			"The retained turn exceeds the usable context. Use set_model to select a larger-context model, then compact (or /model and /compact).",
 		"atomic-tool-chain-cut":
-			"The retained tool calls and results do not form complete pairs. Finish the pending tool operation before /compact; if the transcript is damaged, start a new session with an explicit checkpoint.",
+			"The retained tool calls and results do not form complete pairs. Finish the pending tool operation, then use compact to retry explicitly.",
 		"unsafe-retained-content":
-			"The retained message cannot be replayed safely. Inspect the identified entry; start a new session with an explicit checkpoint if it cannot be repaired.",
+			"The retained message cannot be replayed safely. Inspect the identified entry with get_messages; use compact after correcting the context or selecting a larger-context model.",
 		"missing-preparation-boundary":
 			"The prepared boundary is absent from the branch. Reload the session and run /compact.",
 		"context-reconstruction-failed":
@@ -87,20 +142,15 @@ export function formatRequiredCompactionFallbackRejection(diagnostics: Determini
 		budgetTokens: diagnostics.budgetTokens,
 		budgetExceeded: diagnostics.budgetExceeded ?? false,
 		candidatesChecked: diagnostics.candidatesChecked ?? 0,
-		...(candidate
-			? {
-					candidate: {
-						...candidate,
-						firstKeptEntryId: capUtf8Bytes(candidate.firstKeptEntryId, 128),
-						...(candidate.unsafeEntryId ? { unsafeEntryId: capUtf8Bytes(candidate.unsafeEntryId, 128) } : {}),
-						...(candidate.unsafeMessageRole
-							? { unsafeMessageRole: capUtf8Bytes(candidate.unsafeMessageRole, 32) }
-							: {}),
-					},
-				}
-			: {}),
+		rejectionCounts: Object.fromEntries(rejectionCounts),
+		firstCandidate: formatCandidate(candidates[0]),
+		bestCandidate: formatCandidate(bestCandidate),
+		candidate: formatCandidate(candidates.find((candidate) => candidate.rejectionReason === reason)),
 	};
-	return `deterministic compaction fallback could not retain a safe suffix\n${JSON.stringify(diagnostic)}\n${recovery[reason]} The original transcript has not been changed.`;
+	const pause = automaticPaused
+		? " Automatic compaction is paused for this unchanged transcript and model/settings."
+		: "";
+	return `deterministic compaction fallback could not retain a safe suffix\n${JSON.stringify(diagnostic)}\n${recovery[reason]}${pause} The original transcript has not been changed.`;
 }
 
 const NON_VISIBLE_USER_TEXT = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/gu;
@@ -118,34 +168,6 @@ function hasMeaningfulUserText(entry: SessionEntry): boolean {
 	if (typeof content === "string") return hasVisibleText(content);
 	if (!Array.isArray(content)) return false;
 	return content.some((block) => isRecord(block) && block.type === "text" && hasVisibleText(block.text));
-}
-
-/**
- * Bound a value graph that came from persisted, potentially hostile session data.
- * Returns false when the graph contains anything we must not read (accessors,
- * non-plain prototypes, cycles, functions, symbols) so callers fail closed
- * instead of executing persisted code or walking unbounded structures.
- */
-function isSafeBoundedValue(value: unknown, seen = new Set<object>(), depth = 0): boolean {
-	if (depth > 32) return false;
-	if (value === null || value === undefined) return true;
-	const kind = typeof value;
-	if (kind === "string" || kind === "number" || kind === "boolean") return true;
-	if (kind !== "object") return false;
-	if (seen.has(value as object)) return false;
-	seen.add(value as object);
-	if (Array.isArray(value)) {
-		for (const item of value) if (!isSafeBoundedValue(item, seen, depth + 1)) return false;
-		return true;
-	}
-	const proto = Object.getPrototypeOf(value);
-	if (proto !== Object.prototype && proto !== null) return false;
-	for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
-		if (descriptor.get !== undefined || descriptor.set !== undefined) return false;
-		if (typeof descriptor.value === "function" || typeof descriptor.value === "symbol") return false;
-		if (!isSafeBoundedValue(descriptor.value, seen, depth + 1)) return false;
-	}
-	return true;
 }
 
 /**
@@ -177,6 +199,7 @@ function isTerminalSummarizationProviderFailure(error: unknown): boolean {
 export function classifyRequiredCompactionFallbackFailure(
 	error: unknown,
 ): RequiredCompactionFallbackFailure | undefined {
+	if (error instanceof UnsafeRetainedSuffixError) return "unsafe-retained-content";
 	if (
 		error instanceof StreamDurationBudgetError ||
 		error instanceof StreamIdleTimeoutError ||
@@ -202,6 +225,7 @@ export function classifyRequiredCompactionFallbackFailure(
 export { stripTurnRetrySuppressionPrefix };
 
 const FALLBACK_FAILURE_CAUSE: Record<RequiredCompactionFallbackFailure, string> = {
+	"unsafe-retained-content": "no replay-safe retained suffix fits the context",
 	"summarization-timeout": "the summary stream ran out of its time budget",
 	"summarization-provider-failure": "the provider ended the summary stream with an error",
 	"upstream-stream-truncated": "the provider truncated the summary stream",
@@ -261,8 +285,8 @@ export function createRequiredCompactionFallback(
 	const fixedText = taskIntent ? `${marker}\n\nTask intent:\n${taskIntent}` : marker;
 	const maxSummaryBytes = Math.max(1_024, Math.floor(contextWindow * 0.4));
 	const previousSummary = preparation.previousSummary?.trim();
-	let summary = fixedText;
-	if (previousSummary) {
+	let summary = metadata.summary ?? fixedText;
+	if (previousSummary && metadata.summary === undefined) {
 		const availableBytes = Math.max(0, maxSummaryBytes - Buffer.byteLength(`${fixedText}\n\nPrevious checkpoint:\n`));
 		const truncationMarker = "\n[Older checkpoint truncated]";
 		const boundedPrevious =
@@ -276,10 +300,13 @@ export function createRequiredCompactionFallback(
 		schema: "senpi.compaction.deterministic-fallback.v1",
 		origin: "required-compaction-recovery",
 		failureKind,
+		retainedMessagePolicy: "omit-unsafe-v1",
 		...(taskIntent ? { taskIntent } : {}),
 	};
 	let candidateCount = 0;
 	let sawUnsafeRetainedContent = false;
+	let sawRetainedBudgetExceeded = false;
+	const checkedEntryIds = new Set<string>();
 
 	const syntheticCompaction: CompactionEntry = {
 		type: "compaction",
@@ -422,6 +449,8 @@ export function createRequiredCompactionFallback(
 		firstKeptEntryId: string,
 		retainedSuffix: NonNullable<DeterministicFallbackDetails["retainedSuffix"]>,
 	): CompactionResult<DeterministicFallbackDetails> | undefined => {
+		if (checkedEntryIds.has(firstKeptEntryId)) return undefined;
+		checkedEntryIds.add(firstKeptEntryId);
 		candidateCount++;
 		const details = { ...baseDetails, retainedSuffix };
 		const reject = (
@@ -432,7 +461,12 @@ export function createRequiredCompactionFallback(
 			> = {},
 		): undefined => {
 			if (diagnostics) {
-				diagnostics.rejectionReason = rejectionReason;
+				if (
+					!diagnostics.rejectionReason ||
+					REJECTION_REASON_PRIORITY[rejectionReason] > REJECTION_REASON_PRIORITY[diagnostics.rejectionReason]
+				) {
+					diagnostics.rejectionReason = rejectionReason;
+				}
 				diagnostics.contextWindow = contextWindow;
 				diagnostics.reserveTokens = reserveTokens;
 				diagnostics.budgetTokens = budget;
@@ -476,6 +510,7 @@ export function createRequiredCompactionFallback(
 					);
 		const retainedTokens = (tokenSuffix[retainedStart] ?? Number.POSITIVE_INFINITY) + summaryTokens;
 		if (retainedTokens > budget) {
+			sawRetainedBudgetExceeded = true;
 			if (diagnostics) diagnostics.budgetExceeded = true;
 			return reject("retained-token-budget-exceeded", { estimatedTokens: retainedTokens });
 		}
@@ -525,12 +560,12 @@ export function createRequiredCompactionFallback(
 		break;
 	}
 
-	// A split turn can contain an unsafe persisted tool payload after the
-	// prepared boundary and no later user message. Advance to the earliest safe
-	// suffix rather than retaining that payload forever. `projectCandidate`
+	// A split turn can contain an unsafe or over-budget persisted tool payload
+	// after the prepared boundary and no later user message. Advance to the
+	// earliest safe suffix rather than retaining that payload forever. `projectCandidate`
 	// still rejects orphaned tool results, incomplete call chains, unsafe
 	// content, and over-budget suffixes.
-	if (sawUnsafeRetainedContent) {
+	if (sawUnsafeRetainedContent || sawRetainedBudgetExceeded) {
 		for (let index = preparedBoundaryIndex + 1; index < branchEntries.length; index++) {
 			const entry = branchEntries[index];
 			if (entry.type === "compaction") continue;

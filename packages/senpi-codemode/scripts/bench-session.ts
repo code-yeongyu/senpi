@@ -6,8 +6,9 @@ import type { AgentToolResult } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import type { CodemodeMemorySettings } from "../src/config/memory-settings.ts";
 import type { EvalKernel, EvalLanguage } from "../src/tool/types.ts";
-import { instrumentInterpreter, watchExitUsage } from "./bench-accounting.ts";
+import { BenchAccountingError, instrumentInterpreter, watchExitUsage } from "./bench-accounting.ts";
 import { cpuProbeCell } from "./bench-cells.ts";
+import { readInterpreterCpuUs } from "./bench-process-cpu.ts";
 
 export interface KernelCpu {
 	readonly pid: number;
@@ -166,7 +167,11 @@ export async function createBenchSession(
 			});
 			const match = result.ok ? /(\d+)\D+(\d+)/u.exec(result.valueRepr ?? "") : null;
 			if (!match) throw new Error(`bench cpu probe failed: ${result.ok ? result.valueRepr : result.error.message}`);
-			return { pid: Number(match[1]), cpuUs: Number(match[2]) };
+			const python = detected.py.detected;
+			if (!python.ok) throw new BenchAccountingError("live CPU accounting needs Python");
+			const pid = Number(match[1]);
+			// run() resolves after the complete result arrives; its embedded clock preceded encoding.
+			return { pid, cpuUs: readInterpreterCpuUs(pid, python.resolvedPath ?? python.path) };
 		},
 		async cpu(probeLive = true) {
 			if (language === "js") return [];

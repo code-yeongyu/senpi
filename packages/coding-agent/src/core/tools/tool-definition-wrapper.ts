@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ExtensionToolContext, ToolDefinition } from "../extensions/types.ts";
+import type { ToolDispatcher, ToolUnavailableDetails } from "../tool-dispatch/tool-dispatcher.ts";
 
 /** Creates the context for one tool call. */
 export type ToolContextFactory = (toolCallId: string, signal: AbortSignal | undefined) => ExtensionToolContext;
@@ -8,7 +9,8 @@ export type ToolContextFactory = (toolCallId: string, signal: AbortSignal | unde
 export function wrapToolDefinition<TDetails = unknown>(
 	definition: ToolDefinition<any, TDetails>,
 	ctxFactory?: ToolContextFactory,
-): AgentTool<any, TDetails> {
+	dispatcher?: ToolDispatcher,
+): AgentTool<any, TDetails | ToolUnavailableDetails> {
 	return {
 		name: definition.name,
 		label: definition.label,
@@ -19,14 +21,14 @@ export function wrapToolDefinition<TDetails = unknown>(
 		constrainedSampling: definition.constrainedSampling,
 		prepareArguments: definition.prepareArguments,
 		executionMode: definition.executionMode,
-		execute: (toolCallId, params, signal, onUpdate, ctx?: ExtensionToolContext) =>
-			definition.execute(
-				toolCallId,
-				params,
-				signal,
-				onUpdate,
-				ctx ?? (ctxFactory?.(toolCallId, signal) as ExtensionToolContext),
-			),
+		execute: (toolCallId, params, signal, onUpdate, ctx?: ExtensionToolContext) => {
+			const resolved = ctx ?? ctxFactory?.(toolCallId, signal);
+			// Upstream idiom: a definition wrapped without a context factory legitimately gets no
+			// context (see the ToolDefinition docs); the interface requires the parameter, hence the cast.
+			const context = resolved as ExtensionToolContext;
+			if (dispatcher) return dispatcher.run({ definition, toolCallId, params, signal, onUpdate, ctx: context });
+			return definition.execute(toolCallId, params, signal, onUpdate, context);
+		},
 	};
 }
 
@@ -34,8 +36,9 @@ export function wrapToolDefinition<TDetails = unknown>(
 export function wrapToolDefinitions(
 	definitions: ToolDefinition<any, any>[],
 	ctxFactory?: ToolContextFactory,
+	dispatcher?: ToolDispatcher,
 ): AgentTool<any>[] {
-	return definitions.map((definition) => wrapToolDefinition(definition, ctxFactory));
+	return definitions.map((definition) => wrapToolDefinition(definition, ctxFactory, dispatcher));
 }
 
 /**

@@ -63,7 +63,9 @@ export function createLsToolDefinition(
 	const ops = options?.operations ?? defaultLsOperations;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
+		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "ls",
+		workspaceEffect: "read",
 		label: "ls",
 		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: lsToolSystemPromptContribution.snippet,

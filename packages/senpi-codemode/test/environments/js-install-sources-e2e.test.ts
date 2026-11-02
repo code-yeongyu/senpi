@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as jsInstaller from "../../src/environments/js-installer.ts";
 import { readActiveRevision } from "../../src/environments/revision-store.ts";
 import { hasCommand, packFixture, session, textOf } from "./js-magic-session.ts";
 
@@ -54,6 +55,7 @@ function listeningPort(address: ReturnType<ReturnType<typeof createServer>["addr
 }
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	for (const dir of cleanupDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
@@ -143,8 +145,16 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 		const source = await packageDir(fixtures, "senpi-url-swap", 'export const which = () => "dir";\n');
 		const tarball = await packFixture(fixtures, "senpi-url-swap", "2.0.0", 'export const which = () => "tarball";\n');
 		const later = await packFixture(fixtures, "senpi-url-later", "1.0.0", probeSource);
-		// A URL names no package before the install, so nothing is removed first and only the post-build check stands
-		// between bun's leftover links (#2758) and the next revision.
+		// Bun 1.4.4 replaces the old directory cleanly. Recreate #2758's stale link after the real installer
+		// finishes, so this still proves the post-build refusal even when Bun no longer produces it (#4223).
+		const runJsInstall = jsInstaller.runJsInstall;
+		const install = vi.spyOn(jsInstaller, "runJsInstall").mockImplementation(async (input) => {
+			await runJsInstall(input);
+			if (input.remove !== undefined || !input.packages.some((spec) => spec.startsWith("http://"))) return;
+			const link = join(input.root, "node_modules", "senpi-url-swap", "index.js");
+			await rm(link);
+			await symlink(join(source, "index.js"), link);
+		});
 		const server = createServer((_request, response) => {
 			response.writeHead(200, { "content-type": "application/octet-stream" });
 			response.end(readFileSync(tarball));
@@ -158,16 +168,18 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 
 			const swap = await run(`%bun add http://127.0.0.1:${port}/senpi-url-swap-2.0.0.tgz`);
 			const imported = await run('const { which } = await import("senpi-url-swap");\nwhich()');
-			const next = await run(`%bun add ${later}`);
 
 			expect(swap.details).toHaveProperty("isError", true);
 			expect(textOf(swap)).toContain(
 				"the install left node_modules/senpi-url-swap/index.js linked outside the revision, so nothing was published",
 			);
 			expect(tree(active)).toEqual(before);
+			expect((await readActiveRevision(activeBase(root)))?.dir).toBe(active);
 			expect(textOf(imported).trim()).toBe('"dir"');
+			const next = await run(`%bun add ${later}`);
 			expect(next.details).not.toHaveProperty("isError", true);
 		} finally {
+			install.mockRestore();
 			server.close();
 		}
 	}, 240_000);
@@ -304,18 +316,34 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 	it.each([["npm"], ["bun"]] as const)(
 		"When the directory %s installed from is deleted, then the next install is refused and the previous revision stays active",
 		async (installer) => {
-			const { root, fixtures, run } = await session(installer);
-			const source = await packageDir(fixtures, "senpi-dir-gone", probeSource);
-			const next = await packFixture(fixtures, "senpi-after-gone", "1.0.0", probeSource);
-			await run(`%${installer} add ${source}`);
-			const active = (await readActiveRevision(activeBase(root)))?.dir;
-			await rm(source, { recursive: true });
+			for (const plantLink of [false, true]) {
+				const { root, fixtures, run } = await session(installer);
+				const source = await packageDir(fixtures, "senpi-dir-gone", probeSource);
+				const next = await packFixture(fixtures, "senpi-after-gone", "1.0.0", probeSource);
+				const first = await run(`%${installer} add ${source}`);
+				expect(first.details).not.toHaveProperty("isError", true);
+				const active = (await readActiveRevision(activeBase(root)))?.dir ?? "";
+				if (plantLink) {
+					// Also exercise our dangling-link refusal regardless of the installer's link strategy (#4223).
+					const link = join(active, "node_modules", "senpi-dir-gone");
+					await rm(link, { recursive: true });
+					await symlink(source, link);
+				}
+				const before = tree(active);
+				await rm(source, { recursive: true });
 
-			const second = await run(`%${installer} add ${next}`);
+				const second = await run(`%${installer} add ${next}`);
 
-			expect(second.details).toHaveProperty("isError", true);
-			expect(textOf(second)).toContain("links outside its revision");
-			expect((await readActiveRevision(activeBase(root)))?.dir).toBe(active);
+				expect(second.details).toHaveProperty("isError", true);
+				expect(textOf(second)).toContain("environment_install_failed");
+				if (plantLink) expect(textOf(second)).toContain("links outside its revision");
+				// Bun 1.4.4 hardlinks local files; after deletion no dangling link remains. The installer fails
+				// on the missing source instead. Either failure must leave the previous revision untouched.
+				expect(textOf(second)).not.toContain(source);
+				expect(tree(active)).toEqual(before);
+				expect((await readActiveRevision(activeBase(root)))?.dir).toBe(active);
+				expect(readdirSync(activeBase(root)).some((name) => name.startsWith(".staging-"))).toBe(false);
+			}
 		},
 		240_000,
 	);

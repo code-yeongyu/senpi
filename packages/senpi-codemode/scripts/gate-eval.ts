@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { baselineApprovals, readBaseBaseline, reviewBaselineChanges } from "./gate-baseline-review.ts";
+import { baselineApprovals, baselineHostRefusal, readBaseBaseline, reviewBaselineChanges } from "./gate-baseline-review.ts";
 import { compareReports } from "./gate-compare.ts";
 import { runProcess } from "./gate-process.ts";
 import { writeGateOutput } from "./gate-output.ts";
@@ -185,6 +185,10 @@ async function main(): Promise<void> {
 		if (observations.legacyContracts === undefined) unmeasured.push("legacyContracts");
 		if (report.runtimes.length === 0) unmeasured.push("runtimes");
 	}
+	if (values["write-baseline"]) {
+		const refusal = baselineHostRefusal(process.platform);
+		if (refusal !== undefined) failures.push(refusal);
+	}
 	await writeGateOutput(resolve(values.report), `${JSON.stringify({ report, failures, additions }, null, 2)}\n`);
 	if (values["write-baseline"] && failures.length === 0) {
 		// The artifact retains every measured parent edge. The frozen baseline
@@ -196,7 +200,7 @@ async function main(): Promise<void> {
 	console.log(`Gate report: ${resolve(values.report)}`);
 	for (const failure of new Set(failures)) console.error(failure);
 	if (failures.length > 0) {
-		console.error("For reviewed changes on main, rebuild a clean main checkout and re-record with the head harness:");
+		console.error("For reviewed changes on main, rebuild a clean main checkout on Linux and re-record with the head harness:");
 		console.error("bun packages/senpi-codemode/scripts/gate-build.ts <clean-main-checkout>");
 		console.error("bun run --cwd packages/senpi-codemode gate --target <clean-main-checkout> --baseline test/gate/baseline.json --write-baseline");
 	}

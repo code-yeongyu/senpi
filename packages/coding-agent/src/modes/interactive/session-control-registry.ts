@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { createDaemonDirectories, createHostDaemonPaths, type HostDaemonPaths } from "../rpc/host-daemon-paths.ts";
@@ -28,16 +29,24 @@ const REGISTRY_LOCK_WAIT_MS = 5_000;
  * `<agentDir>/rpc/tui/t-<16hex>.sock`, or - when the agent directory is too deep for `sun_path` -
  * the same name under `/tmp/senpi-rpc-<sha256(agentDir)[:8]>/tui/`. The fallback root is
  * predictable, so it is used only when it is a real directory owned by this user with no group or
- * other access; anything else fails the registration instead of binding into it.
+ * other access; anything else fails the registration instead of binding into it. On win32 the path is only the
+ * logical address (the listener binds a named pipe hashed from it), so it never moves (senpi#4267).
  */
 export async function resolveTuiSocket(agentDir: string, instanceId: string): Promise<string> {
 	const name = tuiSocketName(instanceId);
 	const primary = join(agentDir, "rpc", "tui", name);
-	if (Buffer.byteLength(primary) <= MAX_SOCKET_PATH_BYTES) {
+	if (process.platform === "win32" || Buffer.byteLength(primary) <= MAX_SOCKET_PATH_BYTES) {
 		await makePrivateDirectory(dirname(primary));
 		return primary;
 	}
-	const root = join("/tmp", `senpi-rpc-${createHash("sha256").update(agentDir).digest("hex").slice(0, 8)}`);
+	const fallbackName = `senpi-rpc-${createHash("sha256").update(agentDir).digest("hex").slice(0, 8)}`;
+	const scopedRoot = join(tmpdir(), fallbackName);
+	// Test launchers supply a short owned TMPDIR. A normal user's long macOS temp path
+	// still needs the original short system fallback to fit sun_path.
+	const root =
+		Buffer.byteLength(join(scopedRoot, "tui", name)) <= MAX_SOCKET_PATH_BYTES
+			? scopedRoot
+			: join("/tmp", fallbackName);
 	const tuiRoot = join(root, "tui");
 	await makePrivateDirectory(tuiRoot);
 	for (const directory of [root, tuiRoot]) await assertPrivateDirectory(directory);

@@ -108,7 +108,7 @@ export interface ReclaimLockHolder {
 
 type LockState =
 	| { readonly state: "free" }
-	| { readonly state: "held"; readonly holder?: ReclaimLockHolder }
+	| { readonly state: "held"; readonly holder?: ReclaimLockHolder; readonly unproven?: true }
 	| { readonly state: "stale"; readonly raw: string };
 
 /** A lock that cannot even be parsed was left by a crash mid-write; past this age it is abandoned. */
@@ -151,9 +151,10 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 	}
 	if (!(probes.isProcessAlive ?? pidAlive)(holder.pid)) return { state: "stale", raw };
 	const observed = await (probes.readProcessStartMs ?? defaultReadProcessStartMs)(holder.pid).catch(() => undefined);
-	if (observed === undefined || sameProcessStart(holder.processStartedAtMs, observed))
-		return { state: "held", holder };
-	return { state: "stale", raw };
+	// An unreadable start time cannot tell the holder from a process wearing its reused pid: held, but
+	// `unproven`, so a caller with positive evidence of the holder's death may still reclaim it.
+	if (observed === undefined) return { state: "held", holder, unproven: true };
+	return sameProcessStart(holder.processStartedAtMs, observed) ? { state: "held", holder } : { state: "stale", raw };
 }
 
 /** Remove a stale lock only if it still holds `raw`; a lock someone took meanwhile is put back. */

@@ -19,6 +19,12 @@ export interface HostGenerationPaths {
 	readonly childPidFile: string;
 	/** Written by whoever is about to signal this generation, BEFORE the signal (host-stop-intent.ts). */
 	readonly stopIntentFile: string;
+	/** Written by whoever asks this generation to drain; read by its supervisor (host-stop-intent.ts). */
+	readonly drainRequestFile: string;
+	/** The supervisor's relay of a drain to its host child. */
+	readonly childDrainRequestFile: string;
+	/** The supervisor's marker that it reads drain requests, naming its pid. */
+	readonly drainWatchFile: string;
 	/** The newest stall the host's loop-lag watchdog measured (host-stalled-evidence.ts). */
 	readonly stalledFile: string;
 	/** The host loop's heartbeat: refreshed on every healthy watchdog tick. */
@@ -37,6 +43,9 @@ export function generationPaths(paths: HostDaemonDirectory, instanceId: string):
 		scratchDir: join(dir, "scratch"),
 		childPidFile: join(dir, "host-child.pid"),
 		stopIntentFile: join(dir, "stop-intent.json"),
+		drainRequestFile: join(dir, "drain-request.json"),
+		childDrainRequestFile: join(dir, "host-drain-request.json"),
+		drainWatchFile: join(dir, "drain-watch.json"),
 		stalledFile: join(dir, "host-stalled.json"),
 		aliveFile: join(dir, "host-alive.json"),
 		stopProgressFile: join(dir, "stop-progress.json"),

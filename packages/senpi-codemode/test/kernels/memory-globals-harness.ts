@@ -22,13 +22,16 @@ export async function memoryGlobalsHarness(language: "jl" | "rb", liveBytes: num
 		language === "jl"
 			? '\n    senpi_emit(Dict("type" => "status", "event" => Dict("op" => "globals-walk")))'
 			: '\n  __senpi_emit({ "type" => "status", "event" => { "op" => "globals-walk" } })';
-	if (!runner.includes(entry)) throw new Error("missing globals instrumentation seam");
+	let instrumented = runner.includes(entry);
 	await writeFile(join(root, `runner.${extension}`), runner.replace(entry, entry + counter));
 	for (const asset of await readdir(sourceRoot)) {
 		if (asset.endsWith(`.${extension}`) && asset !== `runner.${extension}`) {
-			await writeFile(join(root, asset), await readFile(join(sourceRoot, asset)));
+			const content = await readFile(join(sourceRoot, asset), "utf8");
+			instrumented ||= content.includes(entry);
+			await writeFile(join(root, asset), content.replace(entry, entry + counter));
 		}
 	}
+	if (!instrumented) throw new Error("missing globals instrumentation seam");
 	const counts = { walks: 0, payloads: 0, footprints: 0 };
 	const exits: Promise<void>[] = [];
 	const spawnRunner: SubprocessSpawn = (command, args, options) => {

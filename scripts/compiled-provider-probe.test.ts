@@ -48,7 +48,7 @@ for (const shared of [false, true]) {
 			writeFileSync(join(state, "settings.json"), JSON.stringify({ retry: { enabled: false }, compaction: { enabled: false } }));
 			const child = spawn(binary, ["--mode", "rpc", ...(shared ? ["--multi-session"] : []), "--provider", model.provider, "--model", model.id, "-e", join(relocated, "probe.ts")], {
 				cwd: state, stdio: ["pipe", "pipe", "pipe"], env: {
-					PATH: process.env.PATH, HOME: join(state, "home"), TMPDIR: scratch,
+					PATH: process.env.PATH, HOME: join(state, "home"), TMPDIR: scratch, TEMP: scratch, TMP: scratch,
 					SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1", AWS_BEDROCK_FORCE_HTTP1: "1",
 					AWS_BEDROCK_SKIP_AUTH: "1", AWS_REGION: "us-east-1",
 					...Object.fromEntries(probes.models.map((entry, position) => [`SENPI_PROBE_URL_${position}`, entry.baseUrl])),

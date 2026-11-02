@@ -112,3 +112,21 @@ The edit card header is produced inside the built-in edit renderer, below the ex
 ### Expected merge conflict zones
 
 - Covered production paths: `packages/coding-agent/src/core/tools/renderers/edit.ts`.
+
+## 2026-10-14 - glob reuses the find renderers (#3330)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/renderers/index.ts`: `createAllToolRenderers` maps the new eval-only `glob` tool to `findRenderers`.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/renderers/index.ts`: `Record<ToolName, ToolRenderers>` must cover every builtin, and `glob` runs the find search, so its calls and results render the same way (senpi#3330).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/renderers/index.ts`: the builtin renderer map is keyed by the core `ToolName` union.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/renderers/index.ts`: the `createAllToolRenderers` object literal at the next upstream sync.

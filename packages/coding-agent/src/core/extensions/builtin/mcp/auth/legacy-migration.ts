@@ -1,5 +1,5 @@
-import { closeSync, mkdirSync, openSync, rmSync, statSync } from "node:fs";
-import { acquireLegacyLock } from "./legacy-lock.ts";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync, statSync } from "node:fs";
+import { LegacyLockAcquireError, withLegacyLock } from "./legacy-lock.ts";
 
 export interface LegacyMigration<TRecord> {
 	readonly rootDir: string;
@@ -14,6 +14,8 @@ export interface LegacyMigration<TRecord> {
 }
 
 export function adoptLegacyRecord<TRecord>(options: LegacyMigration<TRecord>): TRecord | undefined {
+	// Nothing to migrate needs no lock: every request's token lookup lands here when a server has no saved grant.
+	if (!existsSync(options.legacyTokens)) return undefined;
 	const release = acquireSync(options);
 	try {
 		return claim(options);
@@ -25,17 +27,14 @@ export function adoptLegacyRecord<TRecord>(options: LegacyMigration<TRecord>): T
 export async function readRecordAsync<TRecord>(options: LegacyMigration<TRecord>): Promise<TRecord | undefined> {
 	const record = options.read(options.tokensPath);
 	if (record !== undefined) return record;
+	if (!existsSync(options.legacyTokens)) return undefined;
+	if (options.disableLock) return claim(options);
 	mkdirSync(options.rootDir, { mode: 0o700, recursive: true });
-	let release: () => Promise<void>;
 	try {
-		release = options.disableLock ? async () => undefined : await acquireLegacyLock(options.lockPath, options.stale);
+		return await withLegacyLock(options.lockPath, options.stale, () => claim(options));
 	} catch (cause) {
-		throw options.lockError(cause);
-	}
-	try {
-		return claim(options);
-	} finally {
-		await release();
+		if (cause instanceof LegacyLockAcquireError) throw options.lockError(cause.cause);
+		throw cause;
 	}
 }
 

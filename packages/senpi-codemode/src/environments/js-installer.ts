@@ -189,7 +189,8 @@ export function runJsInstall(input: {
 					// installer itself. An abort listener must never throw: nothing above it can catch the error.
 				}
 			}
-			child.kill("SIGKILL");
+			// A child that never started has no pid; on Node < 24.22 / 26.10 its kill() signals our own process group.
+			if (child.pid !== undefined) child.kill("SIGKILL");
 		};
 		input.signal.addEventListener("abort", onAbort, { once: true });
 		child.once("error", (error) => {

@@ -52,6 +52,7 @@ export { Box } from "./components/box.ts";
 export { CancellableLoader } from "./components/cancellable-loader.ts";
 export {
 	Editor,
+	type EditorKeywordHighlight,
 	type EditorOptions,
 	type EditorTheme,
 } from "./components/editor.ts";

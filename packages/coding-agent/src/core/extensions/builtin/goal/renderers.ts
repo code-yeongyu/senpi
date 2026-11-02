@@ -1,8 +1,13 @@
 import { Text } from "@earendil-works/pi-tui";
 import type { Theme, ThemeColor } from "../../../../modes/interactive/theme/theme.ts";
 import type { ToolRenderResultOptions } from "../../types.ts";
-import { formatGoalElapsedSeconds, formatTokensCompact, type GoalToolRenderDetails } from "./format.ts";
-import { GOAL_STATUS_VALUES, type GoalStatus, type GoalToolSnapshot, isRecord } from "./types.ts";
+import {
+	formatGoalElapsedSeconds,
+	formatTokensCompact,
+	type GoalToolRenderDetails,
+	goalStatusLabel,
+} from "./format.ts";
+import { GOAL_STATUS_VALUES, type GoalStatus, type GoalToolSnapshot, goalDisplayStatus, isRecord } from "./types.ts";
 
 const OBJECTIVE_PREVIEW_WIDTH = 120;
 const COLLAPSED_OBJECTIVE_LINES = 2;
@@ -25,7 +30,7 @@ export function renderGoalToolCall(toolName: string, args: unknown, theme: Theme
 		const statusColor: ThemeColor = params.status === "complete" ? "success" : "error";
 		let line = `${title} ${theme.fg("muted", "→")} ${theme.fg(statusColor, params.status)}`;
 		if (typeof params.reason === "string" && params.reason.trim().length > 0) {
-			line += ` ${theme.fg("muted", `— ${shorten(params.reason.trim(), CALL_REASON_BUDGET)}`)}`;
+			line += theme.fg("muted", ` - ${shorten(params.reason.trim(), CALL_REASON_BUDGET)}`);
 		}
 		return new Text(line, 0, 0);
 	}
@@ -47,7 +52,11 @@ export function renderGoalToolResult(result: ResultLike, options: ToolRenderResu
 }
 
 function goalWidgetLines(goal: GoalToolSnapshot, expanded: boolean, theme: Theme): string[] {
-	const status = theme.fg(statusColor(goal.status), theme.bold(`${statusGlyph(goal.status)} ${goal.status}`));
+	const displayStatus = goalDisplayStatus(goal);
+	const status = theme.fg(
+		statusColor(displayStatus),
+		theme.bold(`${statusGlyph(displayStatus)} ${goalStatusLabel(goal.status, goal.continuationStoppedAt)}`),
+	);
 	const usage = ` • ${formatTokensCompact(goal.tokensUsed)} tokens • ${formatGoalElapsedSeconds(goal.timeUsedSeconds)}`;
 	const lines = [`${status}${theme.fg("muted", usage)}`];
 
@@ -110,7 +119,11 @@ function isGoalSnapshotLike(value: unknown): value is GoalToolSnapshot {
 		typeof value.tokensUsed === "number" &&
 		typeof value.timeUsedSeconds === "number" &&
 		typeof value.createdAt === "number" &&
-		typeof value.updatedAt === "number"
+		typeof value.updatedAt === "number" &&
+		(value.continuationStoppedAt === undefined ||
+			(typeof value.continuationStoppedAt === "number" &&
+				Number.isSafeInteger(value.continuationStoppedAt) &&
+				value.continuationStoppedAt >= 0))
 	);
 }
 

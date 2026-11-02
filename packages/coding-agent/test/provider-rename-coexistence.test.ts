@@ -110,7 +110,7 @@ describe("multi-binary coexistence after the subscription rename (senpi#1989)", 
 		const firstBackups = backups(agent);
 		expect(firstBackups).toHaveLength(1);
 		const backupBody = readFileSync(join(agent, firstBackups[0]!), "utf8");
-		const firstSettings = JSON.stringify(SettingsManager.create(agent, agent).getGlobalSettings());
+		const firstSettings = SettingsManager.create(agent, agent).getGlobalSettings();
 		resolveAccountsDirectory(agent);
 
 		// second run: nothing left to migrate
@@ -118,7 +118,8 @@ describe("multi-binary coexistence after the subscription rename (senpi#1989)", 
 		expect(readFileSync(authPath, "utf8")).toBe(afterFirstAuth);
 		expect(backups(agent)).toEqual(firstBackups);
 		expect(readFileSync(join(agent, firstBackups[0]!), "utf8")).toBe(backupBody);
-		expect(JSON.stringify(SettingsManager.create(agent, agent).getGlobalSettings())).toBe(firstSettings);
+		// Resolved settings are a value contract; persisted config ordering is tested separately.
+		expect(SettingsManager.create(agent, agent).getGlobalSettings()).toEqual(firstSettings);
 		expect(resolveAccountsDirectory(agent)).toBe(join(agent, "anthropic-subscription-accounts"));
 		expect(readdirSync(join(agent, "anthropic-subscription-accounts"))).toEqual(["work"]);
 	});

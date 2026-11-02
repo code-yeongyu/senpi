@@ -15,7 +15,10 @@ export function bashTool(output: ToolDeclaration["output"] = {}): ToolDeclaratio
 		async execute({ command, cwd }, api, ctx): Promise<ToolResult> {
 			const started = Date.now();
 			const child = spawn("bash", ["-c", command], { cwd, stdio: ["ignore", "pipe", "pipe"] });
-			const onAbort = () => child.kill("SIGKILL");
+			// A child that never started has no pid; on Node < 24.22 / 26.10 its kill() signals our own process group.
+			const onAbort = () => {
+				if (child.pid !== undefined) child.kill("SIGKILL");
+			};
 			ctx.abortSignal?.addEventListener("abort", onAbort);
 			child.stdout.on("data", (c: Uint8Array) => api.stream(c));
 			child.stderr.on("data", (c: Uint8Array) => api.stream(c));

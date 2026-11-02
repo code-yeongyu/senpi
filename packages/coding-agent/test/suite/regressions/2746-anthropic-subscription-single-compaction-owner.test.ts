@@ -41,6 +41,7 @@ import {
 	streamEvent,
 } from "../../helpers/anthropic-subscription-scripted-sdk.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import { cliAccountOf } from "../../support/claude-cli-test-slots.ts";
 
 const OWNER_ENV = "SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER";
 
@@ -100,7 +101,7 @@ const promptTooLong: Reply = (sessionId) => [
 
 const residentStreamFn: StreamFn = (model, context, options) =>
 	wrapStreamWithModelRecovery(
-		streamAnthropicSubscription(model, context, options),
+		streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...options }),
 		model,
 		getCurrentTools(context.messages),
 	);
@@ -144,7 +145,7 @@ function servingQuery(queries: readonly ScriptedResidentQuery[]): ScriptedReside
 
 /** One owner, never zero: native auto-compact is on exactly when senpi stands down. */
 function expectSingleOwner(query: ScriptedResidentQuery | undefined, senpiOwns: boolean): void {
-	expect(query?.options?.settings).toEqual({ autoCompactEnabled: !senpiOwns });
+	expect(query?.options?.settings).toEqual({ autoCompactEnabled: !senpiOwns, autoMemoryEnabled: false });
 }
 
 function lastAssistant(harness: Harness): AssistantMessage | undefined {
@@ -171,7 +172,7 @@ describe("senpi#2746 one compaction owner per anthropic-subscription turn", () =
 		expectSingleOwner(serving, true);
 		expect(serving?.options?.env?.CLAUDE_CODE_TOTAL_TOKENS_REMINDER).toBe("off");
 		// The overlay is layered over the auth lane's environment, never replacing it.
-		expect(serving?.options?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("access-primary");
+		expect(cliAccountOf(serving?.options?.env)).toBe("primary");
 		expect(lastAssistant(lane.harness)).toMatchObject({ stopReason: "stop" });
 	}, 30_000);
 

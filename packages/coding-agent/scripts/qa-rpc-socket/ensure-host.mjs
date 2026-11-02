@@ -12,10 +12,10 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "../../src/config.ts";
-import { processMatchesPidFile, waitForStartTime } from "../../src/modes/app-server/daemon/process.ts";
 import { readHostRegistration, writeHostRegistration } from "../../src/modes/rpc/host-daemon-registration.ts";
 import { HostEnsureRefusedError, REQUIRED_HOST_CAPABILITIES } from "../../src/modes/rpc/host-decision.ts";
 import { createHostDaemonPaths, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { processMatchesPidFile, waitForStartTime } from "../../src/utils/process-identity.ts";
 
 const lines = [];
 const root = await mkdtemp(join(tmpdir(), "senpi-ensure-host-qa-"));

@@ -29,6 +29,8 @@ const KIMI_CODE_PRESETS = {
 	"kimi-for-coding-highspeed": "kimi-k2-7",
 	k3: "kimi-k3",
 	"k3-256k": "kimi-k3",
+	"k3.1-pro": "kimi-k3-1",
+	"k3.1-pro-highspeed": "kimi-k3-1",
 } as const;
 
 function isKimiCodeVersionedId(id: string): id is keyof typeof KIMI_CODE_PRESETS {

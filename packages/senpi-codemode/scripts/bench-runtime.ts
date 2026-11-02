@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type { EvalLanguage } from "../src/tool/types.ts";
 import { futureCapabilityCell, scalarCell, versionCell } from "./bench-cells.ts";
 import type { Measured } from "./bench-measure.ts";
+import { CPU_BOUNDARY } from "./bench-cpu-contract.ts";
 import { implementedScenarios } from "./bench-scenarios.ts";
 import { type BenchMemory, createBenchSession, loadTarget } from "./bench-session.ts";
 import type { RuntimeReport } from "./bench-worker.ts";
@@ -49,6 +50,7 @@ async function* samples(
 		// A newly shipped capability without a workload must invalidate, not silently skip.
 		for (const name of pending) scenarios[name] = [];
 		const report = (name: string, values: Measured[]): RuntimeReport => ({
+			cpuBoundary: CPU_BOUNDARY,
 			hostRuntime: process.versions.bun === undefined ? "node" : "bun",
 			hostVersion: process.versions.bun ?? process.versions.node,
 			runtimeVersion,

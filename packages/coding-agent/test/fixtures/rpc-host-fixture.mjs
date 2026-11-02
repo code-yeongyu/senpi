@@ -6,7 +6,7 @@
  * and a case that leaves an unusable registration behind - an unguarded pidfile, a failed ensure -
  * has no way to stop it. Two self-terminating bindings keep that from stranding a host: the fixture
  * exits when the socket path it serves disappears (which happens the moment its sandbox directory
- * is removed), and when its parent is gone (a killed test runner reparents it to init).
+ * is removed), and when its parent is gone (a killed test runner reparents it).
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -38,7 +38,22 @@ const transportAddress =
 		? `\\\\.\\pipe\\senpi-rpc-${createHash("sha256").update(Buffer.concat([Buffer.from(win32.normalize(socketPath).toLowerCase(), "utf8"), secret ?? Buffer.alloc(0)])).digest("hex").slice(0, 32)}`
 		: socketPath;
 if (behavior === "ignore-term") process.on("SIGTERM", () => {});
+const answer = (request) =>
+	`${JSON.stringify({
+		id: request.id,
+		type: "response",
+		command: "get_protocol_info",
+		success: true,
+		data: { protocolVersion: 1, serverVersion, capabilities, mode: "multi", ...identity },
+	})}\n`;
+/** `gated`: released by one line on stdin. */
+const gate = new Promise((resolve) => {
+	if (behavior !== "gated") return;
+	process.stdin.once("data", () => resolve());
+});
 const server = createServer((socket) => {
+	// A prober that gave up closes first; its reset is not the fixture's failure.
+	socket.on("error", () => {});
 	let buffer = "";
 	let handshake = Buffer.alloc(0);
 	let authenticated = process.platform !== "win32";
@@ -58,17 +73,21 @@ const server = createServer((socket) => {
 			buffer = buffer.slice(newline + 1);
 			if (behavior === "silent") continue;
 			const request = JSON.parse(line);
-			socket.write(`${JSON.stringify({
-				id: request.id,
-				type: "response",
-				command: "get_protocol_info",
-				success: true,
-				data: { protocolVersion: 1, serverVersion, capabilities, mode: "multi", ...identity },
-			})}\n`);
+			if (behavior === "gated") {
+				// Answers only once the test releases it: a slow host whose timing the test drives.
+				process.stdout.write("probe\n");
+				gate.then(() => {
+					if (!socket.destroyed) socket.write(answer(request));
+				});
+				continue;
+			}
+			socket.write(answer(request));
 		}
 	});
 });
-server.listen(transportAddress);
+server.listen(transportAddress, () => {
+	if (behavior === "gated") process.stdout.write("listening\n");
+});
 process.on("SIGTERM", () => {
 	if (behavior === "ignore-term") return;
 	server.close(() => process.exit(0));
@@ -81,7 +100,8 @@ const watchdog = setInterval(() => {
 	// The socket entry is this fixture's whole purpose; on win32 the pipe has no filesystem entry,
 	// so the sandbox directory that holds its secret is the equivalent evidence.
 	const servingPath = process.platform === "win32" ? dirname(socketPath) : socketPath;
-	const orphaned = process.ppid !== parentPid && process.ppid <= 1;
+	// A subreaper can adopt us instead of init; any reparent means our original parent died.
+	const orphaned = process.ppid !== parentPid;
 	if (existsSync(servingPath) && !orphaned) return;
 	clearInterval(watchdog);
 	server.close(() => process.exit(0));

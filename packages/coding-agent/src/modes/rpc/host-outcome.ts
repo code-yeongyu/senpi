@@ -36,6 +36,7 @@ export function identityPayload(
 	return {
 		socket,
 		pid,
+		lifecycle: host?.lifecycle ?? null,
 		instanceId: host?.instanceId ?? null,
 		generation: host?.generation ?? null,
 		engineVersion: host?.engineVersion ?? null,

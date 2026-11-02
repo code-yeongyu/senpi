@@ -113,12 +113,44 @@ function isEncodableImage(value) {
 	return !isBinaryData(value) && (typeof value.arrayBuffer === "function" || typeof value.bytes === "function");
 }
 
+// { buffer: <bytes>, ...metadata } (e.g. an omowright screenshot): the bytes frame as an image when they
+// carry a known signature; the remaining own fields display as compact JSON text. Non-image bytes or a
+// non-plain wrapper stay on the JSON path. BMP's two-byte 'BM' signature is too weak for the wrapper path
+// (a plain-text buffer can start with 'BM'), so it is only trusted when the header length field is plausible.
+function wrappedBufferImageOps(value) {
+	if (Object.getPrototypeOf(value) !== Object.prototype || !("buffer" in value)) return undefined;
+	const bytes = bytesOf(value.buffer);
+	if (bytes === undefined) return undefined;
+	const mimeType = sniffImageMimeType(bytes);
+	if (mimeType === undefined) return undefined;
+	if (mimeType === "image/bmp" && !isPlausibleBmp(bytes)) return undefined;
+	const frameOp = frame(mimeType, Buffer.from(bytes).toString("base64"));
+	const meta = {};
+	for (const key of Object.keys(value)) {
+		if (key !== "buffer") meta[key] = value[key];
+	}
+	if (Object.keys(meta).length === 0) return [frameOp];
+	try {
+		return [{ kind: "text", text: JSON.stringify(meta) }, frameOp];
+	} catch {
+		return [frameOp];
+	}
+}
+
+function isPlausibleBmp(bytes) {
+	// A BMP header is at least 26 bytes (14 file + 12 info), and its little-endian file-size field must
+	// not exceed the bytes actually present: text after "BM" declares hundreds of MB and stays JSON.
+	if (bytes.length < 26) return false;
+	const declared = bytes[2] | (bytes[3] << 8) | (bytes[4] << 16) | (bytes[5] << 24);
+	return declared >= 26 && bytes.length >= declared;
+}
+
 function frame(mimeType, dataBase64) {
 	return { kind: "frame", mimeType, dataBase64 };
 }
 
 function dropped(reason) {
-	return [{ kind: "text", text: `[display: image dropped — ${reason}]` }];
+	return [{ kind: "text", text: `[display: image dropped - ${reason}]` }];
 }
 
 export function resolveDisplayOps(value) {
@@ -141,7 +173,7 @@ export function resolveDisplayOps(value) {
 		return [frame(payload.mimeType ?? "application/octet-stream", payload.dataBase64)];
 	}
 	if (isEncodableImage(value)) return [{ kind: "encode", value }];
-	return undefined;
+	return wrappedBufferImageOps(value);
 }
 
 export async function encodeDisplayImage(value) {

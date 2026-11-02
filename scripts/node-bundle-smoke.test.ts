@@ -42,7 +42,8 @@ function createState(): string {
 
 function hermeticEnv(state: string): Record<string, string> {
 	return {
-		PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state,
+		PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state, TEMP: state, TMP: state,
+		JITI_RESPECT_TMPDIR_ENV: "1",
 		SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1",
 	};
 }
@@ -72,7 +73,7 @@ test("loads the embedded JavaScript grammar from an isolated Node bundle", () =>
 			const result = spawnSync(runtime, ["--input-type=module", "-e", probe], {
 				cwd: state,
 				encoding: "utf8",
-				env: { PATH: process.env.PATH ?? "" },
+				env: hermeticEnv(state),
 			});
 			expect(result.status, `${runtime}: ${result.stderr}`).toBe(0);
 			expect(result.stdout.trim(), runtime).toBe("tree-sitter-wasm");
@@ -82,9 +83,9 @@ test("loads the embedded JavaScript grammar from an isolated Node bundle", () =>
 	}
 });
 
-// A downstream installer (oh-my-openagent) rewrites these declarations byte-for-byte inside the
-// installed bundle, so emitting must keep one literal `claudeCodeVersion="X.Y.Z"` per emitting file.
-test("keeps the claudeCodeVersion declarations a downstream installer rewrites", () => {
+// The engine no longer advertises a Claude Code version (senpi#5131), so no bundled file declares
+// `claudeCodeVersion="X.Y.Z"` and oh-my-openagent's installer no longer rewrites one (omo#11964).
+test("emits no claudeCodeVersion declaration", () => {
 	// Given
 	const bundle = join(repo, "packages/coding-agent/dist/bundle");
 	// When
@@ -96,7 +97,7 @@ test("keeps the claudeCodeVersion declarations a downstream installer rewrites",
 		)
 		.sort();
 	// Then
-	expect(declaringFiles).toEqual([expect.stringMatching(/^anthropic-messages-.+\.js$/), "session-worker.js"]);
+	expect(declaringFiles).toEqual([]);
 });
 
 describe.each(runtimes)("the Node bundle under %s", (runtime) => {

@@ -2,10 +2,11 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import { afterEach, describe, expect, it } from "vitest";
 import { isBillingErrorMessage } from "../../src/core/retry-fallback/billing.ts";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
-const fallback = "faux/faux-2";
+const fallback = "other-faux/faux-2";
 
 // Verbatim provider error captured from a real session (2026-07-28, anthropic-api
 // claude-fable-5): the billing class this behavior targets.
@@ -29,14 +30,16 @@ const usageLimitBillingError = () =>
 	fauxAssistantMessage("", { stopReason: "error", errorMessage: usageLimitExhaustedError });
 const hardError = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: terminalNonBillingError });
 
-function createChainHarness(now: () => number, maxRetries = 0): Promise<Harness> {
-	return createHarness({
+async function createChainHarness(now: () => number, maxRetries = 0): Promise<Harness> {
+	const harness = await createHarness({
 		models: [{ id: "faux-1" }, { id: "faux-2" }],
 		fallbackNow: now,
 		settings: {
 			retry: { enabled: true, maxRetries, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
 		},
 	});
+	registerFallbackModels(harness, "other-faux", ["faux-2"]);
+	return harness;
 }
 
 describe("retry fallback billing swap", () => {

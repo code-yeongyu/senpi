@@ -1,3 +1,4 @@
+import { hasServerSearch } from "../server-search.ts";
 import { type NativeModelInfo, type NativeModelRegistry, nativeMapping, nativeRouteKey } from "./native.ts";
 import type { SearchProvider } from "./types.ts";
 
@@ -59,6 +60,22 @@ export function resolveNativeSearchModel(
 	setting: string | undefined,
 ): NativeSearchModelChoice | undefined {
 	if (!session || !nativeRouteKey(session)) return undefined;
+	// Main-request server search is always the active model's job. If that fails,
+	// the standalone retry also keeps that model; only no-server routes default
+	// to the cheaper auxiliary model below. An auxiliary setting cannot preempt
+	// the in-turn tool. See senpi#3122.
+	if (
+		session.api !== undefined &&
+		hasServerSearch({
+			api: session.api,
+			provider: session.provider,
+			id: session.id,
+			baseUrl: session.baseUrl,
+			compat: session.compat,
+		})
+	) {
+		return { model: session.id, source: "session" };
+	}
 	if (setting === SESSION_SEARCH_MODEL) return { model: session.id, source: "session" };
 	const candidates = sameRouteModels(session, registry);
 	if (setting === undefined) return defaultChoice(session, candidates);

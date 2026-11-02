@@ -2,7 +2,7 @@ name: Model catalog refresh
 
 # Keeps the bundled model catalog on main current (senpi#2943). Daily it regenerates the
 # whole catalog from models.dev and the providers' model listings. When the catalog
-# changed, it opens (or updates) one refresh PR with a CHANGELOG entry and enables
+# changed, it opens (or updates) one refresh PR with a changelog fragment and enables
 # auto-merge, so the PR lands as soon as its required CI is green. A release then finds
 # no catalog drift and reuses main's CI instead of pushing a catalog commit and waiting
 # for it. A refresh PR whose CI stays red (for example a test pinning a model the catalog
@@ -17,6 +17,7 @@ on:
     paths:
       - '.github/workflows/model-catalog-refresh.yml'
       - 'scripts/model-catalog-refresh.mjs'
+      - 'scripts/publish-catalog-refresh.mjs'
       - 'scripts/release-test-gate.mjs'
       - 'packages/ai/scripts/generate-models.ts'
 
@@ -56,21 +57,23 @@ jobs:
         run: npm ci --ignore-scripts
 
       # --strict (the package script's default): a models.dev or provider-listing outage fails
-      # this run instead of silently keeping yesterday's catalog.
+      # this run instead of silently keeping yesterday's catalog. OpenGateway is the exception: its
+      # outage keeps the committed catalog (a warning annotation) so the other providers still refresh;
+      # opengateway-catalog-refresh.yml is the job that fails on it (senpi#4067).
       - name: Regenerate the model catalog
         working-directory: packages/ai
-        run: npx tsx scripts/generate-models.ts --strict
+        run: npx tsx scripts/generate-models.ts --strict --keep-last-good-opengateway
 
       - name: Validate model data
         working-directory: packages/ai
         run: npx tsx scripts/check-model-data.ts
 
-      - name: Summarize the change and record the CHANGELOG entry
+      - name: Summarize the change and prepare its changelog fragment
         id: summary
         run: |
           set -euo pipefail
           node scripts/model-catalog-refresh.mjs \
-            --changelog packages/ai/CHANGELOG.md \
+            --fragment "$RUNNER_TEMP/model-catalog-fragment.md" \
             --summary "$RUNNER_TEMP/model-catalog-summary.md" >> "$GITHUB_OUTPUT"
           if [[ -f "$RUNNER_TEMP/model-catalog-summary.md" ]]; then
             cat "$RUNNER_TEMP/model-catalog-summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -84,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           unexpected="$(git status --porcelain --untracked-files=all | awk '{print $2}' \
-            | grep -vE '^packages/ai/(src/models\.generated\.ts|src/providers/data/[^/]+\.json|src/providers/[^/]+\.models\.ts|CHANGELOG\.md)$' || true)"
+            | grep -vE '^packages/ai/(src/models\.generated\.ts|src/providers/data/[^/]+\.json|src/providers/[^/]+\.models\.ts)$' || true)"
           if [[ -n "$unexpected" ]]; then
             echo "::error::The regeneration changed files outside the catalog: $unexpected"
             exit 1
@@ -102,28 +105,11 @@ jobs:
             echo "::error::UPSTREAM_AUTOMATION_TOKEN is required so the refresh PR runs CI."
             exit 1
           fi
-          open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --state open --json number --jq '.[0].number // empty')"
-          if [[ "$CHANGED" != "true" ]]; then
-            if [[ -n "$open_pr" ]]; then
-              gh pr close "$open_pr" --repo "$GITHUB_REPOSITORY" --delete-branch \
-                --comment "The model catalog on main is current again; closing this refresh."
-            fi
-            exit 0
-          fi
-          git config user.name "senpi-release-bot"
-          git config user.email "actions@github.com"
-          git checkout -B "$REFRESH_BRANCH"
-          git add -A -- packages/ai/src/models.generated.ts packages/ai/src/providers packages/ai/CHANGELOG.md
-          git commit -m "fix(ai): refresh the bundled model catalog"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${REFRESH_BRANCH}"
-          if [[ -n "$open_pr" ]]; then
-            gh pr edit "$open_pr" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/model-catalog-summary.md"
-          else
-            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$REFRESH_BRANCH" \
-              --title "fix(ai): refresh the bundled model catalog" --body-file "$RUNNER_TEMP/model-catalog-summary.md"
-            open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --state open --json number --jq '.[0].number')"
-          fi
-          gh pr merge "$open_pr" --repo "$GITHUB_REPOSITORY" --auto --merge
+          node scripts/publish-catalog-refresh.mjs \
+            --fragment "$RUNNER_TEMP/model-catalog-fragment.md" \
+            --summary "$RUNNER_TEMP/model-catalog-summary.md" \
+            --title "fix(ai): refresh the bundled model catalog" --auto-merge \
+            -- packages/ai/src/models.generated.ts packages/ai/src/providers
 
       - name: Fail when a refresh has waited too long
         if: github.event_name != 'pull_request'

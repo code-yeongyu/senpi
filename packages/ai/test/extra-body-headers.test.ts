@@ -106,7 +106,7 @@ describe("Anthropic extraBody reserved keys", () => {
 
 describe("Anthropic-compatible provider thinking controls", () => {
 	it("omits explicit disabled thinking for Xiaomi MiMo", async () => {
-		const payload = await capturePayload(getModel("xiaomi", "mimo-v2.5-pro"), undefined);
+		const payload = await capturePayload(getModel("xiaomi", "mimo-v2.6-pro"), undefined);
 
 		expect(payload.thinking).toBeUndefined();
 		expect(payload.output_config).toBeUndefined();

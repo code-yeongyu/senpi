@@ -62,12 +62,14 @@ afterEach(() => resetSdkBoundary());
 describe("claude-sdk-oauth tool-less requests", () => {
 	it("builds no SDK tools for toolChoice none while preserving normal tool options", () => {
 		const normal = buildAnthropicSubscriptionQueryOptions({
+			cwd: process.cwd(),
 			model,
 			context: context([customTool]),
 			tools: ["mcp__custom-tools__lookup"],
 			providerSettings: {},
 		});
 		const toolLess = buildAnthropicSubscriptionQueryOptions({
+			cwd: process.cwd(),
 			model,
 			context: context([customTool]),
 			tools: ["mcp__custom-tools__lookup"],
@@ -82,6 +84,7 @@ describe("claude-sdk-oauth tool-less requests", () => {
 		// so the CLI cannot re-expose configured MCP tools to the summarizer.
 		expect(toolLess.extraArgs).toEqual({ "strict-mcp-config": null });
 		const optedOut = buildAnthropicSubscriptionQueryOptions({
+			cwd: process.cwd(),
 			model,
 			context: context([customTool]),
 			tools: ["mcp__custom-tools__lookup"],
@@ -90,12 +93,22 @@ describe("claude-sdk-oauth tool-less requests", () => {
 		});
 		expect(optedOut.tools).toEqual([]);
 		expect(optedOut.extraArgs).toEqual({ "strict-mcp-config": null });
-		const emptyContext = buildAnthropicSubscriptionQueryOptions({ model, context: context(), providerSettings: {} });
+		const emptyContext = buildAnthropicSubscriptionQueryOptions({
+			cwd: process.cwd(),
+			model,
+			context: context(),
+			providerSettings: {},
+		});
 		expect(emptyContext.tools).toEqual([]);
 		expect(emptyContext.maxTurns).toBeUndefined();
 		expect(emptyContext.extraArgs).toBeUndefined();
 		expect(
-			buildAnthropicSubscriptionQueryOptions({ model, context: context([customTool]), providerSettings: {} }).tools,
+			buildAnthropicSubscriptionQueryOptions({
+				cwd: process.cwd(),
+				model,
+				context: context([customTool]),
+				providerSettings: {},
+			}).tools,
 		).toEqual([...BUILTIN_SDK_TOOLS]);
 	});
 
@@ -116,6 +129,7 @@ describe("claude-sdk-oauth tool-less requests", () => {
 		});
 
 		const stream = streamAnthropicSubscription(model, context([customTool]), {
+			cwd: process.cwd(),
 			toolChoice: "none",
 			streamKind: "auxiliary",
 		});
@@ -126,7 +140,10 @@ describe("claude-sdk-oauth tool-less requests", () => {
 		expect(calls[0]?.tools).toEqual([]);
 		expect(calls[0]?.mcpServers).toBeUndefined();
 
-		const normalStream = streamAnthropicSubscription(model, context([customTool]), { streamKind: "auxiliary" });
+		const normalStream = streamAnthropicSubscription(model, context([customTool]), {
+			cwd: process.cwd(),
+			streamKind: "auxiliary",
+		});
 		await collect(normalStream);
 		await normalStream.result();
 		expect(calls[1]?.tools).toEqual([]);
@@ -139,6 +156,7 @@ describe("claude-sdk-oauth tool-less requests", () => {
 		const runtime = {
 			stream: (_selectedModel: Model<Api>, requestContext: Context, streamOptions: Record<string, unknown>) => {
 				const queryOptions = buildAnthropicSubscriptionQueryOptions({
+					cwd: process.cwd(),
 					model,
 					context: requestContext,
 					streamOptions: streamOptions as never,

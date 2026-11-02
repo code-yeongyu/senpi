@@ -17,7 +17,7 @@ const UTF8_OUTPUT_PREFIX = "try { [Console]::OutputEncoding=[System.Text.Encodin
 
 export const powershellToolSystemPromptContribution = {
 	snippet: "Execute PowerShell commands",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	guidelines: ["PI_* env vars = current model + session details."],
 } as const;
 
 export type PowerShellOperations = BashOperations;
@@ -50,11 +50,14 @@ export function createPowerShellToolDefinition(
 	cwd: string,
 	options?: PowerShellToolOptions,
 ): ReturnType<typeof createShellToolDefinition> {
+	// The default PowerShell operations are local, not caller-injected: only a caller's own operations pin the tool.
+	const { serverPinned: _defaultOperationsPin, ...definition } = createShellToolDefinition(cwd, powershellToolConfig, {
+		...options,
+		operations: options?.operations ?? createLocalPowerShellOperations(),
+	});
 	return {
-		...createShellToolDefinition(cwd, powershellToolConfig, {
-			...options,
-			operations: options?.operations ?? createLocalPowerShellOperations(),
-		}),
+		...definition,
+		...(options?.operations !== undefined || options?.spawnHook !== undefined ? { serverPinned: true } : {}),
 		exposure: "eval",
 	};
 }

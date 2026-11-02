@@ -1,4 +1,5 @@
 import { closeSync, openSync, readSync } from "node:fs";
+import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import { claudeCodeExecutableCandidates, defaultExecutableDeps } from "./executable.ts";
 import { bundledClaudeCodeVersion } from "./executable-version.ts";
 
@@ -10,6 +11,9 @@ import { bundledClaudeCodeVersion } from "./executable-version.ts";
 export const OBSERVED_CLAUDE_CODE_MODEL_FLOORS: Readonly<Record<string, string>> = {
 	"claude-fable-5-1": "2.1.251",
 	"claude-opus-5-5": "2.1.280",
+	...(FABLE55_LAUNCH.minimumClaudeCodeVersion === null
+		? {}
+		: { [FABLE55_LAUNCH.modelId]: FABLE55_LAUNCH.minimumClaudeCodeVersion }),
 };
 
 export type BundledClaudeCodeBinary = { path: string; claudeCodeVersion: string | undefined };

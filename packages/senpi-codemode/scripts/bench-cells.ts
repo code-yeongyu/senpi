@@ -14,7 +14,7 @@ function quoted(value: string): string {
 
 export const scalarCell: PerLanguage = { js: "1 + 1", py: "1 + 1", rb: "1 + 1", jl: "1 + 1" };
 
-/** Process id and that process's own CPU microseconds, read inside the kernel (JS shares the host process). */
+/** Interpreter identity; the embedded clock is diagnostic only. CPU is read host-side after this result. */
 export const cpuProbeCell: PerLanguage = {
 	js: "0",
 	py: 'f\'{__import__("os").getpid()},{__import__("time").process_time_ns() // 1000}\'',

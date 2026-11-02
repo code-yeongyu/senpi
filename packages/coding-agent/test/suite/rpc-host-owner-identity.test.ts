@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as processIdentity from "../../src/modes/app-server/daemon/process.ts";
 import { callerHostOwner, hostOwnerGone, sameHostOwner } from "../../src/modes/rpc/host-daemon-state.ts";
+import * as processIdentity from "../../src/utils/process-identity.ts";
 
 afterEach(() => {
 	vi.restoreAllMocks();

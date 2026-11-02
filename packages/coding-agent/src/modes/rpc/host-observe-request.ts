@@ -7,17 +7,40 @@
  * itself with `observe: true`; the supervisor classifies a connection by the requests it sends, and
  * only a connection that sends something other than an observing read becomes an attachment.
  *
- * Only the two side-effect-free reads can observe: `observe: true` on any other command is ignored
+ * Only the side-effect-free reads can observe (`get_effect_status` answers a receipt and changes nothing; `get_state` and
+ * `get_entries` read a session's state and history, senpi#4267): `observe: true` on any other command is ignored
  * and the connection attaches, so a client cannot hold a session while its host idles out under it.
  * `warm` never attaches, marked or not: it opens nothing, so a host that only received it idles out
  * on its normal deadline (senpi#2314).
  * Hosts that predate the field ignore it (commands are parsed by `type`), so a marked read works
  * against every generation.
+ *
+ * A request may also name the host generation its client runs INSIDE (`origin_host_instance`). A host's
+ * sessions reach other sessions on the same endpoint through its public socket - an omo task tree keys
+ * its `p` shard by the root session, so a child in that shard opens its own children on the very shard
+ * it lives in - and counted as occupancy, those connections held the shard open forever after its owner
+ * and every outside client were gone (senpi#3272). A host treats a connection from its own generation
+ * as DEPENDENT: it neither holds the host nor blocks its exit. This lives here, not in a module of its
+ * own, because the supervisor's import graph is a budget (`supervisor-import-graph.test.ts`).
  */
 
-export const OBSERVE_REQUEST_FIELD = "observe";
+import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 
-const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set(["get_protocol_info", "list_sessions"]);
+export const OBSERVE_REQUEST_FIELD = "observe";
+export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
+
+const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
+	"get_protocol_info",
+	"get_snapshot",
+	"list_sessions",
+	"subscribe_sessions",
+	"unsubscribe_sessions",
+	"get_effect_status",
+	"get_pending_inputs",
+	"get_subscription_limits",
+	"get_state",
+	"get_entries",
+]);
 
 export function isObservingRequest(line: string): boolean {
 	let request: unknown;
@@ -28,6 +51,27 @@ export function isObservingRequest(line: string): boolean {
 	}
 	if (typeof request !== "object" || request === null || Array.isArray(request)) return false;
 	const record = request as Readonly<Record<string, unknown>>;
-	if (record.type === "warm") return true;
+	if (record.type === "warm" || record.type === "authenticate") return true;
 	return record[OBSERVE_REQUEST_FIELD] === true && OBSERVING_COMMANDS.has(record.type);
+}
+
+/** The host generation this process runs in, or undefined outside any host. */
+export function originHostInstance(
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): string | undefined {
+	const instance = env[HOST_INSTANCE_ID_ENV]?.trim();
+	return instance ? instance : undefined;
+}
+
+/** The generation a request line says its client runs in; undefined when unmarked or not JSON. */
+export function requestOriginHostInstance(line: string): string | undefined {
+	let request: unknown;
+	try {
+		request = JSON.parse(line);
+	} catch {
+		return undefined;
+	}
+	if (typeof request !== "object" || request === null || Array.isArray(request)) return undefined;
+	const origin: unknown = Reflect.get(request, ORIGIN_HOST_INSTANCE_FIELD);
+	return typeof origin === "string" && origin.length > 0 ? origin : undefined;
 }

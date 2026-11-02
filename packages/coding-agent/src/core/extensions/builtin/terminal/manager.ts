@@ -1,9 +1,4 @@
-import type {
-	SessionRegistry,
-	SessionRegistryCapacityError,
-	TerminalSession,
-	TerminalSessionOptions,
-} from "@earendil-works/pi-pty";
+import type { SessionRegistry, SessionRegistryCapacityError, TerminalSession } from "@earendil-works/pi-pty";
 import { loadedPty, loadPty } from "./pty.lazy.ts";
 import type { TerminalRuntimeOptions, TerminalRuntimeSession } from "./runtime-session.ts";
 import { DEFAULT_MAX_SESSIONS } from "./shared.ts";
@@ -13,6 +8,8 @@ export type { SessionRegistryCapacityError };
 export interface TerminalManagerOptions {
 	readonly maxSessions?: number;
 	readonly scrollback?: number;
+	/** Scopes this manager's session ids (`bash_<scope>_N`); a tool child's manager sets it so its ids never match the host's. */
+	readonly idScope?: string;
 }
 
 export interface CreatedTerminalSession {
@@ -32,6 +29,7 @@ export class TerminalManager {
 	/** Stable "mon_" identities bound to runtime session ids; survives PTY exit, then drops on session prune or teardown. */
 	private readonly monitorIds = new Map<string, string>();
 	private readonly scrollback?: number;
+	private readonly idScope?: string;
 	private readonly maxSessions: number;
 	private readonly exited = new Set<string>();
 	private reservations = 0;
@@ -39,6 +37,7 @@ export class TerminalManager {
 	constructor(options: TerminalManagerOptions = {}) {
 		this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
 		this.scrollback = options.scrollback;
+		if (options.idScope !== undefined) this.idScope = options.idScope;
 	}
 
 	get size(): number {
@@ -63,11 +62,14 @@ export class TerminalManager {
 	}
 
 	/** Spawn a new terminal session and register it under an allocated `bash_N` id. */
-	async create(command: string, options: TerminalSessionOptions): Promise<CreatedTerminalSession> {
+	async create(command: string, options: TerminalRuntimeOptions): Promise<CreatedTerminalSession> {
 		const pty = await loadPty();
 		const release = this.reserve();
 		if (!release) throw new pty.SessionRegistryCapacityError(this.maxSessions);
-		this.registry ??= new pty.SessionRegistry<TerminalSession>({ maxSessions: this.maxSessions });
+		this.registry ??= new pty.SessionRegistry<TerminalSession>({
+			maxSessions: this.maxSessions,
+			...(this.idScope === undefined ? {} : { idScope: this.idScope }),
+		});
 		const registry = this.registry;
 		const runtimeOptions: TerminalRuntimeOptions = { ...options, scrollback: this.scrollback };
 		const { TerminalRuntimeSession } = await import("./runtime-session.ts");

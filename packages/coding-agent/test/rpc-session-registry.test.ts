@@ -15,6 +15,7 @@ import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 const profile = (cwd: string, sessionPath: string): RpcSessionLaunchProfile => ({
 	cwd,
@@ -52,8 +53,7 @@ function runtime(
 	const flagValues = new Map<string, boolean | string>();
 	return {
 		session: {
-			sessionManager: options.sessionManager,
-			agentDir: options.agentDir,
+			...fakeSessionBase(options),
 			// Projected into the `open_session` wire state, which shares one builder with get_state.
 			isFastModeActive: () => false,
 			agent: { state: {} },
@@ -152,9 +152,12 @@ describe("RPC session registry", () => {
 		});
 		const samePath = join(dir, "same.jsonl");
 		const first = registry.openSession(profile(dir, samePath));
-		await expect(registry.openSession(profile(dir, samePath))).rejects.toMatchObject({ code: "session_path_in_use" });
+		// A concurrent open of the still-constructing path waits on the in-flight open and attaches to
+		// it once it completes (one session per path, never a second copy), rather than failing fast.
+		const second = registry.openSession(profile(dir, samePath));
 		release();
-		await first;
+		const [firstSession, secondSession] = await Promise.all([first, second]);
+		expect(secondSession.sessionId).toBe(firstSession.sessionId);
 	});
 
 	test("rejects commands while closing, then releases the reservation after disposal", async () => {
@@ -552,19 +555,10 @@ describe("RPC session registry", () => {
 		const launchProfile = Object.freeze(profile(dir, join(dir, "profile.jsonl")));
 		const manager = SessionManager.create(dir, dir);
 		const captured: Array<RpcSessionLaunchProfile | undefined> = [];
-		const fakeSession = (sessionManager: SessionManager) => {
-			const flagValues = new Map<string, boolean | string>();
-			return {
-				sessionManager,
-				extensionRunner: {
-					hasHandlers: () => false,
-					setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
-					getFlagValues: () => new Map(flagValues),
-				},
-				abort: async () => {},
-				dispose: () => {},
-			} as never;
-		};
+		// The one fake session shape of this file, so it cannot drift from what the runtime reads.
+		const fakeSession = (sessionManager: SessionManager) =>
+			runtime({ cwd: dir, agentDir: dir, sessionManager } as Parameters<CreateAgentSessionRuntimeFactory>[0])
+				.session as never;
 		const factory: CreateAgentSessionRuntimeFactory = async (options) => {
 			captured.push(options.launchProfile as RpcSessionLaunchProfile | undefined);
 			return {

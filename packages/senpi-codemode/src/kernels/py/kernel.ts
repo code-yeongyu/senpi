@@ -6,14 +6,16 @@ import type {
 	KernelToolsInvokeRequest,
 } from "../js/kernel-tools-types.ts";
 import { inputAtStart } from "../shared/cell-source-at-start.ts";
-import { describeExit } from "../shared/kernel-death.ts";
+import { invocationSession, registerInvocationSession } from "../shared/invocation-authority.ts";
 import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
 import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
+import { pythonDeathReason } from "./death-reason.ts";
 import { runHostCell } from "./host-cell.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
 import { PythonKernelTools } from "./kernel-tools-host.ts";
 import { pythonStartupCeilingMs, pythonStartupHangGuardMs } from "./startup.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
+import { PythonPermissionHost } from "./permission-host.ts";
 
 export type { PythonKernelRunOptions, PythonKernelStartOptions } from "./kernel-contract.ts";
 export type { KernelChild, KernelSpawnOptions, KernelSpawnProcess } from "./process.ts";
@@ -41,25 +43,45 @@ export class PythonKernel {
 	#failure: Error | null = null;
 	readonly #preludes = new KernelPreludeTracker();
 	readonly #memory: KernelMemoryHost | null;
+	/** The newest reading the interpreter reported, named by a restart notice if it dies. */
+	#lastMemory: ResultMessage["memory"];
 	#generation = 0;
 	#closed = false;
 	readonly #tools: PythonKernelTools;
 	#dead = false;
+	readonly #releaseSession: () => void;
+	readonly #permission: PythonPermissionHost;
 
 	private constructor(options: PythonKernelStartOptions) {
 		this.#options = options;
+		this.#releaseSession = registerInvocationSession(options.sessionId, () => ({
+			cwd: options.cwd,
+			state: options.permissions?.state() ?? { epoch: 0, active: false, rules: [] },
+		}));
 		this.#memory = options.memory === undefined ? null : new KernelMemoryHost("py", options.memory);
+		this.#permission = new PythonPermissionHost(options, async () => {
+			this.#tools.retire("kernel_tool_stale", "Python permission authority revoked");
+			this.#settleAllPending("Python permission authority revoked");
+			if (this.#transport) await this.#beginRetirement(this.#transport);
+		});
 		this.#tools = new PythonKernelTools({
 			post: (message) => this.#transport?.post(message),
 			isOpen: () => this.#transport !== null && !this.#closed,
+			invocation: (request, invokeOptions) => this.#permission.invocation(request, invokeOptions),
 			...(options.peerKernelToolsDescribe === undefined ? {} : { peerDescribe: options.peerKernelToolsDescribe }),
 		});
 	}
 
 	static async start(options: PythonKernelStartOptions): Promise<PythonKernel> {
 		const kernel = new PythonKernel(options);
-		await kernel.#spawn(kernel.#generation);
-		return kernel;
+		try {
+			await kernel.#spawn(kernel.#generation);
+			return kernel;
+		} catch (error) {
+			kernel.#releaseSession();
+			kernel.#permission.dispose();
+			throw error;
+		}
 	}
 
 	listKernelToolNames(): readonly string[] {
@@ -86,11 +108,21 @@ export class PythonKernel {
 		return this.#tools.describe(names);
 	}
 
-	invokeKernelTool(
+	async invokeKernelTool(
 		request: KernelToolsInvokeRequest,
 		options?: AbortSignal | KernelToolsInvokeOptions,
 	): Promise<unknown> {
-		return this.#tools.invoke(request, options);
+		await this.#permission.admit();
+		invocationSession(
+			this.#options.sessionId,
+			{
+				cwd: this.#options.cwd,
+				state: this.#options.permissions?.state() ?? { epoch: 0, active: false, rules: [] },
+			},
+			options,
+			this.#options.permissions?.resolveSession,
+		);
+		return await this.#tools.invoke(request, options);
 	}
 
 	run(input: PythonKernelRunOptions): Promise<ResultMessage> {
@@ -157,6 +189,7 @@ export class PythonKernel {
 	async reset(): Promise<void> {
 		if (this.#failure) throw this.#failure;
 		if (this.#closed) throw new Error("Python kernel is closed");
+		this.#permission.revoke();
 		const generation = ++this.#generation;
 		this.#tools.retire("kernel_tool_stale", "Python kernel was reset; its kernel tools are gone");
 		const prior = this.#starting;
@@ -182,7 +215,9 @@ export class PythonKernel {
 
 	async close(): Promise<void> {
 		if (this.#closePromise) return await this.#closePromise;
+		this.#permission.revoke();
 		this.#closed = true;
+		this.#releaseSession();
 		this.#generation += 1;
 		this.#tools.retire("tools_unavailable", "Python kernel is closed");
 		this.#settleAllPending("Python kernel closed");
@@ -191,7 +226,10 @@ export class PythonKernel {
 			await starting?.catch(() => undefined);
 			await this.#retirement?.catch(() => undefined);
 			const transport = this.#transport;
-			if (!transport) return;
+			if (!transport) {
+				this.#permission.dispose();
+				return;
+			}
 			try {
 				await transport.close();
 			} catch (error) {
@@ -199,6 +237,7 @@ export class PythonKernel {
 				throw error;
 			}
 			if (this.#transport === transport) this.#transport = null;
+			this.#permission.dispose();
 		})();
 		return await this.#closePromise;
 	}
@@ -226,6 +265,7 @@ export class PythonKernel {
 	}
 
 	async #activateNext(): Promise<void> {
+		await this.#permission.admit();
 		await this.#ensureStarted();
 		if (this.#closed || this.#active || this.#retirement) return;
 		const pending = this.#queue.shift();
@@ -313,8 +353,10 @@ export class PythonKernel {
 	async #spawn(generation: number): Promise<void> {
 		if (this.#closed || generation !== this.#generation) throw new Error("Python kernel startup was superseded");
 		this.#memory?.processReplaced();
+		this.#lastMemory = undefined;
 		this.#transport = await PythonKernelTransport.start({
 			...this.#options,
+			permission: this.#permission,
 			onMessage: (message) => {
 				if (message.type === "result") return;
 				if (generation === this.#generation && this.#tools.consume(message)) return;
@@ -334,12 +376,14 @@ export class PythonKernel {
 			},
 			onResult: (transport, result) => this.#onResult(transport, result),
 			onError: (transport, error) => this.#onError(transport, error),
-			onExit: (transport, error, exit) => this.#onExit(transport, error, describeExit(exit.code, exit.signal)),
+			onExit: (transport, error, exit) =>
+				this.#onExit(transport, error, pythonDeathReason(error.message, exit, this.#lastMemory)),
 		});
 	}
 
 	#onResult(transport: PythonKernelTransport, result: ResultMessage): void {
 		if (this.#transport !== transport) return;
+		if (result.memory !== undefined) this.#lastMemory = result.memory;
 		const pending = this.#pending.get(result.cellId);
 		if (pending) {
 			const annotated = this.#memory?.annotate(result) ?? result;
@@ -403,11 +447,16 @@ export class PythonKernel {
 				);
 			},
 		);
+		// With an owner, the retired interpreter is a death like an exit (senpi#3612): replaced, and announced.
+		const onDeath = this.#options.onDeath;
+		if (onDeath) this.#dead = true;
 		const active = this.#active;
 		if (active) {
 			if (active.resolveStateRetained) active.resolveStateRetained(false);
-			this.#settleRun(active, failedPythonResult(active.input.cellId, "Python kernel died", error.message));
+			const message = onDeath ? "Python kernel died; every global is lost" : "Python kernel died";
+			this.#settleRun(active, failedPythonResult(active.input.cellId, message, error.message));
 		}
+		onDeath?.(`a failure of its control pipe (${error.message})`);
 	}
 
 	#settleRun(pending: PendingRun, result: ResultMessage): void {
@@ -435,6 +484,7 @@ export class PythonKernel {
 	}
 
 	#removePending(pending: PendingRun): void {
+		this.#permission.settle(pending.input.cellId);
 		pending.hostAbort?.abort();
 		if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
 		if (pending.escalationTimer) clearTimeout(pending.escalationTimer);

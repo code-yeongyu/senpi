@@ -14,6 +14,7 @@ import {
 	type TextContent,
 } from "@earendil-works/pi-ai";
 import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMessage } from "./environment-context.ts";
+import { replaceElidedImages } from "./image-elision-placeholder.ts";
 import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
 import { appendToolResultUserWords } from "./tool-result-user-words.ts";
 
@@ -241,10 +242,10 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 				case "assistant":
 				case "toolResult":
 					return m;
-				default:
-					// biome-ignore lint/correctness/noSwitchDeclarations: fine
+				default: {
 					const _exhaustiveCheck: never = m;
 					return undefined;
+				}
 			}
 		})
 		.filter((m) => m !== undefined);
@@ -276,8 +277,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
  */
 export const TRANSPORT_IMAGE_BUDGET_BYTES = 24 * 1024 * 1024;
 
-export const IMAGE_ELISION_PLACEHOLDER =
-	"[Image elided: an older image was removed to keep the request within the provider's size limit. Re-read the source file if you need to view it again.]";
+export { IMAGE_ELISION_PLACEHOLDER } from "./image-elision-placeholder.ts";
 
 export const BLOCKED_IMAGE_PLACEHOLDER = "Image reading is disabled.";
 
@@ -313,58 +313,73 @@ export function dedupeConsecutivePlaceholder(
 }
 
 /**
- * Bound inline image payload at request-build time. Images are considered from
- * newest to oldest. Once an image would exceed the budget, it and every older
- * image are replaced by a text placeholder. The newest protected blocks are
- * kept regardless of size, but still consume the budget.
+ * Bound inline image payload at request-build time. The oldest images are
+ * replaced by a text placeholder in the message that held them, so a dropped
+ * image never moves to another turn.
  *
- * The input and persisted session remain untouched. If every image fits, the
+ * The cutoff moves in fixed steps rather than on every request (senpi#2768).
+ * History only grows by appending, so each image's offset from the oldest one
+ * never changes; images are dropped once they end below a threshold that only
+ * rises when the total crosses the next half-budget step (likewise half the
+ * historical-image limit). A request that just adds an image therefore sends
+ * every earlier image exactly as before, and a provider cache or a sent-history
+ * hash keyed on that history stays valid until the next step. Crossing a step drops up to
+ * half the budget at once, so the request shrinks noticeably then grows back image by image.
+ *
+ * The newest protected blocks, the current turn (when a historical limit is
+ * set) and the newest historical images under that limit are always kept. The
+ * input and persisted session remain untouched. If every image fits, the
  * original array reference is returned.
  */
 export function elideOldImages(messages: Message[], options?: ElideOldImagesOptions): Message[] {
 	const budgetBytes = options?.budgetBytes ?? TRANSPORT_IMAGE_BUDGET_BYTES;
 	const alwaysKeepNewest = options?.alwaysKeepNewest ?? 1;
 	const maxHistoricalImages = options?.maxHistoricalImages;
-	const limitHistory = maxHistoricalImages !== undefined;
 	const lastAssistantIndex = messages.findLastIndex((message) => message.role === "assistant");
+
+	const images: { key: string; bytes: number; currentTurn: boolean }[] = [];
+	messages.forEach((message, messageIndex) => {
+		if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) return;
+		message.content.forEach((block, blockIndex) => {
+			if (block.type !== "image") return;
+			images.push({
+				key: `${messageIndex}:${blockIndex}`,
+				bytes: block.data.length,
+				currentTurn: maxHistoricalImages !== undefined && messageIndex > lastAssistantIndex,
+			});
+		});
+	});
+
 	const imagesToElide = new Set<string>();
-	let keptImages = 0;
-	let keptHistoricalImages = 0;
-	let imageBytes = 0;
-	let cutoffReached = false;
-
-	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
-		const message = messages[messageIndex];
-		if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) {
-			continue;
-		}
-
-		for (let blockIndex = message.content.length - 1; blockIndex >= 0; blockIndex--) {
-			const block = message.content[blockIndex];
-			if (block.type !== "image") continue;
-			const isCurrentTurn = limitHistory && messageIndex > lastAssistantIndex;
-			const isProtectedHistory = limitHistory && !isCurrentTurn && keptHistoricalImages < maxHistoricalImages;
-			const exceedsHistoryLimit = limitHistory && !isCurrentTurn && !isProtectedHistory;
-
-			if (exceedsHistoryLimit || (cutoffReached && !isCurrentTurn && !isProtectedHistory)) {
-				imagesToElide.add(`${messageIndex}:${blockIndex}`);
-				continue;
+	if (maxHistoricalImages !== undefined) {
+		const historical = images.filter((image) => !image.currentTurn);
+		const step = Math.max(1, Math.floor(maxHistoricalImages / 2));
+		const excess = historical.length - maxHistoricalImages;
+		const cutoff = excess > 0 ? Math.ceil(excess / step) * step : 0;
+		for (const image of historical.slice(0, cutoff)) imagesToElide.add(image.key);
+	} else {
+		const protectedKeys = new Set(
+			images.slice(Math.max(0, images.length - alwaysKeepNewest)).map((image) => image.key),
+		);
+		const total = images.reduce((sum, image) => sum + image.bytes, 0);
+		if (total > budgetBytes) {
+			const step = Math.max(1, Math.floor(budgetBytes / 2));
+			const threshold = Math.ceil((total - budgetBytes) / step) * step;
+			let offset = 0;
+			let elidedBytes = 0;
+			let straddler: (typeof images)[number] | undefined;
+			for (const image of images) {
+				const start = offset;
+				offset += image.bytes;
+				if (protectedKeys.has(image.key)) continue;
+				if (offset <= threshold) {
+					imagesToElide.add(image.key);
+					elidedBytes += image.bytes;
+				} else if (start < threshold && straddler === undefined) {
+					straddler = image;
+				}
 			}
-
-			if (
-				isCurrentTurn ||
-				isProtectedHistory ||
-				keptImages < alwaysKeepNewest ||
-				imageBytes + block.data.length <= budgetBytes
-			) {
-				keptImages++;
-				if (!isCurrentTurn) keptHistoricalImages++;
-				imageBytes += block.data.length;
-				continue;
-			}
-
-			cutoffReached = true;
-			imagesToElide.add(`${messageIndex}:${blockIndex}`);
+			if (straddler !== undefined && total - elidedBytes > budgetBytes) imagesToElide.add(straddler.key);
 		}
 	}
 
@@ -378,12 +393,11 @@ export function elideOldImages(messages: Message[], options?: ElideOldImagesOpti
 			return message;
 		}
 
-		const replaced = message.content.map((block, blockIndex): TextContent | ImageContent =>
-			imagesToElide.has(`${messageIndex}:${blockIndex}`) ? { type: "text", text: IMAGE_ELISION_PLACEHOLDER } : block,
-		);
 		return {
 			...message,
-			content: dedupeConsecutivePlaceholder(replaced, IMAGE_ELISION_PLACEHOLDER) as typeof message.content,
+			content: replaceElidedImages(message.content, (blockIndex) =>
+				imagesToElide.has(`${messageIndex}:${blockIndex}`),
+			) as typeof message.content,
 		};
 	});
 }

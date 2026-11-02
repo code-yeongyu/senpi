@@ -15,6 +15,7 @@ import {
 export async function sharingHttpFixture(port = 0) {
 	const sessions = new Map<string, { server: Server; transport: StreamableHTTPServerTransport }>();
 	let connects = 0;
+	let connections = 0;
 	let toolName = "echo";
 	let toolSchema: Tool["inputSchema"] = { type: "object" };
 	let pings = 0;
@@ -44,7 +45,12 @@ export async function sharingHttpFixture(port = 0) {
 				}
 			}
 			if (!session && req.method === "POST" && !id) {
-				const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID });
+				const transport = new StreamableHTTPServerTransport({
+					sessionIdGenerator: randomUUID,
+					onsessioninitialized: () => {
+						connects++;
+					},
+				});
 				const server = new Server(
 					{ name: "sharing-fixture", version: "1.0.0" },
 					{ capabilities: { tools: { listChanged: true }, resources: { subscribe: true }, logging: {} } },
@@ -74,7 +80,6 @@ export async function sharingHttpFixture(port = 0) {
 				});
 				await server.connect(transport);
 				session = { server, transport };
-				connects++;
 			}
 			if (!session) {
 				res.writeHead(404).end();
@@ -87,6 +92,7 @@ export async function sharingHttpFixture(port = 0) {
 		}
 	});
 	http.on("connection", (socket) => {
+		connections++;
 		sockets.add(socket);
 		socket.once("close", () => {
 			sockets.delete(socket);
@@ -100,6 +106,9 @@ export async function sharingHttpFixture(port = 0) {
 		url: `http://127.0.0.1:${address.port}/mcp`,
 		get connects() {
 			return connects;
+		},
+		get connections() {
+			return connections;
 		},
 		get pings() {
 			return pings;

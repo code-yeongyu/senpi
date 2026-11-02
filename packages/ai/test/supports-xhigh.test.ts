@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { clampThinkingLevel, getModel, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
 import type { Model } from "../src/model.ts";
+import { opencodeGoProvider } from "../src/providers/opencode-go.ts";
 import type { Api } from "../src/types.ts";
 import {
 	FIXTURE_MAX_MODEL_ID,
@@ -171,7 +172,7 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it.each([
-		// Fork context windows: Sol and 6.1 Sol 400k, Luna the full 922k input cap (gpt-6-family-catalog.test.ts).
+		// Fork budgets: Sol 400k, Luna 922k; 6.1 Sol is 400k on the API and 500k on subscription (#3150).
 		["gpt-6-sol", { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }, 400000],
 		["gpt-6-luna", { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }, 922000],
 		["gpt-6.1-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 400000],
@@ -192,7 +193,7 @@ describe("getSupportedThinkingLevels", () => {
 						},
 					],
 				},
-				contextWindow,
+				contextWindow: provider === "chatgpt-subscription" && modelId === "gpt-6.1-sol" ? 500000 : contextWindow,
 				maxTokens: 128000,
 				compat: {
 					supportsAdditionalTools: true,
@@ -222,10 +223,12 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
 
-	it("includes low/high/max plus off for DeepSeek V4 Flash on opencode-go", () => {
-		const model = getModel("opencode-go", "deepseek-v4-flash");
+	it("maps an opencode-go model served over Google Generative AI to its low/medium/high thinking levels", () => {
+		const model = opencodeGoProvider()
+			.getModels()
+			.find((candidate) => candidate.api === "google-generative-ai");
 		expect(model).toBeDefined();
-		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high"]);
 	});
 
 	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on OpenRouter", () => {

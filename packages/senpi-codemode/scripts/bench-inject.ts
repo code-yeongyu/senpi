@@ -34,6 +34,7 @@ export function unmatchedInjections(series: readonly Series[], injections: reado
 }
 
 function scaled(rep: Rep, factor: number): Rep {
+	// Scale the complete post-result CPU aggregate, not an embedded-clock correction.
 	return {
 		cpuMs: rep.cpuMs * factor,
 		wallMs: rep.wallMs * factor,

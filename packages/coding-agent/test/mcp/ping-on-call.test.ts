@@ -125,7 +125,9 @@ describe("MCP ping-on-call health", () => {
 		await expect(
 			tool.execute("tc-second", { value: "second" }, undefined, undefined, testContext() as ExtensionToolContext),
 		).rejects.toBeInstanceOf(ToolExecError);
-		expect(readNumberFile(attemptsFile)).toBe(2);
+		// One healthy spawn, then the single renewal attempt: the failing wrapper exits on the discovery probe,
+		// so that attempt also gets one fresh process for the legacy handshake (senpi#3304), and no more.
+		expect(readNumberFile(attemptsFile)).toBe(3);
 	});
 
 	it("coalesces concurrent stale-call pings without sharing per-call arguments", async () => {

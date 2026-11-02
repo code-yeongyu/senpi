@@ -37,6 +37,8 @@ export interface ExportOptions {
 	themeName?: string;
 	/** Optional tool renderer for custom tools */
 	toolRenderer?: ToolHtmlRenderer;
+	/** Rewrites session data before custom tools render it and again over the whole payload (used by `/share`). */
+	sanitize?: <T>(value: T) => T;
 }
 
 /** Parse a color string to RGB values. Supports hex (#RRGGBB) and rgb(r,g,b) formats. */
@@ -239,37 +241,8 @@ export async function exportSessionToHtml(
 	options?: ExportOptions | string,
 ): Promise<string> {
 	const opts: ExportOptions = typeof options === "string" ? { outputPath: options } : options || {};
-
-	const sessionFile = sm.getSessionFile();
-	if (!sessionFile) {
-		throw new Error("Cannot export in-memory session to HTML");
-	}
-	if (!existsSync(sessionFile)) {
-		throw new Error("Nothing to export yet - start a conversation first");
-	}
-
-	const entries = sm.getEntries();
-
-	// Pre-render custom tools if a tool renderer is provided
-	let renderedTools: Record<string, RenderedToolHtml> | undefined;
-	if (opts.toolRenderer) {
-		renderedTools = preRenderCustomTools(entries, opts.toolRenderer);
-		// Only include if we actually rendered something
-		if (Object.keys(renderedTools).length === 0) {
-			renderedTools = undefined;
-		}
-	}
-
-	const sessionData: SessionData = {
-		header: sm.getHeader(),
-		entries,
-		leafId: sm.getLeafId(),
-		systemPrompt: state?.systemPrompt,
-		tools: state?.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
-		renderedTools,
-	};
-
-	const html = generateHtml(sessionData, opts.themeName);
+	const html = renderSessionToHtml(sm, state, opts);
+	const sessionFile = sm.getSessionFile() ?? "session";
 
 	let outputPath = opts.outputPath ? normalizePath(opts.outputPath) : undefined;
 	if (!outputPath) {
@@ -281,6 +254,44 @@ export async function exportSessionToHtml(
 
 	writeFileSync(outputPath, html, "utf8");
 	return outputPath;
+}
+
+/**
+ * Render a live session to one self-contained HTML document in memory.
+ * `/share` uses this directly so the uploaded bytes never touch disk.
+ */
+export function renderSessionToHtml(sm: SessionManager, state?: AgentState, opts: ExportOptions = {}): string {
+	const sessionFile = sm.getSessionFile();
+	if (!sessionFile) {
+		throw new Error("Cannot export in-memory session to HTML");
+	}
+	if (!existsSync(sessionFile)) {
+		throw new Error("Nothing to export yet - start a conversation first");
+	}
+
+	const sanitize = opts.sanitize ?? (<T>(value: T): T => value);
+	const entries = sanitize(sm.getEntries());
+
+	// Pre-render custom tools if a tool renderer is provided
+	let renderedTools: Record<string, RenderedToolHtml> | undefined;
+	if (opts.toolRenderer) {
+		renderedTools = preRenderCustomTools(entries, opts.toolRenderer);
+		// Only include if we actually rendered something
+		if (Object.keys(renderedTools).length === 0) {
+			renderedTools = undefined;
+		}
+	}
+
+	const sessionData: SessionData = sanitize({
+		header: sm.getHeader(),
+		entries,
+		leafId: sm.getLeafId(),
+		systemPrompt: state?.systemPrompt,
+		tools: state?.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+		renderedTools,
+	});
+
+	return generateHtml(sessionData, opts.themeName);
 }
 
 /**

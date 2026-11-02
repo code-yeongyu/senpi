@@ -8,6 +8,7 @@ import {
 } from "./errors.ts";
 import { isMcpNeedsAuthError } from "./needs-auth.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
+import { McpMrtrError } from "./modern/errors.ts";
 
 export const MCP_PING_STALE_MS = 30_000;
 export const MCP_PING_TIMEOUT_MS = 2_000;
@@ -64,6 +65,7 @@ export async function withMcpSessionExpiryRetry<T>(
 	try {
 		return await operation();
 	} catch (error) {
+		if (error instanceof McpMrtrError) throw error;
 		if (!isMcpSessionExpiredError(error)) throw error;
 		connection.markDegraded(sessionExpiredError(connection, error, true));
 		await reconnectMcpNow(connection);
@@ -85,6 +87,7 @@ export async function withMcpRetriableFailedSendRetry<T>(
 	try {
 		return await operation();
 	} catch (error) {
+		if (error instanceof McpMrtrError) throw error;
 		if (!isRetriableFailedSendError(error)) throw error;
 		connection.markDegraded(failedSendError(connection, error, true));
 		await connection.renew();

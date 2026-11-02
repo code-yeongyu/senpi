@@ -1,5 +1,6 @@
-import { isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, describeProviderFailureForUser, isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
 import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
+import type { SessionEntry } from "../session-manager.ts";
 import { isBillingErrorMessage } from "./billing.ts";
 
 /**
@@ -12,6 +13,13 @@ import { isBillingErrorMessage } from "./billing.ts";
  */
 export type UsageLimitScope = "model" | "account";
 
+export class AccountUsageLimitError extends Error {
+	constructor(provider: string, raw = "usage limit reached") {
+		super(describeProviderFailureForUser(raw, { model: provider, usageLimit: "account" }));
+		this.name = "AccountUsageLimitError";
+	}
+}
+
 // Subscription limit prose that carries no quota/billing keyword, e.g. Claude's
 // "You've hit your session limit · resets 3pm" and the SDK terminal reasons.
 const SUBSCRIPTION_LIMIT_PATTERN =
@@ -22,7 +30,14 @@ const PLAN_MODEL_LIMIT_PATTERN =
 	/\breached\b[^.]*\b(?:free|plan|tier|model)\b[^.]*\blimit\b[\s\S]*\bswitch to (?:a |an )?(?:different|another) model\b/i;
 const MODEL_SCOPE_PATTERN = /\bmodels?\b|\bpremium\b|\b(?:opus|sonnet|haiku|fable|mythos)\b/i;
 
-export function usageLimitScope(errorMessage: string | undefined): UsageLimitScope | undefined {
+export function usageLimitScope(
+	failure: string | undefined | Pick<AssistantMessage, "errorMessage" | "errorCause">,
+): UsageLimitScope | undefined {
+	if (typeof failure === "object" && failure.errorCause?.type === "usage_limit") {
+		const scope = failure.errorCause.scope;
+		if (scope === "account" || scope === "model") return scope;
+	}
+	const errorMessage = typeof failure === "object" ? failure.errorMessage : failure;
 	if (errorMessage === undefined) return undefined;
 	// Claude Code's "You've reached your Fable limit. Switch to another model" carries
 	// none of the keywords below, yet it names the one family it binds (senpi#2555).
@@ -34,6 +49,31 @@ export function usageLimitScope(errorMessage: string | undefined): UsageLimitSco
 		PLAN_MODEL_LIMIT_PATTERN.test(errorMessage);
 	if (!limited) return undefined;
 	return MODEL_SCOPE_PATTERN.test(errorMessage) ? "model" : "account";
+}
+
+/** Project advice without mutating the diagnostic-bearing engine message. */
+export function describeUsageLimitMessage(message: AssistantMessage): AssistantMessage {
+	const scope = usageLimitScope(message);
+	if (!scope || (message.errorCause?.type === "usage_limit" && message.errorCause.scope === scope)) return message;
+	return {
+		...message,
+		errorCause: { type: "usage_limit", scope },
+		...(scope === "account"
+			? {
+					errorMessage: describeProviderFailureForUser(message.errorMessage, {
+						model: `${message.provider}/${message.model}`,
+						usageLimit: scope,
+					}),
+				}
+			: {}),
+	};
+}
+
+/** Project an assistant entry without mutating its persisted identity or payload. */
+export function describeUsageLimitEntry(entry: SessionEntry): SessionEntry {
+	if (entry.type !== "message" || entry.message.role !== "assistant") return entry;
+	const message = describeUsageLimitMessage(entry.message);
+	return message === entry.message ? entry : { ...entry, message };
 }
 
 /** The notice clause naming what hit the limit, or undefined when no usage limit caused the switch. */

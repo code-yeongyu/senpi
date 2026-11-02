@@ -61,6 +61,40 @@ function isNameChar(value: string): boolean {
 	return isAsciiLetter(value) || isAsciiDigit(value) || value === UNDERSCORE;
 }
 
+/**
+ * Angle-bracket special tokens that tokenizers actually define (SentencePiece/Llama `<s>`,
+ * BERT-style `<pad>`/`<unk>`/`<mask>`, Gemma turn markers, reasoning and tool-call delimiters).
+ * Matched case-insensitively, with or without the closing slash. Anything else in angle
+ * brackets is markup, not a control token.
+ */
+export const SGML_CONTROL_TOKEN_NAMES: ReadonlySet<string> = new Set([
+	"s",
+	"pad",
+	"unk",
+	"mask",
+	"bos",
+	"eos",
+	"sep",
+	"cls",
+	"eot",
+	"eom",
+	"endoftext",
+	"think",
+	"start_of_turn",
+	"end_of_turn",
+	"start_of_image",
+	"end_of_image",
+	"im_start",
+	"im_end",
+	"tool_call",
+	"tool_response",
+]);
+
+export function isSgmlControlTokenName(rawName: string): boolean {
+	const name = rawName.startsWith(SLASH) ? rawName.slice(1) : rawName;
+	return SGML_CONTROL_TOKEN_NAMES.has(name.toLowerCase());
+}
+
 function isBracketNameChar(value: string): boolean {
 	return isAsciiUpper(value) || isAsciiDigit(value) || value === UNDERSCORE;
 }
@@ -160,6 +194,12 @@ export class CandidateParser {
 		}
 		if (mode === "sgmlName") {
 			if (value === GREATER_THAN) {
+				// Only a tokenizer special token is a leak candidate. Ordinary markup (`</div>`, `<span>`)
+				// is text: runs of HTML/XML closing tags in prose, code samples and tool arguments
+				// latched the guard (omo#10789).
+				if (!isSgmlControlTokenName(this.#buffer.slice(1))) {
+					return this.#rejectWith(value, offset);
+				}
 				return [this.#emit("sgml", 1, 0, value, offset)];
 			}
 			if (isNameChar(value)) {

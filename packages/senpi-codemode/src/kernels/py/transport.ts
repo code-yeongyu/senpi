@@ -27,6 +27,7 @@ import {
 	waitForExit,
 } from "./process.ts";
 import { PythonStartup, type PythonStartupStage } from "./startup.ts";
+import type { PythonPermissionHost } from "./permission-host.ts";
 
 export type PythonTransportResult = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -41,6 +42,7 @@ export interface PythonTransportRunInput {
 }
 
 export interface PythonTransportOptions {
+	readonly permission?: PythonPermissionHost;
 	readonly interpreterPath: string;
 	readonly sessionId: string;
 	readonly cwd: string;
@@ -48,6 +50,8 @@ export interface PythonTransportOptions {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The kill guard (senpi#5349): the host's protected pids; absent = the guard is off for this kernel. */
+	readonly killGuard?: { readonly protectedPids: readonly number[] };
 	readonly startupTimeoutMs: number;
 	readonly startupCeilingMs: number;
 	readonly readCpuTime?: (pid: number | undefined) => bigint | undefined;
@@ -70,6 +74,8 @@ export interface PythonTransportOptions {
 }
 
 const hardKillWaitMs = 500;
+/** How long a broken control pipe waits for the interpreter's exit, which carries the real cause of the death. */
+const pipeErrorExitWaitMs = 1_000;
 
 export interface PythonPreludePathOptions extends CodemodeRuntimeAssetEnvironment {
 	readonly localPath?: string;
@@ -95,6 +101,7 @@ export class PythonKernelTransport {
 	#retirement: Promise<void> | null = null;
 	#gone: Promise<void> | null = null;
 	#isGone = false;
+	#pipeErrorTimer: NodeJS.Timeout | null = null;
 
 	private constructor(options: PythonTransportOptions, child: KernelChild) {
 		this.#options = options;
@@ -128,6 +135,9 @@ export class PythonKernelTransport {
 				...options.env,
 				PYTHONUNBUFFERED: "1",
 				PYTHONIOENCODING: "utf-8",
+				// Present only while the guard is on: it switches the kernel's guard on and feeds its os.kill prefilter.
+				SENPI_KILL_GUARD_PROTECTED:
+					options.killGuard === undefined ? undefined : options.killGuard.protectedPids.join(","),
 			},
 		};
 		const child = (options.spawnProcess ?? defaultSpawn)(spawnOptions);
@@ -179,6 +189,8 @@ export class PythonKernelTransport {
 			const message = error instanceof Error ? error.message : String(error);
 			this.#stderrTail = `${this.#stderrTail}Python interrupt frame write failed: ${message}\n`.slice(-4_000);
 		}
+		// Only a started kernel reaches here; the guard keeps that invariant local (senpi#3706).
+		if (this.#child.pid === undefined) return;
 		if (process.platform === "win32") this.#child.kill();
 		else this.#child.kill("SIGINT");
 	}
@@ -245,22 +257,29 @@ export class PythonKernelTransport {
 		this.#child.on("error", onError);
 		this.#child.on("exit", onExit);
 		// senpi#3016: a frame written while the interpreter is dying fails on the stdin stream (EPIPE), not on the child.
-		// #onError already ignores it once the child has exited or the transport is inactive, and the listener is never
-		// detached, so a late write failure is never unhandled.
-		this.#child.stdin.on("error", onError);
+		// The listener is never detached, so a late write failure is never unhandled. senpi#3612: that failure can be
+		// processed before the child's exit; the exit then reports the death, with its signal.
+		this.#child.stdin.on("error", (error: unknown) =>
+			this.#onPipeError(error instanceof Error ? error : new Error(String(error))),
+		);
 		const { sessionId, connection, memory, kernelGeneration } = this.#options;
-		this.#write({
-			type: "init",
-			sessionId,
-			connection,
-			...(memory === undefined ? {} : { memory }),
-			...(kernelGeneration === undefined ? {} : { kernelGeneration }),
-		});
+		this.#write(
+			Object.assign(
+				{
+					type: "init",
+					sessionId,
+					connection,
+					...(memory === undefined ? {} : { memory }),
+					...(kernelGeneration === undefined ? {} : { kernelGeneration }),
+				} as const,
+				this.#options.permission ? { permission: this.#options.permission.bootstrap() } : {},
+			),
+		);
 		await startup.ready;
 	}
 
 	#write(message: HostToKernelMessage): void {
-		this.#child.stdin.write(encodeBridgeFrame(message));
+		this.#child.stdin.write(encodeBridgeFrame(this.#options.permission?.frame(message) ?? message));
 	}
 
 	#onStdout(chunk: string): void {
@@ -305,6 +324,7 @@ export class PythonKernelTransport {
 	#onExit(code: number | null, signal: string | null): void {
 		if (this.#exited) return;
 		this.#exited = true;
+		this.#clearPipeErrorTimer();
 		const active = this.#active;
 		this.#active = false;
 		const error = new Error(this.#stderrTail.trim() || `Python kernel exited (${code ?? signal ?? "unknown"})`);
@@ -315,8 +335,25 @@ export class PythonKernelTransport {
 
 	#onError(error: Error): void {
 		if (this.#exited || !this.#active) return;
+		this.#clearPipeErrorTimer();
 		this.#active = false;
 		if (!this.#settleStartup(error)) this.#options.onError(this, error);
+	}
+
+	/** A broken control pipe means the interpreter is gone or going: its exit, not this error, reports the death. */
+	#onPipeError(error: Error): void {
+		if (this.#exited || !this.#active || this.#pipeErrorTimer !== null) return;
+		this.#pipeErrorTimer = setTimeout(() => {
+			this.#pipeErrorTimer = null;
+			this.#onError(error);
+		}, pipeErrorExitWaitMs);
+		this.#pipeErrorTimer.unref?.();
+	}
+
+	#clearPipeErrorTimer(): void {
+		if (this.#pipeErrorTimer === null) return;
+		clearTimeout(this.#pipeErrorTimer);
+		this.#pipeErrorTimer = null;
 	}
 
 	#detachListeners(): void {

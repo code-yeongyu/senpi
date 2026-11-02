@@ -181,7 +181,7 @@ describe("control endpoint lifecycle", () => {
 		const deep = join(root, "a".repeat(60), "b".repeat(60));
 		const socket = await resolveTuiSocket(deep, "instance-1");
 		cleanups.push(() => rmSync(join(socket, "..", ".."), { recursive: true, force: true }));
-		expect(socket).toMatch(/^\/tmp\/senpi-rpc-[0-9a-f]{8}\/tui\/t-[0-9a-f]{16}\.sock$/);
+		expect(socket.startsWith(join(tmpdir(), "senpi-rpc-"))).toBe(true);
 		expect(socket.endsWith(tuiSocketName("instance-1"))).toBe(true);
 		expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(MAX_SOCKET_PATH_BYTES);
 		const shortRoot = mkdtempSync("/tmp/tui-");

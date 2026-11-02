@@ -1,7 +1,7 @@
 import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 
-export function createKernelToolPump({ getRuntime, emit, nestedInvokes }) {
+export function createKernelToolPump({ getRuntime, emit, nestedInvokes, runAuthority }) {
 	async function describe(message) {
 		try {
 			const runtime = getRuntime();
@@ -20,7 +20,7 @@ export function createKernelToolPump({ getRuntime, emit, nestedInvokes }) {
 		try {
 			const runtime = getRuntime();
 			if (!runtime?.kernelTools) throw kernelToolError("tools_unavailable", "JS runtime not initialized");
-			const value = await kernelToolCallContext.run(
+			const execute = () => kernelToolCallContext.run(
 				// The scope lives only in this store: it is gone once the call settles, and it never
 				// reaches the top-level cell context or the next invocation (#1731).
 				{
@@ -42,6 +42,7 @@ export function createKernelToolPump({ getRuntime, emit, nestedInvokes }) {
 						controller.signal,
 					),
 			);
+			const value = await (runAuthority ? runAuthority(message.authority, execute) : execute());
 			emit({ type: "kernel-tool-invoke-reply", requestId: message.requestId, ok: true, value });
 		} catch (error) {
 			emit({ type: "kernel-tool-invoke-reply", requestId: message.requestId, ok: false, error: pumpError(error) });
@@ -100,6 +101,7 @@ function pumpError(error) {
 			stack: error.stack,
 			...(typeof error.code === "string" ? { code: error.code } : {}),
 			...(isPlainRecord(error.details) ? { details: error.details } : {}),
+			...(error.code === "cell_permission_denied" && error.rule ? { details: { permissionRule: error.rule } } : {}),
 		};
 	}
 	return { message: String(error) };

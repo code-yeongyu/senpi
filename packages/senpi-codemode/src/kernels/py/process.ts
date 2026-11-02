@@ -147,7 +147,8 @@ export async function hardKill(
 				signalDelivered = child.kill("SIGKILL");
 			}
 		} else {
-			signalDelivered = child.kill("SIGKILL");
+			// A POSIX child that never started has no pid; on Node < 24.22 / 26.10 its kill() signals our own process group.
+			signalDelivered = (child.pid !== undefined || process.platform === "win32") && child.kill("SIGKILL");
 		}
 		if (!signalDelivered) {
 			settle();

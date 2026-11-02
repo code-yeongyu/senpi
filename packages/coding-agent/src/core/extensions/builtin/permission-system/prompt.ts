@@ -11,7 +11,8 @@ export async function showPermissionPrompt(
 
 	const displayTitle = `${title}\n\n${message}`;
 
-	const options = ["Allow once", "Allow always", "Deny", "Deny with feedback"];
+	const wider = request.widerAlways;
+	const options = ["Allow once", "Allow always", ...(wider ? [wider.label] : []), "Deny", "Deny with feedback"];
 
 	// Clients bind the dialog to the call it approves by this id; with several calls of one tool in
 	// flight (the engine prepares a message's calls before running them), nothing else says which.
@@ -31,6 +32,10 @@ export async function showPermissionPrompt(
 			reply: "reject",
 			message: feedback || undefined,
 		};
+	}
+
+	if (wider !== undefined && choice === wider.label) {
+		return { requestID: request.id, reply: "always", always: [...wider.patterns] };
 	}
 
 	const replyMap: Record<string, Reply> = {
@@ -72,13 +77,14 @@ function formatRequestForDisplay(request: Request): string {
 			parts.push(`Query: ${meta.query || "Unknown"}`);
 			break;
 		case "external_directory": {
-			const parent = typeof meta.parentDir === "string" ? meta.parentDir : undefined;
-			const filepath = typeof meta.filepath === "string" ? meta.filepath : undefined;
-			const pattern = request.patterns?.[0];
-			const derived =
-				typeof pattern === "string" ? (pattern.includes("*") ? pattern.split("*")[0] : pattern) : undefined;
-			const dir = parent ?? filepath ?? derived ?? "Unknown";
-			parts.push(`Directory: ${dir}`);
+			// These are resolved targets, not approval globs. Caller metadata cannot name the
+			// approved directory, and a literal '*' in a filename must survive (senpi#4316).
+			for (const target of request.patterns.length ? request.patterns : ["Unknown"]) {
+				parts.push(`Directory: ${target}`);
+			}
+			if (request.originalPaths?.length) {
+				parts.push(`Requested paths:\n${request.originalPaths.map((p) => `  - ${p}`).join("\n")}`);
+			}
 			break;
 		}
 		default:

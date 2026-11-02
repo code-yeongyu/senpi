@@ -7,10 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
 import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
 import { whenRestoreDecided } from "../../src/core/extensions/builtin/terminal/restore-session.ts";
-import {
-	DURABLE_MONITOR_EXPIRY_MS,
-	FIRE_BUDGET_AUTO_MUTE_SUMMARY,
-} from "../../src/core/extensions/builtin/terminal/shared.ts";
+import { DURABLE_MONITOR_EXPIRY_MS } from "../../src/core/extensions/builtin/terminal/shared.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import { initTheme, theme } from "../../src/modes/interactive/theme/theme.ts";
 
@@ -687,7 +684,7 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		expect(firstText(peeked)).toContain("muted");
 	});
 
-	it("(i) production restore re-adopts a persisted fire window before the restored watch runs", async () => {
+	it("(i) a restored watch whose persisted fire window is past the old 200-line budget keeps delivering", async () => {
 		const now = Date.now();
 		const monitorId = "mon_WIREDFIREBUDGET01";
 		const createdAt = now - 1000;
@@ -712,7 +709,7 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 						suspended: true,
 						lastCheckpoint: null,
 						deliveryPaused: false,
-						fireWindow: { startMs: now, count: 150 },
+						fireWindow: { startMs: now, count: 190 },
 					},
 				],
 				backgroundSessions: [],
@@ -723,8 +720,8 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 
 		const generation = await start("resume");
 		// Subscribe before feeding: the coalesced delivery that carries the echoed lines is the
-		// signal that the PTY output was consumed, and whether that same delivery also carries
-		// the auto-mute summary is exactly what the persisted fire window decides.
+		// signal that the PTY output was consumed. The old fire budget muted this watch on its
+		// 10th line here (190 + 10 = 200); no line count mutes a watch any more.
 		const fireDelivery = nextMonitorNotification(generation, (content) => content.includes("restored-fire"));
 		const fed = await generation.tools.get("bash_input")?.execute("feed-fire-budget", {
 			bash_id: monitorId,
@@ -733,21 +730,16 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		});
 		expect(fed?.isError, firstText(fed)).toBeFalsy();
 
-		// The restored command receives exactly 50 matching lines through the real PTY and monitor
-		// runtime. With the persisted 150 fires, the 50th line reaches the 200-fire limit, so the
-		// one coalesced delivery carries the lines AND the auto-mute summary together.
 		const delivery = await fireDelivery;
-		expect(delivery).toContain(FIRE_BUDGET_AUTO_MUTE_SUMMARY);
-		expect(
-			monitorEventContents(generation).filter((content) => content.includes(FIRE_BUDGET_AUTO_MUTE_SUMMARY)),
-		).toHaveLength(1);
+		expect(delivery).not.toContain("auto-muted");
+		expect(monitorEventContents(generation).filter((content) => content.includes("auto-muted"))).toEqual([]);
 
 		const peeked = await generation.tools.get("bash_output")?.execute("peek-fire-budget", {
 			bash_id: monitorId,
 			view: "screen",
 		});
 		expect(peeked?.isError, firstText(peeked)).toBeFalsy();
-		expect(firstText(peeked)).toContain("monitor muted");
+		expect(firstText(peeked)).not.toContain("monitor muted");
 	});
 
 	it("(f) a non-reload shutdown flushes the manifest as suspended and releases the lease", async () => {

@@ -50,6 +50,7 @@ export const crashQueue100: Scenario = {
 			const settled = value.queued.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []));
 			const generations = new Set(settled.flatMap((result) => (result.ok ? [result.valueRepr ?? ""] : [])));
 			const counts = [...executions.values()];
+			// Survivors are sampled after full result reception; dead children use wait4 exit receipts.
 			const after = await session.cpu(settled.some((result) => result.ok));
 			await session.dispose();
 			disposed = true;

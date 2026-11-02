@@ -33,6 +33,7 @@ class AssistantEventStream extends EventStream<AssistantMessageEvent, AssistantM
 }
 
 class NeverStartingStream extends AssistantEventStream {
+	// oxlint-disable-next-line eslint/require-yield -- the generator throws before its first yield by design
 	override async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
 		await new Promise<never>(() => {});
 	}

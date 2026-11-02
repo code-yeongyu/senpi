@@ -30,7 +30,8 @@ export function collectGarbage(): void {
 /**
  * CPU is accounted per process without double counting: the host total (`process.cpuUsage()` already
  * includes JS worker threads) plus child deltas by PID. Exit receipts preserve dead children;
- * replacement CPU is added once. A lost receipt invalidates the window, never substitutes zero.
+ * replacement CPU is added once. Live snapshots are host reads after full result reception, not clocks
+ * embedded before encoding. Exit receipts cover dead interpreters. Missing usage invalidates the window.
  */
 export function kernelCpuMs(before: readonly KernelCpu[], after: readonly KernelCpu[]): number {
 	const prior = new Map(before.map((value) => [value.pid, value.cpuUs]));

@@ -1,5 +1,13 @@
 import type { SettingsManager, TerminalSettings } from "../../../settings-manager.ts";
-import { DEFAULT_COLS, DEFAULT_MAX_SESSIONS, DEFAULT_ROWS, DEFAULT_SCROLLBACK } from "./shared.ts";
+import {
+	DEFAULT_COLS,
+	DEFAULT_MAX_SESSIONS,
+	DEFAULT_MONITOR_RUNAWAY_LINES_PER_MINUTE,
+	DEFAULT_MONITOR_RUNAWAY_MINUTES,
+	DEFAULT_MONITOR_WAKES_PER_HOUR,
+	DEFAULT_ROWS,
+	DEFAULT_SCROLLBACK,
+} from "./shared.ts";
 
 export type TimeoutAction = "background" | "kill";
 export type NotifyMode = "wake" | "next-turn" | "off";
@@ -10,9 +18,18 @@ export interface MonitorDeliverySettings {
 	readonly maxLinesPerInjection: number;
 	readonly maxCharsPerInjection: number;
 	readonly wakeBudget: number;
+	/** Average wakes an hour (and burst size) of a persistent command watch; more lines batch. */
+	readonly wakesPerHour: number;
+}
+
+/** Runaway guard of a persistent command watch: pause after this many lines a minute for this many minutes. */
+export interface MonitorRunawayGuard {
+	readonly linesPerMinute: number;
+	readonly minutes: number;
 }
 
 export interface ResolvedTerminalSettings {
+	readonly redactSecretsInOutput?: boolean;
 	readonly defaultCols: number;
 	readonly defaultRows: number;
 	readonly scrollback: number;
@@ -20,11 +37,13 @@ export interface ResolvedTerminalSettings {
 	readonly timeoutAction: TimeoutAction;
 	readonly notify: NotifyMode;
 	readonly monitor: MonitorDeliverySettings;
+	readonly monitorRunaway: MonitorRunawayGuard;
 	/** Admission cap on persistent (restart-surviving) monitors per session. */
 	readonly maxDurableMonitors: number | "unlimited";
 }
 
 export const TERMINAL_SETTINGS_DEFAULTS: ResolvedTerminalSettings = {
+	redactSecretsInOutput: false,
 	defaultCols: DEFAULT_COLS,
 	defaultRows: DEFAULT_ROWS,
 	scrollback: DEFAULT_SCROLLBACK,
@@ -37,9 +56,17 @@ export const TERMINAL_SETTINGS_DEFAULTS: ResolvedTerminalSettings = {
 		maxLinesPerInjection: 50,
 		maxCharsPerInjection: 4096,
 		wakeBudget: 5,
+		wakesPerHour: DEFAULT_MONITOR_WAKES_PER_HOUR,
+	},
+	monitorRunaway: {
+		linesPerMinute: DEFAULT_MONITOR_RUNAWAY_LINES_PER_MINUTE,
+		minutes: DEFAULT_MONITOR_RUNAWAY_MINUTES,
 	},
 	maxDurableMonitors: "unlimited",
 };
+
+/** Upper bound of a wake rate (setting or per-monitor override): one wake a second on average. */
+export const MAX_MONITOR_WAKES_PER_HOUR = 3600;
 
 function positiveInt(value: unknown, fallback: number, maximum = Number.MAX_SAFE_INTEGER): number {
 	if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return fallback;
@@ -89,6 +116,18 @@ export function resolveTerminalSettings(raw: TerminalSettings | undefined): Reso
 				16_384,
 			),
 			wakeBudget: positiveInt(raw.monitorWakeBudget, TERMINAL_SETTINGS_DEFAULTS.monitor.wakeBudget, 100),
+			wakesPerHour: positiveInt(
+				raw.monitorWakesPerHour,
+				TERMINAL_SETTINGS_DEFAULTS.monitor.wakesPerHour,
+				MAX_MONITOR_WAKES_PER_HOUR,
+			),
+		},
+		monitorRunaway: {
+			linesPerMinute: positiveInt(
+				raw.monitorRunawayLinesPerMinute,
+				TERMINAL_SETTINGS_DEFAULTS.monitorRunaway.linesPerMinute,
+			),
+			minutes: positiveInt(raw.monitorRunawayMinutes, TERMINAL_SETTINGS_DEFAULTS.monitorRunaway.minutes, 1440),
 		},
 		maxDurableMonitors: durableMonitorCap(raw.maxDurableMonitors),
 	};
@@ -99,5 +138,8 @@ export function loadTerminalSettings(settingsManager: SettingsManager): Resolved
 	const global = settingsManager.getGlobalSettings().terminal;
 	const project = settingsManager.getProjectSettings().terminal;
 	const merged: TerminalSettings = { ...global, ...project };
-	return resolveTerminalSettings(merged);
+	return {
+		...resolveTerminalSettings(merged),
+		redactSecretsInOutput: settingsManager.getBashRedactSecretsInOutput(),
+	};
 }

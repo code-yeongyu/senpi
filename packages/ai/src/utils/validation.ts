@@ -1,7 +1,9 @@
 import { Compile } from "typebox/compile";
-import type { TLocalizedValidationError } from "typebox/error";
 import { Value } from "typebox/value";
 import type { Tool, ToolCall } from "../types.ts";
+import { getToolArgumentValidator, type ToolArgumentValidationError } from "./tool-argument-validator.ts";
+import { coercePrimitiveByType } from "./tool-argument-coercion.ts";
+export { registerToolArgumentValidator } from "./tool-argument-validator.ts";
 
 const validatorCache = new WeakMap<object, ReturnType<typeof Compile>>();
 const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
@@ -15,6 +17,9 @@ interface JsonSchemaObject {
 	allOf?: JsonSchemaObject[];
 	anyOf?: JsonSchemaObject[];
 	oneOf?: JsonSchemaObject[];
+	const?: unknown;
+	enum?: unknown[];
+	default?: unknown;
 }
 
 function getSchemaTypes(schema: JsonSchemaObject): string[] {
@@ -53,80 +58,6 @@ function getSubSchemaValidator(schema: JsonSchemaObject): ReturnType<typeof Comp
 		return getValidator(schema as Tool["parameters"]);
 	} catch {
 		return undefined;
-	}
-}
-
-function coercePrimitiveByType(value: unknown, type: string): unknown {
-	switch (type) {
-		case "number": {
-			if (value === null) {
-				return 0;
-			}
-			if (typeof value === "string" && value.trim() !== "") {
-				const parsed = Number(value);
-				if (Number.isFinite(parsed)) {
-					return parsed;
-				}
-			}
-			if (typeof value === "boolean") {
-				return value ? 1 : 0;
-			}
-			return value;
-		}
-		case "integer": {
-			if (value === null) {
-				return 0;
-			}
-			if (typeof value === "string" && value.trim() !== "") {
-				const parsed = Number(value);
-				if (Number.isInteger(parsed)) {
-					return parsed;
-				}
-			}
-			if (typeof value === "boolean") {
-				return value ? 1 : 0;
-			}
-			return value;
-		}
-		case "boolean": {
-			if (value === null) {
-				return false;
-			}
-			if (typeof value === "string") {
-				if (value === "true") {
-					return true;
-				}
-				if (value === "false") {
-					return false;
-				}
-			}
-			if (typeof value === "number") {
-				if (value === 1) {
-					return true;
-				}
-				if (value === 0) {
-					return false;
-				}
-			}
-			return value;
-		}
-		case "string": {
-			if (value === null) {
-				return "";
-			}
-			if (typeof value === "number" || typeof value === "boolean") {
-				return String(value);
-			}
-			return value;
-		}
-		case "null": {
-			if (value === "" || value === 0 || value === false) {
-				return null;
-			}
-			return value;
-		}
-		default:
-			return value;
 	}
 }
 
@@ -279,10 +210,9 @@ function getValidator(schema: Tool["parameters"]): ReturnType<typeof Compile> {
 	return validator;
 }
 
-function formatValidationPath(error: TLocalizedValidationError): string {
+function formatValidationPath(error: ToolArgumentValidationError): string {
 	if (error.keyword === "required") {
-		const requiredProperties = (error.params as { requiredProperties?: string[] }).requiredProperties;
-		const requiredProperty = requiredProperties?.[0];
+		const requiredProperty = error.params.requiredProperties?.[0] ?? error.params.missingProperty;
 		if (requiredProperty) {
 			const basePath = error.instancePath.replace(/^\//, "").replace(/\//g, ".");
 			return basePath ? `${basePath}.${requiredProperty}` : requiredProperty;
@@ -290,6 +220,123 @@ function formatValidationPath(error: TLocalizedValidationError): string {
 	}
 	const path = error.instancePath.replace(/^\//, "").replace(/\//g, ".");
 	return path || "root";
+}
+
+interface DiscriminatedBranch {
+	readonly schema: JsonSchemaObject;
+	readonly values: readonly unknown[];
+	readonly optional: boolean;
+	readonly defaultValue: unknown;
+}
+
+interface DiscriminatedUnion {
+	readonly property: string;
+	readonly branches: readonly DiscriminatedBranch[];
+	readonly defaultValue: unknown;
+}
+
+function constValues(schema: JsonSchemaObject | undefined): unknown[] | undefined {
+	if (!schema) return undefined;
+	if ("const" in schema) return [schema.const];
+	if (Array.isArray(schema.enum) && schema.enum.length > 0) return [...schema.enum];
+	const members = schema.anyOf ?? schema.oneOf;
+	if (!Array.isArray(members) || members.length === 0) return undefined;
+	const values: unknown[] = [];
+	for (const member of members) {
+		const memberValues = constValues(member);
+		if (!memberValues) return undefined;
+		values.push(...memberValues);
+	}
+	return values;
+}
+
+function discriminatedBranches(members: JsonSchemaObject[], property: string): DiscriminatedBranch[] | undefined {
+	const seen = new Set<unknown>();
+	const branches: DiscriminatedBranch[] = [];
+	for (const member of members) {
+		const propertySchema = member.properties?.[property];
+		const values = constValues(propertySchema);
+		if (!values || values.some((value) => seen.has(value))) return undefined;
+		for (const value of values) seen.add(value);
+		branches.push({
+			schema: member,
+			values,
+			optional: !(member.required ?? []).includes(property),
+			defaultValue: propertySchema?.default,
+		});
+	}
+	return branches;
+}
+
+/** An anyOf/oneOf of object branches that every carry a const-valued property with disjoint values. */
+function findDiscriminatedUnion(schema: JsonSchemaObject): DiscriminatedUnion | undefined {
+	const members = schema.anyOf ?? schema.oneOf;
+	if (!Array.isArray(members) || members.length < 2) return undefined;
+	const [first] = members;
+	if (!first?.properties || !members.every((member) => member.properties !== undefined)) return undefined;
+	for (const property of Object.keys(first.properties)) {
+		const branches = discriminatedBranches(members, property);
+		if (!branches) continue;
+		const defaultValue =
+			schema.properties?.[property]?.default ??
+			branches.map((branch) => branch.defaultValue).find((value) => value !== undefined);
+		return { property, branches, defaultValue };
+	}
+	return undefined;
+}
+
+function selectBranch(
+	union: DiscriminatedUnion,
+	value: unknown,
+): { branch: DiscriminatedBranch; value: unknown; defaulted: boolean } | "unknown" | undefined {
+	if (value !== undefined) {
+		const branch = union.branches.find((candidate) => candidate.values.includes(value));
+		return branch ? { branch, value, defaulted: false } : "unknown";
+	}
+	if (union.defaultValue !== undefined) {
+		const branch = union.branches.find((candidate) => candidate.values.includes(union.defaultValue));
+		if (branch) return { branch, value: union.defaultValue, defaulted: true };
+	}
+	const optional = union.branches.filter((candidate) => candidate.optional);
+	const [only] = optional;
+	if (optional.length === 1 && only && only.values.length === 1) {
+		return { branch: only, value: only.values[0], defaulted: true };
+	}
+	return undefined;
+}
+
+/**
+ * For a discriminated union, report only the branch the arguments address, as one line, so the caller
+ * sees which field to fix instead of every branch's mismatch. Undefined means use the full error list.
+ */
+function formatDiscriminatedUnionError(
+	schema: JsonSchemaObject,
+	validator: ReturnType<typeof Compile>,
+	args: unknown,
+): string | undefined {
+	if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
+	const union = findDiscriminatedUnion(schema);
+	if (!union) return undefined;
+	const received = (args as Record<string, unknown>)[union.property];
+	const selected = selectBranch(union, received);
+	if (selected === undefined) return undefined;
+	if (selected === "unknown") {
+		const allowed = union.branches.flatMap((branch) => branch.values).map((value) => JSON.stringify(value));
+		return `  - ${union.property}: must be one of ${allowed.join(", ")} (received ${JSON.stringify(received)})`;
+	}
+	const branchValidator = getSubSchemaValidator(selected.branch.schema);
+	if (!branchValidator) return undefined;
+	const rootErrors = validator
+		.Errors(args)
+		.filter((error) => error.keyword !== "anyOf" && error.keyword !== "oneOf")
+		.filter((error) => !/^#\/(?:anyOf|oneOf)(?:\/|$)/.test(error.schemaPath));
+	const messages = [...rootErrors, ...branchValidator.Errors(args)].map(
+		(error) => `${formatValidationPath(error)}: ${error.message}`,
+	);
+	const unique = [...new Set(messages)];
+	if (unique.length === 0) return undefined;
+	const label = `for ${union.property} ${JSON.stringify(selected.value)}${selected.defaulted ? ` (default when ${union.property} is omitted)` : ""}`;
+	return `  - ${label}: ${unique.join("; ")}`;
 }
 
 /**
@@ -316,6 +363,19 @@ export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const args = structuredClone(toolCall.arguments);
+	const protocolValidator = getToolArgumentValidator(tool.parameters);
+	if (protocolValidator !== undefined) {
+		if (!protocolValidator(args)) {
+			const errors =
+				protocolValidator.errors
+					?.map(
+						(error) => `  - ${formatValidationPath(error)}: ${error.message ?? error.keyword} (${error.keyword})`,
+					)
+					.join("\n") || "Unknown validation error";
+			throw new Error(`Validation failed for tool "${toolCall.name}":\n${errors}`);
+		}
+		return args;
+	}
 	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);
 	Value.Convert(tool.parameters, args);
 
@@ -339,10 +399,12 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	}
 
 	const errors =
-		validator
+		formatDiscriminatedUnionError(tool.parameters as JsonSchemaObject, validator, args) ??
+		(validator
 			.Errors(args)
 			.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
-			.join("\n") || "Unknown validation error";
+			.join("\n") ||
+			"Unknown validation error");
 
 	const errorMessage = `Validation failed for tool "${toolCall.name}":\n${errors}\n\nReceived arguments:\n${JSON.stringify(toolCall.arguments, null, 2)}`;
 

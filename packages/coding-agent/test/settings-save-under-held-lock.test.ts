@@ -3,23 +3,27 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as debugLog from "../src/core/hidden-stdout-log.ts";
 import { FILE_STORAGE_LOCK_OPTIONS } from "../src/core/lockfile-policy.ts";
 import { getSettingsPath, SettingsManager } from "../src/core/settings-manager.ts";
 
-// A tip is recorded in settings on almost every turn. While another writer (a second senpi
-// process, a settings editor) holds the settings lock, recording it must not freeze the UI, and
+// A tip is recorded in state on almost every turn. While another writer (a second senpi
+// process) holds the state lock, recording it must not freeze the UI, and
 // the record must land once that writer is done.
 describe("saving settings while another writer holds the settings lock", () => {
 	let root: string;
 	let agentDir: string;
 	let settingsPath: string;
+	let statePath: string;
 
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "senpi-held-lock-"));
 		agentDir = join(root, "agent");
 		settingsPath = join(agentDir, "settings.json");
+		statePath = join(agentDir, "state.json");
 		mkdirSync(dirname(settingsPath), { recursive: true });
 		writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }), "utf-8");
+		writeFileSync(statePath, "{}", "utf-8");
 	});
 
 	afterEach(() => {
@@ -29,28 +33,28 @@ describe("saving settings while another writer holds the settings lock", () => {
 
 	it("keeps the event loop running while it waits, and writes the tip once the lock frees", async () => {
 		const settings = SettingsManager.create(join(root, "work"), agentDir);
-		const release = await lockfile.lock(settingsPath, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
-		let ticks = 0;
-		const ticker = setInterval(() => ticks++, 5);
-
-		// The other writer finishes after a short while; a frozen event loop would never get here.
-		const otherWriterDone = new Promise<void>((resolve) =>
-			setTimeout(() => {
-				void release().then(resolve);
-			}, 300),
-		);
-		settings.setTipShown("welcome", 1_000);
-		await otherWriterDone;
+		const release = await lockfile.lock(statePath, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+		const waiting = new Promise<void>((resolve) => {
+			const original = lockfile.lock.bind(lockfile);
+			vi.spyOn(lockfile, "lock").mockImplementation((...args: Parameters<typeof lockfile.lock>) => {
+				resolve();
+				return original(...args);
+			});
+		});
+		try {
+			settings.setTipShown("welcome", 1_000);
+			// The async lock-attempt signal is delivered while the other writer still owns the lock.
+			await waiting;
+			writeFileSync(statePath, JSON.stringify({ tipsHistory: { other: 500 } }));
+		} finally {
+			await release();
+		}
 		await settings.flush();
-		clearInterval(ticker);
-
-		expect(ticks).toBeGreaterThan(10);
-		const written = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
-			theme: string;
+		const written = JSON.parse(readFileSync(statePath, "utf-8")) as {
 			tipsHistory: Record<string, number>;
 		};
-		expect(written.tipsHistory).toEqual({ welcome: 1_000 });
-		expect(written.theme).toBe("dark");
+		expect(written.tipsHistory).toEqual({ other: 500, welcome: 1_000 });
+		expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark" });
 		expect(settings.drainErrors()).toEqual([]);
 	});
 
@@ -80,18 +84,25 @@ describe("saving settings while another writer holds the settings lock", () => {
 		expect(settings.drainErrors().map((error) => error.scope)).toEqual(["project"]);
 	});
 
-	it("reports a lock that never frees without throwing at the caller, and keeps the setting in memory", async () => {
+	it("debug-logs a held state lock once, retains tip memory, and allows later config saves", async () => {
+		const log = vi.spyOn(debugLog, "appendDebugLogEntry").mockImplementation(() => {});
 		const settings = SettingsManager.create(join(root, "work"), agentDir);
-		const release = await lockfile.lock(settingsPath, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+		const release = await lockfile.lock(statePath, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 		try {
 			expect(() => settings.setTipShown("welcome", 2_000)).not.toThrow();
 			await settings.flush();
 
 			expect(settings.getTipsHistory()).toEqual({ welcome: 2_000 });
-			const errors = settings.drainErrors();
-			expect(errors).toHaveLength(1);
-			expect(errors[0]?.scope).toBe("global");
+			expect(log).toHaveBeenCalledTimes(1);
+			expect(settings.drainErrors()).toEqual([]);
 			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark" });
+			settings.setTheme("light");
+			await settings.flush();
+			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "light" });
+			expect(JSON.parse(readFileSync(statePath, "utf-8"))).toEqual({});
+			expect(settings.getTipsHistory()).toEqual({ welcome: 2_000 });
+			expect(settings.drainErrors()).toEqual([]);
+			expect(log).toHaveBeenCalledTimes(1);
 		} finally {
 			await release();
 		}

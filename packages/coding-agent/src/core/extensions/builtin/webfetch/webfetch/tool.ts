@@ -56,16 +56,12 @@ export type WebfetchRenderDetails = WebfetchDetails | WebfetchProgressDetails;
 
 export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 	name: "webfetch",
+	workspaceEffect: "read",
 	label: "Web Fetch",
 	description:
 		"Fetches content from a URL and returns it as markdown, plain text, or HTML. " +
 		"Network use is bounded by timeout and response size limits.",
 	promptSnippet: "webfetch: retrieve URL content as markdown, text, or html",
-	promptGuidelines: [
-		"Use webfetch when a specific URL must be retrieved.",
-		"Prefer markdown format unless raw HTML or plain text is explicitly needed.",
-		"The tool is read-only and does not modify files.",
-	],
 	parameters: Params,
 	async execute(_toolCallId, params, signal, onUpdate, _ctx) {
 		const format = parseWebfetchFormat(params.format);

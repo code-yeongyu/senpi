@@ -1,3 +1,136 @@
+## 2026-11-02 - gpt-6-astra core: terse, no Verification, tool list or file-operations block (senpi#5390)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: `## Verification` removed; `stop-checks` in `## Stop Goal` names the checks up front, runs them once and never re-verifies verified results. `## File operations` and the tool list leave the core; `## Tool Guidelines` stays. `## Writing` is codex's gpt-6-astra "Writing style" verbatim. `root-cause` opens `## Scope and Recovery`. Tool-bound rules carry `requiresTool` and render only when the session has the tool. Every other directive is restated tersely. o200k 4,355 -> 3,674 on a real first-turn tool set.
+
+### Why
+
+Q (2026-11-02) asked to replace the Astra prompt after comparing it with the Codex CLI request for the same model: drop the blocks that cost tokens without earning them, take Codex's writing section, and steer the model to diagnose root causes.
+
+### Why an extension could not handle it
+
+This is the preset's own core text.
+
+### Expected merge conflict zones
+
+`gpt-6-astra.ts` rule constants and `buildGpt6AstraCore`; the `gpt-6-astra:*` hashes in `test/suite/prompt-presets-native-baseline.json`.
+
+## 2026-10-31 - DeepSeek V4.1 Flash full-core rewrite (senpi#5195, fixes #5194)
+
+### What changed
+
+- `deepseek-v4-1-flash.ts`: the preset passes `corePrompt` instead of rendering the shared core. The core states every fork contract once in a compressed register (RFC 2119 keywords, a `<critical>` block for the hard limits): routing line and binding stop condition on terminal, the app/chat variants through `terminalOrApp`, `buildHandoffSection` (its language rule kept; chat keeps `CHAT_REPLY_RULE`), `buildTestDisciplineSection`, `APP_UNRUN_CHECK_RULE`, and the claude-dialect execution tooling. The OmO voice of the shared core is kept (senior-engineer bar, scope fidelity, opinions, the user's call is final, no hedging); the identity names the model. The git-commit hard limit is dropped at the owner's request, and the unread-code/unrun-command hard limit is kept.
+- `DEEPSEEK_V41_FLASH_RULES` (new typed rule data): `injected-directive-authority`, `settled-reading`, `missing-info`, `todo-discipline` carry the V4 Flash-line repairs from `deepseek-v4.ts` in compressed form (`carriedFrom`); `background-wait` is new. `todo-discipline` renders only with `todo`, `background-wait` only with `task`. The Pro-only `reasoning-aim` is not carried.
+- `test/suite/prompt-presets-deepseek-v4-1-flash.test.ts`: the no-V4-rule pin is replaced by rule-table checks (each rule once, in its owning section; tool-bound rules gated; every V4 Flash-line repair carried, no Pro-only one). `prompt-presets-native-baseline.json`: the six `deepseek-v4-1-flash:*` hashes are recaptured; no other hash changes.
+- Size (o200k, 11 tools / no tools): terminal 2167 -> 1982 / 1782 -> 1507, app 2184 -> 2011 / 1799 -> 1536, chat 1987 -> 1825 / 1602 -> 1350.
+
+### Why
+
+- The owner asked for V4.1 to be tuned rather than left on the shared core, with the V4 repairs carried over and oh-my-pi's compressed register and `<critical>` tags as the style reference. DeepSeek's own harness tells the model to end its turn when only waiting on background work remains, and DeepSeek tuned V4.1-Flash-1017 for that harness (api-docs.deepseek.com/updates, 2026-10-17); `background-wait` adopts that stance. The 2026-09-11 decision (no V4 rules on a re-trained model) is reversed by the owner; the behavior change is unmeasured on live V4.1 traces.
+
+### Why an extension could not handle it
+
+- Preset prompts are builtin extension code.
+
+### Expected merge conflict zones
+
+- LOW: `deepseek-v4-1-flash.ts` (whole file), the `deepseek-v4-1-flash:*` lines of the native baseline.
+
+## 2026-10-24 - Kimi K3.1 prompt preset, copied from K3 (senpi#4184)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3-1.ts` (new): a copy of `kimi-k3.ts`; only the identity line ("running on Kimi K3.1") and the function names differ.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts`: `hasKimiK31Signal` / `isKimiK31Model` (`k3.1-pro`, `kimi-k3.1-pro`, `kimi-k3-1-pro`, `k3p1`, "Kimi K3.1", Highspeed variants).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: K3.1 resolves to `kimi-k3-1` before the K3 check; new model case and auto-resolved name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/settings.ts`, `presets.ts`: the `kimi-k3-1` name and its builder.
+
+### Why
+
+- Q asked for K3.1 support with the K3 template cloned, as its own copy so later K3 edits do not change K3.1. Before this, `kimi-k3.1-pro` shared the K3 preset and Kimi Code's `k3.1-pro` matched no preset at all.
+
+### Why an extension could not handle it
+
+- Preset routing and the preset name union live in this builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the Kimi branch at the top of `resolvePresetName` in `contract.ts`, the preset name lists in `settings.ts` and `contract.ts`, the Kimi cases in `presets.ts`.
+
+## 2026-10-23 - Record product-copy punctuation (senpi#4040)
+
+### What changed
+
+- `test/suite/prompt-presets-native-baseline.json`: refresh 156 of the 198 native prompt hashes after the product-copy punctuation changes. Every preset, surface and input is rendered against the clean merge base; the word sequence is unchanged.
+- `test/suite/regressions/3483-prompt-goldens.json` and `3483-review-accounting.test.ts`: refresh the newly merged prompt-accounting baselines for the same verification and workstation punctuation rewrites; fixture inputs stay fixed.
+
+### Why
+
+- The native generation contracts compare shipped prompt bytes, so intentional punctuation changes require matching recorded hashes.
+
+### Why an extension could not handle it
+
+- The fixture records the builtin prompt builders before runtime extensions apply.
+
+### Expected merge conflict zones
+
+- The native prompt baseline hash values.
+
+## 2026-10-18 - Measure the preset actually composed (senpi#3483)
+
+### What changed
+
+- `presets.ts` observes the parts from each preset's real dynamic-builder call and returns them alongside its unchanged prompt. `index.ts` passes those parts, plus only the user's append when present, to preview accounting. Replaced base sections and session policy are not reported.
+- API note: the public `buildDynamicSystemPrompt` now honours custom/append options. `eventOptionsToBuilderInput` deliberately strips both before preset construction; user appends are reapplied once.
+
+### Why
+
+The default builder's sections do not describe a model preset replacement. A golden captured from main before this fold proves the preset bytes stay unchanged.
+
+### Why an extension could not handle it
+
+Only the preset's actual builder call owns its section boundaries.
+
+### Expected merge conflict zones
+
+- `presets.ts`: resolved preset metadata and builder dispatch. `index.ts`: before-agent-start return and user append handling.
+
+## 2026-10-21 - Launch-gated Fable 5.5 preset (senpi#3893)
+
+### What changed
+
+- `claude-fable-5-5.ts`: delegates to the current tuned Fable 5.1 builder with no prompt-byte changes, preserving the dieted core, between-handoff rule, eval stance and all surface-specific behavior.
+- `contract.ts`, `settings.ts`, `presets.ts`: register the new internal preset and route provisional Fable/Mythos 5.5 ids before the generic Fable 5 matcher. Provider ids and optional snapshot are read from the shared `FABLE55_LAUNCH` block.
+- Tests cover routing, forced settings, all three prompt surfaces with and without eval, and retain existing 5/5.1 routing. The six new baseline hashes equal the corresponding 5.1 hashes; existing hashes are untouched.
+
+### Why
+
+- The unreleased model would otherwise receive the older generic Fable 5 core. This carries the measured 5.1 baseline without claiming a new prompting guide exists or growing the prompt.
+
+### Why an extension could not handle it
+
+- This is the builtin preset's own dispatch and settings contract.
+
+### Expected merge conflict zones
+
+- Claude entries in `contract.ts`, `settings.ts`, `presets.ts`; the new preset is fork-only.
+
+## 2026-10-15 - Argon preset (senpi#3385)
+
+### What changed
+
+- `gemini-4-argon.ts` (new): a `corePrompt` that composes the default section builders in the default order and changes four spots through new builder options, so every untouched section stays byte-identical to the default: identity (names the model), `buildIntentGate({ routingLineRule })` (terminal only: "The line is plain prose, and the tool calls that start the work follow it in the same response"), `buildWorkingTaskSection({ opening })` (only when `eval` is a session tool: "Writing code is your superpower ..." in the voice of the ultrawork skill's "Parallel execution" section: one eval cell per step, `for`/`if`/`try` control flow, `parallel(thunks)` for independent lookups, one action at a time only for unseen-input, deploy, approval and destructive calls, files through the cell's tool calls), `buildPoliciesSection({ errorRule })` (transient failures retry as is, other failures change strategy and never repeat the same call). `workstationDialect: "gemini"` (plain sentence pair, no tags, no caps). A `## Search Grounding` paragraph renders as the tuning section only when `web_search` is selected; the date stays in the environment-context message (senpi#2093).
+- `matchers.ts`: `hasGemini4ArgonSignal` / `isGemini4ArgonModel` match `gemini-4-argon` with the usual `[/@:._-]` boundaries, so `google/gemini-4-argon`, `:batch`, `-contributor`, the `-low/-medium/-high` SKUs and the display name resolve; bare `gemini-4` and other generations of the family do not. `contract.ts`: the branch sits last (after Grok), a shared model case and the auto-resolved name are added; `settings.ts` / `presets.ts`: the name joins the union, `VALID_PRESETS` and the dispatch.
+- `test/suite/prompt-presets-gemini-4-argon.test.ts` (new): id shapes and non-matches, the catalog sweep, forced preset, a section-by-section comparison with the default core on every surface (exactly the tuned sections differ; the Intent Gate differs on terminal only), the eval/web_search gating, the dialect, and the baseline keys. `prompt-presets-native-baseline.json`: six `gemini-4-argon:*` hashes added, every existing hash untouched (the generation sweep proves every other model unchanged).
+
+### Why
+
+- Argon was listed on eight providers with no preset, so it received the bare default plus the maximum-emphasis workstation block. The provider's published guidance (direct instructions, no persuasive emphasis; plain pre-tool text; 10-20 active tools; parallel calls when independent; the family's pull toward shell commands and code-first inspection) and the owner's steer (eval cells as the model's superpower, few individual tool names) shaped each edit; the design with sources is the Notion spec linked from the issue.
+- Builder options instead of string replacement on rendered sections: a wording change in the shared core then reaches Argon automatically and a drifted anchor cannot fall back silently.
+
+---
+
 ## 2026-10-08 - Claude Haiku 5.5 preset (senpi#2917)
 
 ### What changed
@@ -19,6 +152,26 @@
 - LOW: the Claude matcher block and the `buildPreset` switch in `presets.ts`; `claude-haiku-5-5.ts` is fork-only.
 
 # prompt-preset Extension Changes
+
+## 2026-10-15 - Every preset states the same handoff condition (senpi#3323)
+
+### What changed
+
+- `gpt-surface.ts` `GPT_HANDOFF_MOMENTS` carries the senpi#3323 condition from `dynamic-prompt/handoff.ts`; `gpt-6-astra.ts` `HANDOFF_REPORT` now interpolates `GPT_HANDOFF_MOMENTS.terminal` instead of a copy of it, so its app replacement cannot drift.
+- Final-message rules apply to a change ("if the turn changed something", "The final message of a change ...", "for a change, the Handoff block"): `claude-opus-5-5.ts`, `claude-opus-5.ts`, `claude-sonnet-5-5.ts`, `claude-haiku-5-5.ts`, `claude-fable-5.ts`, `claude-fable-5-1.ts`, `kimi-k3.ts`, `gpt-5.5.ts`, `gpt-5.6.ts`, `grok-4.5.ts`, and `gpt-6-astra.ts` `FINAL_MESSAGE_SHAPE` with its app replacement.
+- `test/suite/prompt-presets-native-baseline.json` is recaptured: every terminal and app hash changes, every chat hash is unchanged.
+
+### Why
+
+- Same cause as `dynamic-prompt/changes.md` (senpi#3323).
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The handoff-moment and final-message sentences in each preset.
 
 ## 2026-10-04 - Routing and handoff format examples are no longer markdown quote lines (senpi#2714)
 
@@ -1511,3 +1664,21 @@ Per-model prompt preset extension. Selects a tuned system prompt based on the ac
 ### Expected merge conflict zones on next upstream sync
 - LOW: `gpt-5{,.2,.3-codex,.4,.5}.ts` `tuningSection` template literals - upstream has no equivalent helper. If upstream adds its own tuning lines, append rather than overwrite the file-operations block.
 - LOW: `file-operations.ts` is new and additive; no upstream counterpart.
+
+## 2026-10-11 - Public Native prompt generation for adapters (#3104)
+
+### What changed
+
+The model cores and `presets.ts` forward optional host branding without changing Native defaults, while `public.ts` exposes the same generators through the narrowed type views in `generation.ts`.
+
+### Why
+
+Hosts need Native's actual model bodies without duplicate templates or process-global branding changes.
+
+### Why an extension could not handle it
+
+The package export and generator input types are engine-owned contracts.
+
+### Expected merge conflict zones
+
+Builder exports, option forwarding, and application-name interpolations in the model cores.

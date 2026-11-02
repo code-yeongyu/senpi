@@ -81,10 +81,13 @@ describe("defaultTools setting", () => {
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
+		).toEqual(["bash", "edit", "find", "glob", "grep", "ls", "powershell", "read", "write"]);
 		expect(session.getActiveToolNames()).toEqual(["grep", "find"]);
-		expect(session.systemPrompt).toContain("- grep:");
-		expect(session.systemPrompt).not.toContain("- read:");
+		// The selection reaches the model as tool schemas; described tools get no snippet line (senpi#5335).
+		const schemaNames = session.agent.state.tools.map((tool) => tool.name);
+		expect(schemaNames).toEqual(expect.arrayContaining(["grep", "find"]));
+		expect(schemaNames).not.toContain("read");
+		expect(session.systemPrompt).not.toMatch(/^- (grep|read):/m);
 		session.dispose();
 	});
 
@@ -92,8 +95,9 @@ describe("defaultTools setting", () => {
 		const session = await createSession(["read", "powershell", "edit", "write"]);
 
 		expect(session.getActiveToolNames()).toEqual(["read", "powershell", "edit", "write"]);
-		expect(session.systemPrompt).toContain("- powershell: Execute PowerShell commands");
-		expect(session.systemPrompt).not.toContain("- bash:");
+		const schemaNames = session.agent.state.tools.map((tool) => tool.name);
+		expect(schemaNames).toContain("powershell");
+		expect(schemaNames).not.toContain("bash");
 		session.dispose();
 	});
 
@@ -289,7 +293,7 @@ describe("defaultTools setting", () => {
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
+		).toEqual(["bash", "edit", "find", "glob", "grep", "ls", "powershell", "read", "write"]);
 		expect(session.getActiveToolNames()).toEqual(["ls"]);
 		session.dispose();
 	});

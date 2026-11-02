@@ -1,22 +1,25 @@
-import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
-import { serializeJsonLine } from "./jsonl.ts";
-import { omitInlineMedia } from "./media-placeholders.ts";
-import { SocketEventSinkActor } from "./socket-event-fanout.ts";
-
-export type RawWriter = (chunk: string) => void;
-export type BackpressureWaiter = () => Promise<void>;
-
-export interface SessionEventWriterConnection {
-	readonly writeRaw: RawWriter;
-	readonly waitForBackpressure: BackpressureWaiter;
-	/**
-	 * Tears the transport down. Called when this connection's event queue fails
-	 * (overflow, write error): the actor has already stopped delivering records
-	 * AND command responses, so a socket left open would strand the client on a
-	 * connection that can never answer again. Closing it lets the client resync.
-	 */
-	readonly close?: () => void;
-}
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { CompactSelection } from "./compact-negotiation.ts";
+import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
+import { tmpdir } from "node:os";
+import { startRecoveryCleanup } from "./compact-recovery-cleanup.ts";
+import { EventLeases } from "./compact-event-leases.ts";
+import { legacyAttachView } from "./compact-legacy-view.ts";
+import { RecoveryPageRequests } from "./compact-recovery-requests.ts";
+import { RecoveryCheckpoints } from "./compact-recovery-state.ts";
+import { COMPACT_EVENTS_CAPABILITY, MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { ExtensionTransportOwner } from "./extension-owner.ts";
+import { LegacyReplayStore } from "./legacy-replay-store.ts";
+import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import {
+	type RegisteredConnection,
+	type SessionEventWriterConnection,
+	transportOf,
+} from "./session-event-connection.ts";
+import { admissionOf, SessionRecoveryPins } from "./session-recovery-pins.ts";
+import { closeSocket, queueFailureDetail } from "./socket-closing.ts";
+import { type ShedMode, SocketEventSinkActor } from "./socket-event-fanout.ts";
+import { EVENT_RESYNC_CAPABILITY } from "./socket-peer-recovery.ts";
 
 const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"agent_start",
@@ -24,108 +27,159 @@ const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"agent_idle",
 	"session_opened",
 	"session_closed",
+	"session_lifecycle",
 ]);
 
-type RegisteredConnection = {
-	readonly connection: SessionEventWriterConnection;
-	readonly actor: SocketEventSinkActor;
-};
-
-/**
- * A replayable snapshot line.
- *
- * `placeholderLine` is the `media_placeholders` variant. The writer supplies it only when
- * a capable connection was already attached when the record was emitted; a connection that
- * attaches later still needs it, so `source` carries the wire record and the variant is
- * derived once, on the first capable replay, then memoized. Records with no media resolve
- * `placeholderLine` to `line`, so replay stays O(1) and never re-serializes twice.
- */
-type SnapshotRecord = {
-	readonly line: string;
-	placeholderLine?: string;
-	readonly source?: Record<string, unknown>;
-};
-
-/** The placeholder variant of a remembered record, derived and memoized on first use. */
-function snapshotPlaceholderLine(record: SnapshotRecord): string {
-	if (record.placeholderLine !== undefined) return record.placeholderLine;
-	const redacted = record.source === undefined ? undefined : omitInlineMedia(record.source);
-	record.placeholderLine =
-		redacted === undefined || redacted === record.source ? record.line : serializeJsonLine(redacted);
-	return record.placeholderLine;
-}
-
 export class SessionEventFanout {
+	requiredSessions?: (peer: string) => readonly string[];
+	onSessionForgotten?: (sessionId: string) => void;
+	readonly startupCleanup = compactUpdatesEnabled() ? startRecoveryCleanup(tmpdir()) : undefined;
+	onConnectionClosed?: (id: string) => void;
+	/** Each routing session's acceptance lane; retired when the session is sealed or forgotten. */
+	readonly acceptance = new Map<string, SessionAcceptanceLane>();
+	/** Today's retention for a session without a lane (RULING-25 Q5), and the open-view count of both sources. */
+	readonly replay = new LegacyReplayStore();
+	/** The checkpoint tokens this host froze for its peers' baselines and recoveries (S08a). */
+	readonly checkpoints = new RecoveryCheckpoints();
+	/** The ordinary-event leases of peers that selected compact events (S13); absent with the flag off. */
+	readonly events = compactUpdatesEnabled() ? new EventLeases() : undefined;
+	/** The page route over those tokens and leases (S11b, S13); absent with the flag off, so it answers as before. */
+	readonly pages = compactUpdatesEnabled()
+		? new RecoveryPageRequests(this.checkpoints, undefined, this.events)
+		: undefined;
+	private socketEpochs = 0;
+	/** Today's shed path with the compact-updates flag off; the cut frozen at the shed with it on. */
+	private readonly shedMode: ShedMode = compactUpdatesEnabled() ? "capture" : "drop";
 	private readonly connections = new Map<string, RegisteredConnection>();
-	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
-	private readonly pendingQuestions = new Map<string, Map<string, Record<string, unknown>>>();
 	private readonly connectionCapabilities = new Map<string, Set<string>>();
-	private readonly connectionSessions = new Map<string, Set<string>>();
+	/** Per connection, each attached session with the ordinal of the attach that holds it. */
+	private readonly connectionSessions = new Map<string, Map<string, number>>();
+	private attachOrdinal = 0;
+	/** Roots an attach baseline still reads; a seal keeps them readable until that view ends (RULING-51 Q2=A). */
+	private readonly attachViews = new Set<FrozenAcceptedRoot>();
 	private readonly registeredCapabilityConnections = new Set<string>();
+	private readonly pins = new SessionRecoveryPins(
+		this.acceptance,
+		this.checkpoints,
+		this.replay,
+		{
+			socketEpoch: (id) => this.connections.get(id)?.socketEpoch,
+			ordinals: (id) => this.connectionSessions.get(id),
+			required: (id) => this.requiredSessions?.(id) ?? [],
+			has: (id, capability) => this.connectionHas(id, capability),
+		},
+		this.shedMode,
+	);
 
 	registerConnection(
 		id: string,
 		connection: SessionEventWriterConnection,
 		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
 	): void {
-		const actor = new SocketEventSinkActor(
+		this.unregisterConnection(id);
+		const owner = new ExtensionTransportOwner();
+		const socketEpoch = `socket-${++this.socketEpochs}`;
+		const Actor = this.pages ? AdmissionRoutingActor : SocketEventSinkActor;
+		const actor = new Actor(
 			connection,
 			(cause) => {
-				if (this.connections.get(id)?.actor === actor) {
+				const current = this.connections.get(id)?.actor === actor;
+				const compact = current && this.connectionHas(id, COMPACT_EVENTS_CAPABILITY);
+				if (current) {
+					owner.retire();
 					this.connections.delete(id);
 					this.connectionCapabilities.delete(id);
 					this.connectionSessions.delete(id);
 					this.registeredCapabilityConnections.delete(id);
+					this.pages?.forgetPeer(socketEpoch);
+					this.checkpoints.forgetPeer(socketEpoch);
+					this.events?.forgetPeer(socketEpoch);
+					this.onConnectionClosed?.(id);
 				}
 				process.stderr.write(
 					`senpi rpc connection ${id} event queue failed; closing: ${cause instanceof Error ? cause.message : String(cause)}\n`,
 				);
-				connection.close?.();
+				void closeSocket(connection, actor, compact, "event_queue_failed", queueFailureDetail(cause));
 			},
 			options.maxQueueBytes,
 			options.stallMs,
+			this.shedMode,
 		);
-		this.connections.set(id, { connection, actor });
+		if (actor instanceof AdmissionRoutingActor) actor.bind(this.checkpoints, socketEpoch, id);
+		const close: RegisteredConnection["close"] = (code, detail) =>
+			void closeSocket(connection, actor, this.connectionHas(id, COMPACT_EVENTS_CAPABILITY), code, detail);
+		const selection = new CompactSelection();
+		this.connections.set(id, { connection: transportOf(connection), actor, socketEpoch, owner, selection, close });
 		this.connectionCapabilities.set(id, new Set());
-		this.connectionSessions.set(id, new Set());
+		this.connectionSessions.set(id, new Map());
 	}
 
 	unregisterConnection(id: string): void {
 		const registered = this.connections.get(id);
 		if (!registered) return;
+		registered.owner.retire();
 		registered.actor.close();
+		this.pages?.forgetPeer(registered.socketEpoch);
+		this.checkpoints.forgetPeer(registered.socketEpoch);
+		this.events?.forgetPeer(registered.socketEpoch);
 		this.connections.delete(id);
 		this.connectionCapabilities.delete(id);
 		this.connectionSessions.delete(id);
 		this.registeredCapabilityConnections.delete(id);
 	}
 
-	attachConnectionToSession(id: string, sessionId: string): void {
-		if (!this.connections.has(id)) return;
-		const sessions = this.connectionSessions.get(id) ?? new Set<string>();
+	/**
+	 * A first attach is one admission: it freezes the cut C synchronously as that admission's checkpoint (the lane
+	 * root, read later for the baseline; today's replay view for a session without a lane) and installs that peer's
+	 * baseline barrier before the session is live for it; a repeated hold adds nothing. The attempt dies with a
+	 * detach, the peer, or a replacement (new lane epoch), and releases its checkpoint in every case.
+	 */
+	attachConnectionToSession(id: string, sessionId: string, compact = false): void {
+		const registered = this.connections.get(id);
+		if (!registered) return;
+		const sessions = this.connectionSessions.get(id) ?? new Map<string, number>();
 		if (sessions.has(sessionId)) return;
-		sessions.add(sessionId);
+		const ordinal = ++this.attachOrdinal;
+		sessions.set(sessionId, ordinal);
 		this.connectionSessions.set(id, sessions);
-		this.replaySnapshot(id, sessionId);
-		for (const frame of this.pendingQuestions.get(sessionId)?.values() ?? []) {
-			this.connections.get(id)?.actor.enqueue(
-				serializeJsonLine({
-					...frame,
-					remainingMs: typeof frame.deadlineAtMs === "number" ? Math.max(0, frame.deadlineAtMs - Date.now()) : 0,
-				}),
-			);
-		}
+		if (compact) return;
+		const pinned = this.pins.pin(id, [sessionId]);
+		const first = pinned[0];
+		const source = first?.outcome.ok ? first.outcome.value : undefined;
+		if (source) this.attachViews.add(source.root);
+		const release = () => {
+			if (source) this.attachViews.delete(source.root);
+			this.pins.unpin(pinned);
+		};
+		const view = { placeholders: this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY), now: Date.now() };
+		const cursor = this.acceptance.has(sessionId)
+			? legacyAttachView(sessionId, source, view, this.replay.track(release))
+			: this.replay.freezeAttach(sessionId, { ...view, onRelease: release });
+		// Live while the same attach holds the session and every pinned lane is still the incarnation it was pinned at.
+		registered.actor.installBaseline(
+			cursor,
+			() =>
+				this.connections.get(id)?.actor === registered.actor &&
+				this.connectionSessions.get(id)?.get(sessionId) === ordinal &&
+				pinned.every(({ lane, sessionEpoch }) => lane.sessionEpoch === sessionEpoch),
+		);
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
+		this.pins.retire(id, sessionId);
 		this.connectionSessions.get(id)?.delete(sessionId);
 	}
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		const registered = this.connections.get(id);
 		if (!registered) return;
-		this.connectionCapabilities.set(id, new Set(capabilities));
+		// RULING-81 Q-B: the compact-events opt-in is accepted only behind the engine-socket flag.
+		const accepted = registered.selection.wireCapabilities(capabilities, this.events !== undefined);
+		this.connectionCapabilities.set(id, new Set(accepted));
 		this.registeredCapabilityConnections.add(id);
+		if (capabilities.includes(EVENT_RESYNC_CAPABILITY))
+			registered.actor.enableRecovery((reason, carried) => this.pins.resync(id, reason, carried));
+		else registered.actor.disableRecovery();
 	}
 
 	clearConnectionCapabilities(id: string): void {
@@ -163,6 +217,19 @@ export class SessionEventFanout {
 			: [undefined];
 	}
 
+	/** For a record that reaches `id` because it holds `sessionId`: whether that attachment still does; undefined for every other audience. */
+	attachmentOf(id: string, sessionId: string, isTargeted: boolean, recordType: unknown): (() => boolean) | undefined {
+		if (isTargeted || (typeof recordType === "string" && BROADCAST_LIFECYCLE_RECORDS.has(recordType)))
+			return undefined;
+		return this.attachment(id, sessionId);
+	}
+
+	/** The admission (the attach ordinal) through which `id` holds `sessionId` now; undefined when it does not. */
+	admissionOf(id: string, sessionId: string): string | undefined {
+		const ordinal = this.connectionSessions.get(id)?.get(sessionId);
+		return ordinal === undefined ? undefined : admissionOf(ordinal);
+	}
+
 	get(id: string): RegisteredConnection | undefined {
 		return this.connections.get(id);
 	}
@@ -180,54 +247,58 @@ export class SessionEventFanout {
 		for (const { actor } of this.connections.values()) actor.enqueue(line);
 	}
 
+	connectionIds(): readonly string[] {
+		return [...this.connections.keys()];
+	}
+
+	attachedConnections(sessionId: string): readonly string[] {
+		return [...this.connections.keys()].filter((id) => this.connectionSessions.get(id)?.has(sessionId));
+	}
+
+	/**
+	 * Pending `question` frames a session has asked and nobody answered yet: the lane's hot count, today's count for a
+	 * session without a lane, and undefined (unknown) for a lane whose compact state is unavailable. The unknown count
+	 * is output-equivalent to the old 0: `liveStatus` reads it as `?? 0`, so the runtime's own count decides.
+	 */
+	pendingQuestionCount(sessionId: string): number | undefined {
+		const lane = this.acceptance.get(sessionId);
+		return lane ? lane.openBroadcastDialogs : this.replay.pendingQuestionCount(sessionId);
+	}
+
 	/** Deliver one line to the connections attached to a session, never to the rest of the fanout. */
 	deliverToSession(sessionId: string, line: string): void {
-		for (const [id, { actor }] of this.connections)
-			if (this.connectionSessions.get(id)?.has(sessionId)) actor.enqueue(line);
+		for (const [id, { actor }] of this.connections) {
+			const held = this.attachment(id, sessionId);
+			if (held || this.requiredSessions?.(id).includes(sessionId))
+				actor.enqueue(line, undefined, undefined, undefined, false, held);
+		}
 	}
 
-	rememberSnapshot(
-		sessionId: string,
-		value: Record<string, unknown>,
-		line: string,
-		placeholderLine?: string,
-		source?: Record<string, unknown>,
-	): void {
-		if (value.type === "extension_ui_request" && value.method === "question" && typeof value.id === "string") {
-			const pending = this.pendingQuestions.get(sessionId) ?? new Map<string, Record<string, unknown>>();
-			pending.set(value.id, { ...value });
-			this.pendingQuestions.set(sessionId, pending);
-			return;
-		}
-		if (value.type === "question_resolved" && typeof value.id === "string") {
-			this.pendingQuestions.get(sessionId)?.delete(value.id);
-			return;
-		}
-		if (value.type === "question_updated" && typeof value.id === "string") {
-			const frame = this.pendingQuestions.get(sessionId)?.get(value.id);
-			if (frame) Object.assign(frame, { deadlineAtMs: value.deadlineAtMs, remainingMs: value.remainingMs });
-			return;
-		}
-		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
-		const record: SnapshotRecord = { line, placeholderLine, source };
-		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
-			this.sessionSnapshots.set(sessionId, [record]);
-		} else if (this.sessionSnapshots.has(sessionId)) {
-			this.sessionSnapshots.get(sessionId)?.push(record);
-		}
-		if (value.type === "message_end") this.sessionSnapshots.delete(sessionId);
+	/** Retention only for a session without a lane; a lane-owned session's late peers read its frozen view. */
+	rememberSnapshot(sessionId: string, value: Record<string, unknown>, line: string, placeholderLine?: string): void {
+		if (!this.acceptance.has(sessionId)) this.replay.remember(sessionId, value, line, placeholderLine);
 	}
 
+	/**
+	 * A seal or forget ends the routing session for good (its handle is never reissued or re-attached): the lane retires
+	 * (a queued attach view keeps its root) and the session's stream records go on every peer (RULING-56 (2)).
+	 */
 	forgetSession(sessionId: string): void {
-		this.pendingQuestions.delete(sessionId);
-		this.sessionSnapshots.delete(sessionId);
+		this.onSessionForgotten?.(sessionId);
+		for (const { actor, socketEpoch } of this.connections.values())
+			if (actor instanceof AdmissionRoutingActor) actor.remember(sessionId, this.checkpoints, socketEpoch);
+		this.checkpoints.forgetSession(sessionId);
+		this.acceptance.get(sessionId)?.retire("close", this.attachViews);
+		this.acceptance.delete(sessionId);
+		this.replay.forget(sessionId);
 	}
 
-	private replaySnapshot(id: string, sessionId: string): void {
-		const actor = this.connections.get(id)?.actor;
-		if (!actor) return;
-		const placeholders = this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY);
-		for (const record of this.sessionSnapshots.get(sessionId) ?? [])
-			actor.enqueue(placeholders ? snapshotPlaceholderLine(record) : record.line);
+	/**
+	 * The attach holding `sessionId` for `id` now, as a liveness check: true only while that same attach (its ordinal,
+	 * the rule an attach baseline's liveness uses) still holds it, so a detach and re-attach ends it.
+	 */
+	private attachment(id: string, sessionId: string): (() => boolean) | undefined {
+		const ordinal = this.connectionSessions.get(id)?.get(sessionId);
+		return ordinal === undefined ? undefined : () => this.connectionSessions.get(id)?.get(sessionId) === ordinal;
 	}
 }

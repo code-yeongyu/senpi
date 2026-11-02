@@ -5,8 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
-import { processIsLive } from "../../../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { processIsLive } from "../../../src/utils/process-identity.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 const run = promisify(execFile);
@@ -24,7 +24,7 @@ it("logs an unknown legacy identity across caller restarts without retiring it, 
 		await writeFile(paths.legacyPidFile, record);
 		const legacyModule = fileURLToPath(new URL("../../../src/modes/rpc/host-legacy.ts", import.meta.url));
 		const pathsModule = fileURLToPath(new URL("../../../src/modes/rpc/host-daemon-paths.ts", import.meta.url));
-		const identityModule = fileURLToPath(new URL("../../../src/modes/app-server/daemon/process.ts", import.meta.url));
+		const identityModule = fileURLToPath(new URL("../../../src/utils/process-identity.ts", import.meta.url));
 		const stopModule = fileURLToPath(new URL("../../../src/modes/rpc/host-stop.ts", import.meta.url));
 		const source = `
 			import { retireIdleLegacyHost } from ${JSON.stringify(legacyModule)};

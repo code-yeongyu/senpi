@@ -6,7 +6,7 @@ const money = new Intl.NumberFormat("en-US", {
 	currency: "USD",
 });
 
-const UNKNOWN = "—";
+const UNKNOWN = "-";
 
 export function formatSessionInfo(stats: SessionStats, sessionName?: string): string {
 	let info = `${theme.bold("Session Info")}\n\n`;
@@ -45,7 +45,7 @@ export function formatSessionInfo(stats: SessionStats, sessionName?: string): st
 
 	if (stats.cost > 0) {
 		info += `\n\n${theme.bold("Cost")}\n`;
-		info += `${theme.fg("dim", "Total:")} ${money.format(stats.cost)}`;
+		info += `${theme.fg("dim", "Total:")} ${money.format(stats.cost)}${stats.costUnknown ? theme.fg("dim", " + unpriced turns") : ""}`;
 	}
 
 	return info;

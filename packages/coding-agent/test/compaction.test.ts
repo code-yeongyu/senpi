@@ -58,6 +58,7 @@ import type {
 	MessageEndEvent,
 	ModelSelectEvent,
 } from "../src/core/extensions/index.ts";
+import type { HistoryReducer } from "../src/core/session-history-reduce.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
@@ -69,6 +70,7 @@ import {
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../src/core/session-manager.ts";
+import { reduceEntries } from "./helpers/reduce-entries.ts";
 
 const AGENT_DIR = createTempAgentDir();
 
@@ -274,6 +276,8 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
 			getEntries: () => [],
+			getBranch: () => [],
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries([], reducer),
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,
@@ -355,6 +359,7 @@ async function expectSpeculativeCompactionInvalidatedBy(
 		sessionManager: Object.assign(Object.create(null), {
 			getEntries: () => branchEntries,
 			getBranch: () => branchEntries,
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: Object.assign(Object.create(null), {
 			getApiKeyAndHeaders: async () => ({
@@ -691,6 +696,36 @@ describe("findCutPoint", () => {
 	it("should return startIndex if no valid cut points in range", () => {
 		const entries: SessionEntry[] = [createMessageEntry(createAssistantMessage("a"))];
 		const result = findCutPoint(entries, 0, entries.length, 1000);
+		expect(result.firstKeptEntryIndex).toBe(0);
+	});
+
+	// senpi#4617: keepRecentTokens is measured against wire tokens, and CJK text
+	// tokenizes near 1 token per 1.5 chars, not 4. A 4000-char Korean user turn
+	// is ~1000 tokens under chars/4 but ~3000 under the CJK-weighted estimate,
+	// so a 2000-token budget must cut before it, not keep the whole history.
+	it("should weight CJK text when accumulating the keep budget", () => {
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("old")),
+			createMessageEntry(createAssistantMessage("old answer")),
+			createMessageEntry(createUserMessage("한".repeat(4000))),
+			createMessageEntry(createAssistantMessage("ok")),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 2000);
+		expect(result.firstKeptEntryIndex).toBe(2);
+	});
+
+	it("should not change the keep budget for ASCII text", () => {
+		// Spaced prose: no base64-run weighting and no CJK correction, so the
+		// same-length ASCII turn stays at ~1000 tokens and fits the budget.
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("old")),
+			createMessageEntry(createAssistantMessage("old answer")),
+			createMessageEntry(createUserMessage("hello world ".repeat(334))),
+			createMessageEntry(createAssistantMessage("ok")),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 2000);
 		expect(result.firstKeptEntryIndex).toBe(0);
 	});
 
@@ -1225,6 +1260,8 @@ describe("builtin compaction extension threshold regressions", () => {
 			model,
 			sessionManager: Object.assign(Object.create(null), {
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
+				reduceHistory: (reducer: HistoryReducer<unknown>) =>
+					reduceEntries([firstUser, firstAssistant, secondUser, secondAssistant], reducer),
 				getBranch: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {
@@ -1286,6 +1323,7 @@ describe("builtin compaction extension threshold regressions", () => {
 			sessionManager: Object.assign(Object.create(null), {
 				getEntries: () => branchEntries,
 				getBranch: () => branchEntries,
+				reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {
 				getApiKeyAndHeaders: async () => ({
@@ -1336,6 +1374,8 @@ describe("builtin compaction extension threshold regressions", () => {
 			model,
 			sessionManager: Object.assign(Object.create(null), {
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
+				reduceHistory: (reducer: HistoryReducer<unknown>) =>
+					reduceEntries([firstUser, firstAssistant, secondUser, secondAssistant], reducer),
 				getBranch: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {

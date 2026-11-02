@@ -12,7 +12,7 @@
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { processStartTimeMs, readProcessIdentity, sameProcessStartMs } from "../app-server/daemon/process.ts";
+import { processStartTimeMs, readProcessIdentity, sameProcessStartMs } from "../../utils/process-identity.ts";
 import {
 	createGenerationDirectory,
 	generationPaths,

@@ -32,7 +32,7 @@ function run(root: string, scenario: string): void {
 import assert from "node:assert/strict";
 import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createBunExtensionImporter } from ${JSON.stringify(importerPath)};
 const root = ${JSON.stringify(root)};
 const entry = join(root, "extension.ts");
@@ -105,6 +105,56 @@ assert.equal(after(), "after");
 		);
 	});
 
+	// senpi#3716 host-start latency: a fresh host must reuse the prepared source a previous process wrote, without
+	// transpiling, and must still honour per-generation isolation and today's module resolution.
+	it("serves unchanged sources from the prepared-source cache across processes and revalidates resolution", () => {
+		// Given: an extension with a local helper and a package dependency, and a cache directory.
+		const root = fixture(
+			'import { value } from "./helper.ts"; import { dep } from "dep"; export default () => [value, dep];',
+		);
+		writeFileSync(join(root, "helper.ts"), 'export const value: string = "helper";\n');
+		packageFixture(root, "dep", 'export const dep = "first";');
+		writeFileSync(join(root, "node_modules", "dep", "second.js"), 'export const dep = "second";');
+		const cache = (session: string) => `
+const cacheDir = join(root, "prepared-cache");
+${session}`;
+		// When: one process fills the cache, and later processes load with transpiling disabled.
+		run(
+			root,
+			cache(`
+const importer = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+assert.deepEqual((await importer.import(entry, { default: true }))(), ["helper", "first"]);
+`),
+		);
+		run(
+			root,
+			cache(`
+Bun.Transpiler = class { constructor() { throw new Error("transpiled despite a valid cache entry"); } };
+const first = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+const second = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+const one = await first.import(entry, { default: true });
+const two = await second.import(entry, { default: true });
+// Then: both generations load from the cache, each with its own module graph.
+assert.deepEqual(one(), ["helper", "first"]);
+assert.deepEqual(two(), ["helper", "first"]);
+assert.notEqual(one, two);
+`),
+		);
+		// When: the package now resolves elsewhere while the extension source stays byte-identical.
+		writeFileSync(
+			join(root, "node_modules", "dep", "package.json"),
+			JSON.stringify({ type: "module", exports: "./second.js" }),
+		);
+		run(
+			root,
+			cache(`
+const importer = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+// Then: the stale entry is not trusted; the edge resolves to the new target.
+assert.deepEqual((await importer.import(entry, { default: true }))(), ["helper", "second"]);
+`),
+		);
+	});
+
 	it("shares static and computed dynamic relative imports within a generation", () => {
 		// Given: the dynamic specifier cannot be statically rewritten by a bundler.
 		const root = fixture(`import * as helper from "./helper.ts";
@@ -126,20 +176,27 @@ assert.equal(staticModule, dynamicModule);
 
 	it("preserves real import metadata when paths contain URL-special characters", () => {
 		// Given: metadata appears both as direct properties and as the complete object.
-		const root = fixture("export default () => [import.meta.url, import.meta.path, import.meta.dir, import.meta];");
+		const root = fixture(
+			"export default () => [import.meta.url, import.meta.path, import.meta.dir, import.meta, import.meta.filename, import.meta.dirname];",
+		);
 		// When
 		run(
 			root,
 			`
 const importer = await createBunExtensionImporter({});
 const factory = await importer.import(entry, { default: true });
-const [url, path, dir, meta] = factory();
+const [url, path, dir, meta, filename, dirname] = factory();
 // Then
 assert.equal(url, pathToFileURL(realpathSync(entry)).href);
 assert.equal(path, realpathSync(entry));
 assert.equal(dir, realpathSync(root));
 assert.equal(meta.url, url);
 assert.equal(meta.path, path);
+// Node >= 20.11 and Bun: filename/dirname are the decoded file path of url and its directory (#4766).
+assert.equal(filename, fileURLToPath(url));
+assert.equal(dirname, realpathSync(root));
+assert.equal(meta.filename, filename);
+assert.equal(meta.dirname, dirname);
 `,
 		);
 	});

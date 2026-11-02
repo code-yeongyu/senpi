@@ -143,6 +143,17 @@ describe("goal blocks on a terminal provider auth rejection (#2293)", () => {
 
 	it.each([
 		[
+			"a request-level auth refusal after the credential served (#2491)",
+			{
+				...failedTurn("401 request refused", COPILOT, {
+					category: "auth",
+					httpStatus: 401,
+					evidence: "structured_status",
+				}),
+				credentialServedRecently: true as const,
+			},
+		],
+		[
 			"a structured 429",
 			failedTurn("429 Rate limit reached", COPILOT, {
 				category: "rate_limit",
@@ -177,6 +188,7 @@ describe("goal blocks on a terminal provider auth rejection (#2293)", () => {
 
 		expect(setup.harness.sent).toHaveLength(1);
 		expect(setup.harness.sent[0]?.message.customType).toBe("goal-continuation");
+		expect(setup.notices).toEqual([]);
 		expect(await readGoal(goalStoreRef(setup.ctx.sessionManager, setup.ctx.cwd))).toMatchObject({
 			status: "active",
 			consecutiveContinuations: 1,

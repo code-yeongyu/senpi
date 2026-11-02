@@ -41,7 +41,7 @@ import {
 	visibleWidth,
 } from "../utils.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
-import { renderEditorLine } from "./editor-line-render.ts";
+import { type EditorKeywordRange, keywordRangesByLine, renderEditorLine } from "./editor-line-render.ts";
 import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.ts";
 
 const graphemeSegmenter = getGraphemeSegmenter();
@@ -262,10 +262,23 @@ interface LayoutLine {
 	startIndex: number;
 }
 
+/**
+ * Per-character decoration for keyword runs found in the whole editor text
+ * (lines joined with "\n"). `style` receives one character plus its offset
+ * within the run and the run length, so a gradient stays continuous across
+ * wrapped rows and logical lines. Decoration only: it never changes widths.
+ */
+export interface EditorKeywordHighlight {
+	find: (text: string) => readonly MentionRange[];
+	style: (text: string, index: number, length: number) => string;
+}
+
 export interface EditorTheme {
 	borderColor: (str: string) => string;
 	/** Style for resolved mention tokens (for example a known `$skill`); omit to render them plain. */
 	mention?: (str: string) => string;
+	/** Optional keyword-run decoration; a mention or the cursor grapheme takes precedence over it. */
+	keywordHighlight?: EditorKeywordHighlight;
 	/**
 	 * Theme for the autocomplete/slash SelectList built by
 	 * createAutocompleteList(). May carry the optional `renderRow` seam (see
@@ -364,6 +377,8 @@ export class Editor implements Component, Focusable {
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
+
+	private keywordRunsCache?: { text: string; byLine: Map<number, EditorKeywordRange[]> };
 
 	// Border color (can be changed dynamically)
 	public borderColor: (str: string) => string;
@@ -682,6 +697,14 @@ export class Editor implements Component, Focusable {
 		return this.borderColor(border);
 	}
 
+	private keywordRangesByLine(highlight: EditorKeywordHighlight): Map<number, EditorKeywordRange[]> {
+		const text = this.state.lines.join("\n");
+		if (this.keywordRunsCache?.text !== text) {
+			this.keywordRunsCache = { text, byLine: keywordRangesByLine(this.state.lines, highlight.find(text)) };
+		}
+		return this.keywordRunsCache.byLine;
+	}
+
 	render(width: number): string[] {
 		const maxPadding = Math.max(0, Math.floor((width - 1) / 2));
 		const paddingX = Math.min(this.paddingX, maxPadding);
@@ -749,6 +772,16 @@ export class Editor implements Component, Focusable {
 			}));
 		};
 
+		const keywordHighlight = this.theme.keywordHighlight;
+		const keywordRangesByLine = keywordHighlight ? this.keywordRangesByLine(keywordHighlight) : undefined;
+		const keywordRangesFor = (layoutLine: LayoutLine): readonly EditorKeywordRange[] =>
+			(keywordRangesByLine?.get(layoutLine.logicalLine) ?? []).map((range) => ({
+				start: range.start - layoutLine.startIndex,
+				end: range.end - layoutLine.startIndex,
+				runStart: range.runStart - layoutLine.startIndex,
+				runLength: range.runLength,
+			}));
+
 		for (const layoutLine of visibleLines) {
 			let lineVisibleWidth = visibleWidth(layoutLine.text);
 			let cursorInPadding = false;
@@ -762,6 +795,8 @@ export class Editor implements Component, Focusable {
 				text: layoutLine.text,
 				mentions: mentionRangesFor(layoutLine),
 				mentionStyle: mentionStyle ?? ((text) => text),
+				keywords: keywordRangesFor(layoutLine),
+				keywordStyle: keywordHighlight?.style,
 				cursor,
 				firstGrapheme: (text) => [...this.segment(text, "grapheme")][0]?.segment ?? "",
 			});

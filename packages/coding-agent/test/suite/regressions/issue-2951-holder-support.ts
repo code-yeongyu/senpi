@@ -13,7 +13,14 @@ export async function startSessionHolder(sessionFile: string, sessionId: string,
 		["--import", "tsx", fileURLToPath(fixture), sessionFile, sessionId, ...(cwd === null ? [] : [cwd])],
 		{
 			cwd: fileURLToPath(new URL("../../../", import.meta.url)),
-			env: { PATH: process.env.PATH, HOME: root, TMPDIR: root, SENPI_CODING_AGENT_DIR: join(root, "agent") },
+			env: {
+				PATH: process.env.PATH,
+				HOME: root,
+				TMPDIR: root,
+				TEMP: root,
+				TMP: root,
+				SENPI_CODING_AGENT_DIR: join(root, "agent"),
+			},
 			stdio: ["pipe", "pipe", "pipe"],
 		},
 	);

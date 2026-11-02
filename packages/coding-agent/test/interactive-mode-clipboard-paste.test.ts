@@ -230,7 +230,7 @@ describe("InteractiveMode clipboard paste image attachment", () => {
 	it("attaches the image as a pending payload behind an atomic marker", async () => {
 		const { context, editor } = makeContext();
 		const insertMarker = vi.spyOn(editor, "insertImageMarker");
-		const [redData] = await Promise.all([processedData(PNG_RED_BASE64)]);
+		const redData = await processedData(PNG_RED_BASE64);
 
 		await pasteImage(context, PNG_RED_BASE64);
 
