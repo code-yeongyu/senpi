@@ -21,7 +21,7 @@ import {
 	getCurrentTools,
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CLAUDE_SDK_OAUTH_API_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
 import type {
 	SDKMessage,
@@ -210,7 +210,13 @@ function overflowCompactions(harness: Harness) {
 		}));
 }
 
+// These cases assert the flat replay's prompt content; the native-frame replay has its own tests (senpi#1977).
+beforeEach(() => {
+	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
+});
+
 afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
 	while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	resetSessionRegistryBoundary();
 	resetSdkBoundary();

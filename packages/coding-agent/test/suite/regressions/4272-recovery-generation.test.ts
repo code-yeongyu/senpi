@@ -8,7 +8,7 @@ import { heldPeer } from "./4272-legacy-view-support.ts";
 import { recoveryRig as rig, streaming } from "./4272-recovery-support.ts";
 
 // Part of #4272 (S08a, RULING-50 (1) and the S08a review LOW-1/LOW-2): the fanout's attach and shed mint one
-// generation sequence per peer + session incarnation, in either order; it restarts only with a new incarnation, and
+// generation sequence per session, in either order, including new peer and session incarnations (RULING-99), and
 // a dropped peer's open checkpoint is reclaimed with an operation still in flight on it refused as peer_gone.
 
 afterEach(() => {
@@ -16,7 +16,7 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-it("RULING-50 (1) generations increase strictly within one peer + session incarnation across attach and shed in both orders, and restart only with a new incarnation", async () => {
+it("RULING-99 generations increase across attach, shed, replacement and reconnect", async () => {
 	vi.useFakeTimers();
 	const { writer, lane, attach, shed, replace } = rig();
 	const held = heldPeer(writer, "held", [EVENT_RESYNC_CAPABILITY]);
@@ -37,13 +37,13 @@ it("RULING-50 (1) generations increase strictly within one peer + session incarn
 	const epoch = lane.sessionEpoch;
 	replace();
 	const replaced = await shed(held);
-	expect(replaced, "a new session incarnation restarts the sequence").toMatchObject({ generation: 1 });
+	expect(replaced, "a new incarnation continues the session counter").toMatchObject({ generation: 5 });
 	expect(replaced.sessionEpoch).not.toBe(epoch);
 
 	writer.unregisterConnection("held");
 	const again = heldPeer(writer, "held", [EVENT_RESYNC_CAPABILITY]);
 	const reborn = await attach(again);
-	expect(reborn, "a new peer incarnation restarts the sequence").toMatchObject({ generation: 1 });
+	expect(reborn, "a new peer continues the session counter").toMatchObject({ generation: 6 });
 	expect(reborn.socketEpoch).not.toBe(minted[0]?.socketEpoch);
 	writer.unregisterConnection("held");
 	lane.retire("close");

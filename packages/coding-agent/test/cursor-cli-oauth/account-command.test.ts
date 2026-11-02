@@ -162,8 +162,8 @@ describe("/cursor-account", () => {
 
 		const output = lastNotice(notices);
 		expect(output).toContain("alpha | login | available | pinned | affinity pick");
-		expect(output).toContain("bravo | import | blocked until");
-		expect(output).toContain("backup | login | blocked until re-login");
+		expect(output).toContain("bravo | import | rate limited; retry after");
+		expect(output).toContain("backup | login | sign-in rejected; sign in again");
 		expect(output).toContain("Pinned account: alpha (settings)");
 		expect(output).not.toContain("SECRET-ACCESS");
 		expect(output).not.toContain("SECRET-REFRESH");
