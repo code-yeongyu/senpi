@@ -21,9 +21,10 @@ export class AccountUsageLimitError extends Error {
 }
 
 // Subscription limit prose that carries no quota/billing keyword, e.g. Claude's
-// "You've hit your session limit · resets 3pm" and the SDK terminal reasons.
+// "You've hit your session limit · resets 3pm" and the SDK terminal reasons, Z.ai's 1310/1113 bodies
+// and Antigravity's "Individual quota reached" (senpi#3349); a plain "rate limit exhausted" stays transient.
 const SUBSCRIPTION_LIMIT_PATTERN =
-	/\bhit\s+your\b[^.]*\blimit\b|\b(?:session|weekly|monthly|daily|hourly|\d+[- ]hour|usage)\s+limit\b|\bblocking_limit\b|\brapid_refill_breaker\b/i;
+	/\bhit\s+your\b[^.]*\blimit\b|\b(?:session|weekly|monthly|daily|hourly|\d+[- ]hour|usage)\s+limit\b|\bblocking_limit\b|\brapid_refill_breaker\b|\bquota\s+reached\b|\binsufficient\s+balance\b|(?<!rate[ -]?)\blimit\s+exhausted\b/i;
 // A plan cap that tells the user to switch models, e.g. Devin's "Reached free model rate limit. ...
 // switch to a different model" (senpi#2660). An ordinary "rate limit exceeded" stays transient.
 const PLAN_MODEL_LIMIT_PATTERN =
