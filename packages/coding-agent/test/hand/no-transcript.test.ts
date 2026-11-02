@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
+import { grantLooplessExecuteToTestHarness } from "../../src/modes/rpc/loopless-execute-grant.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import { createLooplessRuntimeFactory } from "../../src/modes/rpc/runtime-factory-loopless.ts";
 
@@ -47,7 +48,7 @@ describe("loopless worker runtime transcript (senpi#5413)", () => {
 				agentDir,
 				appMode: "rpc",
 			},
-			{ extensionFactories: [sessionIdentityProbe] },
+			{ extensionFactories: [sessionIdentityProbe], executeGrant: grantLooplessExecuteToTestHarness() },
 		)({ cwd });
 		cleanups.push(() => runtime.dispose());
 

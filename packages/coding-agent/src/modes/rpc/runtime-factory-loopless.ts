@@ -10,6 +10,11 @@ import { createToolChildRuntime } from "../../core/tool-dispatch/tool-child-runt
 import { builtInExtensions } from "../../extensions/index.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { looplessToolFilters, resolveCliPaths, resolveLooplessSettings } from "./loopless-runtime-settings.ts";
+import {
+	isLooplessExecuteGranted,
+	type LooplessExecuteGrant,
+	LooplessExecuteRefusedError,
+} from "./loopless-execute-grant.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
 
@@ -32,7 +37,8 @@ export interface LooplessRuntime {
 	 * It does NOT run the extensions' `tool_call`/`tool_result` handlers (permission checks among them): where those
 	 * run for a call that reaches a tool-execution-only process is decided by the remote tool executor that calls
 	 * this runtime, including forwarding a two-sided extension's handlers to the process that owns the session.
-	 * Until that executor exists nothing may route an untrusted call here.
+	 * Until that executor exists, a runtime refuses every call unless it was built with a grant from the closed
+	 * allowlist in `loopless-execute-grant.ts` (the in-process test harness only).
 	 */
 	execute(name: string, toolCallId: string, params: unknown, signal?: AbortSignal): Promise<AgentToolResult<unknown>>;
 	/** Marks its extension contexts stale, then closes the tool work and the tool child it still runs. */
@@ -63,7 +69,12 @@ export class LooplessToolNotFoundError extends Error {
  */
 export function createLooplessRuntimeFactory(
 	configuration: CliRuntimeConfiguration,
-	local: { extensionFactories?: InlineExtension[]; startupSettingsManager?: SettingsManager } = {},
+	local: {
+		extensionFactories?: InlineExtension[];
+		startupSettingsManager?: SettingsManager;
+		/** Required for `execute`; see `loopless-execute-grant.ts`. */
+		executeGrant?: LooplessExecuteGrant;
+	} = {},
 ): LooplessRuntimeFactory {
 	const { parsed, agentDir, toolRuntime } = configuration;
 	const extensionFactories = local.extensionFactories ?? builtInExtensions;
@@ -152,6 +163,12 @@ export function createLooplessRuntimeFactory(
 		});
 		toolNames = () => [...registry.toolRegistry.keys()];
 		execute = (name, toolCallId, params, signal) => {
+			if (!isLooplessExecuteGranted(local.executeGrant))
+				return Promise.reject(
+					new LooplessExecuteRefusedError(
+						"no executor runs the tool_call/tool_result handlers for this runtime yet",
+					),
+				);
 			const tool = registry.toolRegistry.get(name);
 			if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
 			return runLooplessToolCall(tool, {

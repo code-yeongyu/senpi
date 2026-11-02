@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
+import { grantLooplessExecuteToTestHarness } from "../../src/modes/rpc/loopless-execute-grant.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import {
 	createLooplessRuntimeFactory,
@@ -60,7 +61,7 @@ async function looplessRuntime(): Promise<LooplessRuntime> {
 			agentDir,
 			appMode: "rpc",
 		},
-		{ extensionFactories: [handExtension] },
+		{ extensionFactories: [handExtension], executeGrant: grantLooplessExecuteToTestHarness() },
 	);
 	const runtime = await factory({ cwd });
 	cleanups.push(async () => {
