@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { catalogDigest } from "../../src/modes/rpc/compact-catalog-codec.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,7 +29,8 @@ const CASE_IDS = [
 	"out-of-order-offset",
 ];
 
-const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+const leafDigest = (bytes: Uint8Array): string => catalogDigest("leaf", Buffer.from(bytes));
+const sha256 = (bytes: Uint8Array): string => catalogDigest("fragment", Buffer.from(bytes));
 const readCase = (caseId: string): FragmentCase =>
 	JSON.parse(readFileSync(join(fixtureDirectory, `${caseId}.json`), "utf8"));
 function readValid(caseId: string): ValidFragmentCase {
@@ -110,15 +111,15 @@ describe("shared golden fragment-record fixtures (CONTRACT-r6 B3, senpi#4272)", 
 		}
 	});
 
-	it("index.json lists the eleven cases in order with their kinds and the pending digest ruling", () => {
+	it("RULING-98: index lists the eleven cases with the digest ruling resolved", () => {
 		const index = JSON.parse(readFileSync(join(fixtureDirectory, "index.json"), "utf8"));
 		expect(index).toMatchObject({
 			contract: "CONTRACT-r6",
 			section: "B3",
 			digestAlgorithm: "sha256",
-			digestRulingPending: "S09-Q1",
 			limits: { D: 131_072, F: 262_144, H: 16_384 },
 		});
+		expect(index).not.toHaveProperty("digestRulingPending");
 		expect(index.cases).toEqual(
 			CASE_IDS.map((caseId, position) => ({
 				caseId,
@@ -133,7 +134,7 @@ describe("shared golden fragment-record fixtures (CONTRACT-r6 B3, senpi#4272)", 
 		expect(fixture).toMatchObject({ caseId, kind: "valid", digestAlgorithm: "sha256", limits: FRAGMENT_LIMITS });
 		const source = materializeSource(fixture.source);
 		expect(source.length).toBe(fixture.sourceLength);
-		expect(sha256(source)).toBe(fixture.sourceDigest);
+		expect(leafDigest(source)).toBe(fixture.sourceDigest);
 		expect(
 			fixture.expectedRecords.every((record) => (record.data === undefined) === "generator" in fixture.source),
 		).toBe(true);
@@ -198,13 +199,13 @@ describe("shared golden fragment-record fixtures (CONTRACT-r6 B3, senpi#4272)", 
 			rowKey: "row-sf1-fixture",
 			field: "content",
 			bytes: minted.length,
-			digest: sha256(minted),
+			digest: leafDigest(minted),
 		});
 		const changed = materializeSource(fixture.change?.source ?? { base64: "" });
 		expect(fixture.change?.viewRevision).toBe(42);
 		expect(changed.length).toBe(minted.length);
 		expectRecordSequence(fixture.input, changed);
-		expect(sha256(changed)).not.toBe(fixture.binding?.digest);
+		expect(leafDigest(changed)).not.toBe(fixture.binding?.digest);
 	});
 
 	it("out-of-order-offset: record 2's offset skips past the previous record's end", () => {
@@ -226,12 +227,12 @@ describe("shared golden fragment-record fixtures (CONTRACT-r6 B3, senpi#4272)", 
 			const fixture = JSON.parse(readFileSync(join(fixtureDirectory, file), "utf8"));
 			const source = decodeRuleSource(fixture.source);
 			expect(source.length, caseId).toBe(fixture.sourceLength);
-			expect(sha256(source), caseId).toBe(fixture.sourceDigest);
+			expect(leafDigest(source), caseId).toBe(fixture.sourceDigest);
 			// stale-ref delivers the changed value, so its records are cut from change.source.
 			const delivered = fixture.change === undefined ? source : decodeRuleSource(fixture.change.source);
 			if (fixture.change !== undefined) {
 				expect(delivered.length, caseId).toBe(fixture.change.sourceLength);
-				expect(sha256(delivered), caseId).toBe(fixture.change.sourceDigest);
+				expect(leafDigest(delivered), caseId).toBe(fixture.change.sourceDigest);
 			}
 			const records: FragmentRecord[] = fixture.kind === "valid" ? fixture.expectedRecords : fixture.input;
 			for (const [position, record] of records.entries()) {

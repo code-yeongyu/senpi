@@ -1,0 +1,54 @@
+{
+	"contract": "CONTRACT-r6",
+	"section": "B2",
+	"rulings": [
+		"RULING-57",
+		"RULING-58",
+		"RULING-68",
+		"RULING-68a"
+	],
+	"encoding": "expected.storedBytes is base64 of the node's exact stored bytes: the UTF-16LE code units of expected.text; expected.length is their byte count.",
+	"digestAlgorithm": "sha256",
+	"digestRule": "digest = lowercase hex SHA-256(u8 tagLength || tag || u64be byteLength || bytes) over the exact stored bytes, tag = ASCII 'senpi-recovery-catalog/1/utf16le/<domain>'. expected.digest uses domain 'node' (a node named by its parent's entry), expected.rootDigest domain 'root' (the node as the catalog root a manifest names); component entries use 'leaf'.",
+	"nodeRules": [
+		"text is one JSON object {\"format\":\"senpi-recovery-catalog\",\"version\":1,\"entries\":[...]} in that field order with no other field; each entry is {kind, id, length, digest} in that order, integers in canonical decimal.",
+		"An entry of kind 'node' is a child catalog node; any other kind is a component leaf. length and digest name the child's exact stored bytes."
+	],
+	"receiverRules": [
+		"Verify length and digest over the stored bytes before decoding; on a mismatch refuse the node (fail closed): decode nothing and use no entry."
+	],
+	"regenerate": "SENPI_WRITE_RECOVERY_GOLDENS=1 npx vitest run test/suite/regressions/4272-recovery-golden-pages.test.ts test/suite/regressions/4272-recovery-golden-nodes.test.ts (packages/coding-agent, senpi repository)",
+	"cases": [
+		{
+			"caseId": "leaf-node",
+			"file": "leaf-node.json",
+			"kind": "node",
+			"contractIds": [
+				"R4.B2",
+				"RULING-57",
+				"RULING-58",
+				"RULING-68a"
+			]
+		},
+		{
+			"caseId": "node-with-children",
+			"file": "node-with-children.json",
+			"kind": "node",
+			"contractIds": [
+				"R4.B2",
+				"RULING-57",
+				"RULING-68a"
+			]
+		},
+		{
+			"caseId": "node-digest-mismatch",
+			"file": "node-digest-mismatch.json",
+			"kind": "receiver",
+			"contractIds": [
+				"R4.B2",
+				"RULING-57",
+				"RULING-68a"
+			]
+		}
+	]
+}

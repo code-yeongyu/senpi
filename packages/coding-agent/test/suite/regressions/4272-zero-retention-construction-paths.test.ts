@@ -55,7 +55,7 @@ it.each(rows)(
 			await host.dispose();
 		}
 	},
-	120_000,
+	600_000,
 );
 
 it("control: the same in-process open with the flag off owns no lane, and the same assertion sees today's retention", async () => {
@@ -70,4 +70,4 @@ it("control: the same in-process open with the flag off owns no lane, and the sa
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);

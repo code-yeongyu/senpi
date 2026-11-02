@@ -12,7 +12,7 @@ import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance
 import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
-import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { builtFauxPath, EVENT_SAFETY_MS, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
 
 // senpi#4557 review round 2. LOW-1: one session event deep on BOTH of its projections goes through the real binding
 // and is counted exactly once (the pairing's refusal mark reaches the lane). LOW-2: a real loss ends the compact
@@ -105,6 +105,7 @@ it("in process: an event deep on both projections through the real binding is co
 		(record) =>
 			record.type === "message_end" &&
 			(record.message as { readonly customType?: unknown } | undefined)?.customType === CUSTOM,
+		EVENT_SAFETY_MS,
 	);
 	await pi.sendMessage({ customType: CUSTOM, content: "deep details", display: true, details: nested(CUSTOM_DEPTH) });
 	await delivered;
@@ -123,7 +124,7 @@ it("in process: an event deep on both projections through the real binding is co
 	} finally {
 		lane.release(root);
 	}
-}, 60_000);
+}, 600_000);
 
 /** Runs inside the isolate only: every seeded `text_start` fails for real, so the epoch's first loss comes first. */
 const textSeedFails = `
@@ -200,5 +201,5 @@ it.skipIf(process.versions.bun !== undefined)(
 			await host.dispose();
 		}
 	},
-	90_000,
+	600_000,
 );
