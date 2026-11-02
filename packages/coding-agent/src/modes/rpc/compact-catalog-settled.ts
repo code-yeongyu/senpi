@@ -16,6 +16,15 @@ import type { FrozenAcceptedRoot } from "./session-acceptance-lane.ts";
 const SETTLED = familyId("settled");
 const IDENTITY = familyId("identity");
 
+/**
+ * The settled member of the terminal a message ended at: `message-<terminalSequence>`. A compact peer's live
+ * `message_end` carries that `terminalSequence` and the row's `messageId` (RULING-120, #5331).
+ */
+export const settledMember = (terminalSequence: number) => memberId("message", terminalSequence);
+
+/** The identity member of this epoch's n-th entry join: `join-<n>`, whose `messageId` an `entry_appended` names. */
+const joinMember = (ordinal: number) => memberId("join", ordinal);
+
 /** A terminal as stored: its row, its payload (terminal record and correlation) spliced in, its paged call walked. */
 function terminalSteps(settled: SettledReader, row: TerminalRow, valid: () => void): Steps {
 	const { kind: _kind, payload, call, ...fields } = row;
@@ -40,7 +49,7 @@ export async function* settledComponents(
 	for await (const member of settled.members(reader.valid)) {
 		if (member.kind !== "terminal") continue;
 		const steps = terminalSteps(settled, member.row, reader.valid);
-		yield* stepsComponent(reader.store, SETTLED, memberId("message", member.row.terminalSequence), steps);
+		yield* stepsComponent(reader.store, SETTLED, settledMember(member.row.terminalSequence), steps);
 		count += 1;
 	}
 	if (count === 0) yield emptyComponent("settled");
@@ -63,6 +72,6 @@ export async function* identityComponents(
 	for await (const member of settled.members(reader.valid)) {
 		if (member.kind !== "owner") continue;
 		const join = JSON.stringify({ messageId: member.messageId, entryId: member.entryId });
-		yield* textComponent(reader.store, IDENTITY, memberId("join", member.ordinal), join);
+		yield* textComponent(reader.store, IDENTITY, joinMember(member.ordinal), join);
 	}
 }

@@ -32,7 +32,20 @@ export function maskServerIdentity(bytes: string): string {
 		.replace(/("engineOrdinal":)\[[0-9,]*\]/g, `$1"${ENGINE_ORDINAL}"`);
 }
 
-/** Normalize run paths/identities, not routing fields or frame kinds. Pages stay decodable and digest-valid:
+/** The token counts of a `usage` object: the faux provider derives them from the prompt's length, which varies by host. */
+const USAGE_TOKEN_KEYS: readonly string[] = ["input", "output", "cacheRead", "cacheWrite", "totalTokens"];
+
+/** A `usage` object with every token count masked to `<tokens>`; its keys and its cost stay as recorded. */
+function maskedUsage(usage: Readonly<Record<string, unknown>>): Record<string, unknown> {
+	return Object.fromEntries(
+		Object.entries(usage).map(([key, value]) => [
+			key,
+			USAGE_TOKEN_KEYS.includes(key) && typeof value === "number" ? "<tokens>" : value,
+		]),
+	);
+}
+
+/** Normalize run paths/identities and usage token counts, not routing fields or frame kinds. Pages stay decodable and digest-valid:
  * verify the REAL producer digest first, normalize the UTF-16 JSON content, then update its length/digest.
  * Digests naming unshipped catalog components are stable opaque aliases, not fabricated component payloads.
  */
@@ -64,6 +77,7 @@ export function normalizedTrace(input: unknown, root: string): unknown {
 		if (Array.isArray(value)) return value.map((item: unknown) => visit(item));
 		if (typeof value !== "object" || value === null) return value;
 		const record = value as Record<string, unknown>;
+		if (key === "usage") return visit(maskedUsage(record));
 		if (typeof record.serverVersion === "string" && record.serverVersion !== SERVER_VERSION)
 			return visit({
 				...record,

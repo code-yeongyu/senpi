@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-/** The recovery identity of one session record; never a property on the record, so no byte changes (R3.C1.2). */
+/**
+ * The recovery identity of one session record. It is never a property on the record a session produces, so every
+ * legacy record, and every record with the compact-updates flag off, keeps its bytes (R3.C1.2). One exception
+ * (RULING-120, senpi#5331): with the flag on, the RPC host stamps the copy it sends a `compact_events` peer of a live
+ * `message_end` (`messageId`, `terminalSequence`), `entry_appended` (`owningMessageId`) and `transcript_write_failed`
+ * (`messageId`) with the ids the settled store recorded for that message, so that peer can join the live record to its
+ * settled `message-<terminalSequence>` and `join-<n>` rows across a reconnect or recovery cut. The ids are opaque,
+ * stable for the message's lifetime and never reused in the session; nothing else carries them.
+ */
 export interface RecoveryCarrier {
 	readonly messageId: string;
 	/** Host-issued nonce, internal to the producer/lane handshake; never serialized with a public record. */

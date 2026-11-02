@@ -840,6 +840,42 @@ most 32 live event leases; past that it receives `{"type": "event_lease_refused"
 "lease_limit"}` and is closed, and a record the host cannot stage is refused the same way with
 `"storage_unavailable"`. Its end releases every lease it holds. Leases are released only by `release_recovery`.
 
+**Live message identity (senpi#5331, RULING-120).** A session record never carries its recovery identity as a
+property: legacy connections, and every connection with the flag off, receive exactly the bytes they always did.
+The one exception is the copy a `compact_events` connection receives behind the flag, so it can join a live record to
+the settled overlay it pages after a reconnect or a recovery cut without a second derivation of its own:
+
+- `message_end` gains `messageId` and `terminalSequence`: the `messageId` and `terminalSequence` of the message's
+  settled row, which a pending or failed terminal pages as the `settled` member `message-<terminalSequence>`
+  (sixteen digits) and a joined message pages as the `messageId` of its `identity` member `join-<n>`.
+- `entry_appended` carries the entry's ownership as a tri-state (senpi#5337, RULING-122):
+  - `owningMessageId` present: the entry joined a message, and this is that join member's `messageId`. The owner is
+    captured when the append is applied and kept for that entry, so transcript batches applied before its
+    `entry_appended` cannot drop it.
+  - `ownerUnknown: true`: the host cannot vouch for the entry's ownership. An owned entry the settled store never
+    joined (the epoch's transcript component was unavailable, or the store refused the join) carries it. At most 1,024
+    joins wait for their `entry_appended` at once; a join dropped at that bound is remembered by entry id. Both kinds
+    share one memory (up to 4,096 ids per epoch), and once that memory itself overflows, every entry of the epoch with
+    no join carries `ownerUnknown` until the next bootstrap, including entries no message owns (conservative by
+    design: never a false "not owned"). Resolve a dropped join through recovery's `identity` member `join-<n>` for
+    that entry id; an entry the store never joined has no such member.
+  - both absent: the entry is not message-owned, never a lost or pending join. This absence is normative only because
+    the host marks every entry it cannot vouch for with `ownerUnknown`.
+
+  The lane's status counts dropped joins (`ownerJoinsEvicted`) and ids dropped from that memory
+  (`ownerJoinsOverflowed`), and the host writes one stderr line at an epoch's first overflow. An `entry_appended`
+  carries its tri-state even when the host refused its canonical record at the protocol depth limit: the record is
+  still delivered, and it takes its entry's join like any other.
+- `transcript_write_failed` gains `messageId`: the failed terminal row's `messageId`.
+
+The host appends the fields after the record's own (`{"type": "message_end", ..., "sessionId": "rpc-1", "messageId":
+"...", "terminalSequence": 12}`; a leased record carries them inside its `record` component). They come from the
+settled store that writes those rows, not a parallel derivation. `messageId` is an opaque id with no message content,
+the same live and after recovery for the message's lifetime, and never reused in the session; `terminalSequence` is
+the record's accepted sequence in its `sessionEpoch`. A record with no settled row (an end the store refused, an entry
+no message owns) carries none of them; an entry whose ownership the host cannot vouch for carries `ownerUnknown: true`
+instead.
+
 #### release_recovery
 
 Behind the same flag, the consumer's receipt for an event lease (senpi#4272, S13). Send it only once the leased
