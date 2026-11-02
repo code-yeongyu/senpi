@@ -3,7 +3,11 @@ import { type AssistantMessageEvent, sanitizeProviderDiagnostic } from "@earendi
 import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
 import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import { emitProviderAccountsChanged } from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import {
+	emitProviderAccountFailover,
+	emitProviderAccountsChanged,
+} from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import type { SdkErrorKind } from "../extensions/builtin/anthropic-subscription/errors.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
@@ -100,6 +104,10 @@ function withPoolRetryAt(event: AssistantMessageEvent, retryAt: number): Assista
 	return providerDiagnostic === undefined ? event : { ...event, error: { ...event.error, providerDiagnostic } };
 }
 
+function failoverReason(block: CredentialBlock): SdkErrorKind {
+	return block.reason === "account_disabled" ? "billing" : block.reason;
+}
+
 export type CredentialRotationOptions = {
 	sources: RotationSources;
 	/** Stable session key keeps a session on its slot; absent, each request distributes. */
@@ -132,6 +140,9 @@ export function streamWithCredentialRotation(
 	const useAffinity = sources.policy?.affinity !== false;
 	const pooled: PooledCredential | undefined = sources.credential;
 	const now = sources.now ?? Date.now;
+	// The account a failover just left. The switch is announced once the next account's attempt starts,
+	// so RPC clients and the TUI hear "from -> to" only for a switch that actually happens (senpi#2304).
+	let leaving: { name: string; block: CredentialBlock } | undefined;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
@@ -145,7 +156,16 @@ export function streamWithCredentialRotation(
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
 			return winner;
 		},
-		runAttempt,
+		runAttempt: (slot) => {
+			if (leaving !== undefined && leaving.name !== slot.name) {
+				emitProviderAccountFailover(sources.providerId, leaving.name, slot.name, failoverReason(leaving.block));
+			}
+			leaving = undefined;
+			return runAttempt(slot);
+		},
+		onRotate: ({ slot, block, committedOutput }) => {
+			leaving = committedOutput ? undefined : { name: slot.name, block };
+		},
 		isCommittedOutput: isCommittedRotationOutput,
 		isStreamStart: isRotationStreamStart,
 		errorFromEvent: rotationErrorFromEvent,
