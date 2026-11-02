@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking Changes
+
+### Changed
+
+### Fixed
+
 ## [2026.11.02-1] - 2026-11-02
 
 ### Breaking Changes
