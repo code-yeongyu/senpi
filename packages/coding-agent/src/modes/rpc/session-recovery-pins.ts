@@ -125,7 +125,7 @@ export class SessionRecoveryPins {
 			(sessionId) =>
 				this.acceptance.has(sessionId)
 					? legacyResyncMessage(sessionId, roots.get(sessionId))
-					: Promise.resolve(this.replay.latestMessage(sessionId)),
+					: Promise.resolve({ message: this.replay.latestMessage(sessionId) }),
 			view,
 			this.replay.track,
 		);
