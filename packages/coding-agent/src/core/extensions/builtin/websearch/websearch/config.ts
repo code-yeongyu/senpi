@@ -45,6 +45,7 @@ const PROVIDERS: readonly SearchProvider[] = [
 	"exa-mcp",
 	"searxng",
 	"keenable",
+	"parallel",
 ];
 /** Engines that need no key or account; a block on any of them puts it on a per-session cooldown. */
 export const KEYLESS_PROVIDERS: ReadonlySet<SearchProvider> = new Set<SearchProvider>([
@@ -56,6 +57,7 @@ export const KEYLESS_PROVIDERS: ReadonlySet<SearchProvider> = new Set<SearchProv
 	"exa-mcp",
 	"searxng",
 	"keenable",
+	"parallel",
 ]);
 // These entries may omit apiKey: the search then uses the matching senpi login.
 const SESSION_LOGIN_PROVIDERS: readonly SearchProvider[] = ["chatgpt-subscription", "google"];
