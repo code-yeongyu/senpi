@@ -57,8 +57,8 @@ it("RULING-127 #5374 an old keyless block and a new keyed call reusing its toolC
 	await using host = await statusHost();
 	await writeFile(join(host.cwd, "note.txt"), "note body\n");
 	const sessionPath = writeSession(host.cwd, false, "old.jsonl");
-	const oldBytes = readFileSync(sessionPath, "utf8").trim().split("\n").slice(1);
 	const isOld = (line: string) => OLD_IDS.includes(String((JSON.parse(line) as Entry).id));
+	const oldBytes = readFileSync(sessionPath, "utf8").trim().split("\n").slice(1).filter(isOld);
 	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
 	const legacy = host.client("legacy");
 	const routing = String(dataOf(await legacy.request({ type: "open_session", cwd: host.cwd, sessionPath })).sessionId);
