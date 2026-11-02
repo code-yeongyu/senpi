@@ -86,7 +86,7 @@ function unwrapTodoList(value: unknown): unknown {
  * but prepared arguments flow to the agent loop's `beforeToolCall`/`afterToolCall` hooks, so
  * extension `tool_call`/`tool_result` hooks may observe it on the arguments they receive.
  */
-export const TODO_PREPARED_CORRECTIONS_KEY = "__todoPreparedCorrections";
+const TODO_PREPARED_CORRECTIONS_KEY = "__todoPreparedCorrections";
 
 function isPhaseRecord(value: unknown): value is { phase: string; items: unknown[] } {
 	return isRecord(value) && typeof value.phase === "string" && Array.isArray(value.items);
