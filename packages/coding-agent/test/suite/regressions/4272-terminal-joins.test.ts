@@ -32,7 +32,7 @@ for (const order of ["end-append", "append-end"] as const) {
 				operation();
 				const cut = await rig.cut();
 				held.push(cut);
-				const history = readTranscriptRoot(cut.root.transcript);
+				const history = await readTranscriptRoot(cut.root.transcript);
 				expect(history.ok).toBe(true);
 				const entries = history.ok ? history.entries.filter((entry) => entry.type === "message") : [];
 				expect(cut.settledMessages.length + entries.length).toBe(1);

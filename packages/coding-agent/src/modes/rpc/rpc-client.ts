@@ -7,14 +7,12 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { AssistantProgress, ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
-import type { BrowserEngine } from "../../core/browser-engine.ts";
 import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
-import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -22,19 +20,15 @@ import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
-
-/** A command the host refused; `errorCode` carries the typed code when the command defines one. */
-export class RpcCommandError extends Error {
-	readonly errorCode: string | undefined;
-	readonly errorData: unknown;
-
-	constructor(message: string, errorCode: string | undefined, errorData: unknown) {
-		super(message);
-		this.name = "RpcCommandError";
-		this.errorCode = errorCode;
-		this.errorData = errorData;
-	}
-}
+import { RpcCommandError } from "./rpc-command-error.ts";
+import { handleRpcReply } from "./rpc-client-replies.ts";
+import {
+	RpcClientAdmissions,
+	type CompactOpenResult,
+	type LegacyOpenResult,
+	type RpcOpenOptions,
+} from "./rpc-client-admissions.ts";
+export { RpcCommandError } from "./rpc-command-error.ts";
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
@@ -148,6 +142,8 @@ export type RpcClientEvent =
 	// The host accepted an open_session and says where it is queued; the client also uses it to
 	// switch that open to its post-acknowledgement deadline (senpi#2209).
 	| RpcOpenQueuedEvent
+	// A compact recovery cut resets each tool call still open at it (senpi#5298, senpi#5300); listeners receive it as is.
+	| (Extract<AssistantProgress, { type: "message_tool_arguments_reset" }> & { readonly sessionId?: string })
 	| { type: "bash_start" }
 	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
@@ -202,6 +198,7 @@ const MAX_PENDING_SESSION_EVENTS = 512;
 const MAX_PENDING_SESSION_EVENT_BYTES = 1024 * 1024;
 
 export class RpcClient {
+	readonly admissions = new RpcClientAdmissions((command) => this.send(command, false));
 	private process: ChildProcess | null = null;
 	private socket: Socket | null = null;
 	private stopReadingStdout: (() => void) | null = null;
@@ -456,35 +453,17 @@ export class RpcClient {
 		await this.send({ type: "set_client_info", width, capabilities }, this.sessionId !== undefined);
 	}
 
-	async openSession(options: {
-		attended?: false;
-		spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
-		/** Attach only on this generation; requires `expected_host_instance`. */
-		expectedHostInstance?: string;
-		sessionPath?: string;
-		cwd?: string;
-		provider?: string;
-		modelId?: string;
-		thinkingLevel?: ThinkingLevel;
-		permissionPreset?: string;
-		/** Keep the session alive when its last client disconnects; needs the host's `retain_on_disconnect`. */
-		retain_on_disconnect?: boolean;
-		/** Per-session auto-titling; needs the host's `auto_title_per_session`. */
-		auto_title?: boolean;
-		/** Where this session's replies render; needs the host's `prompt_surface` (`prompt_surface_chat` for `chat`). */
-		promptSurface?: PromptSurface;
-		/** Which browser this session's skills drive; needs the host's `browser_engine`. */
-		browserEngine?: BrowserEngine;
-		/** This session's own fallback policy, in memory only; needs the host's `retry_fallback_profile`. */
-		retryFallback?: SessionRetryFallbackProfile;
-		/** Caller env for this one session's tool subprocesses (senpi#4381); needs the host's `session_env`. */
-		env?: Record<string, string>;
-	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
+	async openSession(options: RpcOpenOptions & { admissionId: string }): Promise<CompactOpenResult>;
+	async openSession(options: RpcOpenOptions & { admissionId?: undefined }): Promise<LegacyOpenResult>;
+	async openSession(options: RpcOpenOptions): Promise<LegacyOpenResult | CompactOpenResult>;
+	async openSession(options: RpcOpenOptions): Promise<LegacyOpenResult | CompactOpenResult> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
 		try {
-			const response = await this.send({ type: "open_session", ...options }, false);
-			const opened = this.getData<{ sessionId: string; state: RpcSessionState; attached?: boolean }>(response);
+			const opened =
+				options.admissionId === undefined
+					? this.getData<LegacyOpenResult>(await this.send({ type: "open_session", ...options }, false))
+					: await this.admissions.open({ ...options, admissionId: options.admissionId });
 			this.sessionId = opened.sessionId;
 			this.compactions.clear();
 			this.pendingOpenSession = false;
@@ -1362,7 +1341,8 @@ export class RpcClient {
 					// Connection-level, not part of the agent's event stream.
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
-					event.type === "queued"
+					event.type === "queued" ||
+					event.type === "message_tool_arguments_reset"
 				)
 					return;
 				events.push(event);
@@ -1391,18 +1371,8 @@ export class RpcClient {
 	private handleLine(line: string): void {
 		try {
 			const data = JSON.parse(line);
-
-			// Check if it's a response to a pending request
-			if (data.type === "response" && data.id && this.pendingRequests.has(data.id)) {
-				const pending = this.pendingRequests.get(data.id)!;
-				this.pendingRequests.delete(data.id);
-				// Response hooks run synchronously inside the frame dispatch so ordering-sensitive
-				// contracts (e.g. optimistic-echo disposition) settle before the NEXT frame —
-				// never through the microtask scheduled by resolve().
-				pending.onResponse?.(data as RpcResponse);
-				pending.resolve(data as RpcResponse);
-				return;
-			}
+			if (handleRpcReply(data, this.pendingRequests, this.admissions)) return;
+			this.admissions.receive(data);
 
 			if (data.type === "queued" && typeof data.for_request === "string")
 				this.pendingRequests.get(data.for_request)?.onQueued?.(data.position);
@@ -1450,6 +1420,7 @@ export class RpcClient {
 	}
 
 	private notifyDisconnect(error: RpcTransportGoneError): void {
+		this.admissions.clear();
 		this.rejectPendingRequests(error);
 		if (!this.disconnectNotified && !this.stopping) {
 			this.disconnectNotified = true;
