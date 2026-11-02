@@ -1,3 +1,81 @@
+## 2026-11-01 - Recognize terminal-formatted Claude login output (senpi#5357)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-auth.ts` removes OSC (including OSC 8 hyperlinks, BEL- or ST-terminated) and CSI sequences with an explicit pattern that keeps the visible text, before extracting the fallback URL or checking success. Its anchored success pattern accepts the exact optional paste-prompt prefix and CRLF, while still requiring exit code 0.
+- The fallback URL is passed on only when it is an `https` URL on `claude.ai`, `claude.com`, `platform.claude.com` or `console.anthropic.com`, with no credentials and no explicit port.
+- The existing CLI login tests and subprocess fixture cover inline success, colored CRLF output, OSC 8 fallback links with `+` in the URL under both terminators, foreign fallback hosts, code submission, a wrong prefix before the success text, and a nonzero exit containing the success message.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-auth.ts` rejected a successful native login when `Login successful.` followed the paste prompt on the same line. The caller then rolled back that login. OSC 8 links also prevented fallback URL detection (senpi#5360).
+- `node:util`'s `stripVTControlCharacters` is not used because under Bun 1.4.4 it leaves an OSC 8 link whose URI contains `+` partly in place, and Claude's copy-code URL joins its scopes with `+`, so the fallback URL was still lost on the runtime senpi ships on.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-auth.ts` is the builtin provider's subprocess-output boundary, shared by browser and copy-code login. A separate extension cannot correct its completion result.
+
+### Expected merge conflict zones
+
+- LOW: the pattern constants, the stdout handler, and the close handler in `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-auth.ts`.
+
+## 2026-11-01 - Current-turn image markers stay module-private (senpi#5352)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts`: `CURRENT_TURN_IMAGES_OPENER` and `CURRENT_TURN_IMAGES_CLOSER` are no longer exported.
+
+### Why
+
+- Both are used only inside `prompt-bridge.ts`; exporting them (senpi#5276) made knip report two unused exports and turned main's Static checks red.
+
+### Why an extension could not handle it
+
+- The constants live in the builtin extension's own module; only its source can change their visibility.
+
+### Expected merge conflict zones
+
+- LOW: `prompt-bridge.ts` lines 41-42 only.
+
+## 2026-11-01 - Cold-seed history bytes stay the same when an image turn ends (senpi#5275)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/cold-seed-images.ts`: `replayHistoryImages` returns `{ history, currentTurn }`. Every tool image in the history becomes `coldSeedImageText.toolImage` (tool, call id, "not shown in the history"), pending or answered; a pending one is also returned in `currentTurn` under `coldSeedImageText.currentTurnToolOutput`, deduped and capped as before. A user upload carries `coldSeedImageText.userHistory` in every state (reworded so it is true for the in-progress turn's upload too). `coldSeedImageText.answered` and `toolOutput` are gone.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts`: `currentTurn` goes after `</conversation_history>` inside `<current_turn_tool_images>` (`CURRENT_TURN_IMAGES_OPENER` / `_CLOSER`), past the cache breakpoint.
+
+### Why
+
+- With resume off, a tool image flipped from inline image to the `already seen` note, and a turn's upload from unlabeled to the history label, when the turn ended. The next rebuilt prompt diverged at that turn's first image, and past the ~20-block cache lookback the whole history was written to the cache again (senpi#5275: 52,922 read / 645,236 written with system and tools unchanged).
+
+### Why an extension could not handle it
+
+- The flattened cold-seed prompt is built inside this builtin provider before any extension sees the request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `replayHistoryImages` and its call in `buildPromptBlocks`; #5098 (native frame replay) also edits the cold-seed path of `prompt-bridge.ts`.
+
+## 2026-10-23 - Retry response identity belongs to the retained attempt (senpi#4058)
+
+### What changed
+
+- `auth-attempt.ts` notifies the stream when an authenticated attempt starts, including resident attempts; `auth-lane.ts` and `session-stream.ts` carry that callback.
+- `stream.ts` resets the response ID, usage, and streamed-shape flag at that boundary. The first response ID still wins within one attempt, but a discarded attempt no longer supplies the ID for a successful retry's usage. A result-only retry also starts with fresh stream-shape bookkeeping.
+- Regression coverage includes retained result-only replies without usage metadata on all three lanes: their context usage stays `null`, rather than retaining the discarded request's counts.
+
+### Why
+
+- A pre-content SDK retry could return the failed attempt's ID with the successful attempt's usage, so downstream Usage could not pair the response with its SDK transcript (desktop#4152).
+
+### Why an extension could not handle it
+
+- The bundled provider owns authenticated retries and the assistant output before session persistence.
+
+### Expected merge conflict zones
+
+- Authenticated attempt inputs, resident auth-lane wiring, and the stream's initial output state.
+
 ## 2026-10-30 - Account remedies are distinct from health and listing notices (senpi#3347)
 
 ### What changed

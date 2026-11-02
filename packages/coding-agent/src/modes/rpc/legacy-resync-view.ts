@@ -11,8 +11,15 @@ export interface FrozenResyncView {
 	readonly onRelease: () => void;
 }
 
-/** What one session resumes from: null when it has nothing, else the message a legacy consumer holds at the cut. */
-export type ResyncMessageSource = (sessionId: string) => Promise<unknown>;
+/**
+ * What one session resumes from: the message a legacy consumer holds at the cut (null when it has nothing), and the
+ * frames that follow its `resync_required` before any captured record (RULING-115: an open tool call's reset).
+ */
+export interface ResyncResume {
+	readonly message: unknown;
+	readonly frames?: readonly Readonly<Record<string, unknown>>[];
+}
+export type ResyncMessageSource = (sessionId: string) => Promise<ResyncResume>;
 
 class ResyncCursor extends GeneratedFramesCursor implements ResyncCut {
 	readonly sessions: readonly string[];
@@ -30,14 +37,16 @@ async function* resyncFrames(
 ): AsyncGenerator<string> {
 	for (const sessionId of entries()) {
 		const closed = view.closedNow(sessionId);
+		const { message, frames = [] } = closed ? { message: null } : await messageOf(sessionId);
 		const resync: RpcSessionResyncRequired = {
 			type: "resync_required",
 			sessionId,
 			reason: view.reason,
-			message: closed ? null : await messageOf(sessionId),
+			message,
 			...(closed ? { closed: true as const } : {}),
 		};
-		yield serializeJsonLine(view.placeholders ? omitNormalInlineMedia(resync) : resync);
+		for (const frame of [resync, ...frames.map((frame) => ({ ...frame, sessionId }))])
+			yield serializeJsonLine(view.placeholders ? omitNormalInlineMedia(frame) : frame);
 	}
 }
 
