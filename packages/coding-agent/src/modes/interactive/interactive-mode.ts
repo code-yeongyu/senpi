@@ -36,6 +36,7 @@ import {
 	type Component,
 	Container,
 	decodeKittyPrintable,
+	encodeProgramStatus,
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
@@ -43,6 +44,7 @@ import {
 	Markdown,
 	matchesKey,
 	outerKittyGraphicsMode,
+	type ProgramStatus,
 	SelectList,
 	Spacer,
 	sanitizeTerminalLabel,
@@ -1037,6 +1039,9 @@ export class InteractiveMode {
 	private hookStatusIntervalId: NodeJS.Timeout | undefined = undefined;
 	private activeToolTerminalTitle: string | undefined = undefined;
 	private extensionTerminalTitle: string | undefined = undefined;
+	/** The OSC 7501 report last written while a status is active; undefined once cleared. */
+	private programStatusSequence: string | undefined = undefined;
+	private programStatusClosed = false;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -1856,6 +1861,15 @@ export class InteractiveMode {
 
 	private updateTerminalTitle(): void {
 		this.applyTerminalTitle();
+	}
+
+	private setProgramStatus(status: ProgramStatus | undefined): void {
+		if (this.programStatusClosed) return;
+		const sequence = encodeProgramStatus(status, APP_COMMAND);
+		if (status === undefined ? this.programStatusSequence === undefined : sequence === this.programStatusSequence)
+			return;
+		this.programStatusSequence = status === undefined ? undefined : sequence;
+		if (process.stdout.isTTY) this.ui.terminal.write(sequence);
 	}
 
 	/**
@@ -3110,7 +3124,9 @@ export class InteractiveMode {
 			if (opts.signal?.aborted) return undefined as T;
 			return await show();
 		}
-		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
+		// A dialog about a tool call is a permission request (ExtensionUIDialogOptions.toolCallId).
+		const kind = opts?.toolCallId === undefined ? {} : { kind: "permission" as const };
+		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id, ...kind });
 		try {
 			return await show();
 		} finally {
@@ -3803,6 +3819,7 @@ export class InteractiveMode {
 				this.extensionTerminalTitle = title;
 				this.applyTerminalTitle();
 			},
+			setProgramStatus: (status) => this.setProgramStatus(status),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => insertProgrammaticComposerInput(this.editor, `\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
@@ -10402,6 +10419,9 @@ export class InteractiveMode {
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
+		// The terminal drops working/blocked records only when the process exits; clear before handing it back.
+		this.setProgramStatus(undefined);
+		this.programStatusClosed = true;
 		this.clearStatusIndicator();
 		this.clearPendingTools();
 		this.stopChatToolAnimations();

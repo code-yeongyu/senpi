@@ -1,5 +1,13 @@
+/** How the user must act on a block, as OSC 7501 names it: a permission approval or a typed answer. */
+export type HerdrBlockedKind = "permission" | "question";
+
+export interface HerdrBlock {
+	readonly label?: string;
+	readonly kind?: HerdrBlockedKind;
+}
+
 export interface HerdrState {
-	readonly blocked: ReadonlyMap<string, string | undefined>;
+	readonly blocked: ReadonlyMap<string, HerdrBlock>;
 	readonly turnActive: boolean;
 	readonly childCount: number;
 	readonly monitorCount: number;
@@ -7,7 +15,7 @@ export interface HerdrState {
 }
 
 export type HerdrStateEvent =
-	| { type: "blocked"; active: boolean; id: string; label?: string }
+	| { type: "blocked"; active: boolean; id: string; label?: string; kind?: HerdrBlockedKind }
 	| { type: "turn"; active: boolean }
 	| { type: "children"; count: number }
 	| { type: "monitors"; count: number }
@@ -50,7 +58,7 @@ export function reduceHerdrState(state: HerdrState, event: HerdrStateEvent): Her
 		case "blocked": {
 			if (state.blocked.has(event.id) === event.active) return state;
 			const blocked = new Map(state.blocked);
-			if (event.active) blocked.set(event.id, event.label);
+			if (event.active) blocked.set(event.id, { label: event.label, kind: event.kind });
 			else blocked.delete(event.id);
 			return { ...state, blocked };
 		}
@@ -58,7 +66,7 @@ export function reduceHerdrState(state: HerdrState, event: HerdrStateEvent): Her
 }
 
 export function selectHerdrReport(state: HerdrState): HerdrReport {
-	if (state.blocked.size > 0) return { state: "blocked", message: state.blocked.values().next().value };
+	if (state.blocked.size > 0) return { state: "blocked", message: state.blocked.values().next().value?.label };
 	const parts: string[] = [];
 	const childCount = Math.max(state.childCount, state.wakeSources.get("senpi-task") ?? 0);
 	if (childCount > 0) parts.push(`${childCount} subagent${childCount === 1 ? "" : "s"} running`);
@@ -73,7 +81,14 @@ export function selectHerdrReport(state: HerdrState): HerdrReport {
 		: { state: "idle" };
 }
 
-export function isHerdrBlockedEvent(data: unknown): data is { active: boolean; id: string; label?: string } {
+/** The kind of the block the report shows, the oldest open one, matching `selectHerdrReport`'s message. */
+export function selectHerdrBlockedKind(state: HerdrState): HerdrBlockedKind | undefined {
+	return state.blocked.values().next().value?.kind;
+}
+
+export function isHerdrBlockedEvent(
+	data: unknown,
+): data is { active: boolean; id: string; label?: string; kind?: HerdrBlockedKind } {
 	return (
 		typeof data === "object" &&
 		data !== null &&
@@ -82,6 +97,7 @@ export function isHerdrBlockedEvent(data: unknown): data is { active: boolean; i
 		"id" in data &&
 		typeof data.id === "string" &&
 		data.id.length > 0 &&
-		(!("label" in data) || data.label === undefined || typeof data.label === "string")
+		(!("label" in data) || data.label === undefined || typeof data.label === "string") &&
+		(!("kind" in data) || data.kind === undefined || data.kind === "permission" || data.kind === "question")
 	);
 }

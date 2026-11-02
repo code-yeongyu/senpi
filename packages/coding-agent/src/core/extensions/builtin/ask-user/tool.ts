@@ -222,6 +222,7 @@ export function startQuestion(
 		active: true,
 		label: first ? `${first.header} - ${first.question}` : "Question",
 		id: request.requestId,
+		kind: "question",
 	});
 	signal?.addEventListener("abort", abort, { once: true });
 	let draft: { answers: QuestionResponse["answers"]; comment?: string } = { answers: {} };
