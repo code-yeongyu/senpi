@@ -368,6 +368,8 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 				);
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
 			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
+			if (message.origin !== undefined)
+				connectionRoles.declareOrigin(roleConnection(message.connection), message.origin);
 			const activeBinding = binding;
 			const run = () => activeBinding.handle(message.command);
 			await workerAdmissionCommand(message, writer, issuedOwners, run);
