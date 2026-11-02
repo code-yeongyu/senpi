@@ -10,6 +10,7 @@ import { exaMcpProvider } from "./providers/exa-mcp.ts";
 import { googleProvider } from "./providers/google.ts";
 import { googleCseProvider } from "./providers/google-cse.ts";
 import { googleHtmlProvider } from "./providers/google-html.ts";
+import { jinaProvider } from "./providers/jina.ts";
 import { kagiProvider } from "./providers/kagi.ts";
 import { keenableProvider } from "./providers/keenable.ts";
 import { kimiProvider } from "./providers/kimi.ts";
@@ -60,6 +61,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	"exa-mcp": exaMcpProvider,
 	searxng: searxngProvider,
 	keenable: keenableProvider,
+	jina: jinaProvider,
 };
 
 function buildContext(config: SearchProviderConfig, request: SearchRequest): BuildContext {

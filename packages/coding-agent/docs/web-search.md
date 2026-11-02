@@ -75,9 +75,11 @@ A config file replaces the free default completely: senpi uses only the provider
 | `nativeModel` | The model native search runs on; see [Choosing the model native search runs on](#choosing-the-model-native-search-runs-on). |
 | `providers[]` | The providers to use. Each entry takes `provider`, and optionally `id`, `apiKey`, `baseUrl`, `maxResults`, `timeoutMs`, `priority`, `weight`, `allowedDomains` or `blockedDomains`. |
 
-Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, `searxng`, and `keenable`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai` (plus `searchEngineId` for `google-cse`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
+Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, `searxng`, and `keenable`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai`, `jina` (plus `searchEngineId` for `google-cse`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
 
 `keenable` ([Keenable](https://keenable.ai)) takes an `apiKey` but also works without one: a keyed entry posts to `https://api.keenable.ai/v1/search` with `X-API-Key`, while a keyless entry uses the shared public tier at `/v1/search/public` and identifies itself with an `X-Keenable-Title` app header instead of a credential. Because the public tier is a per-IP pool, `keenable` is never in the no-config default chain — list it explicitly in `websearch.json`. A single `allowedDomains` entry maps to Keenable's native `site` filter; multiple or blocked domains stay `site:`/`-site:` terms in the query.
+
+`jina` ([Jina Reader](https://jina.ai/reader)) needs an `apiKey`. It sends the query in the URL path of `https://s.jina.ai`, with the result count as `count` (1-20) and `X-Respond-With: no-content` so the answer carries titles and descriptions instead of page text. A single `allowedDomains` entry becomes Jina's host-only `X-Site` filter; multiple or blocked domains stay `site:`/`-site:` terms in the query.
 
 ## Limit or turn off the free engines
 

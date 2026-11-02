@@ -45,6 +45,7 @@ const PROVIDERS: readonly SearchProvider[] = [
 	"exa-mcp",
 	"searxng",
 	"keenable",
+	"jina",
 ];
 /** Engines that need no key or account; a block on any of them puts it on a per-session cooldown. */
 export const KEYLESS_PROVIDERS: ReadonlySet<SearchProvider> = new Set<SearchProvider>([
