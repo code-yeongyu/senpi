@@ -27,6 +27,7 @@ import { serperProvider } from "./providers/serper.ts";
 import type { BuildContext, FetchedPage, PageFetcher, ProviderModule, ResponseFormat } from "./providers/shared.ts";
 import { parseObjectPayload, resolveDomainFilters } from "./providers/shared.ts";
 import { startpageProvider } from "./providers/startpage.ts";
+import { syntheticProvider } from "./providers/synthetic.ts";
 import { tavilyProvider } from "./providers/tavily.ts";
 import { tinyfishProvider } from "./providers/tinyfish.ts";
 import { xaiProvider } from "./providers/xai.ts";
@@ -72,6 +73,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	public: publicProvider,
 	jina: jinaProvider,
 	tinyfish: tinyfishProvider,
+	synthetic: syntheticProvider,
 };
 
 /** A count chosen for one call outranks a provider entry's own value, which outranks the caller's default. */

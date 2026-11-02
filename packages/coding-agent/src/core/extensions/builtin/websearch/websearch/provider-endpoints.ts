@@ -30,6 +30,7 @@ const DEFAULT_PROVIDER_URLS: Record<Exclude<SearchProvider, "searxng" | "public"
 	openrouter: "https://openrouter.ai/api/v1",
 	jina: "https://s.jina.ai",
 	tinyfish: "https://api.search.tinyfish.ai",
+	synthetic: "https://api.synthetic.new/v2/search",
 };
 
 /** SearXNG is self-hosted, so it has no default endpoint; config validation requires its `baseUrl`. */
