@@ -104,6 +104,48 @@ describe("tool_search boots without a session start (RT5a)", () => {
 		expect(getCatalog).not.toHaveBeenCalled();
 	});
 
+	it("runs no tool-search tool hook on a session's tool calls", async () => {
+		// Regression for senpi#5320: a session's tool calls must emit no tool_hook_status for tool-search.
+		// Given a session whose session_start ran, with the runner's tool-hook lifecycle observed.
+		const { harness } = await runtimeWithoutSessionStart(["records_lookup"]);
+		const runner = harness.getExtensionRunner();
+		await runner.emit({ type: "session_start", reason: "startup" });
+		const hookRuns: string[] = [];
+		runner.setToolHookLifecycleObserver((event) => hookRuns.push(`${event.extensionPath}:${event.phase}`));
+		// When tool calls arrive.
+		await toolCall(runner, "call-1");
+		await toolCall(runner, "call-2");
+		// Then tool-search ran no tool hook.
+		expect(hookRuns.filter((run) => run.startsWith("<builtin:tool-search>"))).toEqual([]);
+	});
+
+	it("emits the same tool hook statuses in a session as a session without tool-search", async () => {
+		// Regression for senpi#5320: tool-search must add nothing to a session's tool hook statuses.
+		const hookStatuses = async (withToolSearch: boolean): Promise<string[]> => {
+			const extensionsResult = await createTestExtensionsResult([
+				...(withToolSearch ? [{ path: "<builtin:tool-search>", factory: toolSearchExtension }] : []),
+				{
+					path: "/extensions/probe.ts",
+					factory: (pi: ExtensionAPI) => {
+						pi.on("tool_call", () => undefined);
+					},
+				},
+			]);
+			const harness = await createHarness({ resourceLoader: createTestResourceLoader({ extensionsResult }) });
+			open.push(harness);
+			const runner = harness.getExtensionRunner();
+			await runner.emit({ type: "session_start", reason: "startup" });
+			const statuses: string[] = [];
+			runner.setToolHookLifecycleObserver((event) => statuses.push(`${event.extensionPath}:${event.phase}`));
+			await toolCall(runner, "call-1");
+			await toolCall(runner, "call-2");
+			return statuses;
+		};
+		// Given one session with tool-search and one without, each with the same probe tool hook.
+		// When each sees the same tool calls, then both emit the same hook statuses.
+		expect(await hookStatuses(true)).toEqual(await hookStatuses(false));
+	});
+
 	it("boots once for a runtime whose contexts have no session manager", async () => {
 		// Given a runner without a session manager over a runtime that can list its tools.
 		const { harness, service, extensionsResult } = await runtimeWithoutSessionStart(["records_lookup"]);

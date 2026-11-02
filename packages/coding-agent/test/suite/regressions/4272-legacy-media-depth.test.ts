@@ -146,7 +146,7 @@ it("in process: a media-placeholder client receives a 4,000-deep tool result unc
 }, 600_000);
 
 /** One real placeholder-writer delivery, with exact refusal/reporting and two-turn survival assertions. */
-async function writerDelivers(depth: number): Promise<boolean> {
+async function writerDelivers(depth: number, expectedDelivered?: boolean): Promise<boolean> {
 	let accepted: boolean | undefined;
 	const { records, refusals, stderr } = await inProcess((host, sessionId) => {
 		accepted = enqueueLegacyRecord(host.writer, sessionId, deepToolEnd(depth, new Date(0)));
@@ -154,7 +154,8 @@ async function writerDelivers(depth: number): Promise<boolean> {
 	expect(accepted, "consumed, not an overflow or a closed session").toBe(true);
 	const ends = records.filter(isDeepEnd);
 	const delivered = ends.length === 1;
-	expect(ends).toHaveLength(delivered ? 1 : 0);
+	if (expectedDelivered !== undefined) expect(ends).toHaveLength(expectedDelivered ? 1 : 0);
+	else expect(ends.length).toBeLessThanOrEqual(1);
 	if (delivered) {
 		expect(blockOf(ends[0])).toMatchObject({ type: "image_ref", ref: { toolCallId: "call_deep", contentIndex: 1 } });
 		let details = detailsOf(ends[0]);
@@ -168,7 +169,7 @@ async function writerDelivers(depth: number): Promise<boolean> {
 		expect(details).toBe(new Date(0).toISOString());
 		expect(ends[0]).toMatchObject({ isError: false });
 	}
-	expect(refusals, "refusals counted exactly").toBe(delivered ? 0 : 1);
+	expect(refusals ?? 0, "refusals counted exactly").toBe(delivered ? 0 : 1);
 	expect(
 		stderr.filter((line) => REFUSED.test(line)),
 		"refusals reported exactly",
@@ -181,7 +182,8 @@ async function writerDelivers(depth: number): Promise<boolean> {
 }
 
 it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typed over-engine refusal", async () => {
-	// Node 26 measurements: 5888/5889 split; 4990-vs-5246 disagreed across call sites; Lw-256 refused.
+	// Single-host Node 26 examples: 5888/5889 split; 4990-vs-5246 disagreed across call sites; Lw-256 refused.
+	// Another host measured P around 5407; these are examples, not portable expected values.
 	// Near-boundary replays are deliberately absent: the Node 26 delivery-path stack budget shifts by >=257
 	// levels with call context. Bisection measures Lw once; P is the independent native-only probe LIMIT.
 	let low = 0;
@@ -196,9 +198,10 @@ it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typ
 		LIMIT - 512,
 	);
 	const depth = Math.floor(Math.min(LIMIT, low) / 2);
-	console.log(`RULING-105 media Lw=${low} P=${LIMIT} far=${depth}`);
-	for (let repeat = 0; repeat < 3; repeat++) expect(await writerDelivers(depth), "far depth delivered").toBe(true);
-	expect(await writerDelivers(OVER_ENGINE), "over-engine refused").toBe(false);
+	process.stdout.write(`RULING-105 media Lw=${low} P=${LIMIT} far=${depth}\n`);
+	for (let repeat = 0; repeat < 3; repeat++)
+		expect(await writerDelivers(depth, true), "far depth delivered").toBe(true);
+	expect(await writerDelivers(OVER_ENGINE, false), "over-engine refused").toBe(false);
 }, 300_000);
 
 const isolatePrelude = `

@@ -134,7 +134,10 @@ const isObject = (value: StoreValue | undefined): value is JsonlObject =>
 /**
  * SessionManager's v1 -> v2 step with ids derived from position instead of random, so a reopen keeps the ids it
  * imported. Like SessionManager it walks every line after reading (header at index 0), so `firstKeptEntryIndex`
- * resolves the same way; a non-object line is kept but takes no id (SessionManager would throw on a primitive).
+ * resolves the same way. A non-object line is kept but takes no id, and the chain links around it. SessionManager
+ * differs (senpi#5214): it throws on a primitive line; it gives an array line an id that JSON drops on save, so the
+ * next entry's `parentId` and a `firstKeptEntryId` aimed at that line dangle. Here the next entry links to the previous
+ * object entry and that `firstKeptEntryId` stays unset.
  */
 function migrateV1(values: StoreValue[]): void {
 	let previous: string | null = null;
@@ -195,8 +198,10 @@ function parse(bytes: Uint8Array): {
 	const keys = new Set<string>();
 	const entries = entryLines.map((line, index): LocatedRecord => {
 		if (isObject(line.value) && line.value.type === "session") throw new Error("Duplicate JSONL session entry");
-		// SessionManager keeps a line without a string id; the store still needs a key, taken from its position.
-		const key = isObject(line.value) && typeof line.value.id === "string" ? line.value.id : `~line-${index}`;
+		// SessionManager keeps a line without a string id; the store still needs a key, taken from its position. A real
+		// id starting with "~" gets one more "~", so it can never equal a positional `~line-N` key (senpi#5214).
+		const id = isObject(line.value) && typeof line.value.id === "string" ? line.value.id : undefined;
+		const key = id === undefined ? `~line-${index}` : id.startsWith("~") ? `~${id}` : id;
 		if (keys.has(key)) throw new Error("Duplicate JSONL session entry");
 		keys.add(key);
 		return { ...line, key, stored: stored(line.value, line.raw) };

@@ -52,7 +52,7 @@ export function createDispatchAuthorizer(
 			return {
 				action,
 				fingerprint: JSON.stringify([
-					ctx.sessionManager.getSessionId(),
+					ctx.sessionManager === undefined ? "" : ctx.sessionManager.getSessionId(),
 					ctx.cwd,
 					state.preset === "auto",
 					decisions,
