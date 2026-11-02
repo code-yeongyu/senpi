@@ -9,9 +9,9 @@ import {
 	type TranscriptUnavailableReason,
 	type TranscriptPersistence,
 } from "../../core/session-transcript-journal.ts";
+import { stageBootstrap, TailBudget, type TailReadFailure, TranscriptTail } from "./accepted-transcript-tail.ts";
+import { type StagedContent, StagedReadError, type TransferStaging } from "./compact-transfer-staging.ts";
 
-/** One worker frame's worth of unwritten entries; persisted history consumes no content budget. */
-export const DEFAULT_TRANSCRIPT_TAIL_BYTES = 16 * 1024 * 1024;
 /**
  * What an epoch keeps of every accepted entry after persistence released its text: its id, kind and parent link
  * (RULING-61 Q1 = C). Each record is charged no less than the heap it holds, so this budget bounds the retained heap
@@ -65,12 +65,6 @@ class AcceptedEntries implements Iterable<AcceptedEntry> {
 	}
 }
 
-interface TranscriptTail {
-	readonly entries: Map<number, string>;
-	retainedBytes: number;
-	persistence: TranscriptPersistence | null;
-}
-
 /**
  * A cut names its base and accepted ids. Its shared tail releases content only once the captured file covers it;
  * persistence may change the source of those exact entries, never the accepted count.
@@ -89,7 +83,7 @@ export interface TranscriptRoot {
 
 export type TranscriptRead =
 	| { readonly ok: true; readonly entries: readonly FileEntry[] }
-	| { readonly ok: false; readonly error: PersistedBaseError | TranscriptUnavailableReason };
+	| { readonly ok: false; readonly error: PersistedBaseError | TranscriptUnavailableReason | TailReadFailure };
 
 /** The transcript component of one epoch, changed only by accepted transitions (R3.C1.1). */
 export class AcceptedTranscript {
@@ -102,8 +96,23 @@ export class AcceptedTranscript {
 	/** Each distinct kind once per epoch, so every record of a kind shares one string whatever the producer sent. */
 	private kindNames = new Map<string, string>();
 	private ancestryBytes = 0;
-	private tail: TranscriptTail = { entries: new Map(), retainedBytes: 0, persistence: null };
+	private readonly staging: TransferStaging;
+	/** One bound for this epoch's tails, a superseded tail a live cut still holds included (carry 65a). */
+	private readonly budget = new TailBudget();
+	private tail: TranscriptTail;
 	private unavailable: TranscriptUnavailableReason | null = null;
+	/**
+	 * The first entry whose text the tail bound refused, while that is the only reason the version is unavailable
+	 * (RULING-80 (4)): later entries still record their identity, no text is kept outside the budget, and the version
+	 * reads whole again once every entry from here on is durable.
+	 */
+	private missingFrom: number | undefined;
+
+	/** Entry texts are staged into, and spill through, the owning lane's staging store (S12a). */
+	constructor(staging: TransferStaging) {
+		this.staging = staging;
+		this.tail = new TranscriptTail(staging, null, this.budget);
+	}
 
 	get historyVersion(): number {
 		return this.version;
@@ -113,21 +122,34 @@ export class AcceptedTranscript {
 		return this.unavailable === null;
 	}
 
-	apply(transition: TranscriptTransition): void {
+	/**
+	 * Applies a bootstrap whose entry texts the internal bootstrap reader staged first: a bootstrap refused at a bound
+	 * leaves the epoch's transcript typed unavailable with nothing kept, never partial.
+	 */
+	bootstrap(transitions: readonly TranscriptTransition[]): void {
+		const staged = stageBootstrap(this.staging, transitions);
+		if (!staged) return this.markUnavailable("transcript_tail_over_byte_limit");
+		try {
+			for (const transition of transitions) this.apply(transition, staged.get(transition));
+		} finally {
+			for (const content of staged.values()) this.staging.abandon(content);
+		}
+	}
+
+	/** `staged`: the append's entry text, already staged by the bootstrap reader; this transcript adopts it if kept. */
+	apply(transition: TranscriptTransition, staged?: StagedContent): void {
 		this.version += 1;
 		if (transition.kind === "replace") {
+			this.tail.supersede();
 			this.base = transition.base;
 			this.entryIds = [];
 			this.kinds = [];
 			this.parents = [];
 			this.kindNames = new Map();
 			this.ancestryBytes = 0;
-			this.tail = {
-				entries: new Map(),
-				retainedBytes: 0,
-				persistence: transition.base,
-			};
+			this.tail = new TranscriptTail(this.staging, transition.base, this.budget);
 			this.unavailable = null;
+			this.missingFrom = undefined;
 			return;
 		}
 		if (transition.kind === "unavailable") {
@@ -138,21 +160,16 @@ export class AcceptedTranscript {
 			this.persisted(transition.persistence);
 			return;
 		}
-		if (this.unavailable !== null) return;
+		if (this.unavailable !== null && this.missingFrom === undefined) return;
 		if (transition.kind === "append") {
 			const index = this.entryIds.length;
 			if (!this.retainAncestry(transition.id, transition.type, transition.parentId)) return;
 			if (transition.persistence) this.persisted(transition.persistence);
-			if (index + (this.base?.count ?? 0) >= (this.tail.persistence?.count ?? 0)) {
-				const bytes = Buffer.byteLength(transition.entry ?? "");
-				if (this.tail.retainedBytes + bytes > DEFAULT_TRANSCRIPT_TAIL_BYTES) {
-					this.markUnavailable("transcript_tail_over_byte_limit");
-					return;
-				}
-				if (transition.entry !== undefined) {
-					this.tail.entries.set(index, transition.entry);
-					this.tail.retainedBytes += bytes;
-				}
+			const unpersisted = index + (this.base?.count ?? 0) >= (this.tail.persistence?.count ?? 0);
+			if (this.missingFrom === undefined && unpersisted && transition.entry !== undefined) {
+				const content = staged ?? this.tail.stage(index, transition.entry);
+				if (content) this.tail.adopt(index, content);
+				else this.markUnavailable("transcript_tail_over_byte_limit", index);
 			}
 			this.leafId = transition.id;
 		} else this.leafId = transition.leafId;
@@ -183,7 +200,9 @@ export class AcceptedTranscript {
 		return true;
 	}
 
-	private markUnavailable(reason: TranscriptUnavailableReason): void {
+	/** `missingFrom` marks a tail-bound refusal recoverable; any other reason, or a second one, stays for the version. */
+	private markUnavailable(reason: TranscriptUnavailableReason, missingFrom?: number): void {
+		this.missingFrom = this.unavailable === null ? missingFrom : undefined;
 		this.unavailable ??= reason;
 		process.stderr.write(`senpi rpc acceptance: transcript component unavailable: ${reason}\n`);
 	}
@@ -202,37 +221,55 @@ export class AcceptedTranscript {
 	}
 
 	private persisted(persistence: TranscriptPersistence): void {
-		this.tail.persistence = persistence;
-		for (const [index, entry] of this.tail.entries) {
-			if (index + (this.base?.count ?? 0) >= persistence.count) break;
-			this.tail.retainedBytes -= Buffer.byteLength(entry);
-			this.tail.entries.delete(index);
+		this.tail.persisted(persistence, this.base?.count ?? 0);
+		// Every entry the version holds no text for is now read from the file by identity (RULING-80 (4)).
+		if (this.missingFrom !== undefined && persistence.count - (this.base?.count ?? 0) >= this.entryIds.length) {
+			this.missingFrom = undefined;
+			this.unavailable = null;
 		}
+	}
+
+	/** Releases the epoch's tail content once no root of it can be read any longer. */
+	release(): void {
+		this.tail.releaseAll();
 	}
 }
 
-/** The root's entries: its base read only through the captured identity, then its own accepted values. */
-export function readTranscriptRoot(root: TranscriptRoot): TranscriptRead {
+/**
+ * The root's entries: its base read only through the captured identity, then its own accepted values from its own
+ * segments, held for the whole read so a persistence report during it cannot drop what it reads. A segment read by
+ * identity that is gone or holds other bytes is typed, never other content (RULING-78 (2)).
+ */
+export async function readTranscriptRoot(root: TranscriptRoot): Promise<TranscriptRead> {
 	if (root.unavailable !== null) return { ok: false, error: root.unavailable };
-	const persistence = root.tail.persistence;
-	const persistedCount = Math.min(root.count, Math.max(0, (persistence?.count ?? 0) - (root.base?.count ?? 0)));
-	const base =
-		root.base ??
-		(persistence && {
-			fileIdentity: persistence.fileIdentity,
-			count: 0,
-			idFingerprint: createHash("sha256").digest("hex"),
-			contentFingerprint: new BaseContentHash().digest(),
-		});
-	const persisted = base
-		? readPersistedBase(base, root.accepted.idsBefore(persistedCount))
-		: { ok: true as const, entries: [] };
-	if (!persisted.ok) return persisted;
-	const entries = [...persisted.entries];
-	for (let index = persistedCount; index < root.count; index++) {
-		const entry = root.tail.entries.get(index);
-		if (entry === undefined) return { ok: false, error: "transcript_tail_trimmed" };
-		entries.push(JSON.parse(entry) as FileEntry);
+	const hold = root.tail.hold(root.count, root.base?.count ?? 0);
+	try {
+		const persistence = hold.persistence;
+		const base =
+			root.base ??
+			(persistence &&
+				hold.fileCount > 0 && {
+					fileIdentity: persistence.fileIdentity,
+					count: 0,
+					idFingerprint: createHash("sha256").digest("hex"),
+					contentFingerprint: new BaseContentHash().digest(),
+				});
+		const persisted = base
+			? readPersistedBase(base, root.accepted.idsBefore(hold.fileCount))
+			: { ok: true as const, entries: [] };
+		if (!persisted.ok) return persisted;
+		const entries = [...persisted.entries];
+		for (let index = hold.fileCount; index < root.count; index++) {
+			if (!hold.has(index)) return { ok: false, error: "transcript_tail_trimmed" };
+			let text = "";
+			for await (const chunk of hold.chunks(index)) text += chunk;
+			entries.push(JSON.parse(text) as FileEntry);
+		}
+		return { ok: true, entries };
+	} catch (cause) {
+		if (cause instanceof StagedReadError) return { ok: false, error: `transcript_${cause.reason}` };
+		throw cause;
+	} finally {
+		hold.release();
 	}
-	return { ok: true, entries };
 }

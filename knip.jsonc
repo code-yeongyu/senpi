@@ -1107,8 +1107,6 @@
       "packages/coding-agent/src/modes/interactive/working-status.ts": ["formatWorkingStatusTextFrame"],
       // pre-existing at origin main aceb1cc1d9: unused exports stringifyProviderNative
       "packages/coding-agent/src/modes/provider-native-rendering.ts": ["stringifyProviderNative"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_TRANSCRIPT_TAIL_BYTES
-      "packages/coding-agent/src/modes/rpc/accepted-transcript.ts": ["DEFAULT_TRANSCRIPT_TAIL_BYTES"],
       // pre-existing at origin main aceb1cc1d9: unused exports isHostMintedId
       "packages/coding-agent/src/modes/rpc/client-admission-record.ts": ["isHostMintedId"],
       // pre-existing at origin main aceb1cc1d9: unused exports CONNECTION_ROLE_CAPABILITIES
