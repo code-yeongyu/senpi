@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { stripVTControlCharacters } from "node:util";
 import { createClaudeCliBrowserCapture } from "./claude-cli-browser-capture.ts";
 import { type ClaudeCliRun, spawnClaudeCli, stopClaudeCli } from "./claude-cli-process.ts";
 
@@ -43,6 +44,8 @@ const KILL_GRACE_MS = 5_000;
 // form, group 2 the plain one. Each needs its terminator, so a URL split across stdout chunks is never read early.
 const MANUAL_URL_LINE =
 	/If the browser didn't open, visit: (?:\x1b\]8;;(https:\/\/[^\s\x07\x1b]+)(?:\x07|\x1b\\)|(https:\/\/\S+)\r?\n)/;
+// Fallback over VT-stripped stdout for colored or non-OSC8 output.
+const PLAIN_MANUAL_URL_LINE = /If the browser didn't open, visit: (https:\/\/\S+)\r?\n/;
 // Not anchored at line start: the CLI writes it on the line of its unterminated "Paste code here if prompted > " prompt.
 const SUCCESS_LINE = /Login successful\.\r?$/m;
 
@@ -121,11 +124,14 @@ export function startClaudeCliLogin(options: ClaudeCliLoginOptions): ClaudeCliLo
 		child.stdout?.on("data", (chunk: string) => {
 			stdout += chunk;
 			capture.flush();
-			const manual = manualSeen ? null : MANUAL_URL_LINE.exec(stdout);
-			const manualUrl = manual?.[1] ?? manual?.[2];
-			if (manualUrl !== undefined) {
-				manualSeen = true;
-				options.onManualUrl?.(manualUrl);
+			if (!manualSeen) {
+				const manual = MANUAL_URL_LINE.exec(stdout);
+				const manualUrl =
+					manual?.[1] ?? manual?.[2] ?? PLAIN_MANUAL_URL_LINE.exec(stripVTControlCharacters(stdout))?.[1];
+				if (manualUrl !== undefined) {
+					manualSeen = true;
+					options.onManualUrl?.(manualUrl);
+				}
 			}
 		});
 		child.stderr?.setEncoding("utf8");
@@ -139,7 +145,7 @@ export function startClaudeCliLogin(options: ClaudeCliLoginOptions): ClaudeCliLo
 		child.once("close", (exitCode: number | null) => {
 			capture.flush();
 			if (ending !== undefined) settle({ outcome: ending });
-			else if (exitCode === 0 && SUCCESS_LINE.test(stdout)) settle({ outcome: "success" });
+			else if (exitCode === 0 && SUCCESS_LINE.test(stripVTControlCharacters(stdout))) settle({ outcome: "success" });
 			else settle({ outcome: "failed", reason: exitCode === 0 ? "unexpected_exit" : failureReason(stderr) });
 		});
 		options.signal?.addEventListener("abort", onAbort, { once: true });

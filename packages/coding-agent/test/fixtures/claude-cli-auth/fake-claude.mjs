@@ -63,18 +63,26 @@ if (group === "auth" && command === "logout" && mode === "logout-hang") {
 if (group !== "auth" || command !== "login") process.exit(2);
 
 if (mode === "login-hang") process.on("SIGTERM", () => record({ sigterm: true }));
+const terminalOutput = mode.endsWith("-terminal");
+// In terminal mode uses ST terminator (\x1b\); default uses BEL (\x07).
+const manualUrl = terminalOutput
+	? `\u001b]8;;${MANUAL_URL}\u001b\\${MANUAL_URL}\u001b]8;;\u001b\\`
+	: `\u001b]8;;${MANUAL_URL}\u0007${MANUAL_URL}\u001b]8;;\u0007`;
+const successOutput = terminalOutput
+	? "\u001b[32mLogin successful.\u001b[0m\r\n"
+	: "Login successful.\n";
 process.stdout.write("Opening browser to sign in…\n");
 // The CLI prints the copy-code URL as an OSC 8 hyperlink even with NO_COLOR=1.
-process.stdout.write(`If the browser didn't open, visit: \u001b]8;;${MANUAL_URL}\u0007${MANUAL_URL}\u001b]8;;\u0007\n`);
+process.stdout.write(`If the browser didn't open, visit: ${manualUrl}\n`);
 if (process.env.BROWSER) spawnSync(process.env.BROWSER, [AUTOMATIC_URL], { stdio: "ignore" });
 process.stdout.write("Paste code here if prompted > ");
 
 if (mode === "login-hang") {
 	setInterval(() => {}, 1 << 30);
-} else if (mode === "login-auto") {
+} else if (mode.startsWith("login-auto") || mode === "login-exit1-success") {
 	// No newline before it: the CLI writes this on the unterminated "Paste code here if prompted > " line.
-	process.stdout.write("Login successful.\n");
-	process.exit(0);
+	process.stdout.write(successOutput);
+	process.exit(mode === "login-exit1-success" ? 1 : 0);
 } else if (mode === "login-org-denied") {
 	process.stderr.write("OAuth login failed: cli_auth_login_org_not_allowed\n");
 	process.exit(1);
@@ -83,7 +91,7 @@ if (mode === "login-hang") {
 	lines.once("line", (line) => {
 		record({ stdin: line });
 		if (mode === "login-exit0-silent") process.exit(0);
-		process.stdout.write("Login successful.\n");
+		process.stdout.write(successOutput);
 		process.exit(0);
 	});
 }
