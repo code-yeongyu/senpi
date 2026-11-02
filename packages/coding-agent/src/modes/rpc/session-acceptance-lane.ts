@@ -7,7 +7,8 @@ import { AcceptedTranscript, type TranscriptRoot } from "./accepted-transcript.t
 import type { CanonicalUnit } from "./compact-lane-transitions.ts";
 import { CompactSettledMessages, type SettledDiagnostic, type SettledRoot } from "./compact-settled-messages.ts";
 import type { FrozenCompactState } from "./compact-state-view.ts";
-import type { CompactContentStoreOptions } from "./compact-content-store.ts";
+import { CompactContentStore, type CompactContentStoreOptions } from "./compact-content-store.ts";
+import { TransferStaging } from "./compact-transfer-staging.ts";
 import {
 	type AcceptedCorrelation,
 	admitRecord,
@@ -17,6 +18,8 @@ import {
 } from "./session-acceptance-admission.ts";
 import { foldCompactRecord, foldCompactTransition } from "./session-acceptance-compact.ts";
 import { AcceptedRootReads } from "./session-acceptance-reads.ts";
+import { recoveryAgentDir, RecoveryStorageHealth } from "./compact-storage-health.ts";
+import { SessionGenerations } from "./compact-session-generations.ts";
 
 /** Where one accepted recovery record sits in its runtime incarnation (R3.C1.1). */
 interface AcceptedRef {
@@ -60,9 +63,15 @@ const RETIRED_SETTLED: SettledRoot = Object.freeze({ base: undefined, overrides:
  * with another epoch's.
  */
 export class SessionAcceptanceLane extends AcceptedRootReads {
+	readonly generations: SessionGenerations;
 	private epoch = "";
 	private sequence = 0;
-	private transcript = new AcceptedTranscript();
+	/**
+	 * The lane's one staging store: accepted transcript tails of every epoch, spilled like any payload leaf (S12a), and
+	 * its worker's fragments before their message is whole (S12b); retiring the lane aborts what is still staged.
+	 */
+	readonly staging: TransferStaging;
+	private transcript: AcceptedTranscript;
 	private activeMessageId: string | null = null;
 	private turnId: string | null = null;
 	private correlation: AcceptedCorrelation | null = null;
@@ -79,14 +88,28 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		storage?: CompactContentStoreOptions,
 		diagnose: (reason: SettledDiagnostic) => void = (reason) =>
 			process.stderr.write(`senpi rpc acceptance: settled transition: ${reason}\n`),
+		agentDir = recoveryAgentDir,
 	) {
 		super();
-		this.storage = storage;
+		this.generations = new SessionGenerations(agentDir);
+		this.storage = {
+			...storage,
+			dir: storage?.dir ?? tmpdir(),
+			health: storage?.health ?? new RecoveryStorageHealth(agentDir),
+		};
 		this.diagnose = diagnose;
+		const dir = join(storage?.dir ?? tmpdir(), `senpi-transcript-${randomUUID()}`);
+		this.staging = new TransferStaging(new CompactContentStore({ ...this.storage, dir }));
+		this.transcript = new AcceptedTranscript(this.staging);
 	}
 
 	get recoveryEpoch(): string {
 		return this.nonce;
+	}
+
+	/** The sequence of the last record this epoch accepted: what a record leased right after its acceptance names (S13). */
+	get acceptedSequence(): number {
+		return this.sequence;
 	}
 
 	/** The public epoch of this incarnation (S08-Q1): distinct from the producer nonce, which is never serialized. */
@@ -128,8 +151,10 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 			sessionEpoch: this.epoch,
 		});
 		this.sequence = 0;
-		this.transcript = new AcceptedTranscript();
-		for (const transition of input.transcript) this.transcript.apply(transition);
+		// Every root of the previous epoch was released above, so its tail content goes with it.
+		this.transcript.release();
+		this.transcript = new AcceptedTranscript(this.staging);
+		this.transcript.bootstrap(input.transcript);
 		this.activeMessageId = null;
 		this.turnId = null;
 		this.correlation = null;
@@ -160,6 +185,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	): AcceptedRef | undefined {
 		const type = field(record, "type");
 		if (this.retired || this.epoch === "" || typeof type !== "string" || !SEQUENCED.has(type)) return undefined;
+		this.beforeAccept?.(record);
 		const folds = !canonicalRefused && this.current.admits(record, type);
 		// The calls component decides first, before the lane commits anything for this record, its correlation change
 		// included (RULING-13 Q9); a correlation change takes the sequence just before its record.
@@ -198,6 +224,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	/** A block control has no legacy record; it is a unit of its own at the next sequence. */
 	acceptControl(unit: CanonicalUnit | undefined): number | undefined {
 		if (this.retired || this.epoch === "" || !unit) return undefined;
+		this.beforeAccept?.({ type: "materializer_control" });
 		this.sequence += 1;
 		this.current.fold(unit, this.sequence);
 		return this.sequence;
@@ -227,26 +254,35 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		if (this.retired) return root;
 		this.rootOwners.set(root, this.settled);
 		this.live.add(root);
+		// The cut keeps the tail segments it names until it is released (RULING-78 (1)).
+		root.transcript.tail.retainCut(root.transcript.count);
 		return root;
 	}
 
 	release(root: FrozenAcceptedRoot): void {
 		if (!this.live.delete(root)) return;
+		root.transcript.tail.releaseCut(root.transcript.count);
 		this.rootOwners.get(root)?.release(root.settled);
 		this.current.release(root.current);
 		if (this.retired) this.retireStorage();
 	}
 
 	storageStatus() {
-		return { ...this.settled.storageStatus(), refusedRecords: this.current.refusedRecords };
+		return {
+			...this.settled.storageStatus(),
+			refusedRecords: this.current.refusedRecords,
+			transcript: this.staging.status(),
+		};
 	}
 
 	private compact = () => ({ settled: this.settled, current: this.current });
 
 	async idle(): Promise<void> {
+		await this.generations.idle();
 		await this.cleanup;
 		await this.settled.idle();
 		await this.current.idle();
+		await this.staging.idle();
 	}
 
 	private retireSettled(): void {
@@ -263,7 +299,8 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	 */
 	retire(reason: "close" | "worker_failed", keep: ReadonlySet<FrozenAcceptedRoot> = new Set()): void {
 		this.retiredAs ??= reason;
-		this.transcript = new AcceptedTranscript();
+		this.generations.close();
+		this.transcript = new AcceptedTranscript(this.staging);
 		for (const root of this.live) if (!keep.has(root)) this.release(root);
 		this.retireStorage();
 	}
@@ -273,5 +310,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		this.storageRetired = true;
 		if (this.settled) this.retireSettled();
 		this.current.retire();
+		this.cleanup = Promise.all([this.cleanup, this.staging.close()]).then(() => {});
+		void this.cleanup.catch(() => this.diagnose("retired_owner"));
 	}
 }
