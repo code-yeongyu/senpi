@@ -67,7 +67,7 @@ async function setup() {
 
 describe("kill guard on bash_input line editing", () => {
 	it.each([
-		["ctrl+a, then type at the start", [{ input: "ill -9 -1\x01k" }]],
+		["ctrl+a, then type at the start", [{ input: "ill -9 -1\x01k\n", submit: false }]],
 		["Home, then type at the start", [{ input: "ill -9 -1\x1b[Hk" }]],
 		[
 			"ctrl+u, then yank it back with ctrl+y",
@@ -77,8 +77,22 @@ describe("kill guard on bash_input line editing", () => {
 			"a yank on the next line",
 			[{ input: "kill -9 -1", submit: false }, { keys: ["ctrl+u", "enter"] }, { keys: ["\x19", "enter"] }],
 		],
-		["tab completion of a kill-family prefix", [{ input: "kil\t -9 -1" }]],
+		["tab completion of a kill-family prefix", [{ input: "kil\t -9 -1\n", submit: false }]],
 		["an unknown cursor key between the pieces", [{ input: "ll -9 -1\x1b[1;5Dki" }]],
+		["an escape the shell reads shorter than the guard", [{ input: "\x1b[ kill -9 -1\n", submit: false }]],
+		["ctrl+v quoting an escape", [{ input: "\x16\x1b[ ; kill -9 -1\n", submit: false }]],
+		[
+			"ctrl+v, ctrl+u, then kills that overflow the kill ring",
+			[{ input: `kill -9 -1 ;\x16\x15${" a\x17".repeat(11)}\n`, submit: false }],
+		],
+		["an escape left open at Enter", [{ input: "kill -9 -1\x1b[" }]],
+		[
+			"a backslash continuation across two calls",
+			[
+				{ input: "kill -9 \\\n", submit: false },
+				{ input: "-1\n", submit: false },
+			],
+		],
 	] as const)("refuses a line built with %s", async (_shape, calls) => {
 		const { harness, ran } = await setup();
 		const outcomes: Outcome[] = [];
@@ -92,14 +106,28 @@ describe("kill guard on bash_input line editing", () => {
 	});
 
 	it.each([
-		["an edited line with no kill-family word", { input: "ls\x01echo " }],
-		["tab completion of other words", { input: "git ch\t" }],
-		["a plain narrow kill", { input: "kill 4242" }],
-	] as const)("lets %s through", async (_shape, params) => {
+		["a plain line", [{ input: "ls -la\n", submit: false }]],
+		["a plain line with backspaces", [{ input: "echo hi\x7f\x7fhello\n", submit: false }]],
+		["an edited line with no kill-family word", [{ input: "ls\x01echo \n", submit: false }]],
+		["an edited line without an i or two l", [{ input: "git pull --rebase\x01sudo \n", submit: false }]],
+		["an edited line with k and i but no l", [{ input: "echo skip\x01x\n", submit: false }]],
+		["tab completion of other words", [{ input: "git ch\t\n", submit: false }]],
+		["tab completion after a k word that is no kill prefix", [{ input: "kubectl get po\t\n", submit: false }]],
+		["a plain narrow kill", [{ input: "kill 4242\n", submit: false }]],
+		[
+			"a backslash continuation across two calls",
+			[
+				{ input: "echo a \\\n", submit: false },
+				{ input: "b\n", submit: false },
+			],
+		],
+	] as const)("lets %s through", async (_shape, calls) => {
 		const { harness, ran } = await setup();
+		const outcomes: Outcome[] = [];
+		for (const params of calls) outcomes.push(await call(harness, { bash_id: "b1", ...params }));
 
-		expect(await call(harness, { bash_id: "b1", ...params })).toEqual({ blocked: false });
-		expect(ran).toHaveLength(1);
+		expect(outcomes).toEqual(calls.map(() => ({ blocked: false })));
+		expect(ran).toHaveLength(calls.length);
 	});
 });
 

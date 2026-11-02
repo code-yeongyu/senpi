@@ -4,11 +4,11 @@ import { activateKillGuardRuntime, releaseKillGuardRuntime } from "../../../kill
 import { refuse } from "../../../kill-guard/verdict.ts";
 import type { ExtensionAPI, ToolCallEventResult } from "../../types.ts";
 import { isWakeSourceStateEvent, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
-import { bashInputStream, type SubmittedLine, typeInto } from "./typed-lines.ts";
+import { bashInputBytes, type SubmittedLine, typeInto } from "./typed-lines.ts";
 import { forgetAgentSession, keepTypedSession, noteRunningShells, typedSession } from "./typed-sessions.ts";
 
 const UNFOLLOWABLE =
-	"a bash_input line was edited with a key the guard cannot follow (tab completion, history recall, a meta key or another escape sequence), and the edited line could run a kill-family command";
+	"a bash_input line was sent with a control byte, an escape sequence, tab or a named key, and the bytes sent for it could spell a kill-family command once the shell's line editor rearranges them (the guard refuses these instead of modelling every readline key)";
 
 /** The command text of a `bash` or `monitor` call, or `undefined` for any other tool. */
 function commandOf(toolName: string, input: Record<string, unknown>): string | undefined {
@@ -35,7 +35,9 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 		return verdict.action === "refuse" ? { block: true, reason: verdict.message } : undefined;
 	};
 	// Every line the call completes runs, each line break a command separator. An edited line is judged as every line
-	// it could be, and refused outright when a key the guard cannot follow could have built a kill-family command.
+	// it could be, and a line that was not typed plainly is refused outright when its bytes could spell a kill-family
+	// command (fail-closed; see typed-lines.ts). This judges only the agent's bash_input calls: a person typing in their
+	// own terminal never reaches this hook.
 	const judgeLines = (lines: readonly SubmittedLine[]): ToolCallEventResult | undefined => {
 		const texts = lines.map((line) => line.text);
 		const variants = [
@@ -51,12 +53,16 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 		if (!lines.some((line) => line.unfollowable)) return undefined;
 		return {
 			block: true,
-			reason: refuse("R5", UNFOLLOWABLE, "Type the whole command as plain text and submit it.").message,
+			reason: refuse(
+				"R5",
+				UNFOLLOWABLE,
+				"Type the whole command as plain text (printable characters and backspace only) and submit it.",
+			).message,
 		};
 	};
 	const judgeBashInput = (input: Record<string, unknown>): ToolCallEventResult | undefined => {
 		const id = typeof input.bash_id === "string" ? input.bash_id : "";
-		const typed = typeInto(typedSession(sessionKey, id), bashInputStream(input));
+		const typed = typeInto(typedSession(sessionKey, id), bashInputBytes(input));
 		// A refused call writes nothing, so the shell's line stays as it was.
 		const refused = typed.lines.length === 0 ? undefined : judgeLines(typed.lines);
 		if (refused === undefined) keepTypedSession(sessionKey, id, typed.session);
