@@ -29,6 +29,7 @@ export {
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
+export { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "./core/required-compaction-error.ts";
 // Compaction
 export {
 	type BranchPreparation,

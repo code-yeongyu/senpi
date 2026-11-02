@@ -12,7 +12,7 @@ Completing tasks out of phase order can move this pointer **back** to an earlier
 
 | op | Required fields | Effect |
 |---|---|---|
-| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing) |
+| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing). Each list entry is exactly one phase; items holds only task strings |
 | init | items: string[] | Flattened single-phase init |
 | start | task | Mark in progress |
 | done | task or phase | Mark completed |
@@ -48,11 +48,11 @@ export const TASK_MANAGEMENT_SECTION = `
 <Task_Management>
 ## Todo Management
 
-A request with three or more distinct steps gets a phased todo before the first edit - investigation, implementation, verification, final report - in the todo tool; its description carries the operations, anatomy, and rules. Mark each item done the moment it finishes and reconcile the list against the newest user message before ending a turn.
+Request with 3+ distinct steps -> phased todo in the todo tool before first edit: investigation, implementation, verification, final report.
 
 ## Evidence
-- File edit: inspect the changed files and diagnostics.
-- Build command: require exit code 0.
-- Test run: require passing output, or state the pre-existing failure.
+- File edit: inspect changed files + diagnostics.
+- Build: exit code 0.
+- Test run: passing output, or state the pre-existing failure.
 </Task_Management>
 `;
