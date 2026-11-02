@@ -1,18 +1,17 @@
 import { getAssistantCapture, SeedFrontierError } from "@earendil-works/pi-ai";
-import { envValue } from "../../core/brand.ts";
 import type { AgentSession, AgentSessionEvent } from "../../core/agent-session.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import type { AgentSessionStructuredRecord } from "../../core/structured-session-lane.ts";
 import { type SeededJsonAgentSessionEvent, toJsonEvent } from "../json-event.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 
 /**
- * The engine-socket compact-updates rollout flag (`<brand>_ENGINE_SOCKET_COMPACT_UPDATES`), explicit-true only.
- * Off, no session holds a structured subscription and every destination keeps its existing bytes.
+ * Internal structured capture and the acceptance lane it feeds follow the rollout flag alone (RULING-112): off, every
+ * session binds legacy-only, in process and in a worker alike; on, a session without the lane refuses the subscription.
  */
 export function structuredLaneEnabled(): boolean {
-	const value = envValue("ENGINE_SOCKET_COMPACT_UPDATES");
-	return value === "1" || value === "true";
+	return compactUpdatesEnabled();
 }
 
 type BlockState = "open" | "ended" | "invalid";
