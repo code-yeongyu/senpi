@@ -281,11 +281,13 @@ describe("Regression: stale compaction generation after a revision change", () =
 		expect(delayedAssistant.message.timestamp).toBe(payloadTimestamp);
 		expect(new Date(branch[compactionIndex]!.timestamp).getTime()).toBeGreaterThan(payloadTimestamp);
 
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
 		await expect(harness.session.prompt("subsequent admission")).rejects.toThrow(
 			"Context remains above the compaction threshold because compaction did not complete",
 		);
 		expect(harness.faux.state.callCount).toBe(1);
-		expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
+		// A new explicit prompt retries compaction; its rejection still prevents a provider call (#4161).
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(3);
 	});
 
 	it("keeps a reloaded delayed assistant post-compaction without falling back to payload timestamps", async () => {

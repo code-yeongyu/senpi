@@ -49,7 +49,7 @@ export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOp
 		if (typeof block !== "object" || block === null) continue;
 		if (!("type" in block) || block.type !== "toolCall") continue;
 		if (!("arguments" in block) || !("name" in block)) continue;
-		addFileOp(block.name, block.arguments as Record<string, unknown> | undefined, fileOps);
+		addFileOp(block.name, block.arguments, fileOps);
 	}
 }
 
@@ -160,7 +160,7 @@ export function serializeConversation(messages: Message[]): string {
 				if (block.type === "thinking") {
 					thinkingParts.push(block.thinking);
 				} else if (block.type === "toolCall") {
-					const args = block.arguments as Record<string, unknown>;
+					const args = block.arguments;
 					const argsStr = Object.entries(args)
 						.map(([k, v]) => `${k}=${JSON.stringify(v)}`)
 						.join(", ");

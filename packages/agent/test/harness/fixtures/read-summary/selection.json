@@ -30,7 +30,7 @@
     "read-folders/lexical-context.ts": "e3816078bc60c25e07ceb029d49ceb9d83d55968e2a1e9fa278ec5a4bf9bcb3f",
     "read-folders/lexical-spans.ts": "c7ba988487972d9e39427e5faf0120b3bf787cb48ffa32cf8123ce54bdbdbd93",
     "read-folders/prepare.ts": "3ec2d553ea1877cc04e12e730b7c9a0d7b2d5e4d08a60980a1c8396eb338bfd2",
-    "read-folders/tree-sitter/engine.ts": "b2e06b13e5c42efbd6d7128d0c737f2cbc890693d5a332dac88b15e670195c05",
+    "read-folders/tree-sitter/engine.ts": "a4004e3d4e4dbd385f29b15a29ef5ebc5741f795f242646119fc6e98bf60e6d5",
     "read-folders/tree-sitter/grammar-assets.ts": "c1390501b5932899c3618a83574e0d35306a77ad3a4a6f0c784b1f8295de2a45",
     "read-folders/tree-sitter/syntax.ts": "21ec7601f431b635ccad1dce3e089875e2bec12db2f9ac2d8af62d34bda806ef",
     "read-folders/types.ts": "449f11dd3b2d0e68f1f6aad896a0a73a4c9756fef3f5acce9295bac9a26fbc69",

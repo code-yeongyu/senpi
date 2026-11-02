@@ -5,6 +5,7 @@ import {
 	isClassifierRefusal,
 	isCursorExecResolved,
 	readProviderDiagnostic,
+	sanitizeProviderErrorMessage,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
@@ -94,7 +95,7 @@ export function createTerminalFailureAssistantMessage(
 ): AssistantMessage {
 	const errorMessage = error instanceof Error ? error.message : String(error);
 	const providerDiagnostic = reason === "error" ? readProviderDiagnostic(error) : undefined;
-	return {
+	const message: AssistantMessage = {
 		role: "assistant",
 		content: partialMessage?.content ?? [{ type: "text", text: "" }],
 		api: partialMessage?.api ?? model.api,
@@ -120,6 +121,9 @@ export function createTerminalFailureAssistantMessage(
 		...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 		timestamp: partialMessage?.timestamp ?? Date.now(),
 	};
+	// A thrown provider error never passed the stream boundary: classify and redact it the same way (senpi#4282).
+	sanitizeProviderErrorMessage(message);
+	return message;
 }
 
 export function normalizeTerminalAssistantMessage(

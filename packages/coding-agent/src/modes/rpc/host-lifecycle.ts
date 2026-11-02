@@ -1,12 +1,19 @@
 #!/usr/bin/env node
+import "../../private-fds.ts";
 import { randomUUID } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
-import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
+import {
+	createGenerationDirectory,
+	createHostDaemonPaths,
+	generationPaths,
+	HostDaemonStateError,
+} from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
@@ -77,6 +84,21 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const told = process.env[HOST_INSTANCE_ID_ENV];
 	const instanceId = told !== undefined && told.trim() !== "" ? told : randomUUID();
 	const generation = generationPaths(paths, instanceId);
+	const created = await mkdir(generation.dir, { recursive: true, mode: 0o700 }).catch((cause) => {
+		throw new HostDaemonStateError(generation.dir, cause);
+	});
+	let startupRegistered = false;
+	await using _generationStartup = {
+		async [Symbol.asyncDispose]() {
+			// An ensured directory is not ours to discard. Until shutdown owns a new one,
+			// every failed startup must remove it, including failures after child spawn.
+			if (created !== undefined && !startupRegistered) {
+				await rm(generation.dir, { recursive: true, force: true });
+			}
+		},
+	};
+	// A direct launch has no ensure to provision its records before the child can write them.
+	await createGenerationDirectory(generation);
 	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
 	const publicSocket = launch.socket;
 	const publicEndpoint =
@@ -98,6 +120,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		shuttingDown: false,
 		shutdownReason: undefined,
 		childExitRecorded: Promise.resolve(),
+		startupComplete: Promise.resolve(),
 		publicSocketOwned: false,
 		publicSocketIdentity: undefined,
 		endpointReplaced: false,
@@ -223,42 +246,47 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// exists, so a SIGTERM arriving during host startup must run the same cleanup instead of Node's
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
+	startupRegistered = true;
 	try {
-		// Direct supervisor launches predate owner records and may have no generation directory.
+		// Direct supervisor launches predate owner records and may have no generation settings.
 		// Ensured starts create it before spawning and always carry an explicit owner/null record.
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
 			await owner.start(launch.ownerFd);
 		}
 		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
 		await activity.openObserver();
-		await prepareSocketPath(bindSocket);
-		await listen(server, bindSocket, publicSecret);
-		await publicEndpoint?.publish();
-		state.publicSocketOwned = true;
-		if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
-		state.publicSocketIdentity = await statSocketIdentity(publicSocket);
-		// Publish the ownership token inside this supervisor's private scratch
-		// directory (which no replacement supervisor writes): the host child's
-		// crash-path cleanup compares the public path against THIS entry only.
-		if (state.publicSocketIdentity && internal.dir) {
-			await writeSocketIdentityFile(join(internal.dir, PUBLIC_SOCKET_IDENTITY_FILE), state.publicSocketIdentity);
-		}
-		watchers.push(
-			drainOnPublicSocketLoss(
-				publicSocket,
-				state.publicSocketIdentity,
-				() => state.shuttingDown || drain.active,
-				drain,
-				() => {
-					state.endpointReplaced = true;
-				},
-				{ file: paths.pointerFile, instanceId },
-			),
-		);
-		watchers.push(await drain.acceptRequests(generation));
+		if (state.shuttingDown) return;
+		// Shutdown stops the child immediately, but joins these writes before removing their directories.
+		state.startupComplete = (async () => {
+			await prepareSocketPath(bindSocket);
+			await listen(server, bindSocket, publicSecret);
+			await publicEndpoint?.publish();
+			state.publicSocketOwned = true;
+			if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
+			state.publicSocketIdentity = await statSocketIdentity(publicSocket);
+			// The child's crash cleanup compares the public entry against this generation's private token.
+			if (state.publicSocketIdentity && internal.dir) {
+				await writeSocketIdentityFile(join(internal.dir, PUBLIC_SOCKET_IDENTITY_FILE), state.publicSocketIdentity);
+			}
+			watchers.push(
+				drainOnPublicSocketLoss(
+					publicSocket,
+					state.publicSocketIdentity,
+					() => state.shuttingDown || drain.active,
+					drain,
+					() => {
+						state.endpointReplaced = true;
+					},
+					{ file: paths.pointerFile, instanceId },
+				),
+			);
+			watchers.push(await drain.acceptRequests(generation));
+		})();
+		await state.startupComplete;
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}
+	if (state.shuttingDown) return;
 	if (process.platform === "win32") {
 		watchers.push(
 			await watchWin32ChildIdentity(

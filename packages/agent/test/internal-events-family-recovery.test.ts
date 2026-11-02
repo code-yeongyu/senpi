@@ -3,7 +3,7 @@ import { stream as streamDevin } from "../../ai/src/api/devin-agent.ts";
 import { getAssistantCapture } from "../../ai/src/utils/assistant-capture.ts";
 import { closeStubServers, frame, MODEL, serveEdge, trailer } from "../../ai/test/devin-agent-stream-harness.ts";
 import { Agent } from "../src/agent.ts";
-import { type OrderedAgentRecord, subscribeInternalAgent } from "../src/internal-events.ts";
+import { type OrderedAgentRecord, createInternalAgentChannel } from "../src/internal-events.ts";
 
 afterEach(closeStubServers);
 
@@ -18,12 +18,14 @@ async function channel(modelId: string): Promise<OrderedAgentRecord[]> {
 		},
 	});
 	const model = { ...MODEL, id: modelId, baseUrl };
+	const internalChannel = createInternalAgentChannel();
 	const agent = new Agent({
+		internalChannel,
 		initialState: { model },
 		streamFn: (_model, context, options) => streamDevin(model, context, { ...options, apiKey: "session-abc" }),
 	});
 	const records: OrderedAgentRecord[] = [];
-	const unsubscribe = subscribeInternalAgent(agent, (record) => {
+	const unsubscribe = internalChannel.subscribe((record) => {
 		records.push(record);
 	});
 	await agent.prompt("fixture");

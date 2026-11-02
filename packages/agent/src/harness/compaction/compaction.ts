@@ -77,7 +77,7 @@ function extractFileOperations(
 }
 function getMessageFromEntry(entry: Entry): AgentMessage | undefined {
 	if (entry.type === "message") {
-		return entry.message as AgentMessage;
+		return entry.message;
 	}
 	if (entry.type === "branch_summary") {
 		return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
@@ -188,7 +188,7 @@ export function getLastAssistantUsage(entries: Entry[]): Usage | undefined {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		if (entry.type === "message") {
-			const usage = getAssistantUsage(entry.message as AgentMessage);
+			const usage = getAssistantUsage(entry.message);
 			if (usage) return usage;
 		}
 	}
@@ -398,7 +398,7 @@ export function findCutPoint(
 	for (let i = endIndex - 1; i >= startIndex; i--) {
 		const entry = entries[i];
 		if (entry.type !== "message") continue;
-		const messageTokens = estimateTokens(entry.message as AgentMessage);
+		const messageTokens = estimateTokens(entry.message);
 		accumulatedTokens += messageTokens;
 		if (accumulatedTokens >= keepRecentTokens) {
 			let foundCutPoint = false;

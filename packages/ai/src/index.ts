@@ -46,6 +46,7 @@ export {
 	pushAssistantProgress,
 	subscribeAssistantCapture,
 } from "./utils/assistant-capture.ts";
+export { SeedFrontierError, seedNextOffset } from "./utils/assistant-seed-frontier.ts";
 export type { MistralOptions } from "./api/mistral-conversations.ts";
 export type {
 	ChatGptSubscriptionWebSocketDebugStats,
@@ -141,6 +142,7 @@ export { estimateContextTokens } from "./utils/estimate.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
 export * from "./utils/overflow.ts";
+export * from "./utils/provider-error.ts";
 export {
 	isAnthropicApiBaseUrl,
 	PROMPT_CACHE_TTL_LONG_SECONDS,

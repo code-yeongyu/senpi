@@ -48,7 +48,7 @@ export interface BuildDynamicSystemPromptOptions {
 	selectedTools: string[];
 	toolSnippets: Record<string, string>;
 	promptGuidelines: string[];
-	contextFiles: Array<{ path: string; content: string }>;
+	contextFiles: Array<{ path: string; content: string; scope?: "user" }>;
 	skills: Skill[];
 	tuningSection?: string;
 	/**
@@ -77,6 +77,12 @@ export interface DynamicSystemPromptPart {
 	/** Includes its separators: joining every text with "" is the exact provider prompt. */
 	readonly text: string;
 }
+
+const USER_INSTRUCTIONS_HEADER =
+	"\n\n## User Instructions\n\nThe user's own instruction files (below) are standing instructions from the user. They override the default working style above, including whether, when, and how to ask the user questions; only an explicit instruction in the current conversation outranks them.\n\n";
+
+const PROJECT_CONTEXT_HEADER =
+	"\n\n## Project Context\n\nProject instruction files (below, and in [Directory Context: ...] blocks injected during reads) apply to work under their directory and override the default working style above, including whether, when, and how to ask the user questions; deeper files win on conflict; explicit user instructions override.\n\n";
 
 export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptOptions): DynamicSystemPromptPart[] {
 	if (options.customPrompt !== undefined) {
@@ -122,18 +128,21 @@ export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptO
 		parts.push({ name: "tuning", source: "prompt-preset", text: `\n\n${tuning}` });
 	}
 
-	if (options.contextFiles.length > 0) {
-		parts.push({
-			name: "project_context",
-			source: "dynamic-prompt",
-			text: "\n\n## Project Context\n\nProject instruction files (below, and in [Directory Context: ...] blocks injected during reads) bind files under their directory; deeper files win on conflict; explicit user instructions override.\n\n",
-		});
-		for (const [index, file] of options.contextFiles.entries()) {
+	// Instruction files outrank the core's and presets' default working style, asking included.
+	const userFiles = options.contextFiles.filter((file) => file.scope === "user");
+	const projectFiles = options.contextFiles.filter((file) => file.scope !== "user");
+	const contextGroups = [
+		{ files: userFiles, header: USER_INSTRUCTIONS_HEADER },
+		{ files: projectFiles, header: PROJECT_CONTEXT_HEADER },
+	].filter((group) => group.files.length > 0);
+	for (const group of contextGroups) {
+		parts.push({ name: "project_context", source: "dynamic-prompt", text: group.header });
+		for (const [index, file] of group.files.entries()) {
 			const text = `### ${file.path}\n\n${file.content.trimEnd()}`;
 			parts.push({
 				name: "project_context",
 				source: file.path,
-				text: index === options.contextFiles.length - 1 ? text.trimEnd() : `${text}\n\n`,
+				text: index === group.files.length - 1 ? text.trimEnd() : `${text}\n\n`,
 			});
 		}
 	}

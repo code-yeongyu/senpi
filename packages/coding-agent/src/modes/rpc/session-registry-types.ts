@@ -7,6 +7,7 @@ import type { SessionContext, SessionKind } from "../../core/extensions/types.ts
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
 import type { PreparableRuntimeFactory } from "./host-warm.ts";
+import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import type { SessionContextOverlay } from "./session-context-patch.ts";
 import type { PublishedSessionContext } from "./session-status.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
@@ -29,6 +30,8 @@ export interface RpcSessionEntry {
 	state: RpcSessionState;
 	runtime?: SessionRuntime;
 	worker?: SessionWorkerClient;
+	/** The in-process session's ordered acceptance lane, present only while the compact-updates flag is on. */
+	acceptance?: SessionAcceptanceLane;
 	/** Visibility class chosen by the open, frozen for the entry's life. */
 	readonly kind: SessionKind;
 	/** Frozen opaque labels the open attached; `{}` when it attached none. */
@@ -128,6 +131,8 @@ export interface RpcSessionRegistryOptions {
 	sessionFileLoad?: "sliced" | "blocking";
 	/** Slicer for a `sliced` load; defaults to an 8 ms budget on the real clock. */
 	createSlicer?: () => EventLoopSlicer;
+	/** A session worker's own registry: its host owns the acceptance lane, so the isolate opens none. */
+	workerIsolate?: true;
 }
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
@@ -147,6 +152,8 @@ export interface RpcSessionRow {
 	name?: string;
 	status: Exclude<RpcSessionState, "quarantined">;
 	attachments: number;
+	/** True when the session outlives its last attachment; once granted, never revoked. */
+	retain_on_disconnect: boolean;
 	kind: SessionKind;
 	context: PublishedSessionContext;
 	/** Milliseconds since the last routed command or session-owned activity refreshed the idle window. */
@@ -170,6 +177,7 @@ export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSes
 		...(profile.holderEndpoint ? { holderEndpoint: Object.freeze({ ...profile.holderEndpoint }) } : {}),
 		...(profile.creationModel ? { creationModel: Object.freeze({ ...profile.creationModel }) } : {}),
 		...(profile.sessionContext ? { sessionContext: Object.freeze({ ...profile.sessionContext }) } : {}),
+		...(profile.sessionEnv ? { sessionEnv: Object.freeze({ ...profile.sessionEnv }) } : {}),
 		...(profile.retryFallback
 			? {
 					retryFallback: Object.freeze({
