@@ -1,3 +1,41 @@
+## 2026-10-29 - Static check that every bundle and binary entry has a source file (senpi#4892)
+
+### What changed
+
+- `scripts/bundle-entry-points.mjs` (new): owns the bundle's required-inputs list (`bundleRequiredInputs`) and `lazyEntryPoints`, both moved unchanged out of `scripts/build-coding-agent-bundle.mjs`.
+- `scripts/build-coding-agent-bundle.mjs`: `buildBundle()` reads its required inputs from `bundleRequiredInputs()` and its lazy entries from `lazyEntryPoints()` in the new module. Build output is unchanged.
+- `scripts/bundle-entry-paths.test.mjs` (new): maps every required input, lazy entry, `packages/*/dist/*.js` output lookup in the bundle script, and every `bun build --compile` entrypoint in `scripts/build-binaries.sh` and the `build:binary` script back to its source file, and names each one that has none.
+
+### Why
+
+- A PR that deleted or renamed a listed module passed its focused tests and review, and only the full build failed (`Bundle input is missing: ...`). The static check fails at the PR's own script tests in milliseconds.
+
+### Why an extension could not handle it
+
+- The bundle and binary builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs loop in `buildBundle()`; new lazy entries now go in `scripts/bundle-entry-points.mjs`.
+
+## 2026-10-29 - Ratchet client response dispatch after removing its unchecked assertion (S15a-2, part of #4272)
+
+### What changed
+
+- `scripts/lint-ratchet.baseline.json`: Lower rpc-client.ts's non-null-assertion count from 2 to 1 after extracting checked response dispatch.
+
+### Why
+
+- `scripts/lint-ratchet.baseline.json`: The removed pending-request assertion must not be reintroduced.
+
+### Why an extension could not handle it
+
+- `scripts/lint-ratchet.baseline.json`: This is the repository's static lint budget.
+
+### Expected merge conflict zones
+
+- `scripts/lint-ratchet.baseline.json`: Preserve the lower rpc-client.ts assertion count when merging client changes.
+
 ## 2026-10-30 - The coding-agent bundle no longer requires the removed Anthropic OAuth flow (senpi#4436, S7)
 
 ### What changed

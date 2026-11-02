@@ -1,8 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, link, mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { basename, dirname, join, win32 } from "node:path";
+import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\senpi-rpc-";
 export const SOCKET_SECRET_BYTES = 32;
@@ -22,9 +23,26 @@ export function socketSecretPath(logicalPath: string): string {
 export async function ensureSocketSecret(path: string): Promise<Buffer> {
 	const existing = await readSecretEntry(path);
 	if (existing?.length === SOCKET_SECRET_BYTES) return existing;
-	// A wrong-sized file is repaired in place until the serialized repair of design 4.4 lands (#4199 S6).
-	if (existing) return writeSocketSecretInPlace(path);
-	return createSocketSecret(path);
+	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	const release = await acquireOwnershipSafeLock(await socketSecretLockPath(path));
+	try {
+		// The first read is only a hint (design 4.4): a contender may have published or repaired since.
+		const current = await readSecretEntry(path);
+		if (current?.length === SOCKET_SECRET_BYTES) return current;
+		// Windows keeps the in-place writer until the native no-replace bridge (senpi#4310, #4312) is wired.
+		if (process.platform === "win32") return await writeSocketSecretInPlace(path);
+		const candidate = randomBytes(SOCKET_SECRET_BYTES);
+		if (current === undefined) {
+			if ((await publishSocketSecretIfAbsent(path, candidate)) === "published") return candidate;
+			const winner = await readSecretEntry(path);
+			if (winner?.length === SOCKET_SECRET_BYTES) return winner;
+			throw new Error(`RPC socket secret is invalid and was not replaced: ${path}`);
+		}
+		await replaceSocketSecret(path, candidate);
+		return candidate;
+	} finally {
+		await release();
+	}
 }
 
 /**
@@ -89,7 +107,7 @@ type SocketSecretPublication = "published" | "collision";
 
 /** Publishes `candidate` at `path` unless an entry already exists there. POSIX only. */
 async function publishSocketSecretIfAbsent(path: string, candidate: Buffer): Promise<SocketSecretPublication> {
-	const staging = join(dirname(path), `.${basename(path)}.stage-${process.pid}-${randomBytes(8).toString("hex")}`);
+	const staging = stagingPath(path);
 	await writeStaging(staging, candidate);
 	try {
 		await link(staging, path);
@@ -143,6 +161,39 @@ async function syncDirectory(dir: string): Promise<void> {
 	} finally {
 		await handle.close();
 	}
+}
+
+/**
+ * The per-secret mutation lock (design 4.2): `<canonical parent>/<name>.publish.lock`, so every spelling of one
+ * physical secret takes the same lock. It holds only the SQLite lock database, is created owner-only, must be a regular
+ * file, and is never removed.
+ */
+async function socketSecretLockPath(path: string): Promise<string> {
+	const lockPath = join(await realpath(dirname(path)), `${basename(path)}.publish.lock`);
+	const handle = await open(lockPath, constants.O_RDONLY | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
+	try {
+		if (!(await handle.stat()).isFile()) throw new Error(`RPC socket secret lock is not a regular file: ${lockPath}`);
+	} finally {
+		await handle.close();
+	}
+	return lockPath;
+}
+
+/** Replaces an invalid secret with `candidate` in one rename; the old entry stays until that rename (design 4.4). */
+async function replaceSocketSecret(path: string, candidate: Buffer): Promise<void> {
+	const staging = stagingPath(path);
+	await writeStaging(staging, candidate);
+	try {
+		await rename(staging, path);
+	} catch (error: unknown) {
+		await unlink(staging).catch(() => undefined);
+		throw error;
+	}
+	await syncDirectory(dirname(path));
+}
+
+function stagingPath(path: string): string {
+	return join(dirname(path), `.${basename(path)}.stage-${process.pid}-${randomBytes(8).toString("hex")}`);
 }
 
 async function writeSocketSecretInPlace(path: string): Promise<Buffer> {
