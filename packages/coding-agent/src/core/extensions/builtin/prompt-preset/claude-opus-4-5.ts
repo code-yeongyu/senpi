@@ -2,7 +2,9 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { buildExecutionToolingSection } from "./execution-tooling.ts";
 
 function buildClaudeOpus45Tuning(): string {
-	return `Break complex tasks into ordered steps with clear dependencies before executing. When a request covers a set of items, apply it to every item rather than only the first, and state the scope you applied.`;
+	return `Break complex tasks into ordered steps with clear dependencies before executing. When a request covers a set of items, apply it to every item rather than only the first, and state the scope you applied.
+
+Write in the user's language (the one their instructions name, else the one they write in): every reply, note between tool calls, and todo label, and keep it after reading tool output, files, or skills written in another language.`;
 }
 
 export function buildClaudeOpus45Prompt(options: BuildDynamicSystemPromptOptions): string {
