@@ -2311,7 +2311,7 @@ An `effect_status` is enqueued on the subscribing connection AFTER the record th
 
 ### Client information
 
-Clients may send `set_client_info` with `{ sessionId?, width, capabilities? }`. `capabilities` registers the connection's
+Clients may send `set_client_info` with `{ sessionId?, width, capabilities?, remoteOrigin? }` (`remoteOrigin`: see "Remote origin"). `capabilities` registers the connection's
 opt-in client capabilities (see [Client capabilities](#client-capabilities)); a name the host does not know is ignored,
 never refused. Registration belongs to the connection that sent it: socket disposal removes it, and clients must
 re-register `capabilities` after every reconnect. `width` is accepted for compatibility and has no effect: the host
@@ -6547,6 +6547,18 @@ Set the text in the input editor. Fire-and-forget.
 Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
 
 Every `question` frame carries `raisedBy`: the `connectionId` whose command raised it (the same connection a `select`, `confirm`, `input` or `editor` raised at that point is delivered to; for a model tool call, the connection whose prompt started the turn), or `"agent"` when no connection's command started the work (for example a goal continuation, or a classic stdio session). A client uses it to tell a question it raised from one another connection raised; the frame still reaches every attached connection, and any of them may answer. The field is optional and additive: a client that ignores it is unaffected, and frames from older hosts omit it. The replayed frames in `pendingQuestions` carry the same value.
+
+#### Remote origin
+
+A relay forwarder that drives a session on behalf of another device opens its own connection for that device and declares, in that connection's `set_client_info`, which device it speaks for:
+
+```json
+{"type":"set_client_info","width":80,"remoteOrigin":{"deviceId":"device-a","deviceName":"Laptop"}}
+```
+
+`deviceId` is required and `deviceName` optional; both are non-empty strings of at most 256 characters, and no other key is accepted (`remote_origin_invalid`). A connection's origin is fixed once declared: repeating the same value is accepted, and a different one is refused `remote_origin_fixed` and leaves the declared origin unchanged. A connection that never declares one is local.
+
+Every `select`, `confirm`, `input`, `editor` and `question` frame raised by that connection's command (for a model tool call, the connection whose prompt started the turn) carries the declared value as `remoteOrigin`, next to `raisedBy`. The mirrored `ui_request_pending` carries it inside `request`, and so do replayed pending dialogs. A dialog raised by a local connection carries no `remoteOrigin`, so absence means local. A client shows the label (for example "Requested from Laptop") so that the person at the host can tell a dialog a remote device's turn raised from their own. `set_client_info` is a connection-local method: a forwarder never forwards a remote device's own `set_client_info`, so a remote device cannot set or change the label. A secret `input` goes only to the connection that raised it and is not labeled.
 
 ```json
 {
