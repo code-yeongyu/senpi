@@ -123,6 +123,18 @@ describe("widerAlwaysScope (#3403)", () => {
 		expect(allowedUnder(grant, "https://example.invalid:443/x")).toBe(true);
 	});
 
+	// senpi#3458: schemes are case-insensitive and ports are compared after numeric normalization.
+	it.each([
+		["HTTPS://EXAMPLE.invalid/a", "https://example.invalid"],
+		["https://example.invalid:0443/a", "https://example.invalid"],
+		["http://example.invalid:00080/a", "http://example.invalid"],
+		["https://example.invalid:00080/a", "https://example.invalid:80"],
+	])("normalizes the domain grant for %s", (raw, origin) => {
+		expect(widerAlwaysScope("fetch_fixture", "url", raw)?.patterns).toEqual([`origin=${origin}`]);
+		expect(allowedUnder(raw, `${origin}/other`)).toBe(true);
+		expect(allowedUnder(`${origin}/first`, raw)).toBe(true);
+	});
+
 	it("refuses look-alike hosts, other ports, other schemes and paths that mention the host", () => {
 		const grant = "https://example.invalid/a";
 		expect(allowedUnder(grant, "https://example.invalid.evil.test/")).toBe(false);
