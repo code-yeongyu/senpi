@@ -42,6 +42,17 @@ const hosts: { name: string; env: NodeJS.ProcessEnv; stripKeeps: boolean }[] = [
 		env: { ANTHROPIC_BASE_URL: "https://API.anthropic.com/v1" },
 		stripKeeps: false,
 	},
+	{ name: "whitespace-only BASE_URL", env: { ANTHROPIC_BASE_URL: "   " }, stripKeeps: false },
+	{
+		name: "BASE_URL=Anthropic origin:443",
+		env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com:443" },
+		stripKeeps: false,
+	},
+	{
+		name: "BASE_URL=Anthropic origin with userinfo",
+		env: { ANTHROPIC_BASE_URL: "https://user@api.anthropic.com" },
+		stripKeeps: false,
+	},
 	{ name: "unparsable BASE_URL", env: { ANTHROPIC_BASE_URL: "not a url" }, stripKeeps: true },
 ];
 

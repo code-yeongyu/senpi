@@ -40,10 +40,11 @@ const DEFAULT_ANTHROPIC_ORIGIN = "https://api.anthropic.com";
 /**
  * A base URL on Anthropic's own origin (any path or trailing slash) is not a gateway: the key there would bill the
  * console org exactly as in senpi#1195, and the claude.ai bearer goes where it always goes. A value that does not
- * parse as a URL is kept as a gateway, because it cannot be shown to be Anthropic's origin.
+ * parse as a URL is kept as a gateway, because it cannot be shown to be Anthropic's origin. A blank or whitespace-only
+ * value is unset: the SDK trims it and falls back to Anthropic's default origin.
  */
 function isGatewayBaseUrl(value: string | undefined): boolean {
-	if (!value) return false;
+	if (!value?.trim()) return false;
 	try {
 		return new URL(value).origin !== DEFAULT_ANTHROPIC_ORIGIN;
 	} catch {
