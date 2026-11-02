@@ -25,11 +25,16 @@ type Route = {
 	notBefore: number;
 };
 type Send = (command: RpcCommand) => Promise<RpcResponse>;
+/** Sent admission IDs this client remembers, least recently sent dropped first, so the memory stays bounded. */
+const SENT_ADMISSION_IDS = 4096;
 
 /** Pre-send admission routes and event-driven repair. No prompt, mutable-root fallback, timer or retry loop. */
 export class RpcClientAdmissions {
 	private readonly routes = new Map<string, Route>();
-	/** Admission IDs sent on this connection: a re-send is a C4.4 retry and carries `retry: true` (RULING-125). */
+	/**
+	 * Admission IDs this client instance sent, kept across reconnects (RULING-125): a re-send is a C4.4 retry and
+	 * carries `retry: true`, so a new socket that does not know the ID answers admission_unknown instead of opening.
+	 */
 	private readonly sent = new Set<string>();
 	private readonly send: Send;
 	private serial = 0;
@@ -40,7 +45,17 @@ export class RpcClientAdmissions {
 
 	clear(): void {
 		this.routes.clear();
-		this.sent.clear();
+	}
+
+	/** Record a send of `admissionId` as the most recent one; true when this client sent it before. */
+	private remember(admissionId: string): boolean {
+		const retry = this.sent.delete(admissionId);
+		this.sent.add(admissionId);
+		for (const oldest of this.sent) {
+			if (this.sent.size <= SENT_ADMISSION_IDS) break;
+			this.sent.delete(oldest);
+		}
+		return retry;
 	}
 
 	receive(input: unknown): void {
@@ -72,8 +87,7 @@ export class RpcClientAdmissions {
 		const existing = this.routes.has(options.admissionId);
 		if (!existing)
 			this.routes.set(options.admissionId, { repair: new RecoveryRepairController(), generation: 0, notBefore: 0 });
-		const retry = this.sent.has(options.admissionId);
-		this.sent.add(options.admissionId);
+		const retry = this.remember(options.admissionId);
 		try {
 			const opened = this.accept(
 				await this.send({ ...options, type: "open_session", ...(retry ? { retry: true as const } : {}) }),

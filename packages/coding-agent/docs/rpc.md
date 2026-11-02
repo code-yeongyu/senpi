@@ -962,7 +962,10 @@ possibly duplicating its effect. An unmarked request for a forgotten ID still ru
 clients must mark retries; `status().retiredOverflow` still counts ring drops. A marked request whose fields differ from
 the stored row answers `admission_admission_conflict`, as an unmarked one does. With
 `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` off, and on a legacy (non-compact) request, the field is ignored. The in-repo
-`RpcClient` marks every `openSession` that re-sends an `admissionId` it already sent on the current connection.
+`RpcClient` marks every `openSession` that re-sends an `admissionId` the same client instance already sent, also
+after a disconnect and reconnect: the typical C4.4 retry follows a reconnect, and the new socket does not know the ID,
+so an unmarked re-send would open again. The client remembers the 4,096 most recently sent IDs (least recently sent
+dropped first), so its memory stays bounded; a client must not reuse an `admissionId` for a different request.
 
 #### interactive_user
 

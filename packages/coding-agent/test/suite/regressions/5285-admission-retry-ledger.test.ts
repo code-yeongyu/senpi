@@ -4,6 +4,7 @@ import {
 	CompactAdmissionError,
 	CompactAdmissions,
 } from "../../../src/modes/rpc/compact-admissions.ts";
+import { RpcClientAdmissions } from "../../../src/modes/rpc/rpc-client-admissions.ts";
 import { admissionClient } from "./4272-rpc-client-admission-support.ts";
 
 afterEach(() => {
@@ -124,3 +125,29 @@ it("RULING-125 a re-send after the client reconnects is marked retry:true and is
 	expect(produced).toEqual([]);
 	expect(fixture.failures).toEqual([]);
 }, 600_000);
+
+it("RULING-125 the client remembers at most 4,096 sent ids, least recently sent dropped first", async () => {
+	const sent: Record<string, unknown>[] = [];
+	const admissions = new RpcClientAdmissions(async (command) => {
+		sent.push({ ...command });
+		return { type: "response", command: "open_session", success: false, error: "refused" };
+	});
+	const open = (admissionId: string) => admissions.open({ admissionId }).catch(() => undefined);
+	for (let id = 0; id <= 4096; id++) await open(`id-${id}`);
+	expect(sent.filter((command) => command.retry !== undefined)).toEqual([]);
+	await open("id-1");
+	await open("id-0");
+	await open("id-2");
+	await open("id-1");
+	await open("id-4096");
+	expect(sent.slice(-5).map((command) => [command.admissionId, command.retry])).toEqual([
+		["id-1", true],
+		["id-0", undefined],
+		["id-2", undefined],
+		["id-1", true],
+		["id-4096", true],
+	]);
+	admissions.clear();
+	await open("id-4096");
+	expect(sent.at(-1)).toMatchObject({ admissionId: "id-4096", retry: true });
+});
