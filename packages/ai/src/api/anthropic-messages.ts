@@ -2016,7 +2016,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 		options.thinkingBudgets,
 	);
 
-	const maxTokens = clampMaxTokensToContext(model, context, adjusted.maxTokens);
+	const maxTokens = clampMaxTokensToContext(model, context, adjusted.maxTokens, options.contextUsageNotBefore);
 
 	return stream(model, context, {
 		...base,
