@@ -5,6 +5,7 @@ import {
 	getAltScreenSearchMatchKey,
 } from "./alt-screen-search.ts";
 import { AltScreenFlashContainer } from "./components/alt-screen-flash.ts";
+import { writeClipboardOsc52 } from "./clipboard.ts";
 import { ScrollView } from "./components/scroll-view.ts";
 import { getKeybindings } from "./keybindings.ts";
 import { isKeyRelease } from "./keys.ts";
@@ -1441,7 +1442,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			);
 			return ok;
 		}
-		this.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
+		writeClipboardOsc52(text, { write: (data) => this.terminal.write(data) });
 		this.flash("Copied!");
 		return true;
 	}
