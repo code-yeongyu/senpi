@@ -62,7 +62,7 @@ describe("Fable 5.5 provisional preset (senpi#3893)", () => {
 
 	it("inherits the same Opus-only fallback ladder once released and honors an explicit tombstone", () => {
 		expect(resolveRetryFallbackSettings(undefined).chains["claude-fable-5-5"]).toEqual(
-			FABLE55_LAUNCH.released ? ["claude-opus-5-5:max", "claude-opus-5:max"] : undefined,
+			FABLE55_LAUNCH.released ? ["claude-opus-5-5", "claude-opus-5"] : undefined,
 		);
 		expect(
 			resolveRetryFallbackSettings({ fallbackChains: { "claude-fable-5-5": [] } }).chains["claude-fable-5-5"],
