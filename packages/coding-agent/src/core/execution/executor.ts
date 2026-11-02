@@ -1,11 +1,11 @@
-import { prepareAgentToolCall } from "@earendil-works/pi-agent-core";
+import { type AgentTool, prepareAgentToolCall } from "@earendil-works/pi-agent-core";
 import type {
 	ExecutionEntry,
 	ExecutionEvent,
 	ExecutionKey,
 	LedgerReply,
 } from "@earendil-works/pi-agent-core/conformance";
-import { errorResult, finalizeBody, type PreparedBody, runBody } from "./executor-body.ts";
+import { errorResult, finalizeBody, messageOf, type PreparedBody, runBody } from "./executor-body.ts";
 import {
 	digestOf,
 	freezeCall,
@@ -98,7 +98,12 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		const effect = await step(key, generation, { kind: "effect" });
 		if (effect.status !== "applied") return refusal(effect);
 
-		const tool = await pipeline.resolve(call, request.context);
+		let tool: AgentTool | undefined;
+		try {
+			tool = await pipeline.resolve(call, request.context);
+		} catch (error) {
+			return stop(key, generation, { kind: "blocked", result: errorResult(messageOf(error)) });
+		}
 		if (!tool) {
 			const hint = pipeline.removedToolHint(call.name);
 			const text = hint === undefined ? `Tool ${call.name} not found` : `Tool ${call.name} not found. ${hint}`;
@@ -128,6 +133,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 			const freeze = await step(key, generation, { kind: "freeze", call: frozen, awaitingConsent: false });
 			if (freeze.status !== "applied") return refusal(freeze);
 			bodies.set(keyId(key), {
+				...named,
 				tool,
 				toolCall: prepared.toolCall,
 				args: frozen.args,
@@ -136,21 +142,22 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 			});
 			return { kind: "prepared", call: frozen, ...named };
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return stop(key, generation, { kind: "blocked", result: errorResult(message), ...named });
+			return stop(key, generation, { kind: "blocked", result: errorResult(messageOf(error)), ...named });
 		}
 	}
 
-	async function releaseOnce(request: ReleaseRequest, body: PreparedBody): Promise<ReleaseReply> {
+	async function terminalRow(key: ExecutionKey): Promise<ReleaseReply> {
+		const entry = await ledger.read(key);
+		if (entry === undefined) return { kind: "refused", reason: "not_found" };
+		const progress = entry.progress;
+		// A blocked call never had a body: release on it is refused, not replayed.
+		if (progress.state === "settled" && progress.outcome.reason === "blocked")
+			return { kind: "refused", reason: "blocked" };
+		return { kind: "replayed", entry };
+	}
+
+	async function runReleased(request: ReleaseRequest, body: PreparedBody): Promise<ReleaseReply> {
 		const { key, generation, signal } = request;
-		const released = await ledger.apply({
-			key,
-			generation,
-			actor: request.actor,
-			now: clock(),
-			event: { kind: "release" },
-		});
-		if (released.status === "refused" || released.status === "result_expired") return refusal(released);
 		const dispatched = await step(key, generation, { kind: "dispatch" });
 		if (dispatched.status === "replayed") return { kind: "replayed", entry: dispatched.entry };
 		if (dispatched.status !== "applied" || dispatched.entry.progress.state !== "dispatched") {
@@ -158,29 +165,46 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		}
 		const executed = await runBody(body, signal, request.onUpdate ?? (() => {}));
 		const { result, isError } = await finalizeBody(body, executed, pipeline, signal);
-		const recorded = await step(key, generation, { kind: "result", value: resultValue(result, isError) });
+		const value = resultValue(result, isError, body.requestedName);
+		const recorded = await step(key, generation, { kind: "result", value });
 		for (const memo of [bodies, preparations, releases]) memo.delete(keyId(key));
 		// A cancel or lease expiry that settled first stays terminal; the late body result is audit only.
 		if (recorded.status === "replayed") return { kind: "replayed", entry: recorded.entry };
 		if (recorded.status !== "applied") return refusal(recorded);
-		return { kind: "settled", toolCall: body.toolCall, result, isError };
+		const named = body.requestedName === undefined ? {} : { requestedName: body.requestedName };
+		return { kind: "settled", toolCall: body.toolCall, result, isError, ...named };
 	}
 
-	async function settledRow(key: ExecutionKey): Promise<ReleaseReply> {
-		const entry = await ledger.read(key);
-		const progress = entry?.progress;
-		if (entry === undefined || progress === undefined) return { kind: "refused", reason: "not_prepared" };
-		// Release on a terminal is refused; a blocked call never had a body to replay.
-		if (progress.state === "settled" && progress.outcome.reason === "blocked")
-			return { kind: "refused", reason: "blocked" };
-		return progress.state === "settled" || progress.state === "acked"
-			? { kind: "replayed", entry }
-			: { kind: "refused", reason: "not_prepared" };
+	// Every release reaches the ledger with its own actor and generation before any memo is read or written, so a
+	// wrong actor or an old generation is refused there and can never answer, or block, the issuer's own release.
+	async function release(request: ReleaseRequest): Promise<ReleaseReply> {
+		const { key, generation } = request;
+		const released = await ledger.apply({
+			key,
+			generation,
+			actor: request.actor,
+			now: clock(),
+			event: { kind: "release" },
+		});
+		if (released.status === "refused") return released.reason === "terminal" ? terminalRow(key) : refusal(released);
+		if (released.status === "result_expired") return refusal(released);
+		const id = keyId(key);
+		const pending = releases.get(id);
+		if (pending !== undefined) return pending;
+		const body = bodies.get(id);
+		if (body === undefined) return { kind: "refused", reason: "not_prepared" };
+		// Today's loop never starts a body once the run is aborted; the call stays released for the issuer's abort.
+		if (request.signal?.aborted) return { kind: "aborted", result: errorResult("Operation aborted") };
+		const reply = runReleased(request, body);
+		releases.set(id, reply);
+		void reply.catch(() => releases.get(id) === reply && releases.delete(id));
+		return reply;
 	}
 
 	return {
 		prepare: (request) => {
-			const requestDigest = digestOf(toStoreValue({ name: request.call.name, args: request.call.arguments }));
+			const { name, arguments: args, incomplete, errorMessage } = request.call;
+			const requestDigest = digestOf(toStoreValue({ name, args, incomplete, errorMessage }));
 			const admission = JSON.stringify([
 				request.generation,
 				request.workspace,
@@ -196,17 +220,11 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 			if (pending !== undefined) return Promise.resolve({ kind: "refused", reason: "identity_conflict" });
 			const reply = prepareOnce(request, requestDigest);
 			preparations.set(id, { admission, reply });
+			// Only a prepared call keeps its memo (release needs it); every other reply is durable or retryable.
+			const forget = () => preparations.get(id)?.reply === reply && preparations.delete(id);
+			void reply.then((settled) => settled.kind === "prepared" || forget(), forget);
 			return reply;
 		},
-		release: (request) => {
-			const id = keyId(request.key);
-			const pending = releases.get(id);
-			if (pending !== undefined) return pending;
-			const body = bodies.get(id);
-			if (body === undefined) return settledRow(request.key);
-			const reply = releaseOnce(request, body);
-			releases.set(id, reply);
-			return reply;
-		},
+		release,
 	};
 }

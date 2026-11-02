@@ -73,7 +73,10 @@ export type ReleaseReply =
 			readonly toolCall: AgentToolCall;
 			readonly result: AgentToolResult<unknown>;
 			readonly isError: boolean;
+			/** Set when the model's name resolved to another tool; the caller adds today's correction notice. */
+			readonly requestedName?: string;
 	  }
+	| { readonly kind: "aborted"; readonly result: AgentToolResult<unknown> }
 	| { readonly kind: "replayed"; readonly entry: ExecutionEntry }
 	| { readonly kind: "refused"; readonly reason: string };
 

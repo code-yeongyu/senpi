@@ -28,8 +28,8 @@ export function freezeCall(name: string, args: unknown): FrozenCall {
 }
 
 /** The durable record of a settled body: what the issuer commits before ACK. Details stay in the in-process reply. */
-export function resultValue(result: AgentToolResult<unknown>, isError: boolean): StoreValue {
-	return toStoreValue({ content: result.content ?? [], isError });
+export function resultValue(result: AgentToolResult<unknown>, isError: boolean, requestedName?: string): StoreValue {
+	return toStoreValue({ content: result.content ?? [], isError, requestedName });
 }
 
 export type StoppedReply = Extract<PrepareReply, { readonly kind: "blocked" | "batch_abort" }>;

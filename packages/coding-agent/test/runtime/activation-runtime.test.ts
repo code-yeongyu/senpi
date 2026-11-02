@@ -58,6 +58,7 @@ async function openQaExecutor(options: PrepFixtureOptions = {}): Promise<PrepFix
 			const reply = await executor.release(id);
 			if (reply.kind === "settled")
 				return { kind: "settled", text: resultText(reply.result), isError: reply.isError };
+			if (reply.kind === "aborted") return { kind: "refused", reason: "aborted" };
 			return reply.kind === "replayed" ? { kind: "replayed" } : reply;
 		},
 		trace: () => {

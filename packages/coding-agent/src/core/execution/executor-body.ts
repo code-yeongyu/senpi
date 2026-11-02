@@ -15,6 +15,8 @@ export interface PreparedBody {
 	readonly args: unknown;
 	readonly assistantMessage: AssistantMessage;
 	readonly context: AgentContext;
+	/** The model's own name when it resolved to another tool; today's result carries a correction notice for it. */
+	readonly requestedName?: string;
 }
 
 export interface BodyOutcome {
@@ -26,7 +28,7 @@ export function errorResult(message: string): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text: message }], details: {} };
 }
 
-function messageOf(error: unknown): string {
+export function messageOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
