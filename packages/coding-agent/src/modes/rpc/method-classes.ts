@@ -252,6 +252,8 @@ export const RPC_METHOD_CLASS = {
 	account_order: "device_admin",
 	account_pin: "device_admin",
 	account_remove: "device_admin",
+	// clears the stored account's cooldown/block state through the auth storage, like account_remove
+	account_reset: "device_admin",
 	// runs the sign-in connection test on a stored account and writes its result through the auth storage
 	test_provider_account: "device_admin",
 	set_favorite_models: "device_admin",

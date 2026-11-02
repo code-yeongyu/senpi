@@ -1,13 +1,20 @@
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { credentialPoolRepository } from "../../src/core/credential-accounts.ts";
+import { SENTINEL_OAUTH_FIELDS } from "../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { attachJsonlLineReader, serializeJsonLine } from "../../src/modes/rpc/jsonl.ts";
+import { RpcClient, RpcCommandError } from "../../src/modes/rpc/rpc-client.ts";
+import { socketSink } from "../../src/modes/rpc/socket-sink.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../src/core/extensions/builtin/anthropic-subscription/index.ts";
 import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
 import { createHarness } from "./harness.ts";
-import { cliSlot } from "../support/claude-cli-test-slots.ts";
+import { cliDirId, cliSlot } from "../support/claude-cli-test-slots.ts";
 import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
 describe("RPC auth and connection handler contracts", () => {
@@ -557,4 +564,343 @@ describe("RPC auth and connection handler contracts", () => {
 		).toBeUndefined();
 		await plainHandler.dispose();
 	});
+});
+
+const FUTURE = 4_102_444_800_000;
+const modelBlocks = { limited: { blockedUntil: FUTURE } };
+const block = { blockReason: "account_disabled" as const, blockedUntil: FUTURE };
+const history = { failureCount: 3, lastSuccessAt: 1, modelBlocks, lease: { id: "probe", expiresAt: FUTURE } };
+
+// Desktop #4203 U1: the public RPC must perform the same full reset as the CLI.
+// The direct #3285 owner cannot catch dispatch, early acknowledgements or leaked storage errors.
+// These tests exercise the real handler and stores without a production-only test seam.
+describe("account_reset unblocks one account over RPC", () => {
+	let dir: string;
+	let harness: ReturnType<typeof makeHarness>;
+	let collected: ReturnType<typeof makeSink>;
+	let handler: ReturnType<typeof createRpcConnectionHandler>;
+	let envBefore: NodeJS.ProcessEnv;
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "rpc-account-reset-4203-"));
+		envBefore = {
+			OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+			OPENAI_API_KEY_2: process.env.OPENAI_API_KEY_2,
+		};
+		harness = makeHarness(dir);
+		collected = makeSink();
+		handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+	});
+
+	afterEach(async () => {
+		await handler.dispose();
+		harness.cleanup();
+		for (const key of ["OPENAI_API_KEY", "OPENAI_API_KEY_2"]) {
+			if (envBefore[key] === undefined) delete process.env[key];
+			else process.env[key] = envBefore[key];
+		}
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	async function send(id: string, command: Record<string, unknown>) {
+		const response = collected.waitFor((message) => message.id === id, 5_000);
+		await handler.handleInputLine(JSON.stringify({ id, ...command }));
+		return response;
+	}
+
+	async function seed(provider: string) {
+		const oauth = provider === "anthropic-subscription";
+		// Stored Claude accounts are Claude CLI accounts (senpi#4436); a token slot would not be listed.
+		const accounts = ["a", "b"].map((name) => ({
+			name,
+			...(oauth ? { store: "claude-cli" as const, dirId: cliDirId(name) } : { key: `synthetic-${name}` }),
+			source: name === "a" ? ("import" as const) : ("login" as const),
+			displayName: `Account ${name}`,
+			...block,
+			modelBlocks,
+			authRecoveryGrant: "kept",
+		}));
+		await harness.authStorage.modify(provider, async () => ({
+			...(oauth
+				? { type: "oauth" as const, ...SENTINEL_OAUTH_FIELDS }
+				: { type: "api_key" as const, key: "synthetic-a" }),
+			accounts,
+			pinned: "b",
+			order: ["b", "a"],
+			slotState: { a: { ...block, modelBlocks }, b: { ...block, modelBlocks } },
+		}));
+		const repo = credentialPoolRepository(harness.authStorage);
+		for (const slot of accounts) {
+			// Same material the listing hashes (credential-accounts.ts); a Claude CLI slot carries none of the three.
+			const material = "key" in slot ? { key: slot.key } : {};
+			const credentialRevision = await repo.storedCredentialRevision(provider, slot.name, material);
+			await repo.mutateSlotState(provider, "stored", slot.name, () => ({
+				...block,
+				...history,
+				credentialRevision,
+			}));
+		}
+		return repo;
+	}
+
+	for (const provider of ["openai", "anthropic-subscription"]) {
+		it(`resets all named-account health and preserves credentials, pins and order for ${provider}`, async () => {
+			const repo = await seed(provider);
+			const authBefore = JSON.parse(readFileSync(harness.authPath, "utf8"));
+			const sidecarBefore = await repo.listSlots(provider, "stored");
+			expect(await send("before", { type: "get_provider_accounts", provider })).toMatchObject({
+				data: {
+					accounts: [
+						{ name: "b", blocked: true },
+						{ name: "a", blocked: true },
+					],
+				},
+			});
+			const changed = collected.waitFor(
+				(message) => message.type === "auth_accounts_changed" && message.provider === provider,
+				5_000,
+			);
+			// Attach rejection handling before triggering too, so a RED failure leaves no rejected waiter.
+			const event = changed.then(
+				(value) => value,
+				(error: unknown) => error,
+			);
+			const response = await send("reset", { type: "account_reset", provider, name: "b" });
+			expect(response).toEqual({ id: "reset", type: "response", command: "account_reset", success: true });
+			expect(await event).toEqual({ type: "auth_accounts_changed", provider });
+			expect(await send("after", { type: "get_provider_accounts", provider })).toMatchObject({
+				data: {
+					ordered: true,
+					accounts: [
+						{ name: "b", pinned: true, blocked: false },
+						{ name: "a", pinned: false, blocked: true },
+					],
+				},
+			});
+			const expectedAuth = structuredClone(authBefore);
+			delete expectedAuth[provider].accounts[1].blockReason;
+			delete expectedAuth[provider].accounts[1].blockedUntil;
+			delete expectedAuth[provider].accounts[1].modelBlocks;
+			delete expectedAuth[provider].slotState.b;
+			expect(JSON.parse(readFileSync(harness.authPath, "utf8"))).toEqual(expectedAuth);
+			expect(await repo.listSlots(provider, "stored")).toEqual({
+				a: sidecarBefore.a,
+			});
+			expect(JSON.stringify(collected.messages())).not.toMatch(/synthetic-|access-|refresh-/);
+		});
+	}
+
+	it("unblocks an environment slot without changing its value or the other slot", async () => {
+		process.env.OPENAI_API_KEY = "synthetic-env";
+		process.env.OPENAI_API_KEY_2 = "synthetic-env-2";
+		const repo = credentialPoolRepository(harness.authStorage);
+		for (const [name, variable, value] of [
+			["env", "OPENAI_API_KEY", "synthetic-env"],
+			["env-2", "OPENAI_API_KEY_2", "synthetic-env-2"],
+		]) {
+			const credentialRevision = await repo.envCredentialRevision(variable, value);
+			await repo.mutateSlotState("openai", "env", name, () => ({ ...block, ...history, credentialRevision }));
+		}
+		const before = await repo.listSlots("openai", "env");
+		const changed = collected.waitFor((message) => message.type === "auth_accounts_changed", 5_000);
+		const event = changed.then(
+			(value) => value,
+			(error: unknown) => error,
+		);
+		expect(await send("env-reset", { type: "account_reset", provider: "openai", name: "env-2" })).toMatchObject({
+			success: true,
+		});
+		expect(await event).toEqual({ type: "auth_accounts_changed", provider: "openai" });
+		expect(await send("env-list", { type: "get_provider_accounts", provider: "openai" })).toMatchObject({
+			data: {
+				accounts: [
+					{ name: "env", blocked: true },
+					{ name: "env-2", blocked: false },
+				],
+			},
+		});
+		expect(await repo.listSlots("openai", "env")).toEqual({ env: before.env });
+		expect(process.env.OPENAI_API_KEY_2).toBe("synthetic-env-2");
+		expect(harness.authStorage.get("openai")).toBeUndefined();
+	});
+
+	it("returns a correlated typed error for an unknown name without mutation or notice", async () => {
+		const repo = await seed("openai");
+		const before = readFileSync(harness.authPath, "utf8");
+		const state = await repo.listSlots("openai", "stored");
+		expect(
+			await send("missing", { type: "account_reset", provider: "openai", name: "synthetic-secret-name" }),
+		).toMatchObject({
+			id: "missing",
+			type: "response",
+			command: "account_reset",
+			success: false,
+			errorCode: "account_not_found",
+			error: "Provider account not found. Refresh the account list.",
+		});
+		expect(readFileSync(harness.authPath, "utf8")).toBe(before);
+		expect(await repo.listSlots("openai", "stored")).toEqual(state);
+		expect(collected.messages().filter((message) => message.type === "auth_accounts_changed")).toEqual([]);
+	});
+
+	it.each([
+		{ provider: null, name: "b" },
+		{ provider: 1, name: "b" },
+		{ name: "b" },
+		{ provider: "openai", name: null },
+		{ provider: "openai", name: 1 },
+		{ provider: "openai" },
+	])("refuses malformed selectors without changing account state: %j", async (selector) => {
+		const repo = await seed("openai");
+		const before = readFileSync(harness.authPath, "utf8");
+		const state = await repo.listSlots("openai", "stored");
+		expect(await send("invalid", { type: "account_reset", ...selector })).toMatchObject({
+			id: "invalid",
+			command: "account_reset",
+			success: false,
+			errorCode: "invalid_argument",
+		});
+		expect(readFileSync(harness.authPath, "utf8")).toBe(before);
+		expect(await repo.listSlots("openai", "stored")).toEqual(state);
+		expect(collected.messages().filter((message) => message.type === "auth_accounts_changed")).toEqual([]);
+	});
+
+	it("acknowledges and publishes only after the stored block write settles", async () => {
+		await seed("openai");
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const modify = harness.authStorage.modify.bind(harness.authStorage);
+		harness.authStorage.modify = async (provider, fn) => {
+			entered.resolve();
+			await release.promise;
+			return modify(provider, fn);
+		};
+		const changed = collected.waitFor((message) => message.type === "auth_accounts_changed", 5_000);
+		const event = changed.then(
+			(value) => value,
+			(error: unknown) => error,
+		);
+		const response = send("settled", { type: "account_reset", provider: "openai", name: "b" });
+		try {
+			await Promise.race([
+				entered.promise,
+				response.then(() => {
+					throw new Error("Response before write");
+				}),
+			]);
+			expect(
+				collected
+					.messages()
+					.some((message) => message.id === "settled" || message.type === "auth_accounts_changed"),
+			).toBe(false);
+		} finally {
+			release.resolve();
+		}
+		expect(await response).toMatchObject({ success: true });
+		expect(await event).toEqual({ type: "auth_accounts_changed", provider: "openai" });
+	});
+
+	it("returns failure without a success notice when a stored write rejects", async () => {
+		await seed("openai");
+		harness.authStorage.modify = async () => {
+			throw new Error("Storage failed for synthetic-secret-credential");
+		};
+		expect(await send("failed", { type: "account_reset", provider: "openai", name: "b" })).toMatchObject({
+			id: "failed",
+			command: "account_reset",
+			success: false,
+			error: "Could not reset this account. Try again.",
+			errorCode: "account_reset_failed",
+		});
+		expect(collected.messages().filter((message) => message.type === "auth_accounts_changed")).toEqual([]);
+	});
+});
+
+// Desktop #4203: the typed client must await the actual engine acknowledgement,
+// including turning a failed response into a typed rejection rather than resolving.
+it.each([false, true])("round-trips account metadata and reset responses with legacy host=%s", async (legacy) => {
+	const dir = mkdtempSync(join(tmpdir(), "reset-client-4203-"));
+	const harness = makeHarness(dir);
+	const handlers: ReturnType<typeof createRpcConnectionHandler>[] = [];
+	const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\reset-${randomUUID()}` : join(dir, "rpc.sock");
+	const server = createServer((socket) => {
+		const handler = createRpcConnectionHandler(harness.runtimeHost, socketSink(socket));
+		handlers.push(handler);
+		attachJsonlLineReader(socket, (line) => {
+			const command = JSON.parse(line) as { id?: string; type: string };
+			if (legacy && (command.type === "account_reset" || command.type === "get_provider_accounts")) {
+				socket.write(
+					serializeJsonLine({
+						type: "response",
+						id: command.id,
+						command: command.type,
+						...(command.type === "account_reset"
+							? { success: false, error: "Unknown command: account_reset" }
+							: {
+									success: true,
+									data: { accounts: [{ name: "work", source: "login", blocked: true, pinned: false }] },
+								}),
+					}),
+				);
+				return;
+			}
+			void handler.handleInputLine(line);
+		});
+	});
+	const client = new RpcClient({ socketPath });
+	let unsubscribe = () => {};
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await harness.authStorage.modify("openai", async () => ({
+			type: "api_key",
+			key: "synthetic",
+			accounts: [
+				{
+					name: "work",
+					key: "synthetic",
+					blockReason: "account_disabled",
+				},
+			],
+		}));
+		await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+		await client.start();
+		if (legacy) {
+			expect(await client.getProviderAccounts("openai")).toEqual([
+				{ name: "work", source: "login", blocked: true, pinned: false },
+			]);
+			const refused = client.resetProviderAccount("openai", "work");
+			await expect(refused).rejects.toBeInstanceOf(RpcCommandError);
+			await expect(refused).rejects.toMatchObject({ message: "Unknown command: account_reset" });
+			return;
+		}
+		const changed = new Promise<unknown>((resolve, reject) => {
+			timer = setTimeout(() => reject(new Error("No account-change event")), 5_000);
+			unsubscribe = client.onEvent((event) => {
+				if (event.type !== "auth_accounts_changed") return;
+				clearTimeout(timer);
+				resolve(event);
+			});
+		});
+
+		const observed = changed.then(
+			(value) => value,
+			(error: unknown) => error,
+		);
+
+		await client.resetProviderAccount("openai", "work");
+
+		expect(await observed).toMatchObject({ type: "auth_accounts_changed", provider: "openai" });
+		expect(await client.getProviderAccounts("openai")).toMatchObject([{ name: "work", blocked: false }]);
+		const refused = client.resetProviderAccount("openai", "missing");
+		await expect(refused).rejects.toBeInstanceOf(RpcCommandError);
+		await expect(refused).rejects.toMatchObject({ errorCode: "account_not_found" });
+	} finally {
+		clearTimeout(timer);
+		unsubscribe();
+		await client.stop();
+		for (const handler of handlers) await handler.dispose();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		harness.cleanup();
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

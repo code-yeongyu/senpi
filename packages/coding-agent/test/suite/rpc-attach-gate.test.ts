@@ -29,6 +29,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 				{ type: "unload_session" },
 				{ type: "set_client_info", capabilities: [] },
 				{ type: "record_user_activity", kind: "draft" },
+				{ type: "account_reset", provider: "openai", name: "work" },
 				{ type: "future_session_mutation" },
 			];
 			for (const mutation of mutations) {
