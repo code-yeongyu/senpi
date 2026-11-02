@@ -9,7 +9,7 @@ import type { ExecutionEntry, ExecutionEvent, ExecutionKey, LedgerReply } from "
 export type PausePoint = "hook" | "dispatch" | "body";
 
 /** What the scripted `tool_call` chain decides for a tool name; unknown names are allowed. */
-const BATCH_TOOLS: Readonly<Record<string, "block" | "batch_abort">> = { deny: "block", stop: "batch_abort" };
+const BATCH_TOOLS: Readonly<Record<string, StoppedReply["kind"]>> = { deny: "blocked", stop: "batch_abort" };
 
 export interface ExecutorOpenOptions {
 	readonly id: string;
@@ -38,8 +38,19 @@ export class ExecutorKilledError extends Error {
 	}
 }
 
-const markerKey = ({ issuer, commandId }: ExecutionKey): string =>
-	`batch.executor.marker:${JSON.stringify([issuer, commandId])}`;
+type StoppedReply = Extract<PrepareReply, { readonly kind: "blocked" | "batch_abort" }>;
+
+function stoppedReply(kind: StoppedReply["kind"], name: string): StoppedReply {
+	return kind === "blocked" ? { kind, result: `blocked: ${name}` } : { kind };
+}
+
+/** The reply a re-sent prepare gets back from the ledger's durable `blocked` outcome, as the prepared executor does. */
+function fromStopped(value: StoreValue): StoppedReply | undefined {
+	if (value === null || typeof value !== "object" || !("kind" in value) || !("name" in value)) return undefined;
+	const { kind, name } = value;
+	if (typeof name !== "string" || (kind !== "blocked" && kind !== "batch_abort")) return undefined;
+	return stoppedReply(kind, name);
+}
 
 function expectEntry(reply: LedgerReply, what: string): ExecutionEntry {
 	if (reply.status === "applied" || reply.status === "replayed") return reply.entry;
@@ -73,11 +84,11 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 
 		const stored = async (entry: ExecutionEntry): Promise<PrepareReply> => {
 			const progress = entry.progress;
-			if (progress.state === "settled") return { kind: "settled", outcome: progress.outcome };
+			if (progress.state === "settled") {
+				const stopped = progress.outcome.reason === "blocked" ? fromStopped(progress.outcome.value) : undefined;
+				return stopped ?? { kind: "settled", outcome: progress.outcome };
+			}
 			if (!("call" in progress)) throw new Error(`no stored prepare reply in state ${progress.state}`);
-			const marker = await store.getDocument(markerKey(entry));
-			if (marker === "block") return { kind: "blocked", result: `blocked: ${progress.call.name}` };
-			if (marker === "batch_abort") return { kind: "batch_abort" };
 			return { kind: "prepared", frozenDigest: progress.call.digest };
 		};
 		const settled = async (ref: ExecutionRef): Promise<SettleReply> => {
@@ -110,8 +121,10 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 			trace.push(`hook:${commandId}`);
 			await hold(commandId, "hook");
 			const decision = BATCH_TOOLS[call.name];
-			if (decision !== undefined)
-				await store.commit(epoch, [{ op: "put", key: markerKey(entry), data: decision }], () => {});
+			if (decision !== undefined) {
+				const block: ExecutionEvent = { kind: "block", value: { kind: decision, name: call.name } };
+				return stored(expectEntry(await apply(request, block, id), "block"));
+			}
 			const frozen = { ...call, digest: `${requestDigest}:frozen` };
 			const freeze: ExecutionEvent = { kind: "freeze", call: frozen, awaitingConsent: false };
 			return stored(expectEntry(await apply(request, freeze, id), "freeze"));

@@ -84,7 +84,7 @@ export type CallOutcome =
 	| { readonly kind: "not_run"; readonly cause: "batch_abort" | "interrupted_preparation" }
 	| {
 			readonly kind: "interrupted";
-			readonly reason: Exclude<ExecutionOutcome["reason"], "result"> | "unknown_execution";
+			readonly reason: Exclude<ExecutionOutcome["reason"], "result" | "blocked"> | "unknown_execution";
 			readonly uncertain: boolean;
 	  };
 

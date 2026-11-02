@@ -17,7 +17,7 @@ function numbers(value: StoreObject, keys: readonly string[]): boolean {
 
 function terminal(value: StoreValue | undefined): boolean {
 	if (!object(value) || typeof value.hooksRan !== "boolean" || typeof value.uncertain !== "boolean") return false;
-	return value.reason === "result"
+	return value.reason === "result" || value.reason === "blocked"
 		? value.value !== undefined
 		: ["cancelled", "lease_expired", "hand_restarted", "uncertain"].includes(String(value.reason));
 }

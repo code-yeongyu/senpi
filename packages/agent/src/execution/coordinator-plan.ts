@@ -67,16 +67,22 @@ export async function buildBatchManifest(issuer: string, plan: BatchPlan): Promi
 /** A reply after which no later call is prepared and the decision is ABORT. */
 export function abortCause(reply: PrepareReply): "batch_abort" | "interrupted_preparation" | undefined {
 	if (reply.kind === "batch_abort") return "batch_abort";
-	if (reply.kind === "settled" && reply.outcome.reason !== "result") return "interrupted_preparation";
-	return undefined;
+	if (reply.kind !== "settled") return undefined;
+	const { reason } = reply.outcome;
+	return reason === "result" || reason === "blocked" ? undefined : "interrupted_preparation";
 }
 
 export function settledOutcome(reply: SettleReply): CallOutcome {
 	if (reply.kind === "unknown_execution") return { kind: "interrupted", reason: "unknown_execution", uncertain: true };
 	const { outcome } = reply;
-	return outcome.reason === "result"
-		? { kind: "result", value: outcome.value }
-		: { kind: "interrupted", reason: outcome.reason, uncertain: outcome.uncertain };
+	switch (outcome.reason) {
+		case "result":
+			return { kind: "result", value: outcome.value };
+		case "blocked":
+			return { kind: "blocked", result: outcome.value };
+		default:
+			return { kind: "interrupted", reason: outcome.reason, uncertain: outcome.uncertain };
+	}
 }
 
 /**
