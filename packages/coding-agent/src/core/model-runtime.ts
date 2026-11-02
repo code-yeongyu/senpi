@@ -1038,6 +1038,11 @@ export class ModelRuntime implements Models {
 	 * costs a microtask hop, which would reorder an ordinary request's provider
 	 * call relative to the untouched `streamSimple` path.
 	 */
+	/** Whether a request carrying no explicit key would select this provider's credential through the pool. */
+	rotatesCredentials(model: Model<Api>): boolean {
+		return this.couldRotateCredentials(model, undefined);
+	}
+
 	private couldRotateCredentials(model: Model<Api>, options: CredentialRotationStreamOptions | undefined): boolean {
 		if (options?.apiKey !== undefined) return false;
 		if (this.credentials.hasRuntimeApiKey(model.provider)) return false;

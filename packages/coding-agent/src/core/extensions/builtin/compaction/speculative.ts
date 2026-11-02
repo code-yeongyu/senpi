@@ -303,9 +303,16 @@ export async function runExtensionCompaction(
 		const detail = auth && !auth.ok ? auth.error : `no credentials resolved for provider "${selectedModel.provider}"`;
 		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);
 	}
-	const requestSnapshot = auth.baseUrl
-		? { ...selectedSnapshot, model: { ...selectedModel, baseUrl: auth.baseUrl } }
-		: selectedSnapshot;
+	// A pooled provider selects its account per request, as the main turn does; the key resolved above
+	// only proves credentials exist and would pin the summary to the stored top-level slot (senpi#1814).
+	const pooled = auth.rotatesCredentials === true;
+	const requestAuth = pooled
+		? { extraBody: auth.extraBody }
+		: { apiKey: auth.apiKey, headers: auth.headers, extraBody: auth.extraBody };
+	const requestSnapshot =
+		auth.baseUrl && !pooled
+			? { ...selectedSnapshot, model: { ...selectedModel, baseUrl: auth.baseUrl } }
+			: selectedSnapshot;
 
 	const prompt = buildPrompt({
 		variant: requestSnapshot.promptVariant,
@@ -373,11 +380,7 @@ export async function runExtensionCompaction(
 						prompt,
 						signal,
 						snapshot: requestSnapshot,
-						auth: {
-							apiKey: auth.apiKey,
-							headers: auth.headers,
-							extraBody: auth.extraBody,
-						},
+						auth: requestAuth,
 						...(reasoningOverrideRetrySpent ? { omitReasoningOptions: true } : {}),
 					});
 					if (
