@@ -125,8 +125,9 @@ describe("loopless worker runtime (senpi#5413)", () => {
 
 // The admission path under test is production code; the workers are in-memory stand-ins, so counts are exact and
 // nothing depends on machine load (as in X4, test/characterization/worker-cap.test.ts).
-function looplessStandIns(options: { holdStart?: Promise<void> } = {}) {
+function looplessStandIns(options: { holdStart?: Promise<void>; failStart?: boolean } = {}) {
 	const started: LooplessWorker[] = [];
+	const closed: LooplessWorker[] = [];
 	const createWorker = (): LooplessWorker => {
 		let exit: () => void = () => {};
 		const exited = new Promise<void>((resolve) => {
@@ -136,14 +137,18 @@ function looplessStandIns(options: { holdStart?: Promise<void> } = {}) {
 			exited,
 			start: async () => {
 				await options.holdStart;
+				if (options.failStart) throw new Error("runtime failed to build");
 				return ["read"];
 			},
-			close: async () => exit(),
+			close: async () => {
+				closed.push(worker);
+				exit();
+			},
 		};
 		started.push(worker);
 		return worker;
 	};
-	return { started, createWorker };
+	return { started, closed, createWorker };
 }
 
 function sessionRegistry(capacity: WorkerCapacity, cwd: string): WorkerSessionRegistry {
@@ -181,6 +186,7 @@ function looplessPool(capacity: WorkerCapacity, createWorker: () => LooplessWork
 	return new LooplessWorkerPool({
 		configuration: { parsed: parseArgs(["--mode", "rpc"]), cwd: tmpdir(), agentDir: tmpdir(), appMode: "rpc" },
 		capacity,
+		closeGraceMs: 10_000,
 		createWorker,
 	});
 }
@@ -246,5 +252,20 @@ describe("MULTI cap: the per-hand worker cap holds across sessions (Z2, senpi#54
 
 		await pool.open(tmpdir());
 		expect(await refusal(pool.open(tmpdir()))).toBe("too_many_sessions");
+	});
+
+	it("a worker whose runtime fails to start is closed and frees its slot", async () => {
+		const failing = looplessStandIns({ failStart: true });
+		const capacity = new WorkerCapacity();
+		const pool = looplessPool(capacity, failing.createWorker);
+
+		const refused = await refusal(pool.open(tmpdir()));
+
+		expect([refused, failing.closed.length, pool.size, capacity.inUse()]).toEqual([
+			"runtime failed to build",
+			1,
+			0,
+			0,
+		]);
 	});
 });

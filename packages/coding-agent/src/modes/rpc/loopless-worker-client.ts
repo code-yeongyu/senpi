@@ -8,7 +8,8 @@ import type { HostToLooplessWorker, LooplessWorkerToHost } from "./loopless-work
 export interface LooplessWorker {
 	readonly exited: Promise<void>;
 	start(configuration: CliRuntimeConfiguration, cwd: string): Promise<readonly string[]>;
-	close(): Promise<void>;
+	/** Asks the isolate to dispose its runtime; past `graceMs` the isolate is terminated. Settles once it exited. */
+	close(graceMs: number): Promise<void>;
 }
 
 function looplessWorkerEntry(): string | URL {
@@ -20,6 +21,12 @@ function looplessWorkerEntry(): string | URL {
 export function startLooplessWorker(): LooplessWorker {
 	const worker = new Worker(looplessWorkerEntry());
 	const exited = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+	// An isolate that fails outside its message handler (a module that does not load, an uncaught throw) emits `error`;
+	// with no listener that would throw in the host and take every other session down with it.
+	let failure: string | undefined;
+	worker.on("error", (error: unknown) => {
+		failure = error instanceof Error ? error.message : String(error);
+	});
 	const post = (message: HostToLooplessWorker): void => worker.postMessage(message);
 	return {
 		exited,
@@ -31,12 +38,17 @@ export function startLooplessWorker(): LooplessWorker {
 					else reject(new Error(message.error));
 				};
 				worker.on("message", onMessage);
-				void exited.then(() => reject(new Error("loopless_worker_exited")));
+				void exited.then(() => reject(new Error(failure ?? "loopless_worker_exited")));
 				post({ type: "start", configuration, cwd });
 			}),
-		close: async () => {
+		close: async (graceMs) => {
 			post({ type: "close" });
-			await exited;
+			const grace = setTimeout(() => void worker.terminate(), graceMs);
+			try {
+				await exited;
+			} finally {
+				clearTimeout(grace);
+			}
 		},
 	};
 }

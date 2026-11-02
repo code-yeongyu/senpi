@@ -7,6 +7,8 @@ export interface LooplessWorkerPoolOptions {
 	readonly configuration: CliRuntimeConfiguration;
 	/** The process's one worker budget; the session registry of the same process shares it. */
 	readonly capacity: WorkerCapacity;
+	/** How long a closing worker may dispose its runtime before it is terminated (as session workers' close grace). */
+	readonly closeGraceMs: number;
 	/** Production starts a real isolate; a caller may supply one to drive admission deterministically. */
 	readonly createWorker?: () => LooplessWorker;
 }
@@ -46,7 +48,7 @@ export class LooplessWorkerPool {
 		try {
 			return { id, tools: await worker.start(this.options.configuration, cwd) };
 		} catch (cause) {
-			await worker.close();
+			await worker.close(this.options.closeGraceMs);
 			this.workers.delete(id);
 			throw cause;
 		}
@@ -55,7 +57,7 @@ export class LooplessWorkerPool {
 	async close(id: string): Promise<void> {
 		const worker = this.workers.get(id);
 		if (worker === undefined) throw new Error("unknown_session");
-		await worker.close();
+		await worker.close(this.options.closeGraceMs);
 		this.workers.delete(id);
 	}
 }

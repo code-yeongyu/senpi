@@ -28,6 +28,7 @@ describe("loopless worker isolate (senpi#5413)", () => {
 				appMode: "rpc",
 			},
 			capacity: new WorkerCapacity(),
+			closeGraceMs: 10_000,
 		});
 
 		const opened = await pool.open(cwd);
