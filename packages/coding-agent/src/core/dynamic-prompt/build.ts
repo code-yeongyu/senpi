@@ -6,7 +6,7 @@ import { buildIntentGate } from "./intent-gate.ts";
 import { buildPoliciesSection } from "./policies.ts";
 import { buildStyleSection } from "./style.ts";
 import { categorizeTools } from "./tool-categorization.ts";
-import { buildToolSection } from "./tool-section.ts";
+import { buildToolGuidelinesSection, buildToolSection } from "./tool-section.ts";
 import type { AvailableTool, PromptSurface } from "./types.ts";
 import { buildVerificationSection } from "./verification.ts";
 import { buildWorkingTaskSection } from "./working-task.ts";
@@ -29,6 +29,8 @@ export interface DynamicPromptCoreContext {
 	appName?: string;
 	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section. */
 	toolSection: string;
+	/** The "## Tool Guidelines" block alone ("" when empty), for cores that drop the tool list. */
+	toolGuidelines: string;
 }
 
 export interface BuildDynamicSystemPromptOptions {
@@ -101,9 +103,15 @@ export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptO
 		promptGuidelines: options.promptGuidelines,
 	});
 
+	const toolGuidelines = buildToolGuidelinesSection({
+		tools,
+		toolSnippets: options.toolSnippets,
+		promptGuidelines: options.promptGuidelines,
+	});
+
 	const surface = options.surface ?? "terminal";
 	const sections = options.corePrompt
-		? [options.corePrompt({ tools, toolSection, surface, appName: options.appName })]
+		? [options.corePrompt({ tools, toolSection, toolGuidelines, surface, appName: options.appName })]
 		: [
 				buildIdentitySection(options.appName),
 				"",

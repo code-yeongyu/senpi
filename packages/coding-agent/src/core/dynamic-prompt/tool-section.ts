@@ -49,6 +49,18 @@ export function buildToolSection(options: {
 		lines.push("(none)", "");
 	}
 
+	const guidelines = buildToolGuidelinesSection(options);
+	if (guidelines) lines.push(guidelines, "");
+
+	return lines.join("\n").trimEnd();
+}
+
+/** The "## Tool Guidelines" block alone, or "" when no tool contributes a guideline. */
+export function buildToolGuidelinesSection(options: {
+	tools: AvailableTool[];
+	toolSnippets: Record<string, string>;
+	promptGuidelines?: string[];
+}): string {
 	const guidelines =
 		options.promptGuidelines?.map((guideline) => guideline.trim()).filter((guideline) => guideline) ?? [];
 	const evalOnlyGrepGuideline = getEvalOnlyGrepGuideline(
@@ -56,13 +68,6 @@ export function buildToolSection(options: {
 		options.toolSnippets,
 	);
 	if (evalOnlyGrepGuideline) guidelines.unshift(evalOnlyGrepGuideline);
-	if (guidelines.length > 0) {
-		lines.push("## Tool Guidelines", "");
-		for (const guideline of guidelines) {
-			lines.push(`- ${guideline}`);
-		}
-		lines.push("");
-	}
-
-	return lines.join("\n").trimEnd();
+	if (guidelines.length === 0) return "";
+	return ["## Tool Guidelines", "", ...guidelines.map((guideline) => `- ${guideline}`)].join("\n");
 }
