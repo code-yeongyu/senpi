@@ -1563,6 +1563,8 @@
         "src/tool-child-main.ts",
         "src/utils/image-resize-worker.ts",
         "src/core/extensions/builtin/permission-system/path-identity-worker.ts",
+        // The kill guard's judge, compiled into the binary by path (build:binary) and imported by URL by codemode workers.
+        "src/core/kill-guard/index.ts",
         // Experimental entries run by path (mini-test.sh, experimental-cli-entry.test.ts).
         "src/experimental/cli.ts",
         "src/experimental/mini/main.ts",
