@@ -230,7 +230,9 @@ it("RULING-81 measurements: descriptors per record type on the real path, and th
 		process.stdout.write(`S13-MEASURE descriptors-per-type ${JSON.stringify(perType)} pinned-bytes ${pinned}\n`);
 		expect(Object.values(perType).reduce((sum, count) => sum + count, 0)).toBe(events.status().minted);
 		const before = events.status();
-		vi.spyOn(TransferStaging.prototype, "stage").mockImplementation(() => {
+		// `begin` is where the byte limit refuses and the one entry both staging paths take: a stamped compact copy
+		// (RULING-123) streams from its record, never `stage()` from another destination's line.
+		vi.spyOn(TransferStaging.prototype, "begin").mockImplementation(() => {
 			throw new TransferStagingError("staging_over_byte_limit");
 		});
 		host.writer.enqueue(routing, oversized("c-fail"));

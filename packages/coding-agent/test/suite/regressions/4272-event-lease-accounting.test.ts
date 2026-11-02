@@ -57,9 +57,11 @@ it("X07 S13 an oversized record is staged once for every compact peer, each hold
 				result: { content: [{ type: "text", text: text(index) }] },
 			});
 		await host.writer.flush();
-		const legacyLarge = legacy.inbox.filter((record) => record.type === "tool_execution_end").map(wireBytes);
-		expect(legacyLarge.every((bytes) => bytes > F)).toBe(true);
-		const stored = legacyLarge.reduce((sum, bytes) => sum + 2 * (bytes - 1), 0);
+		const legacyEnds = legacy.inbox.filter((record) => record.type === "tool_execution_end");
+		expect(legacyEnds.map(wireBytes).every((bytes) => bytes > F)).toBe(true);
+		// The staged text is the compact copy: the legacy line plus its RULING-123 stamp (these calls were never announced).
+		const compactCopy = (record: WireRecord) => wireBytes({ ...record, callUnknown: true });
+		const stored = legacyEnds.reduce((sum, record) => sum + 2 * (compactCopy(record) - 1), 0);
 		expect(events.status(), "one staged copy per record, shared by both compact peers").toMatchObject({
 			open: records * compact.length,
 			minted: records * compact.length,
