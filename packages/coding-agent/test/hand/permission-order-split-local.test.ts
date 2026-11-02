@@ -5,7 +5,6 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import {
 	cleanupHands,
@@ -127,10 +126,8 @@ describe("hand-side tool handlers on split-local (S27a, K3.b)", () => {
 		const notes = join(dirs.cwd, "notes.txt");
 		await writeFile(notes, "keep me\n");
 		const link = openLink();
-		const permission = builtinExtensions
-			.filter((entry) => entry.id === "permission-system")
-			.map((entry) => ({ factory: entry.factory, path: `<builtin:${entry.id}>` }));
-		startHand(link, dirs, permission, ["--permission-preset", "auto"]);
+		// The builtin permission system loads on every hand runtime, as on a session.
+		startHand(link, dirs, [], ["--permission-preset", "auto"]);
 
 		const { agent } = await runTurn({
 			calls: [

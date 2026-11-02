@@ -141,7 +141,7 @@ function response(content: AssistantMessage["content"]) {
 	return stream;
 }
 
-export function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {
+export function toolCall(id: string, name: string, args: ToolCall["arguments"]): ToolCall {
 	return { type: "toolCall", id, name, arguments: args };
 }
 
