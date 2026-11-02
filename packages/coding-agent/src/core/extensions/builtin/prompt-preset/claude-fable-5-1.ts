@@ -121,7 +121,7 @@ ${buildExecutionToolingParagraph({ toolNames: context.tools.map((tool) => tool.n
 
 ## Verification
 
-Scale the checks to the change, never the rigor. Always run diagnostics on every changed file. For a behavioral change, also run the related tests and the affected entry point once. For multi-file or cross-cutting work, also build and exercise the user-visible behavior through its real surface.
+Scale the checks to the change, never the rigor. Always run diagnostics on every changed file. For a behavioral change, also run the related tests and the affected entry point once. For multi-file or cross-cutting work, also build and manually exercise the user-visible behavior through its real surface.
 
 ${buildTestDisciplineSection()}
 
