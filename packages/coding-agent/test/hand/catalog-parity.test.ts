@@ -66,6 +66,12 @@ const CASES: readonly ParityCase[] = [
 		expectAbsent: ["bash", "find_widget"],
 	},
 	{
+		name: "--exclude-tools",
+		flags: ["--exclude-tools", "bash,find_widget"],
+		expectTools: ["read", "echo"],
+		expectAbsent: ["bash", "find_widget"],
+	},
+	{
 		name: "--no-tools",
 		flags: ["--no-tools"],
 		expectTools: [],
