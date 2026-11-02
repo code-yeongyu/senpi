@@ -1,50 +1,44 @@
 import { judgeCommand } from "../../../kill-guard/command.ts";
 import { hostKillGuardContext, readKillGuardSetting } from "../../../kill-guard/host.ts";
-import { refuse } from "../../../kill-guard/verdict.ts";
 import type { ExtensionAPI, ToolCallEventResult } from "../../types.ts";
-import { isWakeSourceStateEvent, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
-import { bashInputBytes } from "./input-keys.ts";
-import type { UnjudgedHistory } from "./shell-history.ts";
-import { type ShellReconfiguration, shellReconfiguration } from "./shell-reconfiguration.ts";
-import { type SubmittedLine, typeInto } from "./typed-lines.ts";
-import { forgetAgentSession, keepTypedSession, noteRunningShells, typedSession } from "./typed-sessions.ts";
 
-const UNFOLLOWABLE =
-	"a bash_input line was sent with a control byte, an escape sequence, tab or a named key, and the bytes sent for it could spell a kill-family command once the shell's line editor rearranges them (the guard refuses these instead of modelling every readline key)";
-
-// bash runs a history entry for these lines, not the typed text, and the guard cannot see the shell's history (it may
-// hold lines loaded from the user's history file before the session), so they are refused unjudged (fail closed).
-const UNJUDGED_HISTORY: Record<UnjudgedHistory, string> = {
-	recall:
-		"history recall is not judged: bash runs the history entry a recall key put on the line, which the guard cannot see",
-	expansion:
-		"history expansion is not judged: bash runs the line a `!` event, a leading `^` or `fc` expands to, not the typed one",
-};
-const TYPE_IN_FULL = "Type the full command as plain text and submit it.";
-// The threat model is a mistaken agent: these make every remaining "bash runs a line the guard could not see" path
-// refuse instead of guessing (see shell-reconfiguration.ts).
-const UNMODELLED_KEY = "the line was edited with a key the guard cannot follow";
-const LEAVE_SHELL_AS_IS =
-	"Leave the background shell's key bindings, history and aliases as they are, or run the command with the bash tool.";
-const SHELL_RECONFIGURATION: Record<ShellReconfiguration, readonly [string, string]> = {
-	reconfigure: [
-		"changing the shell's key bindings, history or aliases through bash_input is not judged",
-		LEAVE_SHELL_AS_IS,
-	],
-	"dynamic-command": [
-		"a bash_input command word built by an expansion or ANSI-C quoting is not judged: the guard cannot know which command it names",
-		"Type the command name literally.",
-	],
-	unparsed: [
-		"a bash_input line the guard cannot parse is not judged when it names kill, pkill, killall or a command that changes key bindings, history or aliases",
-		"Type it as a simpler command, or run it with the bash tool.",
-	],
+const SUBMIT_KEYS = new Set(["enter", "return"]);
+const BACKSPACE = new Set(["\b", "\x7f"]);
+const isLineBreak = (char: string) => char === "\r" || char === "\n";
+const isControl = (char: string) => {
+	const code = char.codePointAt(0) ?? 0;
+	return code < 0x20 || (code >= 0x7f && code <= 0x9f);
 };
 
 /** The command text of a `bash` or `monitor` call, or `undefined` for any other tool. */
 function commandOf(toolName: string, input: Record<string, unknown>): string | undefined {
 	if (toolName !== "bash" && toolName !== "monitor") return undefined;
 	return typeof input.command === "string" ? input.command : undefined;
+}
+
+/**
+ * The lines a `bash_input` call submits when it is plain typing: printable text and backspace, Enter from `submit`, a
+ * line break in the text or an `enter` key, and no other named key. `undefined` for any other call (escape sequences,
+ * control keys, history or cursor keys): those reach whatever program owns the terminal, which the guard cannot see,
+ * so they run unjudged here and the shell that runs them judges the command (PATH shims, the shell's `kill`).
+ * Text an earlier call typed without a line break is not tracked.
+ */
+function plainSubmittedLines(input: Record<string, unknown>): string[] | undefined {
+	const keys = Array.isArray(input.keys) ? input.keys : [];
+	if (!keys.every((key) => typeof key === "string" && SUBMIT_KEYS.has(key.trim().toLowerCase()))) return undefined;
+	const text = typeof input.input === "string" ? input.input : "";
+	const submit = typeof input.submit === "boolean" ? input.submit : text.length > 0;
+	const lines: string[] = [];
+	let line: string[] = [];
+	for (const char of `${text}${submit ? "\r" : ""}${"\r".repeat(keys.length)}`) {
+		if (isLineBreak(char)) {
+			lines.push(line.join(""));
+			line = [];
+		} else if (BACKSPACE.has(char)) line.pop();
+		else if (isControl(char)) return undefined;
+		else line.push(char);
+	}
+	return lines;
 }
 
 /**
@@ -56,75 +50,12 @@ function commandOf(toolName: string, input: Record<string, unknown>): string | u
  */
 export default function killGuardExtension(pi: ExtensionAPI): void {
 	let enabled = true;
-	let sessionKey = "";
-	let stopWatchingShells = () => {};
 	const refusal = (command: string): ToolCallEventResult | undefined => {
 		// The PTY bash tool, the core bash tool and monitors start the command in a fresh session and process group.
 		const verdict = judgeCommand(command, hostKillGuardContext({ kind: "fresh-session" }, "bash"));
 		return verdict.action === "refuse" ? { block: true, reason: verdict.message } : undefined;
 	};
-	// Every line the call completes runs, each line break a command separator. An edited line is judged as every line
-	// it could be, and a line that was not typed plainly is refused outright when its bytes could spell a kill-family
-	// command (fail-closed; see typed-lines.ts). This judges only the agent's bash_input calls: a person typing in their
-	// own terminal never reaches this hook.
-	const judgeLines = (lines: readonly SubmittedLine[]): ToolCallEventResult | undefined => {
-		const unjudged = lines.find((line) => line.history !== undefined)?.history;
-		if (unjudged !== undefined)
-			return { block: true, reason: refuse("R5", UNJUDGED_HISTORY[unjudged], TYPE_IN_FULL).message };
-		if (lines.some((line) => line.unmodelledKey === true))
-			return { block: true, reason: refuse("R5", UNMODELLED_KEY, TYPE_IN_FULL).message };
-		const texts = lines.map((line) => line.text);
-		const variants = [
-			texts,
-			...lines.flatMap((line, index) =>
-				line.alternatives.map((alternative) => texts.map((text, at) => (at === index ? alternative : text))),
-			),
-		];
-		for (const variant of variants) {
-			const refused = refusal(variant.join("\n"));
-			if (refused !== undefined) return refused;
-		}
-		const reconfiguration = lines
-			.flatMap((line) => [line.text, ...line.alternatives])
-			.map(shellReconfiguration)
-			.find((kind) => kind !== undefined);
-		if (reconfiguration !== undefined)
-			return { block: true, reason: refuse("R5", ...SHELL_RECONFIGURATION[reconfiguration]).message };
-		if (!lines.some((line) => line.unfollowable)) return undefined;
-		return {
-			block: true,
-			reason: refuse(
-				"R5",
-				UNFOLLOWABLE,
-				"Type the whole command as plain text (printable characters and backspace only) and submit it.",
-			).message,
-		};
-	};
-	const judgeBashInput = (input: Record<string, unknown>): ToolCallEventResult | undefined => {
-		const id = typeof input.bash_id === "string" ? input.bash_id : "";
-		const typed = typeInto(typedSession(sessionKey, id), bashInputBytes(input));
-		// A refused call writes nothing, so the shell's line stays as it was.
-		const refused = typed.lines.length === 0 ? undefined : judgeLines(typed.lines);
-		if (refused === undefined) keepTypedSession(sessionKey, id, typed.session);
-		return refused;
-	};
-	pi.on("session_start", (event, ctx) => {
-		sessionKey = ctx.sessionManager?.getSessionId?.() ?? "";
-		// A reload keeps the terminal's PTY sessions and the text typed into them; any other start brings fresh ones.
-		if (event.reason !== "reload") forgetAgentSession(sessionKey);
-		stopWatchingShells();
-		stopWatchingShells = pi.events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
-			if (
-				!isWakeSourceStateEvent(data) ||
-				data.source !== "terminal-background-sessions" ||
-				data.items === undefined
-			)
-				return;
-			noteRunningShells(
-				sessionKey,
-				data.items.map((item) => item.id),
-			);
-		});
+	pi.on("session_start", (_event, ctx) => {
 		enabled = readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on";
 		if (!enabled)
 			ctx.ui.notify(
@@ -132,14 +63,13 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 				"warning",
 			);
 	});
-	pi.on("session_shutdown", (event) => {
-		stopWatchingShells();
-		stopWatchingShells = () => {};
-		if (event.reason !== "reload") forgetAgentSession(sessionKey);
-	});
 	pi.on("tool_call", (event): ToolCallEventResult | undefined => {
 		if (!enabled) return undefined;
-		if (event.toolName === "bash_input") return judgeBashInput(event.input);
+		if (event.toolName === "bash_input") {
+			// Each submitted line runs, each line break a command separator; a refused call writes nothing.
+			const lines = plainSubmittedLines(event.input);
+			return lines === undefined || lines.length === 0 ? undefined : refusal(lines.join("\n"));
+		}
 		const command = commandOf(event.toolName, event.input);
 		return command === undefined ? undefined : refusal(command);
 	});

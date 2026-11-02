@@ -265,7 +265,7 @@ describe("analyzeBashCommandWords", () => {
 						kind: "parsed",
 						segments: words.segments.map((segment) => [segment.name, ...segment.words.map((w) => w.text)]),
 					}
-				: { kind: words.kind };
+				: words;
 		expect(lines).toEqual(analyzeBashCommand(command));
 	});
 
