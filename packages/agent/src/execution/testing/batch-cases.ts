@@ -145,6 +145,29 @@ const wavesAcrossExecutors: BatchCase = async (adapters) => {
 		["done:s", "body:d"],
 	] as const)
 		before(h, first, second, "a release waits for its dependencies' final outcomes");
+
+	const chain = batchPlan("batch-07-blocked-link", [
+		["s1", "e1", "read", "sequential"],
+		["s2", "e2", "deny", "sequential"],
+		["s3", "e1", "read", "sequential"],
+		["p", "e2"],
+	]);
+	const last = h.written("outcome:p");
+	const blocked = { kind: "blocked", result: "blocked: deny" } as const;
+	expectEqual(
+		(await (await h.brain()).run(chain)).outcomes,
+		[resultOf("s1"), blocked, resultOf("s3"), resultOf("p")],
+		"a blocked link settles as blocked; the chain runs",
+	);
+	const order = await last;
+	for (const [finished, released] of [
+		["outcome:s1", "release:s3"],
+		["outcome:s3", "release:p"],
+	] as const) {
+		const [a, b] = [order.indexOf(finished), order.indexOf(released)];
+		if (a < 0 || b < 0 || a > b)
+			throw new Error(`a blocked link still waits on its own dependencies: ${finished} before ${released}`);
+	}
 };
 
 const batchAbort: BatchCase = async (adapters) => {

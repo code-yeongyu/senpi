@@ -85,17 +85,22 @@ describe("batchDependencies", () => {
 	}
 });
 
-describe("a durable blocked preparation", () => {
-	it("is a per-call blocked result, not an interrupted preparation: the batch releases the others", async () => {
-		// Given: an executor whose ledger already holds a's preparation as the durable `blocked` outcome
+describe("a raw settled blocked outcome as a prepare reply", () => {
+	it("fails closed: the ledger cannot tell a blocked call from a preflight abort, so the batch is ABORTed unrun", async () => {
+		// Given: an executor that forwards the raw durable `blocked` ledger outcome instead of `blocked`/`batch_abort`
 		const adapter = memoryStore();
 		const store = await adapter.open(await adapter.createMedium());
 		await store.claim(0, 1);
 		const blocked = { reason: "blocked", value: "denied", hooksRan: true, uncertain: false } as const;
 		const released: string[] = [];
+		const prepared: string[] = [];
 		const executor: BatchExecutor = {
-			prepare: async ({ executionId }) =>
-				executionId === "a" ? { kind: "settled", outcome: blocked } : { kind: "prepared", frozenDigest: "b" },
+			prepare: async ({ executionId }) => {
+				prepared.push(executionId);
+				return executionId === "a"
+					? { kind: "settled", outcome: blocked }
+					: { kind: "prepared", frozenDigest: "b" };
+			},
 			release: async ({ executionId }) => {
 				released.push(executionId);
 				return { kind: "settled", outcome: { reason: "result", value: "ok", hooksRan: true, uncertain: false } };
@@ -125,15 +130,16 @@ describe("a durable blocked preparation", () => {
 			],
 		});
 
-		// Then: a is blocked with its stored result, and b still runs
+		// Then: the batch is ABORTed, b is never prepared, and no body runs
 		expect(result).toEqual({
-			decision: "RELEASE",
+			decision: "ABORT",
 			outcomes: [
 				{ kind: "blocked", result: "denied" },
-				{ kind: "result", value: "ok" },
+				{ kind: "not_run", cause: "interrupted_preparation" },
 			],
 		});
-		expect(released).toEqual(["b"]);
+		expect(prepared).toEqual(["a"]);
+		expect(released).toEqual([]);
 	});
 });
 
