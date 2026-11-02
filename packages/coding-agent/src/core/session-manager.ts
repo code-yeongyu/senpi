@@ -51,6 +51,7 @@ import {
 	readForkSource,
 	terminateFinalSessionLine,
 } from "./session-entry-file.ts";
+import { removeSessionArtifacts } from "./session-artifacts.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import {
 	BaseContentHash,
@@ -1792,6 +1793,7 @@ export class SessionManager {
 		if (this.ownedHeaderFile !== this.sessionFile) return false;
 		if (!this.fileEntries.every(isDisposableEntry)) return false;
 		await rm(this.sessionFile, { force: true });
+		await removeSessionArtifacts(this.sessionFile);
 		this.ownedHeaderFile = undefined;
 		this.flushed = false;
 		this.transcriptFile.reset();

@@ -14,6 +14,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
+import { removeSessionArtifacts } from "../../../core/session-artifacts.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
 import { removeToolMedia, toolMediaRoot, toolMediaScopeOfSessionFile } from "../../rpc/tool-media-store.ts";
 import { theme } from "../theme/theme.ts";
@@ -564,18 +565,32 @@ class SessionList implements Component, Focusable {
 
 type SessionsLoader = (onProgress?: SessionListProgress, signal?: AbortSignal) => Promise<SessionInfo[]>;
 
-function withMediaOutcome<T extends object>(result: T, mediaError: string | undefined): T & { mediaError?: string } {
-	return mediaError === undefined ? result : { ...result, mediaError };
+interface LeftoverOutcome {
+	mediaError?: string;
+	artifactsError?: string;
+}
+
+function withLeftoverOutcome<T extends object>(
+	result: T,
+	mediaError: string | undefined,
+	artifactsError: string | undefined,
+): T & LeftoverOutcome {
+	return {
+		...result,
+		...(mediaError === undefined ? {} : { mediaError }),
+		...(artifactsError === undefined ? {} : { artifactsError }),
+	};
 }
 
 /**
  * Delete a session file, trying the `trash` CLI first, then falling back to unlink. The session's
- * tool images go with it; when they cannot be removed the session is still deleted (its id is gone
- * with the file) and `mediaError` names the leftover directory so the caller can say so.
+ * tool images and its eval artifacts directory go with it; when either cannot be removed the session
+ * is still deleted (its id is gone with the file) and `mediaError` / `artifactsError` names the
+ * leftover directory so the caller can say so.
  */
 export async function deleteSessionFile(
 	sessionPath: string,
-): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string; mediaError?: string }> {
+): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string } & LeftoverOutcome> {
 	// The header is read before the file goes: the media directory is named after the session id.
 	const mediaScope = await toolMediaScopeOfSessionFile(sessionPath);
 	const removeMedia = (): string | undefined => {
@@ -607,13 +622,21 @@ export async function deleteSessionFile(
 
 	// If trash reports success, or the file is gone afterwards, treat it as successful
 	if (trashResult.status === 0 || !existsSync(sessionPath)) {
-		return withMediaOutcome({ ok: true, method: "trash" }, removeMedia());
+		return withLeftoverOutcome(
+			{ ok: true, method: "trash" },
+			removeMedia(),
+			await removeSessionArtifacts(sessionPath),
+		);
 	}
 
 	// Fallback to permanent deletion
 	try {
 		await unlink(sessionPath);
-		return withMediaOutcome({ ok: true, method: "unlink" }, removeMedia());
+		return withLeftoverOutcome(
+			{ ok: true, method: "unlink" },
+			removeMedia(),
+			await removeSessionArtifacts(sessionPath),
+		);
 	} catch (err) {
 		const unlinkError = err instanceof Error ? err.message : String(err);
 		const trashErrorHint = getTrashErrorHint();
@@ -789,11 +812,12 @@ export class SessionSelectorComponent extends Container implements Focusable {
 				this.sessionList.setSessions(sessions, showCwd);
 
 				const msg = result.method === "trash" ? "Session moved to trash" : "Session deleted";
-				if (result.mediaError) {
-					this.header.setStatusMessage(
-						{ type: "error", message: `${msg}, but its images were not removed: ${result.mediaError}` },
-						8000,
-					);
+				const leftovers = [
+					...(result.mediaError ? [`its images were not removed: ${result.mediaError}`] : []),
+					...(result.artifactsError ? [`its eval output was not removed: ${result.artifactsError}`] : []),
+				];
+				if (leftovers.length > 0) {
+					this.header.setStatusMessage({ type: "error", message: `${msg}, but ${leftovers.join("; ")}` }, 8000);
 				} else {
 					this.header.setStatusMessage({ type: "info", message: msg }, 2000);
 				}
