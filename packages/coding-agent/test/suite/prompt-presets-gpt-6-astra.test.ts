@@ -386,6 +386,25 @@ describe("GPT-6 Astra behavior contract", () => {
 		expect(sections.get("Tool Guidelines")).toContain("GUIDELINE_SENTINEL");
 	});
 
+	it("renders no tool list even when a tool carries a snippet", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "gpt-6-astra" };
+		const preset = resolvePreset(createModel("gpt-6-astra"), settings, {
+			cwd: "/repo",
+			selectedTools: ALL_TOOLS,
+			toolSnippets: { read: "READ_SNIPPET", eval: "EVAL_SNIPPET" },
+			promptGuidelines: ["GUIDELINE_SENTINEL"],
+			contextFiles: [],
+			skills: [],
+		});
+
+		// then
+		const sections = sectionsOf(preset?.prompt ?? "");
+		expect(sections.has("Available Tools")).toBe(false);
+		expect(preset?.prompt).not.toContain("READ_SNIPPET");
+		expect(sections.get("Tool Guidelines")).toContain("GUIDELINE_SENTINEL");
+	});
+
 	it("contains no emoji anywhere in the rendered prompt", () => {
 		// given
 		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra");

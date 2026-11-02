@@ -444,7 +444,9 @@ function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 		context.surface !== "terminal"
 			? `${GPT_APP_UNRUN_CHECK_RULE} Fix failures your change caused and report pre-existing ones.`
 			: "Say what you could not run and why; fix failures your change caused and report pre-existing ones.";
-	const toolSection = context.toolSection ? `\n\n${context.toolSection}` : "";
+	// Only the guidelines: the provider request carries every tool schema, so the core renders no tool list.
+	const guidelinesAt = context.toolSection.indexOf("## Tool Guidelines");
+	const toolSection = guidelinesAt === -1 ? "" : `\n\n${context.toolSection.slice(guidelinesAt)}`;
 
 	return `You are ${context.appName ?? APP_NAME}, a coding agent. You and the user share one workspace; carry their intended goal to completion with work indistinguishable from a careful senior engineer's.
 
