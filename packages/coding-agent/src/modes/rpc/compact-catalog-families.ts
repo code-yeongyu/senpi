@@ -20,7 +20,7 @@ import type { CompactDialog } from "./compact-current-components.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import type { CatalogComponent } from "./compact-recovery-catalog.ts";
 import { protocolId } from "./compact-recovery-ids.ts";
-import type { SettledReader } from "./compact-settled-messages.ts";
+import type { SettledReader } from "./compact-settled-rows.ts";
 import type { CompactValues, ValueRef } from "./compact-values.ts";
 import type { FrozenAcceptedRoot } from "./session-acceptance-lane.ts";
 

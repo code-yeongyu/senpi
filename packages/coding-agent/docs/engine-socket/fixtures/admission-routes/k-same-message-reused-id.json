@@ -1,0 +1,209 @@
+{
+	"snapshot": {
+		"calls/call-0000000000000037-0000": {
+			"owningMessageId": "00000000-0000-4000-8000-000000000001",
+			"contentIndex": 0,
+			"parentKey": null,
+			"join": "pending",
+			"startSequence": 46,
+			"startedAtMs": 1793491200000,
+			"requestedName": "read",
+			"resolvedName": "read",
+			"seed": {},
+			"raw": {
+				"kind": "owned",
+				"text": "{\"path\":\"first.txt\"}"
+			},
+			"input": {
+				"announced": {
+					"path": "first.txt"
+				},
+				"started": {
+					"path": "first.txt"
+				},
+				"prepared": null
+			},
+			"correlation": null,
+			"hook": {
+				"type": "tool_hook_status",
+				"hookRunId": "<hook-run>",
+				"hookName": "PreToolUse",
+				"toolName": "read",
+				"toolCallId": "dup",
+				"extensionPath": "<inline:1>",
+				"startedAt": 1793491200000,
+				"phase": "start",
+				"statusMessage": "running inline:1",
+				"sessionId": "rpc-1"
+			},
+			"progress": null,
+			"result": null,
+			"outcome": null,
+			"toolCallId": "dup",
+			"turnId": "00000000-0000-4000-8000-000000000002",
+			"phase": "executing",
+			"runtimeItemKey": "call-1",
+			"callUnknown": true
+		},
+		"calls/call-0000000000000040-0000": {
+			"owningMessageId": "00000000-0000-4000-8000-000000000001",
+			"contentIndex": 1,
+			"parentKey": null,
+			"join": "pending",
+			"startSequence": null,
+			"startedAtMs": null,
+			"requestedName": "read",
+			"resolvedName": "read",
+			"seed": {},
+			"raw": {
+				"kind": "owned",
+				"text": "{\"path\":\"second.txt\"}"
+			},
+			"input": {
+				"announced": {
+					"path": "second.txt"
+				},
+				"started": null,
+				"prepared": null
+			},
+			"correlation": null,
+			"hook": null,
+			"progress": null,
+			"result": null,
+			"outcome": null,
+			"toolCallId": "dup",
+			"turnId": "00000000-0000-4000-8000-000000000002",
+			"phase": "awaiting-execution",
+			"runtimeItemKey": "call-2",
+			"callUnknown": true
+		},
+		"settled/message-0000000000000113": {
+			"messageId": "00000000-0000-4000-8000-000000000003",
+			"turnId": "00000000-0000-4000-8000-000000000002",
+			"terminalSequence": 113,
+			"role": "toolResult",
+			"runtimeItemKey": "call-1",
+			"callUnknown": true,
+			"entryId": null,
+			"status": "failed",
+			"error": {
+				"errorMessage": "EACCES: injected transcript failure"
+			},
+			"payload": {
+				"terminal": {
+					"role": "toolResult",
+					"toolCallId": "dup",
+					"toolName": "read",
+					"content": [
+						{
+							"type": "text",
+							"text": "ENOENT: no such file or directory, access '<root>/cwd/first.txt'"
+						}
+					],
+					"details": {},
+					"isError": true,
+					"timestamp": 1793491200000
+				},
+				"correlation": {}
+			},
+			"call": {
+				"owningMessageId": "00000000-0000-4000-8000-000000000001",
+				"contentIndex": 0,
+				"parentKey": null,
+				"startSequence": 46,
+				"startedAtMs": 1793491200000,
+				"requestedName": "read",
+				"resolvedName": "read",
+				"seed": {},
+				"input": {
+					"announced": {
+						"path": "first.txt"
+					},
+					"started": {
+						"path": "first.txt"
+					},
+					"prepared": null
+				},
+				"correlation": null,
+				"outcome": {
+					"kind": "result",
+					"isError": true,
+					"source": "execution_end"
+				},
+				"toolCallId": "dup",
+				"turnId": "00000000-0000-4000-8000-000000000002",
+				"runtimeItemKey": "call-1",
+				"callUnknown": true,
+				"nestedCalls": {
+					"calls": [],
+					"complete": true,
+					"omitted": 0
+				}
+			}
+		},
+		"settled/message-0000000000000116": {
+			"messageId": "00000000-0000-4000-8000-000000000004",
+			"turnId": "00000000-0000-4000-8000-000000000002",
+			"terminalSequence": 116,
+			"role": "toolResult",
+			"runtimeItemKey": "call-2",
+			"callUnknown": true,
+			"entryId": null,
+			"status": "failed",
+			"error": {
+				"errorMessage": "EACCES: injected transcript failure"
+			},
+			"payload": {
+				"terminal": {
+					"role": "toolResult",
+					"toolCallId": "dup",
+					"toolName": "read",
+					"content": [
+						{
+							"type": "text",
+							"text": "ENOENT: no such file or directory, access '<root>/cwd/second.txt'"
+						}
+					],
+					"details": {},
+					"isError": true,
+					"timestamp": 1793491200000
+				},
+				"correlation": {}
+			},
+			"call": {
+				"owningMessageId": "00000000-0000-4000-8000-000000000001",
+				"contentIndex": 1,
+				"parentKey": null,
+				"startSequence": 66,
+				"startedAtMs": 1793491200000,
+				"requestedName": "read",
+				"resolvedName": "read",
+				"seed": {},
+				"input": {
+					"announced": {
+						"path": "second.txt"
+					},
+					"started": {
+						"path": "second.txt"
+					},
+					"prepared": null
+				},
+				"correlation": null,
+				"outcome": {
+					"kind": "result",
+					"isError": true,
+					"source": "execution_end"
+				},
+				"toolCallId": "dup",
+				"turnId": "00000000-0000-4000-8000-000000000002",
+				"runtimeItemKey": "call-2",
+				"callUnknown": true,
+				"nestedCalls": {
+					"calls": [],
+					"complete": true,
+					"omitted": 0
+				}
+			}
+		}
+	}
+}
