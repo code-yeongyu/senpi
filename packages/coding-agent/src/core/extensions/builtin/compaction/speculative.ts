@@ -54,6 +54,7 @@ import {
 } from "./speculative-summary.ts";
 
 import { allowSummarizationRetry, DEFAULT_SUMMARIZATION_RETRY_POLICY } from "./summarization-retry.ts";
+import { summaryRequestFits } from "./summary-model-fit.ts";
 
 import { extractTaskIntent, resolveInheritedTaskIntent } from "./task-intent.ts";
 
@@ -285,12 +286,24 @@ export async function runExtensionCompaction(
 	// has none of these and is rejected before a request.
 	const authenticated = (resolved: ResolvedRequestAuth | undefined): boolean =>
 		resolved?.ok === true && Boolean(resolved.apiKey || hasCredentialHeaders(resolved.headers) || resolved.ambient);
+	const prompt = buildPrompt({
+		variant: snapshot.promptVariant,
+		previousSummary: snapshot.preparation.previousSummary,
+		taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []),
+		customInstructions: snapshot.customInstructions,
+	});
+	// The request carries the session system prompt when there is one (speculative-summary.ts), so it counts
+	// against the input budget with the instructions (oh-my-openagent#9698).
+	const promptTokens = approxTokens(snapshot.systemPrompt ?? prompt.system) + approxTokens(prompt.user);
 	let selectedModel = context.getCompactionModel?.() ?? snapshot.model;
 	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
 	if (signal?.aborted) return undefined;
-	// A configured summary model whose credentials could not be confirmed earlier (#830) must not
-	// disable compaction: without credentials at request time, summarize on the session model.
-	if (selectedModel !== snapshot.model && !authenticated(auth)) {
+	// A configured summary model whose credentials could not be confirmed earlier (#830), or whose window cannot
+	// hold the request's fixed part (oh-my-openagent#9698), must not disable compaction: summarize on the session model.
+	if (
+		selectedModel !== snapshot.model &&
+		(!authenticated(auth) || !summaryRequestFits(selectedModel.contextWindow, promptTokens))
+	) {
 		selectedModel = snapshot.model;
 		auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
 		if (signal?.aborted) return undefined;
@@ -307,13 +320,6 @@ export async function runExtensionCompaction(
 		? { ...selectedSnapshot, model: { ...selectedModel, baseUrl: auth.baseUrl } }
 		: selectedSnapshot;
 
-	const prompt = buildPrompt({
-		variant: requestSnapshot.promptVariant,
-		previousSummary: requestSnapshot.preparation.previousSummary,
-		taskIntent: resolveInheritedTaskIntent(requestSnapshot.branchEntries ?? []),
-		customInstructions: requestSnapshot.customInstructions,
-	});
-	const promptTokens = approxTokens(prompt.user);
 	let messages = boundSummarizationInput(
 		pruneToolResults(
 			[...requestSnapshot.preparation.messagesToSummarize, ...requestSnapshot.preparation.turnPrefixMessages],
