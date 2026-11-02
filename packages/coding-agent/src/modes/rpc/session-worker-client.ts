@@ -515,7 +515,13 @@ export class SessionWorkerClient {
 						if (message.bootstrap) lane?.bootstrap(message.bootstrap);
 						else {
 							lane?.applyTranscript(message.transitions ?? []);
-							lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
+							lane?.accept(
+								record,
+								message.recovery,
+								frameUnit(message),
+								message.canonicalRefused === true,
+								message.callKey,
+							);
 						}
 						if (!enqueueLegacyRecord(writer, sessionId, record)) {
 							acknowledge(message.signal, false);

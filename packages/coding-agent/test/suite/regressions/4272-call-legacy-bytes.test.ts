@@ -68,7 +68,7 @@ it("T3i legacy records keep their grammar while the real lane tracks the call th
 		const executing = await lane.readCurrentCalls(started.root);
 		const completed = await lane.readCurrentCalls(ended.root);
 		expect(executing.calls).toHaveLength(1);
-		expect(executing.calls[0]?.runtimeItemKey).toMatch(new RegExp(`^${started.root.sessionEpoch}:\\d+\\.0$`));
+		expect(executing.calls[0]?.runtimeItemKey).toMatch(/^blk:[0-9a-f-]{36}:0$/);
 		expect(executing.calls[0]).toMatchObject({
 			toolCallId: "call-read-1",
 			turnId: started.root.turnId,

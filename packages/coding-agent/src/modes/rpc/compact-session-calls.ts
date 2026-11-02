@@ -3,6 +3,7 @@ import {
 	type CallProjection,
 	type CallRaw,
 	type CallScope,
+	FRESH_CALL,
 	type FrozenCalls,
 	type OutstandingCall,
 	runtimeItemKey,
@@ -10,7 +11,8 @@ import {
 	terminal,
 } from "./compact-call-model.ts";
 import { NOT_EXECUTED, orphaned, settleCall, settledPatch } from "./compact-call-retirement.ts";
-import { CompactCallTable, creationOf } from "./compact-call-table.ts";
+import { blockCallKey } from "../../core/session-call-keys.ts";
+import { CompactCallTable } from "./compact-call-table.ts";
 import type { CompactContentStore } from "./compact-content-store.ts";
 import type { ValueRef } from "./compact-values.ts";
 
@@ -32,6 +34,8 @@ export interface ExecutionStart {
 	readonly toolName: string;
 	readonly args: unknown;
 	readonly parentToolCallId?: string;
+	/** The key its producer minted with a bridge-started call's start (RULING-127 (b)); the host mints none then. */
+	readonly key?: string;
 }
 
 /** The four "can still take this record" states, one per record kind; every per-id record picks the oldest such call. */
@@ -40,28 +44,10 @@ const executing = (call: OutstandingCall) => call.phase === "executing";
 const stillOpen = (call: OutstandingCall) => !terminal(call);
 const awaitingCarrier = (call: OutstandingCall) => call.join === "pending";
 
-const FRESH = {
-	owningMessageId: null,
-	contentIndex: null,
-	parentKey: null,
-	join: "pending",
-	startSequence: null,
-	startedAtMs: null,
-	requestedName: null,
-	resolvedName: null,
-	seed: null,
-	raw: null,
-	input: { announced: null, started: null, prepared: null },
-	correlation: null,
-	hook: null,
-	progress: null,
-	result: null,
-	outcome: null,
-} as const;
-
 /**
  * The outstanding-call phase machine (R3.C3.1-C3.3, RULING-13): one reducer, phases only forward, records in any
- * order, a host-minted key fixed at creation. Every change republishes the calls root at the lane sequence given.
+ * order, a key fixed at creation (the producer's, RULING-127). Every change republishes the calls root at the lane
+ * sequence given.
  */
 export class CompactSessionCalls {
 	readonly table: CompactCallTable;
@@ -85,7 +71,7 @@ export class CompactSessionCalls {
 		const turnId = step.scope.turnId;
 		if (turnId === null) return;
 		const id = block.id || null;
-		const existing = this.table.byTurnId(turnId, id);
+		const bridge = this.table.bridgeStarted(turnId, id);
 		const raw: CallRaw = { kind: "active", messageId: block.messageId, contentIndex: block.contentIndex };
 		const fields = {
 			owningMessageId: block.messageId,
@@ -94,12 +80,12 @@ export class CompactSessionCalls {
 			raw,
 			...(block.correlation ? { correlation: block.correlation } : {}),
 		};
-		if (existing && existing.owningMessageId === null && existing.parentKey === null) {
-			this.update(step, existing, { ...fields, requestedName: existing.requestedName ?? block.name });
+		if (bridge) {
+			this.update(step, bridge, { ...fields, requestedName: bridge.requestedName ?? block.name });
 			return;
 		}
-		if (existing) this.table.counters.collisions++;
-		this.create(step, {
+		if (this.table.byTurnId(turnId, id)) this.table.counters.collisions++;
+		this.create(step, blockCallKey(block.messageId, block.contentIndex), {
 			turnId,
 			toolCallId: id,
 			phase: "streaming",
@@ -116,11 +102,15 @@ export class CompactSessionCalls {
 
 	/** `toolcall_end` and each terminal block: the announcement's final id, name and input; the call owns the raw. */
 	announce(step: CallStep, block: AnnouncedBlock, raw: CallRaw | null): void {
-		const call = this.table.byOwner(block.messageId, block.contentIndex);
 		const turnId = step.scope.turnId;
+		const owned = this.table.byOwner(block.messageId, block.contentIndex);
+		const bridge = owned ? undefined : this.table.bridgeStarted(turnId, block.id || null);
+		const call =
+			owned ??
+			(bridge && this.update(step, bridge, { owningMessageId: block.messageId, contentIndex: block.contentIndex }));
 		if (!call) {
 			if (turnId === null) return;
-			this.create(step, {
+			this.create(step, blockCallKey(block.messageId, block.contentIndex), {
 				turnId,
 				toolCallId: block.id || null,
 				owningMessageId: block.messageId,
@@ -156,7 +146,12 @@ export class CompactSessionCalls {
 			startedAtMs: Date.now(),
 			resolvedName: start.toolName,
 		};
-		const announced = this.table.oldestById(start.toolCallId, turnId, awaitingStart);
+		// RULING-127 (b): a start joins only a block of its own turn, the scope the producer counts waiting blocks in.
+		const announced = this.table.oldestById(
+			start.toolCallId,
+			turnId,
+			(call) => call.turnId === turnId && awaitingStart(call),
+		);
 		if (announced)
 			return this.update(step, announced, {
 				...started,
@@ -166,7 +161,7 @@ export class CompactSessionCalls {
 		const existing = this.table.byTurnId(turnId, start.toolCallId);
 		if (existing) this.table.counters.reused++;
 		const parent = start.parentToolCallId ? this.lookup(turnId, start.parentToolCallId) : undefined;
-		const created = this.create(step, {
+		const created = this.create(step, start.key, {
 			turnId,
 			toolCallId: start.toolCallId,
 			parentKey: parent?.runtimeItemKey ?? null,
@@ -266,16 +261,21 @@ export class CompactSessionCalls {
 		return undefined;
 	}
 
-	private create(step: CallStep, fields: Partial<OutstandingCall> & Pick<OutstandingCall, "turnId" | "phase">) {
+	/** `key`: the producer's key for a block or a bridge-started call; the host mints one only for a call with neither. */
+	private create(
+		step: CallStep,
+		key: string | undefined,
+		fields: Partial<OutstandingCall> & Pick<OutstandingCall, "turnId" | "phase">,
+	) {
 		if (this.mintedAt !== step.sequence) {
 			this.mintedAt = step.sequence;
 			this.mintedK = 0;
 		} else this.mintedK++;
 		const call: OutstandingCall = {
-			...FRESH,
+			...FRESH_CALL,
 			toolCallId: null,
 			...fields,
-			runtimeItemKey: runtimeItemKey(step.scope, step.sequence, this.mintedK),
+			runtimeItemKey: key ?? runtimeItemKey(step.scope, step.sequence, this.mintedK),
 		};
 		this.table.put(call, { sequence: step.sequence, k: this.mintedK });
 		this.sequence = step.sequence;
@@ -284,7 +284,7 @@ export class CompactSessionCalls {
 
 	private update(step: CallStep, call: OutstandingCall, patch: Partial<OutstandingCall>): OutstandingCall {
 		const next = { ...call, ...patch };
-		this.table.put(next, creationOf(call));
+		this.table.reput(next);
 		this.sequence = step.sequence;
 		return next;
 	}

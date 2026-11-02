@@ -72,10 +72,10 @@ export class CompactLaneCurrent {
 	}
 
 	/** An execution, hook or boundary record for the calls component (S06); undefined once the state is unavailable. */
-	foldCall(record: object, sequence: number, turnId: string | null): CallFold | undefined {
+	foldCall(record: object, sequence: number, turnId: string | null, callKey?: string): CallFold | undefined {
 		if (!this.state) return undefined;
 		try {
-			return this.state.acceptCall(protocolClone(record), sequence, turnId);
+			return this.state.acceptCall(protocolClone(record), sequence, turnId, callKey);
 		} catch (cause) {
 			this.fail(cause);
 			return undefined;
