@@ -842,6 +842,69 @@ most 32 live event leases; past that it receives `{"type": "event_lease_refused"
 "lease_limit"}` and is closed, and a record the host cannot stage is refused the same way with
 `"storage_unavailable"`. Its end releases every lease it holds. Leases are released only by `release_recovery`.
 
+**Live message identity (senpi#5331, RULING-120).** A session record never carries its recovery identity as a
+property: legacy connections, and every connection with the flag off, receive exactly the bytes they always did.
+The one exception is the copy a `compact_events` connection receives behind the flag, so it can join a live record to
+the settled overlay it pages after a reconnect or a recovery cut without a second derivation of its own:
+
+- `message_end` gains `messageId` and `terminalSequence`: the `messageId` and `terminalSequence` of the message's
+  settled row, which a pending or failed terminal pages as the `settled` member `message-<terminalSequence>`
+  (sixteen digits) and a joined message pages as the `messageId` of its `identity` member `join-<n>`.
+- `entry_appended` carries the entry's ownership as a tri-state (senpi#5337, RULING-122):
+  - `owningMessageId` present: the entry joined a message, and this is that join member's `messageId`. The owner is
+    captured when the append is applied and kept for that entry, so transcript batches applied before its
+    `entry_appended` cannot drop it.
+  - `ownerUnknown: true`: the host cannot vouch for the entry's ownership. An owned entry the settled store never
+    joined (the epoch's transcript component was unavailable, or the store refused the join) carries it. At most 1,024
+    joins wait for their `entry_appended` at once; a join dropped at that bound is remembered by entry id. Both kinds
+    share one memory (up to 4,096 ids per epoch), and once that memory itself overflows, every entry of the epoch with
+    no join carries `ownerUnknown` until the next bootstrap, including entries no message owns (conservative by
+    design: never a false "not owned"). Resolve a dropped join through recovery's `identity` member `join-<n>` for
+    that entry id; an entry the store never joined has no such member.
+  - both absent: the entry is not message-owned, never a lost or pending join. This absence is normative only because
+    the host marks every entry it cannot vouch for with `ownerUnknown`.
+
+  The lane's status counts dropped joins (`ownerJoinsEvicted`) and ids dropped from that memory
+  (`ownerJoinsOverflowed`), and the host writes one stderr line at an epoch's first overflow. An `entry_appended`
+  carries its tri-state even when the host refused its canonical record at the protocol depth limit: the record is
+  still delivered, and it takes its entry's join like any other.
+- `transcript_write_failed` gains `messageId`: the failed terminal row's `messageId`.
+
+The host appends the fields after the record's own (`{"type": "message_end", ..., "sessionId": "rpc-1", "messageId":
+"...", "terminalSequence": 12}`; a leased record carries them inside its `record` component). They come from the
+settled store that writes those rows, not a parallel derivation. `messageId` is an opaque id with no message content,
+the same live and after recovery for the message's lifetime, and never reused in the session; `terminalSequence` is
+the record's accepted sequence in its `sessionEpoch`. A record with no settled row (an end the store refused, an entry
+no message owns) carries none of them; an entry whose ownership the host cannot vouch for carries `ownerUnknown: true`
+instead.
+
+**Live call identity (senpi#5346, RULING-123).** The same compact copy of a live call record names the call it
+belongs to, so a client can join it to that call's snapshot entry after a reconnect or a recovery cut. This covers
+`message_update` records whose `assistantMessageEvent` is `toolcall_start`, `toolcall_delta` or `toolcall_end`, and
+`tool_execution_start`, `tool_execution_update`, `tool_execution_end` and `tool_hook_status`:
+
+- `runtimeItemKey`: the key of the outstanding call the host changed with this record, the same key the call's
+  `calls` member and, once it settles, its terminal row and call projection carry. A `toolcall_*` update names the call
+  that owns the streamed block. The key is opaque, fixed for the call's lifetime (live and after recovery), and never
+  reused in the session, so it tells apart calls that share a `toolCallId` (providers reuse them across turns). It is
+  unique on its own; no `turnId` is needed beside it.
+- `callUnknown: true`: the host changed no call with this record, so it cannot vouch for one. Every `tool_hook_status`
+  names a `toolCallId` (there are no session-level hook records), but a hook can run for a call the session never
+  announced, such as a nested call inside another tool; that record, a record for a call that already ended, a record
+  refused at the protocol depth limit, and a record arriving while the epoch's compact state is unavailable all carry
+  `callUnknown: true`. So does an execution or hook record (`tool_execution_*`, `tool_hook_status`) whose
+  `toolCallId` more than one call inside one assistant message took: those records name only the `toolCallId`, so the
+  host cannot tell which of those calls a record is about, and it never picks one by order. The mark lasts while any
+  call of that message and id is live. A `toolcall_*` update names its block by `contentIndex`, so it keeps the exact
+  key of its own call even then.
+
+A compact live call record carries exactly one of the two fields, `runtimeItemKey` or `callUnknown: true`, never both
+and never neither; that holds for its delta-only form too, when a newer `toolcall_delta` supersedes a queued one.
+
+The host appends the field after the record's own, like the message ids above (`{"type": "tool_execution_end", ...,
+"sessionId": "rpc-1", "runtimeItemKey": "..."}`); legacy connections and every connection with the flag off receive
+the same bytes as before.
+
 #### release_recovery
 
 Behind the same flag, the consumer's receipt for an event lease (senpi#4272, S13). Send it only once the leased
@@ -6452,6 +6515,8 @@ Set the text in the input editor. Fire-and-forget.
 
 Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
 
+Every `question` frame carries `raisedBy`: the `connectionId` whose command raised it (the same connection a `select`, `confirm`, `input` or `editor` raised at that point is delivered to; for a model tool call, the connection whose prompt started the turn), or `"agent"` when no connection's command started the work (for example a goal continuation, or a classic stdio session). A client uses it to tell a question it raised from one another connection raised; the frame still reaches every attached connection, and any of them may answer. The field is optional and additive: a client that ignores it is unaffected, and frames from older hosts omit it. The replayed frames in `pendingQuestions` carry the same value.
+
 ```json
 {
   "type": "extension_ui_request",
@@ -6460,6 +6525,7 @@ Present one or more questions to the user. Requires the `question` client capabi
   "requestId": "ask-user-1",
   "toolCallId": "call_abc123",
   "waitForAnswer": true,
+  "raisedBy": "socket-1",
   "questions": [
     {
       "id": "q1",
