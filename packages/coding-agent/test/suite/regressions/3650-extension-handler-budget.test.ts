@@ -164,7 +164,7 @@ describe("senpi#3650 a hung extension handler cannot freeze the session", () => 
 		async (event) => {
 			// given no handler budget and a 60 s inactivity lease, and a %s handler that never settles
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
-			const { api } = await startHeld(event, {
+			const { api, errors } = await startHeld(event, {
 				extensionEventHandlerWarnMs: 0,
 				extensionEventHandlerTimeoutMs: 0,
 				turn_inactivity_ms: 60_000,
@@ -183,6 +183,9 @@ describe("senpi#3650 a hung extension handler cannot freeze the session", () => 
 			await withinRealTime(harness.session.waitForSettledSessionWork(), "session work to settle");
 
 			// then the deadline released the held handler, settled the session, and the steer reached the model once
+			expect(errors.filter((error) => error.event === event).map((error) => error.error)).toEqual([
+				"handler released when the turn was stopped",
+			]);
 			expect(harness.session.isStreaming).toBe(false);
 			expect(customMessageTypes(harness)).toContain(NOTIFICATION);
 			expect(getUserTexts(harness).filter((text) => text === "late steer")).toHaveLength(1);

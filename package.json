@@ -23,7 +23,7 @@
 		"build:native:win32": "node scripts/run-workspaces.mjs --workspace packages/tui build:native:win32",
 		"dev": "node scripts/run-workspaces.mjs --parallel --workspace packages/ai --workspace packages/coding-agent dev",
 		"dev:tsc": "node scripts/run-workspaces.mjs --workspace packages/ai dev:tsc",
-		"check": "npm run lint && npm run fmt:check && npm run lint:ratchet && npm run check:pinned-deps && npm run check:ts-imports && npm run check:conflict-markers && npm run check:entry-graphs && npm run check:bun-lock && npm run check:install-lock:coding-agent && npm run check:claude-sdk-platform-lock && tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json && node scripts/check-browser-smoke.mjs",
+		"check": "npm run lint && npm run fmt:check && npm run lint:ratchet && npm run check:pinned-deps && npm run check:ts-imports && npm run check:conflict-markers && npm run check:entry-graphs && npm run check:bun-lock && npm run check:install-lock:coding-agent && npm run check:claude-sdk-platform-lock && bun check --no-script --all -p tsconfig.json && bun check --no-script --all -p scripts/tsconfig.json && node scripts/check-browser-smoke.mjs",
 		"check:fix": "npm run fmt && oxlint --deny-warnings --fix && npm run check",
 		"lint": "oxlint --deny-warnings",
 		"knip:check": "knip",

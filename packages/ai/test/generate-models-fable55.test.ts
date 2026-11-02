@@ -1,13 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Api, Model } from "../src/types.ts";
 import { FABLE55_LAUNCH } from "../src/utils/fable55-launch.ts";
+import { copyJsonModelGenerationFixture } from "./json-model-generation-fixture.ts";
 
-const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const modelId = FABLE55_LAUNCH.modelId;
 
 // senpi#3893: synthetic values test source fidelity, not an unreleased model's price card.
@@ -32,10 +32,7 @@ describe("Fable 5.5 launch generation", () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-fable55-"));
 		try {
 			const isolated = join(root, "package");
-			mkdirSync(isolated);
-			for (const entry of ["package.json", "scripts", "src"]) {
-				cpSync(join(packageRoot, entry), join(isolated, entry), { recursive: true });
-			}
+			copyJsonModelGenerationFixture(isolated);
 			const shippedCatalog = shippedBefore
 				? { "anthropic-messages": { [`chat:${modelId}`]: { id: modelId, provider: "anthropic" } } }
 				: {};

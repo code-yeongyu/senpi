@@ -36,6 +36,9 @@ export interface RetryFallbackControllerDeps {
 		isUsingOAuth?(model: Model<Api>): boolean;
 		/** Filters bare-selector expansion: a definitive `false` keeps a lane that can never serve out of the chain. */
 		isFallbackEligible?(model: Model<Api>): boolean;
+		/** With `getServiceTier`: pairs a base model with its `-fast` alias so an alias-keyed chain governs it. */
+		getUpstreamModelId?(model: Model<Api>): string | undefined;
+		getServiceTier?(model: Model<Api>): string | undefined;
 	};
 	cooldowns: SelectorCooldowns;
 	/** Chain-entry circuits shared with every session in the process on the same agent dir. */

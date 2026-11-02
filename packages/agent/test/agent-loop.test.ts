@@ -1609,7 +1609,6 @@ describe("agentLoop with AgentMessage", () => {
 						"toolUse",
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
-					setTimeout(() => releaseFirst?.(), 20);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
@@ -1622,6 +1621,9 @@ describe("agentLoop with AgentMessage", () => {
 		const events: AgentEvent[] = [];
 		for await (const event of stream) {
 			events.push(event);
+			// Barrier (plan P0-01b, G3): "first" finishes only once "second" has ended, so the
+			// batch completes only if both bodies run in one wave; no timer decides the order.
+			if (event.type === "tool_execution_end" && event.toolCallId === "tool-2") releaseFirst?.();
 		}
 
 		const toolExecutionEndIds = events.flatMap((event) => {
@@ -1845,10 +1847,6 @@ describe("agentLoop with AgentMessage", () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;
 		let parallelObserved = false;
-		let releaseFirst: (() => void) | undefined;
-		const firstDone = new Promise<void>((resolve) => {
-			releaseFirst = resolve;
-		});
 
 		const slowTool: AgentTool<typeof toolSchema, { value: string }> = {
 			name: "slow",
@@ -1858,7 +1856,10 @@ describe("agentLoop with AgentMessage", () => {
 			executionMode: "sequential",
 			async execute(_toolCallId, params) {
 				if (params.value === "first") {
-					await firstDone;
+					// Barrier (plan P0-01b, G3): the executor dispatches a batch through microtasks
+					// only, so once the microtask queue drains, any body dispatched alongside this
+					// one has already started. No timer decides whether "second" overlaps.
+					await new Promise<void>((resolve) => setImmediate(resolve));
 					firstResolved = true;
 				}
 				if (params.value === "second" && !firstResolved) {
@@ -1896,7 +1897,6 @@ describe("agentLoop with AgentMessage", () => {
 						"toolUse",
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
-					setTimeout(() => releaseFirst?.(), 20);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });

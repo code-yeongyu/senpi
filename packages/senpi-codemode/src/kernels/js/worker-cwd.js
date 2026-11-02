@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { syncBuiltinESMExports } from "node:module";
 import { isAbsolute, resolve, sep } from "node:path";
 import { isMainThread } from "node:worker_threads";
+import { FS_PERMISSION_PATHS } from "./interpose-fs.js";
 
 // A worker thread cannot chdir (process.chdir throws ERR_WORKER_UNSUPPORTED_OPERATION under Node
 // and Bun), so every relative path a cell used resolved against the host process directory: in a
@@ -73,19 +74,22 @@ export function installSessionCwd(cwd, options) {
 	const path = process.getBuiltinModule("node:path");
 	const resolveFromProcess = path.resolve;
 	path.resolve = (...segments) => resolveFromProcess(root, ...segments);
-	patchFs(process.getBuiltinModule("node:fs"), process.getBuiltinModule("node:fs/promises"), at, root);
+	patchFs(process.getBuiltinModule("node:fs"), process.getBuiltinModule("node:fs/promises"), at, root, options?.permissionInterposed);
 	patchChildProcess(process.getBuiltinModule("node:child_process"), at, root);
-	patchBun(globalThis.Bun, at, root);
+	patchBun(globalThis.Bun, at, root, options?.permissionInterposed);
 	syncBuiltinESMExports();
 }
 
-function patchFs(fs, promises, at, root) {
+function patchFs(fs, promises, at, root, permissionInterposed) {
 	const promiseModules = [...new Set([fs.promises, promises])];
 	for (const [name, indexes] of Object.entries(FS_PATH_ARGS)) {
+		if (permissionInterposed && FS_PERMISSION_PATHS.has(name)) continue;
 		replace(fs, name, (fn) => resolvingArgs(fn, indexes, at));
-		replace(fs, `${name}Sync`, (fn) => resolvingArgs(fn, indexes, at));
+		// The early wrapper must see the requested spelling before cwd resolution (#4309).
+		if (!(permissionInterposed && name === "writeFile")) replace(fs, `${name}Sync`, (fn) => resolvingArgs(fn, indexes, at));
 		for (const target of promiseModules) replace(target, name, (fn) => resolvingArgs(fn, indexes, at));
 	}
+	if (permissionInterposed) return;
 	replace(fs.realpath, "native", (fn) => resolvingArgs(fn, [0], at));
 	replace(fs.realpathSync, "native", (fn) => resolvingArgs(fn, [0], at));
 	for (const target of [fs, ...promiseModules]) {
@@ -105,15 +109,17 @@ function patchChildProcess(childProcess, at, root) {
 	for (const name of CHILD_PROCESS_COMMAND_ARGS) replace(childProcess, name, (fn) => withOptionsCwd(fn, () => 1, root));
 }
 
-function patchBun(bun, at, root) {
+function patchBun(bun, at, root, permissionInterposed) {
 	if (bun === null || typeof bun !== "object") return;
-	replace(bun, "file", (fn) => resolvingArgs(fn, [0], at));
-	replace(bun, "write", (fn) => resolvingArgs(fn, [0], at));
+	if (!permissionInterposed) {
+		replace(bun, "file", (fn) => resolvingArgs(fn, [0], at));
+		replace(bun, "write", (fn) => resolvingArgs(fn, [0], at));
+	}
 	replace(bun, "spawn", (fn) => withBunSpawnCwd(fn, root));
 	replace(bun, "spawnSync", (fn) => withBunSpawnCwd(fn, root, false));
 	if (typeof bun.$?.cwd === "function") bun.$.cwd(root);
 	const glob = bun.Glob?.prototype;
-	if (glob) {
+	if (glob && !permissionInterposed) {
 		for (const name of ["scan", "scanSync"]) {
 			replace(glob, name, (fn) =>
 				function scan(options) {

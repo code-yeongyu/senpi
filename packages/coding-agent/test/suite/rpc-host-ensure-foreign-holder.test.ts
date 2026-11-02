@@ -17,7 +17,8 @@ import { createHostDaemonPaths, ensureHost } from "../../src/modes/rpc/host-ensu
 import { DEFAULT_HOST_LAUNCH_SPEC } from "../../src/modes/rpc/host-launch-spec.ts";
 import { HOST_EXIT_REFUSED, runHostRequest } from "../../src/modes/rpc/host-runner.ts";
 import { processIsLive, readProcessStartTime } from "../../src/utils/process-identity.ts";
-import { killAndWait, reapProcessesUnder } from "../helpers/spawned-host-reaper.ts";
+import { reapSpawnedHosts } from "../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const CLI_ENGINE = "2026.10.16";
 const CLI_PROFILE = "cli-profile-with-agent-mode-extensions";
@@ -27,11 +28,9 @@ const roots: string[] = [];
 const children: ChildProcess[] = [];
 
 afterEach(async () => {
-	for (const child of children.splice(0)) await killAndWait(child);
-	for (const root of roots.splice(0)) {
-		await reapProcessesUnder(root);
-		await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-	}
+	const pending = roots.splice(0);
+	await reapSpawnedHosts({ children: children.splice(0), roots: pending });
+	for (const root of pending) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }, 30_000);
 
 describe.skipIf(process.platform === "win32")("a foreign_writer refusal names its holder (#3561)", () => {
@@ -127,7 +126,7 @@ async function spawnSilentListener(socket: string): Promise<ChildProcess> {
 	].join(" ");
 	const child = spawn(process.execPath, ["-e", script], {
 		stdio: ["ignore", "pipe", "ignore"],
-		env: { ...process.env, HELD_SOCKET: socket },
+		env: { ...hostSpawnEnv(), HELD_SOCKET: socket },
 	});
 	children.push(child);
 	await new Promise<void>((resolve, reject) => {

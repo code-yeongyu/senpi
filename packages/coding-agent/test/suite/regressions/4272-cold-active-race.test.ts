@@ -1,16 +1,28 @@
 import { expect, it, vi } from "vitest";
 import { CompactSessionState } from "../../../src/modes/rpc/compact-session-state.ts";
-import { controlledIo, spoolRoot, startBlock } from "../compact-storage-support.ts";
+import { controlledIo, spoolRoot, startBlock, startIdentity } from "../compact-storage-support.ts";
 
-// senpi#4272 / RULING-33: an active target belongs exclusively to synchronous acceptance.
+const seededStart = (messageId: string, text: string) => ({
+	type: "seeded_block" as const,
+	...startIdentity(),
+	messageId,
+	event: {
+		type: "message_block_state" as const,
+		contentIndex: 0,
+		phase: "insert" as const,
+		block: { type: "text" as const, text },
+	},
+});
+
+// senpi#4272 / RULING-33: an active target belongs exclusively to synchronous acceptance, whichever start path made it live.
 it.each(
 	(["message_status", "message_remove"] as const).flatMap((type) =>
-		(["enqueue", "lookup", "lookup-settled", "publication", "publication-settled"] as const).map((step) => ({
-			type,
-			step,
-		})),
+		(["enqueue", "lookup", "lookup-settled", "publication", "publication-settled"] as const).flatMap((step) =>
+			(["block_start", "seeded_block"] as const).map((path) => ({ type, step, path })),
+		),
 	),
-)("rejects active $type at $step", async ({ type, step }) => {
+)("rejects active $type at $step through $path", async ({ type, step, path }) => {
+	const start = path === "seeded_block" ? seededStart : startBlock;
 	const root = await spoolRoot();
 	const io = controlledIo();
 	const state = new CompactSessionState({ dir: root.dir, io: io.io, compactAboveRows: 1 });
@@ -32,20 +44,20 @@ it.each(
 		state.accept(startBlock("blocker", "body"));
 		state.accept({ type: "message_status", messageId: "blocker", persistence: "pending" });
 		if (step !== "enqueue") {
-			state.accept(startBlock("target", "old"));
+			state.accept(start("target", "old"));
 			state.accept({ type: "message_status", messageId: "target", persistence: "pending" });
 		}
 		await state.idle();
 		const blocker = state.applyCold({ type: "message_status", messageId: "blocker", persistence: "appended" });
 		await hold.entered;
-		if (step === "enqueue") state.accept(startBlock("target", "live"));
+		if (step === "enqueue") state.accept(start("target", "live"));
 		const sequence = state.acceptedSequence;
 		const cold = state.applyCold({ type, messageId: "target", persistence: "failed" });
 		let followup: ReturnType<typeof state.applyCold> | undefined;
 		if (step === "enqueue") {
 			// Admission rejects immediately, even while unrelated cold work is blocked.
 			expect(await cold).toEqual({ kind: "rejected", reason: "active_message", afterSequence: sequence });
-		} else if (step.startsWith("lookup")) state.accept(startBlock("target", "live"));
+		} else if (step.startsWith("lookup")) state.accept(start("target", "live"));
 		if (step === "lookup-settled") {
 			state.accept({ type: "message_status", messageId: "target", persistence: "appended" });
 			followup = state.applyCold({ type: "message_status", messageId: "target", persistence: "appended" });
@@ -54,7 +66,7 @@ it.each(
 		hold.release();
 		if (step.startsWith("publication")) {
 			await entered.promise;
-			state.accept(startBlock("target", "live"));
+			state.accept(start("target", "live"));
 			if (step === "publication-settled") {
 				state.accept({ type: "message_status", messageId: "target", persistence: "appended" });
 				followup = state.applyCold({ type: "message_status", messageId: "target", persistence: "appended" });

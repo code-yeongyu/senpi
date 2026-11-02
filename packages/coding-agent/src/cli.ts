@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
+// Second: capture the private descriptor table before anything can spawn (senpi#4749).
+import "./private-fds.ts";
 import "./internal-role.ts";
 import { spawn, spawnSync, type StdioOptions } from "node:child_process";
 import { existsSync, fstatSync, realpathSync } from "node:fs";
@@ -8,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
+import { dispatchKillGuardCommand } from "./cli/kill-guard-command.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import {
 	APP_NAME,
@@ -20,6 +23,7 @@ import {
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
+import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
 
 /** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
 function reexecStdio(): StdioOptions {
@@ -68,10 +72,17 @@ function reexecUnderBunIfNeeded(): boolean {
 	if (decision.action === "stay") {
 		return false;
 	}
-	const result = spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], {
+	const transfer = preparePrivateFdSpawn({
 		stdio: reexecStdio(),
 		windowsHide: true,
 	});
+	const result = (() => {
+		try {
+			return spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], transfer.options);
+		} finally {
+			transfer.close();
+		}
+	})();
 	if (result.signal) {
 		process.kill(process.pid, result.signal);
 		return true;
@@ -79,6 +90,10 @@ function reexecUnderBunIfNeeded(): boolean {
 	process.exitCode = result.status ?? 1;
 	return true;
 }
+
+// The kill guard's runtime shims ask this executable to judge a signal (senpi#5349). Hidden and never in help; it
+// loads only the judge, so it answers before any runtime re-exec or engine import.
+await dispatchKillGuardCommand(process.argv.slice(2));
 
 if (reexecUnderBunIfNeeded()) {
 	process.exit();
@@ -151,7 +166,7 @@ async function spawnFullCli(): Promise<number> {
 	releaseInheritedInspectorForChild();
 	const childEnvironment = isBundledNode ? { ...process.env, [ISOLATED_CHILD_ENV]: "1" } : process.env;
 	return await new Promise<number>((resolve, reject) => {
-		const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
+		const child = spawnWithPrivateFds(spawn, process.execPath, [...process.execArgv, fullCliPath, ...args], {
 			env: childEnvironment,
 			stdio: reexecStdio(),
 		});

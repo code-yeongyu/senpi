@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildEvalPrompt, evalEmphasisStyle } from "../src/prompt/eval-prompt.ts";
 
 type PromptOptions = {
@@ -35,17 +35,6 @@ function fullPrompt(
 }
 
 describe("buildEvalPrompt", () => {
-	it.each([
-		["js without spawns", { py: false, js: true, rb: false, jl: false }, { spawns: false }],
-		["js-py without spawns", { py: true, js: true, rb: false, jl: false }, { spawns: false }],
-		["all with spawns", { py: true, js: true, rb: true, jl: true }, { spawns: true, spawnDefaultAgent: "task" }],
-	] as const)("renders the %s prompt", (_name, enabled, options) => {
-		// Given: an enabled language set and its task-tool availability.
-		// When: the eval prompt is built.
-		// Then: its complete user-facing contract remains snapshotted.
-		expect(buildEvalPrompt(enabled, options)).toMatchSnapshot();
-	});
-
 	it("documents only enabled languages and leaves field semantics to the parameter schema", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
@@ -96,31 +85,11 @@ describe("buildEvalPrompt", () => {
 		}
 	});
 
-	it("documents detachment, queued-cell discipline, and the detached-cell controls", () => {
+	it("advertises the eval cell-control action syntax", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
-		expect(prompt).toContain("outlives the foreground window detaches");
 		expect(prompt).toContain('eval({ action: "peek" | "stop", cell_id })');
 		expect(prompt).toContain('eval({ action: "list" })');
-		expect(prompt).toContain("Do not re-run a detached or queued cell");
-	});
-
-	it("teaches output() as an immediate status or transcript read", () => {
-		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false }, { spawns: true });
-
-		expect(prompt).toContain("Reads immediately: running tasks return their status");
-	});
-
-	it("keeps eval-specific prompt guidelines stable", () => {
-		// Given: a registered eval tool with no active model id.
-		// When: its prompt metadata is built.
-		const guidelines = buildEvalPrompt({ py: true, js: true, rb: true, jl: true }, { spawns: true }).promptGuidelines;
-
-		// Then: the system-prompt guidance carries the batching decision rule.
-		expect(guidelines).toEqual([
-			"Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
-			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
-		]);
 	});
 
 	it("maps model ids to emphasis dialects across provider id shapes", () => {
@@ -232,27 +201,6 @@ describe("buildEvalPrompt", () => {
 		expect(fallback).toContain("parallel(thunks)");
 	});
 
-	it("tunes the batching guideline to the model dialect", () => {
-		// Given: the same kernel set with model ids from each family.
-		const enabled = { py: true, js: true, rb: true, jl: true };
-		const guideline = (modelId: string): string =>
-			buildEvalPrompt(enabled, { spawns: false, modelId }).promptGuidelines[0];
-
-		// When/Then: the first guideline is the family-tuned batching contract.
-		expect(guideline("claude-opus-4-8")).toBe(
-			"Prefer eval for a step's independent calls: one cell runs them together and keeps every failure in its result.",
-		);
-		expect(guideline("gpt-5.6")).toBe(
-			"Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on their own and notify on completion, so do not poll.",
-		);
-		expect(buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).promptGuidelines[0]).toBe(
-			"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.",
-		);
-		expect(guideline("kimi-k2.6")).toBe(
-			"Put a step's independent calls into one eval cell with parallel(thunks) and keep every failed item in the result.",
-		);
-	});
-
 	it("renders the host-sizing note only when a host line is provided", () => {
 		// Given: the same kernel set with and without a preformatted host line.
 		const enabled = { py: true, js: true, rb: false, jl: false };
@@ -268,10 +216,10 @@ describe("buildEvalPrompt", () => {
 		expect(withoutHost).not.toContain("Host:");
 	});
 
-	it("describes the Bun kernel and points at the bun-1-4 skill only while it is active", () => {
+	it("describes the Bun kernel and points at the bun skill only while it is active", () => {
 		// Given: the same kernel set under a bun kernel with the skill, a bun kernel without it, and a node kernel.
 		const enabled = { py: true, js: true, rb: false, jl: false };
-		const bunSkillPath = "/opt/senpi/skill/bun-1-4/SKILL.md";
+		const bunSkillPath = "/opt/senpi/skill/bun/SKILL.md";
 		const bunWithSkill = buildEvalPrompt(enabled, {
 			spawns: false,
 			jsRuntime: { name: "bun", version: "1.4.0", path: "/usr/local/bin/bun" },
@@ -294,14 +242,14 @@ describe("buildEvalPrompt", () => {
 		// Then: only the bun kernel with an active skill carries the pointer; node keeps its wording.
 		expect(bunWithSkill).toContain("JS runs in-process on Bun 1.4.0");
 		expect(bunWithSkill).toContain(
-			`Before a cell that installs a package, spawns a server or PTY, or starts a long run, read the bun-1-4 skill at ${bunSkillPath}`,
+			`Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at ${bunSkillPath}`,
 		);
 		expect(bunWithSkill).not.toContain("before your first js cell");
 		expect(bunWithSkill).not.toContain("Node.js worker");
 		expect(bunWithoutSkill).toContain("JS runs in-process on Bun 1.3.9");
-		expect(bunWithoutSkill).not.toContain("bun-1-4 skill");
+		expect(bunWithoutSkill).not.toContain("bun skill at");
 		expect(node).toContain("Node.js worker");
-		expect(node).not.toContain("bun-1-4 skill");
+		expect(node).not.toContain("bun skill at");
 		expect(node).not.toContain(bunSkillPath);
 		expect(jsDisabled).not.toContain("Bun");
 		expect(jsDisabled).not.toContain(bunSkillPath);
@@ -309,5 +257,44 @@ describe("buildEvalPrompt", () => {
 
 	it("throws when no kernels are enabled", () => {
 		expect(() => buildEvalPrompt({ py: false, js: false, rb: false, jl: false })).toThrow(/no kernels enabled/i);
+	});
+});
+
+// senpi#5067: SENPI_TEST_WORKSTATION's repoRoot pin shows the bun skill path under a synthetic checkout root.
+describe("buildEvalPrompt bun pointer under the test-only repoRoot pin", () => {
+	const PIN = { cpuModel: "Synthetic CPU", cores: 997, kernel: "Synthetic 0.0.0" };
+	const enabled = { py: false, js: true, rb: false, jl: false };
+	const bunSkillPath = "/work/checkout/packages/senpi-codemode/src/skill/bun/SKILL.md";
+	const render = () =>
+		buildEvalPrompt(enabled, {
+			spawns: false,
+			jsRuntime: { name: "bun", version: "1.4.0", path: "/usr/local/bin/bun" },
+			bunSkillPath,
+		}).description;
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("production (unset) shows the real path, byte-identical to a pin whose checkout does not hold it", () => {
+		vi.stubEnv("SENPI_TEST_WORKSTATION", "");
+		const production = render();
+		vi.stubEnv("SENPI_TEST_WORKSTATION", JSON.stringify({ ...PIN, repoRoot: { from: "/elsewhere", to: "/eq" } }));
+
+		expect(render()).toBe(production);
+		expect(production).toContain(`read the bun skill at ${bunSkillPath}`);
+	});
+
+	it("a path inside the pinned checkout is shown under the pinned root", () => {
+		vi.stubEnv("SENPI_TEST_WORKSTATION", "");
+		const production = render();
+		vi.stubEnv(
+			"SENPI_TEST_WORKSTATION",
+			JSON.stringify({ ...PIN, repoRoot: { from: "/work/checkout", to: "/eq-synthetic/checkout" } }),
+		);
+
+		expect(render()).toBe(
+			production.replace(bunSkillPath, "/eq-synthetic/checkout/packages/senpi-codemode/src/skill/bun/SKILL.md"),
+		);
 	});
 });

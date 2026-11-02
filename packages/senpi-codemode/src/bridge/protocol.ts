@@ -16,6 +16,13 @@ const bridgeErrorSchema = Type.Object({
 	message: Type.String(),
 	stack: Type.Optional(Type.String()),
 	code: Type.Optional(Type.String()),
+	permissionRule: Type.Optional(
+		Type.Object({
+			permission: Type.String(),
+			pattern: Type.String(),
+			layer: Type.String(),
+		}),
+	),
 });
 
 const statusEventSchema = Type.Object({ op: Type.String() }, { additionalProperties: true });
@@ -38,6 +45,10 @@ const hostToKernelMessageSchema = Type.Union([
 		hostToolNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 		foreignLanguageNames: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 		memory: Type.Optional(kernelMemoryThresholdsSchema),
+		/** JS kernels: the kill guard's judge module (imported by URL in the worker) and the agent host's pid (senpi#5349). */
+		killGuard: Type.Optional(
+			Type.Object({ moduleUrl: Type.String({ minLength: 1 }), agentPid: Type.Integer({ minimum: 1 }) }),
+		),
 	}),
 	Type.Object({
 		type: Type.Literal("run"),

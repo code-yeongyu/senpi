@@ -1941,7 +1941,34 @@ function convertTools(
 	tools: Tool[],
 	compat: ResolvedOpenAICompletionsCompat,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
-	return tools.map((tool) => {
+	const strictByTool = tools.map((tool) =>
+		tool.freeform || resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools)
+			? undefined
+			: resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false),
+	);
+	if (compat.mixedStrictTools === false) {
+		const nonStrictTool = tools.find(
+			(tool, index) =>
+				!tool.freeform &&
+				!resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools) &&
+				strictByTool[index] !== true,
+		);
+		if (nonStrictTool) {
+			const requiredTool = tools.find(
+				(tool) =>
+					tool.constrainedSampling &&
+					tool.constrainedSampling.type === "json_schema" &&
+					tool.constrainedSampling.strict === "require",
+			);
+			if (requiredTool) {
+				throw new Error(
+					`Tool "${requiredTool.name}" requires JSON-schema constrained sampling, but tool "${nonStrictTool.name}" cannot be strict and this provider rejects mixed strict and non-strict tools.`,
+				);
+			}
+			strictByTool.fill(undefined);
+		}
+	}
+	return tools.map((tool, index) => {
 		const grammar = resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -1963,7 +1990,7 @@ function convertTools(
 			throw new Error("Freeform tools cannot be sent to OpenAI Chat Completions; use Responses API");
 		}
 
-		const strict = resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false);
+		const strict = strictByTool[index];
 		const schemaParameters = getJsonSchemaToolParameters(tool, strict) as Record<string, unknown>;
 		const normalizedParameters =
 			compat.toolSchemaFlavor === "moonshot-mfjs"

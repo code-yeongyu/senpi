@@ -80,6 +80,36 @@ describe("openai-completions providerDiagnostic", () => {
 		});
 	});
 
+	// senpi#4950: a gateway that names a quota exhaustion only in `error.type`, with no `error.code`.
+	it("classifies a code-less 429 by its precise quota type", async () => {
+		const result = await run(
+			httpError(429, {
+				message: "You've reached your monthly usage limit",
+				type: "exceeded_current_quota_error",
+			}),
+		);
+		expect(result.providerDiagnostic).toEqual({
+			category: "quota",
+			httpStatus: 429,
+			code: "exceeded_current_quota_error",
+			evidence: "structured_code",
+		});
+	});
+
+	it("still ignores a coarse type bucket when the code is missing", async () => {
+		const result = await run(httpError(429, { message: "slow down", type: "invalid_request_error" }));
+		expect(result.providerDiagnostic).toEqual({
+			category: "unknown",
+			httpStatus: 429,
+			evidence: "structured_status",
+		});
+	});
+
+	it("omits the diagnostic when a quota type contradicts the status", async () => {
+		const result = await run(httpError(500, { message: "odd", type: "exceeded_current_quota_error" }));
+		expect(result.providerDiagnostic).toBeUndefined();
+	});
+
 	it("classifies a 503 without a code as provider_unavailable", async () => {
 		const result = await run(httpError(503, { message: "upstream unavailable" }));
 		expect(result.providerDiagnostic).toEqual({

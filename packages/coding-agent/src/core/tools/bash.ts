@@ -269,6 +269,7 @@ function resolveSpawnContext(
 		}
 		if (ctx.thinkingLevel) env.PI_REASONING_LEVEL = ctx.thinkingLevel;
 		if (ctx.browserEngine) env.OMO_BROWSER_ENGINE = ctx.browserEngine;
+		Object.assign(env, ctx.sessionEnv);
 	}
 	const baseContext: BashSpawnContext = { command, cwd, env };
 	return spawnHook ? spawnHook(baseContext) : baseContext;

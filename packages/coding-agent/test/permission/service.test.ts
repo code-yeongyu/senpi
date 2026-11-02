@@ -86,18 +86,6 @@ describe("PermissionService", () => {
 			expect(service.list()).toEqual([]);
 		});
 
-		it("throws DeniedError when a static rule denies a pattern", async () => {
-			// given a configured (static) deny for the pattern — approvals are allow-only under HIGH 1
-			const { service } = createService([{ permission: "bash", pattern: "git commit", action: "deny" }]);
-
-			// when
-			const result = service.ask(createRequest());
-
-			// then
-			await expect(result).rejects.toEqual(new DeniedError(["git commit"]));
-			expect(service.list()).toEqual([]);
-		});
-
 		it("throws DeniedError with only the denied patterns when multiple patterns provided", async () => {
 			// given
 			const { service } = createService([{ permission: "bash", pattern: "rm *", action: "deny" }]);

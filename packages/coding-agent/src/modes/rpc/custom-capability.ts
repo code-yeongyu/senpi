@@ -36,6 +36,11 @@ export const ATTENDED_CAPABILITY = "attended";
  * placeholders for this connection; the client fetches a block on demand with `get_media`.
  */
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
+/**
+ * Opt-in, honored only behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` and never advertised (S13; S17 owns the public
+ * selection): a record past F reaches this connection as an `eventLease` envelope paged through `get_recovery_page`.
+ */
+export const COMPACT_EVENTS_CAPABILITY = "compact_events";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
 /** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
@@ -137,6 +142,15 @@ export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
 export const BROWSER_ENGINE_CAPABILITY = "browser_engine";
 
 /**
+ * HOST capability: this host honors `open_session.env` (senpi#4381), the per-spawn caller env channel.
+ * The entries are that session's own: its tool subprocesses see them, they are never merged into the host
+ * process environment or carried to a successor generation through it, and only a task child opened with
+ * `spawnedBy` naming that session inherits them (any client that could attach to it can open such a child).
+ * A name outside the host's caller-passable set is refused with `invalid_session_env`.
+ */
+export const SESSION_ENV_CAPABILITY = "session_env";
+
+/**
  * HOST capability: this host honors `open_session.retryFallback` (`{ modelFallback, fallbackChains }`). The
  * policy is that session's own: it is applied as an in-memory settings override for that session only,
  * never written to a settings file and never seen by another session on the host.
@@ -201,6 +215,8 @@ export function buildCustomUnsupportedRequest(
 
 /** `verify_api_key` and `keyHint` on `get_auth_providers` rows (desktop #2510). */
 export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
+/** `test_provider_account`: re-run the sign-in connection test on one Claude subscription account (senpi#4436). */
+export const PROVIDER_ACCOUNT_TEST_CAPABILITY = "provider_account_test";
 
 /** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
 export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";
