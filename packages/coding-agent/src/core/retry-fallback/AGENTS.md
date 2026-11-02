@@ -12,7 +12,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 | `controller-types.ts` | Controller type declarations (`ActiveFallbackState`, deps, reasons) |
 | `circuit.ts` | `FallbackCircuitBreaker` shared per resolved agent dir (`fallbackCircuitsFor`): one doubling step per open episode (failures while open take none, senpi#3467), an `exhausted` mark for verdicts other sessions act on, Retry-After bounded by the cooldown ceiling (senpi#2446), single half-open probe lease; `createFallbackCircuitAccess` binds a session's owner id, clock (monotonic by default), and `fallback.*` settings; `admit()` is the only way to route to a half-open entry; admission is per request lane (`turn` / `probe-back:<n>`) and each acquisition gets a fresh generation; `acquireFallbackCircuits` holds a dir's breaker per session |
 | `chains.ts` | Selector parse/format, chain-key resolution, `canonicalizeFallbackChains` (bare-selector expansion + registry eligibility) |
-| `expansion.ts` | Bare-selector family expansion; OpenRouter denylist; OAuth-first auth tiers; `PROVIDER_PRECEDENCE` tie-break |
+| `expansion.ts` | Bare-selector family expansion; `FIRST_PARTY_PROVIDERS` vendor scope; OAuth-first auth tiers; `PROVIDER_PRECEDENCE` tie-break |
 | `hint-policy.ts` | Pure 429 hint tiers (`no-hint-fast-fallback` / `tier1-in-turn` / `tier2-fallback-probe-back` / `tier3-fallback-only`) + probe schedule math |
 | `probe-scheduler.ts` | ONE armed probe plan per session, max two probes (half-hint, then deadline), injected `setTimeout`/`clearTimeout` |
 | `cooldown.ts` | `SelectorCooldowns`: runtime-only selector suppression, injected `now`/`random`, honors `retryAfterMs` |
@@ -45,7 +45,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 
 ## ANTI-PATTERNS
 
-- Expanding a bare selector onto OpenRouter — it re-publishes other vendors' catalogs under namespaced ids; only an explicit `openrouter/...` selector may route there.
+- Expanding a bare selector beyond its vendor's `FIRST_PARTY_PROVIDERS` (resellers, gateways, cloud re-hosts, custom providers); only an explicit `provider/...` selector may route there. An unmapped vendor stays on the chain key's own provider.
 - Persisting cooldown or tried-selector state across sessions.
 - Two in-flight probes, or arming a second plan without superseding — `probe-scheduler.ts` owns exactly one plan per session.
 - Writing raw provider errors/headers to `fallback.log` — always go through `log.ts` scrubbing.

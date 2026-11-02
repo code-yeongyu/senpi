@@ -58,7 +58,7 @@ it("T5 only the first admission and a reset advance the generation: a duplicate 
 	expect(checkpoints.stream(first)).toMatchObject({ generation: 2, routes: ["attach-1"] });
 	const overlapping = await attach(other, "other");
 	expect(overlapping.socketEpoch).not.toBe(first.socketEpoch);
-	expect(overlapping.generation, "another peer's hold is its own stream at generation 1").toBe(1);
+	expect(overlapping.generation, "another peer draws from the same session counter (RULING-99)").toBe(3);
 	expect(checkpoints.stream(first)?.generation, "the first stream is untouched by the other peer").toBe(2);
 	expect(checkpoints.status()).toMatchObject({ streams: 2, frozen: 3, reclaimed: 0 });
 	for (const id of ["held", "other"]) writer.unregisterConnection(id);
@@ -67,7 +67,7 @@ it("T5 only the first admission and a reset advance the generation: a duplicate 
 	await lane.idle();
 });
 
-it("carry 37 a replacement keeps one stream record per peer and session: every incarnation restarts the counter in the same record", async () => {
+it("RULING-99 a replacement keeps one stream record and continues the session counter", async () => {
 	vi.useFakeTimers();
 	const { writer, lane, checkpoints, attach, shed, replace } = recoveryRig();
 	const held = heldPeer(writer, "held", [EVENT_RESYNC_CAPABILITY]);
@@ -77,9 +77,12 @@ it("carry 37 a replacement keeps one stream record per peer and session: every i
 		replace();
 		const minted = await shed(held);
 		epochs.add(minted.sessionEpoch);
-		expect(minted.generation).toBe(1);
+		expect(minted.generation).toBe(incarnation + 2);
 		expect(checkpoints.status().streams, "one record per peer and session, whatever the incarnation").toBe(1);
-		expect(checkpoints.stream(first)).toMatchObject({ sessionEpoch: minted.sessionEpoch, generation: 1 });
+		expect(checkpoints.stream(first)).toMatchObject({
+			sessionEpoch: minted.sessionEpoch,
+			generation: incarnation + 2,
+		});
 	}
 	expect(epochs.size).toBe(4);
 	writer.unregisterConnection("held");
