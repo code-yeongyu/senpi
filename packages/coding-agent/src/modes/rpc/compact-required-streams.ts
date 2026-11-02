@@ -54,7 +54,7 @@ export class CompactRequiredStreams {
 					true,
 				);
 				if (!frozen.ok) {
-					registered.connection.close?.();
+					registered.close("checkpoint_unavailable", frozen.failure.reason);
 					continue;
 				}
 			}
@@ -85,7 +85,7 @@ export class CompactRequiredStreams {
 					lane,
 				);
 				if (!frozen.ok) {
-					registered.connection.close?.();
+					registered.close("checkpoint_unavailable", frozen.failure.reason);
 					continue;
 				}
 				state.seed = frozen.value.token;

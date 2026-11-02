@@ -10,7 +10,11 @@ import { SOCKET_CLOSING_CODES } from "../../../src/modes/rpc/socket-closing.ts";
 it("RULING-124 (d) a registered transport cannot be closed directly; the registration's close takes a code", () => {
 	const fanout = new SessionEventFanout();
 	let closed = 0;
-	fanout.registerConnection("peer", { writeRaw: () => {}, waitForBackpressure: async () => {}, close: () => void closed++ });
+	fanout.registerConnection("peer", {
+		writeRaw: () => {},
+		waitForBackpressure: async () => {},
+		close: () => void closed++,
+	});
 	const registered = fanout.get("peer") ?? expect.unreachable("the connection is registered");
 	expect(Object.keys(registered.connection).sort(), "no close reachable at runtime either").toEqual([
 		"waitForBackpressure",

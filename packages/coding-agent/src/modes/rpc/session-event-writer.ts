@@ -9,7 +9,7 @@ import { RecordLine, SessionEventWriterDestinations } from "./session-event-writ
 import { causeOfRecord } from "./session-status.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 
-export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
+export type { SessionEventWriterConnection } from "./session-event-connection.ts";
 export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./session-event-writer-lanes.ts";
 
 /**

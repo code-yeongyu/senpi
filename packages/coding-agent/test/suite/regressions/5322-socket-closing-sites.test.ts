@@ -19,8 +19,7 @@ type Host = Awaited<ReturnType<typeof statusHost>>;
 /** A peer whose socket the engine may close: resolves with the number of lines it had received at the close. */
 function closablePeer(host: Host, name = "peer") {
 	const closed = Promise.withResolvers<number>();
-	let peer: RawClient | undefined;
-	peer = host.client(name, { close: () => closed.resolve(peer?.received.length ?? -1) });
+	const peer: RawClient = host.client(name, { close: () => closed.resolve(peer.received.length) });
 	return { peer, closed: closed.promise };
 }
 

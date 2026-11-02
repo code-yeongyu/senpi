@@ -940,6 +940,31 @@ before the route stops delivering. Per path:
   on the socket; the session's streams end with it.
 - A socket's end: nothing can be delivered on it any more; its streams end with it.
 
+**Engine-initiated socket close (senpi#5322, RULING-124).** With `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on, the engine
+never closes a socket that selected compact events without saying why. Before every close the engine itself decides,
+it stops the socket's record queue and writes one last record:
+
+```json
+{"type": "socket_closing", "code": "event_queue_failed", "retryable": true, "detail": "overflow"}
+```
+
+`detail` is optional. The engine then waits for that record to drain for at most 1 second and closes the socket
+regardless. When the transport is already broken (the write fails, or the drain is refused) the socket closes at once
+and the record may never arrive, so a client must not depend on it: a close with no `socket_closing` is handled as
+`retryable: true`. A legacy socket, and every socket with the flag off, is closed exactly as before, with no new record.
+
+`retryable` is fixed per code. `true`: the cause belongs to this connection (its queue, its lease budget, compact storage
+that may recover), so reconnect with backoff and recover through the recovery commands (`reset_stream`, a re-open).
+`false`: a new connection with the same selection gets the same answer, so reconnect without the compact selection, or
+stop.
+
+| `code` | `retryable` | Sent when | `detail` |
+|---|---|---|---|
+| `checkpoint_unavailable` | `true` | A required or mirrored stream's checkpoint cannot be frozen | The refusal reason, for example `unavailable` |
+| `event_queue_failed` | `true` | The socket's event queue failed; follows its `overflow` record when it has one | `overflow`, `stall` or `transport_error` |
+| `event_lease_refused` | `true` | An event cannot be leased; follows its `event_lease_refused` record | `lease_limit` or `storage_unavailable` |
+| `compact_endpoint_unsupported` | `false` | A compact mirror of a session served only on the legacy wire; follows its `compact_refused` record | none |
+
 #### interactive_user
 
 A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's

@@ -240,11 +240,11 @@ it("RULING-81 measurements: descriptors per record type on the real path, and th
 		process.stdout.write(`S13-MEASURE failure retained-bytes ${retained} refused ${JSON.stringify(after.refused)}\n`);
 		expect(retained, "a refused record retains no staged bytes").toBe(0);
 		expect(after.refused).toMatchObject({ storage_unavailable: 1 });
-		expect(compact.inbox.at(-1)).toEqual({
-			type: "event_lease_refused",
-			sessionId: routing,
-			reason: "storage_unavailable",
-		});
+		// RULING-124 (#5322): the refusal, then the record announcing the close it causes.
+		expect(compact.inbox.slice(-2)).toEqual([
+			{ type: "event_lease_refused", sessionId: routing, reason: "storage_unavailable" },
+			{ type: "socket_closing", code: "event_lease_refused", retryable: true, detail: "storage_unavailable" },
+		]);
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}

@@ -214,3 +214,22 @@ export function dataOf(record: WireRecord): Record<string, unknown> {
 export function statusRecords(client: RawClient, subscriptionId: string): WireRecord[] {
 	return client.inbox.filter((record) => record.type === "session_status" && record.subscriptionId === subscriptionId);
 }
+
+/**
+ * Receipts every event lease `peer` was handed for `sessionId` since inbox index `from`, as a compact consumer does (S13).
+ * A peer that never receipts reaches its lease bound and is closed with `socket_closing` (RULING-124, #5322).
+ */
+export async function receiptLeases(peer: RawClient, sessionId: string, from: number): Promise<void> {
+	for (const frame of peer.inbox.slice(from)) {
+		const lease = frame.eventLease as { readonly id: string; readonly admissionId: string } | undefined;
+		if (lease === undefined || frame.sessionId !== sessionId) continue;
+		const receipt = { kind: "event", id: lease.id };
+		const released = await peer.request({
+			type: "release_recovery",
+			sessionId,
+			lease: receipt,
+			admissionId: lease.admissionId,
+		});
+		if (released.success !== true) throw new Error(`lease receipt refused: ${JSON.stringify(released)}`);
+	}
+}

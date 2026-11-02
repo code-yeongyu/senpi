@@ -4,7 +4,7 @@ import type { CanonicalControl } from "./compact-canonical-pairing.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
-import type { SessionEventWriterConnection } from "./session-event-fanout.ts";
+import type { SessionEventWriterConnection } from "./session-event-connection.ts";
 import type { RpcRecord } from "./session-event-writer-compaction.ts";
 import { acceptActors, SessionEventWriterLanes, settleActors } from "./session-event-writer-lanes.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
