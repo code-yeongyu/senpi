@@ -124,6 +124,8 @@ describe("isPureNetworkTransient", () => {
 		"FailedToOpenSocket: Was there a typo in the url or port?",
 		"connect EHOSTUNREACH 203.0.113.7:443",
 		"connect ENETUNREACH 203.0.113.7:443",
+		// oh-my-openagent#10121: a Go-based gateway's peer reset, prose only.
+		"read tcp 192.0.2.10:52814->203.0.113.7:443: read: connection reset by peer",
 	])("#given %s #then it is a network blip", (message) => {
 		expect(isPureNetworkTransient(message)).toBe(true);
 	});

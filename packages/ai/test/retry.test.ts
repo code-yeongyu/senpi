@@ -239,6 +239,8 @@ describe("provider retry classification", () => {
 		"connect ENETUNREACH 203.0.113.7:443",
 		"write EPIPE",
 		"ECONNABORTED: connection aborted",
+		// oh-my-openagent#10121: a Go-based gateway reports the peer reset only as prose.
+		"read tcp 192.0.2.10:52814->203.0.113.7:443: read: connection reset by peer",
 	])("classifies the connection-level failure %s as retryable", (errorMessage) => {
 		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
 	});
