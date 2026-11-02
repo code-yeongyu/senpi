@@ -1,4 +1,5 @@
 import { type Static, Type } from "typebox";
+import { annotateShellTrust } from "../../../../../engine-trust/shell-trust.ts";
 import type { AgentToolUpdateCallback } from "../../../types.ts";
 import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
@@ -376,7 +377,13 @@ async function runForeground(
 	}
 	const status = describeExit(runtime);
 	if (exit && exit.exitCode !== 0 && exit.exitCode !== null) {
-		return errorResult(`${output ? `${output}\n\n` : ""}Command exited with code ${exit.exitCode}`);
+		const text = `${output ? `${output}\n\n` : ""}Command exited with code ${exit.exitCode}`;
+		const annotation = annotateShellTrust({ exitCode: exit.exitCode, output: runtime.fullOutput() });
+		if (annotation === undefined) return errorResult(text);
+		return textResult(annotation.text === undefined ? text : `${text}\n\n${annotation.text}`, {
+			details: { trust: annotation.trust },
+			isError: true,
+		});
 	}
 	return noticedResult(output || "(no output)", [formatted.marker], {
 		details: {
