@@ -1,7 +1,7 @@
 import type { DurableStore } from "../durable/store.ts";
 import type { AdmissionLine } from "../durable/store-admission.ts";
 import { decodeBatchRecord } from "./coordinator-codec.ts";
-import { abortCause, buildBatchManifest, settledOutcome } from "./coordinator-plan.ts";
+import { abortCause, buildBatchManifest, finished, settledOutcome } from "./coordinator-plan.ts";
 import type {
 	BatchExecutor,
 	BatchPlan,
@@ -159,7 +159,10 @@ export function createBatchCoordinator(options: BatchCoordinatorOptions): BatchC
 					const index = call.sourceIndex;
 					if (current().outcomes[index] !== null || inflight.has(index)) continue;
 					if (!current().released[index]) {
-						if (!call.dependsOn.every((dependency) => current().outcomes[dependency] !== null)) continue;
+						const ready = call.dependsOn.every((dependency) =>
+							finished(manifest.calls, current().outcomes, dependency),
+						);
+						if (!ready) continue;
 						await persist({ ...current(), released: replace(current().released, index, true) }, "release", call);
 					}
 					inflight.set(

@@ -54,7 +54,9 @@ export type ExecutionRef = { readonly issuer: string; readonly executionId: stri
 /**
  * The executor's durable answer to a prepare. A re-sent prepare returns the stored answer and never reruns
  * preparation; a call whose endpoint already ended (for example `hand_restarted` after an executor restart during
- * preparation) answers `settled` with that terminal outcome.
+ * preparation) answers `settled` with that terminal outcome. A preparation the executor stopped itself is answered as
+ * `blocked` or `batch_abort`, also on a re-send, never as the raw `settled` ledger outcome: the ledger stores both
+ * under reason `blocked`, and only the executor can tell a blocked call from a preflight abort.
  */
 export type PrepareReply =
 	| { readonly kind: "prepared"; readonly frozenDigest: string }

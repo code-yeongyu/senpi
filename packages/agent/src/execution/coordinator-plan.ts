@@ -64,12 +64,35 @@ export async function buildBatchManifest(issuer: string, plan: BatchPlan): Promi
 	return { ...header, issuer, calls, manifestDigest: await digest({ ...header, issuer, calls }) };
 }
 
-/** A reply after which no later call is prepared and the decision is ABORT. */
+/**
+ * A reply after which no later call is prepared and the decision is ABORT. A raw `settled` outcome other than a result
+ * fails closed, `blocked` included: the ledger stores a blocked call and a preflight abort under the same reason, and
+ * an executor that stopped a preparation itself answers `blocked` or `batch_abort` instead.
+ */
 export function abortCause(reply: PrepareReply): "batch_abort" | "interrupted_preparation" | undefined {
 	if (reply.kind === "batch_abort") return "batch_abort";
-	if (reply.kind !== "settled") return undefined;
-	const { reason } = reply.outcome;
-	return reason === "result" || reason === "blocked" ? undefined : "interrupted_preparation";
+	if (reply.kind === "settled" && reply.outcome.reason !== "result") return "interrupted_preparation";
+	return undefined;
+}
+
+/**
+ * Whether `index` and everything it transitively depends on have final outcomes. A call that settled at preparation
+ * still finishes only after its own dependencies, as today's scheduler awaits them before every call's outcome.
+ */
+export function finished(
+	calls: readonly { readonly dependsOn: readonly number[] }[],
+	outcomes: readonly unknown[],
+	index: number,
+): boolean {
+	const done = new Map<number, boolean>();
+	const visit = (at: number): boolean => {
+		const known = done.get(at);
+		if (known !== undefined) return known;
+		const result = outcomes[at] !== null && (calls[at]?.dependsOn ?? []).every((dependency) => visit(dependency));
+		done.set(at, result);
+		return result;
+	};
+	return visit(index);
 }
 
 export function settledOutcome(reply: SettleReply): CallOutcome {
