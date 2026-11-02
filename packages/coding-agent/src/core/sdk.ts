@@ -181,6 +181,14 @@ export type {
 	ToolDefinition,
 } from "./extensions/index.ts";
 export type { PromptTemplate } from "./prompt-templates.ts";
+export {
+	bootstrapRuntime,
+	buildToolRegistry,
+	type RuntimeBootstrap,
+	type RuntimeBootstrapOptions,
+	type ToolRegistryBuild,
+	type ToolRegistryInput,
+} from "./runtime/bootstrap.ts";
 export type { Skill } from "./skills.ts";
 export type { Tool } from "./tools/index.ts";
 

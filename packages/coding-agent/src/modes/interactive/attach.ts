@@ -9,6 +9,9 @@ import { CustomEditor } from "./components/custom-editor.ts";
 import { RecordRenderer } from "./record-renderer.ts";
 import { getEditorTheme, theme } from "./theme/theme.ts";
 
+/** What an attached TUI declares in `set_client_info`; it renders tool arguments only from `toolcall_end`. */
+export const ATTACH_CLIENT_CAPABILITIES = ["interactive_user", "question", "grant_select", "secret_input_v1"] as const;
+
 /** Reports every width its line is drawn at, so the endpoint learns the presentation's width. */
 class WidthReporter implements Component {
 	private readonly inner: Text;
@@ -131,7 +134,7 @@ export class AttachedTui extends Container implements Focusable {
 			await this.client.request({
 				type: "set_client_info",
 				width: this.width,
-				capabilities: ["interactive_user", "question", "grant_select", "secret_input_v1"],
+				capabilities: [...ATTACH_CLIENT_CAPABILITIES],
 			});
 			const listing = await this.client.request({ type: "list_sessions", observe: true });
 			if (listing.command !== "list_sessions") throw new Error("Expected a session listing");

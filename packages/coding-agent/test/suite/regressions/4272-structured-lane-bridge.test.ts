@@ -62,8 +62,7 @@ interface Run {
 
 async function runControls(flag: boolean): Promise<Run> {
 	vi.unstubAllEnvs();
-	if (flag) vi.stubEnv(FLAG, "1");
-	expect(structuredLaneEnabled()).toBe(flag);
+	vi.stubEnv(FLAG, flag ? "1" : "0");
 	const extension: object[] = [];
 	// Holds the session's event queue at the first thinking_start until the agent has emitted message_end, so a
 	// control that skipped the queue would overtake the queued events.
@@ -81,6 +80,8 @@ async function runControls(flag: boolean): Promise<Run> {
 		extensionFactories: [listen],
 	});
 	sessions.push(session);
+	// #4272 RULING-112: internal capture follows the rollout flag alone, never selected socket output.
+	expect(structuredLaneEnabled()).toBe(flag);
 	const stopHold = session.harness.agent.subscribe((event) => {
 		if (event.type === "message_end" && event.message.role === "assistant") hold.resolve();
 	});

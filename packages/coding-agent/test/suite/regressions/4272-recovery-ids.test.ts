@@ -1,12 +1,15 @@
 import { expect, it } from "vitest";
 import {
 	BOUNDED_ID_MAX_BYTES,
+	baseRef,
+	CATALOG_NODE_MAX_ENTRIES,
 	CATALOG_REF_MAX_STEPS,
 	catalogRootRef,
 	childRef,
 	parseBoundedId,
 	parseContentDigest,
 	parseContentRef,
+	parsePageRef,
 	refSteps,
 } from "../../../src/modes/rpc/compact-recovery-ids.ts";
 
@@ -77,4 +80,24 @@ it("RULING-58 (3) a ref has at most CATALOG_REF_MAX_STEPS child steps: the valid
 	expect(ref).toBe(deepest);
 	expect(refSteps(ref)).toHaveLength(CATALOG_REF_MAX_STEPS);
 	expect(() => childRef(ref, 0)).toThrow(RangeError);
+});
+
+it("RULING-71 (1) `<catalogRoot>:base` passes the one validator like every ref and is reserved: the component grammar refuses it by name, so no component ref is ever minted with it", () => {
+	const root = catalogRootRef(7);
+	const base = baseRef(root);
+	expect(base).toBe("c-0000000000000007:base");
+	// It is a bounded id under the same allow-list and byte bound as every ref, and the page route parses it as the base
+	expect(parseBoundedId(base)).toEqual({ ok: true, value: base });
+	expect(parsePageRef(base)).toEqual({ ok: true, value: { kind: "base", ref: base } });
+	// The component grammar refuses the reserved step by name at any position, so a parsed component ref never carries it
+	for (const reserved of [base, `${root}:000:base`, `${root}:base:000`])
+		expect(parseContentRef(reserved), reserved).toEqual({ ok: false, reason: "reserved" });
+	expect(parsePageRef(`${root}:000:base`)).toEqual({ ok: false, reason: "reserved" });
+	// The minter goes through that grammar: every child step under a root and under a child is a component, never the base
+	for (const parent of [root, childRef(root, 0)])
+		for (let index = 0; index < CATALOG_NODE_MAX_ENTRIES; index++) {
+			const ref = childRef(parent, index);
+			expect(parsePageRef(ref)).toEqual({ ok: true, value: { kind: "catalog", ref } });
+		}
+	expect(() => baseRef(childRef(root, 0))).toThrow(RangeError);
 });

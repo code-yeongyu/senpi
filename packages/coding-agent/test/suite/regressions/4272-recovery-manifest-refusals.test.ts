@@ -11,6 +11,7 @@ import type {
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
+import { componentBytes } from "./4272-frozen-bytes-support.ts";
 import { cutStructuredBytes, recoveryRig } from "./4272-recovery-support.ts";
 
 // Part of #4272 (S09, RULING-58 and the #4551 review): a refusal of a catalog read is a closed typed detail, counted
@@ -121,8 +122,9 @@ it("RULING-58 (1) a session id whose surrogate pair straddles the leaf boundary 
 		await rig.lane.idle();
 		const read = unwrap(await rig.checkpoints.readCatalog(token, caller, manifest.session.ref));
 		if (read.kind !== "component") throw new Error("expected a component");
-		expect(read.text).toBe(huge);
-		expect(Buffer.from(read.text, "utf16le").equals(stored)).toBe(true);
+		const bytes = await componentBytes(read);
+		expect(bytes.toString("utf16le")).toBe(huge);
+		expect(bytes.equals(stored)).toBe(true);
 		rig.checkpoints.release(token);
 		expect(await rig.bytes()).toEqual(rig.before);
 	} finally {

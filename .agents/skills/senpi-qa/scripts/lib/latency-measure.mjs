@@ -46,6 +46,28 @@ export function iterationSamples({ callAt, nextAt, bodies }) {
 	};
 }
 
+/** Words per streamed answer before its marker. */
+const ANSWER_WORDS = 30;
+const LETTERS = "abcdefghijklmnopqrstuvwxyz";
+
+/** A letter-only word for `n` (bijective base 26: a..z, aa..): digit runs would all collapse to one token below. */
+function letterWord(n) {
+	let word = "";
+	for (let rest = n + 1; rest > 0; rest = Math.floor((rest - 1) / 26)) word = LETTERS[(rest - 1) % 26] + word;
+	return word;
+}
+
+/**
+ * The answer TUI frame iteration `i` streams. Its closing marker `E01-STREAMED-<i>` is on screen only once the last delta
+ * rendered. The TTSR repetitive-turns rule collapses digit runs and interrupts the third near-identical turn in a row,
+ * which sends an unscripted provider request that takes the next iteration's scripted turn (senpi#5270), so every
+ * iteration's words are letter-only and unique to it: no two answers share a word trigram before the marker.
+ */
+export function streamedAnswer(i) {
+	const words = Array.from({ length: ANSWER_WORDS }, (_, k) => `q${letterWord(i * ANSWER_WORDS + k)}`);
+	return `${words.join(" ")} E01-STREAMED-${i}`;
+}
+
 /**
  * Frame-time samples of one streaming window. `chunks` are the EQ.tui capture's output chunks (`{ at, frameEnds }`, the
  * capture's `frames`) from the stream's release through the chunk whose frame shows its last delta. A frame ends where
