@@ -1,5 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { createApplyPatchTool } from "./tool.ts";
+import { type ApplyPatchExecutions, createApplyPatchTool } from "./tool.ts";
 import type {
 	ApplyPatchExtensionAPI,
 	ApplyPatchToolsetState,
@@ -109,18 +109,39 @@ export function registerApplyPatchExtension(pi: ApplyPatchExtensionAPI): void {
 		activeVariant?: ApplyPatchToolVariant;
 		wireMode: ApplyPatchWireMode;
 	} = { removedEditToolNames: [], wireMode: "none" };
+	const executions: ApplyPatchExecutions = new Map();
 	const variants = {
-		freeform: createApplyPatchTool("freeform"),
-		json: createApplyPatchTool("json"),
+		freeform: createApplyPatchTool("freeform", executions),
+		json: createApplyPatchTool("json", executions),
 	} as const;
 	state.activeVariant = "freeform";
 	pi.registerTool(variants.freeform);
 	registerApplyPatchLazyActivator(pi, state);
 	pi.on("tool_result", async (event) => {
-		if (event.toolName !== APPLY_PATCH_NAME || event.isError || !hasApplyPatchFailures(event.details)) {
-			return undefined;
+		if (event.toolName !== APPLY_PATCH_NAME) return undefined;
+		try {
+			const execution = executions.get(event.toolCallId);
+			const genericAbort =
+				event.isError &&
+				event.content.length === 1 &&
+				event.content[0]?.type === "text" &&
+				event.content[0].text === "Tool execution aborted";
+			if (execution && genericAbort) {
+				try {
+					// Do not publish the abort until all in-flight mutations and rollback settle.
+					await execution;
+				} catch (error) {
+					return {
+						content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+						isError: true,
+					};
+				}
+			}
+			if (event.isError || !hasApplyPatchFailures(event.details)) return undefined;
+			return { isError: true };
+		} finally {
+			executions.delete(event.toolCallId);
 		}
-		return { isError: true };
 	});
 	pi.on("session_start", async (_event, ctx) => {
 		syncToolset(pi, ctx.model, state, variants);

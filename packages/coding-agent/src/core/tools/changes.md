@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-11-02 - Multi-file mutation queue reservations (senpi#1670)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: `withFileMutationQueues(filePaths, fn)` reserves every canonical identity of one mutation transaction before `fn` runs - keys deduplicated, `currentQueue` awaiting every key, release cleaning every key it still owns. `withFileMutationQueue(filePath, fn)` delegates to it, and `acquireFileMutationLock(filePath, signal?)` keeps its single-path signature over the same multi-key slot (`keys`, `currentQueue`, `release`), so the stuck-holder and abort race now covers every key of the slot. A path that does not exist yet keys on the canonical form of its nearest existing ancestor plus the missing tail instead of its lexically resolved form.
+
+### Why
+
+- A transactional `apply_patch` must hold every path it touches until byte-exact rollback finishes. Nesting the single-file helper deadlocks when one transaction spans several paths, and reserving them one by one leaves rollback interleaving with another writer.
+
+### Why an extension could not handle it
+
+- Edit, write, and builtin extension mutations share this core queue; a queue in an extension would not serialize against the built-in tools, and only the queue owner can reserve the bounded realpath and case-folding identity contract.
+
+### Expected merge conflict zones
+
+- LOW: `registerSlots` / `waitTurn` and the `withFileMutationQueue`/`withFileMutationQueues` bodies in `packages/coding-agent/src/core/tools/file-mutation-queue.ts`.
+
 ## 2026-10-27 - The core bash tool applies the session's caller env (fixes senpi#4381)
 
 ### What changed
