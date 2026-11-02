@@ -344,6 +344,7 @@ import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import { QueuedInputAges } from "./queued-input-age.ts";
 import { checkSessionReloadVeto } from "./reload-veto.ts";
+import { RequiredCompactionError } from "./required-compaction-error.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
@@ -1047,17 +1048,6 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 		error instanceof CompactionCancelledError ||
 		(error instanceof Error && error.name === "AbortError")
 	);
-}
-
-/** The error a turn ends with when a required compaction could not bring the context back under the window. */
-export const REQUIRED_COMPACTION_ERROR_MESSAGE =
-	"Context remains above the compaction threshold because compaction did not complete";
-
-class RequiredCompactionError extends Error {
-	constructor() {
-		super(REQUIRED_COMPACTION_ERROR_MESSAGE);
-		this.name = "RequiredCompactionError";
-	}
 }
 
 class MissingModelAccessError extends Error {
@@ -3194,10 +3184,9 @@ export class AgentSession {
 	}
 
 	/**
-	 * Unconditional release for manual `/compact`, the user's explicit remedy. An
-	 * ordinary user prompt is deliberately not a release: it only adds context, so
-	 * it cannot make the rejected context admissible, and the pre-prompt gate
-	 * already owns its own fail-closed rejection for that route.
+	 * An explicit user retry releases the automatic-loop latch, not the context
+	 * admission requirement. The pre-prompt gate must still compact successfully
+	 * before sending an oversized request.
 	 */
 	private _releaseBlockedPostCompactionAdmission(): void {
 		this._blockedPostCompactionAssistant = undefined;
@@ -5691,7 +5680,11 @@ export class AgentSession {
 		const promptGuidelines: string[] = [];
 		for (const name of contributingToolNames) {
 			const snippet = this._toolPromptSnippets.get(name);
-			if (snippet) {
+			// A model-facing tool whose schema description the model already reads gets no snippet line;
+			// withheld eval-only tools keep theirs (senpi#5335).
+			const describedToModel =
+				validToolNames.includes(name) && (this._toolRegistry.get(name)?.description.trim() ?? "") !== "";
+			if (snippet && !describedToModel) {
 				toolSnippets[name] = snippet;
 			}
 
@@ -5717,50 +5710,46 @@ export class AgentSession {
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};
+		const evalOnlyArmed = this._isEvalOnlyPolicyArmed();
+		const armed = evalOnlyArmed ? (this._evalOnlyToolNames ?? new Set<string>()) : new Set<string>();
+		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
+		// The eval-only paragraph below states the grep rule for this render, so the grep snippet that
+		// renders the eval-only grep guideline stays out of it (senpi#5335).
+		const { grep: _grepSnippet, ...snippetsWithoutGrep } = toolSnippets;
 		const prompt = buildDynamicSystemPrompt({
 			...this._baseSystemPromptOptions,
+			...(registered.has("grep") ? { toolSnippets: snippetsWithoutGrep } : {}),
 			onParts: (parts) => {
 				this._baseSystemPromptParts = parts;
 			},
 		});
-		if (!this._isEvalOnlyPolicyArmed()) return prompt;
-		const armed = this._evalOnlyToolNames ?? new Set<string>();
-		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
-		const sentences: string[] = [];
+		if (!evalOnlyArmed) return prompt;
+		const helpers: string[] = [];
 		const shellHelpers = ["bash", "powershell"].filter((name) => registered.has(name)).map(evalHelperCall);
-		if (shellHelpers.length > 0) {
-			sentences.push(
-				`Shell commands run ONLY inside eval cells via ${shellHelpers.join(" or ")}; hooks and permissions still apply.`,
-			);
-		}
-		if (registered.has("workflow")) {
-			sentences.push(
-				`The workflow tool runs ONLY inside eval cells via ${evalHelperCall("workflow")}; hooks and permissions still apply.`,
-			);
-		}
+		if (shellHelpers.length > 0) helpers.push(`${shellHelpers.join(" / ")} shell`);
+		if (registered.has("workflow")) helpers.push(evalHelperCall("workflow"));
 		// Declared tools and SDK overrides outside the built-in groups still need eval guidance.
-		const otherHelpers = [...registered]
-			.filter(
-				(name) =>
-					name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep" && name !== "glob",
-			)
-			.map(evalHelperCall);
-		if (otherHelpers.length > 0) {
-			sentences.push(
-				`These tools run ONLY inside eval cells via ${otherHelpers.join(" or ")}; hooks and permissions still apply.`,
-			);
-		}
+		helpers.push(
+			...[...registered]
+				.filter(
+					(name) =>
+						name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep" && name !== "glob",
+				)
+				.map(evalHelperCall),
+		);
 		if (registered.has("glob")) {
-			sentences.push(
-				`File-name search runs ONLY inside eval cells via ${evalHelperCall("glob")}; it matches a glob such as **/*.ts, respects .gitignore, and applies hooks and permissions - prefer it over find/ls in tool.bash.`,
+			helpers.push(
+				`${evalHelperCall("glob")} file-name search (glob like **/*.ts, respects .gitignore; over find/ls)`,
 			);
 		}
 		if (registered.has("grep")) {
-			sentences.push(
-				`Text search runs ONLY inside eval cells via ${evalHelperCall("grep")}; it returns structured matches, respects .gitignore, and applies hooks and permissions - prefer it over rg/grep in tool.bash.`,
+			helpers.push(
+				`${evalHelperCall("grep")} text search (structured, respects .gitignore; over rg/grep; page full -> skip, narrow with glob/path)`,
 			);
 		}
-		return sentences.length > 0 ? `${prompt}\n\n${sentences.join("\n\n")}` : prompt;
+		return helpers.length > 0
+			? `${prompt}\n\nEval-only tools (hooks + permissions still apply): ${helpers.join("; ")}.`
+			: prompt;
 	}
 
 	/**
@@ -6381,6 +6370,7 @@ export class AgentSession {
 			await this._assertModelReadyForTurn();
 
 			// The user's new prompt is sent below, so do not call agent.continue() here.
+			if (originOf(options) === "person") this._releaseBlockedPostCompactionAdmission();
 			await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 
 			// Build messages array (environment context if it changed, user message, then custom messages)

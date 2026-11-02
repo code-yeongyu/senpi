@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import { fastSiblingOption } from "../fast-model-pair.ts";
 import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
@@ -111,7 +112,14 @@ export class RetryFallbackController {
 		const current = this.deps.getCurrentSelector();
 		if (!current) return false;
 		const chains = this.canonicalChains();
-		return resolveChainKey(current.model, current.thinkingLevel, chains) !== undefined;
+		return (
+			resolveChainKey(
+				current.model,
+				current.thinkingLevel,
+				chains,
+				fastSiblingOption(this.deps.registry, current.model),
+			) !== undefined
+		);
 	}
 
 	/**
@@ -384,7 +392,13 @@ export class RetryFallbackController {
 	private managedChainKey(current: { model: Model<Api>; thinkingLevel?: ThinkingLevel }): string | undefined {
 		if (!this.deps.getSettings().modelFallback) return undefined;
 		const chains = this.canonicalChains();
-		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
+		const chainKey =
+			resolveChainKey(
+				current.model,
+				current.thinkingLevel,
+				chains,
+				fastSiblingOption(this.deps.registry, current.model),
+			) ?? this.state?.chainKey;
 		return chainKey && chains[chainKey] ? chainKey : undefined;
 	}
 
