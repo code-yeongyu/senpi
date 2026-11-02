@@ -965,7 +965,10 @@ the stored row answers `admission_admission_conflict`, as an unmarked one does. 
 `RpcClient` marks every `openSession` that re-sends an `admissionId` the same client instance already sent, also
 after a disconnect and reconnect: the typical C4.4 retry follows a reconnect, and the new socket does not know the ID,
 so an unmarked re-send would open again. The client remembers the 4,096 most recently sent IDs (least recently sent
-dropped first), so its memory stays bounded; a client must not reuse an `admissionId` for a different request.
+dropped first), so its memory stays bounded; a client must not reuse an `admissionId` for a different request. A
+re-send of an ID older than that 4,096-entry window goes out unmarked, so the late-retry residual is bounded by both
+windows (the client's 4,096 sent IDs and the engine's 4,096-entry ring plus 127 live rows); a client that retries
+older admissions raises its own bound.
 
 #### interactive_user
 
