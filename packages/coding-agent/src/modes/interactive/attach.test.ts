@@ -305,6 +305,26 @@ describe("attached interactive TUI", () => {
 		},
 	);
 
+	// senpi#5480: a dialog raised by a remote device's turn says which device asked.
+	it("labels a dialog raised by a remote device's turn with that device", async () => {
+		const { host, view, until, screen } = await attached();
+		host.send({
+			...permissionRequest,
+			id: "remote-named",
+			remoteOrigin: { deviceId: "dev-1", deviceName: "Work laptop" },
+		});
+		await until((text) => text.includes("Allow operation?"));
+		expect(screen()).toContain("Requested from Work laptop");
+		view.handleInput("\r");
+		await host.command("extension_ui_response");
+		host.send({ ...permissionRequest, id: "remote-unnamed", remoteOrigin: { deviceId: "dev-2" } });
+		await until((text) => text.includes("Requested from dev-2"));
+		view.handleInput("\r");
+		await host.waitFor((record) => record.type === "extension_ui_response" && record.id === "remote-unnamed");
+		host.send({ ...permissionRequest, id: "local" });
+		await until((text) => text.includes("Allow operation?") && !text.includes("Requested from"));
+	});
+
 	it("keeps typed text when the endpoint refuses a prompt", async () => {
 		const { view, until, screen } = await attached({ refuse: { prompt: "session_busy" } });
 		for (const key of "Keep this text") view.handleInput(key);
