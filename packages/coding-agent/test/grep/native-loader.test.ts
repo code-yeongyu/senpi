@@ -110,15 +110,29 @@ describe("native grep loader", () => {
 		expect(requireBinding).toHaveBeenCalledExactlyOnceWith(candidates[0]);
 	});
 
-	it.each(["native", "auto"])("%s selection does not swallow a sentinel mismatch", async (engine) => {
+	it("native selection does not swallow a sentinel mismatch", async () => {
 		await expect(
 			resolveGrepEngine({
 				...options,
-				env: { SENPI_GREP_ENGINE: engine },
+				env: { SENPI_GREP_ENGINE: "native" },
 				requireBinding: () => ({ ...fakeBinding(), __senpiGrepAbi1: () => "0" }),
 				isQuarantined: () => false,
 			}),
 		).rejects.toMatchObject({ name: "NativeGrepSentinelMismatchError", modulePath: candidates[0] });
+	});
+
+	it("auto selection falls back to rg and warns on sentinel mismatch", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const engine = await resolveGrepEngine({
+			...options,
+			env: { SENPI_GREP_ENGINE: "auto" },
+			requireBinding: () => ({ ...fakeBinding(), __senpiGrepAbi1: () => "0" }),
+			isQuarantined: () => false,
+		});
+		expect(engine.name).toBe("rg");
+		expect(warn).toHaveBeenCalledOnce();
+		expect(warn.mock.calls[0][0]).toContain(candidates[0]);
+		expect(warn.mock.calls[0][0]).toContain("ABI mismatch");
 	});
 
 	it("skips quarantined files before require, without clearing attributes", () => {
