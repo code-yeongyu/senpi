@@ -16,14 +16,28 @@ export class McpToolSchemaError extends Error {
 	}
 }
 
-const validators = new WeakMap<object, ValidateFunction>();
+// Keyed by content, not identity: every catalog cache read parses fresh schema objects, and recompiling a
+// large catalog on each read blocked startup for seconds.
+const validators = new Map<string, ValidateFunction>();
+const MAX_CACHED_VALIDATORS = 1024;
 const dialect = "https://json-schema.org/draft/2020-12/schema";
+const ajvOptions = {
+	strict: false,
+	validateFormats: false,
+	allErrors: false,
+	inlineRefs: false,
+	addUsedSchema: false,
+} as const;
+// Checks schemas against the 2020-12 meta-schema without adding them, so it keeps no $id namespace and compiles
+// the meta-schema once instead of once per tool schema.
+let metaSchemaChecker: Ajv2020 | undefined;
 
 /** No coercion/default insertion/removal, no network resolver, no shared $id namespace. */
 export function compileModernSchema(schema: McpJsonSchema): ValidateFunction {
-	const cached = typeof schema === "boolean" ? undefined : validators.get(schema);
-	if (cached !== undefined) return cached;
 	checkBounds(schema);
+	const key = JSON.stringify(schema);
+	const cached = validators.get(key);
+	if (cached !== undefined) return cached;
 	if (
 		typeof schema !== "boolean" &&
 		schema.$schema !== undefined &&
@@ -35,15 +49,16 @@ export function compileModernSchema(schema: McpJsonSchema): ValidateFunction {
 	try {
 		if (typeof schema !== "boolean" && schema.$async !== undefined)
 			throw new McpToolSchemaError("MCP_SCHEMA_INVALID", "Async schemas are unsupported.");
-		const ajv = new Ajv2020({
-			strict: false,
-			validateFormats: false,
-			allErrors: false,
-			inlineRefs: false,
-			addUsedSchema: false,
-		});
-		const validate = ajv.compile(schema);
-		if (typeof schema !== "boolean") validators.set(schema, validate);
+		metaSchemaChecker ??= new Ajv2020(ajvOptions);
+		if (metaSchemaChecker.validateSchema(schema) !== true) {
+			throw new McpToolSchemaError("MCP_SCHEMA_INVALID", "Invalid MCP schema or unresolved schema reference.");
+		}
+		const validate = new Ajv2020({ ...ajvOptions, validateSchema: false }).compile(schema);
+		if (validators.size >= MAX_CACHED_VALIDATORS) {
+			const oldest = validators.keys().next().value;
+			if (oldest !== undefined) validators.delete(oldest);
+		}
+		validators.set(key, validate);
 		return validate;
 	} catch (error) {
 		if (error instanceof McpToolSchemaError) throw error;
