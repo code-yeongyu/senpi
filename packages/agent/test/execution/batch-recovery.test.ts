@@ -96,10 +96,10 @@ describe("the batch manifest identity", () => {
 		const executor: BatchExecutor = {
 			prepare: async (request) => {
 				prepared.push(request.executionId);
-				return { status: "batch_abort" };
+				return { kind: "batch_abort" };
 			},
-			release: async () => ({ status: "unknown_execution" }),
-			abort: async () => ({ status: "unknown_execution" }),
+			release: async () => ({ kind: "unknown_execution" }),
+			abort: async () => ({ kind: "unknown_execution" }),
 		};
 		const coordinator = createBatchCoordinator({
 			issuer: "brain",

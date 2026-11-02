@@ -57,15 +57,15 @@ export type ExecutionRef = { readonly issuer: string; readonly executionId: stri
  * preparation) answers `settled` with that terminal outcome.
  */
 export type PrepareReply =
-	| { readonly status: "prepared"; readonly frozenDigest: string }
-	| { readonly status: "blocked"; readonly result: StoreValue }
-	| { readonly status: "batch_abort" }
-	| { readonly status: "settled"; readonly outcome: ExecutionOutcome };
+	| { readonly kind: "prepared"; readonly frozenDigest: string }
+	| { readonly kind: "blocked"; readonly result: StoreValue }
+	| { readonly kind: "batch_abort" }
+	| { readonly kind: "settled"; readonly outcome: ExecutionOutcome };
 
 /** Release and abort answer with the endpoint's terminal outcome; an executor that lost the call says so. */
 export type SettleReply =
-	| { readonly status: "settled"; readonly outcome: ExecutionOutcome }
-	| { readonly status: "unknown_execution" };
+	| { readonly kind: "settled"; readonly outcome: ExecutionOutcome }
+	| { readonly kind: "unknown_execution" };
 
 /** The hand side of the batch protocol. Every method is replay-safe: re-sending gives the same effect. */
 export interface BatchExecutor {

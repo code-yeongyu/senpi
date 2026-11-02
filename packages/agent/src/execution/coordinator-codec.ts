@@ -46,7 +46,7 @@ function manifest(value: StoreValue | undefined): value is BatchManifest {
 
 function prepareReply(value: StoreValue | undefined): value is PrepareReply {
 	if (!object(value)) return false;
-	switch (value.status) {
+	switch (value.kind) {
 		case "prepared":
 			return typeof value.frozenDigest === "string";
 		case "blocked":

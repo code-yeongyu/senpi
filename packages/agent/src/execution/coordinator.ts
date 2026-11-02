@@ -143,8 +143,8 @@ export function createBatchCoordinator(options: BatchCoordinatorOptions): BatchC
 			for (const call of manifest.calls) {
 				if (current().outcomes[call.sourceIndex] !== null) continue;
 				const reply = current().prepares[call.sourceIndex] ?? null;
-				if (reply?.status === "settled") await settle(call, settledOutcome(reply));
-				else if (reply?.status === "blocked") {
+				if (reply?.kind === "settled") await settle(call, settledOutcome(reply));
+				else if (reply?.kind === "blocked") {
 					await executor(call.executor).abort(ref(call));
 					await settle(call, { kind: "blocked", result: reply.result });
 				} else if (current().decision === "ABORT") {

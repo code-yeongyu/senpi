@@ -73,19 +73,19 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 
 		const stored = async (entry: ExecutionEntry): Promise<PrepareReply> => {
 			const progress = entry.progress;
-			if (progress.state === "settled") return { status: "settled", outcome: progress.outcome };
+			if (progress.state === "settled") return { kind: "settled", outcome: progress.outcome };
 			if (!("call" in progress)) throw new Error(`no stored prepare reply in state ${progress.state}`);
 			const marker = await store.getDocument(markerKey(entry));
-			if (marker === "block") return { status: "blocked", result: `blocked: ${progress.call.name}` };
-			if (marker === "batch_abort") return { status: "batch_abort" };
-			return { status: "prepared", frozenDigest: progress.call.digest };
+			if (marker === "block") return { kind: "blocked", result: `blocked: ${progress.call.name}` };
+			if (marker === "batch_abort") return { kind: "batch_abort" };
+			return { kind: "prepared", frozenDigest: progress.call.digest };
 		};
 		const settled = async (ref: ExecutionRef): Promise<SettleReply> => {
 			const entry = await ledger.read(keyOf(ref));
-			if (entry === undefined) return { status: "unknown_execution" };
+			if (entry === undefined) return { kind: "unknown_execution" };
 			if (entry.progress.state !== "settled")
 				throw new Error(`execution ${ref.executionId} is ${entry.progress.state}`);
-			return { status: "settled", outcome: entry.progress.outcome };
+			return { kind: "settled", outcome: entry.progress.outcome };
 		};
 
 		const prepare = async (request: PrepareRequest): Promise<PrepareReply> => {
@@ -119,7 +119,7 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 
 		const release = async (ref: ExecutionRef): Promise<SettleReply> => {
 			const entry = await ledger.read(keyOf(ref));
-			if (entry === undefined) return { status: "unknown_execution" };
+			if (entry === undefined) return { kind: "unknown_execution" };
 			if (entry.progress.state === "settled") return settled(ref);
 			expectEntry(await apply(ref, { kind: "release" }, ref.issuer), "release");
 			await hold(ref.executionId, "dispatch");
@@ -135,7 +135,7 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 		};
 
 		const abort = async (ref: ExecutionRef): Promise<SettleReply> => {
-			if ((await ledger.read(keyOf(ref))) === undefined) return { status: "unknown_execution" };
+			if ((await ledger.read(keyOf(ref))) === undefined) return { kind: "unknown_execution" };
 			const reply = await apply(ref, { kind: "abort" }, ref.issuer);
 			if (reply.status === "refused" && reply.reason !== "terminal")
 				throw new Error(`abort refused: ${reply.reason}`);

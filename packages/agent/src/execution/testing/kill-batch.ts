@@ -18,7 +18,7 @@ type Scenario = {
 	readonly writes: readonly string[];
 	readonly expected: BatchResult;
 	readonly prepared: readonly string[];
-	readonly bodies: number;
+	readonly ran: readonly string[];
 };
 
 const notRun = { kind: "not_run", cause: "batch_abort" } as const;
@@ -38,7 +38,7 @@ const SCENARIOS: readonly Scenario[] = [
 		]),
 		expected: { decision: "RELEASE", outcomes: [resultOf("a"), resultOf("b"), resultOf("c")] },
 		prepared: ["a", "b", "c"],
-		bodies: 1,
+		ran: ["a", "b", "c"],
 	},
 	{
 		name: "a batch_abort reply",
@@ -50,7 +50,18 @@ const SCENARIOS: readonly Scenario[] = [
 		writes: ["manifest", "prepare:a", "prepare:b", "decision", "outcome:a", "outcome:b", "outcome:c"],
 		expected: { decision: "ABORT", outcomes: [notRun, notRun, notRun] },
 		prepared: ["a", "b"],
-		bodies: 0,
+		ran: [],
+	},
+	{
+		name: "a blocked call beside a released call (the executor's blocked reply must be durable)",
+		calls: [
+			["a", "e1", "deny"],
+			["b", "e2"],
+		],
+		writes: ["manifest", "prepare:a", "prepare:b", "decision", "outcome:a", "release:b", "outcome:b"],
+		expected: { decision: "RELEASE", outcomes: [{ kind: "blocked", result: "blocked: deny" }, resultOf("b")] },
+		prepared: ["a", "b"],
+		ran: ["b"],
 	},
 ];
 const AT: readonly BrainKill["at"][] = ["before", "after"];
@@ -81,7 +92,8 @@ const cases = SCENARIOS.flatMap((scenario, scenarioIndex) =>
 					const preparedOnce = scenario.prepared.includes(executionId) ? 1 : 0;
 					for (const step of ["shim", "hook"])
 						expectEqual(h.count(`${step}:${executionId}`), preparedOnce, `${step}:${executionId} once at most`);
-					expectEqual(h.count(`body:${executionId}`), preparedOnce * scenario.bodies, `body:${executionId}`);
+					const ranOnce = scenario.ran.includes(executionId) ? 1 : 0;
+					expectEqual(h.count(`body:${executionId}`), ranOnce, `body:${executionId}`);
 					if (preparedOnce === 1) expectEqual(await h.ledgerState(executor, executionId), "settled", "stable ids");
 				}
 			};
