@@ -44,6 +44,8 @@ pub struct PtySessionOptions {
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
+    /// When set, the child gets exactly `env`; otherwise `env` is applied over this process's environment.
+    pub clear_env: bool,
     pub cols: u16,
     pub rows: u16,
     pub timeout: Option<Duration>,
@@ -56,6 +58,7 @@ impl PtySessionOptions {
             args: Vec::new(),
             cwd: None,
             env: Vec::new(),
+            clear_env: false,
             cols: 80,
             rows: 24,
             timeout: None,
@@ -74,6 +77,11 @@ impl PtySessionOptions {
 
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn clear_env(mut self) -> Self {
+        self.clear_env = true;
         self
     }
 
@@ -130,6 +138,9 @@ impl PtySession {
         command.args(&opts.args);
         if let Some(cwd) = &opts.cwd {
             command.cwd(cwd);
+        }
+        if opts.clear_env {
+            command.env_clear();
         }
         for (key, value) in &opts.env {
             command.env(key, value);

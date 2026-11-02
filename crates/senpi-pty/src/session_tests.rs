@@ -50,6 +50,55 @@ fn pty_session_reports_shell_pid_and_process_group_after_exit() {
     assert_eq!(session.process_group_id(), Some(process_group));
 }
 
+#[cfg(unix)]
+fn child_env(options: PtySessionOptions) -> String {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&output);
+    let mut session = PtySession::start(options.arg("-c").arg("env"), move |chunk| {
+        seen.lock().unwrap().extend_from_slice(chunk)
+    })
+    .unwrap();
+    assert_eq!(session.wait().unwrap().exit_code, Some(0));
+    let text = String::from_utf8_lossy(&output.lock().unwrap()).replace('\r', "");
+    text
+}
+
+// Cargo puts CARGO_MANIFEST_DIR in the test binary's OS environment, so it stands in for a variable the JS caller
+// deleted from process.env but the OS environment still holds (omo#12157), without a racy set_var.
+#[cfg(unix)]
+#[test]
+fn pty_session_with_clear_env_gives_the_child_exactly_the_given_environment() {
+    let probe = "CARGO_MANIFEST_DIR";
+    assert!(
+        std::env::var_os(probe).is_some(),
+        "{probe} must be in the test environment"
+    );
+    let path = std::env::var("PATH").unwrap();
+    let home = std::env::temp_dir().to_string_lossy().into_owned();
+    let given = PtySessionOptions::new("/bin/sh")
+        .clear_env()
+        .env("PATH", path.clone())
+        .env("HOME", home.clone());
+    let inherited = PtySessionOptions::new("/bin/sh").env("HOME", home.clone());
+
+    let cleared = child_env(given);
+    let overlaid = child_env(inherited);
+
+    assert!(
+        !cleared.contains(&format!("{probe}=")),
+        "cleared env leaked {probe}: {cleared}"
+    );
+    assert!(
+        cleared.lines().any(|line| line == format!("PATH={path}")),
+        "PATH missing: {cleared}"
+    );
+    assert!(cleared.lines().any(|line| *line == format!("HOME={home}")));
+    assert!(
+        overlaid.contains(&format!("{probe}=")),
+        "the control must still inherit {probe}"
+    );
+}
+
 #[test]
 fn background_wait_does_not_complete_before_reader_drain() {
     let output = Arc::new(Mutex::new(Vec::new()));
