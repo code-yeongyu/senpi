@@ -6,7 +6,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
-import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import type { ExtensionRuntime, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { drainPendingProviderRegistrations } from "./extensions/loader.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { ModelRuntime } from "./model-runtime.ts";
@@ -164,6 +164,43 @@ function applyExtensionFlagValues(
  *
  * Returns services plus diagnostics. It does not create an AgentSession.
  */
+/**
+ * Replay the provider registrations extensions queued while loading, in their original call order,
+ * so last-registration-wins holds across mixed legacy/native registrations. Shared by session
+ * services and `auth check`, which must see the same providers a generation does (senpi#2191).
+ */
+export function replayExtensionProviderRegistrations(
+	modelRuntime: ModelRuntime,
+	extensionRuntime: ExtensionRuntime,
+): { registeredProviders: Set<string>; diagnostics: AgentSessionRuntimeDiagnostic[] } {
+	const registeredProviders = new Set<string>();
+	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
+	for (const registration of drainPendingProviderRegistrations(extensionRuntime)) {
+		try {
+			if (registration.kind === "config") {
+				void modelRuntime.registerProvider(registration.name, registration.config, {
+					refresh: false,
+					extensionPath: registration.extensionPath,
+				});
+				registeredProviders.add(registration.name);
+			} else {
+				void modelRuntime.registerNativeProvider(registration.provider, {
+					refresh: false,
+					extensionPath: registration.extensionPath,
+				});
+				registeredProviders.add(registration.provider.id);
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({
+				type: "error",
+				message: `Extension "${registration.extensionPath}" error: ${message}`,
+			});
+		}
+	}
+	return { registeredProviders, diagnostics };
+}
+
 export async function createAgentSessionServices(
 	options: CreateAgentSessionServicesOptions,
 ): Promise<AgentSessionServices> {
@@ -197,34 +234,11 @@ export async function createAgentSessionServices(
 	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
 	modelRuntime.setSettingsManager(settingsManager);
 
-	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
 	const extensionsResult = resourceLoader.getExtensions();
-	const registeredProviders = new Set<string>();
-	// Replay registrations queued during extension loading in original call order
-	// so last-registration-wins holds across mixed legacy/native registrations.
-	for (const registration of drainPendingProviderRegistrations(extensionsResult.runtime)) {
-		try {
-			if (registration.kind === "config") {
-				void modelRuntime.registerProvider(registration.name, registration.config, {
-					refresh: false,
-					extensionPath: registration.extensionPath,
-				});
-				registeredProviders.add(registration.name);
-			} else {
-				void modelRuntime.registerNativeProvider(registration.provider, {
-					refresh: false,
-					extensionPath: registration.extensionPath,
-				});
-				registeredProviders.add(registration.provider.id);
-			}
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			diagnostics.push({
-				type: "error",
-				message: `Extension "${registration.extensionPath}" error: ${message}`,
-			});
-		}
-	}
+	const { registeredProviders, diagnostics } = replayExtensionProviderRegistrations(
+		modelRuntime,
+		extensionsResult.runtime,
+	);
 	// A runtime built for this session refreshes everything it has, which is what
 	// it just composed. A runtime shared across a host's sessions already holds
 	// every provider earlier opens refreshed, so this open recomposes only what
