@@ -1465,6 +1465,21 @@ export interface SessionBeforeCompactEvent {
 }
 
 /**
+ * Fired by manual compaction (`/compact`, RPC, `ctx.compact()`) when native preparation finds nothing to
+ * summarize, so `session_before_compact` cannot fire. An extension that owns compaction returns a
+ * `compaction` to serve the request; with no result the native "Already compacted" / "Nothing to compact"
+ * refusal stands. Additive: `session_before_compact` is unchanged.
+ */
+export interface SessionCompactRequestedEvent {
+	type: "session_compact_requested";
+	reason: "manual";
+	/** Why native preparation is empty: the branch already ends in a compaction, or it is too small. */
+	nativeOutcome: "already-compacted" | "too-small";
+	branchEntries: SessionEntry[];
+	customInstructions?: string;
+}
+
+/**
  * Fired after context compaction, including rejections. Discriminated on
  * `accepted` so extension handlers get correct narrowing: only accepted events
  * carry a `compactionEntry`; rejected events carry the `rejectionCause`. Prior
@@ -1625,6 +1640,7 @@ export type SessionEvent =
 	| SessionBeforeForkEvent
 	| SessionBeforeReloadEvent
 	| SessionBeforeCompactEvent
+	| SessionCompactRequestedEvent
 	| SessionCompactEvent
 	| SessionCompactFailedEvent
 	| SessionShutdownEvent
@@ -2407,6 +2423,11 @@ export interface ReloadVetoDecision {
 	reason?: string;
 }
 
+/** Result of a `session_compact_requested` handler. The first handler returning `compaction` serves the request. */
+export interface SessionCompactRequestedResult {
+	compaction?: CompactionResult;
+}
+
 export interface SessionBeforeCompactResult {
 	cancel?: boolean;
 	compaction?: CompactionResult;
@@ -2611,6 +2632,10 @@ export interface ExtensionAPI {
 	on(
 		event: "session_before_compact",
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,
+	): () => void;
+	on(
+		event: "session_compact_requested",
+		handler: ExtensionHandler<SessionCompactRequestedEvent, SessionCompactRequestedResult>,
 	): () => void;
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): () => void;
 	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): () => void;

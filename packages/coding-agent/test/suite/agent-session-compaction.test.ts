@@ -472,6 +472,68 @@ describe("AgentSession compaction characterization", () => {
 		expect(compactionEntries).toHaveLength(0);
 	});
 
+	it("lets a compaction owner serve manual /compact when native preparation is empty (senpi#3354)", async () => {
+		// given
+		const requested: Array<{ reason: string; nativeOutcome: string; customInstructions?: string }> = [];
+		let beforeCompactCalls = 0;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("session_before_compact", async () => {
+						beforeCompactCalls += 1;
+						return undefined;
+					});
+					pi.on("session_compact_requested", async (event) => {
+						requested.push({
+							reason: event.reason,
+							nativeOutcome: event.nativeOutcome,
+							customInstructions: event.customInstructions,
+						});
+						const firstKept = event.branchEntries[0];
+						if (!firstKept) throw new Error("expected branch entries");
+						return {
+							compaction: { summary: "owner summary", firstKeptEntryId: firstKept.id, tokensBefore: 42 },
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.prompt("hi");
+
+		// when
+		const result = await harness.session.compact("focus");
+
+		// then
+		expect(requested).toEqual([{ reason: "manual", nativeOutcome: "too-small", customInstructions: "focus" }]);
+		expect(beforeCompactCalls).toBe(0);
+		expect(result.summary).toBe("owner summary");
+		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
+		expect(compactionEntries).toHaveLength(1);
+	});
+
+	it("keeps the native refusal when no owner serves the empty-preparation request (senpi#3354)", async () => {
+		// given
+		let requestedCalls = 0;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("session_compact_requested", async () => {
+						requestedCalls += 1;
+						return undefined;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.prompt("hi");
+
+		// when / then
+		await expect(harness.session.compact()).rejects.toThrow("Nothing to compact (session too small)");
+		expect(requestedCalls).toBe(1);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+	});
+
 	it("throws when compacting without configured auth", async () => {
 		const harness = await createHarness({
 			settings: { compaction: { keepRecentTokens: 1 } },
