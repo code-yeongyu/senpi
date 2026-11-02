@@ -34,6 +34,13 @@ export async function withJavaScriptKernel<T>(
 	}
 }
 
+/**
+ * No cell deadline: the cell's result is the event a test awaits, and the test's own timeout is the only bound. A
+ * wall-clock cell deadline fails a cell whenever a loaded host keeps the kernel off the CPU that long (#5179); pass it
+ * wherever the deadline is not the behaviour under test.
+ */
+export const NO_CELL_DEADLINE = 0;
+
 export async function runJavaScriptCell(
 	kernel: JavaScriptKernel,
 	code: string,

@@ -12,6 +12,8 @@ src/session-handle.ts  SessionLease / PiSessionHandle semantics
 src/transport.ts       ByteTransport / ByteTransportFactory contracts
 src/errors.ts          PiServerError and client error taxonomy
 src/unix.ts            Node Unix-domain transport (separate ./unix subpath)
+src/materializer*.ts   Transaction-bound compact materializer contract, wire parser, reference adapter
+src/materializer-test-kit.ts  Shared adapter conformance cases (./materializer-test-kit subpath)
 src/index.ts           Public barrel
 test/                  Vitest suites plus support harness
 ```
@@ -30,7 +32,7 @@ test/                  Vitest suites plus support harness
 ## CONVENTIONS
 
 - Node-only code lives in `src/unix.ts`, exported only through the separate `./unix` subpath; the `src/index.ts` barrel must stay runtime-neutral.
-- `package.json` exports map is `.`, `./unix`, `./package.json`; `sideEffects: false`. Extend the map rather than adding side-effectful entry points.
+- `package.json` exports map is `.`, `./unix`, `./materializer-test-kit`, `./package.json`; `sideEffects: false`. Adapter implementations import the conformance kit from its subpath and must not copy its cases. Extend the map rather than adding side-effectful entry points.
 - Build and tests resolve `@earendil-works/pi-protocol` via `paths`/vitest alias (`../protocol/dist` for build, `../protocol/src` for tests); keep both in sync when files move.
 - Imports carry explicit `.ts` extensions per root `tsconfig.base.json`.
 - Engines: Node >=22.19.0 (repo root requires >=24). Published as CalVer `@earendil-works/pi-client`.

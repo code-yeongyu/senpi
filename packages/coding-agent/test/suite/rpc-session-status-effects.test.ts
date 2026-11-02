@@ -9,7 +9,8 @@ afterEach(async () => {
 });
 
 async function host() {
-	const created = await statusHost();
+	// Below vitest's 30 s testTimeout: a hung wait fails naming its predicate before the test times out.
+	const created = await statusHost({ deadlineMs: 20_000 });
 	hosts.push(created);
 	return created;
 }
