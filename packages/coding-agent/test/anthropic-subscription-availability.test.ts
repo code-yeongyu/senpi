@@ -51,10 +51,12 @@ describe("readAmbientClaudeAuthStatus", () => {
 		spawnMock.mockReturnValue(fakeChild(0));
 
 		await expect(probeAmbientClaudeAuthStatus()).resolves.toBe(true);
-		expect(spawnMock).toHaveBeenCalledWith(executable, ["auth", "status"], {
-			stdio: "ignore",
-			windowsHide: true,
-		});
+		expect(spawnMock).toHaveBeenCalledWith(
+			executable,
+			["auth", "status"],
+			expect.objectContaining({ stdio: "ignore", windowsHide: true }),
+		);
+		expect(spawnMock.mock.calls[0]?.[2]?.env).not.toHaveProperty("ANTHROPIC_API_KEY");
 	});
 
 	// readAmbientClaudeAuthStatus memoises its result for 30s, so the outcome cases probe directly:

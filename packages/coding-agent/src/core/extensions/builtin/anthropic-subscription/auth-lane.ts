@@ -16,7 +16,12 @@ import { isBlockedFor, type PinSource, selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
 import { recoverAuthBlockedSlots } from "./auth-block-recovery.ts";
 import { activeBoundary } from "./auth-lane-boundary.ts";
-import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
+import {
+	hasRequestOauthToken,
+	mergeRequestAuthEnvironment,
+	stripAmbientApiKey,
+	stripManagedAuthEnvironment,
+} from "./auth-environment.ts";
 import { accountDirFor, claudeCliSharedRoot, ensureAccountDir } from "./claude-cli-account-dir.ts";
 import { buildClaudeCliEnvironment } from "./claude-cli-environment.ts";
 import { profileChanged, verifyClaudeCliInitialization } from "./claude-cli-token-source.ts";
@@ -207,10 +212,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 	const pool = await managedPool(input.providerSettings, input.env);
 	if (!pool) {
 		const parentEnvironment = mergeRequestAuthEnvironment(activeBoundary.env(), input.env);
-		const ambientEnvironment: Record<string, string | undefined> = { ...parentEnvironment };
-		for (const name of Object.keys(ambientEnvironment)) {
-			if (name.startsWith("SENPI_")) delete ambientEnvironment[name];
-		}
+		const ambientEnvironment = stripAmbientApiKey(parentEnvironment);
 		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
 		let askedLegacyLongContext = false;
 		const ambientAttempt = async () => {

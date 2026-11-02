@@ -22,6 +22,19 @@ export function mergeRequestAuthEnvironment(
 	return environment;
 }
 
+/**
+ * The ambient lane runs Claude Code with the host's own login and gateway settings, but a host
+ * ANTHROPIC_API_KEY outranks that login inside Claude Code and bills an API key instead of the
+ * subscription (senpi#1195), so it is dropped along with the SENPI_* namespace.
+ */
+export function stripAmbientApiKey(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const { ANTHROPIC_API_KEY: _apiKey, ...environment } = parent;
+	for (const name of Object.keys(environment)) {
+		if (name.startsWith("SENPI_")) delete environment[name];
+	}
+	return environment;
+}
+
 export function stripManagedAuthEnvironment(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const {
 		ANTHROPIC_API_KEY: _apiKey,

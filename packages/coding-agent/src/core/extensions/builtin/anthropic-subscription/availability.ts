@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { signalSpawnedChild } from "../../../../utils/child-signal.ts";
+import { stripAmbientApiKey } from "./auth-environment.ts";
 import {
 	defaultExecutableDeps,
 	describeClaudeCodeExecutable,
@@ -88,13 +89,16 @@ type ProbeChildProcess = {
 
 export type AmbientProbeOptions = {
 	timeoutMs?: number;
-	spawnProbe?: (command: string, args: readonly string[]) => ProbeChildProcess;
+	spawnProbe?: (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => ProbeChildProcess;
+	env?: NodeJS.ProcessEnv;
 };
 
 export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions = {}): Promise<boolean> {
 	const timeoutMs = options.timeoutMs ?? AMBIENT_PROBE_TIMEOUT_MS;
 	const spawnProbe =
-		options.spawnProbe ?? ((command, args) => spawn(command, [...args], { stdio: "ignore", windowsHide: true }));
+		options.spawnProbe ??
+		((command, args, env) => spawn(command, [...args], { env, stdio: "ignore", windowsHide: true }));
+	const probeEnvironment = stripAmbientApiKey(options.env ?? process.env);
 	let executable: string;
 	try {
 		executable = resolveClaudeCodeExecutable(defaultExecutableDeps());
@@ -110,7 +114,7 @@ export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions 
 			clearTimeout(deadline);
 			resolve(available);
 		};
-		const child = spawnProbe(executable, ["auth", "status"]);
+		const child = spawnProbe(executable, ["auth", "status"], probeEnvironment);
 		const deadline = setTimeout(() => {
 			signalSpawnedChild(child, "SIGKILL");
 			finish(false);
