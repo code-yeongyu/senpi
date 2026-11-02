@@ -88,11 +88,16 @@ function place(staged: string, dir: string, files: KillGuardShimFiles): void {
 	}
 }
 
-function isKillGuardBashEnv(path: string | undefined): boolean {
+/**
+ * Whether `base` carries an outer agent's kill-guard BASH_ENV: a `bash_env.sh` written together with the private
+ * `SENPI_KILL_GUARD_USER_BASH_ENV` that `killGuardEnvironment` always sets beside it. Read from the environment alone,
+ * like the PROMPT_COMMAND hook's prefix, so building a spawn environment touches no file (no-sync-in-session-path).
+ */
+function isKillGuardBashEnv(base: NodeJS.ProcessEnv): boolean {
 	return (
-		path !== undefined &&
-		basename(path) === KILL_GUARD_BASH_ENV &&
-		existsSync(join(dirname(path), KILL_GUARD_SHIM_MARKER))
+		base.BASH_ENV !== undefined &&
+		basename(base.BASH_ENV) === KILL_GUARD_BASH_ENV &&
+		base.SENPI_KILL_GUARD_USER_BASH_ENV !== undefined
 	);
 }
 
@@ -117,7 +122,7 @@ function nestedShellLevel(level: string | undefined): boolean {
 export function killGuardEnvironment(base: NodeJS.ProcessEnv, runtime: KillGuardRuntime): Record<string, string> {
 	const pathKey = Object.keys(base).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const rest = (base[pathKey] ?? "").split(delimiter).filter((entry) => entry !== "" && entry !== runtime.dir);
-	const userBashEnv = isKillGuardBashEnv(base.BASH_ENV) ? base.SENPI_KILL_GUARD_USER_BASH_ENV : base.BASH_ENV;
+	const userBashEnv = isKillGuardBashEnv(base) ? base.SENPI_KILL_GUARD_USER_BASH_ENV : base.BASH_ENV;
 	const userPromptCommand = base.PROMPT_COMMAND?.startsWith(KILL_GUARD_PROMPT_HOOK_PREFIX)
 		? base.SENPI_KILL_GUARD_USER_PROMPT_COMMAND
 		: base.PROMPT_COMMAND;
@@ -191,7 +196,7 @@ export function releaseKillGuardRuntime(holder: object): void {
 	holders.delete(holder);
 }
 
-export function activeKillGuardRuntime(): KillGuardRuntime | undefined {
+function activeKillGuardRuntime(): KillGuardRuntime | undefined {
 	let active: KillGuardRuntime | undefined;
 	for (const runtime of holders.values()) active = runtime;
 	return active;

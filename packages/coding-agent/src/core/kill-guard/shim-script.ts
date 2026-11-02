@@ -9,10 +9,10 @@ import { refuseAll } from "./kill.ts";
 import type { KillGuardVerdict } from "./types.ts";
 import { KILL_GUARD_TAG, refuse } from "./verdict.ts";
 
-export const KILL_GUARD_SHIM_NAMES = ["kill", "pkill", "killall"] as const;
+const KILL_GUARD_SHIM_NAMES = ["kill", "pkill", "killall"] as const;
 export type KillGuardShimName = (typeof KILL_GUARD_SHIM_NAMES)[number];
 export const KILL_GUARD_BASH_ENV = "bash_env.sh";
-export const KILL_GUARD_BASH_KILL = "bash_kill.sh";
+const KILL_GUARD_BASH_KILL = "bash_kill.sh";
 /** Every PROMPT_COMMAND hook starts with this, so an inherited hook is recognised as the kill guard's own. */
 export const KILL_GUARD_PROMPT_HOOK_PREFIX = "__senpi_kg_q=$?;";
 /** A file every shim directory holds, so a shim looking for the real binary skips every kill-guard directory. */

@@ -51,7 +51,7 @@ describe("killGuardEnvironment", () => {
 		expect(killGuardEnvironment(base({ SHLVL: level }), f.runtime()).SHLVL).toBe(expected);
 	});
 
-	it("chains a user's BASH_ENV, and keeps it when the environment already carries a kill-guard BASH_ENV", () => {
+	it("chains a user's BASH_ENV (one named bash_env.sh too), and keeps it when the environment already carries a kill-guard BASH_ENV", () => {
 		const user = killGuardEnvironment(base({ BASH_ENV: "/home/u/.bash_env" }), f.runtime());
 		expect(user.SENPI_KILL_GUARD_USER_BASH_ENV).toBe("/home/u/.bash_env");
 		const nested = killGuardEnvironment(
@@ -60,6 +60,8 @@ describe("killGuardEnvironment", () => {
 		);
 		expect(nested.SENPI_KILL_GUARD_USER_BASH_ENV).toBe("/home/u/.bash_env");
 		expect(nested.BASH_ENV).toBe(join(f.shims, "bash_env.sh"));
+		const ownFile = killGuardEnvironment(base({ BASH_ENV: "/home/u/rc/bash_env.sh" }), f.runtime());
+		expect(ownFile.SENPI_KILL_GUARD_USER_BASH_ENV).toBe("/home/u/rc/bash_env.sh");
 	});
 
 	it("keeps the user's PROMPT_COMMAND, also when the environment already carries a kill-guard hook (C1)", () => {

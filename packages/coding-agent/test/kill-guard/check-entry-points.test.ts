@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { KILL_GUARD_COMMAND } from "../../src/core/kill-guard/check-command.ts";
 import { posix, TAG, writeExecutable } from "./shim-fixtures.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -53,7 +54,15 @@ describe.runIf(posix)("`__kill-guard check` on every CLI entry", () => {
 		const check = (...argv: string[]) =>
 			spawnSync(
 				"bun",
-				[join(packageRoot, "src", entry), "__kill-guard", "check", "--vantage", String(process.pid), "--", ...argv],
+				[
+					join(packageRoot, "src", entry),
+					KILL_GUARD_COMMAND,
+					"check",
+					"--vantage",
+					String(process.pid),
+					"--",
+					...argv,
+				],
 				{ env: box.env, encoding: "utf8", timeout: 20_000 },
 			);
 
