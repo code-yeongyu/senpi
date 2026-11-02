@@ -37,6 +37,11 @@ export interface AnthropicSubscriptionProviderSettings {
 	readonly accountFallback?: boolean;
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
 	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
+	/**
+	 * `false` keeps the user's claude.ai account connectors out of the Claude Code child (oh-my-openagent#12166).
+	 * Absent or `true` leaves Claude Code's own default, which loads them.
+	 */
+	readonly claudeAiConnectors?: boolean;
 }
 
 export type ResolvedSystemPromptMode = {
@@ -130,6 +135,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 	const accountFallback = typeof value.accountFallback === "boolean" ? value.accountFallback : undefined;
 	const tokenInjection = parseTokenInjection(value.tokenInjection);
 	const compactionOwner = parseCompactionOwner(value.compactionOwner);
+	const claudeAiConnectors = typeof value.claudeAiConnectors === "boolean" ? value.claudeAiConnectors : undefined;
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
 		...(appendSystemPrompt !== undefined ? { appendSystemPrompt } : {}),
@@ -142,6 +148,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 		...(accountFallback !== undefined ? { accountFallback } : {}),
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
 		...(compactionOwner !== undefined ? { compactionOwner } : {}),
+		...(claudeAiConnectors !== undefined ? { claudeAiConnectors } : {}),
 	};
 }
 
@@ -155,6 +162,7 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 	const pinnedAccount = parseNonEmptyString(environment.SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT);
 	const accountFallback = parseEnvironmentBoolean(environment.SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK);
 	const compactionOwner = parseCompactionOwner(environment.SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER);
+	const claudeAiConnectors = parseEnvironmentBoolean(environment.SENPI_CLAUDE_SDK_OAUTH_CLAUDEAI_CONNECTORS);
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
 		...(systemPromptMode !== undefined ? { systemPromptMode } : {}),
@@ -165,6 +173,7 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
 		...(accountFallback !== undefined ? { accountFallback } : {}),
 		...(compactionOwner !== undefined ? { compactionOwner } : {}),
+		...(claudeAiConnectors !== undefined ? { claudeAiConnectors } : {}),
 	};
 }
 

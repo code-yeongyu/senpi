@@ -11,7 +11,7 @@ import {
 } from "../rules/rules/constants.ts";
 import { sdkModelId } from "./context-window.ts";
 import { presetAppendDeprecationGuidance } from "./guidance.ts";
-import { claudeCodeQueryEnvironment } from "./query-environment.ts";
+import { claudeCodeInlineSettings, claudeCodeQueryEnvironment } from "./query-environment.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import type { EffortLevel, Options, SettingSource, ThinkingConfig } from "./sdk-boundary.ts";
 import {
@@ -279,7 +279,7 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 		// Exactly one compaction owner: senpi by default, so Claude Code's native auto-compact is off
 		// (senpi's overflow recovery covers the hard limit); `compactionOwner: "sdk"` hands it back.
 		// configFingerprint hashes `settings`, so an owner change restarts the resident process.
-		settings: { autoCompactEnabled: !senpiOwnsCompaction },
+		settings: claudeCodeInlineSettings(providerSettings, senpiOwnsCompaction),
 		settingSources: resolveSettingSources(providerSettings, mode, authLane),
 	};
 	const environment = claudeCodeQueryEnvironment(input.model, senpiOwnsCompaction);
