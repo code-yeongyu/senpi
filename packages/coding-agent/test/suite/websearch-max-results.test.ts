@@ -67,7 +67,12 @@ async function search(
 		},
 		context() as ExtensionToolContext,
 	);
-	return { details: result.details as SearchDetails, text: result.content[0]?.text ?? "", progress };
+	const firstPart = result.content[0];
+	return {
+		details: result.details as SearchDetails,
+		text: firstPart?.type === "text" ? firstPart.text : "",
+		progress,
+	};
 }
 
 afterEach(() => {
