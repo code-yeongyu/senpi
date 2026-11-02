@@ -6,7 +6,8 @@ import { specDigest } from "./4272-frozen-bytes-support.ts";
 
 // Part of #4272 (S13, RULING-81 X06 = C): the legacy line of a record is built only when a legacy destination needs it.
 // An oversized record whose only audience selected compact events is staged from a bounded piece stream, never as one
-// encoded legacy line (0 encodings); with a legacy peer beside it the one legacy line serves both (exactly 1).
+// encoded legacy line (0 encodings); with a legacy peer beside it the record is encoded exactly once (its compact copy
+// carries a RULING-123 stamp, so it streams from the stamped record instead of reusing the legacy line).
 
 vi.mock("../../../src/modes/rpc/jsonl.ts", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../../../src/modes/rpc/jsonl.ts")>();
@@ -45,8 +46,9 @@ it("RULING-81 X06 a compact-only audience costs 0 legacy encodings of an oversiz
 		const streamed = compact.inbox.find((record) => record.eventLease !== undefined)?.eventLease as
 			| { length: number; digest: string }
 			| undefined;
-		const exact = Buffer.from(JSON.stringify({ ...big("c-only"), sessionId: routing }), "utf16le");
-		expect(streamed, "the streamed content is the record's exact JSON text").toMatchObject({
+		// The compact copy carries its RULING-123 stamp inside the leased `record` component (docs/rpc.md).
+		const exact = Buffer.from(JSON.stringify({ ...big("c-only"), sessionId: routing, callUnknown: true }), "utf16le");
+		expect(streamed, "the streamed content is the compact copy's exact JSON text").toMatchObject({
 			length: exact.length,
 			digest: specDigest("leaf", exact),
 		});
@@ -59,7 +61,7 @@ it("RULING-81 X06 a compact-only audience costs 0 legacy encodings of an oversiz
 			sessionId: routing,
 		});
 		expect(compact.inbox.filter((record) => record.eventLease !== undefined)).toHaveLength(2);
-		expect(encodings("c-mixed"), "mixed: one legacy line serves both").toBe(1);
+		expect(encodings("c-mixed"), "mixed: exactly one legacy line").toBe(1);
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
