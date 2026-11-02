@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { killWindowsTree, listWindowsRows } from "./windows-tree-kill.js";
+import { signalUnjudged as signal } from "./worker-kill-guard.js";
 
 // Plain JS (with process-tree.d.ts) because the worker runtime imports it and
 // worker files cannot import TypeScript; the host imports the same module so a
@@ -22,17 +23,17 @@ export function initializeProcessCleanup(original) {
 export function isProcessAlive(pid) {
 	if (!Number.isInteger(pid) || pid <= 0) return false;
 	try {
-		process.kill(pid, 0);
+		signal(pid, 0);
 		return true;
 	} catch (error) {
 		return isRecord(error) && error.code === "EPERM";
 	}
 }
 
-export function signalProcess(pid, signal) {
+export function signalProcess(pid, signalName) {
 	if (!Number.isInteger(pid) || pid <= 0) return false;
 	try {
-		process.kill(pid, signal);
+		signal(pid, signalName);
 		return true;
 	} catch {
 		return false;
@@ -136,16 +137,16 @@ export async function terminateProcessGroups(groups, options) {
 
 function groupHasMembers(pgid) {
 	try {
-		process.kill(-pgid, 0);
+		signal(-pgid, 0);
 		return true;
 	} catch (error) {
 		return isRecord(error) && error.code === "EPERM";
 	}
 }
 
-function signalGroup(pgid, signal) {
+function signalGroup(pgid, signalName) {
 	try {
-		process.kill(-pgid, signal);
+		signal(-pgid, signalName);
 	} catch {
 		// The group emptied between the check and the signal.
 	}
