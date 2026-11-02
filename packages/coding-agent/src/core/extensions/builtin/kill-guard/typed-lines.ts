@@ -1,6 +1,12 @@
 import { encodeKeys } from "../terminal/shared.ts";
 import { type EditorState, FRESH_EDITOR, type LineDraft, LineEditor } from "./line-editor.ts";
-import { expandsHistory, isHistoryKey, OPERATE_AND_GET_NEXT, type UnjudgedHistory } from "./shell-history.ts";
+import {
+	couldExpandHistoryReordered,
+	expandsHistory,
+	isHistoryKey,
+	OPERATE_AND_GET_NEXT,
+	type UnjudgedHistory,
+} from "./shell-history.ts";
 
 /** A background shell between `bash_input` calls: its line editor, the line being sent and the lines it has run. */
 export interface TypedSession {
@@ -228,12 +234,13 @@ function submitted(line: LineDraft, editor: EditorState, history: readonly strin
 
 /**
  * A recalled line, or one whose text (any candidate) bash would history-expand, is refused unjudged. After a key the
- * guard does not model, the bytes may sit in another order than the editor text, so any `!` or `^` among them counts.
+ * guard does not model, the bytes may sit in another order than the editor text (see {@link couldExpandHistoryReordered}).
  */
 function unjudgedHistory(line: SubmittedLine, pending: PendingLine): UnjudgedHistory | undefined {
 	if (pending.recalledHistory) return "recall";
 	const candidates = [line.text, ...line.alternatives];
-	if (candidates.some(expandsHistory) || (pending.unordered && /[!^]/.test(pending.printable))) return "expansion";
+	if (candidates.some(expandsHistory) || (pending.unordered && couldExpandHistoryReordered(pending.printable)))
+		return "expansion";
 	return undefined;
 }
 

@@ -165,6 +165,7 @@ describe("kill guard on bash_input line editing", () => {
 		["a single-quoted !", [{ input: "echo 'a!b'\n", submit: false }]],
 		["a negated condition", [{ input: "if ! true; then :; fi\n", submit: false }]],
 		["a backslash-escaped !", [{ input: "echo a\\!b\n", submit: false }]],
+		["a plain line holding the letters f and c", [{ input: "echo cafe\n", submit: false }]],
 	] as const)("lets %s through", async (_shape, calls) => {
 		const { harness, ran } = await setup();
 		const outcomes: Outcome[] = [];
@@ -190,6 +191,11 @@ describe("kill guard refuses bash_input lines bash takes from its history", () =
 		["fc", [{ input: "fc\n", submit: false }], EXPANSION],
 		["fc after a separator", [{ input: "true; fc -s\n", submit: false }], EXPANSION],
 		["a ! typed after a key the guard does not model", [{ input: "echo x\x1b[1;5D!\n", submit: false }], EXPANSION],
+		[
+			"an unmodelled cursor key that reorders c and f into fc",
+			[{ input: "c\x1b[1;5Df\n", submit: false }],
+			EXPANSION,
+		],
 		["Up arrow + Enter", [{ keys: ["up", "enter"] }], RECALL],
 		["ctrl+r + Enter", [{ keys: ["\x12", "enter"] }], RECALL],
 		[

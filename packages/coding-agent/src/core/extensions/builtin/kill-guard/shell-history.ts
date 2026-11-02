@@ -105,3 +105,12 @@ function runsFc(line: string): boolean {
 export function expandsHistory(text: string): boolean {
 	return text.split("\n").some((line) => /^[ \t]*\^/.test(line) || hasHistoryBang(line) || runsFc(line));
 }
+
+/**
+ * After a key the guard does not model, the bytes typed for a line may sit in any order on it, so the line could hold a
+ * history expansion its editor text does not show: a `!` or `^` among the bytes, or an `f` and a `c` that could form `fc`.
+ */
+export function couldExpandHistoryReordered(printable: string): boolean {
+	const lower = printable.toLowerCase();
+	return /[!^]/.test(lower) || (lower.includes("f") && lower.includes("c"));
+}
