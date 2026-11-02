@@ -1,3 +1,40 @@
+## 2026-10-30 - Fallback display comment follows first-party bare expansion (senpi#5050)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/model-fallback/settings.ts`: the `displayLookup` comment now says a bare default expands across the vendor's first-party providers. No behavior change.
+
+### Why
+
+- The comment described the removed every-provider expansion.
+
+### Why an extension could not handle it
+
+- Comment-only edit to an existing builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the `displayLookup` doc comment.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`.
+- The built-in OAuth interaction maps typed secret prompts to guarded input only on capable host contexts, preserving legacy calls on older hosts.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
 ## 2026-10-29 - Job widgets: review follow-ups to P1, P3 and P4
 
 ### What changed

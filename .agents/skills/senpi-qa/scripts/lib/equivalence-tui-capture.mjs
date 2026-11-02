@@ -125,19 +125,25 @@ export function startTui(run, { resume = false } = {}) {
 	// chunk can end inside a frame, so screen state is read only at a frame boundary: never a half-painted frame.
 	let frameOpen = false;
 	let scanTail = "";
+	/** Chunks the headless terminal has parsed so far (a waiter resolves inside the callback of the chunk that satisfied it). */
+	let parsed = 0;
 	const check = () => {
 		if (frameOpen) return;
 		const lines = bufferLines(term);
 		for (const waiter of [...waiters]) if (waiter.predicate(lines)) waiter.done(lines);
 	};
 	relay.stdout.on("data", (chunk) => {
-		frames.push({ at: performance.now(), bytes: chunk.length });
+		const at = performance.now();
+		const index = frames.length;
 		const text = scanTail + chunk.toString("latin1");
+		// The carried tail is shorter than a marker, so every match ends inside this chunk: each is a frame completed here.
+		frames.push({ at, bytes: chunk.length, frameEnds: text.split(FRAME_END).length - 1 });
 		const begin = text.lastIndexOf(FRAME_BEGIN);
 		const end = text.lastIndexOf(FRAME_END);
 		const open = begin === end ? frameOpen : begin > end;
 		scanTail = text.slice(-(FRAME_BEGIN.length - 1));
 		term.write(chunk, () => {
+			parsed = index + 1;
 			frameOpen = open;
 			check();
 		});
@@ -154,8 +160,13 @@ export function startTui(run, { resume = false } = {}) {
 			waiter.fail(new Error(`TUI exited while waiting for ${waiter.label} (stderr: ${stderr.slice(-400)})`));
 	});
 	const tui = {
-		/** Raw output chunk arrival times (for EQ.perf's frame time); never part of the equality. */
+		/**
+		 * Raw output chunks `{ at, bytes, frameEnds }` (for EQ.perf's frame time): arrival time, size and how many rendered
+		 * frames (synchronized-output FRAME_END markers) completed in the chunk. Never part of the equality.
+		 */
 		frames,
+		/** How many of `frames` the screen model has parsed; read inside a waitFor predicate, it is the deciding chunk + 1. */
+		parsedChunks: () => parsed,
 		exited,
 		lines: () => bufferLines(term),
 		/** The visible screen rows (the last TUI_ROWS rows of the buffer). */
