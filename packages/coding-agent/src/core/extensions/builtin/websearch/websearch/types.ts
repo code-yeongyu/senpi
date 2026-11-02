@@ -23,7 +23,15 @@ export type SearchProvider =
 	| "google-html"
 	| "exa-mcp"
 	| "searxng"
-	| "keenable";
+	| "keenable"
+	| "parallel"
+	| "firecrawl"
+	| "openrouter"
+	| "public"
+	| "jina"
+	| "tinyfish"
+	| "synthetic"
+	| "ollama";
 
 /** Why a keyless engine refused a search; each reason puts the engine on a cooldown. */
 export type SearchBlockReason = "challenge" | "rate_limited" | "forbidden" | "network";
@@ -74,6 +82,8 @@ export interface SearchUserLocation {
 export interface SearchRequest {
 	query: string;
 	maxResults: number;
+	/** Set when a call chose its own count, so it outranks a provider entry's `maxResults`. */
+	maxResultsFromCall?: boolean;
 	allowedDomains?: string[];
 	blockedDomains?: string[];
 }

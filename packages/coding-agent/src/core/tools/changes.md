@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-11-02 - read can ignore the context model on a runtime without a session (senpi#5413)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: new `ReadToolOptions.contextModel` (default `true`). When `false`, `read` does not read `ctx.model`: no model-specific image note, and the image resize profile falls back to `resizeOptions`, as it already does when no execution context is passed.
+
+### Why
+
+- A runtime that owns no session (`bootstrapRuntime()` without a `sessionManager`, senpi#5223) refuses its loop-side context members by name, `model` included, so `read` threw on every call there. That runtime is how a tool-execution-only process will run the built-in tools (brain/hand split).
+
+### Why an extension could not handle it
+
+- `read` is a core built-in tool; how it reads its execution context is decided inside its definition.
+
+### Expected merge conflict zones
+
+- LOW: the `ReadToolOptions` property list and the two `model` reads in `createReadToolDefinition`'s image branch.
+
 ## 2026-10-27 - The core bash tool applies the session's caller env (fixes senpi#4381)
 
 ### What changed
