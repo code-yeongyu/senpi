@@ -17,17 +17,16 @@ export interface RpcRemoteOrigin {
 const MAX_DEVICE_ID_CHARACTERS = 256;
 const MAX_DEVICE_NAME_CHARACTERS = 256;
 
-export const REMOTE_ORIGIN_INVALID =
+const REMOTE_ORIGIN_INVALID =
 	"remote_origin_invalid: remoteOrigin must be { deviceId: non-empty string, deviceName?: non-empty string }";
-export const REMOTE_ORIGIN_FIXED =
-	"remote_origin_fixed: a connection's remoteOrigin cannot change after it is declared";
+const REMOTE_ORIGIN_FIXED = "remote_origin_fixed: a connection's remoteOrigin cannot change after it is declared";
 
 function boundedText(value: unknown, max: number): value is string {
 	return typeof value === "string" && value.length > 0 && value.length <= max;
 }
 
 /** The declared origin, `undefined` when the field is absent, or `"invalid"` for any other shape. */
-export function parseRemoteOrigin(value: unknown): RpcRemoteOrigin | undefined | "invalid" {
+function parseRemoteOrigin(value: unknown): RpcRemoteOrigin | undefined | "invalid" {
 	if (value === undefined) return undefined;
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return "invalid";
 	const deviceId: unknown = Reflect.get(value, "deviceId");
