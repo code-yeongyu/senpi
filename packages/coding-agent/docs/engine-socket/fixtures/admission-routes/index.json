@@ -1,0 +1,17 @@
+{
+	"format": "senpi-admission-routes",
+	"version": 1,
+	"cases": [
+		"a-request.json",
+		"b-answer.json",
+		"c-baseline.json",
+		"d-before-answer.json",
+		"e-overlap.json",
+		"f-subscribe.json",
+		"g-cancelled.json",
+		"h-legacy.json",
+		"i-live-identity.json",
+		"i-reset-stream.json",
+		"j-live-call-identity.json"
+	]
+}

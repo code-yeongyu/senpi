@@ -1,6 +1,7 @@
 import type { TranscriptRoot } from "./accepted-transcript.ts";
 import { entryFamily, type FamilyProducers, familyId, memberId } from "./compact-catalog-registry.ts";
 import { writtenComponent } from "./compact-catalog-writer.ts";
+import type { TailHold } from "./accepted-transcript-tail.ts";
 import type { CompactContentStore } from "./compact-content-store.ts";
 import type { CatalogComponent } from "./compact-recovery-catalog.ts";
 import { protocolId } from "./compact-recovery-ids.ts";
@@ -65,10 +66,27 @@ interface AncestryRow {
  * else its ancestry row naming the file as its source. With a loaded base the opaque family names the base stream
  * too; it is explicitly empty only when its producer is complete and no base exists, and a partial one with no
  * member of this epoch emits nothing. An unavailable root is an explicit descriptor with its typed reason and no rows.
+ * The tail is held for the whole walk: one consistent cut of it, its entries readable to the end even if persistence
+ * releases them meanwhile.
  */
 export async function* transcriptComponents(
 	store: CompactContentStore,
 	transcript: TranscriptRoot,
+	producers: FamilyProducers,
+	valid: () => void,
+): AsyncGenerator<CatalogComponent> {
+	const hold = transcript.tail.hold(transcript.count, transcript.base?.count ?? 0);
+	try {
+		yield* heldComponents(store, transcript, hold, producers, valid);
+	} finally {
+		hold.release();
+	}
+}
+
+async function* heldComponents(
+	store: CompactContentStore,
+	transcript: TranscriptRoot,
+	hold: TailHold,
 	producers: FamilyProducers,
 	valid: () => void,
 ): AsyncGenerator<CatalogComponent> {
@@ -77,7 +95,7 @@ export async function* transcriptComponents(
 		leafId: transcript.leafId,
 		count: transcript.count,
 		base: transcript.base && { count: transcript.base.count, idFingerprint: transcript.base.idFingerprint },
-		persisted: transcript.tail.persistence?.count ?? null,
+		persisted: hold.persistence?.count ?? null,
 		unavailable: transcript.unavailable,
 	};
 	yield* textComponent(store, TRANSCRIPT, TRANSCRIPT, JSON.stringify(descriptor));
@@ -87,14 +105,18 @@ export async function* transcriptComponents(
 	let opaque = 0;
 	for (const { index, id, kind, parentId } of transcript.accepted) {
 		valid();
-		const text = transcript.tail.entries.get(index);
+		const tail = hold.has(index);
 		const family = entryFamily(kind);
-		const row: AncestryRow = { index, id, source: text === undefined ? "file" : "tail", parentId, kind, family };
+		const row: AncestryRow = { index, id, source: tail ? "tail" : "file", parentId, kind, family };
 		const line = JSON.stringify(row);
 		yield* textComponent(store, TRANSCRIPT, memberId("entry", index), line);
 		if (family !== "opaque") continue;
 		opaque += 1;
-		yield* textComponent(store, OPAQUE, memberId("entry", index), text ?? line);
+		yield* tail
+			? writtenComponent(store, OPAQUE, memberId("entry", index), async (writer) => {
+					for await (const chunk of hold.chunks(index, valid)) writer.push(chunk);
+				})
+			: textComponent(store, OPAQUE, memberId("entry", index), line);
 	}
 	if (base !== undefined) yield* textComponent(store, OPAQUE, BASE, base);
 	else if (opaque === 0 && producers.opaque === "complete") yield { kind: OPAQUE, id: OPAQUE, leaves: [], owner: 0 };
