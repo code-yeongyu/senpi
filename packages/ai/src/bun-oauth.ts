@@ -1,4 +1,3 @@
-import { anthropicOAuth } from "./auth/oauth/anthropic.ts";
 import { chatgptSubscriptionOAuth } from "./auth/oauth/chatgpt-subscription.ts";
 import { cursorOAuth } from "./auth/oauth/cursor.ts";
 import { devinOAuth } from "./auth/oauth/devin.ts";
@@ -14,7 +13,6 @@ import { xaiOAuth } from "./auth/oauth/xai.ts";
 /** Register OAuth flows statically embedded in the standalone Bun binary. */
 export function registerBunOAuthFlows(): void {
 	registerBundledOAuthFlowLoaders({
-		anthropic: () => anthropicOAuth,
 		chatgptSubscription: () => chatgptSubscriptionOAuth,
 		openaiChatGPT: () => openaiChatGPTOAuth,
 		githubCopilot: () => githubCopilotOAuth,

@@ -132,6 +132,38 @@ describe("job widget lines", () => {
 		});
 	}
 
+	const wideHeadlineLabel: JobWidgetEntry = {
+		...spark,
+		view: {
+			title: "Blender render",
+			headline: { text: "120", label: "frames rendered in this pass" },
+			blocks: spark.view?.blocks ?? [],
+		},
+	};
+	// Block label, then the chart, then the headline label with the chart back, then both.
+	const orderRows: Array<[number, { blockLabel: boolean; chart: boolean; headlineLabel: boolean }]> = [
+		[92, { blockLabel: true, chart: true, headlineLabel: true }],
+		[91, { blockLabel: false, chart: true, headlineLabel: true }],
+		[69, { blockLabel: false, chart: true, headlineLabel: true }],
+		[68, { blockLabel: false, chart: false, headlineLabel: true }],
+		[59, { blockLabel: false, chart: false, headlineLabel: true }],
+		[58, { blockLabel: false, chart: true, headlineLabel: false }],
+		[40, { blockLabel: false, chart: true, headlineLabel: false }],
+		[39, { blockLabel: false, chart: false, headlineLabel: false }],
+	];
+	for (const [width, kept] of orderRows) {
+		it(`gives way in order for a wide headline label at ${width} columns`, () => {
+			const line = formatJobWidgetLine(wideHeadlineLabel, width, PLAIN_LINE_STYLE) ?? "";
+			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+			expect(line).toContain("120 · 4.20 s");
+			expect({
+				blockLabel: line.includes("per-frame time"),
+				chart: /[▁▂▃▄▅▆▇█]/.test(line),
+				headlineLabel: line.includes("frames rendered in this pass"),
+			}).toEqual(kept);
+		});
+	}
+
 	it("draws nothing for a skipped job", () => {
 		expect(formatJobWidgetLine(skipped, 80, PLAIN_LINE_STYLE)).toBeUndefined();
 	});

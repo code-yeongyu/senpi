@@ -177,6 +177,7 @@ export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSes
 		...(profile.holderEndpoint ? { holderEndpoint: Object.freeze({ ...profile.holderEndpoint }) } : {}),
 		...(profile.creationModel ? { creationModel: Object.freeze({ ...profile.creationModel }) } : {}),
 		...(profile.sessionContext ? { sessionContext: Object.freeze({ ...profile.sessionContext }) } : {}),
+		...(profile.sessionEnv ? { sessionEnv: Object.freeze({ ...profile.sessionEnv }) } : {}),
 		...(profile.retryFallback
 			? {
 					retryFallback: Object.freeze({

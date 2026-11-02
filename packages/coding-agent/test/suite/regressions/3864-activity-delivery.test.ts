@@ -123,7 +123,7 @@ it.each([false, true])(
 				}
 			}
 			expect(lifecycle).toEqual(original);
-			expect(fanout["lifecycleSnapshots"].get("worker")?.line).toBe(cached);
+			expect(fanout.replay["lifecycleSnapshots"].get("worker")?.line).toBe(cached);
 			const { activityRevision: _activityRevision, ...legacy } = lifecycle;
 			expect(observeLifecycleDelivery({ type: "session_lifecycle", lifecycle: legacy })).toEqual({
 				type: "session_lifecycle",

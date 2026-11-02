@@ -42,7 +42,7 @@ function hasArgonCatalogSignal(model: Model<Api>): boolean {
 }
 
 function getArgonCatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasArgonCatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasArgonCatalogSignal));
 }
 
 /** Top-level `## ` sections (and the trailing workstation block) keyed by heading, so untouched sections compare whole. */

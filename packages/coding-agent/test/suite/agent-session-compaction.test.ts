@@ -13,6 +13,7 @@ import {
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateContextTokens, estimateTokens, generateSummary } from "../../src/core/compaction/index.ts";
+import { formatCompactionFailure } from "../../src/core/compaction-failure-text.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";
 
@@ -1576,7 +1577,7 @@ describe("AgentSession compaction characterization", () => {
 			reason: "threshold",
 			aborted: false,
 			willRetry: false,
-			errorMessage: "Auto-compaction failed: summary generator blew up",
+			errorMessage: formatCompactionFailure("auto-compaction", "summary generator blew up"),
 		});
 		expect(failedEvents).toEqual([
 			expect.objectContaining({
@@ -1585,7 +1586,7 @@ describe("AgentSession compaction characterization", () => {
 				aborted: false,
 				willRetry: false,
 				fromExtension: false,
-				errorMessage: "Auto-compaction failed: summary generator blew up",
+				errorMessage: formatCompactionFailure("auto-compaction", "summary generator blew up"),
 			}),
 		]);
 	});

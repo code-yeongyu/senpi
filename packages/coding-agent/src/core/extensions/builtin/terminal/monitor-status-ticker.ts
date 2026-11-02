@@ -12,6 +12,11 @@ export interface MonitorStatusTickerOptions {
 	readonly render: MonitorStatusRender;
 	/** Injectable clock for tests; defaults to Date.now. */
 	readonly now?: () => number;
+	/**
+	 * Read on every tick: true pulses the watch glyph (agent idle, motion allowed). Defaults to
+	 * a static glyph. The pulse rides the existing once-per-second tick, so it adds no timer.
+	 */
+	readonly animate?: () => boolean;
 }
 
 /**
@@ -25,6 +30,7 @@ export interface MonitorStatusTickerOptions {
 export class MonitorStatusTicker {
 	private readonly render: MonitorStatusRender;
 	private readonly now: () => number;
+	private readonly animate: () => boolean;
 	private intervalId: NodeJS.Timeout | undefined;
 	private snapshot: readonly MonitorSnapshotEntry[] = [];
 	private lastRenderedStatus: string | undefined;
@@ -33,6 +39,7 @@ export class MonitorStatusTicker {
 	constructor(options: MonitorStatusTickerOptions) {
 		this.render = options.render;
 		this.now = options.now ?? Date.now;
+		this.animate = options.animate ?? (() => false);
 	}
 
 	get running(): boolean {
@@ -74,14 +81,14 @@ export class MonitorStatusTicker {
 
 	/** Returns false when the render hit a retired context and the ticker retired. */
 	private tick(): boolean {
-		const status = formatMonitorStatus(this.snapshot, this.now());
-		if (this.hasRendered && status === this.lastRenderedStatus) return true;
-		this.hasRendered = true;
-		this.lastRenderedStatus = status;
 		try {
+			const status = formatMonitorStatus(this.snapshot, this.now(), this.animate());
+			if (this.hasRendered && status === this.lastRenderedStatus) return true;
+			this.hasRendered = true;
+			this.lastRenderedStatus = status;
 			this.render(status);
 		} catch (error) {
-			// The render reads the extension's captured ctx; after a session replacement
+			// The render and the animate gate read the extension's captured ctx; after a session replacement
 			// or reload that throws from inside the interval callback, where nothing
 			// catches it and the process exits. Retire instead: stop() renders nothing,
 			// and the next sync() (with a live ctx) re-arms the ticker.

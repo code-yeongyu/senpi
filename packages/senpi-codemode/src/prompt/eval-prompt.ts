@@ -1,5 +1,6 @@
 import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { DEFAULT_MAX_DETACHED_CELLS, DEFAULT_RUN_BUDGET_SECONDS } from "../config/settings.ts";
+import { pinnedDisplayPath } from "../extension/host-facts.ts";
 import type { EvalRuntimeInfo } from "../tool/types.ts";
 import { EVAL_PROMPT_TEMPLATE } from "./eval-prompt-template.ts";
 
@@ -29,7 +30,7 @@ export interface EvalPromptOptions {
 	readonly hostLine?: string;
 	/** Identity of the in-process js kernel; a bun runtime swaps the Node.js worker line for the Bun one. */
 	readonly jsRuntime?: EvalRuntimeInfo;
-	/** Absolute path of the active bun-1-4 skill; rendered as a MUST READ pointer only on a bun kernel. */
+	/** Absolute path of the active bun skill; rendered as a MUST READ pointer only on a bun kernel. */
 	readonly bunSkillPath?: string;
 	/** Kill deadline for a cell's own execution time, as configured; the description states it. */
 	readonly runBudgetSeconds?: number;
@@ -105,7 +106,8 @@ export function buildEvalPrompt(
 		hostLine: options.hostLine ?? "",
 		jsBun: options.jsRuntime?.name === "bun",
 		jsVersion: options.jsRuntime?.version ?? "",
-		bunSkillPath: options.bunSkillPath ?? "",
+		// pinnedDisplayPath: the test-only checkout pin (senpi#5067); the path itself unless SENPI_TEST_WORKSTATION pins it.
+		bunSkillPath: options.bunSkillPath === undefined ? "" : pinnedDisplayPath(options.bunSkillPath),
 		runBudgetSeconds: String(options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS),
 		maxDetachedCells: String(options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS),
 		kernelPreludeDocs: (options.kernelPreludes ?? []).map((prelude) => prelude.documentation).join("\n"),

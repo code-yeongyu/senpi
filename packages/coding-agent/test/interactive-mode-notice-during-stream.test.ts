@@ -137,4 +137,29 @@ describe("#2836 a notice posted while a turn streams", () => {
 		expect((children[children.length - 1] as Text).render(80).join("\n")).toContain("Todos unchanged.");
 		ui.stop();
 	});
+
+	test.each(["deferred render", "invalidated render"])(
+		"#4841 earlier status rows keep their content after a later notice (%s)",
+		(order) => {
+			const { ui, host } = streamingHost();
+			try {
+				host.streamingComponent = undefined;
+				showStatus.call(host, "Settings: settings.json (JSON)");
+				if (order === "invalidated render") host.chatContainer.render(80);
+				host.chatContainer.addChild(new Text("E12-FIRST", 0, 0));
+				showStatus.call(host, "Cache hit 0.0%, 0.0s");
+				showStatus.call(host, "Cache hit 0.0%, 0.1s");
+				if (order === "invalidated render") host.chatContainer.invalidate();
+
+				const transcript = host.chatContainer.render(80).join("\n");
+				expect(transcript).toContain("Settings: settings.json (JSON)");
+				expect(transcript.split("Cache hit 0.0%, 0.1s").length - 1).toBe(1);
+				expect(transcript).not.toContain("Cache hit 0.0%, 0.0s");
+				expect(transcript.indexOf("Settings:")).toBeLessThan(transcript.indexOf("E12-FIRST"));
+				expect(transcript.indexOf("E12-FIRST")).toBeLessThan(transcript.indexOf("Cache hit"));
+			} finally {
+				ui.stop();
+			}
+		},
+	);
 });

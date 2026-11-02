@@ -1,3 +1,21 @@
+## 2026-10-27 - get_goal is search-exposed (senpi#4454)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`: `get_goal` is deferred to by-name activation through the tool search; `create_goal` and `update_goal` stay active.
+
+### Why
+
+- Each deferred tool leaves the first request's tool list and system prompt, so every request carries fewer tool-schema tokens (senpi#4454).
+
+### Why an extension could not handle it
+
+- This builtin owns its tool registration.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`.
+
 ## 2026-10-26 - Request-level refusals retain goal recovery (senpi#2491)
 
 ### What changed

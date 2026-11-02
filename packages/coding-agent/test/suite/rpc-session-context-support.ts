@@ -65,6 +65,8 @@ interface OpenFields {
 	readonly promptSurface?: "terminal" | "app" | "chat";
 	readonly browserEngine?: "connected" | "builtin" | "none";
 	readonly retryFallback?: { modelFallback: boolean; fallbackChains: Record<string, string[]> };
+	readonly env?: Record<string, string>;
+	readonly spawnedBy?: { parentSessionId: string; rootSessionId: string; taskId: string };
 }
 
 /**

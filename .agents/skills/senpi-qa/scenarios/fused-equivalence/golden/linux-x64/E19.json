@@ -99,7 +99,7 @@
   ],
   "O4": [
    {
-    "authorization": "sha256:16db75d323fd60c6",
+    "authorization": "<redacted:sha256:16db75d323fd60c6>",
     "authorizationMatchesExpected": true,
     "clientType": "cli",
     "clientVersion": "cli-2026.07.23-e383d2b",
@@ -264,13 +264,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:3>",
        "parentId": "<id:1>",
@@ -302,6 +302,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:1>"
       }
      },
@@ -336,6 +337,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:1>"
@@ -344,7 +346,8 @@
       }
      },
      {
-      "type": "agent_start"
+      "type": "agent_start",
+      "runId": "<uuid:17>"
      },
      {
       "type": "turn_start"
@@ -538,6 +541,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "read",
@@ -849,6 +853,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:3>"
@@ -1110,6 +1115,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:5>"
       }
      },
@@ -1410,6 +1416,7 @@
          ]
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "lastStop": {
          "cause": "aborted",
          "runId": "<uuid:17>",
@@ -1437,8 +1444,7 @@
          "endedBy": "unknown-abort",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:13>",
        "parentId": "<id:11>",
@@ -1478,6 +1484,7 @@
         ]
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "lastStop": {
         "cause": "aborted",
         "runId": "<uuid:17>",
@@ -1619,6 +1626,7 @@
          ]
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "lastStop": {
          "cause": "aborted",
          "runId": "<uuid:17>",
@@ -1646,8 +1654,7 @@
          "endedBy": "unknown-abort",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:14>",
        "parentId": "<id:13>",
@@ -1781,13 +1788,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:4>",
      "parentId": "<id:3>",
@@ -1962,6 +1969,7 @@
        ]
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "lastStop": {
        "cause": "aborted",
        "runId": "<uuid:2>",
@@ -1989,8 +1997,7 @@
        "endedBy": "unknown-abort",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:14>",
      "parentId": "<id:12>",
@@ -2026,6 +2033,7 @@
        ]
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "lastStop": {
        "cause": "aborted",
        "runId": "<uuid:2>",
@@ -2053,8 +2061,7 @@
        "endedBy": "unknown-abort",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:15>",
      "parentId": "<id:14>",

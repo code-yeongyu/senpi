@@ -39,6 +39,33 @@ describe("permission service resolver-state subscription", () => {
 		await resolver.close();
 	});
 
+	it("a constructor that throws after the identity fill leaves no subscription on the shared resolver", async () => {
+		const resolver = unavailableResolver();
+		const baseline = resolver.listenerCount;
+		const throwingDetect: PathIdentityResolver = Object.create(resolver, {
+			detect: {
+				value: () => {
+					throw new Error("detect failed");
+				},
+			},
+		});
+		const rules = [{ permission: "read", pattern: "/srv/data/**", action: "deny" as const }];
+		expect(
+			() =>
+				new PermissionService(
+					rules,
+					[],
+					createLocalEventEmitter(),
+					undefined,
+					undefined,
+					undefined,
+					throwingDetect,
+				),
+		).toThrow("detect failed");
+		expect(resolver.listenerCount).toBe(baseline);
+		await resolver.close();
+	});
+
 	it("dispose() releases the subscription, so the resolver holds nothing of a retired service", async () => {
 		const resolver = unavailableResolver();
 		const emitter = createLocalEventEmitter();

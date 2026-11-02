@@ -16,7 +16,7 @@ import type {
 	ToolRenderContext,
 	ToolRenderResultOptions,
 } from "../../../types.ts";
-import { normalizeTodoParams } from "../normalize.ts";
+import { normalizeTodoParams, prepareTodoArguments } from "../normalize.ts";
 import { TODO_TOOL_DESCRIPTION } from "../prompt.ts";
 import {
 	applyParams,
@@ -300,6 +300,7 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 			"Mark work done immediately and use drop for tasks that are no longer needed.",
 		],
 		parameters: TODO_PARAMS_SCHEMA,
+		prepareArguments: (args) => prepareTodoArguments(args) as TodoParams,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<TodoToolDetails>> {
 			const previousPhases = clonePhases(accessors.getCurrentPhases());

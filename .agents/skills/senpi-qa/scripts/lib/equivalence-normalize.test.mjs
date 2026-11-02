@@ -103,11 +103,13 @@ test("durations are dropped, measurement values become <measured> with their key
 		toolDurationMs: 9,
 		generationMs: 25,
 		queued_ms: 4,
+		structuredContent: { exit_code: 0, wall_time_seconds: 0.1 },
 		memory: { liveBytes: 7, rssBytes: 9, heapUsedBytes: 1, heapTotalBytes: 2, externalBytes: 3 },
 		timeoutMs: 5000,
 		text: "took 12ms",
 	});
 	assert.deepEqual(out, {
+		structuredContent: { exit_code: 0 },
 		memory: {
 			liveBytes: "<measured>",
 			rssBytes: "<measured>",

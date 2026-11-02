@@ -31,6 +31,7 @@ export interface WorkerSessionRegistryOptions {
 
 /** Transport-side lifecycle owner. Caller paths are never inspected on this event loop. */
 export class WorkerSessionRegistry {
+	readonly supportsCompact = () => true;
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new SessionPathReservations();
 	private readonly claims = new Map<string, WorkerSessionClaims>();
@@ -45,7 +46,8 @@ export class WorkerSessionRegistry {
 		this.options = options;
 		this.closeGraceMs = options.closeGraceMs;
 		this.now = options.now;
-		this.createWorker = options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks));
+		this.createWorker =
+			options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks, options.configuration.agentDir));
 	}
 
 	get size(): number {
