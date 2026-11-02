@@ -47,6 +47,7 @@ import {
 	startupReplacementMessage,
 } from "./startup-model-pick.ts";
 import { clampThinkingSelection, getSupportedThinkingLevels } from "./thinking-levels.ts";
+import { resumeReasoningBaseline } from "./reasoning-baseline.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -447,8 +448,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 	let agent: Agent;
 	const reasoningBaseline = existingSession.configurationUpdate
-		? (sessionManager.getBranch().find((entry) => entry.type === "thinking_level_change")?.thinkingLevel ??
-			thinkingLevel)
+		? resumeReasoningBaseline(sessionManager.getBranch())
 		: undefined;
 
 	// Read blockImages per request so a mid-session settings change takes effect.

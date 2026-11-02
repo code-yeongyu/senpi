@@ -331,6 +331,7 @@ import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
+import { requestThinkingLevel } from "./reasoning-baseline.ts";
 import type { PromptSizeInventory } from "./prompt-size-startup.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import {
@@ -2799,7 +2800,8 @@ export class AgentSession {
 					declaredTools: this.agent.state.declaredTools?.slice(),
 				},
 				model: this.agent.state.model,
-				thinkingLevel: this.agent.state.thinkingLevel,
+				// Every request of the run keeps the effort the run started with (senpi#4116).
+				thinkingLevel: requestThinkingLevel(this.agent.state.reasoningBaseline, this.agent.state.thinkingLevel),
 				thinkingSelection: this.agent.state.thinkingSelection ?? null,
 				abortServerSideFallback:
 					this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain(),
@@ -9260,7 +9262,8 @@ export class AgentSession {
 		const previousReasoningBaseline = this.agent.state.reasoningBaseline;
 		const previousAbortServerSideFallback = this.agent.abortServerSideFallback;
 		this.agent.state.model = model;
-		if (!supportsConfigurationUpdate(model)) {
+		const modelIdentityChanged = !modelsAreEqual(previousModel, model);
+		if (modelIdentityChanged || !supportsConfigurationUpdate(model)) {
 			this.agent.state.reasoningBaseline = undefined;
 		}
 		const scopedMatch = this._scopedModels.find((sm) => modelsAreEqual(sm.model, model));
@@ -9278,6 +9281,9 @@ export class AgentSession {
 		} else {
 			this._setThinkingLevel(thinking.level, false, thinking.selection, opts.origin);
 		}
+		// Another model's prompt cache starts empty, so the level that came with the switch is the one its
+		// requests carry, never the previous model's level as a baseline (senpi#4116).
+		if (modelIdentityChanged) this.agent.state.reasoningBaseline = undefined;
 		this._thinkingLevelSource = thinking.source;
 
 		this._emitHighReasoningWarningIfNeeded();
