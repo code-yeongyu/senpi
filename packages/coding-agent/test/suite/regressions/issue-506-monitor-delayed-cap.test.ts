@@ -55,7 +55,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 
 	// senpi#3007: additive stop entries must not suppress the existing shared-cap guard event.
 	it.each(["available", "missing", "throws-after-append"] as const)(
-		"persists a delayed delivery and blocks the next one at the shared cap (%s entry writer)",
+		"persists a delayed delivery, delivers no more at the shared cap, and blocks once the monitor drains (%s entry writer)",
 		async (entryWriter) => {
 			vi.useFakeTimers();
 			const notices: string[] = [];
@@ -106,8 +106,21 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 				goal: countedGoal,
 				messages: [assistantStopWithText("still waiting")],
 			});
+			// The backstop re-check at the cap (run through fireNow, the timer's own path, so it settles before
+			// asserting) delivers nothing more. While the monitor is still live the goal stays active and parks
+			// on it instead of reading blocked (#5325), with no further backstop armed.
+			expect(await monitor.fireNow()).toEqual({ fired: true, kind: "monitor" });
+			expect(harness.sent).toHaveLength(1);
+			expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active", consecutiveContinuations: 8 });
+			expect(events.emitted.filter((event) => event.channel === "goal_continuation_guard_tripped")).toEqual([]);
+			expect(entries.filter((entry) => entry.customType === "goal-continuation-stopped")).toEqual([]);
+			expect(monitor.scheduledContinuation()).toBeUndefined();
+
+			// The monitor ends without delivering: the shared cap applies and blocks the goal.
 			const guardTripped = waitForEventCount(events, "goal_continuation_guard_tripped", 1);
-			await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
+			events.emit("terminal_monitor_state", { activeCount: 0 });
+			await events.flush();
+			await vi.advanceTimersByTimeAsync(1_000);
 			await guardTripped;
 
 			expect(harness.sent).toHaveLength(1);
