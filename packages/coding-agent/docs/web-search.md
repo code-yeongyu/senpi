@@ -97,6 +97,8 @@ Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpag
 
 `jina` ([Jina Reader](https://jina.ai/reader)) needs an `apiKey`. It sends the query in the URL path of `https://s.jina.ai`, with the result count as `count` (1-20) and `X-Respond-With: no-content` so the answer carries titles and descriptions instead of page text. A single `allowedDomains` entry becomes Jina's host-only `X-Site` filter; multiple or blocked domains stay `site:`/`-site:` terms in the query.
 
+`tinyfish` ([TinyFish](https://tinyfish.ai)) needs an `apiKey` and sends GET requests with `X-API-Key` to `https://api.search.tinyfish.ai`. It asks for at most ten results per page and reads further pages until it has the requested count, a page comes back short, or ten pages have been read.
+
 ## Limit or turn off the free engines
 
 A `websearch.json` replaces the free chain completely, so the engines it does not list are never contacted. Put the file in `~/.senpi/websearch.json` to apply it everywhere, or in `<project>/.senpi/websearch.json` for one project.
