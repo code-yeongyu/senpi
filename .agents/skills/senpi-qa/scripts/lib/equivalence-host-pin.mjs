@@ -13,7 +13,7 @@
 // `node:os` function is patched, so pool sizes and every other host read in the child stay real.
 //
 // The checkout location is a host fact too (senpi#5067): the prompt names absolute paths inside the repo, in the
-// `<skill_roots>` table (coding-agent skills-prompt.ts) and the bun-1-4 skill pointer (senpi-codemode eval-prompt.ts),
+// `<skill_roots>` table (coding-agent skills-prompt.ts) and the bundled bun skill pointer (senpi-codemode eval-prompt.ts),
 // so the same commit checked out at two paths hashed to two keys. The seam's `repoRoot: {from, to}` field makes both
 // sites show a path under the real checkout (`from`, its realpath) under PINNED_REPO_ROOT (`to`). Only the rendering
 // changes: the child still reads every file at its real path.
