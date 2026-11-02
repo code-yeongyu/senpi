@@ -1,3 +1,41 @@
+## 2026-10-31 - eval infers an omitted run language when it is unambiguous (senpi#5154)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-language-inference.ts` (new): `inferEvalLanguage` fills an omitted run language with the only enabled kernel, or, when exactly js and py are enabled, with `classifyEvalCode`: a strong marker of one language (py: `def name(`, a plain `import x` / `from x import y` line; js: `await` on a call, a template literal, `JSON.`/`Object.`/`Array.`, `const`/`let`, `=>`, `console.log(`, ESM imports) and no strong or weak signal of the other. `print(` is no signal, since the prelude gives both runtimes `print`. Any conflict fills nothing.
+- `packages/senpi-codemode/src/tool/eval-argument-validator.ts`: the eval validator fills the language before its missing-field check, records the fill as `language_inferred`, and drops a caller-sent `language_inferred`. An explicit language is never changed. A filled call that still fails validation reports the caller's own arguments.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `parseEvalRequest` applies the same inference for direct callers and carries `language_inferred` on the run request; a `language_inferred` argument counts only on an object the validator filled.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: a run whose language was inferred leads its result with `language_inferred: <lang> (<basis>)`.
+
+### Why
+
+- senpi#5154: a run call that omitted language always failed with the teaching error, even when the kernel could not be anything else, and a weaker tool-calling model could repeat that omission many times.
+
+### Expected merge conflict zones
+
+- LOW: the language checks in `parseEvalRequest`, the validator closure from senpi#5150, and `execute` in `createEvalTool`.
+
+## 2026-10-30 - Restore Windows Python startup assets and builtin helpers (senpi#4955, senpi#5048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/path_identity_windows.py`: rebuild only Python lexical functions with private globals, retaining native builtin helpers directly and preserving function defaults.
+- `.github/workflows/ci.yml`: copy every Python runtime sibling into the isolated compiled Python host, rather than copying only `prelude.py`.
+- `packages/senpi-codemode/test/py-canonical-parity.test.ts`: simulate a builtin `ntpath.normpath` and poison module attributes after capture.
+- `packages/senpi-codemode/test/py-packaged-assets.test.ts`: compare the actual CI sidecar copy selection with the runtime Python asset set.
+
+### Why
+
+- CPython's builtin `ntpath.normpath` has no `__code__`. The isolated CI host also omitted the permission bridge and path-identity siblings required by the prelude.
+
+### Why an extension could not handle it
+
+- Permission identity capture runs before user cells, and the isolated host's runtime files are selected by CI before startup.
+
+### Expected merge conflict zones
+
+- LOW: Windows lexical-helper capture and the isolated Python host copy step.
+
 ## 2026-10-31 - A mistyped detached cell id names the one close known id (senpi#5153)
 
 ### What changed

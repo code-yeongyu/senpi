@@ -1,3 +1,61 @@
+## 2026-11-01 - Tool names with a stray word prefix resolve to their unique suffix tool (senpi#5316)
+
+### What changed
+
+- `packages/ai/src/utils/tool-name-match.ts`: `resolveToolNameMatch` gains a last-resort step, `strayPrefixMatch`. When the requested name is unregistered, matches nothing through the exact, fold and unprefixed steps, and carries no `mcp` namespace, it resolves to the one registered tool whose exact name is a `_`-separated suffix of the requested name (`trophy_eval` -> `eval`). It refuses when two suffix tools match, when any word of the stripped prefix is a destructive verb (`delete_write`, `force_bash`), or when a prefix word itself names a registered tool (`read_write`); those calls keep the existing not-found error.
+
+### Why
+
+- Models behind a namespacing proxy drop the namespace but keep one word of it (`trophy_eval`, `fringe_write`), and each such call failed `Tool ... not found` and cost a turn (code-yeongyu/oh-my-openagent#12065, senpi#5315).
+
+### Why an extension could not handle it
+
+- The matcher is the shared core resolver used by the agent loop and the Anthropic tool-reference repair; an extension cannot change how an unknown tool-call name is resolved.
+
+### Expected merge conflict zones
+
+- LOW: fork-only file `packages/ai/src/utils/tool-name-match.ts`; upstream has no copy.
+
+## 2026-10-30 - Identify the SIWC credential route (part of #5003)
+
+### What changed
+
+- `packages/ai/src/types.ts` adds the per-credential `OpenAIResponsesCompat.siwc` route marker.
+- `packages/ai/src/provider-diagnostic.ts` preserves a validated SIWC route on structured diagnostics.
+
+### Why
+
+- `packages/ai/src/types.ts` must distinguish plan usage from API-key and Codex routes without token heuristics.
+- `packages/ai/src/provider-diagnostic.ts` must preserve the status-only direct-admission policy across error boundaries.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts` defines the adapter's shared compatibility contract.
+- `packages/ai/src/provider-diagnostic.ts` validates diagnostics before retry and pool consumers read them.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: `OpenAIResponsesCompat`.
+- `packages/ai/src/provider-diagnostic.ts`: diagnostic fields and sanitizer.
+
+## 2026-10-30 - Invoke optional OAuth revocation during logout (part of #5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: invokes the provider's revocation hook, returns its typed result, blocks new auth until every overlapping logout completes using a per-provider counter, and aborts active provider requests before revocation.
+
+### Why
+
+- `packages/ai/src/models.ts`: every Models logout caller must use the same revocation and local-clear path.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/models.ts`: Models owns provider dispatch and the injected credential store.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: logout orchestration and request auth setup.
+
 ## 2026-10-30 - First-class private secret input (senpi#5108)
 
 ### What changed

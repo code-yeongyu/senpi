@@ -1,3 +1,40 @@
+## 2026-10-30 - Implement SIWC renewable-session revocation (part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: discovers the revocation endpoint, posts the refresh token and issued client ID, accepts empty HTTP 200, and bounds network/5xx retries with injectable backoff.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: local token deletion alone does not end the renewable SIWC session.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: the bundled provider owns the session's OAuth protocol.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OAuth hook object and token-operation helpers.
+
+## 2026-10-31 - Kimi Code's refused refresh says so on its error (senpi#5010)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/kimi-coding.ts`: a refresh refused with 401, 403 or `invalid_grant` throws `OAuthTokenEndpointError` with `credentialRefused: true` and the body's `oauthError`; other failed refreshes carry `oauthError` only.
+- `packages/ai/src/auth/oauth/radius.ts`: `OAuthResponseError` passes its OAuth code to the base class instead of declaring its own `oauthError` field.
+
+### Why
+
+- Kimi's refusal message has no OAuth JSON, so the credential pool stopped blocking a dead Kimi login and failing over to a sibling account (senpi#5010 review).
+
+### Why an extension could not handle it
+
+- The Kimi refresh runs inside the bundled OAuth adapter; no extension hook can annotate its error.
+
+### Expected merge conflict zones
+
+- LOW: the unauthorized branch of `refreshToken` in `kimi-coding.ts`; `OAuthResponseError` in `radius.ts`.
+
 ## 2026-10-27 - The hand-rolled Anthropic OAuth (PKCE) flow is removed (senpi#4436, S7)
 
 ### What changed

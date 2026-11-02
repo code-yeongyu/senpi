@@ -1,3 +1,39 @@
+## 2026-11-01 - Resource utility tools keep their place ahead of the per-server MCP tools (senpi#5289)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `registerMcpTierBTools` sorts by name only the per-server tool definitions and per-server proxy gateways; the fixed utility tools (`mcp_list_resources`, `mcp_read_resource`) keep their reference order ahead of them.
+
+### Why
+
+- #5290 sorted every MCP-managed name, which also moved the utility tools behind the per-server tools; only the per-server names ever followed server connect order.
+
+### Why an extension could not handle it
+
+- The order is decided inside the builtin MCP extension's own registration.
+
+### Expected merge conflict zones
+
+- LOW: the `catalogNames` and gateway loop in `registerMcpTierBTools`.
+
+## 2026-11-01 - Direct-mode MCP tools keep one order whichever server connects first (senpi#5289)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `registerMcpTierBTools` passes its managed names (full definitions, proxy gateways, utility tools) to `orderActiveSet` together with the tool-search catalog names, so MCP tools sort by name in direct mode too. Base tools keep their reference order.
+
+### Why
+
+- In direct mode MCP tools are not in the tool-search catalog, so `orderActiveSet` kept them in reference order, which was the order their servers finished connecting. The tool list a model received, and its prompt-cache prefix, could change between runs, and the fused equivalence scenario E11 failed on a loaded host with two tool names swapped.
+
+### Why an extension could not handle it
+
+- The order is decided inside the builtin MCP extension's own registration.
+
+### Expected merge conflict zones
+
+- LOW: the `catalogNames` line in `registerMcpTierBTools`.
+
 ## 2026-10-27 - MCP instructions are a volatile system-prompt addition (senpi#4447)
 
 ### What changed
