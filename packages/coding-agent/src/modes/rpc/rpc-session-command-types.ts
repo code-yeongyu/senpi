@@ -165,7 +165,8 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_pending_inputs"; knownClientMessageIds?: string[] }
 
 	// Model
-	| { id?: string; type: "set_model"; provider: string; modelId: string; effectId?: string }
+	/** `scope: "session"` switches only this session's model; without it the device's default model follows. */
+	| { id?: string; type: "set_model"; provider: string; modelId: string; scope?: "session"; effectId?: string }
 	| { id?: string; type: "set_favorite_models"; models: RpcSessionModelEntry[] }
 	| { id?: string; type: "set_scoped_models"; models: RpcSessionModelEntry[] }
 	| { id?: string; type: "cycle_model"; direction?: "forward" | "backward" }

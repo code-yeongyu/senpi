@@ -132,6 +132,10 @@ export const REVIEWED_FIELDS = {
 	set_label: { fields: ["admissionId", "entryId", "id", "label", "sessionId", "type"] },
 	set_session_name: { fields: ["admissionId", "id", "name", "sessionId", "type"] },
 	set_thinking_level: { version: 1, fields: ["admissionId", "effectId", "id", "level", "scope", "sessionId", "type"] },
+	set_model: {
+		version: 1,
+		fields: ["admissionId", "effectId", "id", "modelId", "provider", "scope", "sessionId", "type"],
+	},
 	set_auto_compaction: { fields: ["admissionId", "enabled", "id", "sessionId", "type"] },
 	set_retry_fallback: { fields: ["admissionId", "id", "retryFallback", "sessionId", "type"] },
 	pause_for_run: { fields: ["admissionId", "id", "parentPauseSeq", "parentSessionId", "runRef", "sessionId", "type"] },

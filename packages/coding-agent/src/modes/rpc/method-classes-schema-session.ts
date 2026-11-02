@@ -130,7 +130,12 @@ const STATE_AND_MODEL_SCHEMAS = {
 	request_self_settle: session("request_self_settle", {}),
 	get_effect_status: session("get_effect_status", { effectId: Id, sessionPath: OptPath }),
 	get_pending_inputs: session("get_pending_inputs", { knownClientMessageIds: Opt(Strings) }),
-	set_model: session("set_model", { provider: Id, modelId: Id, effectId: OptId }),
+	set_model: session("set_model", {
+		provider: Id,
+		modelId: Id,
+		scope: Opt(Type.Literal("session")),
+		effectId: OptId,
+	}),
 	set_favorite_models: session("set_favorite_models", { models: ModelEntries }),
 	set_scoped_models: session("set_scoped_models", { models: ModelEntries }),
 	cycle_model: session("cycle_model", { direction: Opt(literals("forward", "backward")) }),

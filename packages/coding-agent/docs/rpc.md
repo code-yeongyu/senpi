@@ -4142,6 +4142,16 @@ Switch to a specific model. A provider/model pair the session's registry does no
 {"type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-20250514"}
 ```
 
+Without a scope, the switch also becomes the device's default model (written to the settings file), so new
+sessions open on it. `"scope": "session"` switches only this session: the switch is recorded in its history and
+restored on resume, extensions see the same `model_select`, and the default model and every other session are left
+as they were. The engine's method-class table classes the scoped form as `drive` and the unscoped form as
+`device_admin`.
+
+```json
+{"type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-20250514", "scope": "session"}
+```
+
 An optional `effectId` records the switch as an effect: the response adds `effectId`,
 `state` and `effect` beside the model, a retry with the same id answers
 `replayed: true` without switching again, and a refusal also records the receipt as
