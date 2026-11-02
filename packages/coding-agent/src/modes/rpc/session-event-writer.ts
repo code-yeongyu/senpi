@@ -1016,7 +1016,11 @@ export class SessionEventWriter {
 			while (previousFull && !(previousFull.value.type === "message_update" && previousFull.value.message != null))
 				previousFull = previousFull.previous;
 			if (previousFull) {
-				if (queue.latestByKey.get(MESSAGE_KEY) === previousFull) this.demoteAndMerge(queue, previousFull);
+				// Only a compact delta may fold a superseded record into its predecessor: the merge concatenates
+				// deltas, and a non-delta update (text_end, thinking_start, toolcall_start) has none to preserve.
+				// Every other superseded snapshot keeps its own delta and position and is only demoted.
+				if (compactDelta(value) !== undefined && queue.latestByKey.get(MESSAGE_KEY) === previousFull)
+					this.demoteAndMerge(queue, previousFull);
 				else this.records.replace(previousFull, demoteMessageUpdate(previousFull.value) as RpcRecord);
 			}
 			const node = this.records.append(queue, value, MESSAGE_KEY);

@@ -215,7 +215,10 @@ describe("multi-session RPC event writer", () => {
 
 		const output = records(chunks);
 		expect(output).toHaveLength(12);
-		expect(output.filter((record) => record.message === null)).toHaveLength(0);
+		// A barrier blocks MERGING (no record or delta is lost), not demotion: every superseded snapshot keeps its
+		// delta and position with cumulative fields set to null (see docs/rpc.md, "Buffered replay and collected
+		// client events retain only the latest such snapshot").
+		expect(output.filter((record) => record.message === null)).toHaveLength(4);
 		expect(output.filter((record) => record.type === "message_update")).toHaveLength(9);
 	});
 
