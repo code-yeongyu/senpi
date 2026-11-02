@@ -372,8 +372,10 @@ export class RetryFallbackController {
 		limit?: UsageLimitScope,
 	): Promise<void> {
 		const prior = this.state;
+		const holdPrimary = prior?.pinned === true || this.deps.getSettings().revertPolicy === "never";
 		if (
 			prior &&
+			!holdPrimary &&
 			baseSelector(candidate.selector) === prior.originalSelector &&
 			(candidate.selector.thinkingLevel === undefined ||
 				candidate.selector.thinkingLevel === prior.originalThinkingLevel)
@@ -429,11 +431,7 @@ export class RetryFallbackController {
 		const filters: CandidateFilters = {
 			registry: this.deps.registry,
 			tried: this.triedSelectors,
-			isSuppressed: (base) =>
-				(holdPrimary &&
-					(base === originalRung ||
-						(base === state?.originalSelector && formatSelector(current.model) !== state.originalSelector))) ||
-				this.deps.cooldowns.isSuppressed(base),
+			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
@@ -442,16 +440,21 @@ export class RetryFallbackController {
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		};
 		let candidate = firstUsableCandidate(entries, current, filters);
-		// Only the original head may wrap, once per turn. Pins and deliberate
-		// "never" selections hold; spent heads cannot be probes.
+		// Only the original head may wrap, once per turn, and only once it has
+		// actually recovered: its circuit closed (or free for this session to
+		// claim as the half-open probe) and no session cooldown still holding it
+		// (Retry-After, a usage-limit reset window). A circuit still open does not
+		// wrap and never becomes an all-open probe; pins, deliberate "never"
+		// selections and spent heads never wrap (senpi#3302 review).
 		if (!candidate && state && !holdPrimary) {
 			const model = original && this.deps.registry.find(original.provider, original.id);
 			if (model && !this.unusable.isUnusable(model)) {
 				candidate = firstUsableCandidate([originalRung ?? state.originalSelector], current, {
 					...filters,
-					// The breaker owns recovery for tracked heads, including the
-					// existing all-open chain probe; other cooldowns still hold.
-					isSuppressed: (base) => !this.probes.governs(base) && filters.isSuppressed(base),
+					// An open circuit suppresses instead of probing: the breaker's own
+					// probe schedule, not this wrap, re-opens the road to that head.
+					isSuppressed: (base) => filters.isSuppressed(base) || this.probes.isOpen(base),
+					isCircuitOpen: () => false,
 				});
 			}
 		}
