@@ -12,19 +12,27 @@ function isRemoteSession(env: NodeJS.ProcessEnv): boolean {
 	return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.MOSH_CONNECTION);
 }
 
-async function tmuxAllowsPassthrough(env: NodeJS.ProcessEnv): Promise<boolean> {
-	if (!env.TMUX) return false;
+/**
+ * With `set-clipboard on`, tmux stores raw OSC 52 in its paste buffer and forwards it to clients
+ * that have the clipboard feature. A DCS passthrough envelope skips both, so it is only added where
+ * tmux would not reach the outer terminal itself. A failed or timed-out probe keeps the raw sequence.
+ */
+async function routeOsc52ThroughTmux(sequence: string, env: NodeJS.ProcessEnv): Promise<string> {
+	if (!env.TMUX) return sequence;
 
 	const args = ["display-message", "-p"];
 	const pane = env.TMUX_PANE;
 	if (pane && /^%\d+$/.test(pane)) {
 		args.push("-t", pane);
 	}
-	args.push("#{allow-passthrough}");
+	args.push("#{allow-passthrough}|#{set-clipboard}|#{client_termfeatures}");
 
-	// A failed or timed-out probe resolves undefined and keeps the raw sequence.
-	const value = (await runClipboardCommand("tmux", args, { timeoutMs: 250 }))?.toString("utf8").trim().toLowerCase();
-	return value === "1" || value === "on" || value === "all";
+	const probe = (await runClipboardCommand("tmux", args, { timeoutMs: 250 }))?.toString("utf8").trim();
+	if (!probe) return sequence;
+	const [passthrough = "", setClipboard = "", features = ""] = probe.toLowerCase().split("|");
+	if (passthrough !== "1" && passthrough !== "on" && passthrough !== "all") return sequence;
+	if (setClipboard !== "on") return wrapTmuxPassthrough(sequence);
+	return features.split(",").includes("clipboard") ? sequence : sequence + wrapTmuxPassthrough(sequence);
 }
 
 async function emitOsc52(text: string, env: NodeJS.ProcessEnv): Promise<boolean> {
@@ -32,9 +40,8 @@ async function emitOsc52(text: string, env: NodeJS.ProcessEnv): Promise<boolean>
 	if (encoded.length > MAX_OSC52_ENCODED_LENGTH) {
 		return false;
 	}
-	const sequence = `\x1b]52;c;${encoded}\x07`;
 	// The interactive TUI hides plain stdout writes; this one must reach the terminal.
-	writeTerminalSequence((await tmuxAllowsPassthrough(env)) ? wrapTmuxPassthrough(sequence) : sequence);
+	writeTerminalSequence(await routeOsc52ThroughTmux(`\x1b]52;c;${encoded}\x07`, env));
 	return true;
 }
 

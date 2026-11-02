@@ -96,7 +96,9 @@ describe("copyToClipboard while the interactive terminal guards stdout", () => {
 	])("delivers $name to the terminal, not the hidden-stdout handler", async ({ tmux, expected }) => {
 		if (tmux) {
 			vi.stubEnv("TMUX", "/tmp/tmux-1000/default,1,0");
-			mocks.command.mockImplementation(async (name) => (name === "tmux" ? Buffer.from("on\n") : undefined));
+			mocks.command.mockImplementation(async (name) =>
+				name === "tmux" ? Buffer.from("on|external|RGB,clipboard\n") : undefined,
+			);
 		}
 
 		await copyToClipboard("hello");

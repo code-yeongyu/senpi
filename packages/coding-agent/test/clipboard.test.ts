@@ -155,38 +155,61 @@ describe("copyToClipboard", () => {
 		expect(osc52Writes).toHaveLength(1);
 		expect(mocks.command).not.toHaveBeenCalled();
 	});
-	test("remote tmux copy wraps OSC 52 in DCS passthrough", async () => {
+	// tmux stores and forwards raw OSC 52 only with `set-clipboard on`; DCS passthrough bypasses both,
+	// so it is sent only where tmux would not reach the outer terminal itself.
+	const raw = "\x1b]52;c;aGVsbG8=\x07";
+	const wrapped = "\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\";
+	const tmuxCases: { name: string; tmux?: Record<string, string>; pane: string; output: string }[] = [
+		{
+			name: "passthrough with set-clipboard external",
+			tmux: { "allow-passthrough": "on", "set-clipboard": "external", client_termfeatures: "RGB,clipboard" },
+			pane: "%7",
+			output: wrapped,
+		},
+		{
+			name: "passthrough all with set-clipboard off",
+			tmux: { "allow-passthrough": "all", "set-clipboard": "off", client_termfeatures: "" },
+			pane: "%7",
+			output: wrapped,
+		},
+		{
+			name: "set-clipboard on and a clipboard-capable client",
+			tmux: { "allow-passthrough": "on", "set-clipboard": "on", client_termfeatures: "RGB,clipboard" },
+			pane: "%7",
+			output: raw,
+		},
+		{
+			name: "set-clipboard on without a clipboard-capable client",
+			tmux: { "allow-passthrough": "on", "set-clipboard": "on", client_termfeatures: "RGB" },
+			pane: "%7",
+			output: raw + wrapped,
+		},
+		{
+			name: "passthrough off",
+			tmux: { "allow-passthrough": "off", "set-clipboard": "on", client_termfeatures: "RGB" },
+			pane: "%7",
+			output: raw,
+		},
+		{ name: "a failed probe", pane: "", output: raw },
+	];
+	test.each(tmuxCases)("remote tmux copy with $name", async ({ tmux, pane, output }) => {
 		vi.stubEnv("SSH_CONNECTION", "client server");
 		vi.stubEnv("TMUX", "/tmp/tmux-1000/default,1,0");
-		vi.stubEnv("TMUX_PANE", "%7");
-		mocks.command.mockImplementation(async (name) => (name === "tmux" ? Buffer.from("on\n") : Buffer.alloc(0)));
-		await copyToClipboard("hello");
-		expect(osc52Writes).toEqual(["\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\"]);
-		expect(mocks.command).toHaveBeenCalledExactlyOnceWith(
-			"tmux",
-			["display-message", "-p", "-t", "%7", "#{allow-passthrough}"],
-			{ timeoutMs: 250 },
+		vi.stubEnv("TMUX_PANE", pane);
+		// Fake tmux: expand whatever `display-message -p` format is requested from the pane's options.
+		mocks.command.mockImplementation(async (_name, args) =>
+			tmux === undefined
+				? undefined
+				: Buffer.from(
+						`${(args.at(-1) ?? "").replace(/#\{([\w-]+)\}/g, (_match, key: string) => tmux[key] ?? "")}\n`,
+					),
 		);
+		await copyToClipboard("hello");
+		expect(osc52Writes).toEqual([output]);
+		expect(mocks.command.mock.calls.map(([name, args]) => [name, args.slice(0, -1)])).toEqual([
+			["tmux", ["display-message", "-p", ...(pane ? ["-t", pane] : [])]],
+		]);
 	});
-	test.each(["off\n", undefined])(
-		"remote tmux copy keeps raw OSC 52 when the passthrough probe returns %j",
-		async (probe) => {
-			vi.stubEnv("SSH_CONNECTION", "client server");
-			vi.stubEnv("TMUX", "/tmp/tmux-1000/default,1,0");
-			mocks.command.mockImplementation(async (name) =>
-				name === "tmux" ? (probe === undefined ? undefined : Buffer.from(probe)) : Buffer.alloc(0),
-			);
-			await copyToClipboard("hello");
-			expect(osc52Writes).toEqual(["\x1b]52;c;aGVsbG8=\x07"]);
-			expect(mocks.command).toHaveBeenCalledExactlyOnceWith(
-				"tmux",
-				["display-message", "-p", "#{allow-passthrough}"],
-				{
-					timeoutMs: 250,
-				},
-			);
-		},
-	);
 	test("a rejected native write falls back to pbcopy", async () => {
 		mocks.clipboard.setText.mockRejectedValue(new Error("native failed"));
 		await copyToClipboard("hello");
