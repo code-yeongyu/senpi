@@ -5,9 +5,8 @@ export function buildFragmentFixtureIndex(cases: readonly { caseId: string; kind
 		contract: "CONTRACT-r6",
 		section: "B3",
 		digestAlgorithm: "sha256",
-		digestRulingPending: "S09-Q1",
 		digestRule:
-			"digest is lowercase hex SHA-256 over the exact raw bytes of one fragment; sourceDigest and binding.digest cover the whole value. Pending the S09-Q1 ruling; a different ruling regenerates every file.",
+			"digest is lowercase hex domain-separated SHA-256 via compact-catalog-codec.ts: fragment uses u8 tagLen + \"senpi-recovery-catalog/1/utf16le/fragment\" + u64BE byteLength + exact fragment bytes; sourceDigest and binding.digest use the leaf domain over the whole value (RULING-57/58, RULING-98).",
 		limits: FRAGMENT_LIMITS,
 		recordRules: [
 			"Each record is {offset, length, digest, next, complete, data?}; length <= D raw bytes; data is base64 of those bytes.",
