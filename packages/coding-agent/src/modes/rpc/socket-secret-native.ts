@@ -9,9 +9,9 @@ import { fileURLToPath } from "node:url";
 import { getPackageDir } from "../../config.ts";
 
 /** ABI of the bridge's exports, not the package CalVer. Keep aligned with crates/senpi-socket-secret. */
-export const NATIVE_SOCKET_SECRET_ABI_VERSION = "1";
+const NATIVE_SOCKET_SECRET_ABI_VERSION = "1";
 
-export const SOCKET_SECRET_NATIVE_PATH_ENV = "SENPI_SOCKET_SECRET_NATIVE_PATH";
+const SOCKET_SECRET_NATIVE_PATH_ENV = "SENPI_SOCKET_SECRET_NATIVE_PATH";
 
 export interface NativeKernelSessionIdentity {
 	readonly status: "verified" | "unverified";
