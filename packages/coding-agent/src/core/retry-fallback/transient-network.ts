@@ -2,7 +2,7 @@ import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
 
 // Transport blips (timeouts, DNS, socket drops, a cut stream); shared by the cooldown and the fallback decision.
 const TRANSPORT_FAILURE =
-	/timed? out|timeout|econnreset|econnrefused|etimedout|socket hang up|socket connection was closed|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|enotfound|eai_again|upstream.?connect|reset before headers|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|\btls\b|\bssl\b|econnaborted|epipe/;
+	/timed? out|timeout|econnreset|econnrefused|etimedout|socket hang up|socket connection was closed|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|enotfound|eai_again|upstream.?connect|reset before headers|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|\btls\b|\bssl\b|econnaborted|epipe|unable to connect|failed.?to.?open.?socket|connection.?closed|ehostunreach|enetunreach/;
 
 // A limit, spent account, loaded model or server-side failure (5xx, "unavailable") is the provider's
 // answer, even beside a timeout, matching the precedence in cooldown.ts.
