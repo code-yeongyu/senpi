@@ -136,6 +136,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 				);
 			} else if (event.type === "retry_fallback_exhausted") {
 				console.error(`Model fallback exhausted: ${event.chainKey} (${event.lastError})`);
+				for (const attempt of event.attempts) console.error(`  ${attempt.model}: ${attempt.reason}`);
 			} else if (event.type === "retry_fallback_reverted") {
 				const cause = event.cause === "fallback-unusable" ? ` (${event.from} cannot serve right now)` : "";
 				console.error(`Model fallback reverted: ${event.from} -> ${event.to}${cause}`);

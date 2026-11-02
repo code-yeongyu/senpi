@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
 import { fastSiblingOption } from "../fast-model-pair.ts";
+import type { FallbackAttempt } from "./attempts.ts";
 import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
@@ -32,6 +33,9 @@ export class RetryFallbackController {
 	private readonly triedSelectors = new Set<string>();
 	private state: ActiveFallbackState | undefined;
 	private lastExhaustedChainKey: string | undefined;
+	// Each model of this turn that failed, in order, and whether its exhaustion was already reported (senpi#5518).
+	private readonly attempts: FallbackAttempt[] = [];
+	private exhaustionReported = false;
 	// A fallback forced by a network blip serves out its turn; only the next turn boundary reverts it.
 	private heldForNetworkBlip = false;
 	// The model a network blip just failed on: none of its rungs is tried in that walk (senpi#3344).
@@ -79,6 +83,27 @@ export class RetryFallbackController {
 		this.triedSelectors.clear();
 		this.refusedProviders.clear();
 		this.lastExhaustedChainKey = undefined;
+		this.attempts.length = 0;
+		this.exhaustionReported = false;
+	}
+
+	noteAttempt(attempt: FallbackAttempt): void {
+		this.attempts.push(attempt);
+	}
+
+	/** The chain this turn ran out of and every model it tried, or undefined while a rung is left. */
+	exhaustion(): { chainKey: string; attempts: readonly FallbackAttempt[] } | undefined {
+		const chainKey = this.exhaustedChainKey;
+		if (chainKey === undefined) return undefined;
+		return { chainKey, attempts: [...this.attempts] };
+	}
+
+	/** {@link exhaustion}, handed out once per turn so the several failure paths report it exactly once. */
+	reportExhaustion(): { chainKey: string; attempts: readonly FallbackAttempt[] } | undefined {
+		if (this.exhaustionReported) return undefined;
+		const exhaustion = this.exhaustion();
+		if (exhaustion) this.exhaustionReported = true;
+		return exhaustion;
 	}
 
 	clear(): void {

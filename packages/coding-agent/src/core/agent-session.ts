@@ -346,6 +346,7 @@ import { QueuedInputAges } from "./queued-input-age.ts";
 import { checkSessionReloadVeto } from "./reload-veto.ts";
 import { RequiredCompactionError } from "./required-compaction-error.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
+import { classifyFallbackAttempt, describeExhaustedChain, type FallbackAttempt } from "./retry-fallback/attempts.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
 import {
@@ -765,7 +766,7 @@ export type AgentSessionEvent =
 			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
 			cause?: "fallback-unusable";
 	  }
-	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
+	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string; attempts: readonly FallbackAttempt[] }
 	| ModelConfigErrorEvent
 	| {
 			type: "server_fallback_aborted";
@@ -2314,6 +2315,12 @@ export class AgentSession {
 	 * drains. `chainConfigured` is required because the no-chain refusal path
 	 * emits no retry_fallback_exhausted, leaving the UI no other signal.
 	 */
+	/** Reports the turn's exhausted chain once, with every model it tried and why (senpi#5518). */
+	private _emitFallbackExhausted(lastError: string): void {
+		const exhaustion = this._retryFallback.reportExhaustion();
+		if (exhaustion) this._emit({ type: "retry_fallback_exhausted", ...exhaustion, lastError });
+	}
+
 	private _emitServerFallbackAborted(message: AssistantMessage): void {
 		const details = message.diagnostics?.find((entry) => entry.type === SERVER_FALLBACK_ABORTED_DIAGNOSTIC)?.details;
 		if (details === undefined) return;
@@ -4190,6 +4197,13 @@ export class AgentSession {
 				}
 				retryContinuationBlocked ||= requestShapeOutcome === "blocked";
 			}
+			if (msg.stopReason === "error" && this.model) {
+				this._retryFallback.noteAttempt({
+					model: formatSelector(this.model),
+					reason: classifyFallbackAttempt(msg),
+					error: msg.errorMessage ?? "Unknown error",
+				});
+			}
 			// Retry transient failures normally and eligible hard errors only through a fallback.
 			const retryableError = requestShape === "not-request-shape" && this._isRetryableError(msg);
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
@@ -4276,6 +4290,12 @@ export class AgentSession {
 					msg.errorMessage = `${msg.errorMessage} (the rejected image from ${rejectedImages.join(", ")} is left out of later requests; send your next message to continue)`;
 				}
 			}
+			// The last rung failed with nothing left to try: the turn ends with the whole chain named (senpi#5518).
+			const exhaustion =
+				retryOutcome === "not-handled" && msg.stopReason === "error" && !userAbortSuppressedQueuedContinuation
+					? this._retryFallback.exhaustion()
+					: undefined;
+			if (exhaustion && msg.errorMessage) this._emitFallbackExhausted(msg.errorMessage);
 			if (retryOutcome === "not-handled" && this._retryAttempt > 0 && msg.errorMessage) {
 				const attempt = this._retryAttempt;
 				this._retryAttempt = 0;
@@ -4285,7 +4305,11 @@ export class AgentSession {
 					success: false,
 					attempt,
 					// A user abort cancelled the pending retry, as an abort during backoff does.
-					finalError: userAbortSuppressedQueuedContinuation ? "Retry cancelled" : msg.errorMessage,
+					finalError: userAbortSuppressedQueuedContinuation
+						? "Retry cancelled"
+						: exhaustion
+							? describeExhaustedChain(exhaustion.attempts)
+							: msg.errorMessage,
 				});
 			}
 			this._resolveRetry();
@@ -12835,14 +12859,7 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 		const hintSettings = this.settingsManager.getHintPolicySettings();
 		const finishRetryAttempt = (attempt: number, finalError: string | undefined) => {
-			const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-			if (exhaustedChainKey) {
-				this._emit({
-					type: "retry_fallback_exhausted",
-					chainKey: exhaustedChainKey,
-					lastError: errorMessage,
-				});
-			}
+			this._emitFallbackExhausted(errorMessage);
 			this._emit({
 				type: "auto_retry_end",
 				success: false,
@@ -12939,8 +12956,7 @@ export class AgentSession {
 				retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
 			});
 			if (!switchedFallback) {
-				const chainKey = this._retryFallback.exhaustedChainKey;
-				if (chainKey) this._emit({ type: "retry_fallback_exhausted", chainKey, lastError: errorMessage });
+				this._emitFallbackExhausted(errorMessage);
 				if (this._retryAttempt > 0) {
 					this._emit({
 						type: "auto_retry_end",
@@ -12992,14 +13008,7 @@ export class AgentSession {
 					...(isRequestLevelRefusal(message) ? { refusedProvider: message.provider } : {}),
 				});
 				if (!switchedFallback) {
-					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-					if (exhaustedChainKey) {
-						this._emit({
-							type: "retry_fallback_exhausted",
-							chainKey: exhaustedChainKey,
-							lastError: errorMessage,
-						});
-					}
+					this._emitFallbackExhausted(errorMessage);
 					this._resolveRetry();
 					return "not-handled";
 				}
@@ -13025,14 +13034,7 @@ export class AgentSession {
 			}
 			switchedFallback = await tryFallback("refusal", {});
 			if (!switchedFallback) {
-				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-				if (exhaustedChainKey) {
-					this._emit({
-						type: "retry_fallback_exhausted",
-						chainKey: exhaustedChainKey,
-						lastError: errorMessage,
-					});
-				}
+				this._emitFallbackExhausted(errorMessage);
 				if (this._retryAttempt > 0) {
 					this._emit({
 						type: "auto_retry_end",
@@ -13090,14 +13092,7 @@ export class AgentSession {
 					if (switchedFallback) {
 						this._retryAttempt = 1;
 					} else {
-						const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-						if (exhaustedChainKey) {
-							this._emit({
-								type: "retry_fallback_exhausted",
-								chainKey: exhaustedChainKey,
-								lastError: errorMessage,
-							});
-						}
+						this._emitFallbackExhausted(errorMessage);
 						this._emit({
 							type: "auto_retry_end",
 							success: false,
@@ -13137,14 +13132,7 @@ export class AgentSession {
 						if (switchedFallback) {
 							this._retryAttempt = 1;
 						} else {
-							const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-							if (exhaustedChainKey) {
-								this._emit({
-									type: "retry_fallback_exhausted",
-									chainKey: exhaustedChainKey,
-									lastError: errorMessage,
-								});
-							}
+							this._emitFallbackExhausted(errorMessage);
 							this._emit({
 								type: "auto_retry_end",
 								success: false,
@@ -13182,14 +13170,7 @@ export class AgentSession {
 							if (switchedFallback) {
 								this._retryAttempt = 1;
 							} else {
-								const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-								if (exhaustedChainKey) {
-									this._emit({
-										type: "retry_fallback_exhausted",
-										chainKey: exhaustedChainKey,
-										lastError: errorMessage,
-									});
-								}
+								this._emitFallbackExhausted(errorMessage);
 								this._emit({
 									type: "auto_retry_end",
 									success: false,
@@ -13237,14 +13218,7 @@ export class AgentSession {
 					// The new model receives a fresh retry budget; the failed model does not.
 					this._retryAttempt = 1;
 				} else {
-					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
-					if (exhaustedChainKey) {
-						this._emit({
-							type: "retry_fallback_exhausted",
-							chainKey: exhaustedChainKey,
-							lastError: errorMessage,
-						});
-					}
+					this._emitFallbackExhausted(errorMessage);
 					this._emit({
 						type: "auto_retry_end",
 						success: false,

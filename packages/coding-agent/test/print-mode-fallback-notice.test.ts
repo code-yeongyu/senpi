@@ -24,6 +24,7 @@ const exhausted: Extract<AgentSessionEvent, { type: "retry_fallback_exhausted" }
 	type: "retry_fallback_exhausted",
 	chainKey: "anthropic/claude-opus-4-6",
 	lastError: "all models unavailable",
+	attempts: [{ model: "anthropic/claude-opus-4-6", reason: "error", error: "all models unavailable" }],
 };
 
 const reverted: Extract<AgentSessionEvent, { type: "retry_fallback_reverted" }> = {
