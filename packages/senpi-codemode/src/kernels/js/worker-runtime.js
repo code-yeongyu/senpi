@@ -4,6 +4,7 @@ import { createCellRequire, createRequire } from "./worker-require.js";
 import { createFileHelpers } from "./worker-file-helpers.js";
 import { inspect } from "node:util";
 import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
+import { projectValueImages } from "./value-images.js";
 import { terminateProcessGroups, terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
 import { INJECTED_GROUP } from "./worker-cwd.js";
@@ -158,7 +159,7 @@ export class JsWorkerRuntime {
 	}
 
 	#installGlobals() {
-		globalThis.print = (...values) => this.#emitText("stdout", `${values.map(formatValue).join(" ")}\n`);
+		globalThis.print = (...values) => this.#print("stdout", values);
 		globalThis.display = value => this.#display(value);
 		globalThis.log = message => this.#hooks?.emit({ type: "log", message: String(message) });
 		globalThis.phase = title => this.#hooks?.emit({ type: "phase", title: String(title) });
@@ -215,8 +216,8 @@ export class JsWorkerRuntime {
 		};
 		process.stdout.write = routeWrite(process.stdout, originalStdoutWrite, "stdout");
 		process.stderr.write = routeWrite(process.stderr, originalStderrWrite, "stderr");
-		console.log = (...values) => this.#emitText("stdout", `${values.map(formatValue).join(" ")}\n`);
-		console.error = (...values) => this.#emitText("stderr", `${values.map(formatValue).join(" ")}\n`);
+		console.log = (...values) => this.#print("stdout", values);
+		console.error = (...values) => this.#print("stderr", values);
 		const restoreShellCapture = installShellCapture({
 			isActive: () => this.#hooks !== null,
 			emitText: (stream, data) => this.#emitText(stream, data),
@@ -241,6 +242,12 @@ export class JsWorkerRuntime {
 		this.#hooks?.emit({ type: "text", stream, data });
 	}
 
+	#print(stream, values) {
+		const shown = values.map(projectValueImages);
+		this.#emitText(stream, `${shown.map((item) => formatValue(item.value)).join(" ")}\n`);
+		for (const image of shown.flatMap((item) => item.frames)) this.#hooks?.emit({ type: "display", ...image });
+	}
+
 	#emitStatus(event) {
 		this.#hooks?.emit({ type: "status", event });
 	}
@@ -253,8 +260,10 @@ export class JsWorkerRuntime {
 			}
 			const ops = resolveDisplayOps(value);
 			if (ops !== undefined) return this.#applyDisplayOps(ops);
+			const shown = projectValueImages(value);
 			try {
-				this.#hooks?.emit({ type: "display", mimeType: "application/json", dataBase64: encodeBase64(JSON.stringify(value)) });
+				this.#hooks?.emit({ type: "display", mimeType: "application/json", dataBase64: encodeBase64(JSON.stringify(shown.value)) });
+				for (const image of shown.frames) this.#hooks?.emit({ type: "display", ...image });
 			} catch (error) {
 				if (!(error instanceof TypeError)) throw error;
 				this.#emitText("stdout", `${inspect(value, { colors: false, depth: 5 })}\n`);

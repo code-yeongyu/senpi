@@ -356,7 +356,7 @@ options object and asynchronous helpers are `await`-able.
 | Helper | Contract |
 | --- | --- |
 | `display(value)` | Emits text, structured JSON, markdown, or image display data. Images reach the model only through `display`: pass a figure, raw image bytes (PNG/JPEG/GIF/WebP/BMP sniffed), a `data:` URL, a `Blob`-like or `Bun.Image` value, a marshalled tool result, or one of its `images[i]` frames. |
-| `print(value, ...)` | Emits text output. |
+| `print(value, ...)` | Emits text output. An image frame inside a printed, returned, or JSON-displayed plain value (a whole tool result, its `images[i]`, or `{ type: "image", mimeType, data }`) is attached as an image and its payload replaced in the text by `[<mimeType> <size> KB -> attached]` (js, py). |
 | `text(value)` (rb, jl) | Emits `value` as one text item without separators (`print` joins its arguments and calls it). |
 | `display_image(base64, mime_type)` (rb, jl) | Emits an image from base64 data; `mime_type` defaults to `image/png` (Ruby: `mime_type:` keyword). |
 | `read(path, offset?, limit?)` | Reads text with 1-indexed line slicing. `local://` paths resolve under the session artifact root. |

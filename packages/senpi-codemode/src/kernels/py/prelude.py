@@ -308,7 +308,9 @@ def display(value: Any) -> None:
     if isinstance(value, dict) and (_display_tool_result(value) or _display_image_dict(value)):
         return
     if isinstance(value, (dict, list, tuple)):
-        _emit_display("application/json", value)
+        frames: list[tuple[str, str]] = []
+        _emit_display("application/json", _project_value_images(value, frames))
+        _emit_image_frames(frames)
         return
     if isinstance(value, (bytes, bytearray)):
         raw = bytes(value)
@@ -318,6 +320,75 @@ def display(value: Any) -> None:
     if bundle and _display_bundle(bundle):
         return
     _emit_display("text/plain", str(value))
+
+
+# A value a cell returns, prints or displays as JSON becomes text, so an image inside it (a tool.computer or
+# tool.read reply) would reach the model as base64 (omo#12185). Each image payload in a plain dict/list/tuple is
+# swapped for a short placeholder and collected for the caller to emit as a display frame.
+_VALUE_IMAGE_MAX_DEPTH = 32
+
+
+def _value_image_payload(node: dict[str, Any]) -> tuple[str, str] | None:
+    mime_type = node.get("mimeType")
+    if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
+        return None
+    if isinstance(node.get("dataBase64"), str):
+        key = "dataBase64"
+    elif node.get("type") == "image" and isinstance(node.get("data"), str):
+        key = "data"
+    else:
+        return None
+    encoded = _image_base64(node[key])
+    return None if encoded is None else (key, encoded[0])
+
+
+def _image_placeholder(mime_type: str, data_base64: str) -> str:
+    size = len(data_base64) * 3 // 4 - (len(data_base64) - len(data_base64.rstrip("=")))
+    return f"[{mime_type} {max(1, round(size / 1024))} KB -> attached]"
+
+
+def _project_value_images(value: Any, frames: list[tuple[str, str]], seen: dict[int, Any] | None = None, depth: int = 0) -> Any:
+    if type(value) not in (dict, list, tuple) or depth >= _VALUE_IMAGE_MAX_DEPTH:
+        return value
+    seen = {} if seen is None else seen
+    if id(value) in seen:
+        return seen[id(value)]
+    if type(value) is dict:
+        image = _value_image_payload(value)
+        if image is not None:
+            key, encoded = image
+            frames.append((value["mimeType"], encoded))
+            seen[id(value)] = {**value, key: _image_placeholder(value["mimeType"], encoded)}
+            return seen[id(value)]
+        copy: dict[Any, Any] = {}
+        seen[id(value)] = copy
+        for key, item in value.items():
+            copy[key] = _project_value_images(item, frames, seen, depth + 1)
+        changed = any(copy[key] is not item for key, item in value.items())
+    elif type(value) is list:
+        copy_list: list[Any] = []
+        seen[id(value)] = copy_list
+        copy_list.extend(_project_value_images(item, frames, seen, depth + 1) for item in value)
+        changed = any(new is not old for new, old in zip(copy_list, value))
+        copy = copy_list
+    else:
+        copy = tuple(_project_value_images(item, frames, seen, depth + 1) for item in value)
+        changed = any(new is not old for new, old in zip(copy, value))
+    seen[id(value)] = copy if changed else value
+    return seen[id(value)]
+
+
+def _emit_image_frames(frames: list[tuple[str, str]]) -> None:
+    for mime_type, data_base64 in frames:
+        emit({"type": "display", "mimeType": mime_type, "dataBase64": data_base64})
+
+
+def _cell_print(*values: Any, **options: Any) -> None:
+    frames: list[tuple[str, str]] = []
+    if options.get("file") in (None, sys.stdout, sys.stderr):
+        values = tuple(_project_value_images(value, frames) for value in values)
+    print(*values, **options)
+    _emit_image_frames(frames)
 
 
 def _status_events_enabled() -> bool:
@@ -1838,7 +1909,7 @@ def _shell(command: str) -> ShellResult:
 USER_NS.update(
     {
         "display": display,
-        "print": print,
+        "print": _cell_print,
         "log": log,
         "phase": phase,
         "env": env,
@@ -2294,7 +2365,10 @@ def run_cell(
             "durationMs": elapsed(start),
         }
         if value is not None:
-            result["valueRepr"] = repr(value)
+            frames: list[tuple[str, str]] = []
+            shown = _project_value_images(value, frames)
+            _emit_image_frames(frames)
+            result["valueRepr"] = repr(shown)
     except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — cell boundary serializes user errors and interrupts.
         text("stdout", stdout.getvalue())
         text("stderr", stderr.getvalue())
