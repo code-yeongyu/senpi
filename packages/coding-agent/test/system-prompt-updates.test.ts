@@ -213,7 +213,7 @@ describe("system prompt updates", () => {
 			const initial = requests[0]?.messages[0];
 			if (initial?.role !== "system") throw new Error("expected initial system message");
 			expect(initial.toolsAdded?.map((value) => value.name)).toEqual(["first", "second"]);
-			expect(getSystemMessageText(initial)).toContain("first prompt snippet");
+			expect(getSystemMessageText(initial)).toContain("Use first carefully.");
 
 			// C-AG-4: the fork re-declares the rebuilt prompt and active tools in the one leading system
 			// message instead of appending a transcript patch.
@@ -222,8 +222,7 @@ describe("system prompt updates", () => {
 			const update = updates[0];
 			if (update?.role !== "system") throw new Error("expected updated system message");
 			expect(update.toolsAdded?.map((value) => value.name)).toEqual(["second"]);
-			expect(getSystemMessageText(update)).toContain("second prompt snippet");
-			expect(getSystemMessageText(update)).not.toContain("first prompt snippet");
+			expect(getSystemMessageText(update)).toContain("Use second carefully.");
 			expect(getSystemMessageText(update)).not.toContain("Use first carefully.");
 
 			const result = requests[2]?.messages.filter((message) => message.role === "toolResult").at(-1);

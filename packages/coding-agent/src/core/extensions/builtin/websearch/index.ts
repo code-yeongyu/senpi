@@ -19,7 +19,7 @@ import { loadWebsearchConfig } from "./websearch/config.ts";
 import { attemptRouteLabel } from "./websearch/route-attempts.ts";
 import { providerEntryLabel } from "./websearch/search.ts";
 import { resolveNativeSearchModel } from "./websearch/search-model.ts";
-import { createWebSearchTool } from "./websearch/tool.ts";
+import { createWebSearchTool, WEB_SEARCH_CITE_GUIDELINE } from "./websearch/tool.ts";
 import type { ConfigLoadResult, WebsearchConfig } from "./websearch/types.ts";
 
 const STATUS_KEY = "pi-websearch";
@@ -151,14 +151,19 @@ export default function (pi: ExtensionAPI): void {
 				await refreshState(ctx.model, ctx);
 			}
 			if (!hasServerSearch(ctx.model)) return undefined;
-			const systemPrompt = event.systemPrompt
+			const failed = hasServerSearchFailed(ctx.sessionManager, ctx.model);
+			const withoutSections = event.systemPrompt
 				.replace(ANTHROPIC_WEB_SEARCH_SECTION, "")
 				.replace(OPENAI_WEB_SEARCH_SECTION, "");
+			// Server search: the section below carries the cite rule, so the tool's guideline bullet goes.
+			const systemPrompt = failed
+				? withoutSections
+				: withoutSections.replace(`- ${WEB_SEARCH_CITE_GUIDELINE}\n`, "");
 			return {
 				systemPrompt: `${systemPrompt}\n## Web Search\n${
-					hasServerSearchFailed(ctx.sessionManager, ctx.model)
+					failed
 						? "Use the standalone web_search tool when current information is needed. Native search failed for this session model."
-						: "Use the provider's in-turn server web search when current information is needed."
+						: "web_search = provider server-side search. Use when current info needed; cite returned URLs in final answer."
 				}`,
 			};
 		},

@@ -182,7 +182,7 @@ ${executors} on THIS workstation. Match commands, paths, package managers, and p
 	gemini: (executors) =>
 		`${executors} on this workstation; match commands, paths, package managers, and parallel pool sizes to it. Code you write may target another machine; code you run always runs here.`,
 	default: (executors) =>
-		`**EXECUTION HAPPENS HERE.** ${executors} on THIS machine: you MUST match commands, paths, package managers, and parallel pool sizes to the workstation above. Code you WRITE may target a different machine; anything you RUN executes HERE.`,
+		`**EXECUTION HAPPENS HERE.** ${executors} on THIS machine: match commands, paths, package managers, parallel pool sizes to the workstation above. Code you WRITE may target another machine; anything you RUN executes HERE.`,
 };
 
 export interface BuildWorkstationSectionOptions {

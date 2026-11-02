@@ -17,7 +17,7 @@ const writeSchema = Type.Object({
 
 export const writeToolSystemPromptContribution = {
 	snippet: "Create or overwrite files",
-	guidelines: ["Use write only for new files or complete rewrites."],
+	guidelines: ["write only for new files or full rewrites."],
 } as const;
 
 export type WriteToolInput = Static<typeof writeSchema>;
