@@ -949,7 +949,9 @@ it stops the socket's record queue and writes one last record:
 ```
 
 `detail` is optional. The engine then waits for that record to drain for at most 1 second and closes the socket
-regardless. When the transport is already broken (the write fails, or the drain is refused) the socket closes at once
+regardless. A host shutdown bounds every one of these waits, and the half-close that flushes the record, by its
+own 2-second connection budget inside the supervisor's 5-second stop window; a socket still open at the end of that
+budget is destroyed. When the transport is already broken (the write fails, or the drain is refused) the socket closes at once
 and the record may never arrive, so a client must not depend on it: a close with no `socket_closing` is handled as
 `retryable: true`. A legacy socket, and every socket with the flag off, is closed exactly as before, with no new record.
 

@@ -33,6 +33,7 @@ import { hostWatchdogBinding, internalHostTransport } from "./host-internal-tran
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
+import { closeHostConnections, type HostConnection } from "./host-shutdown-connections.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
@@ -98,14 +99,6 @@ const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
  * hold every session file it served for as long as one close stays wedged.
  */
 const WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS = 10_000;
-
-interface Connection {
-	readonly id: string;
-	readonly sink: RpcConnectionSink;
-	readonly detach: () => void;
-	/** RULING-124: every host close names its reason; a compact peer is told before its socket closes. */
-	readonly close: (code: SocketClosingCode) => Promise<void>;
-}
 
 /**
  * Socket agent events are delivered only to connections attached to their
@@ -286,7 +279,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 async function runSocketHost(options: MultiSessionHostOptions, socketPath: string): Promise<never> {
 	await prepareSocketPath(socketPath);
 	const writer = new SessionEventWriter(() => {});
-	const connections = new Map<string, Connection>();
+	const connections = new Map<string, HostConnection>();
 	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a
 	// connection that has only sent observing reads (`status`) is not occupancy.
 	const occupancy = new ClientOccupancy(() => {}, hostInstanceId());
@@ -480,7 +473,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// An announced close half-closes so `socket_closing` is flushed first (SOCKET_CUT_GRACE_MS bounds it).
 			const close = (code: SocketClosingCode) =>
 				writer.closeConnection(id, code, (announced) => (announced ? sink.close?.() : socket.destroy()));
-			connections.set(id, { id, sink, detach, close });
+			connections.set(id, { id, sink, socket, detach, close });
 			socket.once("close", detach);
 			socket.once("error", () => detach());
 		};
@@ -497,6 +490,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const shutdown = async (exitCode = 0, watchdogCleanup?: Promise<void>): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
 		shuttingDown = true;
+		const startedAt = Date.now();
 		observers.stop();
 		handover?.dispose();
 		presenterControl?.dispose();
@@ -514,9 +508,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			await (process.platform === "win32"
 				? Promise.race([router.dispose(), delay(WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS)])
 				: router.dispose());
-			await writer.flush();
-			await Promise.all([...connections.values()].map((connection) => connection.close("host_shutdown")));
-			for (const connection of connections.values()) connection.detach();
+			const open = [...connections.values()];
+			const cancelForce = await closeHostConnections(open, () => writer.flush(), startedAt, hostLog);
 			// libuv unlinks the bound NAME when the listening handle closes - which
 			// would delete a newer host's entry renamed over this path. Shield the
 			// current entry for the close, then let the ownership check decide.
@@ -525,6 +518,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					? Promise.race([closeServer(server), delay(WINDOWS_SHUTDOWN_HARD_EXIT_MS)])
 					: closeServer(server),
 			);
+			cancelForce();
 			// Ownership-checked: unlink only the entry THIS process bound. After a
 			// takeover renamed a newer host's socket over the same path, the
 			// identity no longer matches and the replacement stays published.
