@@ -57,7 +57,7 @@ function capturedShell(originalShell, options, guard, escape = originalShell.esc
 		const promise = originalShell(isolateStdin(strings), ...expressions);
 		return captureShellPromise(promise, options);
 	};
-	for (const key of Object.keys(originalShell)) shell[key] = originalShell[key];
+	copyShellKeys(shell, originalShell);
 	if (typeof originalShell.Shell === "function") shell.Shell = capturedShellClass(originalShell.Shell, options, guard, escape);
 	for (const method of SHELL_CONFIG_METHODS) {
 		shell[method] = (...args) => {
@@ -66,6 +66,17 @@ function capturedShell(originalShell, options, guard, escape = originalShell.esc
 		};
 	}
 	return shell;
+}
+
+// Copies the shell's enumerable own keys the wrapper does not already own, as ordinary writable properties. A
+// function's own `name` and `length` are read-only, so assigning them throws in a module: on Bun 1.4.4 the only own
+// enumerable key of a `new Bun.$.Shell()` instance is `name`. The source's flags are not copied either, because
+// `Bun.$.Shell` itself is non-writable there and the wrapper replaces it right after.
+function copyShellKeys(target, source) {
+	for (const key of Object.keys(source)) {
+		if (Object.hasOwn(target, key)) continue;
+		Object.defineProperty(target, key, { value: source[key], writable: true, enumerable: true, configurable: true });
+	}
 }
 
 // `new Bun.$.Shell()` builds an independent `$` with its own env and cwd; each instance is judged and captured

@@ -17,7 +17,11 @@ export const NARROW =
 export const ALLOW: KillGuardVerdict = { action: "allow" };
 
 /** One stderr line: the tag, the rule, the evidence, the narrow alternative and the setting that turns the guard off. */
-export function refuse(rule: KillGuardRule, evidence: string, alternative = NARROW): KillGuardVerdict {
+export function refuse(
+	rule: KillGuardRule,
+	evidence: string,
+	alternative = NARROW,
+): Extract<KillGuardVerdict, { readonly action: "refuse" }> {
 	const line = `${KILL_GUARD_TAG} refused (${rule} ${RULE_NAMES[rule]}): ${evidence}. ${alternative} ${OFF_SWITCH}`;
 	return { action: "refuse", rule, message: line.replace(/\s*\n\s*/g, " ") };
 }

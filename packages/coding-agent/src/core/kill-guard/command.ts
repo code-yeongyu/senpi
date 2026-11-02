@@ -11,6 +11,7 @@ import { ALLOW, combine, defer, refuse } from "./verdict.ts";
 
 const KILL_FAMILY = new Set(["kill", "pkill", "killall"]);
 const basename = (text: string) => text.split("/").pop() ?? text;
+const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 
 function pipedIntoKill(segment: BashCommandSegment, segments: readonly BashCommandSegment[]): boolean {
 	const position = segments.indexOf(segment);
@@ -19,14 +20,24 @@ function pipedIntoKill(segment: BashCommandSegment, segments: readonly BashComma
 	);
 }
 
-/** nix-shell, chroot and systemd-run run a command the lexer does not unwrap; the guard reads it from their words. */
+/** The command line nix-shell runs (`--run`/`--command`), or the applet line busybox runs (`busybox sh -c ...`). */
+function innerScript(segment: BashCommandSegment): string | undefined {
+	if (segment.name === "busybox")
+		return segment.words.some((word) => word.dynamic)
+			? undefined
+			: segment.words.map((word) => quote(word.text)).join(" ");
+	const index = segment.words.findIndex((word) => word.text === "--run" || word.text === "--command");
+	const script = index < 0 ? undefined : segment.words[index + 1];
+	return script === undefined || script.dynamic ? undefined : script.text;
+}
+
+/** nix-shell, busybox, chroot and systemd-run run a command the lexer does not unwrap; the guard reads it from their words. */
 function unwrapOpaque(segment: BashCommandSegment): BashCommandSegment[] {
 	const wrapper = { name: segment.name, words: segment.words };
-	if (segment.name === "nix-shell") {
-		const index = segment.words.findIndex((word) => word.text === "--run" || word.text === "--command");
-		const script = index < 0 ? undefined : segment.words[index + 1];
-		if (script === undefined || script.dynamic) return [];
-		const inner = analyzeBashCommandWords(script.text);
+	if (segment.name === "nix-shell" || segment.name === "busybox") {
+		const script = innerScript(segment);
+		if (script === undefined) return [];
+		const inner = analyzeBashCommandWords(script);
 		if (inner.kind !== "parsed") return [];
 		return inner.segments.map((child) => ({ ...child, wrappers: [...segment.wrappers, wrapper, ...child.wrappers] }));
 	}
@@ -67,7 +78,11 @@ function judgeSegment(
 
 /** A command the lexer cannot parse is refused only for a literal `kill -1`; other kill words are left to runtime. */
 function judgeUnparsed(command: string): KillGuardVerdict {
-	const lines = bestEffortCommandLines(command);
+	// `env -S` / `--split-string` take a whole command line inside one word (`--split-string=kill -9 -1`, `-Skill -1`):
+	// the words after `=` and after a glued `-S` are read as command starts too.
+	const lines = [command, command.replaceAll("=", " "), command.replace(/(^|[\s'"])-S/g, "$1")].flatMap((text) =>
+		bestEffortCommandLines(text),
+	);
 	for (const [name, second, third] of lines) {
 		if (name !== "kill") continue;
 		const signalThenAll = (second === "--" || /^-[A-Za-z0-9]+$/.test(second ?? "")) && third === "-1";
@@ -84,8 +99,6 @@ export function judgeCommand(command: string, context: KillGuardContext): KillGu
 	if (analysis.kind === "unparsed") return judgeUnparsed(command);
 	return combine(analysis.segments.map((segment) => judgeSegment(segment, analysis.segments, context)));
 }
-
-const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 
 /** Judges a spawn argv (no shell reads it); `["sh", "-c", script]` is read through the script. */
 export function judgeArgv(argv: readonly string[], context: KillGuardContext): KillGuardVerdict {

@@ -212,6 +212,21 @@ describe("pkill / killall / kill command lines", () => {
 		});
 	});
 
+	it.each([
+		["busybox kill -9 -1"],
+		["busybox sh -c 'kill -9 -1'"],
+		["fish -c 'kill -9 -1'"],
+		["env -S 'kill -9 -1'"],
+		["env --split-string='kill -9 -1'"],
+		["env -S'kill -9 -1'"],
+	])("reads the command behind %s (R3)", (command) => {
+		expect(rule(judgeCommand(command, fixture().context))).toBe("R3");
+	});
+
+	it.each([["busybox echo kill -9 -1"], ["busybox ls"]])("allows %s", (command) => {
+		expect(judgeCommand(command, fixture().context)).toEqual({ action: "allow" });
+	});
+
 	it("refuses killall with age filters it cannot resolve", () => {
 		expect(rule(judgeCommand("killall -o 5m node", fixture().context))).toBe("R5");
 	});

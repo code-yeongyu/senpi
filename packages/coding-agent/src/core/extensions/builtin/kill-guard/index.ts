@@ -1,8 +1,14 @@
 import { judgeCommand } from "../../../kill-guard/command.ts";
 import { hostKillGuardContext, killGuardProtectedPids, readKillGuardSetting } from "../../../kill-guard/host.ts";
 import { activateKillGuardRuntime, releaseKillGuardRuntime } from "../../../kill-guard/runtime.ts";
+import { refuse } from "../../../kill-guard/verdict.ts";
 import type { ExtensionAPI, ToolCallEventResult } from "../../types.ts";
-import { bashInputStream, typeInto } from "./typed-lines.ts";
+import { isWakeSourceStateEvent, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
+import { bashInputStream, type SubmittedLine, typeInto } from "./typed-lines.ts";
+import { forgetAgentSession, keepTypedSession, noteRunningShells, typedSession } from "./typed-sessions.ts";
+
+const UNFOLLOWABLE =
+	"a bash_input line was edited with a key the guard cannot follow (tab completion, history recall, a meta key or another escape sequence), and the edited line could run a kill-family command";
 
 /** The command text of a `bash` or `monitor` call, or `undefined` for any other tool. */
 function commandOf(toolName: string, input: Record<string, unknown>): string | undefined {
@@ -21,25 +27,58 @@ function commandOf(toolName: string, input: Record<string, unknown>): string | u
 export default function killGuardExtension(pi: ExtensionAPI): void {
 	let enabled = true;
 	const holder = {};
-	// Text typed into a background session without a line break, per bash_id: a later Enter submits it (A7).
-	const pendingLines = new Map<string, string>();
+	let sessionKey = "";
+	let stopWatchingShells = () => {};
 	const refusal = (command: string): ToolCallEventResult | undefined => {
 		// The PTY bash tool, the core bash tool and monitors start the command in a fresh session and process group.
 		const verdict = judgeCommand(command, hostKillGuardContext({ kind: "fresh-session" }, "bash"));
 		return verdict.action === "refuse" ? { block: true, reason: verdict.message } : undefined;
 	};
+	// Every line the call completes runs, each line break a command separator. An edited line is judged as every line
+	// it could be, and refused outright when a key the guard cannot follow could have built a kill-family command.
+	const judgeLines = (lines: readonly SubmittedLine[]): ToolCallEventResult | undefined => {
+		const texts = lines.map((line) => line.text);
+		const variants = [
+			texts,
+			...lines.flatMap((line, index) =>
+				line.alternatives.map((alternative) => texts.map((text, at) => (at === index ? alternative : text))),
+			),
+		];
+		for (const variant of variants) {
+			const refused = refusal(variant.join("\n"));
+			if (refused !== undefined) return refused;
+		}
+		if (!lines.some((line) => line.unfollowable)) return undefined;
+		return {
+			block: true,
+			reason: refuse("R5", UNFOLLOWABLE, "Type the whole command as plain text and submit it.").message,
+		};
+	};
 	const judgeBashInput = (input: Record<string, unknown>): ToolCallEventResult | undefined => {
 		const id = typeof input.bash_id === "string" ? input.bash_id : "";
-		const typed = typeInto(pendingLines.get(id) ?? "", bashInputStream(input));
-		// Every line the call completes runs, each line break a command separator; a refused call writes nothing.
-		const refused = typed.lines.length === 0 ? undefined : refusal(typed.lines.join("\n"));
-		if (refused !== undefined) return refused;
-		if (typed.pending === "") pendingLines.delete(id);
-		else pendingLines.set(id, typed.pending);
-		return undefined;
+		const typed = typeInto(typedSession(sessionKey, id), bashInputStream(input));
+		// A refused call writes nothing, so the shell's line stays as it was.
+		const refused = typed.lines.length === 0 ? undefined : judgeLines(typed.lines);
+		if (refused === undefined) keepTypedSession(sessionKey, id, typed.session);
+		return refused;
 	};
-	pi.on("session_start", (_event, ctx) => {
-		pendingLines.clear();
+	pi.on("session_start", (event, ctx) => {
+		sessionKey = ctx.sessionManager?.getSessionId?.() ?? "";
+		// A reload keeps the terminal's PTY sessions and the text typed into them; any other start brings fresh ones.
+		if (event.reason !== "reload") forgetAgentSession(sessionKey);
+		stopWatchingShells();
+		stopWatchingShells = pi.events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
+			if (
+				!isWakeSourceStateEvent(data) ||
+				data.source !== "terminal-background-sessions" ||
+				data.items === undefined
+			)
+				return;
+			noteRunningShells(
+				sessionKey,
+				data.items.map((item) => item.id),
+			);
+		});
 		enabled = readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on";
 		if (!enabled) {
 			// Only this session's hold: another session in the process keeps its own until it reads the setting.
@@ -60,7 +99,12 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 			);
 		}
 	});
-	pi.on("session_shutdown", () => releaseKillGuardRuntime(holder));
+	pi.on("session_shutdown", (event) => {
+		releaseKillGuardRuntime(holder);
+		stopWatchingShells();
+		stopWatchingShells = () => {};
+		if (event.reason !== "reload") forgetAgentSession(sessionKey);
+	});
 	pi.on("tool_call", (event): ToolCallEventResult | undefined => {
 		if (!enabled) return undefined;
 		if (event.toolName === "bash_input") return judgeBashInput(event.input);

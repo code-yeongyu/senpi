@@ -90,22 +90,30 @@ describe.runIf((process.platform === "darwin" || process.platform === "linux") &
 			expect(originalCalls).toEqual([]);
 		});
 
-		it("judges every shell a cell builds with new Bun.$.Shell()", async () => {
+		it("judges every shell a cell builds with new Bun.$.Shell(), shaped as on Bun 1.4.4", async () => {
 			const ran: string[] = [];
 			const escape = (value: string) => value;
+			// As on Bun 1.4.4: an instance's only own enumerable key is a read-only `name`, it has no `escape`, and
+			// `Bun.$.Shell` is non-writable and non-configurable.
 			function Shell() {
-				return Object.assign(
-					(strings: TemplateStringsArray) => {
-						ran.push(strings.join(""));
-						return Promise.resolve();
-					},
-					{ escape },
-				);
+				const instance = (strings: TemplateStringsArray) => {
+					ran.push(strings.join(""));
+					return Promise.resolve();
+				};
+				return Object.defineProperty(instance, "name", { value: "Shell", enumerable: true });
 			}
+			const $ = Object.defineProperty(
+				Object.assign(() => Promise.resolve(), { escape }),
+				"Shell",
+				{
+					value: Shell,
+					enumerable: true,
+				},
+			);
 			Object.defineProperty(globalThis, "Bun", {
 				configurable: true,
 				value: {
-					$: Object.assign(() => Promise.resolve(), { escape, Shell }),
+					$,
 					spawn: () => ({}),
 					spawnSync: () => ({ success: true, exitCode: 0, stdout: encode(""), stderr: encode("") }),
 				},

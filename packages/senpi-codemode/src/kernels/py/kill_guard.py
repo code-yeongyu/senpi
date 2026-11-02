@@ -18,7 +18,8 @@ import time
 __builtins__ = vars(builtins).copy()
 
 KILL_FAMILY = frozenset(("kill", "pkill", "killall"))
-SHELLS = frozenset(("sh", "bash", "zsh", "dash", "ksh", "mksh", "ash"))
+SHELLS = frozenset(("sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "yash", "posh", "fish", "csh", "tcsh",
+                    "busybox"))
 REACHES_KILL = KILL_FAMILY | SHELLS
 # The host bounds its table read and its dry run at 2 s each; this covers both plus the round trip.
 DEADLINE_SECONDS = 6.0
@@ -74,8 +75,9 @@ def install(port, protected):
 
     def argv_reaches_kill(argv):
         # Any element, not only argv[0]: sudo, env, timeout, nice, nohup and xargs put the kill-family command, or the
-        # shell that runs one, later in argv (amendment A4).
-        return any(basename(word) in REACHES_KILL for word in argv)
+        # shell that runs one, later in argv (amendment A4). A word holding a whole command line (`env -S
+        # "kill -9 -1"`, `--split-string=...`) is split by the program that reads it, so it counts too.
+        return any(basename(word) in REACHES_KILL or ("kill" in word and len(word.split()) > 1) for word in argv)
 
     def check_shell(text):
         if "kill" in text:
