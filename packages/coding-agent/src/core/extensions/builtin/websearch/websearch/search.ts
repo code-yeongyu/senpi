@@ -2,9 +2,11 @@ import { KEYLESS_PROVIDERS } from "./config.ts";
 import type { FetchedPage } from "./providers/shared.ts";
 import {
 	detectSearchChallenge,
+	nextSearchPageRequest,
 	normalizeSearchResponse,
 	parseProviderBody,
 	prepareSearchRequest,
+	searchPaginates,
 	searchResponseError,
 	searchResponseFormat,
 } from "./providers.ts";
@@ -19,6 +21,7 @@ import type {
 	SearchProvider,
 	SearchProviderEntry,
 	SearchRequest,
+	SearchResultItem,
 	WebsearchConfig,
 } from "./types.ts";
 
@@ -263,16 +266,57 @@ async function performProviderSearch(
 		});
 
 	const abort = searchAbortSignal(signal, timeoutMsFor(config));
-	let response: Response;
-	let page: FetchedPage;
+	const max = request.maxResults;
+	const paginates = searchPaginates(config.provider);
+	const seenUrls = new Set<string>();
+	const results: SearchResultItem[] = [];
+	let payload: unknown;
 	try {
 		const prepared = await prepareSearchRequest(config, request, async (built) => {
 			const handshake = await fetch(built.url, requestInit(built, abort.signal));
 			return { status: handshake.status, url: handshake.url || built.url, body: await handshake.text() };
 		});
 		if ("challenge" in prepared) return challengeFailure(prepared.challenge);
-		response = await fetch(prepared.url, requestInit(prepared, abort.signal));
-		page = { status: response.status, url: response.url || prepared.url, body: await response.text() };
+		let built: BuiltSearchRequest = prepared;
+		for (let pageIndex = 0; ; pageIndex += 1) {
+			const response = await fetch(built.url, requestInit(built, abort.signal));
+			const page: FetchedPage = {
+				status: response.status,
+				url: response.url || built.url,
+				body: await response.text(),
+			};
+
+			const challenge = detectSearchChallenge(config.provider, page);
+			if (challenge) return challengeFailure(challenge);
+
+			payload = responsePayload(config.provider, page);
+			if (!response.ok) {
+				const extra: Partial<SearchDetails> = {};
+				const blocked = blockForStatus(response.status);
+				const retryAfter = retryAfterSeconds(response);
+				if (blocked) extra.blocked = blocked;
+				if (retryAfter !== undefined) extra.retryAfterSeconds = retryAfter;
+				return failure(httpErrorMessage(response.status, payload, page.body), extra);
+			}
+
+			const serviceError = searchResponseError(config.provider, payload);
+			if (serviceError) return failure(serviceError);
+
+			const normalized = await normalizeSearchResponse(config.provider, payload);
+			if (paginates) {
+				for (const item of normalized) {
+					if (seenUrls.has(item.url)) continue;
+					seenUrls.add(item.url);
+					results.push(item);
+				}
+			} else {
+				results.push(...normalized);
+			}
+			if (results.length >= max) break;
+			const next = nextSearchPageRequest(config, request, page, payload, pageIndex);
+			if (!next) break;
+			built = next;
+		}
 	} catch (error) {
 		if (signal?.aborted) throw abortReason(signal);
 		return failure(error instanceof Error ? error.message : "Search request failed", { blocked: "network" });
@@ -280,24 +324,6 @@ async function performProviderSearch(
 		abort.cleanup();
 	}
 
-	const challenge = detectSearchChallenge(config.provider, page);
-	if (challenge) return challengeFailure(challenge);
-
-	const payload = responsePayload(config.provider, page);
-	if (!response.ok) {
-		const extra: Partial<SearchDetails> = {};
-		const blocked = blockForStatus(response.status);
-		const retryAfter = retryAfterSeconds(response);
-		if (blocked) extra.blocked = blocked;
-		if (retryAfter !== undefined) extra.retryAfterSeconds = retryAfter;
-		return failure(httpErrorMessage(response.status, payload, page.body), extra);
-	}
-
-	const serviceError = searchResponseError(config.provider, payload);
-	if (serviceError) return failure(serviceError);
-
-	const results = await normalizeSearchResponse(config.provider, payload);
-	const max = request.maxResults;
 	const limitedResults = results.slice(0, max);
 	const details: SearchDetails = {
 		provider: config.provider,

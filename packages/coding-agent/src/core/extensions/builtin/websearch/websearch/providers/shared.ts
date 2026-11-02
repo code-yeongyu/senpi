@@ -47,6 +47,8 @@ export interface ProviderModule {
 		built: BuiltSearchRequest,
 		fetchPage: PageFetcher,
 	): Promise<BuiltSearchRequest | { challenge: string }>;
+	/** Builds the request for the next page of a paginated search; undefined stops after the current page. */
+	nextPage?(ctx: BuildContext, page: FetchedPage, payload: JsonObject, pageIndex: number): BuiltSearchRequest;
 }
 
 /**

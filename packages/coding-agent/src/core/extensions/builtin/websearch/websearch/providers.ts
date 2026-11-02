@@ -23,6 +23,7 @@ import type { BuildContext, FetchedPage, PageFetcher, ProviderModule, ResponseFo
 import { parseObjectPayload, resolveDomainFilters } from "./providers/shared.ts";
 import { startpageProvider } from "./providers/startpage.ts";
 import { tavilyProvider } from "./providers/tavily.ts";
+import { tinyfishProvider } from "./providers/tinyfish.ts";
 import { xaiProvider } from "./providers/xai.ts";
 import { zAiProvider } from "./providers/z-ai.ts";
 import type {
@@ -60,6 +61,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	"exa-mcp": exaMcpProvider,
 	searxng: searxngProvider,
 	keenable: keenableProvider,
+	tinyfish: tinyfishProvider,
 };
 
 function buildContext(config: SearchProviderConfig, request: SearchRequest): BuildContext {
@@ -108,4 +110,22 @@ export async function normalizeSearchResponse(provider: SearchProvider, payload:
 		return module.normalizeDocument(await parseHtmlDocument(html));
 	}
 	return module.normalizeResponse?.(data) ?? [];
+}
+
+/** Whether a provider paginates: the search executor follows `nextPage` across its pages. */
+export function searchPaginates(provider: SearchProvider): boolean {
+	return PROVIDER_MODULES[provider].nextPage !== undefined;
+}
+
+/** Builds the next page's request for a paginating provider, or undefined to stop paginating. */
+export function nextSearchPageRequest(
+	config: SearchProviderConfig,
+	request: SearchRequest,
+	page: FetchedPage,
+	payload: unknown,
+	pageIndex: number,
+): BuiltSearchRequest | undefined {
+	const module = PROVIDER_MODULES[config.provider];
+	if (!module.nextPage) return undefined;
+	return module.nextPage(buildContext(config, request), page, parseObjectPayload(payload), pageIndex);
 }
