@@ -1,14 +1,21 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.2-2] - 2026-11-02
 
 ### Breaking Changes
 
 ### Added
 
+- Behind the compact-updates flag, a `compact_events` RPC connection's live `message_end`, `entry_appended` and `transcript_write_failed` records carry the message ids of the settled recovery rows (`messageId`, `terminalSequence`, `owningMessageId`), so a client can join them across a reconnect, including an entry whose `entry_appended` arrives after other transcript batches, and an entry whose owner the host can no longer vouch for carries `ownerUnknown: true` rather than looking unowned; every other connection receives the same bytes as before ([#5331](https://github.com/code-yeongyu/senpi/issues/5331), [#5337](https://github.com/code-yeongyu/senpi/issues/5337))
+- Behind the compact-updates flag, a `compact_events` RPC connection's live `toolcall_*` updates, `tool_execution_start`/`update`/`end` and `tool_hook_status` records carry the `runtimeItemKey` of their call, the key its recovery snapshot entry carries, so a client can join them across a reconnect even when a `toolCallId` is reused; a record the host cannot attribute to a call, including an execution or hook record for one of several calls reusing one `toolCallId` inside one message, carries `callUnknown: true` instead. Every other connection receives the same bytes as before ([#5346](https://github.com/code-yeongyu/senpi/issues/5346))
+- RPC `question` frames carry an optional `raisedBy`: the connection whose command raised the question, or `"agent"` when no connection's command started the work. Questions are still broadcast to every attached connection ([#5388](https://github.com/code-yeongyu/senpi/pull/5388)).
+
 ### Changed
 
 ### Fixed
+
+- An RPC host start refuses a symlink at its socket path instead of following it, and never removes a socket entry that became reachable after it was judged stale ([#5318](https://github.com/code-yeongyu/senpi/pull/5318))
+- `senpi update` and the startup update notice order zero-padded and `-1` CalVer versions such as `2026.11.02-1`, so installs on those releases see newer releases again ([#5411](https://github.com/code-yeongyu/senpi/pull/5411))
 
 ### Removed
 

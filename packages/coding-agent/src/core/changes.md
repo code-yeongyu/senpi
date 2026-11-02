@@ -1,3 +1,39 @@
+## 2026-11-01 - The recovery identity contract names the compact call exception (RULING-123, senpi#5346)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-recovery-identity.ts`: the contract comment adds that a `compact_events` peer's copy of a live call record carries `runtimeItemKey` or `callUnknown: true`, taken from the calls component. No code changed.
+
+### Why
+
+- RULING-123 (4): the contract comment must state the compact exception.
+
+### Why an extension could not handle it
+
+- It is the core contract comment for the recovery carrier.
+
+### Expected merge conflict zones
+
+- LOW: the comment above `RecoveryCarrier`.
+
+## 2026-11-01 - The recovery identity contract names its compact exception (RULING-120, senpi#5331)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-recovery-identity.ts`: the contract comment says where the identity becomes a property (a `compact_events` peer's copy of `message_end`, `entry_appended` and `transcript_write_failed`, flag on), for whom, and why. No code changed.
+
+### Why
+
+- RULING-120 (4): the old wording, never a property on the record, would be silently contradicted by the compact stamp.
+
+### Why an extension could not handle it
+
+- It is the core contract comment for the recovery carrier.
+
+### Expected merge conflict zones
+
+- LOW: the comment above `RecoveryCarrier`.
+
 ## 2026-10-31 - Restoring a session settles consumed custody of ended runs (part of senpi#4848)
 
 ### What changed
