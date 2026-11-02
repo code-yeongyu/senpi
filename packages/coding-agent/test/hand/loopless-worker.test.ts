@@ -10,11 +10,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { grantLooplessExecuteToTestHarness } from "../../src/modes/rpc/loopless-execute-grant.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
+import type { LooplessWorker } from "../../src/modes/rpc/loopless-worker-client.ts";
+import { LooplessWorkerPool } from "../../src/modes/rpc/loopless-worker-pool.ts";
 import {
 	createLooplessRuntimeFactory,
 	type LooplessRuntime,
 	LooplessToolNotFoundError,
 } from "../../src/modes/rpc/runtime-factory-loopless.ts";
+import type { SessionWorkerClient } from "../../src/modes/rpc/session-worker-client.ts";
+import { SESSION_WORKER_LIMITS, type WorkerSnapshot } from "../../src/modes/rpc/session-worker-protocol.ts";
+import { WorkerCapacity } from "../../src/modes/rpc/worker-capacity.ts";
+import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -114,5 +120,131 @@ describe("loopless worker runtime (senpi#5413)", () => {
 		const runtime = await looplessRuntime();
 
 		await expect(runtime.execute("missing", "call-missing", {})).rejects.toBeInstanceOf(LooplessToolNotFoundError);
+	});
+});
+
+// The admission path under test is production code; the workers are in-memory stand-ins, so counts are exact and
+// nothing depends on machine load (as in X4, test/characterization/worker-cap.test.ts).
+function looplessStandIns(options: { holdStart?: Promise<void> } = {}) {
+	const started: LooplessWorker[] = [];
+	const createWorker = (): LooplessWorker => {
+		let exit: () => void = () => {};
+		const exited = new Promise<void>((resolve) => {
+			exit = resolve;
+		});
+		const worker: LooplessWorker = {
+			exited,
+			start: async () => {
+				await options.holdStart;
+				return ["read"];
+			},
+			close: async () => exit(),
+		};
+		started.push(worker);
+		return worker;
+	};
+	return { started, createWorker };
+}
+
+function sessionRegistry(capacity: WorkerCapacity, cwd: string): WorkerSessionRegistry {
+	let serial = 0;
+	return new WorkerSessionRegistry({
+		configuration: { parsed: parseArgs(["--mode", "rpc"]), cwd, agentDir: join(cwd, "agent"), appMode: "rpc" },
+		closeGraceMs: 10_000,
+		now: Date.now,
+		capacity,
+		createWorker: () => {
+			const id = ++serial;
+			const path = join(cwd, `session-${id}.jsonl`);
+			const snapshot = {
+				state: { sessionId: `durable-${id}`, sessionFile: path, cwd },
+				sessionPath: path,
+				liveSessionPaths: [path],
+				busy: false,
+				streaming: false,
+			} as unknown as WorkerSnapshot;
+			return {
+				snapshot,
+				bindingReady: true,
+				busy: false,
+				exited: Promise.resolve(),
+				prepare: async () => path,
+				commit: async () => snapshot,
+				close: async () => {},
+				quarantine: () => {},
+			} as unknown as SessionWorkerClient;
+		},
+	});
+}
+
+function looplessPool(capacity: WorkerCapacity, createWorker: () => LooplessWorker): LooplessWorkerPool {
+	return new LooplessWorkerPool({
+		configuration: { parsed: parseArgs(["--mode", "rpc"]), cwd: tmpdir(), agentDir: tmpdir(), appMode: "rpc" },
+		capacity,
+		createWorker,
+	});
+}
+
+async function refusal(open: Promise<unknown>): Promise<string | undefined> {
+	return open.then(
+		() => undefined,
+		(cause: unknown) => (cause instanceof Error ? cause.message : String(cause)),
+	);
+}
+
+describe("MULTI cap: the per-hand worker cap holds across sessions (Z2, senpi#5413)", () => {
+	it("admits the cap's loopless workers across sessions and refuses the next one, starting no worker", async () => {
+		const standIns = looplessStandIns();
+		const pool = looplessPool(new WorkerCapacity(), standIns.createWorker);
+		for (let i = 0; i < SESSION_WORKER_LIMITS.workers; i++) await pool.open(tmpdir());
+
+		const refused = await refusal(pool.open(tmpdir()));
+
+		expect(refused).toBe("too_many_sessions");
+		expect(standIns.started).toHaveLength(SESSION_WORKER_LIMITS.workers);
+		expect(pool.size).toBe(SESSION_WORKER_LIMITS.workers);
+	});
+
+	it("counts loopless workers still starting against the cap", async () => {
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const standIns = looplessStandIns({ holdStart: held });
+		const pool = looplessPool(new WorkerCapacity(), standIns.createWorker);
+		const pending = Array.from({ length: SESSION_WORKER_LIMITS.workers }, () => pool.open(tmpdir()));
+
+		const refused = await refusal(pool.open(tmpdir()));
+
+		expect(refused).toBe("too_many_sessions");
+		release();
+		await expect(Promise.all(pending)).resolves.toHaveLength(SESSION_WORKER_LIMITS.workers);
+	});
+
+	it("shares one cap with the session workers of the same process", async () => {
+		const scratch = await mkdtemp(join(tmpdir(), "senpi-rt10-cap-"));
+		cleanups.push(() => rm(scratch, { recursive: true, force: true }));
+		const capacity = new WorkerCapacity();
+		const registry = sessionRegistry(capacity, scratch);
+		const pool = looplessPool(capacity, looplessStandIns().createWorker);
+		const half = SESSION_WORKER_LIMITS.workers / 2;
+		for (let i = 0; i < half; i++) await registry.openSession({ cwd: scratch });
+		for (let i = 0; i < half; i++) await pool.open(scratch);
+
+		const looplessRefused = await refusal(pool.open(scratch));
+		const sessionRefused = await refusal(registry.openSession({ cwd: scratch }));
+
+		expect([looplessRefused, sessionRefused]).toEqual(["too_many_sessions", "too_many_sessions"]);
+	});
+
+	it("frees exactly one slot when one loopless worker closes", async () => {
+		const pool = looplessPool(new WorkerCapacity(), looplessStandIns().createWorker);
+		const opened = [];
+		for (let i = 0; i < SESSION_WORKER_LIMITS.workers; i++) opened.push(await pool.open(tmpdir()));
+
+		await pool.close(opened[0]?.id ?? "");
+
+		await pool.open(tmpdir());
+		expect(await refusal(pool.open(tmpdir()))).toBe("too_many_sessions");
 	});
 });
