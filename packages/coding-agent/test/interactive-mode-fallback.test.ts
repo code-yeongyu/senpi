@@ -120,6 +120,7 @@ describe("InteractiveMode fallback lifecycle", () => {
 			type: "retry_fallback_exhausted",
 			chainKey: "faux/faux-1",
 			lastError: "all models unavailable",
+			attempts: [{ model: "faux/faux-1", reason: "error", error: "all models unavailable" }],
 		});
 
 		expect(fixture.showNoticeBox).toHaveBeenNthCalledWith(
