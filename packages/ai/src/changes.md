@@ -1,3 +1,244 @@
+## 2026-11-01 - Tool names with a stray word prefix resolve to their unique suffix tool (senpi#5316)
+
+### What changed
+
+- `packages/ai/src/utils/tool-name-match.ts`: `resolveToolNameMatch` gains a last-resort step, `strayPrefixMatch`. When the requested name is unregistered, matches nothing through the exact, fold and unprefixed steps, and carries no `mcp` namespace, it resolves to the one registered tool whose exact name is a `_`-separated suffix of the requested name (`trophy_eval` -> `eval`). It refuses when two suffix tools match, when any word of the stripped prefix is a destructive verb (`delete_write`, `force_bash`), or when a prefix word itself names a registered tool (`read_write`); those calls keep the existing not-found error.
+
+### Why
+
+- Models behind a namespacing proxy drop the namespace but keep one word of it (`trophy_eval`, `fringe_write`), and each such call failed `Tool ... not found` and cost a turn (code-yeongyu/oh-my-openagent#12065, senpi#5315).
+
+### Why an extension could not handle it
+
+- The matcher is the shared core resolver used by the agent loop and the Anthropic tool-reference repair; an extension cannot change how an unknown tool-call name is resolved.
+
+### Expected merge conflict zones
+
+- LOW: fork-only file `packages/ai/src/utils/tool-name-match.ts`; upstream has no copy.
+
+## 2026-10-30 - Identify the SIWC credential route (part of #5003)
+
+### What changed
+
+- `packages/ai/src/types.ts` adds the per-credential `OpenAIResponsesCompat.siwc` route marker.
+- `packages/ai/src/provider-diagnostic.ts` preserves a validated SIWC route on structured diagnostics.
+
+### Why
+
+- `packages/ai/src/types.ts` must distinguish plan usage from API-key and Codex routes without token heuristics.
+- `packages/ai/src/provider-diagnostic.ts` must preserve the status-only direct-admission policy across error boundaries.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts` defines the adapter's shared compatibility contract.
+- `packages/ai/src/provider-diagnostic.ts` validates diagnostics before retry and pool consumers read them.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: `OpenAIResponsesCompat`.
+- `packages/ai/src/provider-diagnostic.ts`: diagnostic fields and sanitizer.
+
+## 2026-10-30 - Invoke optional OAuth revocation during logout (part of #5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: invokes the provider's revocation hook, returns its typed result, blocks new auth until every overlapping logout completes using a per-provider counter, and aborts active provider requests before revocation.
+
+### Why
+
+- `packages/ai/src/models.ts`: every Models logout caller must use the same revocation and local-clear path.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/models.ts`: Models owns provider dispatch and the injected credential store.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: logout orchestration and request auth setup.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/ai/src/compat/extension-oauth-types.ts`.
+- The compatibility OAuth prompt type retains the text, secret, or manual-code discriminator through auth adapters.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-30 - Mixed strict tools compatibility contract (senpi#4821)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `OpenAICompletionsCompat` gains optional `mixedStrictTools?: boolean`, defaulting to true.
+
+### Why
+
+- `packages/ai/src/types.ts`: providers need to declare whether a request may mix strict and non-strict function tools independently of strict-schema support.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the shared compatibility interface defines the typed contract consumed by model catalogs and request adapters.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts` `OpenAICompletionsCompat`, beside `supportsStrictMode`.
+
+## 2026-10-30 - Models.login passes the provider's account identity to the login write (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` passes `provider.auth.oauth?.accountIdentity` to `appendLoginSlot`, so a re-login of a saved account replaces it.
+
+### Why
+
+- oh-my-openagent#9633: the interactive `/login` path writes through `Models.login`.
+
+### Why an extension could not handle it
+
+- The write happens inside `Models.login` under the credential lock.
+
+### Expected merge conflict zones
+
+- LOW: the `appendLoginSlot` call in `Models.login`.
+
+## 2026-10-27 - No Anthropic OAuth flow in the bundled loaders or the oauth entry point (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/bun-oauth.ts`: the standalone binary registers no `anthropic` OAuth flow.
+- `packages/ai/src/oauth.ts`: `loadAnthropicOAuth` is no longer re-exported; `registerBundledOAuthFlowLoaders` stays.
+
+### Why
+
+- senpi#4436 (R7): the PKCE direct-login route and its token refresh are removed; nothing loads them.
+
+### Why an extension could not handle it
+
+- The bundled flow registry and the `./oauth` subpath are pi-ai's own public surface.
+
+### Expected merge conflict zones
+
+- LOW: the import list and loader object in `bun-oauth.ts`; the first export line of `oauth.ts`.
+
+## 2026-10-27 - Context and the leading system message carry the stable system prefix (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `Context.systemPromptStablePrefix` and request-time `SystemMessage.stablePrefix` (the prefix text, so a rewritten prompt that no longer starts with it is detected). The prefix is shared across sessions in the same working directory: the base prompt names the cwd.
+
+### Why
+
+- Providers with block-level prompt caching need to know where the cross-session stable part of the system prompt ends.
+
+### Why an extension could not handle it
+
+- `Context` and `SystemMessage` are the provider-facing contract defined in `packages/ai/src/types.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the `Context` and `SystemMessage` interfaces in `packages/ai/src/types.ts`.
+
+## 2026-10-30 - `StreamOptions.onTransportActivity` (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/types.ts`: new optional `StreamOptions.onTransportActivity`, called whenever a response body delivers bytes, keep-alives included. Liveness only; adapter support is explicit.
+
+### Why
+
+- The agent loop needs to tell a connection that is alive but has no content yet from a dead one, and only the adapter sees the bytes. A callback in the options crosses lazy and recovery wrappers unchanged, which a method on the inner stream would not.
+
+### Why an extension could not handle it
+
+- The option is part of the core stream contract every adapter receives.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `StreamOptions`, next to `onProviderStreamEvent`.
+
+## 2026-10-29 - `Provider.baseUrl` documents the model.baseUrl transport contract (senpi#4765)
+
+### What changed
+
+- `packages/ai/src/models.ts`: the `Provider.baseUrl` doc comment states that transports send each request to `model.baseUrl`, never to this value or a hard-coded host, because senpi sets every model's `baseUrl` (and this field) to a user's models.json `baseUrl` when one is configured. Documentation only; no type change.
+
+### Why
+
+- senpi#4765: a native `Provider` registered by an extension is composed under the same rule as any other provider: when models.json sets a `baseUrl`, every model carries it, so its `stream` must read `model.baseUrl`.
+
+### Why an extension could not handle it
+
+- `Provider` is the pi-ai public provider type; its contract is documented where it is declared.
+
+### Expected merge conflict zones
+
+- LOW: the doc comment above `Provider.baseUrl` in `models.ts`.
+
+## 2026-10-27 - Shared seed frontier contract (part of #4272)
+
+### What changed
+
+- `packages/ai/src/index.ts` exports the shared seed frontier validator and typed error.
+
+### Why
+
+- `packages/ai/src/index.ts` gives the producer and session projector one frontier contract.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/index.ts` owns the package surface used by the session projector.
+
+### Expected merge conflict zones
+
+- The capture export block in `packages/ai/src/index.ts`.
+
+## 2026-10-26 - AssistantMessage.credentialServedRecently (senpi#2491)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `credentialServedRecently?: true`, set by the coding-agent model runtime on a failed response whose credential (provider, endpoint and key) served a response moments before.
+
+### Why
+
+- `packages/ai/src/types.ts`: a 401 right after the same key served is a gateway refusing that one request, not a dead key; consumers need a typed mark to tell the two apart without reading `errorMessage`.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the mark rides the core message type that the agent loop, `agent_end.failure` and the fallback decision all read; an extension cannot add a typed field to it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts` `AssistantMessage`, beside `failureSource`.
+
+## 2026-10-25 - errorCause names a model configuration error (senpi#4282)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage.errorCause` also accepts `{ type: "model_config"; model: string }`.
+- `packages/ai/src/index.ts`: exports `utils/provider-error.ts` (`isModelConfigError`, `redactSecrets`, `redactCredentialShapes`, `sanitizeProviderErrorMessage`).
+
+### Why
+
+- Clients and task hosts read a typed cause instead of matching provider text when a configured model id is not served by its route.
+
+### Why an extension could not handle it
+
+- The assistant message shape is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `errorCause` field of `AssistantMessage`; one export line in `index.ts`.
+
 ## 2026-10-26 - Reader note on the capture index (senpi#4349, part of #4272)
 
 ### What changed

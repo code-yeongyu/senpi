@@ -49,7 +49,7 @@ const bashSchema = Type.Object({
 
 export const bashToolSystemPromptContribution = {
 	snippet: "Execute bash commands (ls, rg, find, etc.)",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	guidelines: ["PI_* env vars = current model + session details."],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -269,6 +269,7 @@ function resolveSpawnContext(
 		}
 		if (ctx.thinkingLevel) env.PI_REASONING_LEVEL = ctx.thinkingLevel;
 		if (ctx.browserEngine) env.OMO_BROWSER_ENGINE = ctx.browserEngine;
+		Object.assign(env, ctx.sessionEnv);
 	}
 	const baseContext: BashSpawnContext = { command, cwd, env };
 	return spawnHook ? spawnHook(baseContext) : baseContext;

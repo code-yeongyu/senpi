@@ -34,6 +34,7 @@ export {
 
 /** Process-local lifecycle owner for multi-session RPC runtimes. */
 export class RpcSessionRegistry {
+	readonly supportsCompact: (profile?: RpcSessionLaunchProfile) => boolean;
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new Set<string>();
 	private readonly pendingClaims: PendingClaims = new Map();
@@ -64,6 +65,7 @@ export class RpcSessionRegistry {
 						createRuntime: (runtimeOptions) =>
 							options.createRuntime({ ...runtimeOptions, mcpRegistry: options.mcpRegistry }),
 					};
+		this.supportsCompact = options.createRuntime.supportsCompact ?? (() => false);
 		this.now = options.now ?? Date.now;
 		this.closeGraceMs = options.closeGraceMs ?? 10_000;
 		this.teardownHost = {
@@ -175,6 +177,7 @@ export class RpcSessionRegistry {
 			context: publishedSessionContext(entry.context, entry.contextOverlay),
 			// A closing entry has already released its last attachment; never publish that as negative.
 			attachments: Math.max(0, entry.attachments),
+			retain_on_disconnect: entry.retainOnDisconnect === true,
 			status: entry.state === "quarantined" ? "closing" : entry.state,
 			idleMs: Math.max(0, now - entry.lastCommandAt),
 			tool_child: entry.runtime?.session.toolChildRow() ?? { state: "none" },

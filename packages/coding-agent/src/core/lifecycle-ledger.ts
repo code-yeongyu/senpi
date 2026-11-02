@@ -115,6 +115,7 @@ export class LifecycleLedger {
 		const { lastStop: _lastStop, ...current } = this.current;
 		this.current = current;
 		this.runId = crypto.randomUUID();
+		this.current = { ...this.current, runId: this.runId };
 		this.runActive = true;
 		this.admissionWriteFailed = false;
 		// A new run is unsaved state even inside an open epoch: recompute() treats records that differ only in runActive
@@ -339,7 +340,6 @@ function wireSnapshot(record: LifecycleRecord): SessionLifecycle {
 		synthetic: _synthetic,
 		epochSealed: _sealed,
 		settleRequest: _request,
-		runId: _runId,
 		runActive: _runActive,
 		...snapshot
 	} = record;

@@ -15,7 +15,14 @@ import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 } from "@earendil-works/pi-agent-core";
-import type { JsonObject, NestedToolCallRecord, NestedToolCalls, TextContent, Usage } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	JsonObject,
+	NestedToolCallRecord,
+	NestedToolCalls,
+	TextContent,
+	Usage,
+} from "@earendil-works/pi-ai";
 import { combineUsage } from "./usage-totals.ts";
 
 /**
@@ -132,12 +139,18 @@ export interface NestedToolCallHost {
 	getTools(): readonly AgentTool[];
 	/** Whether every nested call runs exclusively, as when the agent executes tool calls sequentially. */
 	isSequential(): boolean;
-	/** Run the call through the tool pipeline, with hooks that report `parentToolCallId`. */
+	/** The assistant message that issued the model-issued call `rootToolCallId`, while that call runs. */
+	issuerOf?(rootToolCallId: string): AssistantMessage | undefined;
+	/**
+	 * Run the call through the tool pipeline, with hooks that report `parentToolCallId`. `issuedBy` is the issuing
+	 * message of the model-issued call the nested call descends from, when the host recorded one (senpi#5234).
+	 */
 	runToolCall(
 		toolCall: AgentToolCall,
 		parentToolCallId: string,
 		signal: AbortSignal | undefined,
 		onUpdate: (partialResult: AgentToolResult<unknown>) => Promise<void>,
+		issuedBy: AssistantMessage | undefined,
 	): Promise<AgentToolCallOutcome>;
 	emit(event: NestedToolExecutionEvent): Promise<void>;
 }
@@ -148,6 +161,12 @@ interface CallScope {
 	nextId: number;
 	/** Set inside a call that holds the exclusive queue, so its own nested calls do not wait on it. */
 	holdsQueue: boolean;
+}
+
+/** The model-issued call a nested call descends from: nested IDs are `<callerId>/<n>`. */
+export function rootToolCallId(toolCallId: string): string {
+	const separator = toolCallId.indexOf("/");
+	return separator === -1 ? toolCallId : toolCallId.slice(0, separator);
 }
 
 function textOf(result: AgentToolResult<unknown>): string {
@@ -217,17 +236,23 @@ export class NestedToolCallRunner {
 		});
 		let outcome: AgentToolCallOutcome;
 		try {
-			outcome = await this.host.runToolCall(toolCall, callerId, options.signal, async (partialResult) => {
-				options.onUpdate?.(partialResult);
-				await this.host.emit({
-					type: "tool_execution_update",
-					toolCallId: toolCall.id,
-					toolName: name,
-					args: toolCall.arguments,
-					partialResult,
-					parentToolCallId: callerId,
-				});
-			});
+			outcome = await this.host.runToolCall(
+				toolCall,
+				callerId,
+				options.signal,
+				async (partialResult) => {
+					options.onUpdate?.(partialResult);
+					await this.host.emit({
+						type: "tool_execution_update",
+						toolCallId: toolCall.id,
+						toolName: name,
+						args: toolCall.arguments,
+						partialResult,
+						parentToolCallId: callerId,
+					});
+				},
+				this.host.issuerOf?.(rootToolCallId(callerId)),
+			);
 		} finally {
 			this.scopes.delete(toolCall.id);
 			release?.();

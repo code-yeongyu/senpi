@@ -5,6 +5,7 @@ import { PassThrough, type Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { windowsTreeKillArgs } from "../../../../../scripts/windows-process-tree.mjs";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 interface InspectorState {
 	readonly url: string;
@@ -73,7 +74,7 @@ function findFreePort(): Promise<number> {
 }
 
 function sanitizedChildEnv(): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env, PI_OFFLINE: "1" };
+	const env: NodeJS.ProcessEnv = { ...hostSpawnEnv(), PI_OFFLINE: "1" };
 	delete env.NODE_OPTIONS;
 	return env;
 }

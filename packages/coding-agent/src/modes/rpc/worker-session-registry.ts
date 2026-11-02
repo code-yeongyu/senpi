@@ -31,6 +31,7 @@ export interface WorkerSessionRegistryOptions {
 
 /** Transport-side lifecycle owner. Caller paths are never inspected on this event loop. */
 export class WorkerSessionRegistry {
+	readonly supportsCompact = () => true;
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new SessionPathReservations();
 	private readonly claims = new Map<string, WorkerSessionClaims>();
@@ -45,7 +46,8 @@ export class WorkerSessionRegistry {
 		this.options = options;
 		this.closeGraceMs = options.closeGraceMs;
 		this.now = options.now;
-		this.createWorker = options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks));
+		this.createWorker =
+			options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks, options.configuration.agentDir));
 	}
 
 	get size(): number {
@@ -167,6 +169,7 @@ export class WorkerSessionRegistry {
 				context: publishedSessionContext(entry.context, entry.contextOverlay),
 				// A closing entry has already released its last attachment; never publish that as negative.
 				attachments: Math.max(0, entry.attachments),
+				retain_on_disconnect: entry.retainOnDisconnect === true,
 				status: entry.state === "quarantined" ? "closing" : entry.state,
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				// A worker isolate's session has no tool child of its own yet (senpi#3566 todo 4 serves the in-process host).

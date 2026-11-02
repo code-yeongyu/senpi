@@ -167,11 +167,11 @@ async function sendFollowUp(
 describe("codex continuation state across model switches", () => {
 	const harnesses: Harness[] = [];
 
-	afterEach(() => {
+	afterEach(async () => {
 		vi.unstubAllGlobals();
 		closeChatGptSubscriptionWebSocketSessions();
 		resetChatGptSubscriptionWebSocketDebugStats();
-		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+		while (harnesses.length > 0) await harnesses.pop()?.cleanup();
 	});
 
 	it("replays full input without previous_response_id when the tool set changes", async () => {
@@ -249,7 +249,7 @@ describe("codex continuation state across model switches", () => {
 		// When: a model switch is rejected because no auth is configured.
 		const target = harness.getModel("faux-2");
 		if (!target) throw new Error("Missing faux-2 model");
-		await expect(harness.session.setModel(target)).rejects.toThrow("No API key");
+		await expect(harness.session.setModel(target)).rejects.toMatchObject({ name: "ModelSwitchAuthError" });
 
 		// Then: the continuation cache and the active model are untouched.
 		expect(harness.session.model?.id).toBe("faux-1");

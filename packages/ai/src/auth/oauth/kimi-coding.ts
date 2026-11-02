@@ -245,13 +245,16 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 		if (response.ok) {
 			return parseTokenResponse(json, "refresh");
 		}
+		const oauthError = typeof json?.error === "string" ? json.error : undefined;
 
-		// Unauthorized: the stored credential is dead; Models clears it and prompts re-login.
-		if (response.status === 401 || response.status === 403 || json?.error === "invalid_grant") {
+		// Unauthorized: the stored credential is dead; Models clears it and prompts re-login. The decision
+		// and the OAuth code travel on the error, so the credential pool never has to read this prose.
+		if (response.status === 401 || response.status === 403 || oauthError === "invalid_grant") {
 			const description = typeof json?.error_description === "string" ? `: ${json.error_description}` : "";
 			throw new OAuthTokenEndpointError(
 				`Kimi Code token refresh unauthorized (status ${response.status})${description}`,
 				response.status,
+				{ oauthError, credentialRefused: true },
 			);
 		}
 
@@ -267,6 +270,7 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 		throw new OAuthTokenEndpointError(
 			`Kimi Code token refresh failed with status ${response.status}${text ? `: ${text}` : ""}`,
 			response.status,
+			{ oauthError },
 		);
 	}
 

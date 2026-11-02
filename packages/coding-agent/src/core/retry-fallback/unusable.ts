@@ -48,6 +48,15 @@ export class UnusableEntries {
 		this.cooldowns.clear(accountKey(model.provider));
 		this.accountErrors.delete(model.provider);
 	}
+
+	/** The provider's accounts changed (a login, an added or re-authorized account): every hold it earned is stale. */
+	clearProvider(provider: string, models: readonly Model<Api>[]): void {
+		this.cooldowns.clear(accountKey(provider));
+		this.accountErrors.delete(provider);
+		for (const model of models) {
+			if (model.provider === provider) this.cooldowns.clear(entryKey(model));
+		}
+	}
 }
 
 function accountKey(provider: string): string {

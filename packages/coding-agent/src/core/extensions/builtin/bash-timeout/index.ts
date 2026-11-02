@@ -1,22 +1,8 @@
-import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
-import { resolveForegroundWindowSeconds } from "../terminal/tools/foreground-window.ts";
+import type { ExtensionAPI } from "../../types.ts";
+import { applyBashTimeout, type BashToolInputLike, resolveBashTimeoutDefaults } from "./timeout.ts";
 
-import {
-	applyBashTimeout,
-	type BashToolInputLike,
-	buildBashTimeoutPrompt,
-	resolveBashTimeoutDefaults,
-} from "./timeout.ts";
-
-export type { BashTimeoutDefaults, BashTimeoutPromptOptions, BashToolInputLike } from "./timeout.ts";
-export {
-	applyBashTimeout,
-	BASH_DEFAULT_TIMEOUT_SECONDS,
-	BASH_MAX_TIMEOUT_SECONDS,
-	buildBashTimeoutPrompt,
-	resolveBashTimeoutDefaults,
-} from "./timeout.ts";
+export type { BashTimeoutDefaults, BashToolInputLike } from "./timeout.ts";
+export { applyBashTimeout, BASH_DEFAULT_TIMEOUT_SECONDS, resolveBashTimeoutDefaults } from "./timeout.ts";
 
 export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 	const env = typeof process !== "undefined" ? process.env : {};
@@ -32,26 +18,5 @@ export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	/**
-	 * Native Anthropic bash replaces the PTY `bash` tool and the terminal
-	 * extension steps aside with it, so nothing implements the auto-detach the
-	 * policy would otherwise advertise.
-	 */
-	const resolveWindow = (ctx: ExtensionContext | undefined): number | undefined => {
-		if (isAnthropicBashEnabled() && ctx?.model?.api === "anthropic-messages") return undefined;
-		return resolveForegroundWindowSeconds(env);
-	};
-
-	pi.on(
-		"before_agent_start",
-		async (event, ctx) => {
-			const foregroundWindowSeconds = resolveWindow(ctx);
-			const prompt = buildBashTimeoutPrompt(
-				defaults,
-				foregroundWindowSeconds === undefined ? {} : { foregroundWindowSeconds },
-			);
-			return { systemPrompt: `${event.systemPrompt}${prompt}` };
-		},
-		{ previewSafe: true },
-	);
+	// The timeout facts reach the model through the terminal section (senpi#5335); this extension adds no prompt text.
 }
