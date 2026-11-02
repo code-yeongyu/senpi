@@ -10,7 +10,9 @@ import { randomUUID } from "node:crypto";
  * stable for the message's lifetime and never reused in the session; nothing else carries them. The same copy of a live
  * call record (`toolcall_*` updates, `tool_execution_*`, `tool_hook_status`) carries the `runtimeItemKey` of the call
  * the host changed with it, or `callUnknown: true` when it changed none (RULING-123, senpi#5346): that key comes from
- * the calls component (`compact-call-model.ts`), not from this carrier.
+ * the calls component (`compact-call-model.ts`), not from this carrier. Calls that share one `toolCallId` inside one
+ * assistant message are told apart only by order, so their snapshot `calls` and settled rows carry `callUnknown: true`
+ * too (senpi#5348): the calls table's own mark, never a confident attribution that can be swapped.
  */
 export interface RecoveryCarrier {
 	readonly messageId: string;

@@ -11,7 +11,7 @@ import { baseRow, textComponent } from "./compact-catalog-transcript.ts";
 import { emptyComponent, stepsComponent } from "./compact-catalog-writer.ts";
 import type { CatalogComponent } from "./compact-recovery-catalog.ts";
 import { protocolId } from "./compact-recovery-ids.ts";
-import type { SettledReader } from "./compact-settled-messages.ts";
+import type { SettledReader } from "./compact-settled-rows.ts";
 
 const SOURCE = familyId("source");
 const BASE = protocolId("base");

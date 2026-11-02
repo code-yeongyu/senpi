@@ -127,9 +127,15 @@ export class CompactCallTable {
 
 	private readonly slotBytesOf = new WeakMap<ValueRef, number>();
 
-	/** Publishes a created or changed call at its creation ordinal and refreshes every index it is reachable by. */
-	put(call: OutstandingCall, creation: { readonly sequence: number; readonly k: number }): void {
+	/**
+	 * Publishes a created or changed call at its creation ordinal and refreshes every index it is reachable by. The
+	 * stored header carries `callUnknown: true` exactly while `sharesIdInMessage` holds for it (#5348), so the snapshot
+	 * row, the in-process view and the settled projection all state the mark this table keeps; the first call to share
+	 * an id with another of its message republishes the others marked.
+	 */
+	put(input: OutstandingCall, creation: { readonly sequence: number; readonly k: number }): void {
 		const order = callOrder(creation.sequence, creation.k);
+		const call = marked(input, this.willShare(input));
 		// Measured before anything changes, so a header the engine cannot serialize leaves the table as it was.
 		const bytes = headerBytes(call);
 		const previous = this.entries.get(call.runtimeItemKey)?.call;
@@ -139,6 +145,17 @@ export class CompactCallTable {
 		this.headerBytes += bytes - (previous ? headerBytes(previous) : 0);
 		this.entries.set(call.runtimeItemKey, { call, order });
 		this.index(call);
+		if (call.callUnknown && call.owningMessageId !== null && call.toolCallId !== null)
+			for (const peer of this.inMessage(call.owningMessageId, call.toolCallId).map((key) => this.get(key)))
+				if (peer && !peer.callUnknown) this.put(peer, creationOf(peer));
+	}
+
+	/** Whether `call`, once put, shares its toolCallId inside its message: the mark is set, or another live call has it. */
+	private willShare(call: OutstandingCall): boolean {
+		const { owningMessageId, toolCallId, runtimeItemKey } = call;
+		if (owningMessageId === null || !toolCallId) return false;
+		if (this.shared.has(sharedKey(owningMessageId, toolCallId))) return true;
+		return this.inMessage(owningMessageId, toolCallId).some((key) => key !== runtimeItemKey);
 	}
 
 	remove(key: string): void {
@@ -205,7 +222,7 @@ export class CompactCallTable {
 				this.byTurn.set(slot, call.runtimeItemKey);
 			const keys = this.byId.get(call.toolCallId) ?? [];
 			if (!keys.includes(call.runtimeItemKey)) this.byId.set(call.toolCallId, [...keys, call.runtimeItemKey]);
-			if (call.owningMessageId !== null && this.inMessage(call.owningMessageId, call.toolCallId).length > 1)
+			if (call.owningMessageId !== null && call.callUnknown)
 				this.shared.add(sharedKey(call.owningMessageId, call.toolCallId));
 		}
 		if (call.owningMessageId !== null && call.contentIndex !== null)
@@ -240,6 +257,11 @@ export class CompactCallTable {
 			if (siblings?.size === 0) this.children.delete(call.parentKey);
 		}
 	}
+}
+
+function marked(call: OutstandingCall, ambiguous: boolean): OutstandingCall {
+	const { callUnknown: _mark, ...header } = call;
+	return ambiguous ? { ...header, callUnknown: true } : header;
 }
 
 function headerBytes(call: OutstandingCall): number {
