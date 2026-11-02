@@ -85,6 +85,58 @@ describe("batchDependencies", () => {
 	}
 });
 
+describe("a durable blocked preparation", () => {
+	it("is a per-call blocked result, not an interrupted preparation: the batch releases the others", async () => {
+		// Given: an executor whose ledger already holds a's preparation as the durable `blocked` outcome
+		const adapter = memoryStore();
+		const store = await adapter.open(await adapter.createMedium());
+		await store.claim(0, 1);
+		const blocked = { reason: "blocked", value: "denied", hooksRan: true, uncertain: false } as const;
+		const released: string[] = [];
+		const executor: BatchExecutor = {
+			prepare: async ({ executionId }) =>
+				executionId === "a" ? { kind: "settled", outcome: blocked } : { kind: "prepared", frozenDigest: "b" },
+			release: async ({ executionId }) => {
+				released.push(executionId);
+				return { kind: "settled", outcome: { reason: "result", value: "ok", hooksRan: true, uncertain: false } };
+			},
+			abort: async () => ({ kind: "settled", outcome: blocked }),
+		};
+		const coordinator = createBatchCoordinator({
+			issuer: "brain",
+			store,
+			epoch: 1,
+			admission: createAdmissionLine(),
+			executor: () => executor,
+		});
+		const call = { executor: "hand", name: "read", args: {}, sequential: false };
+
+		// When: the batch runs
+		const result = await coordinator.run({
+			batchId: "blocked-durable",
+			scope: "scope",
+			workspace: "workspace",
+			generation: 1,
+			admittedAt: 100,
+			leaseUntil: 60_100,
+			calls: [
+				{ ...call, executionId: "a" },
+				{ ...call, executionId: "b" },
+			],
+		});
+
+		// Then: a is blocked with its stored result, and b still runs
+		expect(result).toEqual({
+			decision: "RELEASE",
+			outcomes: [
+				{ kind: "blocked", result: "denied" },
+				{ kind: "result", value: "ok" },
+			],
+		});
+		expect(released).toEqual(["b"]);
+	});
+});
+
 describe("the batch manifest identity", () => {
 	it("refuses a re-sent batch id whose manifest differs, before any prepare is sent", async () => {
 		// Given: a batch whose manifest is durable
