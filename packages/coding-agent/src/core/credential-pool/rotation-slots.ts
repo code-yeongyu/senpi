@@ -9,6 +9,7 @@ import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { activeModelBlockUntil } from "./model-scope.ts";
 import {
 	acquireHalfOpenLease,
+	applicableStoredState,
 	type CredentialSlotRepository,
 	type CredentialSlotState,
 	type HalfOpenLease,
@@ -94,8 +95,10 @@ export type RotationSlot = RunSlot & {
 	/** Env-lane key material for the attempt; never serialized or persisted. */
 	envKey?: string;
 	envVarName?: string;
-	/** Stored-lane material revision binding sidecar health to the current credential; never serialized. */
+	/** Stored-lane account revision: the key account-level health is recorded under; never serialized. */
 	storedRevision?: string;
+	/** Stored-lane material revision: the key a rejected-token block is recorded under; never serialized. */
+	materialRevision?: string;
 	/**
 	 * The half-open probe lease THIS listing took for the attempt; never serialized. `lease` is copied
 	 * from the shared file and may be another request's, so only this id may be handed back.
@@ -206,13 +209,15 @@ export async function listRotationSlots(
 		// A slot of the other kind cannot project, so a session must never be handed it (senpi#3486).
 		for (const slot of slotsOfOwnKind(credential)) {
 			const persisted = state[slot.name];
-			const storedRevision = await repository.storedCredentialRevision(providerId, slot.name, {
+			const revisions = await repository.storedSlotRevisions(providerId, slot.name, {
 				key: slot.key,
 				access: slot.access,
 				refresh: slot.refresh,
 			});
-			// A block belongs to the material that earned it; a re-login starts clean.
-			const applicable = persisted?.credentialRevision === storedRevision ? persisted : undefined;
+			const storedRevision = revisions.account;
+			const materialRevision = revisions.material;
+			// A verdict on the account survives a token refresh; a rejected token retires with its material (senpi#4093).
+			const applicable = applicableStoredState(persisted, revisions);
 			const modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
 			// A slot still blocked for this model never takes the half-open probe lease:
 			// it cannot run, and holding the lease would starve other models' requests.
@@ -245,7 +250,7 @@ export async function listRotationSlots(
 			if (lease !== undefined && lease !== STORE_BUSY) {
 				const leased = await repository.listSlots(providerId, "stored");
 				const leasedState = leased[slot.name];
-				const leasedApplicable = leasedState?.credentialRevision === storedRevision ? leasedState : undefined;
+				const leasedApplicable = applicableStoredState(leasedState, revisions);
 				// Re-read after the awaits: a concurrent request may have blocked this model meanwhile.
 				const leasedModelUntil = activeModelBlockUntil(leasedApplicable?.modelBlocks, modelId, now());
 				await releaseLeaseIfModelBlocked(
@@ -264,6 +269,7 @@ export async function listRotationSlots(
 								lane: "stored",
 								pinned: (credential as PooledCredential).pinned === slot.name,
 								storedRevision,
+								materialRevision,
 								...(leasedModelUntil === undefined ? { heldLeaseId: lease.leaseId } : {}),
 							},
 							leasedApplicable,
@@ -281,6 +287,7 @@ export async function listRotationSlots(
 							lane: "stored",
 							pinned: (credential as PooledCredential).pinned === slot.name,
 							storedRevision,
+							materialRevision,
 						},
 						applicable,
 					),

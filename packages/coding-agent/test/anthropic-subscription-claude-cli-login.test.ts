@@ -19,7 +19,7 @@ afterEach(() => {
 
 type Recorded = { pid?: number; argv?: string[]; configDir?: string; stdin?: string };
 
-function setup(mode: string) {
+function setup(mode: string, fixtureEnv: NodeJS.ProcessEnv = {}) {
 	const root = mkdtempSync(join(tmpdir(), "senpi-claude-cli-login-"));
 	roots.push(root);
 	const executable = join(root, "claude");
@@ -32,6 +32,7 @@ function setup(mode: string) {
 		HOME: root,
 		FAKE_CLAUDE_MODE: mode,
 		FAKE_CLAUDE_RECORD: recordPath,
+		...fixtureEnv,
 	};
 	const records = (): Recorded[] =>
 		readFileSync(recordPath, "utf8")
@@ -43,6 +44,7 @@ function setup(mode: string) {
 		configDir,
 		method: "browser",
 		parentEnv,
+		signal: AbortSignal.timeout(10_000),
 		...overrides,
 	});
 	return { options, records, configDir };
@@ -58,46 +60,74 @@ function isAlive(pid: number): boolean {
 }
 
 describe("claude auth login through the CLI (fixture 2.1.306 shapes)", () => {
-	it("captures the one-click URL through BROWSER and the copy-code URL from stdout", async () => {
-		const { options } = setup("login-auto");
-		const automatic: string[] = [];
+	it.each(["login-auto", "login-auto-inline", "login-auto-terminal", "login-auto-bel"])(
+		"captures both URLs and accepts successful browser login with %s output",
+		async (mode) => {
+			const { options } = setup(mode);
+			const automatic: string[] = [];
+			const manual: string[] = [];
+
+			const login = startClaudeCliLogin(
+				options({ onAutomaticUrl: (url) => automatic.push(url), onManualUrl: (url) => manual.push(url) }),
+			);
+
+			expect(await login.result).toEqual({ outcome: "success" });
+			expect(automatic).toEqual([expect.stringContaining("redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback")]);
+			// The visible URL, whole: "+" in the scope survives and no terminal sequence is left in it.
+			expect(manual).toEqual([
+				"https://claude.ai/oauth/authorize?code=true&client_id=fixture&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Aprofile+user%3Ainference&state=fixture-state",
+			]);
+		},
+	);
+
+	it.each([
+		"https://claude.ai.evil.example/oauth/authorize?code=true&scope=user%3Aprofile+user%3Ainference",
+		"https://claude.ai@evil.example/oauth/authorize?code=true",
+		"https://evil.example/oauth/authorize?redirect=https%3A%2F%2Fclaude.ai",
+		"http://claude.ai/oauth/authorize?code=true",
+		"https://claude.ai:8443/oauth/authorize?code=true",
+	])("never passes on a copy-code URL outside Claude's sign-in hosts: %s", async (url) => {
+		const { options } = setup("login-auto-bel", { FAKE_CLAUDE_MANUAL_URL: url });
 		const manual: string[] = [];
 
-		const login = startClaudeCliLogin(
-			options({ onAutomaticUrl: (url) => automatic.push(url), onManualUrl: (url) => manual.push(url) }),
-		);
+		const login = startClaudeCliLogin(options({ onManualUrl: (value) => manual.push(value) }));
 
 		expect(await login.result).toEqual({ outcome: "success" });
-		expect(automatic).toEqual([expect.stringContaining("redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback")]);
-		expect(manual).toEqual([expect.stringContaining("platform.claude.com%2Foauth%2Fcode%2Fcallback")]);
+		expect(manual).toEqual([]);
 	});
 
-	it("writes a pasted code to stdin as code#state and never to argv", async () => {
-		const { options, records, configDir } = setup("login-paste");
-		const login = startClaudeCliLogin(
-			options({
-				onManualUrl: () => {
-					expect(login.submitCode("https://platform.claude.com/oauth/code/callback?code=abc123&state=st456")).toBe(
-						true,
-					);
-				},
-			}),
-		);
+	it.each(["login-paste", "login-paste-terminal"])(
+		"completes %s through the fallback URL and writes the pasted code only to stdin",
+		async (mode) => {
+			const { options, records, configDir } = setup(mode);
+			const login = startClaudeCliLogin(
+				options({
+					onManualUrl: () => {
+						expect(
+							login.submitCode("https://platform.claude.com/oauth/code/callback?code=abc123&state=st456"),
+						).toBe(true);
+					},
+				}),
+			);
 
-		expect(await login.result).toEqual({ outcome: "success" });
-		const [start, pasted] = records();
-		expect(start?.argv).toEqual(["auth", "login", "--claudeai"]);
-		expect(start?.argv?.join(" ")).not.toContain("abc123");
-		expect(start?.configDir).toBe(configDir);
-		expect(pasted?.stdin).toBe("abc123#st456");
-	});
+			expect(await login.result).toEqual({ outcome: "success" });
+			const [start, pasted] = records();
+			expect(start?.argv).toEqual(["auth", "login", "--claudeai"]);
+			expect(start?.argv?.join(" ")).not.toContain("abc123");
+			expect(start?.configDir).toBe(configDir);
+			expect(pasted?.stdin).toBe("abc123#st456");
+		},
+	);
 
-	it("does not report success for an exit 0 without the success line", async () => {
-		const { options } = setup("login-exit0-silent");
-		const login = startClaudeCliLogin(options({ onManualUrl: () => login.submitCode("code#state") }));
+	it.each(["login-exit0-silent", "login-exit1-success", "login-auto-wrong-prefix"])(
+		"rejects incomplete or failed login %s",
+		async (mode) => {
+			const { options } = setup(mode);
+			const login = startClaudeCliLogin(options({ onManualUrl: () => login.submitCode("code#state") }));
 
-		expect(await login.result).toEqual({ outcome: "failed", reason: "unexpected_exit" });
-	});
+			expect(await login.result).toEqual({ outcome: "failed", reason: "unexpected_exit" });
+		},
+	);
 
 	it("maps an org refusal to a typed reason", async () => {
 		const { options } = setup("login-org-denied");

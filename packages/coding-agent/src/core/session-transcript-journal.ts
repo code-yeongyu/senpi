@@ -16,6 +16,8 @@ export interface PersistedBase {
 	readonly fileIdentity: FileIdentity;
 	readonly count: number;
 	readonly idFingerprint: string;
+	/** RULING-72: the counted lines' content as the load read them (`BaseContentHash`); any later edit changes it. */
+	readonly contentFingerprint: string;
 }
 
 export type TranscriptUnavailableReason =
@@ -23,7 +25,8 @@ export type TranscriptUnavailableReason =
 	| "transcript_file_identity_unavailable"
 	| "transcript_tail_trimmed"
 	| "transcript_tail_over_byte_limit"
-	| "transcript_ancestry_over_byte_limit";
+	| "transcript_ancestry_over_byte_limit"
+	| "transcript_entry_unidentified";
 
 export interface TranscriptPersistence {
 	readonly fileIdentity: FileIdentity;
@@ -91,9 +94,12 @@ export class TranscriptJournal {
 	}
 }
 
+/** One entry's part of `idFingerprint`, whatever the parsed line holds; the recovery base scan hashes the same. */
+export const fingerprintLine = (entry: FileEntry): string => `${entry.type}\u0000${entry.id}\n`;
+
 function fingerprint(entries: readonly FileEntry[]): string {
 	const hash = createHash("sha256");
-	for (const entry of entries) hash.update(`${entry.type}\u0000${entry.id}\n`);
+	for (const entry of entries) hash.update(fingerprintLine(entry));
 	return hash.digest("hex");
 }
 
@@ -167,6 +173,9 @@ export function snapshotTranscript(state: {
 	readonly persistence?: TranscriptPersistence;
 }): TranscriptTransition[] {
 	if (state.unpersisted === undefined) return [{ kind: "unavailable", reason: "transcript_tail_trimmed" }];
+	// A line read from disk is not checked against FileEntry: one without a string id cannot be an ancestry node.
+	if (state.unpersisted.some((entry) => typeof entry.id !== "string"))
+		return [{ kind: "unavailable", reason: "transcript_entry_unidentified" }];
 	return [
 		{ kind: "replace", base: state.base },
 		...state.unpersisted.map((entry): TranscriptTransition => ({
