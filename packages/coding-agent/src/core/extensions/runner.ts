@@ -793,14 +793,17 @@ export class ExtensionRunner {
 
 	/**
 	 * Binds the runtime facts a runner without a session (a loopless runtime, S27a) can still answer: the registered
-	 * tools (`pi.getAllTools()`) and, when given, where hook configuration is loaded from (its contexts then answer
-	 * `getLoadedHookSources()` instead of refusing it). A session binds both through `bindCore`.
+	 * tools (`pi.getAllTools()`), the active set (`pi.getActiveTools()` is empty and `pi.setActiveTools()` changes nothing:
+	 * the active set belongs to a loop, as `getActiveTools()` answers) and, when given, where hook configuration is loaded from (its contexts then answer
+	 * `getLoadedHookSources()` instead of refusing it). A session binds them through `bindCore`.
 	 */
 	bindSessionlessFacts(facts: {
 		readonly getAllTools: GetAllToolsHandler;
 		readonly getLoadedHookSources?: ExtensionContextActions["getLoadedHookSources"];
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
+		this.runtime.getActiveTools = () => this.getActiveTools();
+		this.runtime.setActiveTools = () => {};
 		if (facts.getLoadedHookSources === undefined) return;
 		this.getLoadedHookSourcesFn = facts.getLoadedHookSources;
 		this.sessionlessBoundMembers.add("getLoadedHookSources");

@@ -103,7 +103,7 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 					type: "tool_execution_end",
 					toolCallId: raw.id,
 					toolName: raw.name,
-					result: { ...result, details: result.details },
+					result,
 					isError: result.isError,
 				});
 				return result;

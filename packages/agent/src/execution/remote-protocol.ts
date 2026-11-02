@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
 import type { AgentToolResult } from "../types.ts";
 import type { ExecutionScope } from "./tool-host.ts";
 
@@ -47,9 +47,9 @@ export interface RemoteRefused {
 /** The serializable part of an {@link AgentToolResult}. */
 export interface RemoteToolResult {
 	readonly content: (TextContent | ImageContent)[];
-	readonly details: unknown;
+	readonly details: JsonValue | undefined;
 	readonly isError: boolean;
-	readonly structuredContent?: unknown;
+	readonly structuredContent?: JsonValue;
 	readonly terminate?: boolean;
 	readonly addedToolNames?: readonly string[];
 }
@@ -114,11 +114,16 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 	}
 }
 
+/** The JSON form a value takes on the wire (what the session receives), so a result's types say what arrives. */
+function asJson(value: unknown): JsonValue | undefined {
+	return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
 /** What a hand sends back for a tool result, keeping only what crosses the wire. */
 export function toRemoteToolResult(result: AgentToolResult<unknown>): RemoteToolResult {
 	return {
 		content: result.content ?? [],
-		details: result.details,
+		details: asJson(result.details),
 		isError: result.isError === true,
 		...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }),
 		...(result.terminate === undefined ? {} : { terminate: result.terminate }),
