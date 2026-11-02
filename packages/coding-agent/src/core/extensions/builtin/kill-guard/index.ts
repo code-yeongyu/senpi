@@ -4,8 +4,10 @@ import { activateKillGuardRuntime, releaseKillGuardRuntime } from "../../../kill
 import { refuse } from "../../../kill-guard/verdict.ts";
 import type { ExtensionAPI, ToolCallEventResult } from "../../types.ts";
 import { isWakeSourceStateEvent, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
+import { bashInputBytes } from "./input-keys.ts";
 import type { UnjudgedHistory } from "./shell-history.ts";
-import { bashInputBytes, type SubmittedLine, typeInto } from "./typed-lines.ts";
+import { type ShellReconfiguration, shellReconfiguration } from "./shell-reconfiguration.ts";
+import { type SubmittedLine, typeInto } from "./typed-lines.ts";
 import { forgetAgentSession, keepTypedSession, noteRunningShells, typedSession } from "./typed-sessions.ts";
 
 const UNFOLLOWABLE =
@@ -20,6 +22,25 @@ const UNJUDGED_HISTORY: Record<UnjudgedHistory, string> = {
 		"history expansion is not judged: bash runs the line a `!` event, a leading `^` or `fc` expands to, not the typed one",
 };
 const TYPE_IN_FULL = "Type the full command as plain text and submit it.";
+// The threat model is a mistaken agent: these make every remaining "bash runs a line the guard could not see" path
+// refuse instead of guessing (see shell-reconfiguration.ts).
+const UNMODELLED_KEY = "the line was edited with a key the guard cannot follow";
+const LEAVE_SHELL_AS_IS =
+	"Leave the background shell's key bindings, history and aliases as they are, or run the command with the bash tool.";
+const SHELL_RECONFIGURATION: Record<ShellReconfiguration, readonly [string, string]> = {
+	reconfigure: [
+		"changing the shell's key bindings, history or aliases through bash_input is not judged",
+		LEAVE_SHELL_AS_IS,
+	],
+	"dynamic-command": [
+		"a bash_input command word built by an expansion or ANSI-C quoting is not judged: the guard cannot know which command it names",
+		"Type the command name literally.",
+	],
+	unparsed: [
+		"a bash_input line the guard cannot parse is not judged when it names kill, pkill, killall or a command that changes key bindings, history or aliases",
+		"Type it as a simpler command, or run it with the bash tool.",
+	],
+};
 
 /** The command text of a `bash` or `monitor` call, or `undefined` for any other tool. */
 function commandOf(toolName: string, input: Record<string, unknown>): string | undefined {
@@ -53,6 +74,8 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 		const unjudged = lines.find((line) => line.history !== undefined)?.history;
 		if (unjudged !== undefined)
 			return { block: true, reason: refuse("R5", UNJUDGED_HISTORY[unjudged], TYPE_IN_FULL).message };
+		if (lines.some((line) => line.unmodelledKey === true))
+			return { block: true, reason: refuse("R5", UNMODELLED_KEY, TYPE_IN_FULL).message };
 		const texts = lines.map((line) => line.text);
 		const variants = [
 			texts,
@@ -64,6 +87,12 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 			const refused = refusal(variant.join("\n"));
 			if (refused !== undefined) return refused;
 		}
+		const reconfiguration = lines
+			.flatMap((line) => [line.text, ...line.alternatives])
+			.map(shellReconfiguration)
+			.find((kind) => kind !== undefined);
+		if (reconfiguration !== undefined)
+			return { block: true, reason: refuse("R5", ...SHELL_RECONFIGURATION[reconfiguration]).message };
 		if (!lines.some((line) => line.unfollowable)) return undefined;
 		return {
 			block: true,
