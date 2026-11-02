@@ -96,9 +96,11 @@ describe("retry fallback hardening", () => {
 	});
 
 	it("logs the no-chain decision for an unconfigured model", async () => {
+		// The shipped `"*"` lane means every model now resolves a chain, so the
+		// no_chain decision is only reachable once that lane is tombstoned too.
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0 } },
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, fallbackChains: { "*": [] } } },
 		});
 		harnesses.push(harness);
 		harness.setResponses([overloaded(), fauxAssistantMessage("recovered")]);

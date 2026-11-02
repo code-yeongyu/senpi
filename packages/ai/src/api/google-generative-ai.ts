@@ -2,14 +2,13 @@ import {
 	type GenerateContentConfig,
 	type GenerateContentParameters,
 	GoogleGenAI,
-	ThinkingLevel as GoogleGenAIThinkingLevel,
 	type ThinkingConfig,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
-	Context,
+	AssistantMessageEvent,
 	Model,
 	ModelThinkingLevel,
 	SimpleStreamOptions,
@@ -18,40 +17,43 @@ import type {
 	TextContent,
 	ThinkingBudgets,
 	ThinkingContent,
-	ThinkingLevel,
 	ToolCall,
+	TranscriptContext,
 } from "../types.ts";
+import { pushAssistantCompleteBlock, pushAssistantSignature } from "../utils/assistant-capture.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import type { GoogleThinkingLevel } from "./google-shared.ts";
+import { getSystemMessageText } from "../utils/text.ts";
+import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
+import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
 	convertTools,
+	getDisabledGoogleThinkingConfig,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
+	resolveGoogleThinkingLevel,
 	retainThoughtSignature,
+	retryGoogleRequest,
 	supportsGoogleStrictToolSampling,
+	toGoogleSdkThinkingLevel,
+	toGoogleThinkingLevel,
 	toProviderNativeContent,
+	usesGoogleThinkingLevel,
 } from "./google-shared.ts";
 import { applyExtraBody, buildBaseOptions, GOOGLE_RESERVED_BODY_KEYS } from "./simple-options.ts";
-
-const THINKING_LEVEL_MAP: Record<GoogleThinkingLevel, GoogleGenAIThinkingLevel> = {
-	THINKING_LEVEL_UNSPECIFIED: GoogleGenAIThinkingLevel.THINKING_LEVEL_UNSPECIFIED,
-	MINIMAL: GoogleGenAIThinkingLevel.MINIMAL,
-	LOW: GoogleGenAIThinkingLevel.LOW,
-	MEDIUM: GoogleGenAIThinkingLevel.MEDIUM,
-	HIGH: GoogleGenAIThinkingLevel.HIGH,
-};
 
 export interface GoogleOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "any";
 	thinking?: {
 		enabled: boolean;
 		budgetTokens?: number; // -1 for dynamic, 0 to disable
-		level?: GoogleThinkingLevel;
+		level?: GoogleApiThinkingLevel;
 	};
 }
 
@@ -60,10 +62,11 @@ let toolCallCounter = 0;
 
 export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 	model: Model<"google-generative-ai">,
-	context: Context,
+	context: TranscriptContext,
 	options?: GoogleOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
+	const normalizedContext = collapseSystemMessages(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -93,20 +96,24 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 			const client = createClient(model, apiKey, providerHeadersToRecord(options?.headers));
-			let params = buildParams(model, context, options);
+			let params = buildParams(model, normalizedContext, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await client.models.generateContentStream(params);
+			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let currentIndex = 0;
 			let groundingMetadataEmitted = false;
 			let urlContextMetadataEmitted = false;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
+			// blockIndex() drifts past the open block once a native part is appended; capture keeps the block's own index.
+			const pushOpen = (event: AssistantMessageEvent) => stream.push(event, { contentIndex: currentIndex });
 			for await (const chunk of googleStream) {
+				await options?.onProviderStreamEvent?.(chunk, model);
 				// @google/genai documents GenerateContentResponse.responseId as an output-only field
 				// used to identify each response. Keep the first non-empty one from the stream.
 				output.responseId ||= chunk.responseId;
@@ -124,14 +131,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 							) {
 								if (currentBlock) {
 									if (currentBlock.type === "text") {
-										stream.push({
+										pushOpen({
 											type: "text_end",
 											contentIndex: blocks.length - 1,
 											content: currentBlock.text,
 											partial: output,
 										});
 									} else {
-										stream.push({
+										pushOpen({
 											type: "thinking_end",
 											contentIndex: blockIndex(),
 											content: currentBlock.thinking,
@@ -142,20 +149,23 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 								if (isThinking) {
 									currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
 									output.content.push(currentBlock);
+									currentIndex = blockIndex();
 									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 								} else {
 									currentBlock = { type: "text", text: "" };
 									output.content.push(currentBlock);
+									currentIndex = blockIndex();
 									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 								}
 							}
 							if (currentBlock.type === "thinking") {
 								currentBlock.thinking += part.text;
+								pushAssistantSignature(stream, currentIndex, currentBlock, part.thoughtSignature);
 								currentBlock.thinkingSignature = retainThoughtSignature(
 									currentBlock.thinkingSignature,
 									part.thoughtSignature,
 								);
-								stream.push({
+								pushOpen({
 									type: "thinking_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
@@ -163,11 +173,12 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 								});
 							} else {
 								currentBlock.text += part.text;
+								pushAssistantSignature(stream, currentIndex, currentBlock, part.thoughtSignature);
 								currentBlock.textSignature = retainThoughtSignature(
 									currentBlock.textSignature,
 									part.thoughtSignature,
 								);
-								stream.push({
+								pushOpen({
 									type: "text_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
@@ -180,14 +191,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 							handledAsKnownPart = true;
 							if (currentBlock) {
 								if (currentBlock.type === "text") {
-									stream.push({
+									pushOpen({
 										type: "text_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.text,
 										partial: output,
 									});
 								} else {
-									stream.push({
+									pushOpen({
 										type: "thinking_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.thinking,
@@ -215,17 +226,22 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 
 							output.content.push(toolCall);
 							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-							stream.push({
-								type: "toolcall_delta",
-								contentIndex: blockIndex(),
-								delta: JSON.stringify(toolCall.arguments),
-								partial: output,
-							});
+							// The adapter never parses its own spelling: the complete parsed seed stays authoritative.
+							stream.push(
+								{
+									type: "toolcall_delta",
+									contentIndex: blockIndex(),
+									delta: JSON.stringify(toolCall.arguments),
+									partial: output,
+								},
+								{ parsedThrough: 0 },
+							);
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 						}
 
 						if (!handledAsKnownPart) {
 							output.content.push(toProviderNativeContent(part));
+							pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 						}
 					}
 				}
@@ -236,6 +252,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 						subtype: "groundingMetadata",
 						raw: candidate.groundingMetadata,
 					});
+					pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 					groundingMetadataEmitted = true;
 				}
 
@@ -245,18 +262,20 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 						subtype: "urlContextMetadata",
 						raw: candidate.urlContextMetadata,
 					});
+					pushAssistantCompleteBlock(stream, blockIndex(), blocks[blockIndex()]);
 					urlContextMetadataEmitted = true;
 				}
 
 				if (candidate?.finishReason) {
 					output.rawStopReason = candidate.finishReason;
 					output.stopReason = mapStopReason(candidate.finishReason);
-					if (output.content.some((b) => b.type === "toolCall")) {
+					if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 						output.stopReason = "toolUse";
 					}
 				}
 
 				if (chunk.usageMetadata) {
+					const reasoning = reportedCount(chunk.usageMetadata.thoughtsTokenCount);
 					output.usage = {
 						input:
 							(chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
@@ -264,7 +283,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
 						cacheWrite: 0,
-						reasoning: chunk.usageMetadata.thoughtsTokenCount || 0,
+						...(reasoning === undefined ? {} : { reasoning }),
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {
 							input: 0,
@@ -280,14 +299,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 
 			if (currentBlock) {
 				if (currentBlock.type === "text") {
-					stream.push({
+					pushOpen({
 						type: "text_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.text,
 						partial: output,
 					});
 				} else {
-					stream.push({
+					pushOpen({
 						type: "thinking_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.thinking,
@@ -331,7 +350,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 
 export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOptions> = (
 	model: Model<"google-generative-ai">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
@@ -339,7 +358,10 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
-	const base = buildBaseOptions(model, context, options, apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies GoogleOptions;
 	// `reasoning` is typed as ThinkingLevel, but runtime callers can hand "off"
 	// through, and Gemini 3 maps null "off" so a post-clamp check cannot see it.
 	// Thinking-off takes the disabled wire form, never an enabled one.
@@ -352,15 +374,14 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 		// Only non-reasoning models clamp every request to "off".
 		return stream(model, context, { ...base, thinking: { enabled: false } } satisfies GoogleOptions);
 	}
-	const effort = clampedReasoning as ClampedThinkingLevel;
-	const googleModel = model as Model<"google-generative-ai">;
+	const resolvedLevel = resolveGoogleThinkingLevel(model, clampedReasoning);
 
-	if (isGemini3ProModel(googleModel) || isGemini3FlashModel(googleModel) || isGemma4Model(googleModel)) {
+	if (usesGoogleThinkingLevel(model)) {
 		return stream(model, context, {
 			...base,
 			thinking: {
 				enabled: true,
-				level: getThinkingLevel(effort, googleModel),
+				level: toGoogleThinkingLevel(resolvedLevel),
 			},
 		} satisfies GoogleOptions);
 	}
@@ -369,7 +390,7 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 		...base,
 		thinking: {
 			enabled: true,
-			budgetTokens: getGoogleBudget(googleModel, effort, options.thinkingBudgets),
+			budgetTokens: getGoogleBudget(model, resolvedLevel, options.thinkingBudgets),
 		},
 	} satisfies GoogleOptions);
 };
@@ -384,8 +405,9 @@ function createClient(
 		httpOptions.baseUrl = model.baseUrl;
 		httpOptions.apiVersion = ""; // baseUrl already includes version path, don't append
 	}
-	if (model.headers || optionsHeaders) {
-		httpOptions.headers = { ...model.headers, ...optionsHeaders };
+	const headers = providerHeadersToRecord({ "User-Agent": getPiUserAgent(), ...model.headers, ...optionsHeaders });
+	if (headers) {
+		httpOptions.headers = headers;
 	}
 
 	return new GoogleGenAI({
@@ -396,10 +418,12 @@ function createClient(
 
 function buildParams(
 	model: Model<"google-generative-ai">,
-	context: Context,
+	context: TranscriptContext,
 	options: GoogleOptions = {},
 ): GenerateContentParameters {
 	const contents = convertMessages(model, context, { preserveThinking: options.thinking?.enabled === true });
+	const initialSystemMessage = getInitialSystemMessage(context.messages);
+	const currentTools = getCurrentTools(context.messages);
 
 	const generationConfig: GenerateContentConfig = {};
 	if (options.temperature !== undefined) {
@@ -409,13 +433,18 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
-	const functionCallingMode = context.tools?.length
-		? resolveGoogleFunctionCallingMode(context.tools, options.toolChoice, supportsGoogleStrictToolSampling(model.id))
-		: undefined;
+	const supportsStrictMode = supportsGoogleStrictToolSampling(model.id);
+	const functionCallingMode =
+		currentTools.length > 0
+			? resolveGoogleFunctionCallingMode(currentTools, options.toolChoice, supportsStrictMode)
+			: undefined;
+	const systemInstruction = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
-		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
+		...(systemInstruction && { systemInstruction: sanitizeSurrogates(systemInstruction) }),
+		...(currentTools.length > 0 && {
+			tools: convertTools(currentTools, false, supportsStrictMode),
+		}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),
@@ -424,13 +453,13 @@ function buildParams(
 	if (options.thinking?.enabled && model.reasoning) {
 		const thinkingConfig: ThinkingConfig = { includeThoughts: true };
 		if (options.thinking.level !== undefined) {
-			thinkingConfig.thinkingLevel = THINKING_LEVEL_MAP[options.thinking.level];
+			thinkingConfig.thinkingLevel = toGoogleSdkThinkingLevel(options.thinking.level);
 		} else if (options.thinking.budgetTokens !== undefined) {
 			thinkingConfig.thinkingBudget = options.thinking.budgetTokens;
 		}
 		config.thinkingConfig = thinkingConfig;
 	} else if (model.reasoning && options.thinking && !options.thinking.enabled) {
-		config.thinkingConfig = getDisabledThinkingConfig(model);
+		config.thinkingConfig = getDisabledGoogleThinkingConfig(model);
 	}
 
 	if (options.signal) {
@@ -451,109 +480,43 @@ function buildParams(
 	return params;
 }
 
-type ClampedThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
-
-function isGemma4Model(model: Model<"google-generative-ai">): boolean {
-	return /gemma-?4/.test(model.id.toLowerCase());
-}
-
-function isGemini3ProModel(model: Model<"google-generative-ai">): boolean {
-	return /gemini-3(?:\.\d+)?-pro/.test(model.id.toLowerCase());
-}
-
-function isGemini3FlashModel(model: Model<"google-generative-ai">): boolean {
-	const id = model.id.toLowerCase();
-	return /gemini-3(?:\.\d+)?-flash/.test(id) || id === "gemini-flash-latest" || id === "gemini-flash-lite-latest";
-}
-
-function getDisabledThinkingConfig(model: Model<"google-generative-ai">): ThinkingConfig {
-	// Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
-	// do not support full thinking-off either. For Gemini 3 models, use the lowest supported
-	// thinkingLevel without includeThoughts so hidden thinking remains invisible to pi.
-	if (isGemini3ProModel(model)) {
-		return { thinkingLevel: GoogleGenAIThinkingLevel.LOW };
-	}
-	if (isGemini3FlashModel(model)) {
-		return { thinkingLevel: GoogleGenAIThinkingLevel.MINIMAL };
-	}
-	if (isGemma4Model(model)) {
-		return { thinkingLevel: GoogleGenAIThinkingLevel.MINIMAL };
-	}
-
-	// Gemini 2.x supports disabling via thinkingBudget = 0.
-	return { thinkingBudget: 0 };
-}
-
-function getThinkingLevel(effort: ClampedThinkingLevel, model: Model<"google-generative-ai">): GoogleThinkingLevel {
-	if (isGemini3ProModel(model)) {
-		switch (effort) {
-			case "minimal":
-			case "low":
-				return "LOW";
-			case "medium":
-			case "high":
-				return "HIGH";
-		}
-	}
-	if (isGemma4Model(model)) {
-		switch (effort) {
-			case "minimal":
-			case "low":
-				return "MINIMAL";
-			case "medium":
-			case "high":
-				return "HIGH";
-		}
-	}
-	switch (effort) {
-		case "minimal":
-			return "MINIMAL";
-		case "low":
-			return "LOW";
-		case "medium":
-			return "MEDIUM";
-		case "high":
-			return "HIGH";
-	}
-}
-
 function getGoogleBudget(
 	model: Model<"google-generative-ai">,
-	effort: ClampedThinkingLevel,
+	level: ResolvedGoogleThinkingLevel,
 	customBudgets?: ThinkingBudgets,
 ): number {
-	if (customBudgets?.[effort] !== undefined) {
-		return customBudgets[effort]!;
+	if (customBudgets?.[level] !== undefined) {
+		return customBudgets[level]!;
 	}
 
 	if (model.id.includes("2.5-pro")) {
-		const budgets: Record<ClampedThinkingLevel, number> = {
+		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
 			minimal: 128,
 			low: 2048,
 			medium: 8192,
 			high: 32768,
 		};
-		return budgets[effort];
+		return budgets[level];
 	}
 
 	if (model.id.includes("2.5-flash-lite")) {
-		const budgets: Record<ClampedThinkingLevel, number> = {
+		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
 			minimal: 512,
 			low: 2048,
 			medium: 8192,
 			high: 24576,
 		};
-		return budgets[effort];
+		return budgets[level];
 	}
 
 	if (model.id.includes("2.5-flash")) {
-		const budgets: Record<ClampedThinkingLevel, number> = {
+		const budgets: Record<ResolvedGoogleThinkingLevel, number> = {
 			minimal: 128,
 			low: 2048,
 			medium: 8192,
 			high: 24576,
 		};
-		return budgets[effort];
+		return budgets[level];
 	}
 
 	return -1;

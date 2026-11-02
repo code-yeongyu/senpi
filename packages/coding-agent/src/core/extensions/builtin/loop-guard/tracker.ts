@@ -27,12 +27,14 @@ function stableStringify(value: unknown): string {
 export class ToolCallTracker {
 	private calls: ToolCallRecord[] = [];
 
-	record(toolName: string, args: unknown): void {
+	record(toolName: string, args: unknown): ToolCallRecord {
 		const argsJson = canonicalizeArgs(args);
-		this.calls.push({ toolName, argsJson, signature: `${toolName}\u0000${argsJson}` });
+		const record = { toolName, argsJson, signature: `${toolName}\u0000${argsJson}` };
+		this.calls.push(record);
 		if (this.calls.length > TRACK_WINDOW) {
 			this.calls = this.calls.slice(-TRACK_WINDOW);
 		}
+		return record;
 	}
 
 	get records(): readonly ToolCallRecord[] {

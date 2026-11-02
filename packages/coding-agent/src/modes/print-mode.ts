@@ -6,10 +6,16 @@
  * - `senpi --mode json "prompt"` - JSON event stream
  */
 
-import type { ImageContent } from "@earendil-works/pi-ai";
+import {
+	describeProviderFailureForUser,
+	type ImageContent,
+	stripTurnRetrySuppressionPrefix,
+} from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
-import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";
+import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
+import { usageLimitCause, usageLimitScope } from "../core/retry-fallback/usage-limit.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
+import { toJsonEvent } from "./json-event.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "./provider-native-rendering.ts";
 
 /**
@@ -32,9 +38,9 @@ export interface PrintModeOptions {
  */
 export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: PrintModeOptions): Promise<number> {
 	const { mode, messages = [], initialMessage, initialImages } = options;
-	let exitCode = 0;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
+	let unsubscribeBackpressure: (() => void) | undefined;
 	let disposed = false;
 	const signalCleanupHandlers: Array<() => void> = [];
 
@@ -42,7 +48,10 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		if (disposed) return;
 		disposed = true;
 		unsubscribe?.();
-		await runtimeHost.dispose();
+		unsubscribeBackpressure?.();
+		// Print mode ends right after: a signal calls process.exit, and the normal path returns to main, whose
+		// process exits once the loop drains (handles extensions leave open are reclaimed at shutdown, senpi#2292).
+		await runtimeHost.dispose({ processExit: true });
 	};
 
 	const registerSignalHandlers = (): void => {
@@ -86,8 +95,25 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 						customInstructions: navigateOptions?.customInstructions,
 						replaceInstructions: navigateOptions?.replaceInstructions,
 						label: navigateOptions?.label,
+						expectedLeafId: navigateOptions?.expectedLeafId,
 					});
 					return { cancelled: result.cancelled };
+				},
+				editAssistantMessage: async (entryId, text, editOptions) => {
+					const result = await session.editAssistantMessage(entryId, text, {
+						summarize: editOptions?.summarize,
+						customInstructions: editOptions?.customInstructions,
+						expectedLeafId: editOptions?.expectedLeafId,
+					});
+					return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
+				},
+				editUserMessage: async (entryId, text, editOptions) => {
+					const result = await session.editUserMessage(entryId, text, {
+						summarize: editOptions?.summarize,
+						customInstructions: editOptions?.customInstructions,
+						expectedLeafId: editOptions?.expectedLeafId,
+					});
+					return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
 				},
 				switchSession: async (sessionPath, switchOptions) => {
 					return runtimeHost.switchSession(sessionPath, switchOptions);
@@ -102,11 +128,28 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		});
 
 		unsubscribe?.();
+		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
+			if (event.type === "retry_fallback_applied") {
+				console.error(
+					`Model fallback: ${event.from} -> ${event.to} (${usageLimitCause(event.from, event.limit) ?? event.reason})`,
+				);
+			} else if (event.type === "retry_fallback_exhausted") {
+				console.error(`Model fallback exhausted: ${event.chainKey} (${event.lastError})`);
+			} else if (event.type === "retry_fallback_reverted") {
+				const cause = event.cause === "fallback-unusable" ? ` (${event.from} cannot serve right now)` : "";
+				console.error(`Model fallback reverted: ${event.from} -> ${event.to}${cause}`);
+			}
 			if (mode === "json") {
-				writeRawStdout(`${JSON.stringify(event)}\n`);
+				writeRawStdout(`${JSON.stringify(toJsonEvent(event))}\n`);
 			}
 		});
+		unsubscribeBackpressure =
+			mode === "json"
+				? session.agent.subscribe(async () => {
+						await waitForRawStdoutBackpressure();
+					})
+				: undefined;
 	};
 
 	try {
@@ -127,15 +170,32 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			await session.prompt(message, { sessionTitlePrompt: false });
 		}
 
-		if (mode === "text") {
-			const state = session.state;
-			const lastMessage = state.messages.findLast((message) => message.role === "assistant");
+		await session.waitForSettledSessionWork();
 
+		const lastMessage = session.state.messages.findLast((message) => message.role === "assistant");
+		const failed =
+			lastMessage?.role === "assistant" &&
+			(lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted");
+		const exitCode = failed ? 1 : 0;
+
+		if (mode === "text") {
 			if (lastMessage?.role === "assistant") {
 				const assistantMsg = lastMessage;
-				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
-					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
-					exitCode = 1;
+				if (failed) {
+					// A provider-stream stall or transport drop keeps the classifier wording
+					// on the message; stderr gets the plain-language version instead.
+					const described =
+						assistantMsg.errorCause?.type === "usage_limit" && assistantMsg.errorCause.scope === "account"
+							? assistantMsg.errorMessage
+							: describeProviderFailureForUser(assistantMsg.errorMessage, {
+									model: `${assistantMsg.provider}/${assistantMsg.model}`,
+									usageLimit: usageLimitScope(assistantMsg),
+								});
+					console.error(
+						described ??
+							(stripTurnRetrySuppressionPrefix(assistantMsg.errorMessage ?? "") ||
+								`Request ${assistantMsg.stopReason}`),
+					);
 				} else {
 					for (const content of assistantMsg.content) {
 						if (content.type === "text") {
@@ -149,7 +209,6 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			}
 		}
 
-		await session.waitForSettledSessionWork();
 		return exitCode;
 	} catch (error: unknown) {
 		console.error(error instanceof Error ? error.message : String(error));

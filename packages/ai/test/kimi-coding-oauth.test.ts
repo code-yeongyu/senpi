@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { kimiCodingOAuth } from "../src/auth/oauth/kimi-coding.ts";
-import type { AuthInteraction } from "../src/auth/types.ts";
+import type { ProviderAuthInteraction } from "../src/auth/types.ts";
 
 const CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const OAUTH_HOST = "https://auth.kimi.com";
@@ -31,10 +31,15 @@ function deviceAuthorizationResponse(overrides?: Record<string, unknown>): Respo
 	});
 }
 
-function createInteraction(events: Array<Record<string, unknown>>): AuthInteraction {
+function createInteraction(
+	events: Array<Record<string, unknown>>,
+	region: "mainland-cn" | "global" | undefined = "mainland-cn",
+): ProviderAuthInteraction {
 	return {
-		prompt: async () => {
-			throw new Error("Kimi Code login should not prompt");
+		signal: new AbortController().signal,
+		prompt: async (prompt) => {
+			if (prompt.type === "select" && region !== undefined) return region;
+			throw new Error(`Kimi Code login should not prompt for ${prompt.type}`);
 		},
 		notify: (event) => events.push(event),
 	};
@@ -113,6 +118,7 @@ describe("Kimi Code OAuth", () => {
 			access: "access-token",
 			refresh: "refresh-token",
 			expires: startTime.getTime() + 10000 + 3600 * 1000,
+			env: { KIMI_CODE_REGION: "mainland-cn" },
 		});
 		expect(pollTimes).toEqual([startTime.getTime() + 5000, startTime.getTime() + 10000]);
 	});
@@ -161,7 +167,7 @@ describe("Kimi Code OAuth", () => {
 		await assertion;
 	});
 
-	it("honors the KIMI_CODE_OAUTH_HOST override", async () => {
+	it("honors the KIMI_CODE_OAUTH_HOST override without prompting", async () => {
 		vi.useFakeTimers();
 		vi.stubEnv("KIMI_CODE_OAUTH_HOST", "https://auth.example.com/");
 
@@ -181,7 +187,7 @@ describe("Kimi Code OAuth", () => {
 			}),
 		);
 
-		const credentialPromise = kimiCodingOAuth.login(createInteraction([]));
+		const credentialPromise = kimiCodingOAuth.login(createInteraction([], undefined));
 		await vi.advanceTimersByTimeAsync(1000);
 		await expect(credentialPromise).resolves.toMatchObject({ access: "a", refresh: "r" });
 		expect(urls).toEqual([
@@ -205,12 +211,15 @@ describe("Kimi Code OAuth", () => {
 		);
 
 		const before = Date.now();
-		const credential = await kimiCodingOAuth.refresh({
-			type: "oauth",
-			access: "old-access",
-			refresh: "old-refresh",
-			expires: before,
-		});
+		const credential = await kimiCodingOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old-access",
+				refresh: "old-refresh",
+				expires: before,
+			},
+			new AbortController().signal,
+		);
 		expect(credential).toEqual({
 			type: "oauth",
 			access: "new-access",
@@ -219,9 +228,8 @@ describe("Kimi Code OAuth", () => {
 		});
 		expect(credential.expires).toBeGreaterThanOrEqual(before + 3600 * 1000);
 
-		await expect(kimiCodingOAuth.toAuth(credential)).resolves.toEqual({
-			headers: { Authorization: "Bearer new-access" },
-		});
+		const auth = await kimiCodingOAuth.toAuth(credential);
+		expect(auth.headers).toMatchObject({ Authorization: "Bearer new-access" });
 	});
 
 	it("retries refresh on 429 and fails unauthorized on invalid_grant", async () => {
@@ -238,12 +246,15 @@ describe("Kimi Code OAuth", () => {
 			}),
 		);
 
-		const refreshPromise = kimiCodingOAuth.refresh({
-			type: "oauth",
-			access: "old",
-			refresh: "old",
-			expires: 0,
-		});
+		const refreshPromise = kimiCodingOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old",
+				refresh: "old",
+				expires: 0,
+			},
+			new AbortController().signal,
+		);
 		await vi.advanceTimersByTimeAsync(1000);
 		await expect(refreshPromise).resolves.toMatchObject({ access: "a" });
 		expect(calls).toBe(2);
@@ -254,7 +265,10 @@ describe("Kimi Code OAuth", () => {
 			vi.fn(async (): Promise<Response> => jsonResponse({ error: "invalid_grant" }, 400)),
 		);
 		await expect(
-			kimiCodingOAuth.refresh({ type: "oauth", access: "old", refresh: "old", expires: 0 }),
+			kimiCodingOAuth.refresh(
+				{ type: "oauth", access: "old", refresh: "old", expires: 0 },
+				new AbortController().signal,
+			),
 		).rejects.toThrow("unauthorized");
 	});
 });

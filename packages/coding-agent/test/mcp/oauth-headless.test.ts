@@ -21,8 +21,9 @@ import { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { registerMcpServiceDirectTools } from "../../src/core/extensions/builtin/mcp/service-register.ts";
 import type { McpConnectionEntry } from "../../src/core/extensions/builtin/mcp/service-types.ts";
 import { connectAndRefreshMcpCatalog } from "../../src/core/extensions/builtin/mcp/startup-race.ts";
+import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { capturingPi, registeredTool, testContext, textContent } from "./fixtures/register-call.ts";
-import { waitForCondition } from "./fixtures/service-lifecycle.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -43,7 +44,7 @@ async function agentDir(): Promise<string> {
 }
 
 interface Harness {
-	deps: AuthCommandDeps;
+	deps: AuthCommandDeps<McpServerConfig>;
 	notes: { message: string; type: string }[];
 	browsered: URL[];
 	store: McpTokenStore;
@@ -70,7 +71,7 @@ function makeHarness(
 		logLevel: "info",
 		...overrides,
 	};
-	const deps: AuthCommandDeps = {
+	const deps: AuthCommandDeps<McpServerConfig> = {
 		serverName: "fix",
 		config,
 		agentDir: dir,
@@ -230,9 +231,9 @@ describe("headless oauth flows", () => {
 		const [tool] = buildMcpToolDefinitions([entry]);
 		if (tool === undefined) throw new Error("expected MCP tool definition");
 
-		await expect(tool.execute("tc-auth", {}, undefined, undefined, testContext())).rejects.toThrow(
-			/\/mcp auth-start fix/,
-		);
+		await expect(
+			tool.execute("tc-auth", {}, undefined, undefined, testContext() as ExtensionToolContext),
+		).rejects.toThrow(/\/mcp auth-start fix/);
 	});
 
 	it("reports the headless auth-start flow when degraded renew hits OAuth needs_auth", async () => {
@@ -258,9 +259,9 @@ describe("headless oauth flows", () => {
 		const [tool] = buildMcpToolDefinitions([entry]);
 		if (tool === undefined) throw new Error("expected MCP tool definition");
 
-		await expect(tool.execute("tc-renew-auth", {}, undefined, undefined, testContext())).rejects.toThrow(
-			/\/mcp auth-start fix/,
-		);
+		await expect(
+			tool.execute("tc-renew-auth", {}, undefined, undefined, testContext() as ExtensionToolContext),
+		).rejects.toThrow(/\/mcp auth-start fix/);
 	});
 
 	it("refreshes near-expiry OAuth tokens through the real catalog and tool runtime path", async () => {
@@ -316,14 +317,19 @@ describe("headless oauth flows", () => {
 				settings: { outputGuard: { maxBytes: 50 * 1024, maxLines: 2000 }, searchThreshold: 10, toolPrefix: "mcp" },
 			},
 			[entry],
+			new ToolSearchService({
+				getAllTools: () => [],
+				getActiveTools: () => pi.getActiveTools(),
+				setActiveTools: (names) => pi.setActiveTools([...names]),
+			}),
 		);
 		await harness.store.update((current) => ({ ...current, expiresAt: Date.now() + 60_000 }));
 		const tool = registeredTool(pi, "mcp_fix_tool_1");
 		const beforeCalls = (await fixture.getLog()).tokenHits;
 
 		const [first, second] = await Promise.all([
-			tool.execute("tc-runtime-1", { value: "one" }, undefined, undefined, testContext()),
-			tool.execute("tc-runtime-2", { value: "two" }, undefined, undefined, testContext()),
+			tool.execute("tc-runtime-1", { value: "one" }, undefined, undefined, testContext() as ExtensionToolContext),
+			tool.execute("tc-runtime-2", { value: "two" }, undefined, undefined, testContext() as ExtensionToolContext),
 		]);
 
 		const afterCalls = await fixture.getLog();
@@ -387,7 +393,11 @@ describe("headless oauth flows", () => {
 			pi,
 			{ agentDir: dir },
 		);
-		await waitForCondition(() => service.getConnection("fix")?.state === "needs_auth", 10_000);
+		await service.whenAttachSettled();
+		expect(service.getConnection("fix")).toBeUndefined();
+		expect((await service.refreshWireStatusSnapshot()).servers).toMatchObject([
+			{ name: "fix", status: "needs_auth", authStatus: "notLoggedIn", serverInfo: null, tools: [] },
+		]);
 
 		expect(service.getServerSnapshots()).toMatchObject([
 			{
@@ -415,11 +425,15 @@ describe("headless oauth flows", () => {
 			capturingPi(),
 			{ agentDir: dir },
 		);
-		await waitForCondition(() => service.getConnection("fix")?.state === "connected", 10_000);
+		await service.whenAttachSettled();
 		expect(service.getConnection("fix")?.state).toBe("connected");
 		await poisonRefreshToken(harness);
 
 		await expect(service.reconnectServer("fix")).rejects.toThrow(/\/mcp auth-start fix/);
+		expect(service.getConnection("fix")).toBeUndefined();
+		expect((await service.refreshWireStatusSnapshot()).servers).toMatchObject([
+			{ name: "fix", status: "needs_auth", authStatus: "notLoggedIn", serverInfo: null, tools: [] },
+		]);
 
 		expect(service.getServerSnapshots()).toMatchObject([
 			{

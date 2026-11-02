@@ -13,8 +13,10 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../../../types.ts";
+import { registerDispatchIdentity } from "../../permission-system/dispatch-metadata.ts";
+import { buildBm25Index } from "../../tool-search/engine/bm25.ts";
+import { deriveMcpRegistrationId } from "../../tool-search/engine/marker.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
-import { buildBm25Index } from "./bm25.ts";
 import { executeMcpCatalogEntry, type McpToolDetails, mapMcpCatalogNames } from "./register.ts";
 
 const ParamsSchema = Type.Object({
@@ -38,24 +40,40 @@ export function createMcpProxyTool(server: string, entries: readonly McpToolCata
 	const named = mapMcpCatalogNames(entries);
 	const byTool = new Map(named.map(({ entry }) => [entry.tool, entry] as const));
 	const index = buildBm25Index(
-		named.map(({ entry, name }) => ({ description: entry.description, name, server, toolName: entry.tool })),
+		named.map(({ entry, name }) => ({
+			name,
+			label: entry.tool,
+			aliases: [entry.tool],
+			description: entry.description,
+			keywords: [],
+			source: "mcp" as const,
+			group: server,
+			ownerLabel: server,
+			registrationId: deriveMcpRegistrationId(server, entry.tool),
+		})),
 	);
 	const name = named[0]?.name.split("_").slice(0, 2).join("_") ?? `mcp_${server}`;
+	const parameters = Type.Object(ParamsSchema.properties);
+	registerDispatchIdentity(parameters, (input) => {
+		if (input.op !== "call" || typeof input.tool !== "string") return undefined;
+		const entry = byTool.get(input.tool);
+		return entry?.invocation?.identity(entry);
+	});
 	return {
 		name,
 		label: `MCP proxy for ${server}`,
-		description: `Gateway to the '${server}' MCP server (${entries.length} tools). Use op:"search" with a query to find tools, op:"describe" with a tool name for its schema, then op:"call" with tool + args (args is a JSON object STRING — no strict validation, so match the described schema exactly).`,
+		description: `Gateway to the '${server}' MCP server (${entries.length} tools). Use op:"search" with a query to find tools, op:"describe" with a tool name for its schema, then op:"call" with tool + args (args is a JSON object STRING: no strict validation, so match the described schema exactly).`,
 		promptSnippet: `Proxy for the ${server} MCP server: search -> describe -> call (args as a JSON string).`,
-		parameters: ParamsSchema,
+		parameters,
 		executionMode: "parallel",
-		async execute(_toolCallId, params: Params, signal, onUpdate): Promise<ProxyResult> {
+		async execute(toolCallId, params: Params, signal, onUpdate, context): Promise<ProxyResult> {
 			if (params.op === "search") {
 				const matches = index.search(params.query ?? "", 10, {});
 				const body =
 					matches.length === 0
 						? `No '${server}' tools matched. Try broader keywords or op:"describe" with an exact tool name.`
 						: matches
-								.map((match) => `- ${match.doc.toolName} — ${match.doc.description ?? "(no description)"}`)
+								.map((match) => `- ${match.doc.label} - ${match.doc.description ?? "(no description)"}`)
 								.join("\n");
 				return textResult(server, `Tools on '${server}':\n${body}`);
 			}
@@ -82,7 +100,12 @@ export function createMcpProxyTool(server: string, entries: readonly McpToolCata
 					`Invalid args for '${entry.tool}': ${error instanceof Error ? error.message : String(error)}. Pass args as a JSON object STRING matching the schema from op:"describe", e.g. {"op":"call","tool":"${entry.tool}","args":"{\\"key\\": \\"value\\"}"}.`,
 				);
 			}
-			return await executeMcpCatalogEntry(entry, args, signal, onUpdate);
+			return await executeMcpCatalogEntry(entry, args, signal, onUpdate, {
+				toolCallId,
+				toolName: name,
+				input: params,
+				context,
+			});
 		},
 		renderCall(args, theme) {
 			const detail = args.op === "search" ? (args.query ?? "") : (args.tool ?? "");
@@ -101,8 +124,7 @@ function textResult(server: string, text: string): ProxyResult {
 
 function unknownToolText(server: string, tool: string | undefined, index: ReturnType<typeof buildBm25Index>): string {
 	const nearest = tool === undefined ? [] : index.search(tool, 3, {});
-	const hint =
-		nearest.length === 0 ? "" : ` Nearest matches: ${nearest.map((match) => match.doc.toolName).join(", ")}.`;
+	const hint = nearest.length === 0 ? "" : ` Nearest matches: ${nearest.map((match) => match.doc.label).join(", ")}.`;
 	return `Unknown tool '${tool ?? "(missing)"}' on '${server}'.${hint} Use op:"search" to list tools.`;
 }
 

@@ -1,4 +1,4 @@
-# Using Pi
+# Using Senpi
 
 This page collects day-to-day usage details that do not fit on the quickstart page.
 
@@ -22,10 +22,12 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 | File reference | Type `@` to fuzzy-search project files |
 | Path completion | Press Tab to complete paths |
 | Multi-line input | Shift+Enter, or Ctrl+Enter on Windows Terminal |
-| Copy response | Ctrl+X copies the last assistant message; in `/tree`, it copies the selected message |
+| Copy response | Ctrl+X copies the selected message in `/tree`; otherwise it copies the last assistant message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
+| Edit response | Ctrl+E on an assistant message in `/tree` opens it in the editor; submitting continues the session from the edited copy |
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |
+| Manual continue | Type `.` alone to resume the most recent intent without sending a new user message |
 | External editor | Ctrl+G opens `externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere |
 | Shortcut overlay | Type `?` on an empty editor to show a dismissible shortcut grid |
 | Startup tips | A rotating `Tip:` line in the startup banner and under the working status teaches features; disable with `"tips": false` |
@@ -39,13 +41,16 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | Command | Description |
 |---------|-------------|
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
-| [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
-| `/model` | Switch models |
+| `/model` | Switch this session's model; Ctrl+S in the picker, or `/model <id> --default`, also makes it the startup default |
+| `/thinking [level]` | Set the thinking level for this session (`/thinking high`), or open the picker with no argument; Ctrl+S in the picker saves it as the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
-| `/settings` | Thinking level, theme, message delivery, transport |
-| `/resume` | Pick from previous sessions |
+| `/reasoning [on\|off]` | Show or toggle reasoning for the current model |
+| `/efforts [level]` | Show or set reasoning effort (graded models only) |
+| `/fast [on\|off]` | Toggle fast mode (ChatGPT Subscription models, persisted per model) |
+| `/settings` | Theme, message delivery, transport, and other preferences |
+| `/resume`, `/sessions` | Pick from previous sessions (`/sessions` is an alias) |
 | `/new` | Start a new session |
-| `/name <name>` | Set session display name |
+| `/rename [name]` | Rename the current session (`/name` is an alias) |
 | `/session` | Show session file, ID, messages, tokens, and cost |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/trust` | Save project trust decision for future sessions |
@@ -61,7 +66,25 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/help` | Getting-started primer, live keybindings, and all commands in a scrollable overlay |
 | `/keybindings` | Open your `keybindings.json` in `$EDITOR` (seeded with current bindings when missing) and reload it live |
 | `/changelog` | Display version history |
-| `/quit`, `/exit` | Quit pi |
+| `/quit`, `/exit` | Quit senpi |
+
+### Reasoning and Fast Mode Commands
+
+**Changing the thinking level.** `/thinking <level>` sets it for this session and `/thinking` alone opens a picker. Shift+Tab cycles through the levels the model supports, and `/efforts <level>` sets the reasoning effort for graded models; both remember the level for the current model. The footer shows the active level after the model name.
+
+**`/reasoning [on|off]`** shows or toggles reasoning. Behavior adapts to the active model:
+
+- Models without reasoning support are told plainly.
+- Always-on models reject `/reasoning off`.
+- On/off-only and graded models toggle normally.
+
+`/reasoning on` restores the effort level you last used for that model. No-arg shows current status.
+
+**`/efforts [minimal|low|medium|high|xhigh|max]`** sets the reasoning effort ladder for graded models. On/off-only models are directed to use `/reasoning` instead. `xhigh` and `max` appear only when the model supports them. No-arg shows current effort and available levels.
+
+**`/fast [on|off]`** toggles ChatGPT Subscription fast mode (`service_tier: "priority"`). The choice is remembered per model and survives restarts. No-arg toggles. Non-Codex models are told fast mode is unavailable. If the active model selection pins `:priority` via a favorite decorator, `/fast off` is blocked and explains why.
+
+All three commands work over RPC and headless (no selector opened, status sent as text notifications).
 
 ## Message Queue
 
@@ -72,40 +95,45 @@ You can submit messages while the agent is still working:
 - **Escape** aborts and restores queued messages to the editor.
 - **Alt+Up** retrieves queued messages back to the editor.
 
-On Windows Terminal, Alt+Enter is fullscreen by default. Remap it as described in [Terminal setup](terminal-setup.md) if you want pi to receive the shortcut.
+On Windows Terminal, Alt+Enter is fullscreen by default. Remap it as described in [Terminal setup](terminal-setup.md) if you want senpi to receive the shortcut.
 
 Configure delivery in [Settings](settings.md) with `steeringMode` and `followUpMode`.
 
 ## Sessions
 
-Sessions are saved automatically to `~/.pi/agent/sessions/`, organized by working directory.
+Sessions are saved automatically to `~/.senpi/agent/sessions/`, organized by working directory.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse and select a session
-pi --no-session        # Ephemeral mode; do not save
-pi --name "my task"    # Set session display name at startup
-pi --session <path|id> # Use a specific session file or session ID
-pi --fork <path|id>    # Fork a session into a new session file
+senpi -c                  # Continue most recent session
+senpi -r                  # Browse and select a session
+senpi --no-session        # Ephemeral mode; do not save
+senpi --name "my task"    # Set session display name at startup
+senpi --session <path|id> # Use a specific session file or session ID
+senpi --fork <path|id>    # Fork a session into a new session file
 ```
 
 Useful session commands:
 
+- `/resume` (or its alias `/sessions`) opens the same picker as `senpi -r` without leaving the TUI.
 - `/session` shows the current session file and ID.
-- `/tree` navigates the in-file session tree and can summarize abandoned branches.
+- `/tree` navigates the in-file session tree and can summarize abandoned branches. Ctrl+E on an assistant entry edits that response in place of the original (the original stays in the file on an abandoned branch; tool calls in the edited response are dropped).
 - `/fork` creates a new session from an earlier user message.
 - `/clone` duplicates the current active branch into a new session file.
 - `/compact` summarizes older messages to free context.
 
 See [Sessions](sessions.md) and [Compaction](compaction.md) for details.
+To see where a long session's memory goes, start senpi with `SENPI_MEMORY_REPORT=1` and send the process `SIGUSR2` from another terminal (`kill -USR2 <pid>`): it writes a per-layer report (main thread, eval kernels, resident session strings, tool-card render cache, extension figures) to `<session>-artifacts/memory/<iso>.json` and keeps running. Add `SENPI_MEMORY_REPORT_SNAPSHOT=1` for a heap snapshot beside it. Nothing is installed without the flag; see [RPC](rpc.md#memory_report) for the report fields.
+
 
 ## Context Files
 
-Pi loads `AGENTS.md` or `CLAUDE.md` at startup from:
+Senpi loads `AGENTS.md` or `CLAUDE.md` at startup from:
 
-- `~/.pi/agent/AGENTS.md` for global instructions
+- `~/.senpi/agent/AGENTS.md` for global instructions
 - parent directories, walking up from the current working directory
 - the current directory
+
+If a directory contains `AGENTS.override.md`, senpi loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory. Context files from other directories still layer normally.
 
 Use context files for project conventions, commands, safety rules, and preferences. Disable loading with `--no-context-files` or `-nc`.
 
@@ -113,24 +141,24 @@ Use context files for project conventions, commands, safety rules, and preferenc
 
 Replace the default system prompt with:
 
-- `.pi/SYSTEM.md` for a project
-- `~/.pi/agent/SYSTEM.md` globally
+- `.senpi/SYSTEM.md` for a project
+- `~/.senpi/agent/SYSTEM.md` globally
 
 Append to the default prompt without replacing it with `APPEND_SYSTEM.md` in either location.
 
 ### Project Trust
 
-On interactive startup, pi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.pi/agent/trust.json`. Trusting a project allows pi to load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
+On interactive startup, senpi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.senpi/agent/trust.json`. Trusting a project allows senpi to load `.senpi/settings.json` and `.senpi` resources, install missing project packages, and execute project extensions.
 
-Before the trust decision, pi loads only context files, user/global extensions, and CLI `-e` extensions so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
+Before the trust decision, senpi loads only context files, user/global extensions, and CLI `-e` extensions so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
 
 Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without an applicable saved trust decision, they use `defaultProjectTrust` from global settings: `ask` (default) and `never` ignore those project resources, while `always` trusts them. Pass `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run.
 
-If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.pi/agent/settings.json`, or change it with `/settings`.
+If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.senpi/agent/settings.json`, or change it with `/settings`.
 
-`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+`senpi config` and package commands use the same project trust flow, except `senpi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
 
-Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
+Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.senpi/agent/trust.json` only; the current session is not reloaded, so restart senpi for changes to take effect.
 
 
 ## Exporting and Sharing Sessions
@@ -144,28 +172,31 @@ If you use pi for open source work and want to publish sessions for model, promp
 ## CLI Reference
 
 ```bash
-pi [options] [@files...] [messages...]
+senpi [options] [--] [@files...] [messages...]
 ```
 
 ### Package Commands
 
 ```bash
-pi install <source> [-l]     # Install package, -l for project-local
-pi remove <source> [-l]      # Remove package
-pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update pi only, or one package source
-pi update --all              # Update pi and packages; reconcile pinned git refs
-pi update --extensions       # Update packages only; reconcile pinned git refs
-pi update --models           # Refresh model catalogs only
-pi update --self             # Update pi only
-pi update --extension <src>  # Update one package
-pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+senpi install <source> [-l]     # Install package, -l for project-local
+senpi remove <source> [-l]      # Remove package
+senpi uninstall <source> [-l]   # Alias for remove
+senpi update [source|self|senpi]   # Update senpi only, or one package source
+senpi update --all              # Update senpi and packages; reconcile pinned git refs
+senpi update --extensions       # Update packages only; reconcile pinned git refs
+senpi update --models           # Refresh model catalogs only
+senpi update --self             # Update senpi only
+senpi update --extension <src>  # Update one package
+senpi list                      # List installed packages
+senpi config                    # Enable/disable package resources
+senpi config import-pi [file]   # Copy config edited in ~/.pi/agent into ~/.senpi/agent (backs up first)
 ```
 
-These commands manage pi packages and `pi update` can update the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall). `pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+After the first start copies an upstream pi install's `~/.pi/agent` into `~/.senpi/agent`, senpi reads only `~/.senpi/agent`. When `auth.json`, `keybindings.json`, `models.json` or `settings.json` in `~/.pi/agent` changes later, the next interactive start warns once per change; `senpi config import-pi` copies the edited files over, or only the ones you name, and never writes to `~/.pi/agent`.
 
-See [Pi Packages](packages.md) for package sources and security notes.
+These commands manage senpi packages and `senpi update` can update the senpi CLI installation. To uninstall senpi itself, see [Quickstart](quickstart.md#uninstall). `senpi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `senpi update` never prompts for project trust.
+
+See [Senpi Packages](packages.md) for package sources and security notes.
 
 ### Modes
 
@@ -177,17 +208,17 @@ See [Pi Packages](packages.md) for package sources and security notes.
 | `--mode rpc` | RPC mode over stdin/stdout; see [RPC mode](rpc.md) |
 | `--export <in> [out]` | Export a session to HTML |
 
-In print mode, pi also reads piped stdin and merges it into the initial prompt:
+In print mode, senpi also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | pi -p "Summarize this text"
+cat README.md | senpi -p "Summarize this text"
 ```
 
 ### Model Options
 
 | Option | Description |
 |--------|-------------|
-| `--provider <name>` | Provider, such as `anthropic`, `openai`, or `google` |
+| `--provider <name>` | Provider, such as `anthropic`, `openai`, or `google`; requires `--model` |
 | `--model <pattern>` | Model pattern or ID; supports `provider/id` and optional `:<thinking>` |
 | `--api-key <key>` | API key, overriding environment variables |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
@@ -201,10 +232,25 @@ cat README.md | pi -p "Summarize this text"
 | `-c`, `--continue` | Continue the most recent session |
 | `-r`, `--resume` | Browse and select a session |
 | `--session <path\|id>` | Use a specific session file or partial UUID |
+| `--spawned-by <json>` | Set parent, root, and task ancestry on a fresh standalone session |
 | `--fork <path\|id>` | Fork a session file or partial UUID into a new session |
+| `--rebind <path\|id>` | Move a session of this repository, recorded at another path (moved or re-cloned), into this directory and continue it |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode; do not save |
 | `--name <name>`, `-n <name>` | Set session display name at startup |
+
+To start a standalone child session, pass one JSON object:
+
+```bash
+senpi --mode rpc --spawned-by '{"parentSessionId":"parent","rootSessionId":"root","taskId":"task"}'
+```
+
+All three fields must be non-empty strings; malformed input exits before runtime creation.
+The ancestry is stored in the session header, so `get_state.lifecycle.role` is `child` before
+the first prompt. A fresh session created with `--session-id` also accepts it. Resuming an
+existing ID preserves its header and warns that the flag is ignored. The flag is likewise
+ignored with a warning with `--session`, `--resume`, `--continue`, `--rebind`, or `--fork`.
+Without the flag, new sessions and ordinary forks start as roots.
 
 ### Tool Options
 
@@ -216,6 +262,16 @@ cat README.md | pi -p "Summarize this text"
 | `--no-tools`, `-nt` | Disable all tools |
 
 Built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
+
+#### `grep` tool contract
+
+Use `tool.grep({ pattern, path, glob, ignoreCase, literal, context, before, after, mode, limit, skip, timeoutMs, hidden, gitignore })` inside eval. `pattern` is required; `path` accepts a file, directory, array, or a `<file>:L1-L2` selector. `glob` accepts positive patterns and `!` exclusions. `mode` is `content` (default), `count`, or `files`; `limit` and `skip` paginate file results. `before`/`after` override `context`.
+
+Find files by name with `tool.glob({ pattern, path, limit })` inside eval, for example `tool.glob({ pattern: "**/*.ts", path: "src" })`. It returns matching paths relative to `path`, respects `.gitignore`, and is never offered as a top-level tool.
+
+Content output uses `path` blocks with `N: match` and `N- context` rows, followed by a footer such as `[grep: matches=2 files=2 searched=42 elapsedMs=8 engine=native nextSkip=none]`. The footer is always present. Tool results include `details` v1 with structured matches, file counts, scan status, and pagination metadata.
+
+The engine is selected automatically. `SENPI_GREP_ENGINE=auto|native|rg` selects the preferred engine, and `SENPI_GREP_NATIVE_PATH` overrides the native addon path. Native search honors filesystem policy and ignore files; ripgrep is the fallback.
 
 ### Resource Options
 
@@ -234,73 +290,77 @@ Built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
 Combine `--no-*` with explicit flags to load exactly what you need, ignoring settings. Example:
 
 ```bash
-pi --no-extensions -e ./my-extension.ts
+senpi --no-extensions -e ./my-extension.ts
 ```
 
 ### Other Options
 
 | Option | Description |
 |--------|-------------|
-| `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
-| `--append-system-prompt <text>` | Append to system prompt |
-| `--ui-mode <mode>` | UI mode: `regular` (default) or experimental `fullscreen` |
+| `--system-prompt <text>` | Replace the generated base prompt (text or a file path); per-model prompt presets step aside; context files and skills are still appended |
+| `--append-system-prompt <text>` | Append to the system prompt (repeatable; text or a file path); applies after per-model prompt presets |
+| `--tui-mode <mode>` | TUI mode: `regular` (default) or experimental `fullscreen` |
+| `--use-theme <name[/name]>` | Set the initial interactive theme for this run without changing settings |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
 | `-h`, `--help` | Show help |
 | `-v`, `--version` | Show version |
 
-In `fullscreen` mode, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. In `regular` mode, pi uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally.
+In `fullscreen` mode, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. In `regular` mode, senpi uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally. See [Terminal setup](terminal-setup.md) for terminal-specific settings and workarounds.
 
-To use fullscreen mode by default, set **UI mode** to `fullscreen` in `/settings`. The change applies after restarting pi.
+Set **TUI mode** in `/settings` to switch between `regular` and `fullscreen` immediately and choose the default for future sessions. **Fullscreen exit output** controls whether exiting fullscreen prints the final transcript or restores the previous screen and prints only the session resume hint.
 
 ### File Arguments
 
 Prefix files with `@` to include them in the message:
 
 ```bash
-pi @prompt.md "Answer this"
-pi -p @screenshot.png "What's in this image?"
-pi @code.ts @test.ts "Review these files"
+senpi @prompt.md "Answer this"
+senpi -p @screenshot.png "What's in this image?"
+senpi @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-pi "List all .ts files in src/"
+senpi "List all .ts files in src/"
 
 # Non-interactive
-pi -p "Summarize this codebase"
+senpi -p "Summarize this codebase"
+
+# Prompt beginning with a dash
+senpi -p -- "- Summarize these points"
 
 # Non-interactive with piped stdin
-cat README.md | pi -p "Summarize this text"
+cat README.md | senpi -p "Summarize this text"
 
 # Named one-shot session
-pi --name "release audit" -p "Audit this repository"
+senpi --name "release audit" -p "Audit this repository"
 
 # Different model
-pi --provider openai --model gpt-4o "Help me refactor"
+senpi --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix
-pi --model openai/gpt-4o "Help me refactor"
+senpi --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-pi --model sonnet:high "Solve this complex problem"
+senpi --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-pi --models "claude-*,gpt-4o"
+senpi --models "claude-*,gpt-4o"
 
 # Read-only mode
-pi --tools read,grep,find,ls -p "Review the code"
+senpi --tools read,grep,find,ls -p "Review the code"
 
 # Disable one extension or built-in tool while keeping the rest available
-pi --exclude-tools ask_question
+senpi --exclude-tools ask_question
 ```
 
 ## Design Principles
 
-Pi keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
+Senpi keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
 
 It intentionally does not include built-in MCP, sub-agents, plan mode, to-dos, background bash, or an in-process sandbox. Use permission presets for tool-call confirmation policy, and use external tools such as containers, VMs, policy sandboxes, and tmux when you need stronger workflow or isolation behavior.
 

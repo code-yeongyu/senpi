@@ -6,6 +6,7 @@ import {
 	IDENTICAL_RUN_THRESHOLD,
 	SIMILAR_RUN_THRESHOLD,
 	SIMILARITY_THRESHOLD,
+	TRACK_WINDOW,
 } from "./policy.ts";
 import { meanAdjacentSimilarity } from "./similarity.ts";
 import type { ToolCallRecord } from "./tracker.ts";
@@ -129,19 +130,38 @@ export function detectCycle(records: readonly ToolCallRecord[]): LoopGuardDetect
 interface GateEntry {
 	fingerprint: string;
 	lastNotifiedCount: number;
+	saturationNotified: boolean;
+}
+
+function maximumObservableCount(detection: LoopGuardDetection): number {
+	switch (detection.kind) {
+		case "identical":
+		case "similar":
+			return TRACK_WINDOW;
+		case "cycle":
+			return Math.floor(TRACK_WINDOW / detection.period);
+	}
 }
 
 export class NoticeGate {
 	private entries = new Map<LoopGuardKind, GateEntry>();
 
 	admit(detection: LoopGuardDetection): boolean {
+		const maximumCount = maximumObservableCount(detection);
 		const existing = this.entries.get(detection.kind);
 		if (existing === undefined || existing.fingerprint !== detection.fingerprint) {
-			this.entries.set(detection.kind, { fingerprint: detection.fingerprint, lastNotifiedCount: detection.count });
+			this.entries.set(detection.kind, {
+				fingerprint: detection.fingerprint,
+				lastNotifiedCount: detection.count,
+				saturationNotified: detection.count >= maximumCount,
+			});
 			return true;
 		}
-		if (detection.count >= existing.lastNotifiedCount * ESCALATION_FACTOR) {
+		const reachedDoubledCount = detection.count >= existing.lastNotifiedCount * ESCALATION_FACTOR;
+		const reachedSaturation = !existing.saturationNotified && detection.count >= maximumCount;
+		if (reachedDoubledCount || reachedSaturation) {
 			existing.lastNotifiedCount = detection.count;
+			if (reachedSaturation) existing.saturationNotified = true;
 			return true;
 		}
 		return false;

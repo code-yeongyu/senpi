@@ -72,9 +72,11 @@ describe("AgentSession dynamic tool registration", () => {
 			resourceLoader,
 		});
 
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash")!;
+		// Eval-only routing keeps `bash` out of the model-visible tool array; it stays
+		// reachable through the registry, which is the path an eval cell uses.
+		const bashTool = session.getRegisteredTool("bash")!;
 		expect(session.systemPrompt).toContain(
-			"Inspect PI_* environment variables for current model and session details.",
+			"You can inspect PI_* environment variables for current model and session details.",
 		);
 		await bashTool.execute("bash-env", { command: "printf ok" });
 		expect(sessionEnv).toMatchObject({
@@ -85,7 +87,7 @@ describe("AgentSession dynamic tool registration", () => {
 			PI_REASONING_LEVEL: session.thinkingLevel,
 		});
 
-		const optedOutBashTool = session.agent.state.tools.find((tool) => tool.name === "bash_without_session_env")!;
+		const optedOutBashTool = session.getRegisteredTool("bash_without_session_env")!;
 		await optedOutBashTool.execute("bash-no-env", { command: "printf ok" });
 		expect(optedOutEnv).not.toHaveProperty("PI_SESSION_ID");
 		expect(optedOutEnv).not.toHaveProperty("PI_SESSION_FILE");
@@ -153,7 +155,7 @@ describe("AgentSession dynamic tool registration", () => {
 			origin: "top-level",
 		});
 		expect(readTool?.sourceInfo).toMatchObject({
-			path: "<builtin:read>",
+			path: "builtin:read",
 			source: "builtin",
 			scope: "temporary",
 			origin: "top-level",
@@ -204,6 +206,47 @@ describe("AgentSession dynamic tool registration", () => {
 			origin: "top-level",
 		});
 		expect(session.getActiveToolNames()).toContain("sdk_tool");
+
+		session.dispose();
+	});
+
+	it("preserves active membership when an existing tool is re-registered as search-exposed", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		let registerAgain: (() => void) | undefined;
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					const definition = {
+						name: "stable_active_tool",
+						label: "Stable Active Tool",
+						description: "Tool whose registration metadata changes",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
+					};
+					pi.registerTool(definition);
+					registerAgain = () => pi.registerTool({ ...definition, exposure: "search" });
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		expect(session.getActiveToolNames()).toContain("stable_active_tool");
+		registerAgain?.();
+		expect(session.getAllTools().find(({ name }) => name === "stable_active_tool")?.exposure).toBe("search");
+		expect(session.getActiveToolNames()).toContain("stable_active_tool");
 
 		session.dispose();
 	});

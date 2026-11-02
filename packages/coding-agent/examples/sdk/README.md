@@ -15,7 +15,7 @@ The runtime example shows how to build a recreate function that closes over proc
 | `05-tools.ts` | Built-in tool allowlists |
 | `06-extensions.ts` | Logging, blocking, result modification |
 | `07-context-files.ts` | AGENTS.md context files |
-| `08-slash-commands.ts` | File-based slash commands |
+| `08-prompt-templates.ts` | File-based prompt templates |
 | `09-api-keys-and-oauth.ts` | API key resolution, OAuth config |
 | `10-settings.ts` | Override compaction, retry, terminal settings |
 | `11-sessions.ts` | In-memory, persistent, continue, list sessions |
@@ -26,7 +26,7 @@ The runtime example shows how to build a recreate function that closes over proc
 
 ```bash
 cd packages/coding-agent
-npx tsx examples/sdk/01-minimal.ts
+bunx tsx examples/sdk/01-minimal.ts
 ```
 
 ## Quick Reference
@@ -71,7 +71,7 @@ const customRuntime = await ModelRuntime.create({
   authPath: "/my/app/auth.json",
   modelsPath: "/my/app/models.json",
 });
-customRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY!);
+await customRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY!);
 
 const resourceLoader = new DefaultResourceLoader({
   systemPromptOverride: () => "You are helpful.",
@@ -132,7 +132,7 @@ session.subscribe((event) => {
     case "tool_execution_end":
       console.log(`Result: ${event.result}`);
       break;
-    case "agent_end":
+    case "agent_settled":
       console.log("Done");
       break;
   }

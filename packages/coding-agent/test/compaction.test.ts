@@ -5,6 +5,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "./support/temp-agent-dir.ts";
 
 const { completeMock } = vi.hoisted(() => ({
 	completeMock: vi.fn(),
@@ -20,7 +21,11 @@ vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
 			queueMicrotask(async () => {
 				const message = (await completeMock(model, context, options)) as AssistantMessage;
 				if (message.stopReason === "error" || message.stopReason === "aborted") {
-					output.push({ type: "error", reason: message.stopReason, error: message });
+					output.push({
+						type: "error",
+						reason: message.stopReason,
+						error: message,
+					});
 				} else if (message.stopReason === "pending") {
 					throw new Error("complete() returned a pending assistant message");
 				} else {
@@ -34,6 +39,7 @@ vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
 });
 
 import {
+	type CompactionPreparation,
 	type CompactionSettings,
 	calculateContextTokens,
 	DEFAULT_COMPACTION_SETTINGS,
@@ -42,6 +48,7 @@ import {
 	findCutPoint,
 	getLastAssistantUsage,
 	prepareCompaction,
+	resolveThresholdContextTokens,
 	shouldCompact,
 } from "../src/core/compaction/index.ts";
 import compactionExtension from "../src/core/extensions/builtin/compaction/index.ts";
@@ -51,6 +58,7 @@ import type {
 	MessageEndEvent,
 	ModelSelectEvent,
 } from "../src/core/extensions/index.ts";
+import type { HistoryReducer } from "../src/core/session-history-reduce.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
@@ -62,6 +70,9 @@ import {
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../src/core/session-manager.ts";
+import { reduceEntries } from "./helpers/reduce-entries.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 // ============================================================================
 // Test fixtures
@@ -232,6 +243,7 @@ function captureCompactionHandlers(): CapturedCompactionHandlers {
 	let messageEnd: MessageEndHandler | undefined;
 	let modelSelect: ModelSelectHandler | undefined;
 	const api: ExtensionAPI = Object.assign(Object.create(null), {
+		cwd: "/tmp/senpi-compaction-test",
 		on: (event: string, currentHandler: BeforeAgentStartHandler | MessageEndHandler | ModelSelectHandler) => {
 			if (event === "before_agent_start") {
 				beforeAgentStart = currentHandler as BeforeAgentStartHandler;
@@ -260,10 +272,12 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		mode: "print",
 		ui: {} as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
 			getEntries: () => [],
+			getBranch: () => [],
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries([], reducer),
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,
@@ -322,7 +336,7 @@ async function expectSpeculativeCompactionInvalidatedBy(
 	const branchEntries = [firstUser, firstAssistant, secondUser, secondAssistant];
 	const appliedSummaries: string[] = [];
 	let currentModel = previousModel;
-	let usageTokens = 100_000;
+	let usageTokens = 130_000;
 	let releaseStale: (() => void) | undefined;
 	const speculativeStarted = new Promise<void>((resolveStarted) => {
 		completeMock.mockImplementationOnce(async (_model: Model<string>, _context: Context, options: StreamOptions) => {
@@ -345,9 +359,13 @@ async function expectSpeculativeCompactionInvalidatedBy(
 		sessionManager: Object.assign(Object.create(null), {
 			getEntries: () => branchEntries,
 			getBranch: () => branchEntries,
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: Object.assign(Object.create(null), {
-			getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-key" }),
+			getApiKeyAndHeaders: async () => ({
+				ok: true as const,
+				apiKey: "test-key",
+			}),
 		}) as ExtensionContext["modelRegistry"],
 		applyCompaction: async (compaction) => {
 			appliedSummaries.push(compaction.summary);
@@ -358,7 +376,10 @@ async function expectSpeculativeCompactionInvalidatedBy(
 			contextWindow: currentModel.contextWindow,
 			percent: (usageTokens / currentModel.contextWindow) * 100,
 		}),
-		getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 }),
+		getCompactionSettings: () => ({
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		}),
 	});
 
 	// given
@@ -375,6 +396,17 @@ async function expectSpeculativeCompactionInvalidatedBy(
 
 	// then
 	expect(appliedSummaries).toEqual(["fresh summary"]);
+}
+
+function requireSourceMessages(
+	preparation: CompactionPreparation | undefined,
+): asserts preparation is CompactionPreparation & {
+	sourceMessages: AgentMessage[];
+	turnPrefixSourceMessages: AgentMessage[];
+} {
+	if (!preparation?.sourceMessages || !preparation.turnPrefixSourceMessages) {
+		throw new Error("Expected compaction source messages");
+	}
 }
 
 function extractText(messages: AgentMessage[]): string {
@@ -426,6 +458,15 @@ describe("Token calculation", () => {
 	it("should handle zero values", () => {
 		const usage = createMockUsage(0, 0, 0, 0);
 		expect(calculateContextTokens(usage)).toBe(0);
+	});
+
+	it("keeps max(usage, estimate) when billed usage is plausible", () => {
+		expect(resolveThresholdContextTokens(180_000, 149_000)).toBe(180_000);
+		expect(resolveThresholdContextTokens(20_000, 149_000)).toBe(149_000);
+	});
+
+	it("drops billed usage that is more than 8x a large local estimate", () => {
+		expect(resolveThresholdContextTokens(4_090_000, 149_256)).toBe(149_256);
 	});
 });
 
@@ -496,6 +537,62 @@ describe("estimateContextTokens", () => {
 		expect(estimate.trailingTokens).toBeGreaterThan(0);
 		expect(estimate.tokens).toBe(150 + estimate.trailingTokens);
 	});
+
+	it.each(["error", "aborted"] as const)("excludes trailing %s turns from the estimate", (stopReason) => {
+		const big = "x".repeat(40_000);
+		const failed: AssistantMessage = {
+			...createAssistantMessage(big),
+			stopReason,
+			content: [
+				{ type: "text", text: big },
+				{ type: "toolCall", id: "c-failed", name: "bash", arguments: { command: "ls" } },
+			],
+		};
+		const orphanResult: AgentMessage = {
+			role: "toolResult",
+			toolCallId: "c-failed",
+			toolName: "bash",
+			content: [{ type: "text", text: big }],
+			isError: true,
+			timestamp: Date.now(),
+		};
+		const withFailed: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			failed,
+			orphanResult,
+			createUserMessage("next"),
+		];
+		const baseline: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			createUserMessage("next"),
+		];
+
+		const withFailedEstimate = estimateContextTokens(withFailed);
+		const baselineEstimate = estimateContextTokens(baseline);
+
+		expect(withFailedEstimate.tokens).toBe(baselineEstimate.tokens);
+		expect(withFailedEstimate.trailingTokens).toBe(baselineEstimate.trailingTokens);
+	});
+
+	it("reports lastUsageIndex against the input array when a failed turn precedes the anchor", () => {
+		const failed: AssistantMessage = { ...createAssistantMessage("failed"), stopReason: "error" };
+		const anchor = createAssistantMessage("anchor", createMockUsage(200, 100));
+		const messages: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			failed,
+			anchor,
+			createUserMessage("next"),
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.lastUsageIndex).not.toBeNull();
+		expect(messages[estimate.lastUsageIndex as number]).toBe(anchor);
+		expect(estimate.usageTokens).toBe(300);
+	});
 });
 
 describe("estimateTokens base64 weighting", () => {
@@ -506,7 +603,12 @@ describe("estimateTokens base64 weighting", () => {
 			role: "toolResult",
 			toolCallId: "call-1",
 			toolName: "get_app_state",
-			content: [{ type: "text", text: `{"screenshot":{"url":"data:image/png;base64,${base64Run}"}}` }],
+			content: [
+				{
+					type: "text",
+					text: `{"screenshot":{"url":"data:image/png;base64,${base64Run}"}}`,
+				},
+			],
 			details: undefined,
 			isError: false,
 			timestamp: Date.now(),
@@ -543,6 +645,11 @@ describe("estimateTokens base64 weighting", () => {
 });
 
 describe("shouldCompact", () => {
+	it("case 2: applies the effective reserve and preserves the scaling opt-out", () => {
+		const settings: CompactionSettings = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 };
+		expect(shouldCompact(980_000, 1_000_000, settings)).toBe(true);
+		expect(shouldCompact(980_000, 1_000_000, { ...settings, reserveScalingEnabled: false })).toBe(false);
+	});
 	it("should return true when context exceeds threshold", () => {
 		const settings: CompactionSettings = {
 			enabled: true,
@@ -589,6 +696,36 @@ describe("findCutPoint", () => {
 	it("should return startIndex if no valid cut points in range", () => {
 		const entries: SessionEntry[] = [createMessageEntry(createAssistantMessage("a"))];
 		const result = findCutPoint(entries, 0, entries.length, 1000);
+		expect(result.firstKeptEntryIndex).toBe(0);
+	});
+
+	// senpi#4617: keepRecentTokens is measured against wire tokens, and CJK text
+	// tokenizes near 1 token per 1.5 chars, not 4. A 4000-char Korean user turn
+	// is ~1000 tokens under chars/4 but ~3000 under the CJK-weighted estimate,
+	// so a 2000-token budget must cut before it, not keep the whole history.
+	it("should weight CJK text when accumulating the keep budget", () => {
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("old")),
+			createMessageEntry(createAssistantMessage("old answer")),
+			createMessageEntry(createUserMessage("한".repeat(4000))),
+			createMessageEntry(createAssistantMessage("ok")),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 2000);
+		expect(result.firstKeptEntryIndex).toBe(2);
+	});
+
+	it("should not change the keep budget for ASCII text", () => {
+		// Spaced prose: no base64-run weighting and no CJK correction, so the
+		// same-length ASCII turn stays at ~1000 tokens and fits the budget.
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("old")),
+			createMessageEntry(createAssistantMessage("old answer")),
+			createMessageEntry(createUserMessage("hello world ".repeat(334))),
+			createMessageEntry(createAssistantMessage("ok")),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 2000);
 		expect(result.firstKeptEntryIndex).toBe(0);
 	});
 
@@ -674,6 +811,70 @@ describe("findCutPoint", () => {
 		expect(customFitsBudget.isSplitTurn).toBe(false);
 		expect(customFitsBudget.turnStartIndex).toBe(-1);
 	});
+
+	// senpi#2480: the attempts that follow the overflowing turn are never sent, so they
+	// must not absorb the budget of the overflow ladder's second rung (keepRecentTokens 0).
+	it("lands a zero keep budget on the turn being answered, past a failed attempt and its orphaned tool result", () => {
+		const oldUser = createMessageEntry(createUserMessage("old history"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old answer"));
+		const currentUser = createMessageEntry(createUserMessage("continue the task"));
+		const failedToolCall = createMessageEntry({
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "failed-call", name: "read", arguments: { path: "big.txt" } }],
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+		});
+		const orphanedResult = createMessageEntry({
+			role: "toolResult",
+			toolCallId: "failed-call",
+			toolName: "read",
+			content: [{ type: "text", text: "x".repeat(8000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+		const entries = [oldUser, oldAssistant, currentUser, failedToolCall, orphanedResult];
+
+		const result = findCutPoint(entries, 0, entries.length, 0);
+
+		expect(result.firstKeptEntryIndex).toBe(2);
+		expect(result.isSplitTurn).toBe(false);
+	});
+
+	// Regression test for #9740.
+	it("should fall back to the latest valid cut point before oversized trailing tool results", () => {
+		const oldUser = createMessageEntry(createUserMessage("old history"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old answer"));
+		const currentUser = createMessageEntry(createUserMessage("read the large file"));
+		const toolCall = createMessageEntry({
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "big.txt" } }],
+			stopReason: "toolUse",
+		});
+		const toolResult = createMessageEntry({
+			role: "toolResult",
+			toolCallId: "call-1",
+			toolName: "read",
+			content: [{ type: "text", text: "x".repeat(8000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+		const entries = [oldUser, oldAssistant, currentUser, toolCall, toolResult];
+
+		const result = findCutPoint(entries, 0, entries.length, 1000);
+		expect(result).toEqual({
+			firstKeptEntryIndex: 3,
+			turnStartIndex: 2,
+			isSplitTurn: true,
+		});
+
+		const preparation = prepareCompaction(entries, {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1000,
+		});
+		expect(preparation?.firstKeptEntryId).toBe(toolCall.id);
+		expect(preparation?.messagesToSummarize).toEqual([oldUser.message, oldAssistant.message]);
+		expect(preparation?.turnPrefixMessages).toEqual([currentUser.message]);
+	});
 });
 
 describe("buildSessionContext", () => {
@@ -688,7 +889,10 @@ describe("buildSessionContext", () => {
 		const loaded = buildSessionContext(entries);
 		expect(loaded.messages.length).toBe(4);
 		expect(loaded.thinkingLevel).toBe("off");
-		expect(loaded.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+		expect(loaded.model).toEqual({
+			provider: "anthropic",
+			modelId: "claude-sonnet-4-5",
+		});
 	});
 
 	it("should handle single compaction", () => {
@@ -764,8 +968,108 @@ describe("buildSessionContext", () => {
 
 		const loaded = buildSessionContext(entries);
 		// model_change is later overwritten by assistant message's model info
-		expect(loaded.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+		expect(loaded.model).toEqual({
+			provider: "anthropic",
+			modelId: "claude-sonnet-4-5",
+		});
 		expect(loaded.thinkingLevel).toBe("high");
+	});
+});
+
+describe("prepareCompaction source messages", () => {
+	it("provides the active history prefix for a normal compaction", () => {
+		const u1 = createMessageEntry(createUserMessage("old user ".repeat(20)));
+		const a1 = createMessageEntry(createAssistantMessage("old assistant ".repeat(20)));
+		const u2 = createMessageEntry(createUserMessage("recent user"));
+		const a2 = createMessageEntry(createAssistantMessage("ok"));
+		const settings: CompactionSettings = {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 3,
+		};
+
+		const preparation = prepareCompaction([u1, a1, u2, a2], settings);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		expect(preparation.isSplitTurn).toBe(false);
+		expect(preparation.sourceMessages).toEqual(preparation.messagesToSummarize);
+		expect(extractText(preparation.sourceMessages)).toContain("old user");
+		expect(extractText(preparation.sourceMessages)).not.toContain("recent user");
+		expect(preparation.turnPrefixSourceMessages).toEqual([]);
+	});
+
+	it("provides the active prefix through a split turn", () => {
+		const user = createMessageEntry(createUserMessage("large request ".repeat(20)));
+		const earlyAssistant = createMessageEntry(createAssistantMessage("early work ".repeat(20)));
+		const keptAssistant = createMessageEntry(createAssistantMessage("kept"));
+		const settings: CompactionSettings = {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		};
+
+		const preparation = prepareCompaction([user, earlyAssistant, keptAssistant], settings);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		expect(preparation.isSplitTurn).toBe(true);
+		expect(preparation.messagesToSummarize).toEqual([]);
+		expect(preparation.sourceMessages).toEqual([]);
+		expect(preparation.turnPrefixSourceMessages).toEqual(preparation.turnPrefixMessages);
+		expect(extractText(preparation.turnPrefixSourceMessages)).toContain("large request");
+		expect(extractText(preparation.turnPrefixSourceMessages)).not.toContain("kept");
+	});
+
+	it("summarizes only entries after a retain-none compaction", () => {
+		const oldUser = createMessageEntry(createUserMessage("old user ".repeat(20)));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old assistant ".repeat(20)));
+		const handoff = createCompactionEntry("handoff", "pending");
+		// appendCompaction(summary, null, ...) records a compaction that keeps no earlier entry as its own first kept id.
+		handoff.firstKeptEntryId = handoff.id;
+		const afterUser = createMessageEntry(createUserMessage("after handoff ".repeat(20)));
+		const afterAssistant = createMessageEntry(createAssistantMessage("after work ".repeat(20)));
+		const recentUser = createMessageEntry(createUserMessage("recent user"));
+		const recentAssistant = createMessageEntry(createAssistantMessage("ok"));
+		const settings: CompactionSettings = {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 3,
+		};
+
+		const preparation = prepareCompaction(
+			[oldUser, oldAssistant, handoff, afterUser, afterAssistant, recentUser, recentAssistant],
+			settings,
+		);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		expect(preparation.firstKeptEntryId).toBe(recentUser.id);
+		expect(preparation.previousSummary).toBe("handoff");
+		expect(preparation.messagesToSummarize).toEqual([afterUser.message, afterAssistant.message]);
+		expect(preparation.sourceMessages[0]?.role).toBe("compactionSummary");
+		expect(preparation.sourceMessages.slice(1)).toEqual(preparation.messagesToSummarize);
+		expect(extractText(preparation.sourceMessages)).not.toContain("old user");
+	});
+});
+
+describe("prepareCompaction", () => {
+	it("does not treat system messages as conversation history", () => {
+		const system = createMessageEntry({
+			role: "system",
+			content: "",
+			sections: { preamble: "current prompt" },
+			timestamp: Date.now(),
+		});
+		const user = createMessageEntry(createUserMessage("one long turn"));
+		const assistant = createMessageEntry(createAssistantMessage("assistant suffix"));
+		const preparation = prepareCompaction([system, user, assistant], {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		});
+
+		expect(preparation).toBeDefined();
+		expect(preparation?.firstKeptEntryId).toBe(assistant.id);
+		expect(preparation?.isSplitTurn).toBe(true);
+		expect(preparation?.messagesToSummarize).toEqual([]);
+		expect(preparation?.turnPrefixMessages).toEqual([user.message]);
 	});
 });
 
@@ -795,6 +1099,34 @@ describe("prepareCompaction with previous compaction", () => {
 		expect(contextText).toContain("user msg 4 (new after compaction1)");
 	});
 
+	it("preserves retained older summaries in the active source prefix", () => {
+		const u1 = createMessageEntry(createUserMessage("user 1"));
+		const a1 = createMessageEntry(createAssistantMessage("assistant 1"));
+		const u2 = createMessageEntry(createUserMessage("user 2 ".repeat(20)));
+		const a2 = createMessageEntry(createAssistantMessage("assistant 2 ".repeat(20)));
+		const compaction1 = createCompactionEntry("First summary", u1.id);
+		const u3 = createMessageEntry(createUserMessage("user 3 ".repeat(20)));
+		const a3 = createMessageEntry(createAssistantMessage("assistant 3 ".repeat(20)));
+		const compaction2 = createCompactionEntry("Second summary", u2.id);
+		const u4 = createMessageEntry(createUserMessage("user 4 ".repeat(20)));
+		const a4 = createMessageEntry(createAssistantMessage("kept"));
+		const settings: CompactionSettings = {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		};
+		const pathEntries = [u1, a1, u2, a2, compaction1, u3, a3, compaction2, u4, a4];
+
+		const preparation = prepareCompaction(pathEntries, settings);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		const sourceSummaries = preparation.sourceMessages.filter((message) => message.role === "compactionSummary");
+		expect(sourceSummaries.map((message) => message.summary)).toEqual(["Second summary", "First summary"]);
+		expect(extractText(preparation.sourceMessages)).toContain("user 3");
+		expect(extractText(preparation.sourceMessages)).not.toContain("user 4");
+		expect(preparation.turnPrefixSourceMessages.at(-1)).toEqual(preparation.turnPrefixMessages.at(-1));
+	});
+
 	it("should re-summarize previously kept messages when the recent window moves past them", () => {
 		const u1 = createMessageEntry(createUserMessage("user msg 1 (summarized by compaction1)".repeat(4)));
 		const a1 = createMessageEntry(createAssistantMessage("assistant msg 1".repeat(4)));
@@ -813,11 +1145,15 @@ describe("prepareCompaction with previous compaction", () => {
 		const preparation = prepareCompaction([u1, a1, u2, a2, u3, a3, compaction1, u4, a4], settings);
 
 		expect(preparation).toBeDefined();
-		const summarizedText = extractText(preparation!.messagesToSummarize);
+		requireSourceMessages(preparation);
+		const summarizedText = extractText(preparation.messagesToSummarize);
 		expect(summarizedText).toContain("user msg 2 - kept by compaction1");
 		expect(summarizedText).toContain("user msg 3 - kept by compaction1");
 		expect(summarizedText).not.toContain("First summary");
-		expect(preparation!.previousSummary).toBe("First summary");
+		expect(preparation.previousSummary).toBe("First summary");
+		expect(preparation.sourceMessages[0]?.role).toBe("compactionSummary");
+		expect(extractText(preparation.sourceMessages)).toContain("First summary");
+		expect(preparation.sourceMessages.slice(1)).toEqual(preparation.messagesToSummarize);
 	});
 });
 
@@ -881,8 +1217,15 @@ describe("builtin compaction extension threshold regressions", () => {
 		const handler = captureBeforeAgentStartHandler();
 		const compact = vi.fn();
 		const ctx = createExtensionContext({
-			getContextUsage: () => ({ tokens: 190_000, contextWindow: 200_000, percent: 0.95 }),
-			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, enabled: false }),
+			getContextUsage: () => ({
+				tokens: 190_000,
+				contextWindow: 200_000,
+				percent: 0.95,
+			}),
+			getCompactionSettings: () => ({
+				...DEFAULT_COMPACTION_SETTINGS,
+				enabled: false,
+			}),
 			compact,
 		});
 
@@ -917,6 +1260,8 @@ describe("builtin compaction extension threshold regressions", () => {
 			model,
 			sessionManager: Object.assign(Object.create(null), {
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
+				reduceHistory: (reducer: HistoryReducer<unknown>) =>
+					reduceEntries([firstUser, firstAssistant, secondUser, secondAssistant], reducer),
 				getBranch: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {
@@ -929,8 +1274,12 @@ describe("builtin compaction extension threshold regressions", () => {
 				order.push("apply-called");
 				return { applied: true, reason: "ok" };
 			},
-			getContextUsage: () => ({ tokens: 190_000, contextWindow: 200_000, percent: 0.95 }),
-			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 }),
+			getContextUsage: () => ({
+				tokens: 190_000,
+				contextWindow: 200_000,
+				percent: 0.95,
+			}),
+			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1, reserveTokens: 100 }),
 		});
 
 		// when
@@ -974,12 +1323,23 @@ describe("builtin compaction extension threshold regressions", () => {
 			sessionManager: Object.assign(Object.create(null), {
 				getEntries: () => branchEntries,
 				getBranch: () => branchEntries,
+				reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {
-				getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-key" }),
+				getApiKeyAndHeaders: async () => ({
+					ok: true as const,
+					apiKey: "test-key",
+				}),
 			}) as ExtensionContext["modelRegistry"],
-			getContextUsage: () => ({ tokens: 190_000, contextWindow: 200_000, percent: 95 }),
-			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 }),
+			getContextUsage: () => ({
+				tokens: 190_000,
+				contextWindow: 200_000,
+				percent: 95,
+			}),
+			getCompactionSettings: () => ({
+				...DEFAULT_COMPACTION_SETTINGS,
+				keepRecentTokens: 1,
+			}),
 			beginCompaction: () => new AbortController().signal,
 			applyCompaction: async () => ({ applied: true, reason: "ok" }),
 		});
@@ -1014,6 +1374,8 @@ describe("builtin compaction extension threshold regressions", () => {
 			model,
 			sessionManager: Object.assign(Object.create(null), {
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
+				reduceHistory: (reducer: HistoryReducer<unknown>) =>
+					reduceEntries([firstUser, firstAssistant, secondUser, secondAssistant], reducer),
 				getBranch: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 			}) as ExtensionContext["sessionManager"],
 			modelRegistry: Object.assign(Object.create(null), {
@@ -1033,8 +1395,12 @@ describe("builtin compaction extension threshold regressions", () => {
 			endCompaction: () => {
 				order.push("end-called");
 			},
-			getContextUsage: () => ({ tokens: 190_000, contextWindow: 200_000, percent: 0.95 }),
-			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 }),
+			getContextUsage: () => ({
+				tokens: 190_000,
+				contextWindow: 200_000,
+				percent: 0.95,
+			}),
+			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1, reserveTokens: 100 }),
 		});
 
 		// when

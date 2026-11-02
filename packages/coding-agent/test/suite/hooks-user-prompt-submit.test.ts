@@ -194,7 +194,7 @@ describe("builtin hooks UserPromptSubmit adapter", () => {
 			// Then
 			const userMessages = harness.session.messages.filter((message) => message.role === "user");
 			expect(userMessages).toHaveLength(1);
-			expect(getMessageText(userMessages[0])).toContain('<skill name="test" location="');
+			expect(getMessageText(userMessages[0])).toContain('<skill-instruction name="test" location="');
 			expect(getMessageText(userMessages[0])).toContain("Use the real expanded skill body.");
 			expect(getMessageText(userMessages[0])).toContain("original prompt");
 			expect(getMessageText(userMessages[0])).not.toContain("REPLACED PROMPT");

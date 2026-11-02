@@ -1,15 +1,71 @@
-import { readFileSync } from "fs";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
+import { formatSkillInvocationPrompt, type ParsedSkillBlock, parseSkillBlock } from "../src/core/agent-session.ts";
 
 describe("export HTML skill block rendering", () => {
 	const templateJs = readFileSync(new URL("../src/core/export-html/template.js", import.meta.url), "utf-8");
+	const parserSource = templateJs.match(
+		/ {6}function parseSkillBlock\(text\) \{[\s\S]*?\n {6}\}\n\n {6}function getSearchableText/,
+	)?.[0];
+	if (!parserSource) throw new Error("Could not extract standalone export parseSkillBlock");
+	const standaloneParser = runInNewContext(
+		`(${parserSource.replace(/\n\n {6}function getSearchableText$/, "").replace(/^ {6}/gm, "")})`,
+	) as (text: string) => ParsedSkillBlock | null;
 
-	it("strips skill wrapper XML from user message rendering", () => {
-		// Skill commands store a structural wrapper in the raw user message:
-		//   <skill name="..." location="...">\n...\n</skill>\n\nactual prompt
-		// The export renderer must detect that wrapper and render only the user-visible prompt,
-		// not the Pi-generated <skill>...</skill> XML tags.
-		expect(templateJs).toMatch(/parseSkillBlock/);
+	const skill = {
+		name: "inspect",
+		filePath: "/project/.agents/skills/inspect/SKILL.md",
+		baseDir: "/project/.agents/skills/inspect",
+		body: "# Inspect\n\nUse inspection tools.",
+	};
+
+	const parsedSkill = {
+		name: skill.name,
+		location: skill.filePath,
+		content: `References are relative to ${skill.baseDir}.\n\n${skill.body}`,
+	};
+
+	it("round-trips the production skill invocation payload through both parsers", () => {
+		const payload = formatSkillInvocationPrompt([skill], "Check errors.");
+		const expected: ParsedSkillBlock = {
+			...parsedSkill,
+			skills: [parsedSkill],
+			userMessage: "Check errors.",
+		};
+
+		expect(parseSkillBlock(payload)).toEqual(expected);
+		expect(standaloneParser(payload)).toEqual(expected);
+	});
+
+	it("parses chained production payloads without exposing later skill markup as the user request", () => {
+		const secondSkill = {
+			name: "verify",
+			filePath: "/project/.agents/skills/verify/SKILL.md",
+			baseDir: "/project/.agents/skills/verify",
+			body: "# Verify\n\nRun focused checks.",
+		};
+		const payload = formatSkillInvocationPrompt([skill, secondSkill], "Check errors.");
+
+		for (const parsed of [parseSkillBlock(payload), standaloneParser(payload)]) {
+			expect(parsed?.userMessage).toBe("Check errors.");
+			expect(parsed?.skills.map((entry) => entry.name)).toEqual(["inspect", "verify"]);
+		}
+	});
+
+	it("keeps parsing legacy payloads from resumed and imported sessions", () => {
+		const legacyPayload = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${skill.body}\n</skill>\n\nCheck errors.`;
+		const expected: ParsedSkillBlock = {
+			...parsedSkill,
+			skills: [parsedSkill],
+			userMessage: "Check errors.",
+		};
+
+		expect(parseSkillBlock(legacyPayload)).toEqual(expected);
+		expect(standaloneParser(legacyPayload)).toEqual(expected);
+	});
+
+	it("strips skill wrapper markup from user message rendering", () => {
 		expect(templateJs).toMatch(/skillBlock\.userMessage/);
 	});
 
@@ -29,7 +85,7 @@ describe("export HTML skill block rendering", () => {
 	it("renders skill content as markdown, not raw text", () => {
 		// The skill block body is markdown (from the SKILL.md file).
 		// It should be rendered through safeMarkedParse, not escaped as raw text.
-		expect(templateJs).toMatch(/safeMarkedParse\(skillBlock\.content\)/);
+		expect(templateJs).toMatch(/safeMarkedParse\(skill\.content\)/);
 	});
 
 	it("shows skill name and user message in the sidebar tree", () => {

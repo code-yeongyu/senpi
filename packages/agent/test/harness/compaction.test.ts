@@ -1,4 +1,5 @@
 import {
+	type Api,
 	type AssistantMessage,
 	createModels,
 	type FauxProviderHandle,
@@ -12,6 +13,7 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 import {
 	type CompactionPreparation,
+	type CompactionSettings,
 	calculateContextTokens,
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
@@ -26,17 +28,15 @@ import {
 	serializeConversation,
 	shouldCompact,
 } from "../../src/harness/compaction/compaction.ts";
-import { buildSessionContext } from "../../src/harness/session/session.ts";
+import { BACKGROUND_CONTEXT } from "../../src/harness/context.ts";
+import { buildSessionContext } from "../../src/harness/session/context.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
-	CompactionSettings,
-	CustomMessageEntry,
+	CustomEntry,
+	Entry,
 	MessageEntry,
-	ModelChangeEntry,
-	SessionTreeEntry,
-	ThinkingLevelChangeEntry,
-} from "../../src/harness/types.ts";
+} from "../../src/harness/session/types.ts";
 import { getOrThrow } from "../../src/harness/types.ts";
 import type { AgentMessage } from "../../src/types.ts";
 
@@ -82,14 +82,14 @@ function createMessageEntry(message: AgentMessage, parentId: string | null = nul
 		type: "message",
 		id: createId(),
 		parentId,
-		timestamp: new Date().toISOString(),
+		seq: nextId,
+		timestamp: Date.now(),
 		message,
 	};
 }
 
 function createCompactionEntry(
 	summary: string,
-	firstKeptEntryId: string,
 	parentId: string | null = null,
 	retainedTail?: AgentMessage[],
 ): CompactionEntry {
@@ -97,32 +97,23 @@ function createCompactionEntry(
 		type: "compaction",
 		id: createId(),
 		parentId,
-		timestamp: new Date().toISOString(),
+		seq: nextId,
+		timestamp: Date.now(),
 		summary,
-		firstKeptEntryId,
 		tokensBefore: 1234,
-		retainedTail,
+		retainedTail: retainedTail ?? [],
+		fromHook: false,
 	};
 }
 
-function createThinkingLevelEntry(level: string, parentId: string | null = null): ThinkingLevelChangeEntry {
+function createCustomEntry(customType: string, parentId: string | null = null): CustomEntry {
 	return {
-		type: "thinking_level_change",
+		type: "custom",
+		customType,
 		id: createId(),
 		parentId,
-		timestamp: new Date().toISOString(),
-		thinkingLevel: level,
-	};
-}
-
-function createModelChangeEntry(provider: string, modelId: string, parentId: string | null = null): ModelChangeEntry {
-	return {
-		type: "model_change",
-		id: createId(),
-		parentId,
-		timestamp: new Date().toISOString(),
-		provider,
-		modelId,
+		seq: nextId,
+		timestamp: Date.now(),
 	};
 }
 
@@ -130,7 +121,7 @@ function createModelChangeEntry(provider: string, modelId: string, parentId: str
 const models = createModels();
 let fauxCount = 0;
 
-function createFauxModel(reasoning: boolean, maxTokens = 8192): { faux: FauxProviderHandle; model: Model<string> } {
+function createFauxModel(reasoning: boolean, maxTokens = 8192): { faux: FauxProviderHandle; model: Model<Api> } {
 	const faux = fauxProvider({
 		provider: `faux-${++fauxCount}`,
 		models: [
@@ -167,6 +158,29 @@ describe("harness compaction", () => {
 		expect(calculateContextTokens(createMockUsage(0, 0, 0, 0))).toBe(0);
 	});
 
+	// oh-my-openagent#10792: compaction uses occupied context, not cumulative billing.
+	it("keeps cumulative SDK billing below the context threshold when the last request fits", () => {
+		const usage = Object.assign(createMockUsage(2_000, 300, 700_000), {
+			contextUsage: { input: 352_000, output: 200 },
+		});
+		const message = createAssistantMessage("done", usage);
+		const estimate = estimateContextTokens([message]);
+		expect(estimate.tokens).toBe(352_200);
+		expect(
+			shouldCompact(estimate.tokens, 1_000_000, {
+				enabled: true,
+				reserveTokens: 300_000,
+				keepRecentTokens: 20_000,
+			}),
+		).toBe(false);
+		expect(usage.totalTokens).toBe(702_300);
+	});
+
+	it("estimates content when no request-level context measurement exists", () => {
+		const usage = Object.assign(createMockUsage(700_000, 300), { contextUsage: null });
+		expect(estimateContextTokens([createAssistantMessage("done", usage)]).tokens).toBe(1);
+	});
+
 	it("checks compaction threshold", () => {
 		const settings: CompactionSettings = {
 			enabled: true,
@@ -179,7 +193,7 @@ describe("harness compaction", () => {
 	});
 
 	it("finds a cut point based on token differences", () => {
-		const entries: SessionTreeEntry[] = [];
+		const entries: Entry[] = [];
 		let parentId: string | null = null;
 		for (let i = 0; i < 10; i++) {
 			const user = createMessageEntry(createUserMessage(`User ${i}`), parentId);
@@ -197,9 +211,9 @@ describe("harness compaction", () => {
 	});
 
 	it("covers cut-point and turn-start edge cases", () => {
-		const thinking = createThinkingLevelEntry("high");
-		const modelChange = createModelChangeEntry("openai", "gpt-4", thinking.id);
-		expect(findCutPoint([thinking, modelChange], 0, 2, 1)).toEqual({
+		const firstCustom = createCustomEntry("first");
+		const secondCustom = createCustomEntry("second", firstCustom.id);
+		expect(findCutPoint([firstCustom, secondCustom], 0, 2, 1)).toEqual({
 			firstKeptEntryIndex: 0,
 			turnStartIndex: -1,
 			isSplitTurn: false,
@@ -208,25 +222,17 @@ describe("harness compaction", () => {
 		const branchSummary: BranchSummaryEntry = {
 			type: "branch_summary",
 			id: createId(),
-			parentId: modelChange.id,
-			timestamp: new Date().toISOString(),
+			parentId: secondCustom.id,
+			seq: nextId,
+			timestamp: Date.now(),
 			fromId: "branch",
 			summary: "branch summary",
+			fromHook: false,
 		};
-		const customMessage: CustomMessageEntry = {
-			type: "custom_message",
-			id: createId(),
-			parentId: branchSummary.id,
-			timestamp: new Date().toISOString(),
-			customType: "note",
-			content: "custom content",
-			display: true,
-		};
-		expect(findTurnStartIndex([thinking, branchSummary], 1, 0)).toBe(1);
-		expect(findTurnStartIndex([thinking, customMessage], 1, 0)).toBe(1);
-		expect(findTurnStartIndex([thinking, modelChange], 1, 0)).toBe(-1);
+		expect(findTurnStartIndex([firstCustom, branchSummary], 1, 0)).toBe(1);
+		expect(findTurnStartIndex([firstCustom, secondCustom], 1, 0)).toBe(-1);
 
-		const result = findCutPoint([thinking, branchSummary, customMessage], 0, 3, 1);
+		const result = findCutPoint([firstCustom, branchSummary], 0, 2, 1);
 		expect(result.firstKeptEntryIndex).toBe(0);
 
 		const toolResult = createMessageEntry({
@@ -244,7 +250,7 @@ describe("harness compaction", () => {
 		});
 
 		const user = createMessageEntry(createUserMessage("user"));
-		const compaction = createCompactionEntry("summary", user.id, user.id);
+		const compaction = createCompactionEntry("summary", user.id);
 		const assistant = createMessageEntry(createAssistantMessage("assistant"), compaction.id);
 		expect(findCutPoint([user, compaction, assistant], 0, 3, 1).firstKeptEntryIndex).toBe(2);
 	});
@@ -282,6 +288,62 @@ describe("harness compaction", () => {
 		const result = findCutPoint(entries, 0, entries.length, tinyBudget);
 
 		expect(result.firstKeptEntryIndex).toBe(lastValidCutPointIndex);
+	});
+
+	it.each(["error", "aborted"] as const)("excludes trailing %s turns from the context estimate", (stopReason) => {
+		const big = "x".repeat(40_000);
+		const failed: AssistantMessage = {
+			...createAssistantMessage(big),
+			stopReason,
+			content: [
+				{ type: "text", text: big },
+				{ type: "toolCall", id: "c-failed", name: "bash", arguments: { command: "ls" } },
+			],
+		};
+		const orphanResult: AgentMessage = {
+			role: "toolResult",
+			toolCallId: "c-failed",
+			toolName: "bash",
+			content: [{ type: "text", text: big }],
+			isError: true,
+			timestamp: Date.now(),
+		};
+		const withFailed: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			failed,
+			orphanResult,
+			createUserMessage("next"),
+		];
+		const baseline: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			createUserMessage("next"),
+		];
+
+		const withFailedEstimate = estimateContextTokens(withFailed);
+		const baselineEstimate = estimateContextTokens(baseline);
+
+		expect(withFailedEstimate.tokens).toBe(baselineEstimate.tokens);
+		expect(withFailedEstimate.trailingTokens).toBe(baselineEstimate.trailingTokens);
+	});
+
+	it("reports lastUsageIndex against the input array when a failed turn precedes the anchor", () => {
+		const failed: AssistantMessage = { ...createAssistantMessage("failed"), stopReason: "error" };
+		const anchor = createAssistantMessage("anchor", createMockUsage(200, 100));
+		const messages: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			failed,
+			anchor,
+			createUserMessage("next"),
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.lastUsageIndex).not.toBeNull();
+		expect(messages[estimate.lastUsageIndex as number]).toBe(anchor);
+		expect(estimate.usageTokens).toBe(300);
 	});
 
 	it("estimates tokens and context usage across supported message roles", () => {
@@ -375,21 +437,21 @@ describe("harness compaction", () => {
 		expect(estimate.tokens).toBe(20 + estimate.trailingTokens);
 	});
 
-	it("builds session context with a compaction entry", () => {
+	it("builds session context with a compaction entry", async () => {
 		const u1 = createMessageEntry(createUserMessage("1"));
 		const a1 = createMessageEntry(createAssistantMessage("a"), u1.id);
 		const u2 = createMessageEntry(createUserMessage("2"), a1.id);
 		const a2 = createMessageEntry(createAssistantMessage("b"), u2.id);
-		const compaction = createCompactionEntry("Summary of 1,a,2,b", u2.id, a2.id, [
+		const compaction = createCompactionEntry("Summary of 1,a,2,b", a2.id, [
 			createUserMessage("2"),
 			createAssistantMessage("b"),
 		]);
 		const u3 = createMessageEntry(createUserMessage("3"), compaction.id);
 		const a3 = createMessageEntry(createAssistantMessage("c"), u3.id);
-		const loaded = buildSessionContext([u1, a1, u2, a2, compaction, u3, a3]);
-		expect(loaded.messages).toHaveLength(5);
-		expect(loaded.messages[0]?.role).toBe("compactionSummary");
-		expect(loaded.messages.map((message) => message.role)).toEqual([
+		const loaded = await buildSessionContext([u1, a1, u2, a2, compaction, u3, a3], undefined, BACKGROUND_CONTEXT);
+		expect(loaded).toHaveLength(5);
+		expect(loaded[0]?.role).toBe("compactionSummary");
+		expect(loaded.map((message) => message.role)).toEqual([
 			"compactionSummary",
 			"user",
 			"assistant",
@@ -398,47 +460,44 @@ describe("harness compaction", () => {
 		]);
 	});
 
-	it("falls back to firstKeptEntryId when a compaction has no retained tail", () => {
-		const u1 = createMessageEntry(createUserMessage("1"));
-		const a1 = createMessageEntry(createAssistantMessage("a"), u1.id);
-		const u2 = createMessageEntry(createUserMessage("2"), a1.id);
-		const a2 = createMessageEntry(createAssistantMessage("b"), u2.id);
-		const compaction = createCompactionEntry("Summary of 1,a,2,b", u2.id, a2.id);
-		const u3 = createMessageEntry(createUserMessage("3"), compaction.id);
-		const loaded = buildSessionContext([u1, a1, u2, a2, compaction, u3]);
-		expect(loaded.messages.map((message) => message.role)).toEqual([
-			"compactionSummary",
-			"user",
-			"assistant",
-			"user",
-		]);
-	});
-
-	it("tracks model and thinking level changes in built context", () => {
-		const user = createMessageEntry(createUserMessage("1"));
-		const modelChange = createModelChangeEntry("openai", "gpt-4", user.id);
-		const assistant = createMessageEntry(createAssistantMessage("a"), modelChange.id);
-		const thinkingChange = createThinkingLevelEntry("high", assistant.id);
-		const loaded = buildSessionContext([user, modelChange, assistant, thinkingChange]);
-		expect(loaded.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
-		expect(loaded.thinkingLevel).toBe("high");
-	});
-
-	it("prepares compaction using the latest compaction summary as previousSummary", () => {
+	it("prepares compaction using the latest compaction summary as previousSummary", async () => {
 		const u1 = createMessageEntry(createUserMessage("user msg 1"));
 		const a1 = createMessageEntry(createAssistantMessage("assistant msg 1"), u1.id);
 		const u2 = createMessageEntry(createUserMessage("user msg 2"), a1.id);
 		const a2 = createMessageEntry(createAssistantMessage("assistant msg 2", createMockUsage(5000, 1000)), u2.id);
-		const compaction1 = createCompactionEntry("First summary", u2.id, a2.id);
+		const compaction1 = createCompactionEntry("First summary", a2.id);
 		const u3 = createMessageEntry(createUserMessage("user msg 3"), compaction1.id);
 		const a3 = createMessageEntry(createAssistantMessage("assistant msg 3", createMockUsage(8000, 2000)), u3.id);
 		const pathEntries = [u1, a1, u2, a2, compaction1, u3, a3];
 		const preparation = getOrThrow(prepareCompaction(pathEntries, DEFAULT_COMPACTION_SETTINGS));
 		expect(preparation).toBeDefined();
 		expect(preparation?.previousSummary).toBe("First summary");
-		expect(preparation?.firstKeptEntryId).toBeTruthy();
 		expect(preparation?.retainedTail.length).toBeGreaterThan(0);
-		expect(preparation?.tokensBefore).toBe(estimateContextTokens(buildSessionContext(pathEntries).messages).tokens);
+		expect(preparation?.tokensBefore).toBe(
+			estimateContextTokens(await buildSessionContext(pathEntries, undefined, BACKGROUND_CONTEXT)).tokens,
+		);
+	});
+
+	it("carries a previous compaction's retained tail into the next preparation", () => {
+		const retainedUser = createUserMessage("retained user");
+		const retainedAssistant = createAssistantMessage("retained assistant");
+		const compaction = createCompactionEntry("previous summary", null, [retainedUser, retainedAssistant]);
+		const user = createMessageEntry(createUserMessage("new user"), compaction.id);
+		const assistant = createMessageEntry(createAssistantMessage("new assistant"), user.id);
+
+		const preparation = getOrThrow(
+			prepareCompaction([compaction, user, assistant], {
+				enabled: true,
+				reserveTokens: 100,
+				keepRecentTokens: 1,
+			}),
+		);
+		expect(preparation?.previousSummary).toBe("previous summary");
+		expect([
+			...(preparation?.messagesToSummarize ?? []),
+			...(preparation?.turnPrefixMessages ?? []),
+			...(preparation?.retainedTail ?? []),
+		]).toEqual([retainedUser, retainedAssistant, user.message, assistant.message]);
 	});
 
 	it("prepares split-turn compaction with prior file-operation details", () => {
@@ -449,8 +508,8 @@ describe("harness compaction", () => {
 		};
 		const a1 = createMessageEntry(assistantMessage, u1.id);
 		const compaction1: CompactionEntry = {
-			...createCompactionEntry("First summary", u1.id, a1.id),
-			details: { readFiles: ["old-read.ts"], modifiedFiles: ["old-edit.ts"] },
+			...createCompactionEntry("First summary", a1.id),
+			details: { readFiles: ["old-read.ts"], modifiedFiles: ["old-edit.ts", "written.ts"] },
 		};
 		const u2 = createMessageEntry(createUserMessage("large turn"), compaction1.id);
 		const a2 = createMessageEntry(createAssistantMessage("large assistant message"), u2.id);
@@ -466,42 +525,11 @@ describe("harness compaction", () => {
 		expect(preparation?.turnPrefixMessages.map((message) => message.role)).toEqual(["user"]);
 		expect([...preparation!.fileOps.read]).toContain("old-read.ts");
 		expect([...preparation!.fileOps.edited]).toContain("old-edit.ts");
-		expect([...preparation!.fileOps.written]).toContain("written.ts");
-	});
-
-	it("prepares custom and branch summary entries for summarization", () => {
-		const branchSummary: BranchSummaryEntry = {
-			type: "branch_summary",
-			id: createId(),
-			parentId: null,
-			timestamp: new Date().toISOString(),
-			fromId: "branch",
-			summary: "branch summary",
-		};
-		const customMessage: CustomMessageEntry = {
-			type: "custom_message",
-			id: createId(),
-			parentId: branchSummary.id,
-			timestamp: new Date().toISOString(),
-			customType: "note",
-			content: "custom content",
-			display: true,
-		};
-		const user = createMessageEntry(createUserMessage("keep"), customMessage.id);
-		const assistant = createMessageEntry(createAssistantMessage("assistant"), user.id);
-		const preparation = getOrThrow(
-			prepareCompaction([branchSummary, customMessage, user, assistant], {
-				enabled: true,
-				reserveTokens: 100,
-				keepRecentTokens: 1,
-			}),
-		);
-
-		expect(preparation?.messagesToSummarize.map((message) => message.role)).toEqual(["branchSummary", "custom"]);
+		expect([...preparation!.fileOps.edited]).toContain("written.ts");
 	});
 
 	it("does not prepare compaction when there is nothing valid to compact", () => {
-		const compaction = createCompactionEntry("already compacted", "entry-keep");
+		const compaction = createCompactionEntry("already compacted");
 		expect(getOrThrow(prepareCompaction([compaction], DEFAULT_COMPACTION_SETTINGS))).toBeUndefined();
 		expect(getOrThrow(prepareCompaction([], DEFAULT_COMPACTION_SETTINGS))).toBeUndefined();
 	});
@@ -534,7 +562,18 @@ describe("harness compaction", () => {
 			},
 		]);
 		getOrThrow(
-			await generateSummary(messages, models, reasoningModel, 2000, undefined, undefined, undefined, "medium"),
+			await generateSummary(
+				messages,
+				models,
+				reasoningModel,
+				2000,
+				undefined,
+				undefined,
+				"medium",
+				undefined,
+				undefined,
+				BACKGROUND_CONTEXT,
+			),
 		);
 		expect(seenOptions[0]).toMatchObject({ reasoning: "medium" });
 
@@ -545,7 +584,20 @@ describe("harness compaction", () => {
 				return fauxAssistantMessage("## Goal\nTest summary");
 			},
 		]);
-		getOrThrow(await generateSummary(messages, models, offModel, 2000, undefined, undefined, undefined, "off"));
+		getOrThrow(
+			await generateSummary(
+				messages,
+				models,
+				offModel,
+				2000,
+				undefined,
+				undefined,
+				"off",
+				undefined,
+				undefined,
+				BACKGROUND_CONTEXT,
+			),
+		);
 		expect(seenOptions[1]).not.toHaveProperty("reasoning");
 
 		const { faux: fauxNonReasoning, model: nonReasoningModel } = createFauxModel(false);
@@ -556,7 +608,18 @@ describe("harness compaction", () => {
 			},
 		]);
 		getOrThrow(
-			await generateSummary(messages, models, nonReasoningModel, 2000, undefined, undefined, undefined, "medium"),
+			await generateSummary(
+				messages,
+				models,
+				nonReasoningModel,
+				2000,
+				undefined,
+				undefined,
+				"medium",
+				undefined,
+				undefined,
+				BACKGROUND_CONTEXT,
+			),
 		);
 		expect(seenOptions[2]).not.toHaveProperty("reasoning");
 	});
@@ -567,7 +630,8 @@ describe("harness compaction", () => {
 		const { faux, model } = createFauxModel(false);
 		faux.setResponses([
 			(context) => {
-				const message = context.messages[0];
+				// The transcript leads with the summarization system prompt; the request is the first user message.
+				const message = context.messages.find((entry) => entry.role === "user");
 				const content = message?.role === "user" ? message.content : [];
 				promptText = Array.isArray(content) && content[0]?.type === "text" ? content[0].text : "";
 				return fauxAssistantMessage("## Goal\nTest summary");
@@ -575,7 +639,18 @@ describe("harness compaction", () => {
 		]);
 
 		const summary = getOrThrow(
-			await generateSummaryWithUsage(messages, models, model, 2000, undefined, "focus", "old summary"),
+			await generateSummaryWithUsage(
+				messages,
+				models,
+				model,
+				2000,
+				"focus",
+				"old summary",
+				undefined,
+				undefined,
+				undefined,
+				BACKGROUND_CONTEXT,
+			),
 		);
 
 		expect(summary.text).toContain("Test summary");
@@ -593,14 +668,40 @@ describe("harness compaction", () => {
 		const { faux, model } = createFauxModel(false);
 		faux.setResponses([fauxAssistantMessage("## Goal\nTest summary")]);
 
-		expect(getOrThrow(await generateSummary(messages, models, model, 2000))).toBe("## Goal\nTest summary");
+		expect(
+			getOrThrow(
+				await generateSummary(
+					messages,
+					models,
+					model,
+					2000,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					BACKGROUND_CONTEXT,
+				),
+			),
+		).toBe("## Goal\nTest summary");
 	});
 
 	it("returns error results for failed or aborted summary generations", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const { faux: errorFaux, model: errorModel } = createFauxModel(false);
 		errorFaux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "boom" })]);
-		const errorResult = await generateSummary(messages, models, errorModel, 2000);
+		const errorResult = await generateSummary(
+			messages,
+			models,
+			errorModel,
+			2000,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			BACKGROUND_CONTEXT,
+		);
 		expect(errorResult).toMatchObject({
 			ok: false,
 			error: { code: "summarization_failed", message: "Summarization failed: boom" },
@@ -608,8 +709,88 @@ describe("harness compaction", () => {
 
 		const { faux: abortedFaux, model: abortedModel } = createFauxModel(false);
 		abortedFaux.setResponses([fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "stopped" })]);
-		const abortedResult = await generateSummary(messages, models, abortedModel, 2000);
+		const abortedResult = await generateSummary(
+			messages,
+			models,
+			abortedModel,
+			2000,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			BACKGROUND_CONTEXT,
+		);
 		expect(abortedResult).toMatchObject({ ok: false, error: { code: "aborted", message: "stopped" } });
+	});
+
+	it.each([
+		["a truncated answer", { ...createAssistantMessage("## Goal\nHalf a summ"), stopReason: "length" as const }],
+		[
+			"a tool call",
+			{
+				...createAssistantMessage(""),
+				content: [{ type: "toolCall" as const, id: "call-1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse" as const,
+			},
+		],
+		["an empty answer", createAssistantMessage("  \n")],
+	])("fails instead of replacing history with %s", async (_name, response: AssistantMessage) => {
+		const { model } = createFauxModel(false);
+		const result = await generateSummary(
+			[createUserMessage("Summarize this.")],
+			createModelsWithSimpleResponses([response]),
+			model,
+			2000,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			BACKGROUND_CONTEXT,
+		);
+		expect(result).toMatchObject({ ok: false, error: { code: "summarization_failed" } });
+	});
+
+	it("fails a split-turn compaction whose turn-prefix summary is empty", async () => {
+		const messages: AgentMessage[] = [createUserMessage("large turn")];
+		const preparation: CompactionPreparation = {
+			messagesToSummarize: [createUserMessage("history")],
+			turnPrefixMessages: messages,
+			retainedTail: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+		const { model } = createFauxModel(false);
+		const responses = createModelsWithSimpleResponses([
+			createAssistantMessage("## Goal\nHistory summary"),
+			createAssistantMessage(""),
+		]);
+
+		expect(
+			await compact(preparation, responses, model, undefined, undefined, undefined, undefined, BACKGROUND_CONTEXT),
+		).toMatchObject({ ok: false, error: { code: "summarization_failed" } });
+	});
+
+	it("estimates a compacted path from content until a newer response reports usage", () => {
+		const question = createUserMessage("question");
+		const answer = createAssistantMessage("answer", createMockUsage(190_000, 1_000));
+		const u1 = createMessageEntry(question);
+		const a1 = createMessageEntry(answer, u1.id);
+		const compaction = createCompactionEntry("summary", a1.id, [question, answer]);
+		const next = createMessageEntry(createUserMessage("next prompt"), compaction.id);
+		const settings = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 1 };
+
+		const stale = getOrThrow(prepareCompaction([u1, a1, compaction, next], settings));
+		expect(stale?.tokensBefore).toBeLessThan(1_000);
+		expect(shouldCompact(stale?.tokensBefore ?? 0, 200_000, settings)).toBe(false);
+
+		const fresh = createMessageEntry(createAssistantMessage("fresh", createMockUsage(195_000, 1_000)), next.id);
+		const measured = getOrThrow(prepareCompaction([u1, a1, compaction, next, fresh], settings));
+		expect(measured?.tokensBefore).toBe(196_000);
+		expect(shouldCompact(measured?.tokensBefore ?? 0, 200_000, settings)).toBe(true);
 	});
 
 	it("clamps compaction summary maxTokens to the model output cap", async () => {
@@ -627,7 +808,6 @@ describe("harness compaction", () => {
 			},
 		]);
 		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: messages,
 			turnPrefixMessages: messages,
 			retainedTail: messages,
@@ -637,7 +817,9 @@ describe("harness compaction", () => {
 			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
 		};
 
-		getOrThrow(await compact(preparation, models, model));
+		getOrThrow(
+			await compact(preparation, models, model, undefined, undefined, undefined, undefined, BACKGROUND_CONTEXT),
+		);
 
 		expect(seenOptions.map((options) => options?.maxTokens)).toEqual([128000, 128000]);
 		expect(seenOptions.map((options) => options?.cacheRetention)).toEqual(["none", "none"]);
@@ -645,10 +827,42 @@ describe("harness compaction", () => {
 		expect(sessionIds[0]).not.toBe(sessionIds[1]);
 	});
 
+	it("retains per-request retries for non-harness compaction callers", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		const preparation: CompactionPreparation = {
+			messagesToSummarize: messages,
+			turnPrefixMessages: [],
+			retainedTail: messages,
+			isSplitTurn: false,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2_000, keepRecentTokens: 20 },
+		};
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "rate limit exceeded" }),
+			fauxAssistantMessage("recovered summary"),
+		]);
+
+		expect(
+			getOrThrow(
+				await compact(
+					preparation,
+					models,
+					model,
+					undefined,
+					undefined,
+					{ enabled: true, maxRetries: 1, baseDelayMs: 0 },
+					undefined,
+					BACKGROUND_CONTEXT,
+				),
+			).summary,
+		).toContain("recovered summary");
+	});
+
 	it("returns compaction error results without throwing", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: messages,
 			turnPrefixMessages: [],
 			retainedTail: messages,
@@ -659,18 +873,21 @@ describe("harness compaction", () => {
 		};
 		const { faux: historyFaux, model: historyModel } = createFauxModel(false);
 		historyFaux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "history failed" })]);
-		expect(await compact(preparation, models, historyModel)).toMatchObject({
+		expect(
+			await compact(
+				preparation,
+				models,
+				historyModel,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				BACKGROUND_CONTEXT,
+			),
+		).toMatchObject({
 			ok: false,
 			error: { code: "summarization_failed", message: "Summarization failed: history failed" },
 		});
-
-		const { model: invalidModel } = createFauxModel(false);
-		const invalidResult = await compact(
-			{ ...preparation, messagesToSummarize: [], firstKeptEntryId: "" },
-			models,
-			invalidModel,
-		);
-		expect(invalidResult).toMatchObject({ ok: false, error: { code: "invalid_session" } });
 	});
 
 	it("combines usage for split-turn compaction summaries", async () => {
@@ -683,7 +900,6 @@ describe("harness compaction", () => {
 			{ ...fauxAssistantMessage("turn prefix summary"), usage: turnPrefixUsage },
 		]);
 		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: messages,
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
@@ -693,7 +909,9 @@ describe("harness compaction", () => {
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		const result = getOrThrow(await compact(preparation, usageModels, model));
+		const result = getOrThrow(
+			await compact(preparation, usageModels, model, undefined, undefined, undefined, undefined, BACKGROUND_CONTEXT),
+		);
 
 		expect(result.usage).toEqual(createMockUsage(6, 8, 10, 12));
 	});
@@ -709,7 +927,6 @@ describe("harness compaction", () => {
 			},
 		]);
 		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
 			turnPrefixMessages: messages,
 			retainedTail: messages,
@@ -719,7 +936,9 @@ describe("harness compaction", () => {
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		getOrThrow(await compact(preparation, models, model, undefined, undefined, "high"));
+		getOrThrow(
+			await compact(preparation, models, model, undefined, "high", undefined, undefined, BACKGROUND_CONTEXT),
+		);
 
 		expect(seenOptions[0]).toMatchObject({ reasoning: "high" });
 	});
@@ -727,7 +946,6 @@ describe("harness compaction", () => {
 	it("returns turn-prefix compaction errors without throwing", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
 			turnPrefixMessages: messages,
 			retainedTail: messages,
@@ -739,14 +957,27 @@ describe("harness compaction", () => {
 		const { faux, model } = createFauxModel(false);
 		faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "prefix failed" })]);
 
-		expect(await compact(preparation, models, model)).toMatchObject({
+		expect(
+			await compact(preparation, models, model, undefined, undefined, undefined, undefined, BACKGROUND_CONTEXT),
+		).toMatchObject({
 			ok: false,
 			error: { code: "summarization_failed", message: "Turn prefix summarization failed: prefix failed" },
 		});
 
 		const { faux: abortedFaux, model: abortedModel } = createFauxModel(false);
 		abortedFaux.setResponses([fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "prefix stopped" })]);
-		expect(await compact(preparation, models, abortedModel)).toMatchObject({
+		expect(
+			await compact(
+				preparation,
+				models,
+				abortedModel,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				BACKGROUND_CONTEXT,
+			),
+		).toMatchObject({
 			ok: false,
 			error: { code: "aborted", message: "prefix stopped" },
 		});
@@ -765,9 +996,10 @@ describe("harness compaction", () => {
 		expect(preparation).toBeDefined();
 		const { faux, model } = createFauxModel(false);
 		faux.setResponses([fauxAssistantMessage("## Goal\nTest summary")]);
-		const result = getOrThrow(await compact(preparation!, models, model));
+		const result = getOrThrow(
+			await compact(preparation!, models, model, undefined, undefined, undefined, undefined, BACKGROUND_CONTEXT),
+		);
 		expect(result.summary.length).toBeGreaterThan(0);
-		expect(result.firstKeptEntryId).toBeTruthy();
 		expect(result.usage?.totalTokens).toBeGreaterThan(0);
 		expect(result.retainedTail?.length).toBeGreaterThan(0);
 		expect(result.details).toBeDefined();

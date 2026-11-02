@@ -14,6 +14,8 @@ import {
 	sortedPackageEntry,
 } from "./install-lock-utils.mjs";
 import { validateGeneratedFiles } from "./install-lock-validation.mjs";
+import { resolveOptionalRegistryPackage } from "./publish-lock-optional-registry.mjs";
+import { BUNDLED_INTERNAL_WORKSPACES, WORKSPACE_PACKAGES } from "./release-packages.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -22,10 +24,10 @@ const outputDir = join(codingAgentDir, "install-lock");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
-const internalPackagePrefixes = ["@earendil-works/pi-", "@code-yeongyu/senpi"];
 const installPackageName = "@code-yeongyu/senpi-install";
 const allowedInstallScriptPackages = new Map([
-	["@google/genai@2.13.0", "preinstall is a no-op in the published package"],
+	["@google/genai@2.23.0", "preinstall is a no-op in the published package"],
+	["esbuild@0.28.2", "postinstall selects and verifies the platform-specific esbuild binary"],
 	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
 ]);
 
@@ -43,14 +45,14 @@ function readJson(path) {
 	return JSON.parse(readFileSync(path, "utf8"));
 }
 
-function getInternalWorkspaces(lockPackages) {
+function getInternalWorkspaces(lockPackages, lockstepInternalNames) {
 	const workspaces = new Map();
 
 	for (const [lockPath, entry] of Object.entries(lockPackages)) {
 		if (!lockPath.startsWith("packages/") || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
 			continue;
 		}
-		if (!internalPackagePrefixes.some((prefix) => entry.name.startsWith(prefix))) {
+		if (!lockstepInternalNames.has(entry.name)) {
 			continue;
 		}
 
@@ -84,8 +86,17 @@ function addInternalWorkspace(installLockPackages, addedPaths, queue, name, work
 	}
 }
 
-function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item) {
-	const lockPath = resolveExternalDependency(lockPackages, item.name, item.resolveFrom, item.spec);
+async function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item) {
+	let lockPath;
+	try {
+		lockPath = resolveExternalDependency(lockPackages, item.name, item.resolveFrom, item.spec);
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.includes("No matching lockfile entry found")) {
+			throw error;
+		}
+		lockPath = `node_modules/${item.name}`;
+		lockPackages[lockPath] = await resolveOptionalRegistryPackage(item.name, item.spec);
+	}
 	const outputPath = rebaseResolvedLockPath(lockPath, item.sourceBase, item.outputBase);
 	if (addedPaths.has(outputPath)) {
 		return;
@@ -138,7 +149,7 @@ function createRootLockEntry(installerPackageJson) {
 	return sortedPackageEntry(entry);
 }
 
-function generateInstallLock() {
+async function generateInstallLock() {
 	const rootLock = readJson(rootLockfilePath);
 	if (rootLock.lockfileVersion !== 3 || !rootLock.packages) {
 		throw new Error("package-lock.json must be lockfileVersion 3 and contain a packages map");
@@ -147,7 +158,17 @@ function generateInstallLock() {
 	const lockPackages = rootLock.packages;
 	const codingAgentPackage = readJson(join(codingAgentDir, "package.json"));
 	const installerPackageJson = createInstallerPackageJson(codingAgentPackage);
-	const internalWorkspaces = getInternalWorkspaces(lockPackages);
+	const lockstepInternalNames = new Set(
+		WORKSPACE_PACKAGES.map((packagePath) => readJson(join(repoRoot, packagePath)).name),
+	);
+	// Bundled-internal workspaces (chord) resolve their closure from the local manifest like
+	// lockstep workspaces, but keep upstream's own version, so they are classified internal without
+	// being subject to the CalVer version check.
+	const internalWorkspaceNames = new Set([
+		...lockstepInternalNames,
+		...BUNDLED_INTERNAL_WORKSPACES.map((packagePath) => readJson(join(repoRoot, packagePath)).name),
+	]);
+	const internalWorkspaces = getInternalWorkspaces(lockPackages, internalWorkspaceNames);
 	const installLockPackages = {
 		"": createRootLockEntry(installerPackageJson),
 	};
@@ -178,7 +199,7 @@ function generateInstallLock() {
 			continue;
 		}
 
-			addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item);
+		await addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item);
 	}
 
 	const installLock = {
@@ -193,14 +214,14 @@ function generateInstallLock() {
 		installerPackageJson,
 		installLock,
 		internalNames,
-		internalPackagePrefixes,
+		lockstepInternalNames,
 		allowedInstallScriptPackages,
 	});
 	return { installerPackageJson, installLock };
 }
 
 try {
-	const { installerPackageJson, installLock } = generateInstallLock();
+	const { installerPackageJson, installLock } = await generateInstallLock();
 	const packageJsonContent = `${JSON.stringify(installerPackageJson, null, "\t")}\n`;
 	const lockfileContent = `${JSON.stringify(installLock, null, "\t")}\n`;
 

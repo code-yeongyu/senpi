@@ -168,24 +168,43 @@ export async function createFakeRuntimeHost(options: CreateHostOptions): Promise
 	}
 
 	let live = primary.session;
+	// The real AgentSessionRuntime stores this callback and awaits it while
+	// completing a replacement; a no-op stub would swap the session without ever
+	// telling the connection handler to re-read it, so every rebind pin would
+	// observe the stale identity.
+	let rebind: ((session: AgentSession) => Promise<void>) | undefined;
+	// Like the real runtime, replacement listeners run against the outgoing session before it is swapped.
+	const replaceListeners = new Set<() => void>();
+	const swap = async (): Promise<void> => {
+		if (!secondary) return;
+		for (const listener of [...replaceListeners]) listener();
+		live = secondary.session;
+		await rebind?.(live);
+	};
 	const host = {
 		get session() {
 			return live;
 		},
 		newSession: vi.fn(async () => {
-			if (secondary) live = secondary.session;
+			await swap();
 			return { cancelled: false };
 		}),
 		switchSession: vi.fn(async () => {
-			if (secondary) live = secondary.session;
+			await swap();
 			return { cancelled: false };
 		}),
 		fork: vi.fn(async () => {
-			if (secondary) live = secondary.session;
+			await swap();
 			return { cancelled: false, selectedText: "forked" };
 		}),
 		dispose: vi.fn(async () => {}),
-		setRebindSession: vi.fn(),
+		setRebindSession: vi.fn((callback?: (session: AgentSession) => Promise<void>) => {
+			rebind = callback;
+		}),
+		onBeforeSessionReplace: vi.fn((listener: () => void) => {
+			replaceListeners.add(listener);
+			return () => replaceListeners.delete(listener);
+		}),
 	} as unknown as AgentSessionRuntime;
 
 	return {

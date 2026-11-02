@@ -13,7 +13,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	cliEntry,
@@ -41,9 +41,43 @@ const SCENARIOS = {
 			{ name: "pin state", expected: "pinned" },
 		],
 	},
+	// Startup swallows submits but preserves the editor text, so each retry
+	// step just presses Enter again; once the command has run, an empty-editor
+	// Enter is a no-op and the waitFor returns on its first poll.
+	account: {
+		steps: [
+			{ text: "/account openai", key: "Enter", waitFor: "Credential accounts for openai:" },
+			{ key: "Enter", waitFor: "Credential accounts for openai:" },
+			{ key: "Enter", waitFor: "Credential accounts for openai:" },
+			{ key: "Enter", waitFor: "Credential accounts for openai:" },
+			{ key: "Enter", waitFor: "Credential accounts for openai:" },
+		],
+		assertions: [
+			{ name: "default account row", expected: "default | login | available" },
+			{ name: "pinned account row", expected: "work | login | available | pinned" },
+		],
+	},
+	"account-missing-pin": {
+		steps: [
+			{ text: "/account openai pin does-not-exist", key: "Enter", waitFor: "Provider account not found" },
+			{ key: "Enter", waitFor: "Provider account not found" },
+			{ key: "Enter", waitFor: "Provider account not found" },
+			{ key: "Enter", waitFor: "Provider account not found" },
+			{ key: "Enter", waitFor: "Provider account not found" },
+		],
+		assertions: [{ name: "missing pin error", expected: "Provider account not found: does-not-exist" }],
+	},
+	"dollar-invocation": {
+		steps: [{ waitFor: "No models available." }, { text: "$deb", waitFor: "$debugging" }],
+		assertions: [{ name: "visible skill row", expected: "$debugging" }],
+	},
 };
 
-const tuiArgs = () => ["--no-context-files", "--no-skills", "--approve"];
+const tuiArgs = (scenario) => {
+	const args = ["--no-context-files", "--approve"];
+	if (scenario !== "dollar-invocation") args.push("--no-skills");
+	return args;
+};
 
 function parseArgs(argv) {
 	const options = { driver: "auto", expected: [] };
@@ -153,7 +187,37 @@ function seedClaudeAccountScenario(box, scenario) {
 	);
 }
 
-async function scenarioTmux(box, steps, expected) {
+function seedAccountScenario(box, scenario) {
+	if (scenario !== "account" && scenario !== "account-missing-pin") return;
+	writeFileSync(
+		join(box.agentDir, "auth.json"),
+		JSON.stringify({
+			openai: {
+				type: "api_key",
+				key: "sandbox-key-default",
+				accounts: [
+					{ name: "default", source: "login", key: "sandbox-key-default" },
+					{ name: "work", source: "login", key: "sandbox-key-work" },
+				],
+				pinned: "work",
+			},
+		}),
+		{ mode: 0o600 },
+	);
+}
+
+function seedDollarInvocationScenario(box, scenario) {
+	if (scenario !== "dollar-invocation") return;
+	const skillDir = join(box.agentDir, "skills", "debugging");
+	mkdirSync(skillDir, { recursive: true });
+	writeFileSync(
+		join(skillDir, "SKILL.md"),
+		"---\nname: debugging\ndescription: Debug runtime failures\n---\n\n# Debugging\n\nTrace the defect.",
+	);
+	writeFileSync(join(box.agentDir, "settings.json"), JSON.stringify({ enableSkillCommands: true }, null, 2));
+}
+
+async function scenarioTmux(box, scenario, steps, expected) {
 	const root = repoRoot();
 	const session = `senpi-qa-scenario-${process.pid}`;
 	const tmux = (...args) => execFileSync("tmux", args, { encoding: "utf8" });
@@ -174,8 +238,8 @@ async function scenarioTmux(box, steps, expected) {
 	};
 	const shell = [
 		`cd ${shq(box.cwd)}`,
-		`export SENPI_CODING_AGENT_DIR=${shq(box.agentDir)} SENPI_CODING_AGENT_SESSION_DIR=${shq(box.sessionDir)} PI_OFFLINE=1 PI_TELEMETRY=0`,
-		`exec ${shq(process.execPath)} ${shq(tsxEntry(root))} --tsconfig ${shq(join(root, "tsconfig.json"))} ${shq(cliEntry(root))} ${tuiArgs().join(" ")}`,
+		`export SENPI_CODING_AGENT_DIR=${shq(box.agentDir)} SENPI_CODING_AGENT_SESSION_DIR=${shq(box.sessionDir)} HOME=${shq(box.env.HOME)} USERPROFILE=${shq(box.env.USERPROFILE)} PI_OFFLINE=1 PI_TELEMETRY=0 SENPI_OMO_LOCAL_UPDATE=0 PAGER=cat GIT_PAGER=cat`,
+		`exec ${shq(process.execPath)} ${shq(tsxEntry(root))} --tsconfig ${shq(join(root, "tsconfig.json"))} ${shq(cliEntry(root))} ${tuiArgs(scenario).map(shq).join(" ")}`,
 	].join("; ");
 	try {
 		try {
@@ -196,10 +260,10 @@ async function scenarioTmux(box, steps, expected) {
 	}
 }
 
-async function scenarioPty(box, steps, expected) {
+async function scenarioPty(box, scenario, steps, expected) {
 	const root = repoRoot();
 	const pty = (await import("node-pty")).default ?? (await import("node-pty"));
-	const term = pty.spawn(process.execPath, [tsxEntry(root), "--tsconfig", join(root, "tsconfig.json"), cliEntry(root), ...tuiArgs()], {
+	const term = pty.spawn(process.execPath, [tsxEntry(root), "--tsconfig", join(root, "tsconfig.json"), cliEntry(root), ...tuiArgs(scenario)], {
 		name: "xterm-color",
 		cols: 120,
 		rows: 34,
@@ -242,9 +306,24 @@ async function runScenario({ scenario, expected, driver, evidence }) {
 	let result;
 	try {
 		seedClaudeAccountScenario(box, scenario);
+		seedAccountScenario(box, scenario);
+		seedDollarInvocationScenario(box, scenario);
 		process.stdout.write(`driver: ${chosenDriver}\n`);
 		const steps = SCENARIOS[scenario].steps;
-		result = chosenDriver === "tmux" ? await scenarioTmux(box, steps, assertions.map((item) => item.expected)) : await scenarioPty(box, steps, assertions.map((item) => item.expected));
+		result =
+			chosenDriver === "tmux"
+				? await scenarioTmux(
+						box,
+						scenario,
+						steps,
+						assertions.map((item) => item.expected),
+					)
+				: await scenarioPty(
+						box,
+						scenario,
+						steps,
+						assertions.map((item) => item.expected),
+					);
 		checks.ok("TUI survives scripted command", result.survived, `driver=${result.driver}`);
 		for (const assertion of assertions) {
 			checks.ok(
@@ -281,6 +360,7 @@ function usage() {
 			"senpi-qa Channel 2 — scripted TUI scenarios",
 			"  node tui-scenario.mjs --scenario login-claude-sdk-oauth --evidence SLUG [--expect TEXT ...]",
 			"  node tui-scenario.mjs --scenario claude-account --evidence SLUG [--expect TEXT ...]",
+			"  node tui-scenario.mjs --scenario dollar-invocation --evidence SLUG",
 			"  node tui-scenario.mjs --self-test [--driver pty|tmux|auto] [--evidence SLUG]",
 			"  --expected '[\"TEXT\", \"TEXT\"]' is a JSON-list alternative to repeated --expect.",
 			"",

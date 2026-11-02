@@ -42,6 +42,7 @@ interface FeedOutcome {
 }
 
 const FEED_CONTEXT: DetectorContext = { source: "thinking", streamKey: "collapse-test", generation: 1 };
+const TOOL_FEED_CONTEXT: DetectorContext = { source: "tool", streamKey: "tool:0", generation: 1 };
 
 function feedChunks(chunks: readonly string[]): FeedOutcome {
 	const state = createCollapseState();
@@ -280,6 +281,15 @@ describe("Detector A collapse/repetition spec rows", () => {
 });
 
 describe("collapse detector behavior", () => {
+	it.each([
+		["base64 blob", buildBase64(20480, 5)],
+		["numeric table", Array.from({ length: 800 }, (_, index) => `${index},${index + 1},${index + 2}`).join("\n")],
+		["code punctuation", buildMinifiedJs(20480)],
+		["box drawing", buildBoxTable()],
+	])("does not detect legitimate repetitive tool arguments: %s", (_name, input) => {
+		const state = createCollapseState();
+		expect(collapseDetector.checkDelta(state, input, TOOL_FEED_CONTEXT)).toBeNull();
+	});
 	it("latches the first match and returns it for every later delta", () => {
 		const state = createCollapseState();
 		const chunks = ["!".repeat(100), "!".repeat(100), "!".repeat(200), "and later text"];

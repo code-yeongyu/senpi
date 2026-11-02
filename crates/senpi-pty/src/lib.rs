@@ -1,4 +1,5 @@
 mod session;
+mod session_input;
 mod session_threads;
 mod signals;
 
@@ -99,6 +100,16 @@ impl NativePtySession {
     pub fn wait<'env>(&mut self, env: &'env Env) -> NapiResult<PromiseRaw<'env, NativePtyExit>> {
         self.wait_exit(env)
     }
+
+    #[napi(getter)]
+    pub fn pid(&self) -> Option<u32> {
+        self.session.as_ref().and_then(PtySession::pid)
+    }
+
+    #[napi(getter, js_name = "processGroupId")]
+    pub fn process_group_id(&self) -> Option<i32> {
+        self.session.as_ref().and_then(PtySession::process_group_id)
+    }
 }
 
 impl NativePtySession {
@@ -166,25 +177,9 @@ pub fn senpi_pty_abi_sentinel() -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_matches_crate_version() {
-        assert_eq!(version(), env!("CARGO_PKG_VERSION"));
-    }
-
-    #[test]
-    fn abi_sentinel_matches_abi_version() {
-        assert_eq!(senpi_pty_abi_sentinel(), NATIVE_PTY_ABI_VERSION);
-    }
-
-    #[test]
-    fn portable_pty_backend_is_linked() {
-        let _pty_system = portable_pty::native_pty_system();
-    }
-}
-
+mod session_input_pty_tests;
+#[cfg(test)]
+mod session_input_tests;
 #[cfg(test)]
 mod session_tests;
 

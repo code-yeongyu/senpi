@@ -14,11 +14,39 @@ export interface ProviderTimeoutRetryPlanInput {
 	streamStartTimeoutMs: number | undefined;
 }
 
+/**
+ * Raise the retry-continuation liveness cap to the stream-start budget granted to
+ * the same retry, so the watchdog can never cancel an attempt on a deadline the
+ * attempt was never given.
+ *
+ * An explicitly disabled cap (`undefined`) stays disabled: the operator opted out
+ * of the wedge guard, and the provider guards still bound the request. A cap that
+ * already outlasts the granted guard is returned unchanged, so an operator who
+ * configured a longer cap keeps it.
+ */
+function reconcileWatchdogTimeoutMs(
+	streamRetryTimeoutMs: number | undefined,
+	streamStartTimeoutMs: number | undefined,
+): number | undefined {
+	if (streamRetryTimeoutMs === undefined || streamRetryTimeoutMs <= 0) return undefined;
+	if (streamStartTimeoutMs === undefined) return streamRetryTimeoutMs;
+	// This timer starts before the retry reaches its first reader.next(). A 10%
+	// proportional grace therefore makes the provider guard strictly win without
+	// imposing a magic absolute delay on short or long operator-configured guards.
+	return Math.max(streamRetryTimeoutMs, Math.ceil(streamStartTimeoutMs * 1.1));
+}
+
 export interface BoundedRetryContinuation {
 	continueRun(): Promise<void>;
 	getActiveSignal(): AbortSignal | undefined;
 	abortActive(): void;
 	timeoutMs: number | undefined;
+	/**
+	 * Subscribes to the retried request's first stream event (its assistant `message_start`); returns
+	 * the unsubscribe. Once the request streams, the provider's own idle and stall guards govern the rest
+	 * of the run, so the watchdog is cleared (senpi#2804).
+	 */
+	onStreamStarted?(listener: () => void): () => void;
 }
 
 export function createProviderTimeoutRetryPlan({
@@ -31,20 +59,23 @@ export function createProviderTimeoutRetryPlan({
 		return { options: {}, watchdogTimeoutMs: undefined };
 	}
 
-	const capEnabledBound = (configuredMs: number | undefined): number | undefined => {
-		if (streamRetryTimeoutMs === undefined || configuredMs === undefined) return undefined;
-		return Math.min(configuredMs, streamRetryTimeoutMs);
-	};
-	const boundedTimeoutMs = capEnabledBound(timeoutMs);
-	const boundedStreamStartTimeoutMs = capEnabledBound(streamStartTimeoutMs);
+	// The retry keeps the user's configured provider guards: shortening them
+	// made a 90s stream-start budget expire after 30s, so a slow-but-alive
+	// provider was reported as a second stall instead of being given the budget
+	// it was configured with. `streamRetryTimeoutMs` still bounds the retry
+	// continuation itself (see `runBoundedRetryContinuation`), which cancels a
+	// wedged retry without lying to the provider about its deadline.
+	//
+	// The cap is reconciled against the guards this same retry was granted. The
+	// grace above is required because this continuation starts its clock earlier
+	// than the provider stream-start reader.
 	return {
 		options: {
 			deferQueuedMessages: true,
-			...(boundedTimeoutMs === undefined ? {} : { timeoutMs: boundedTimeoutMs }),
-			...(boundedStreamStartTimeoutMs === undefined ? {} : { streamStartTimeoutMs: boundedStreamStartTimeoutMs }),
+			...(timeoutMs === undefined ? {} : { timeoutMs }),
+			...(streamStartTimeoutMs === undefined ? {} : { streamStartTimeoutMs }),
 		},
-		watchdogTimeoutMs:
-			boundedTimeoutMs === undefined && boundedStreamStartTimeoutMs === undefined ? streamRetryTimeoutMs : undefined,
+		watchdogTimeoutMs: reconcileWatchdogTimeoutMs(streamRetryTimeoutMs, streamStartTimeoutMs),
 	};
 }
 
@@ -53,22 +84,35 @@ export async function runBoundedRetryContinuation({
 	getActiveSignal,
 	abortActive,
 	timeoutMs,
+	onStreamStarted,
 }: BoundedRetryContinuation): Promise<void> {
-	const continuation = continueRun();
-	const ownedSignal = getActiveSignal();
-	if (timeoutMs === undefined || ownedSignal === undefined) {
-		await continuation;
-		return;
-	}
-
-	const timer = setTimeout(() => {
-		if (getActiveSignal() === ownedSignal) {
-			abortActive();
-		}
-	}, timeoutMs);
+	// The watchdog bounds only the wait for the retried request to start streaming: a retry that streams
+	// and then works for a long time (a long answer, tool calls, further turns) is not a wedged retry.
+	let streamStarted = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const unsubscribe =
+		timeoutMs === undefined
+			? undefined
+			: onStreamStarted?.(() => {
+					streamStarted = true;
+					clearTimeout(timer);
+				});
 	try {
+		const continuation = continueRun();
+		const ownedSignal = getActiveSignal();
+		if (timeoutMs === undefined || ownedSignal === undefined || streamStarted) {
+			await continuation;
+			return;
+		}
+
+		timer = setTimeout(() => {
+			if (!streamStarted && getActiveSignal() === ownedSignal) {
+				abortActive();
+			}
+		}, timeoutMs);
 		await continuation;
 	} finally {
 		clearTimeout(timer);
+		unsubscribe?.();
 	}
 }

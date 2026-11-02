@@ -3,7 +3,15 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { canonicalizePath, getCwdRelativePath, isLocalPath, normalizePath, resolvePath } from "../src/utils/paths.ts";
+import {
+	canonicalizePath,
+	canonicalizePathStrict,
+	getCwdRelativePath,
+	isLocalPath,
+	normalizePath,
+	normalizeWindowsShellPath,
+	resolvePath,
+} from "../src/utils/paths.ts";
 
 let tempDir: string;
 
@@ -123,6 +131,33 @@ describe("resolvePath", () => {
 	});
 });
 
+describe("normalizeWindowsShellPath", () => {
+	it("converts Git Bash, MSYS, Cygwin, and WSL drive paths", () => {
+		expect(normalizeWindowsShellPath("/c/Users/example/project")).toBe("C:\\Users\\example\\project");
+		expect(normalizeWindowsShellPath("/cygdrive/d/work")).toBe("D:\\work");
+		expect(normalizeWindowsShellPath("/mnt/e/source")).toBe("E:\\source");
+		expect(normalizeWindowsShellPath("/c")).toBe("C:\\");
+	});
+
+	it("leaves other path forms unchanged", () => {
+		for (const path of [
+			"C:/Users/example",
+			"C:\\Users\\example",
+			"//server/share/file",
+			"/c/Users\\example",
+			"relative/file",
+			"/tmp/file",
+		]) {
+			expect(normalizeWindowsShellPath(path)).toBe(path);
+		}
+	});
+
+	it.runIf(process.platform === "win32")("is applied by normal path handling on Windows", () => {
+		expect(normalizePath("/c/Users/example")).toBe("C:\\Users\\example");
+		expect(resolvePath("/mnt/c/Users/example", "D:\\work")).toBe(resolve("C:/Users/example"));
+	});
+});
+
 describe("isLocalPath", () => {
 	it("returns true for bare names", () => {
 		expect(isLocalPath("my-package")).toBe(true);
@@ -146,5 +181,43 @@ describe("isLocalPath", () => {
 
 	it("returns false for https: protocol", () => {
 		expect(isLocalPath("https://example.com")).toBe(false);
+	});
+});
+
+describe("canonicalizePathStrict", () => {
+	const roots: string[] = [];
+	afterEach(() => {
+		for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
+	});
+
+	it("throws where the convenience form returns the raw input", () => {
+		// Given a path that cannot be resolved at all
+		const root = mkdtempSync(join(tmpdir(), "senpi-canon-strict-"));
+		roots.push(root);
+		const missing = join(root, "does-not-exist", "child");
+
+		// Then the convenience form hands back exactly what it was given, so a caller
+		// cannot tell a canonical answer from an unresolved one
+		expect(canonicalizePath(missing)).toBe(missing);
+
+		// ...while the strict form refuses to answer. Assert the ERROR CODE, not merely
+		// "it threw": a missing export also throws (TypeError: not a function), so a bare
+		// toThrow() here would pass against production that has no strict form at all.
+		expect(typeof canonicalizePathStrict).toBe("function");
+		let code: string | undefined;
+		try {
+			canonicalizePathStrict(missing);
+		} catch (error) {
+			code = (error as NodeJS.ErrnoException)?.code;
+		}
+		expect(code).toBe("ENOENT");
+	});
+
+	it("agrees with the convenience form when the path does resolve", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-canon-strict-"));
+		roots.push(root);
+		writeFileSync(join(root, "file.txt"), "x", "utf-8");
+		const target = join(root, "file.txt");
+		expect(canonicalizePathStrict(target)).toBe(canonicalizePath(target));
 	});
 });

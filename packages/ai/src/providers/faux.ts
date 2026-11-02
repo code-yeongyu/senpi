@@ -3,6 +3,9 @@ import type {
 	AssistantMessage,
 	AssistantMessageEventStream,
 	Context,
+	DeferredCancelOptions,
+	DeferredFetchOptions,
+	DeferredHandle,
 	ImageContent,
 	Message,
 	Model,
@@ -12,11 +15,16 @@ import type {
 	StreamOptions,
 	TextContent,
 	ThinkingContent,
+	Tool,
 	ToolCall,
 	ToolResultMessage,
+	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { enableAssistantCapture } from "../utils/assistant-capture.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
+import { getSystemMessageText } from "../utils/text.ts";
+import { getCurrentSystemPrompt, getCurrentTools } from "../utils/transcript.ts";
 
 const DEFAULT_API = "faux";
 const DEFAULT_PROVIDER = "faux";
@@ -40,6 +48,7 @@ export interface FauxModelDefinition {
 	name?: string;
 	reasoning?: boolean;
 	input?: ("text" | "image")[];
+	inputLimits?: Model<string>["inputLimits"];
 	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	contextWindow?: number;
 	maxTokens?: number;
@@ -75,7 +84,9 @@ export function fauxAssistantMessage(
 	content: string | FauxContentBlock | FauxContentBlock[],
 	options: {
 		stopReason?: AssistantMessage["stopReason"];
+		deferred?: DeferredHandle;
 		errorMessage?: string;
+		abortSource?: AssistantMessage["abortSource"];
 		stopDetails?: AssistantMessage["stopDetails"];
 		responseId?: string;
 		timestamp?: number;
@@ -89,17 +100,25 @@ export function fauxAssistantMessage(
 		model: DEFAULT_MODEL_ID,
 		usage: DEFAULT_USAGE,
 		stopReason: options.stopReason ?? "stop",
-		stopDetails: options.stopDetails,
-		errorMessage: options.errorMessage,
-		responseId: options.responseId,
+		...(options.stopDetails === undefined ? {} : { stopDetails: options.stopDetails }),
+		...(options.deferred === undefined ? {} : { deferred: options.deferred }),
+		...(options.errorMessage === undefined ? {} : { errorMessage: options.errorMessage }),
+		...(options.abortSource === undefined ? {} : { abortSource: options.abortSource }),
+		...(options.responseId === undefined ? {} : { responseId: options.responseId }),
 		timestamp: options.timestamp ?? Date.now(),
 	};
 }
 
+export interface FauxProviderState {
+	callCount: number;
+	deferredFetchCount: number;
+	cancelledDeferred: DeferredHandle[];
+}
+
 export type FauxResponseFactory = (
-	context: Context,
-	options: StreamOptions | undefined,
-	state: { callCount: number },
+	context: TranscriptContext,
+	options: SimpleStreamOptions | undefined,
+	state: FauxProviderState,
 	model: Model<string>,
 ) => AssistantMessage | Promise<AssistantMessage>;
 
@@ -109,7 +128,14 @@ export interface RegisterFauxProviderOptions {
 	api?: string;
 	provider?: string;
 	models?: FauxModelDefinition[];
+	deferred?: {
+		/** Number of fetches that return the original handle before the scripted response becomes ready. */
+		pendingFetches?: number;
+		pollAfterMs?: number;
+	};
 	tokensPerSecond?: number;
+	/** Headers every scripted response reports through `onResponse` (default none). */
+	responseHeaders?: Record<string, string>;
 	schedulerHook?: () => void | Promise<void>;
 	tokenSize?: {
 		min?: number;
@@ -118,6 +144,10 @@ export interface RegisterFauxProviderOptions {
 }
 
 export interface FauxCallLogEntry {
+	/**
+	 * The request as the pre-transcript `Context` shape: the prompt and tools replayed from the
+	 * transcript's system messages, and `messages` without system messages.
+	 */
 	context: Context;
 	options?: StreamOptions;
 	timestamp: number;
@@ -129,7 +159,7 @@ export interface FauxProviderRegistration {
 	models: [Model<string>, ...Model<string>[]];
 	getModel(): Model<string>;
 	getModel(modelId: string): Model<string> | undefined;
-	state: { callCount: number };
+	state: FauxProviderState;
 	setResponses: (responses: FauxResponseStep[]) => void;
 	appendResponses: (responses: FauxResponseStep[]) => void;
 	getPendingResponseCount: () => number;
@@ -143,7 +173,7 @@ export interface FauxProviderHandle {
 	models: [Model<string>, ...Model<string>[]];
 	getModel(): Model<string>;
 	getModel(modelId: string): Model<string> | undefined;
-	state: { callCount: number };
+	state: FauxProviderState;
 	setResponses: (responses: FauxResponseStep[]) => void;
 	appendResponses: (responses: FauxResponseStep[]) => void;
 	getPendingResponseCount: () => number;
@@ -163,16 +193,24 @@ function cloneStreamOptionsForLog(options: StreamOptions | undefined): StreamOpt
 	return { ...options };
 }
 
-function cloneContextForLog(context: Context): Context {
+function cloneToolForLog(tool: Tool): Tool {
 	return {
-		...context,
-		messages: structuredClone(context.messages),
-		tools: context.tools?.map((tool) => ({
-			name: tool.name,
-			description: tool.description,
-			parameters: structuredClone(tool.parameters),
-			...(tool.freeform ? { freeform: structuredClone(tool.freeform) } : {}),
-		})),
+		name: tool.name,
+		description: tool.description,
+		parameters: structuredClone(tool.parameters),
+		...(tool.freeform ? { freeform: structuredClone(tool.freeform) } : {}),
+	};
+}
+
+/** Log a request in the pre-transcript `Context` shape; system messages fold into `systemPrompt`/`tools`. */
+function toLoggedContext(transcript: TranscriptContext): Context {
+	const systemPrompt = getCurrentSystemPrompt(transcript.messages);
+	const tools = getCurrentTools(transcript.messages);
+	return {
+		...(systemPrompt ? { systemPrompt } : {}),
+		messages: structuredClone(transcript.messages.filter((message) => message.role !== "system")),
+		...(tools.length > 0 ? { tools: tools.map(cloneToolForLog) } : {}),
+		...(transcript.activeToolNames ? { activeToolNames: [...transcript.activeToolNames] } : {}),
 	};
 }
 
@@ -214,27 +252,27 @@ function toolResultToText(message: ToolResultMessage): string {
 }
 
 function messageToText(message: Message): string {
+	if (message.role === "system") {
+		return [
+			getSystemMessageText(message),
+			...(message.toolsRemoved?.map((tool) => `tool-:${JSON.stringify(tool)}`) ?? []),
+			...(message.toolsAdded?.map((tool) => `tool+:${JSON.stringify(tool)}`) ?? []),
+		]
+			.filter((part) => part.length > 0)
+			.join("\n");
+	}
 	if (message.role === "user") {
 		return contentToText(message.content);
 	}
 	if (message.role === "assistant") {
 		return assistantContentToText(message.content);
 	}
+	if (message.role === "configurationUpdate") return "";
 	return toolResultToText(message);
 }
 
-function serializeContext(context: Context): string {
-	const parts: string[] = [];
-	if (context.systemPrompt) {
-		parts.push(`system:${context.systemPrompt}`);
-	}
-	for (const message of context.messages) {
-		parts.push(`${message.role}:${messageToText(message)}`);
-	}
-	if (context.tools?.length) {
-		parts.push(`tools:${JSON.stringify(context.tools)}`);
-	}
-	return parts.join("\n\n");
+function serializeContext(context: TranscriptContext): string {
+	return context.messages.map((message) => `${message.role}:${messageToText(message)}`).join("\n\n");
 }
 
 function commonPrefixLength(a: string, b: string): number {
@@ -248,7 +286,7 @@ function commonPrefixLength(a: string, b: string): number {
 
 function withUsageEstimate(
 	message: AssistantMessage,
-	context: Context,
+	context: TranscriptContext,
 	options: StreamOptions | undefined,
 	promptCache: Map<string, string>,
 ): AssistantMessage {
@@ -307,6 +345,20 @@ function cloneMessage(message: AssistantMessage, api: string, provider: string, 
 		model: modelId,
 		timestamp: cloned.timestamp ?? Date.now(),
 		usage: cloned.usage ?? DEFAULT_USAGE,
+	};
+}
+
+function createDeferredMessage(model: Model<string>, handle: DeferredHandle): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: DEFAULT_USAGE,
+		stopReason: "deferred",
+		deferred: handle,
+		timestamp: Date.now(),
 	};
 }
 
@@ -432,7 +484,11 @@ async function streamWithDeltas(
 				stream.end(aborted);
 				return;
 			}
-			stream.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+			// Faux never parses its generated chunks; only the end installs the arguments.
+			stream.push(
+				{ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } },
+				{ parsedThrough: 0 },
+			);
 		}
 		(partial.content[index] as ToolCall).arguments = block.arguments;
 		stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: { ...partial } });
@@ -454,6 +510,7 @@ async function streamWithDeltas(
 export function createFauxCore(options: RegisterFauxProviderOptions) {
 	const api = options.api ?? randomId(DEFAULT_API);
 	const provider = options.provider ?? DEFAULT_PROVIDER;
+	const responseHeaders = options.responseHeaders ?? {};
 	const minTokenSize = Math.max(
 		1,
 		Math.min(options.tokenSize?.min ?? DEFAULT_MIN_TOKEN_SIZE, options.tokenSize?.max ?? DEFAULT_MAX_TOKEN_SIZE),
@@ -462,9 +519,22 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 	let pendingResponses: FauxResponseStep[] = [];
 	const tokensPerSecond = options.tokensPerSecond;
 	const schedulerHook = options.schedulerHook;
-	const state = { callCount: 0 };
+	const state: FauxProviderState = { callCount: 0, deferredFetchCount: 0, cancelledDeferred: [] };
 	const promptCache = new Map<string, string>();
 	const callLog: FauxCallLogEntry[] = [];
+	const deferredResponses = new Map<
+		string,
+		{
+			handle: DeferredHandle;
+			step: FauxResponseStep;
+			context: TranscriptContext;
+			options: SimpleStreamOptions | undefined;
+			model: Model<string>;
+			pendingFetches: number;
+			cancelled: boolean;
+			final?: AssistantMessage;
+		}
+	>();
 
 	const modelDefinitions = options.models?.length
 		? options.models
@@ -487,17 +557,34 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		baseUrl: DEFAULT_BASE_URL,
 		reasoning: definition.reasoning ?? false,
 		input: definition.input ?? ["text", "image"],
+		inputLimits: definition.inputLimits,
 		cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: definition.contextWindow ?? 128000,
 		maxTokens: definition.maxTokens ?? 16384,
 	})) as [Model<string>, ...Model<string>[]];
 
-	const stream: StreamFunction<string, StreamOptions> = (requestModel, context, streamOptions) => {
+	const resolveResponse = async (
+		step: FauxResponseStep,
+		context: TranscriptContext,
+		streamOptions: SimpleStreamOptions | undefined,
+		requestModel: Model<string>,
+	): Promise<AssistantMessage> => {
+		const resolved = typeof step === "function" ? await step(context, streamOptions, state, requestModel) : step;
+		return withUsageEstimate(
+			cloneMessage(resolved, api, provider, requestModel.id),
+			context,
+			streamOptions,
+			promptCache,
+		);
+	};
+
+	const stream: StreamFunction<string, SimpleStreamOptions> = (requestModel, context, streamOptions) => {
 		const outer = createAssistantMessageEventStream();
+		enableAssistantCapture(outer);
 		const step = pendingResponses.shift();
 		state.callCount++;
 		callLog.push({
-			context: cloneContextForLog(context),
+			context: toLoggedContext(context),
 			options: cloneStreamOptionsForLog(streamOptions),
 			timestamp: Date.now(),
 			modelId: requestModel.id,
@@ -505,7 +592,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 
 		queueMicrotask(async () => {
 			try {
-				await streamOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
+				await streamOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
 				if (!step) {
 					let message = createErrorMessage(
 						new Error("No more faux responses queued"),
@@ -519,10 +606,36 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 					return;
 				}
 
-				const resolved =
-					typeof step === "function" ? await step(context, streamOptions, state, requestModel) : step;
-				let message = cloneMessage(resolved, api, provider, requestModel.id);
-				message = withUsageEstimate(message, context, streamOptions, promptCache);
+				if (streamOptions?.deferred) {
+					const handle: DeferredHandle = {
+						provider: requestModel.provider,
+						modelId: requestModel.id,
+						api: requestModel.api,
+						id: randomId("deferred"),
+						...(options.deferred?.pollAfterMs !== undefined ? { pollAfterMs: options.deferred.pollAfterMs } : {}),
+					};
+					deferredResponses.set(handle.id, {
+						handle,
+						step,
+						context,
+						options: streamOptions,
+						model: requestModel,
+						pendingFetches: Math.max(0, Math.floor(options.deferred?.pendingFetches ?? 0)),
+						cancelled: false,
+					});
+					await streamWithDeltas(
+						outer,
+						createDeferredMessage(requestModel, handle),
+						minTokenSize,
+						maxTokenSize,
+						tokensPerSecond,
+						schedulerHook,
+						streamOptions.signal,
+					);
+					return;
+				}
+
+				const message = await resolveResponse(step, context, streamOptions, requestModel);
 				await streamWithDeltas(
 					outer,
 					message,
@@ -545,6 +658,86 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 	const streamSimple: StreamFunction<string, SimpleStreamOptions> = (streamModel, context, streamOptions) =>
 		stream(streamModel, context, streamOptions);
 
+	const fetchDeferred = (
+		requestModel: Model<string>,
+		handle: DeferredHandle,
+		fetchOptions?: DeferredFetchOptions,
+	): AssistantMessageEventStream => {
+		const outer = createAssistantMessageEventStream();
+		enableAssistantCapture(outer);
+		state.deferredFetchCount++;
+
+		queueMicrotask(async () => {
+			try {
+				await fetchOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
+				const entry = deferredResponses.get(handle.id);
+				if (
+					!entry ||
+					entry.handle.provider !== handle.provider ||
+					entry.handle.modelId !== handle.modelId ||
+					entry.handle.api !== handle.api
+				) {
+					throw new Error(`Unknown faux deferred response: ${handle.id}`);
+				}
+				if (entry.cancelled) throw new Error(`Faux deferred response was cancelled: ${handle.id}`);
+
+				if (entry.pendingFetches > 0) {
+					entry.pendingFetches--;
+					await streamWithDeltas(
+						outer,
+						createDeferredMessage(requestModel, entry.handle),
+						minTokenSize,
+						maxTokenSize,
+						tokensPerSecond,
+						schedulerHook,
+						fetchOptions?.signal,
+					);
+					return;
+				}
+
+				if (!entry.final) {
+					const {
+						deferred: _deferred,
+						signal: _submissionSignal,
+						onResponse: _submissionOnResponse,
+						...submissionOptions
+					} = entry.options ?? {};
+					try {
+						entry.final = await resolveResponse(entry.step, entry.context, submissionOptions, entry.model);
+					} catch (error) {
+						entry.final = createErrorMessage(error, api, provider, entry.model.id);
+					}
+				}
+				await streamWithDeltas(
+					outer,
+					entry.final,
+					minTokenSize,
+					maxTokenSize,
+					tokensPerSecond,
+					schedulerHook,
+					fetchOptions?.signal,
+				);
+			} catch (error) {
+				const message = createErrorMessage(error, api, provider, requestModel.id);
+				outer.push({ type: "error", reason: "error", error: message });
+				outer.end(message);
+			}
+		});
+
+		return outer;
+	};
+
+	const cancelDeferred = async (
+		requestModel: Model<string>,
+		handle: DeferredHandle,
+		cancelOptions?: DeferredCancelOptions,
+	): Promise<void> => {
+		state.cancelledDeferred.push(structuredClone(handle));
+		const entry = deferredResponses.get(handle.id);
+		if (entry) entry.cancelled = true;
+		await cancelOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
+	};
+
 	function getModel(): Model<string>;
 	function getModel(requestedModelId: string): Model<string> | undefined;
 	function getModel(requestedModelId?: string): Model<string> | undefined {
@@ -560,6 +753,8 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		models,
 		stream,
 		streamSimple,
+		fetchDeferred,
+		cancelDeferred,
 		getModel,
 		state,
 		setResponses(responses: FauxResponseStep[]) {
@@ -573,7 +768,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		},
 		getCallLog() {
 			return callLog.map((entry) => ({
-				context: cloneContextForLog(entry.context),
+				context: structuredClone(entry.context),
 				options: cloneStreamOptionsForLog(entry.options),
 				timestamp: entry.timestamp,
 				modelId: entry.modelId,
@@ -629,7 +824,12 @@ export function fauxProvider(options: RegisterFauxProviderOptions = {}): FauxPro
 		id: core.provider,
 		auth: { apiKey: { name: "Faux", resolve: async () => ({ auth: {} }) } },
 		models: core.models,
-		api: { stream: core.stream, streamSimple: core.streamSimple },
+		api: {
+			stream: core.stream,
+			streamSimple: core.streamSimple,
+			fetchDeferred: core.fetchDeferred,
+			cancelDeferred: core.cancelDeferred,
+		},
 	});
 	return {
 		provider,

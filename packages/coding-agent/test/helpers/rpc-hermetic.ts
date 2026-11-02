@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentSessionEvent } from "../../src/core/agent-session.ts";
+import type { JsonAgentSessionEvent } from "../../src/modes/json-event.ts";
 import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
 import { MOCK_API_KEY, MOCK_MODEL, MOCK_PROVIDER, startFakeModelServer } from "./rpc-fake-model.ts";
 
@@ -75,7 +75,7 @@ export function hermeticProviderEnv(): Record<string, string> {
 	return Object.fromEntries(PROVIDER_ENV_KEYS.map((key) => [key, ""]));
 }
 
-export function writeRpcModelsJson(agentDir: string, baseUrl: string): void {
+export function writeRpcModelsJson(agentDir: string, baseUrl: string, extraModelIds: readonly string[] = []): void {
 	writeFileSync(
 		join(agentDir, "models.json"),
 		`${JSON.stringify(
@@ -85,17 +85,15 @@ export function writeRpcModelsJson(agentDir: string, baseUrl: string): void {
 						baseUrl,
 						apiKey: MOCK_API_KEY,
 						api: "anthropic-messages",
-						models: [
-							{
-								id: MOCK_MODEL,
-								baseUrl,
-								api: "anthropic-messages",
-								reasoning: true,
-								contextWindow: 128000,
-								maxTokens: 4096,
-								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-							},
-						],
+						models: [MOCK_MODEL, ...extraModelIds].map((id) => ({
+							id,
+							baseUrl,
+							api: "anthropic-messages",
+							reasoning: true,
+							contextWindow: 128000,
+							maxTokens: 4096,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						})),
 					},
 				},
 			},
@@ -154,7 +152,7 @@ export function readSessionEntries(sessionDir: string): readonly RpcSessionEntry
 	return readFileSync(join(cwdSessionDir, sessionFileName), "utf8").trim().split("\n").map(parseSessionEntry);
 }
 
-export function getAssistantText(events: readonly AgentSessionEvent[]): string | undefined {
+export function getAssistantText(events: readonly JsonAgentSessionEvent[]): string | undefined {
 	for (const event of events) {
 		if (event.type !== "message_end" || event.message.role !== "assistant") continue;
 		const textContent = event.message.content.find(isTextContentBlock);

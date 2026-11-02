@@ -6,6 +6,7 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type ProviderHeaders,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
@@ -14,8 +15,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-
-import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
+import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 describe("createAgentSession provider attribution headers", () => {
 	let tempDir: string;
@@ -96,9 +96,10 @@ describe("createAgentSession provider attribution headers", () => {
 			settingsManager.setEnableInstallTelemetry(false);
 		}
 
-		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "test-api-key" }));
-		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
+		const authStorage = AuthStorage.inMemory({
+			[model.provider]: { type: "api_key", key: "test-api-key" },
+		});
+		const modelRegistry = await createInMemoryModelRegistry(authStorage);
 		let capturedOptions: SimpleStreamOptions | undefined;
 
 		modelRegistry.registerProvider(model.provider, {
@@ -126,14 +127,10 @@ describe("createAgentSession provider attribution headers", () => {
 		});
 
 		try {
-			const stream = await session.agent.streamFunction(
-				model,
-				{ messages: [] },
-				{
-					sessionId: session.sessionId,
-					...(options.requestHeaders ? { headers: options.requestHeaders } : {}),
-				},
-			);
+			const stream = await session.agent.streamFunction(model, normalizeContext({ messages: [] }), {
+				sessionId: session.sessionId,
+				...(options.requestHeaders ? { headers: options.requestHeaders } : {}),
+			});
 			await stream.result();
 			return capturedOptions?.headers;
 		} finally {

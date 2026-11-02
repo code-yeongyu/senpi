@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,23 +9,30 @@ const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 export async function renderTerminalScreenshot(root, evidence, raw) {
 	if (!existsSync(CHROME)) throw new Error(`Chrome not found at ${CHROME}`);
-	const xtermRoot = join(root, ".agents", "skills", "senpi-qa", "node_modules", "@xterm", "xterm");
-	const js = pathToFileURL(join(xtermRoot, "lib", "xterm.js")).href;
-	const css = pathToFileURL(join(xtermRoot, "css", "xterm.css")).href;
+	const ansiPath = join(evidence, "terminal.ansi");
 	const htmlPath = join(evidence, "terminal.html");
+	const gridPath = join(evidence, "terminal.grid.json");
 	const pngPath = join(evidence, "terminal.png");
 	const profileDir = mkdtempSync(join(tmpdir(), "senpi-qa-chrome-"));
-	const encoded = Buffer.from(raw, "utf8").toString("base64");
-	writeFileSync(
-		htmlPath,
-		`<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="${css}">` +
-			`<style>html,body,#terminal{margin:0;width:100%;height:100%;background:#0b0d10}</style>` +
-			`<div id="terminal"></div><script src="${js}"></script><script>` +
-			`const t=new Terminal({cols:120,rows:36,convertEol:true,fontSize:16,theme:{background:"#0b0d10"}});` +
-			`t.open(document.getElementById("terminal"));` +
-			`t.write(new TextDecoder().decode(Uint8Array.from(atob("${encoded}"),c=>c.charCodeAt(0))),` +
-			`()=>{document.body.dataset.ready="true"});` +
-			`</script>`,
+	writeFileSync(ansiPath, raw);
+	execFileSync(
+		process.execPath,
+		[
+			join(root, "scripts", "qa", "xterm-render.mjs"),
+			"render",
+			ansiPath,
+			"--cols",
+			"120",
+			"--rows",
+			"36",
+			"--out-json",
+			gridPath,
+			"--out-html",
+			htmlPath,
+			"--title",
+			"Senpi cache-warm TUI",
+		],
+		{ cwd: root, stdio: "inherit" },
 	);
 	const chrome = spawn(
 		CHROME,
@@ -37,11 +44,10 @@ export async function renderTerminalScreenshot(root, evidence, raw) {
 			"--hide-scrollbars",
 			"--no-default-browser-check",
 			"--no-first-run",
-			"--allow-file-access-from-files",
 			`--user-data-dir=${profileDir}`,
 			"--remote-debugging-port=0",
 			"--window-size=1400,900",
-			pathToFileURL(htmlPath).href,
+			"about:blank",
 		],
 		{ stdio: ["ignore", "ignore", "pipe"] },
 	);
@@ -58,15 +64,9 @@ export async function renderTerminalScreenshot(root, evidence, raw) {
 		try {
 			await cdp.send("Runtime.enable");
 			await cdp.send("Page.enable");
-			await cdp.send("Runtime.evaluate", {
-				expression:
-					`new Promise((resolve)=>{` +
-					`if(document.body?.dataset.ready==="true")return resolve(true);` +
-					`const observer=new MutationObserver(()=>{if(document.body?.dataset.ready==="true"){observer.disconnect();resolve(true)}});` +
-					`observer.observe(document.documentElement,{attributes:true,subtree:true})})`,
-				awaitPromise: true,
-				returnByValue: true,
-			});
+			const loaded = cdp.waitFor("Page.loadEventFired");
+			await cdp.send("Page.navigate", { url: pathToFileURL(htmlPath).href });
+			await loaded;
 			const screenshot = await cdp.send("Page.captureScreenshot", {
 				format: "png",
 				fromSurface: true,
@@ -115,14 +115,20 @@ async function connectCdp(url) {
 	);
 	let sequence = 0;
 	const pending = new Map();
+	const eventWaiters = new Map();
 	socket.addEventListener("message", (event) => {
 		const message = JSON.parse(event.data);
+		const eventWaiter = message.method ? eventWaiters.get(message.method) : undefined;
+		if (eventWaiter) {
+			eventWaiters.delete(message.method);
+			eventWaiter(message.params);
+		}
 		if (!message.id) return;
-		const waiter = pending.get(message.id);
-		if (!waiter) return;
+		const commandWaiter = pending.get(message.id);
+		if (!commandWaiter) return;
 		pending.delete(message.id);
-		if (message.error) waiter.reject(new Error(message.error.message));
-		else waiter.resolve(message.result);
+		if (message.error) commandWaiter.reject(new Error(message.error.message));
+		else commandWaiter.resolve(message.result);
 	});
 	return {
 		send(method, params = {}) {
@@ -133,6 +139,15 @@ async function connectCdp(url) {
 					socket.send(JSON.stringify({ id, method, params }));
 				}),
 				`Chrome command ${method}`,
+				15_000,
+			);
+		},
+		waitFor(method) {
+			return withTimeout(
+				new Promise((resolve) => {
+					eventWaiters.set(method, resolve);
+				}),
+				`Chrome event ${method}`,
 				15_000,
 			);
 		},

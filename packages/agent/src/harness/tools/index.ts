@@ -19,5 +19,10 @@ export {
 	type ReadToolInput,
 	type ReadToolOptions,
 } from "./read.ts";
-export type { ExecutionToolContext } from "./tool-context.ts";
+export type {
+	ExecutionToolContext,
+	PostMutateContext,
+	PostMutateHook,
+	PostMutateResult,
+} from "./tool-context.ts";
 export { createWriteTool, type WriteToolInput } from "./write.ts";

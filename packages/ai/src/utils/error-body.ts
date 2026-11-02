@@ -13,6 +13,8 @@
 // Anthropic / `@google/genai` happy path where the SDK already folded the body
 // into the message, so providers can preserve it without double-printing.
 
+import { appendRetryAfterMsMarker, extract429RetryAfterMs, parseRetryAfterMsMarker } from "./retry-hint.ts";
+
 export const MAX_PROVIDER_ERROR_BODY_CHARS = 4000;
 
 export interface NormalizedProviderError {
@@ -24,9 +26,16 @@ export interface NormalizedProviderError {
 	message: string;
 	/** True when `message` already contains the body (no separate body to add). */
 	messageCarriesBody: boolean;
+	/**
+	 * Provider-requested wait from the error response's Retry-After headers, for
+	 * rate-limit and unavailable statuses. Carried into the formatted message as the
+	 * canonical marker so it survives a terminal failure that no retry consumed.
+	 */
+	retryAfterMs?: number;
 }
 
 type SdkErrorShape = Error & {
+	headers?: unknown;
 	statusCode?: unknown;
 	status?: unknown;
 	body?: unknown;
@@ -44,12 +53,14 @@ export function normalizeProviderError(error: unknown): NormalizedProviderError 
 	const status = extractStatus(sdkError);
 	const body = extractBody(sdkError);
 	const messageCarriesBody = body === undefined || error.message.includes(body);
+	const retryAfterMs = extractRetryAfterMs(sdkError, status);
 
 	return {
 		status,
 		body,
 		message: error.message,
 		messageCarriesBody,
+		...(retryAfterMs === undefined ? {} : { retryAfterMs }),
 	} satisfies NormalizedProviderError;
 }
 
@@ -126,12 +137,43 @@ function isPlainNonEmptyObject(value: unknown): boolean {
  * - prefix:    `"<prefix> (<status>): <body>"`
  */
 export function formatProviderError(norm: NormalizedProviderError, prefix?: string): string {
+	return withRetryAfterMarker(composeProviderError(norm, prefix), norm.retryAfterMs);
+}
+
+function composeProviderError(norm: NormalizedProviderError, prefix?: string): string {
 	if (norm.messageCarriesBody || norm.status === undefined || norm.body === undefined) {
 		return prefix !== undefined && norm.status !== undefined
 			? `${prefix} (${norm.status}): ${norm.message}`
 			: norm.message;
 	}
 	return prefix !== undefined ? `${prefix} (${norm.status}): ${norm.body}` : `${norm.status}: ${norm.body}`;
+}
+
+function withRetryAfterMarker(message: string, retryAfterMs: number | undefined): string {
+	if (retryAfterMs === undefined || parseRetryAfterMsMarker(message) !== undefined) return message;
+	return appendRetryAfterMsMarker(message, retryAfterMs);
+}
+
+/**
+ * Only 429 and 503 carry a Retry-After that means "this provider is unavailable
+ * until then" (RFC 9110 section 10.2.3); the header on other statuses is not a
+ * wait the fallback chain should honour.
+ */
+function extractRetryAfterMs(error: SdkErrorShape, status: number | undefined): number | undefined {
+	if (status !== 429 && status !== 503) return undefined;
+	const headers = toHeaders(error.headers);
+	if (headers === undefined) return undefined;
+	return extract429RetryAfterMs({ status: 429, headers, bodyText: "" });
+}
+
+function toHeaders(value: unknown): Headers | undefined {
+	if (value instanceof Headers) return value;
+	if (typeof value !== "object" || value === null) return undefined;
+	const headers = new Headers();
+	for (const [key, entry] of Object.entries(value)) {
+		if (typeof entry === "string") headers.set(key, entry);
+	}
+	return headers;
 }
 
 export function truncateErrorText(text: string, maxChars: number): string {

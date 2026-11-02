@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	consumeStreamWithIdleTimeout,
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
+	DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
 	StreamIdleTimeoutError,
+	SUMMARIZATION_MAX_DURATION_CAP_MS,
+	SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS,
+	summarizationMaxDurationMs,
 } from "../../src/core/compaction/stream-watchdog.ts";
 
 /**
@@ -125,5 +129,41 @@ describe("consumeStreamWithIdleTimeout", () => {
 
 	it("exposes a 5 minute default aligned with the agent stream idle timeout", () => {
 		expect(DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS).toBe(300_000);
+	});
+});
+
+describe("summarizationMaxDurationMs", () => {
+	it("keeps the 120s floor for small inputs", () => {
+		expect(summarizationMaxDurationMs(0)).toBe(DEFAULT_SUMMARIZATION_MAX_DURATION_MS);
+		expect(summarizationMaxDurationMs(10_000)).toBe(DEFAULT_SUMMARIZATION_MAX_DURATION_MS);
+	});
+
+	it("scales with the estimated input size instead of deadlocking large sessions", () => {
+		// 257k tokens: the #1068 reproduction size, where 120s was exceeded while still streaming.
+		const budget = summarizationMaxDurationMs(257_000);
+		expect(budget).toBe(257_000 * SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS);
+		expect(budget).toBeGreaterThan(DEFAULT_SUMMARIZATION_MAX_DURATION_MS);
+	});
+
+	it("clamps the scaled budget at the absolute cap", () => {
+		const budget = summarizationMaxDurationMs(2_000_000);
+		expect(budget).toBe(SUMMARIZATION_MAX_DURATION_CAP_MS);
+	});
+
+	it("lets a positive override replace the computed budget", () => {
+		expect(summarizationMaxDurationMs(500_000, 300_000)).toBe(300_000);
+		expect(summarizationMaxDurationMs(10_000, 300_000)).toBe(300_000);
+	});
+
+	it("clamps an oversized override to the cap", () => {
+		expect(summarizationMaxDurationMs(10_000, 3_600_000)).toBe(SUMMARIZATION_MAX_DURATION_CAP_MS);
+	});
+
+	it("ignores non-finite and non-positive overrides", () => {
+		expect(summarizationMaxDurationMs(100_000, Number.NaN)).toBe(100_000 * SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS);
+		expect(summarizationMaxDurationMs(100_000, Number.POSITIVE_INFINITY)).toBe(
+			100_000 * SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS,
+		);
+		expect(summarizationMaxDurationMs(100_000, 0)).toBe(100_000 * SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS);
 	});
 });

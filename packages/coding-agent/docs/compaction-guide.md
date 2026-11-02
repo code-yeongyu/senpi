@@ -136,7 +136,7 @@ Configure compaction in `~/.senpi/agent/settings.json` (global) or `.senpi/setti
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `compaction.enabled` | `true` | Enable auto-compaction. Set to `false` for manual control only. |
+| `compaction.enabled` | `true` | Enable proactive auto-compaction. `false` leaves threshold compaction to you; a provider-rejected context overflow still runs the one-shot compact-and-retry recovery. |
 | `compaction.reserveTokens` | `16384` | Tokens reserved for the LLM's response. Lower values allow more context but risk truncation. |
 | `compaction.keepRecentTokens` | `20000` | How much recent conversation to keep uncompressed. Higher values preserve more context but trigger compaction sooner. |
 
@@ -221,7 +221,7 @@ For technical details, see:
 
 ### "I want to disable auto-compaction"
 
-Set `compaction.enabled: false` in your settings. Use `/compact` manually when you want to compact. Be aware that without auto-compaction, long sessions may hit context limits and fail.
+Set `compaction.enabled: false` in your settings. Use `/compact` manually when you want to compact. Threshold compaction stays off, but a context the provider rejects as too large is still compacted once and retried so the session does not stall. The RPC `set_auto_compaction` command and OmO Desktop's per-thread toggle change only that session; they do not write this setting.
 
 ### "How do I see what was compacted?"
 

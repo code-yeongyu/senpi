@@ -36,8 +36,33 @@ export function extractUnreleasedSubsections(content) {
 	return subsections;
 }
 
+// The captured shape used to be copied verbatim, so one malformed block propagated
+// to every following release cycle.
+const UNRELEASED_SUBSECTION_ALIASES = new Map([
+	["### New Features", "### Added"],
+	["### Features", "### Added"],
+	["### Fixes", "### Fixed"],
+	["### Bug Fixes", "### Fixed"],
+]);
+
+export function canonicalizeUnreleasedSubsections(subsections) {
+	const seen = new Set();
+	for (const raw of subsections) {
+		const heading = raw.trim();
+		if (heading.length === 0) continue;
+		seen.add(UNRELEASED_SUBSECTION_ALIASES.get(heading) ?? heading);
+	}
+	const canonical = DEFAULT_UNRELEASED_SUBSECTIONS.filter((heading) => seen.has(heading));
+	const extras = [...seen].filter((heading) => !DEFAULT_UNRELEASED_SUBSECTIONS.includes(heading));
+	return [...canonical, ...extras];
+}
+
 export function resolveNextUnreleasedSubsections(capturedSubsections) {
-	return capturedSubsections ?? DEFAULT_UNRELEASED_SUBSECTIONS;
+	if (capturedSubsections === undefined || capturedSubsections === null) {
+		return DEFAULT_UNRELEASED_SUBSECTIONS;
+	}
+	const canonical = canonicalizeUnreleasedSubsections(capturedSubsections);
+	return canonical.length > 0 ? canonical : DEFAULT_UNRELEASED_SUBSECTIONS;
 }
 
 export function buildUnreleasedBlock(subsections) {

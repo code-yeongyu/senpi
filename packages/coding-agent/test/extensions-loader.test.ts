@@ -13,6 +13,21 @@ describe("extension loader", () => {
 		vi.resetModules();
 	});
 
+	it("leaves jiti unloaded when all extension factories are already available", async () => {
+		// Given: module evaluation itself is observed, not only createJiti calls.
+		const importJiti = vi.fn(async () => ({ createJiti: vi.fn() }));
+		vi.doMock("jiti/static", importJiti);
+		const { loadExtensions } = await import("../src/core/extensions/loader.ts");
+		// When
+		const result = await loadExtensions(["known.js"], "/tmp", undefined, undefined, {
+			factoryResolver: () => () => {},
+		});
+		// Then
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toHaveLength(1);
+		expect(importJiti).not.toHaveBeenCalled();
+	});
+
 	it("reuses one jiti importer when loading an extension batch", async () => {
 		const extensionFactory: ExtensionFactory = (pi: ExtensionAPI) => {
 			pi.registerCommand("mock-command", {
@@ -24,15 +39,39 @@ describe("extension loader", () => {
 			import: importExtension,
 		}));
 
-		vi.doMock("jiti/static", () => ({ createJiti }));
+		// Given: loading the Node-only module is asynchronous.
+		vi.doMock("jiti/static", async () => ({ createJiti }));
 		const { loadExtensions } = await import("../src/core/extensions/loader.ts");
 
+		// When
 		const result = await loadExtensions(["first.js", "second.js"], "/tmp");
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(2);
 		expect(importExtension).toHaveBeenCalledTimes(2);
 		expect(createJiti).toHaveBeenCalledTimes(1);
+	});
+
+	it("exposes the session cwd to the extension factory", async () => {
+		const sessionCwd = path.resolve("/tmp/senpi-extension-session-cwd");
+		expect(sessionCwd).not.toBe(process.cwd());
+
+		let capturedApi: ExtensionAPI | undefined;
+		const extensionFactory: ExtensionFactory = (pi) => {
+			capturedApi = pi;
+		};
+		const importExtension = vi.fn(async () => extensionFactory);
+		const createJiti = vi.fn(() => ({
+			import: importExtension,
+		}));
+
+		vi.doMock("jiti/static", () => ({ createJiti }));
+		const { loadExtensions } = await import("../src/core/extensions/loader.ts");
+
+		const result = await loadExtensions(["first.js"], sessionCwd);
+
+		expect(result.errors).toHaveLength(0);
+		expect(capturedApi?.cwd).toBe(sessionCwd);
 	});
 
 	it("prefers bundled package aliases when the local coding-agent package carries dependencies", async () => {

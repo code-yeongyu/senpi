@@ -5,6 +5,7 @@ import { handleNoUI } from "../../src/core/extensions/builtin/permission-system/
 import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.ts";
 import {
 	CorrectedError,
+	DENIAL_IS_FINAL,
 	DeniedError,
 	RejectedError,
 	type Request,
@@ -178,104 +179,23 @@ describe("Permission System - Multi-Mode Tests", () => {
 		it("auto-denies with helpful message when no rules match", () => {
 			// given
 			const request = createRequest({ id: "print-test-1", permission: "bash", patterns: ["rm -rf /"] });
-			const staticRuleset: Ruleset = [];
-			const cliOverride: Ruleset = [];
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
 			const emitEvent = (event: string, data: unknown) => emittedEvents.push({ event, data });
 
 			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+			const result = handleNoUI(request, { emitEvent });
 
 			// then
 			expect(result).toEqual({
 				requestID: "print-test-1",
 				reply: "reject",
-				message: "Permission required for bash (rm -rf /). Use --permission bash=allow to override.",
+				message: `Permission required for bash (rm -rf /), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
 			});
 			expect(emittedEvents).toHaveLength(1);
 			expect(emittedEvents[0]).toEqual({
 				event: "permission_asked",
 				data: request,
 			});
-		});
-
-		it("allows when CLI override specifies allow", () => {
-			// given
-			const request = createRequest({ id: "print-test-2", permission: "bash", patterns: ["ls"] });
-			const staticRuleset: Ruleset = [];
-			const cliOverride: Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then
-			expect(result).toBeUndefined();
-			expect(emitEvent).toHaveBeenCalledWith("permission_asked", request);
-		});
-
-		it("denies when CLI override specifies deny", () => {
-			// given
-			const request = createRequest({ id: "print-test-3", permission: "bash", patterns: ["rm *"] });
-			const staticRuleset: Ruleset = [];
-			const cliOverride: Ruleset = [{ permission: "bash", pattern: "rm *", action: "deny" }];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then
-			expect(result).toEqual({
-				requestID: "print-test-3",
-				reply: "reject",
-				message: "Permission denied by CLI flag: bash",
-			});
-		});
-
-		it("allows when static ruleset specifies allow", () => {
-			// given
-			const request = createRequest({ id: "print-test-4", permission: "edit", patterns: ["src/*.ts"] });
-			const staticRuleset: Ruleset = [{ permission: "edit", pattern: "src/*", action: "allow" }];
-			const cliOverride: Ruleset = [];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then
-			expect(result).toBeUndefined();
-		});
-
-		it("denies when static ruleset specifies deny", () => {
-			// given
-			const request = createRequest({ id: "print-test-5", permission: "edit", patterns: ["node_modules/*"] });
-			const staticRuleset: Ruleset = [{ permission: "edit", pattern: "node_modules/*", action: "deny" }];
-			const cliOverride: Ruleset = [];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then
-			expect(result).toEqual({
-				requestID: "print-test-5",
-				reply: "reject",
-				message: "Permission denied by config: edit",
-			});
-		});
-
-		it("CLI override takes precedence over static ruleset", () => {
-			// given - static denies but CLI allows
-			const request = createRequest({ id: "print-test-6", permission: "bash", patterns: ["ls"] });
-			const staticRuleset: Ruleset = [{ permission: "bash", pattern: "*", action: "deny" }];
-			const cliOverride: Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then - CLI override wins
-			expect(result).toBeUndefined();
 		});
 	});
 
@@ -372,16 +292,14 @@ describe("Permission System - Multi-Mode Tests", () => {
 			it("auto-denies same as print mode", () => {
 				// given
 				const request = createRequest({ id: "sdk-no-ui-1", permission: "bash", patterns: ["rm -rf /"] });
-				const staticRuleset: Ruleset = [];
-				const cliOverride: Ruleset = [];
 				const emitEvent = vi.fn();
 
 				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+				const result = handleNoUI(request, { emitEvent });
 
 				// then
 				expect(result?.reply).toBe("reject");
-				expect(result?.message).toContain("Use --permission bash=allow");
+				expect(result?.message).toContain("--permission bash=allow");
 			});
 
 			it("allows when rules permit", async () => {
@@ -712,10 +630,14 @@ describe("Permission System - Ported from opencode", () => {
 			).resolves.toBeUndefined();
 		});
 
-		it("session-level override takes precedence over directory-level", async () => {
-			const baseRules: Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }];
-			const overrideRules: Ruleset = [{ permission: "bash", pattern: "rm *", action: "deny" }];
-			const { service } = createService(baseRules, overrideRules);
+		it("a later configured rule overrides an earlier one in last-match order", async () => {
+			// given a base allow and a later configured deny for rm (approvals are allow-only under HIGH 1,
+			// so the override lives in the configured ruleset, where last-match-wins applies)
+			const rules: Ruleset = [
+				{ permission: "bash", pattern: "*", action: "allow" },
+				{ permission: "bash", pattern: "rm *", action: "deny" },
+			];
+			const { service } = createService(rules);
 
 			await expect(
 				service.ask(createRequest({ permission: "bash", patterns: ["rm -rf tmp"] })),

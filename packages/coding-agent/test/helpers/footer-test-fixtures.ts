@@ -7,6 +7,7 @@ type AssistantUsage = {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: { total: number };
+	costUnknown?: true;
 };
 
 type FooterUsageEntry =
@@ -26,6 +27,9 @@ export type FooterSessionOptions = {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	cwd?: string;
+	/** Credential the footer's account segment reads; defaults to none. */
+	credential?: { type: "oauth"; access: string; refresh: string; expires: number } & Record<string, unknown>;
+	sessionId?: string;
 };
 
 export function createFooterSession(options: FooterSessionOptions): AgentSession {
@@ -62,6 +66,7 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 					cacheRead: 0,
 					cacheWrite: 0,
 					cost: 0,
+					costUnknown: undefined as true | undefined,
 					latestCacheHitRate: undefined as number | undefined,
 				};
 				for (const entry of entries) {
@@ -71,6 +76,7 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 					totals.cacheRead += usage.cacheRead;
 					totals.cacheWrite += usage.cacheWrite;
 					totals.cost += usage.cost.total;
+					if (usage.costUnknown) totals.costUnknown = true;
 					if (entry.type === "message" && entry.message.role === "assistant") {
 						const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 						totals.latestCacheHitRate =
@@ -81,10 +87,17 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 			},
 			getSessionName: () => options.sessionName,
 			getCwd: () => options.cwd ?? "/tmp/project",
+			getSessionId: () => options.sessionId ?? "session-footer",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		isFastModeActive: () => options.fastModeActive ?? false,
-		modelRuntime: { isUsingOAuth: () => false },
+		modelRuntime: {
+			isUsingOAuth: () => false,
+			isUsingSubscription: () => false,
+		},
+		modelRegistry: {
+			authStorage: { get: () => options.credential },
+		},
 	} as unknown as AgentSession;
 }
 

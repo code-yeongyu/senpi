@@ -7,6 +7,8 @@ import type { AssistantMessageEvent, Context } from "../src/types.ts";
 import { isRetryableAssistantError } from "../src/utils/retry.ts";
 import { isClassifierRefusal } from "../src/utils/stop-details.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function createSseResponse(
 	stopReason: "refusal" | "sensitive" | "end_turn" | "max_tokens",
 	stopDetails?: { explanation?: string },
@@ -39,8 +41,10 @@ function createSseResponse(
 }
 
 function createFakeAnthropicClient(response: Response): Anthropic {
+	const create = () => ({ asResponse: async () => response });
 	return {
-		messages: { create: () => ({ asResponse: async () => response }) },
+		beta: { messages: { create } },
+		messages: { create },
 	} as unknown as Anthropic;
 }
 
@@ -57,10 +61,10 @@ const anthropicPolicyRefusal =
 describe("classifier stop details", () => {
 	it("maps Anthropic refusal and sensitive stops to typed error details", async () => {
 		const model = getModel("anthropic", "claude-fable-5");
-		const refusal = await streamAnthropic(model, context, {
+		const refusal = await streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(createSseResponse("refusal", { explanation: "policy classifier" })),
 		}).result();
-		const sensitive = await streamAnthropic(model, context, {
+		const sensitive = await streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(createSseResponse("sensitive")),
 		}).result();
 
@@ -76,10 +80,10 @@ describe("classifier stop details", () => {
 
 	it("leaves successful and length-limited Anthropic stops unclassified", async () => {
 		const model = getModel("anthropic", "claude-fable-5");
-		const completed = await streamAnthropic(model, context, {
+		const completed = await streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(createSseResponse("end_turn")),
 		}).result();
-		const lengthLimited = await streamAnthropic(model, context, {
+		const lengthLimited = await streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(createSseResponse("max_tokens")),
 		}).result();
 

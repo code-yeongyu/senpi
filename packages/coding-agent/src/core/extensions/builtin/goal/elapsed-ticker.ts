@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "../../types.ts";
 import { formatGoalElapsedSeconds } from "./format.ts";
+import { isStaleExtensionContextError } from "./stale-context.ts";
 import type { Goal } from "./types.ts";
 
 /** Footer live-elapsed refresh cadence while a goal is actively pursued. */
@@ -21,6 +22,7 @@ export interface GoalElapsedTickerOptions {
  * disagrees with what the next turn commits.
  */
 export function goalLiveElapsedSeconds(goal: Goal, measuredFromMilliseconds: number, nowMilliseconds: number): number {
+	if (goal.continuationStoppedAt !== undefined) return goal.timeUsedSeconds;
 	const elapsedSeconds = Math.max(0, Math.round((nowMilliseconds - measuredFromMilliseconds) / 1000));
 	return goal.timeUsedSeconds + elapsedSeconds;
 }
@@ -59,6 +61,8 @@ export class GoalElapsedTicker {
 		this.measuredFromMilliseconds = measuredFromMilliseconds;
 		this.lastRenderedElapsedLabel = undefined;
 		this.tick();
+		// The immediate render hit a retired ctx and stopped the ticker: arm nothing for it.
+		if (this.ctx === undefined) return;
 		if (this.intervalId !== undefined) return;
 		const handle = setInterval(() => this.tick(), GOAL_ELAPSED_TICK_INTERVAL_MS);
 		handle.unref();
@@ -82,6 +86,18 @@ export class GoalElapsedTicker {
 		const elapsedLabel = formatGoalElapsedSeconds(liveElapsedSeconds);
 		if (elapsedLabel === this.lastRenderedElapsedLabel) return;
 		this.lastRenderedElapsedLabel = elapsedLabel;
-		this.render(this.ctx, this.goal, liveElapsedSeconds);
+		try {
+			this.render(this.ctx, this.goal, liveElapsedSeconds);
+		} catch (error) {
+			// A retired ctx (session replacement/reload) throws on every render from
+			// now on; retire instead of spinning dead forever. This stop() renders
+			// nothing, so it is safe against the same stale ctx. The next sync() with
+			// a live ctx re-arms the ticker.
+			if (isStaleExtensionContextError(error)) {
+				this.stop();
+				return;
+			}
+			throw error;
+		}
 	}
 }

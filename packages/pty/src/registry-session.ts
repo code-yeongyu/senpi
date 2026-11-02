@@ -2,6 +2,12 @@ import type { SessionRegistrySession, TerminalSessionSignal } from "./registry-t
 
 const DEFAULT_COMMAND = "bash";
 export const DEFAULT_SIGNAL: TerminalSessionSignal = "SIGTERM";
+/**
+ * Escalation signal. On Windows there is no SIGKILL: Node maps any signal but 0
+ * to TerminateProcess, and the pty session's own kill path routes it through
+ * `taskkill /T /F`, so the forced semantics hold on both platforms.
+ */
+export const FORCE_SIGNAL: TerminalSessionSignal = "SIGKILL";
 
 export function sessionIdPrefix(command: string): string {
 	const parts = command.split(/[\\/]/).filter(Boolean);
@@ -37,6 +43,24 @@ export async function stopTerminalSession(session: SessionRegistrySession): Prom
 		return;
 	}
 	if (session.signal) await session.signal(DEFAULT_SIGNAL);
+}
+
+/**
+ * Deliver the forced signal to a session that outlived its stop grace. Returns
+ * `false` when the session exposes no way to signal it, so callers can skip a
+ * pointless forced-grace wait instead of hanging on an unkillable stub.
+ */
+export async function forceKillTerminalSession(session: SessionRegistrySession): Promise<boolean> {
+	// Call through `session` so class methods keep their `this` binding.
+	if (session.kill) {
+		await session.kill(FORCE_SIGNAL);
+		return true;
+	}
+	if (session.signal) {
+		await session.signal(FORCE_SIGNAL);
+		return true;
+	}
+	return false;
 }
 
 export async function waitForTerminalSessionExit(session: SessionRegistrySession, graceMs?: number): Promise<boolean> {

@@ -1,7 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "../thinking-levels.ts";
-import { baseSelector, parseFallbackSelector } from "./chains.ts";
+import { baseSelector, type FallbackSelector, parseFallbackSelector } from "./chains.ts";
 import { matchesFamily, parseBareSelector } from "./expansion.ts";
 
 export interface FallbackModelRegistry {
@@ -35,6 +35,17 @@ function validateThinkingLevel(
 }
 
 /**
+ * A same-model entry is only a duplicate when it resolves to the same rung: the
+ * same model at the same level, an entry without one inheriting the key's. The
+ * same model at another level is a deliberate second rung (thinking on -> off)
+ * and stays valid.
+ */
+function isRungDuplicate(entry: FallbackSelector, key: FallbackSelector): boolean {
+	if (baseSelector(entry) !== baseSelector(key)) return false;
+	return (entry.thinkingLevel ?? key.thinkingLevel) === key.thinkingLevel;
+}
+
+/**
  * Names the offending value so a single log line identifies the producer. The
  * bare form of this warning fired repeatedly in the wild with no way to tell
  * which settings value caused it.
@@ -64,7 +75,7 @@ export function validateFallbackChains(chains: unknown, registry: FallbackModelR
 			// role syntax, so it keeps the message that tells the user what to write.
 			warnings.push(`Fallback chain key "${key}" must use a provider/model selector; roles are unsupported.`);
 		}
-		if (hasWildcard) warnings.push(`Fallback chain key "${key}" cannot contain wildcards.`);
+		if (hasWildcard && key !== "*") warnings.push(`Fallback chain key "${key}" cannot contain wildcards.`);
 
 		const parsedKey = hasProvider && !hasWildcard ? parseFallbackSelector(key, models) : undefined;
 		const keyModel = parsedKey ? registry.find(parsedKey.provider, parsedKey.id) : undefined;
@@ -99,7 +110,7 @@ export function validateFallbackChains(chains: unknown, registry: FallbackModelR
 				warnings.push(invalidSelectorWarning("entry", entry, key));
 				continue;
 			}
-			if (parsedKey && baseSelector(parsedEntry) === baseSelector(parsedKey)) {
+			if (parsedKey && isRungDuplicate(parsedEntry, parsedKey)) {
 				warnings.push(`Fallback chain entry "${entry}" for "${key}" cannot reference the same model.`);
 			}
 			validateThinkingLevel(parsedEntry, entryModel, `Fallback chain entry "${entry}"`, warnings);

@@ -9,8 +9,13 @@ import type {
 	SessionBeforeCompactResult,
 	SessionCompactEvent,
 } from "../../src/core/extensions/index.ts";
+import type { HistoryReducer } from "../../src/core/session-history-reduce.ts";
 import type { CompactionEntry, SessionEntry } from "../../src/core/session-manager.ts";
 import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { reduceEntries } from "../helpers/reduce-entries.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 const CHECKPOINT_CUSTOM_TYPE = "compaction.agent-checkpoint";
 const TODO_SNAPSHOT_CUSTOM_TYPE = "compaction.todo-snapshot";
@@ -61,7 +66,8 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 	const sessionManager = {
 		getEntries: () => entries,
 		getBranch: () => entries,
-	} as ExtensionContext["sessionManager"];
+		reduceHistory: <S>(reducer: HistoryReducer<S>) => reduceEntries(entries, reducer),
+	} as unknown as ExtensionContext["sessionManager"];
 
 	return {
 		hasUI: false,
@@ -70,7 +76,7 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 			notify: vi.fn(),
 		}) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],

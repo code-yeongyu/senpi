@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEditTool } from "../src/core/tools/edit.ts";
-import { withFileMutationQueue } from "../src/core/tools/file-mutation-queue.ts";
+import { acquireFileMutationLock, withFileMutationQueue } from "../src/core/tools/file-mutation-queue.ts";
 import { createWriteTool } from "../src/core/tools/write.ts";
 
 function delay(ms: number): Promise<void> {
@@ -55,23 +55,34 @@ describe("withFileMutationQueue", () => {
 
 	it("allows different files to proceed in parallel", async () => {
 		const order: string[] = [];
+		const aStarted = createDeferred();
+		const bStarted = createDeferred();
+		const release = createDeferred();
 
-		await Promise.all([
+		const operations = [
 			withFileMutationQueue("/tmp/file-mutation-queue-a", async () => {
 				order.push("a:start");
-				await delay(30);
+				aStarted.resolve();
+				await release.promise;
 				order.push("a:end");
 			}),
 			withFileMutationQueue("/tmp/file-mutation-queue-b", async () => {
 				order.push("b:start");
-				await delay(30);
+				bStarted.resolve();
+				await release.promise;
 				order.push("b:end");
 			}),
-		]);
+		];
+
+		await Promise.all([aStarted.promise, bStarted.promise]);
+		expect(order).toEqual(expect.arrayContaining(["a:start", "b:start"]));
+		expect(order).not.toContain("a:end");
+		expect(order).not.toContain("b:end");
+		release.resolve();
+		await Promise.all(operations);
 
 		expect(order.indexOf("a:start")).toBeLessThan(order.indexOf("a:end"));
 		expect(order.indexOf("b:start")).toBeLessThan(order.indexOf("b:end"));
-		expect(order.indexOf("b:start")).toBeLessThan(order.indexOf("a:end"));
 	});
 
 	it("uses the same queue for symlink aliases", async () => {
@@ -95,6 +106,38 @@ describe("withFileMutationQueue", () => {
 		]);
 
 		expect(order).toEqual(["target:start", "target:end", "alias:start", "alias:end"]);
+	});
+});
+
+describe("acquireFileMutationLock", () => {
+	it("holds the same slot as withFileMutationQueue: a queued mutation waits for the release", async () => {
+		const dir = await createTempDir();
+		const file = join(dir, "a.txt");
+		const order: string[] = [];
+		const release = await acquireFileMutationLock(file);
+		const queued = withFileMutationQueue(join(dir, ".", "a.txt"), async () => {
+			order.push("queued");
+		});
+		expect(await resolvesWithin(queued, 100)).toBe(false);
+		order.push("held");
+		release();
+		release();
+		await queued;
+		expect(order).toEqual(["held", "queued"]);
+	});
+
+	it("rejects an aborted waiter without holding, and the next waiter still gets the slot", async () => {
+		const dir = await createTempDir();
+		const file = join(dir, "b.txt");
+		const release = await acquireFileMutationLock(file);
+		const controller = new AbortController();
+		const cancelled = acquireFileMutationLock(file, controller.signal);
+		const next = acquireFileMutationLock(file);
+		controller.abort(new Error("stop waiting"));
+		await expect(cancelled).rejects.toThrow("stop waiting");
+		expect(await resolvesWithin(next, 100)).toBe(false);
+		release();
+		(await next)();
 	});
 });
 

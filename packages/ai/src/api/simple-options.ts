@@ -1,13 +1,21 @@
 import type {
 	Api,
-	Context,
 	Model,
 	SimpleStreamOptions,
 	StreamOptions,
 	ThinkingBudgets,
 	ThinkingLevel,
+	TranscriptContext,
 } from "../types.ts";
-import { estimateContextTokens } from "../utils/estimate.ts";
+import { clampMaxTokensToContext, MIN_ANSWER_TOKENS } from "./context-room.ts";
+
+export {
+	CONTEXT_GUARD_MIN_WINDOW,
+	CONTEXT_SAFETY_TOKENS,
+	ContextWindowExhaustedError,
+	clampMaxTokensToContext,
+	MIN_ANSWER_TOKENS,
+} from "./context-room.ts";
 
 /**
  * Merge user-supplied extraBody fields into a provider request payload, skipping
@@ -120,32 +128,23 @@ export const BEDROCK_RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"requestMetadata",
 ]);
 
-const CONTEXT_SAFETY_TOKENS = 4096;
-const MIN_MAX_TOKENS = 1;
-
-export function clampMaxTokensToContext(model: Model<Api>, context: Context, maxTokens: number): number {
-	if (model.contextWindow <= 0) {
-		return Number.isFinite(maxTokens) && maxTokens > 0
-			? Math.max(MIN_MAX_TOKENS, Math.floor(maxTokens))
-			: MIN_MAX_TOKENS;
-	}
-	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
-	const safeAvailable = Math.max(MIN_MAX_TOKENS, available);
-	const requested = Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : safeAvailable;
-	return Math.min(requested, safeAvailable);
-}
-
 export function buildBaseOptions(
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 	apiKey?: string,
 ): StreamOptions {
+	const samplingParams =
+		model.samplingParams || options?.samplingParams
+			? { ...model.samplingParams, ...options?.samplingParams }
+			: undefined;
 	return {
 		temperature: options?.temperature,
+		samplingParams,
 		maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
 		signal: options?.signal,
 		abortServerSideFallback: options?.abortServerSideFallback,
+		telemetryContext: options?.telemetryContext,
 		apiKey: apiKey || options?.apiKey,
 		fetch: options?.fetch,
 		transport: options?.transport,
@@ -155,6 +154,8 @@ export function buildBaseOptions(
 		extraBody: options?.extraBody,
 		onPayload: options?.onPayload,
 		onResponse: options?.onResponse,
+		onProviderStreamEvent: options?.onProviderStreamEvent,
+		onTransportActivity: options?.onTransportActivity,
 		timeoutMs: options?.timeoutMs,
 		websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs,
 		maxRetries: options?.maxRetries,
@@ -163,6 +164,13 @@ export function buildBaseOptions(
 		env: options?.env,
 	};
 }
+
+export const DEFAULT_THINKING_BUDGETS: ThinkingBudgets = {
+	minimal: 1024,
+	low: 2048,
+	medium: 8192,
+	high: 16384,
+};
 
 export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh" | "max"> | undefined {
 	if (effort === "xhigh" || effort === "max") return "high";
@@ -183,6 +191,17 @@ export function clampMaxForOpenAI(
 	return effort;
 }
 
+export function thinkingBudgetForLevel(reasoningLevel: ThinkingLevel, customBudgets?: ThinkingBudgets): number {
+	const budgets = { ...DEFAULT_THINKING_BUDGETS, ...customBudgets };
+	const level = clampReasoning(reasoningLevel)!;
+	return budgets[level]!;
+}
+
+/** Cap a thinking budget so at least MIN_ANSWER_TOKENS remain under a shared response ceiling. */
+export function clampThinkingBudgetToAnswerRoom(thinkingBudget: number, ceiling: number): number {
+	return Math.min(thinkingBudget, Math.max(0, ceiling - MIN_ANSWER_TOKENS));
+}
+
 export function adjustMaxTokensForThinking(
 	// Undefined means no explicit caller cap. Use the model cap and fit thinking inside it.
 	baseMaxTokens: number | undefined,
@@ -190,25 +209,17 @@ export function adjustMaxTokensForThinking(
 	reasoningLevel: ThinkingLevel,
 	customBudgets?: ThinkingBudgets,
 ): { maxTokens: number; thinkingBudget: number } {
-	const defaultBudgets: ThinkingBudgets = {
-		minimal: 1024,
-		low: 2048,
-		medium: 8192,
-		high: 16384,
-	};
-	const budgets = { ...defaultBudgets, ...customBudgets };
-
-	const minOutputTokens = 1024;
+	// Fork: an absent/unresolvable level means "no thinking", not a NaN budget.
 	const level = clampReasoning(reasoningLevel);
 	if (!level) {
 		return { maxTokens: baseMaxTokens ?? modelMaxTokens, thinkingBudget: 0 };
 	}
-	let thinkingBudget = budgets[level]!;
+	let thinkingBudget = thinkingBudgetForLevel(level, customBudgets);
 	const maxTokens =
 		baseMaxTokens === undefined ? modelMaxTokens : Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
 
 	if (maxTokens <= thinkingBudget) {
-		thinkingBudget = Math.max(0, maxTokens - minOutputTokens);
+		thinkingBudget = clampThinkingBudgetToAnswerRoom(thinkingBudget, maxTokens);
 	}
 
 	return { maxTokens, thinkingBudget };

@@ -1,6 +1,13 @@
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
-import type { ExtensionAPI, ExtensionContext, ModelSelectEvent } from "../../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionHandler,
+	ModelSelectEvent,
+} from "../../types.ts";
 import { resolvePreset, resolvePresetName } from "./presets.ts";
 import { loadPromptPresetSettings } from "./settings.ts";
 
@@ -11,6 +18,11 @@ interface SystemPromptOptionsLike {
 	promptGuidelines?: string[];
 	contextFiles?: Array<{ path: string; content: string }>;
 	skills?: BuildDynamicSystemPromptOptions["skills"];
+	surface?: BuildDynamicSystemPromptOptions["surface"];
+	/** User override from --system-prompt / SDK loader; outranks any preset. */
+	customPrompt?: string;
+	/** User appends from --append-system-prompt, pre-joined; reapplied after a preset. */
+	appendSystemPrompt?: string;
 }
 
 function eventOptionsToBuilderInput(
@@ -25,6 +37,7 @@ function eventOptionsToBuilderInput(
 		promptGuidelines: options.promptGuidelines,
 		contextFiles: options.contextFiles,
 		skills: options.skills,
+		surface: options.surface,
 	};
 }
 
@@ -37,7 +50,19 @@ function getPresetName(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "mo
 	if (!model) {
 		return undefined;
 	}
+	if (hasUserSystemPrompt(ctx.getSystemPromptOptions?.())) {
+		return undefined;
+	}
 	return resolvePresetName(model, getSettings(ctx));
+}
+
+function hasUserSystemPrompt(options: SystemPromptOptionsLike | undefined): boolean {
+	return Boolean(options?.customPrompt);
+}
+
+function withUserAppends(presetPrompt: string, options: SystemPromptOptionsLike | undefined): string {
+	const append = options?.appendSystemPrompt;
+	return append ? `${presetPrompt}\n\n${append}` : presetPrompt;
 }
 
 function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): void {
@@ -53,9 +78,18 @@ function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "mo
 }
 
 export default function promptPresetExtension(pi: ExtensionAPI): void {
-	pi.on("before_agent_start", async (event, ctx) => {
+	const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
+		event,
+		ctx,
+	) => {
 		const model = ctx.model;
 		if (!model) {
+			return undefined;
+		}
+
+		// An explicit user system prompt (--system-prompt / SDK loader override)
+		// outranks the per-model preset; the base prompt already carries it.
+		if (hasUserSystemPrompt(event.systemPromptOptions)) {
 			return undefined;
 		}
 
@@ -64,8 +98,16 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		return { systemPrompt: preset.prompt };
-	});
+		const append = event.systemPromptOptions.appendSystemPrompt;
+		return {
+			systemPrompt: withUserAppends(preset.prompt, event.systemPromptOptions),
+			systemPromptParts: [
+				...preset.parts,
+				...(append ? [{ name: "append_system_prompt", source: "loader", text: `\n\n${append}` }] : []),
+			],
+		};
+	};
+	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
 	pi.on("session_start", async (_event, ctx) => {
 		refreshHeader(ctx);
@@ -73,9 +115,14 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 
 	pi.on("model_select", async (event, ctx) => {
 		refreshHeader(ctx, event);
+		// Returning null resets to the base prompt, which already carries the
+		// user's custom prompt and appends.
+		if (hasUserSystemPrompt(event.systemPromptOptions)) {
+			return { systemPrompt: null };
+		}
 		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
 		return {
-			systemPrompt: preset?.prompt ?? null,
+			systemPrompt: preset ? withUserAppends(preset.prompt, event.systemPromptOptions) : null,
 			systemPromptName: preset?.name,
 		};
 	});

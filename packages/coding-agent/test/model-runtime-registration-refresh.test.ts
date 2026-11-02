@@ -81,4 +81,21 @@ describe("ModelRuntime post-startup provider registration", () => {
 		expect(refreshPolicies.every((allowNetwork) => allowNetwork === false)).toBe(true);
 		expect(runtime.getModel("test-dynamic", "test-dynamic-model")).toBeUndefined();
 	});
+
+	it("skips a redundant catalog refresh when re-registering a provider already in a fresh snapshot", async () => {
+		const runtime = await ModelRuntime.create({
+			credentials: new InMemoryCredentialStore(),
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
+		const { provider, refreshPolicies } = createDynamicProvider("test-dynamic");
+
+		await runtime.registerNativeProvider(provider);
+		const afterFirst = refreshPolicies.length;
+		expect(afterFirst).toBeGreaterThan(0);
+
+		await runtime.registerNativeProvider(provider);
+
+		expect(refreshPolicies.length).toBe(afterFirst);
+	});
 });

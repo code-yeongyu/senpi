@@ -12,6 +12,13 @@ interface StderrTakeoverState {
 
 let stdoutTakeoverState: StdoutTakeoverState | undefined;
 let stderrTakeoverState: StderrTakeoverState | undefined;
+let visibleStderrObservation:
+	| {
+			original: typeof process.stderr.write;
+			writer: typeof process.stderr.write;
+			listeners: Set<() => void>;
+	  }
+	| undefined;
 
 const RAW_STDOUT_RETRY_DELAY_MS = 10;
 
@@ -101,6 +108,32 @@ function writeOriginalStderr(state: StderrTakeoverState, text: string): void {
 		return;
 	}
 	state.originalStderrWrite.call(process.stderr, text);
+}
+
+/** Observe the visible sink below any diagnostic redirect, including its failure fallback. */
+export function observeVisibleStderrWrites(listener: () => void): () => void {
+	if (!visibleStderrObservation) {
+		const original = stderrTakeoverState?.originalStderrWrite ?? process.stderr.write;
+		const listeners = new Set<() => void>();
+		const writer: typeof process.stderr.write = function (this: NodeJS.WriteStream, ...args) {
+			for (const notify of listeners) notify();
+			return Reflect.apply(original, this, args);
+		};
+		visibleStderrObservation = { original, writer, listeners };
+		if (stderrTakeoverState) stderrTakeoverState.originalStderrWrite = writer;
+		else process.stderr.write = writer;
+	}
+	const observation = visibleStderrObservation;
+	const notify = () => listener();
+	observation.listeners.add(notify);
+	return () => {
+		if (!observation.listeners.delete(notify) || observation.listeners.size > 0) return;
+		if (stderrTakeoverState?.originalStderrWrite === observation.writer) {
+			stderrTakeoverState.originalStderrWrite = observation.original;
+		}
+		if (process.stderr.write === observation.writer) process.stderr.write = observation.original;
+		visibleStderrObservation = undefined;
+	};
 }
 
 export function takeOverStderr(

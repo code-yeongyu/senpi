@@ -1,8 +1,9 @@
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum, type TextContent } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { modelOnlyText } from "../../../../tools/model-only-text.ts";
 import { defineTool } from "../../../types.ts";
 
-import { htmlToMarkdown, htmlToText } from "./content.ts";
+import { htmlToMarkdown, htmlToText } from "./content.lazy.ts";
 import { clampTimeout, fetchUrl, type WebfetchFormat } from "./fetcher.ts";
 
 const WEBFETCH_FORMATS = ["markdown", "text", "html"] as const;
@@ -55,6 +56,7 @@ export type WebfetchRenderDetails = WebfetchDetails | WebfetchProgressDetails;
 
 export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 	name: "webfetch",
+	workspaceEffect: "read",
 	label: "Web Fetch",
 	description:
 		"Fetches content from a URL and returns it as markdown, plain text, or HTML. " +
@@ -129,10 +131,10 @@ export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 		let converted = false;
 
 		if (isHtml && format === "markdown") {
-			text = htmlToMarkdown(raw, fetched.url);
+			text = await htmlToMarkdown(raw, fetched.url);
 			converted = true;
 		} else if (isHtml && format === "text") {
-			text = htmlToText(raw, fetched.url);
+			text = await htmlToText(raw, fetched.url);
 			converted = true;
 		}
 
@@ -154,8 +156,12 @@ export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 			outputTotalBytes: capped.totalBytes,
 		};
 
+		const content: TextContent[] = [
+			{ type: "text", text: capped.notice === undefined ? capped.text : `${capped.text}\n` },
+		];
+		if (capped.notice !== undefined) content.push(modelOnlyText(capped.notice));
 		return {
-			content: [{ type: "text", text: capped.text }],
+			content,
 			details,
 		};
 	},
@@ -173,8 +179,10 @@ export function parseWebfetchFormat(value: unknown): WebfetchFormat {
 export const DEFAULT_OUTPUT_MAX_BYTES = 50 * 1024;
 
 export interface WebfetchOutputCap {
-	/** Model-facing text after the output cap, with a notice appended when truncated. */
+	/** Model-facing body after the output cap. */
 	text: string;
+	/** Separate model-only continuation notice when truncated. */
+	notice?: string;
 	/** Whether the text was capped below the full converted size. */
 	truncated: boolean;
 	/** Byte length of {@link WebfetchOutputCap.text} excluding the appended notice. */
@@ -198,10 +206,10 @@ export function capWebfetchOutput(text: string): WebfetchOutputCap {
 
 	const head = takeHeadBytes(text, DEFAULT_OUTPUT_MAX_BYTES);
 	const outputBytes = Buffer.byteLength(head, "utf-8");
-	const notice = `\n\n[Output truncated: ${formatByteSize(outputBytes)} of ${formatByteSize(
+	const notice = `[Output truncated: ${formatByteSize(outputBytes)} of ${formatByteSize(
 		totalBytes,
 	)} shown (${formatByteSize(DEFAULT_OUTPUT_MAX_BYTES)} limit). Re-fetch a more specific URL or use web_search for targeted content.]`;
-	return { text: head + notice, truncated: true, outputBytes, totalBytes };
+	return { text: head, notice, truncated: true, outputBytes, totalBytes };
 }
 
 /** Keep whole leading lines within the byte ceiling; fall back to a UTF-8-safe byte prefix for one oversized line. */

@@ -1,4 +1,230 @@
+## 2026-10-22 — Markup that spells a special token is not a leak (senpi#3880)
+
+### What changed
+- `detectors/control-leak.ts`: `s` and `mask` are both tokenizer special tokens and markup elements (HTML strikethrough, SVG mask). For these two names an opening tag is markup, a closing tag that closes an earlier opening in the same stream is markup, and a closing tag in quotation context (fence, inline code, quote) is a documented example. All three are fed to the context tracker as text and never start or extend a run. Only an unmatched, unquoted closing tag (a leaked `</s>` EOS run) stays a candidate.
+
+### Why
+- Nested `<s>` or `<mask>` markup and a fenced SVG example of `</mask>` closers aborted text and thinking as control-token leakage after the omo#10789 allowlist (senpi#3880).
+
+### Tests
+- `test/ttsr/detector-control-leak-markup-collisions.test.ts` (RED 3 failed before the change): nested strikethrough, nested mask and the fenced mask example stay silent across every split; closers beyond the opened markup still fire.
+- Contract change: `detector-control-leak.test.ts` B-P9 used an opening `<s>` run as its start-context positive; it now uses `<bos>`.
+
+### Review follow-up (senpi#3973)
+- A repeated closer is never exempt: only a quoted `</mask>` is a documented example, so a fenced `</s>` loop fires at the quotation threshold (8).
+- Opener credit is bounded. It expires after `EVIDENCE_TTL_CHARS`, it is not granted to openers inside quotation, and a whitespace-only run of openers grants one credit, not one per opener.
+- Tests (RED 4 failed on the previous head): a fenced `</s>` loop fires; a single fenced `</s>` stays silent; an unclosed strikethrough, a fenced opener, and a run of leaked openers do not hide a later `</s>` run.
+
+### Paths
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/control-leak.ts`
+
+## 2026-10-21 — Angle-bracket leak candidates are tokenizer special tokens only (omo#10789)
+
+### What changed
+- `detectors/token-grammar.ts`: an angle-bracket (`sgml` family) candidate is emitted only when its name is a known tokenizer special token (`SGML_CONTROL_TOKEN_NAMES`: `s`, `pad`, `unk`, `mask`, `bos`, `eos`, `sep`, `cls`, `eot`, `eom`, `endoftext`, `think`, `start_of_turn`, `end_of_turn`, `start_of_image`, `end_of_image`, `im_start`, `im_end`, `tool_call`, `tool_response`; case-insensitive, with or without the closing slash). Any other `<name>`/`</name>` is markup: the parser rejects it as text, which also breaks a run.
+- The `ctrl` (`<|...|>`) and `bracket` (`[UPPER]`) families are unchanged.
+
+### Why
+- Runs of HTML/XML closing tags (`</div>` four times in a row) in assistant prose, thinking, code samples and tool arguments latched the guard. It surfaced "Degeneration guard: control-token leakage" and resampled the turn. That happened even to this PR's own automated reviewer while it was discussing the diff (omo#10789).
+
+### Tests
+- `test/ttsr/detector-control-leak-tool-source.test.ts`: closing-tag runs in prose and thinking stay silent (RED 2 failed before), while leaked `</s>` and `<END_OF_TURN>` runs still fire.
+- Contract change in two existing tests that pinned the old behavior: `detector-control-leak-negatives.test.ts` B-N10 (`<div>` x8 now stays silent; a `</s>` x8 case was added and fires) and `detector-control-leak-grammar.test.ts` (an arbitrary 16-character name is silent; the longest known name fires).
+
+## 2026-10-21 — The control-token-leak guard no longer watches tool arguments (omo#10789)
+
+### What changed
+- For `source: "tool"` deltas, the control-token-leak detector (`detectors/control-leak.ts` `checkDelta`) treats angle-bracket (`sgml`) candidates as text. `<|...|>` (`ctrl`) and `[UPPER]` (`bracket`) leaks in tool arguments still fire, because the tool would write them to disk (#3875 review). Assistant text and thinking are watched exactly as before. The collapse detector and TTSR rules are unchanged for every source.
+
+### Why
+- A tool call's arguments are structured data the tool validates, not model prose where a leaked chat-control token means anything. `show_html_page`'s `html` argument streams as tool deltas, and four or more consecutive closing tags (`</div></div></div></div>`, the `sgml` family at `RUN_THRESHOLD_NORMAL = 4`) latched the guard. It surfaced "Degeneration guard: control-token leakage" and resampled the turn, so large pages could not be shown (omo#10789).
+
+### Test
+- `test/ttsr/detector-control-leak-tool-source.test.ts`: an HTML tool argument with four consecutive closing tags does not fire (RED before the change); a tool argument spelling `<s>` markup does not fire; a run of `<|im_end|>` in a tool argument still fires. A genuine `</s>` run in assistant text still fires.
+
+### Paths
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/watch.ts`
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/control-leak.ts`
+
 # TTSR Fork Tracker
+
+## 2026-10-09 - A failed engine pause write preserves the TTSR stop announcement (senpi#3014)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: retain the existing loop-stop entry, event and notice before attempting the new engine pause entry; catch and warn on that additive publication failure using a session logger captured before publication.
+
+### Why
+
+The new second append could throw between the existing loop-stop entry and its event/notice, hiding the stop announcement.
+
+### Why an extension could not handle it
+
+This builtin owns the repeated-rule stop branch and must complete its existing announcement.
+
+### Expected merge conflict zones
+
+`ttsr/index.ts` logger import and repeated-rule `agent_settled` branch. Keep the existing announcement ahead of the best-effort engine pause write.
+
+## 2026-10-09 - Publish the common engine pause entry (senpi#3007)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: the consumed repeated-rule nudge appends `engine-paused` with reason `repetition`, its rule, and `ttsr-injection`, alongside the unchanged `ttsr-loop-stopped` entry, event, and notice.
+
+### Why
+
+Clients need one durable self-stop signal rather than interpreting TTSR notices.
+
+### Why an extension could not handle it
+
+This builtin owns the repeated-rule stop decision and consumes the nudge exactly once.
+
+### Expected merge conflict zones
+
+The `agent_settled` repeated-rule branch. The final idle case for a one-shot repetitive-turns correction is recorded in the engine after all deferred turn claims settle.
+
+## 2026-10-08 - One corrective follow-up per rule per user message (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/follow-up-limit.ts` (new): `ruleAlreadyCorrected(entries, rule)` reports whether a `ttsr-injection` for that rule was already sent since the user's last message, read from the session entries.
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: `agent_settled` sends a rule's corrective nudge (with `triggerTurn`) at most once per user message; a repeat appends `ttsr-loop-stopped`, emits `ttsr:loop-stopped` and tells the user the rule flagged the reply again after its correction.
+
+### Why
+
+- One user message drove 66 turns in about 66 s through the `repetitive-turns` nudge until Stop (senpi#2967). The desktop's server-hosted session fires `session_start` around every turn, so this extension started each automatic turn with fresh in-memory state and re-armed. The limit is read from the session, so a rebuild cannot reset it; the engine-wide turn bound (`src/core/engine-turn-limit.ts`) covers every other source.
+
+### Why an extension could not handle it
+
+- The follow-up turn is started by this builtin's own `agent_settled` handler.
+
+### Expected merge conflict zones
+
+- LOW: `ttsr/index.ts` `agent_settled` handler and imports.
+
+## 2026-10-07 - Code-shaped lines are left out of near-duplicate scoring (senpi#2865)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-near-duplicates.ts`: `foldLine` leaves out an unfenced line shaped like code (indented and not a nested list item, or ending in `{ } [ ] ( ; , >`, the set oh-my-pi uses; `)` is left out because prose often ends in a parenthesis), so a paragraph made only of such lines is never scored. Fenced paragraphs keep their existing exemption.
+
+### Why
+
+Same-shaped code or markup (SVG elements, JSON objects) repeats one skeleton with different literals and scored as near-duplicate paragraphs. TTSR then aborted the stream and retried, discarding the model's valid output. oh-my-pi v18.8.0 drops the same line shapes before its loop heuristics. Trade-off, accepted on review: oh-my-pi applies its rule only to Gemini, DeepSeek and Grok streams, while TTSR applies it to every model, so a narration loop in which EVERY paragraph ends in `,` or `>` or is indented is no longer counted by this detector. Real narration (the incident fixture) carries no such lines and is still caught.
+
+### Why an extension could not handle it
+
+The paragraph scoring is inside the TTSR detector itself.
+
+### Expected merge conflict zones
+
+- `foldLine` and the line state in `collapse-near-duplicates.ts`.
+
+## 2026-09-25 - The handoff Ask exemption needs a closing status label (senpi#2143)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/repetitive-turns.ts`: `HANDOFF_ASK_CLAUSE` drops its end-of-text branch, so an `Ask:` clause is removed only when `For you:`, `You need:` or `Now:` closes it. `test/ttsr/repetitive-turns.test.ts` adds an unlabeled `Ask:` loop that must still fire on its third turn (RED with the old branch).
+
+### Why
+
+The end-of-text branch removed everything after any `Ask:`, so a stuck turn that merely contained the word normalized to nothing and scored 0 against itself, which hid it from `repetitive-turns` and from `collapse-near-duplicates` (same normalizer). #2136 meant to exempt only the restated request inside a handoff block.
+
+### Why an extension could not handle it
+
+This is the detector's own normalizer.
+
+### Expected merge conflict zones
+
+- `HANDOFF_ASK_CLAUSE` in `detectors/repetitive-turns.ts`.
+
+## 2026-09-25 - repetitive-turns ignores the restated Ask of a handoff block (senpi#2135)
+
+### What changed
+
+- `detectors/repetitive-turns.ts` `normalizeTurnText` drops a handoff block's `Ask: ...` clause (up to `For you:` / `You need:` / `Now:`) before comparison. Both the mid-stream lane (`repetitive-turns-lane.ts`) and the cross-turn detector normalize through it, so both stop counting the restated request.
+- `prompts.ts` `REPETITIVE_TURNS_RULE_CONTENT`: `Stop restating the situation. Do not emit another progress recap.` -> `Stop repeating the same status; a report is useful only when something has changed.`
+- `test/ttsr/repetitive-turns.test.ts`: the recorded final-block prefix scores under the threshold against the previous block (0.69 before, RED), and a block that repeats the same For you / Now / Next still scores as a near-duplicate.
+
+### Why
+
+- The handoff contract (senpi#2121) makes every block open by restating the user's request, so block N+1's opening is a near-copy of block N by design. On the released 2026.9.24-3 the lane armed on the final block's prefix, aborted it, and injected "Do not emit another progress recap", after which grok-4.7 closed without the block. The status the model reports (For you / Now / Next) still participates, so a model that re-emits the same status turn after turn is still caught.
+
+### Why an extension could not handle it
+
+- This is the ttsr builtin's own detector and remediation text.
+
+### Expected merge conflict zones
+
+- `normalizeTurnText` in `detectors/repetitive-turns.ts`; `REPETITIVE_TURNS_RULE_CONTENT` in `prompts.ts`. Fork-only files.
+
+## 2026-09-16 - Near-duplicate paragraph frequency
+
+### What changed and why
+
+- Added `detectors/collapse-near-duplicates.ts` (`near-duplicate-paragraphs`), wired last in the collapse chain for text and thinking streams. `paragraph-repeat` compares paragraphs byte for byte, so a model that restates the same step in different words every time never reaches three identical hashes; a captured incident streamed such a loop for 12 minutes with zero tool calls until the user killed the session.
+- The mechanism is a frequency rule, not a pair rule: a paragraph is an echo when its normalized word set reaches 0.5 Jaccard against any of the last 32 eligible paragraphs, and the detector only fires when at least 8 of the last 12 eligible paragraphs are echoes. A couple of similar paragraphs, a callback to an earlier point, or a summary that repeats a sentence never reaches that density.
+- The exact-repeat ring (64 paragraphs) also cannot see a cycle longer than itself. The incident's cycle was 114 paragraphs, so the same loop stayed invisible even where it repeated verbatim; the frequency rule is independent of cycle length.
+- Paragraphs inside fenced code blocks are skipped and never enter the history: repeated code blocks in one message are legitimate.
+- Remediation reuses the existing collapse path: abort, truncate from the first echoed paragraph in the firing window (its anchor is kept), then the collapse nudge.
+- Calibration is measured, not assumed. Replaying the shipped detector over 12,499 real assistant text and thinking parts (28.9 MB) from the local session store fires twice, and both firings are known runaway generations from one 2026-09-03 session; there are no other matches.
+
+### Why an extension-local change is required
+
+- The stream watcher already owns per-message detector state and collapse remediation, so paragraph tracking belongs in the extension-local collapse chain without changing provider or core stream contracts.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/detector-collapse-near-duplicates.test.ts` replays the sanitized incident fixture (`fixtures/incident-near-duplicate-narration.txt`), pins chunk-boundary independence, and pins the negatives: distinct multi-sentence prose, a minority of echoes in the window, the long healthy prefix, fenced code, and tool-stream exclusion.
+- `test/ttsr/collapse-test-inputs.ts` `buildHealthyPrefix` now composes varied vocabulary. Its previous sentences differed only by a counter, so every paragraph normalized to the same token set - healthy prose for a byte-exact rule, a narration loop for a normalized one.
+- `test/ttsr/detector-collapse-paragraphs.test.ts` `narration()` now emits seven lexically distinct steps instead of one template plus a counter, so the exact-repeat assertions still test exact repetition. The assertions themselves are unchanged.
+- Real-CLI QA ships as `senpi-qa` mock-loop scenario `ttsr-near-duplicate-loop`: fifteen paraphrases of one action, none byte-identical, streamed from the local fake model server. It asserts the abort, the truncated persisted message, the `collapse-repetition` interrupt in the recovery request, and the recovered answer.
+- LOW: `detectors/collapse.ts` (one chain entry) and the two test-input fixtures; no existing detector thresholds are changed.
+
+## 2026-09-03 - Within-message paragraph repetition
+
+### What changed and why
+
+- Added `detectors/collapse-paragraphs.ts` (`paragraph-repeat`) for byte-exact paragraph repetition within one streamed message. The existing four mechanisms could not see a 7-paragraph, ~2,100-character, 14-line cycle: scalar and short-period bounds are too small, line cycles are bounded and reset at blank lines, repetitive turns compare across turns, and loop-guard requires tool calls.
+- Tool-argument streams are excluded on purpose because fixtures can legitimately repeat blocks.
+- Thresholds are 64 characters, 24 word characters, 3 occurrences, and a 64-entry recent-paragraph ring.
+- Remediation reuses the existing collapse path: abort, truncate from the second occurrence, and send the collapse nudge.
+- Known limit: a paragraph ends only at a blank (whitespace-only) line, so narration that separates steps with single newlines is one paragraph to this mechanism; line cycles up to period 4 remain the line-cycle detector's job.
+
+### Why an extension-local change is required
+
+- The stream watcher already owns per-message detector state and collapse remediation, so paragraph tracking belongs in the extension-local collapse chain without changing provider or core stream contracts.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/detector-collapse-paragraphs.test.ts` covers chunking, eligibility, byte equality, multiline paragraphs, separators, and tool exclusion.
+- `test/ttsr/extension-wiring.test.ts` covers abort, truncation, activation, nudge, retry, and recovery.
+- Real-CLI QA ships as `senpi-qa` mock-loop scenario `ttsr-paragraph-loop` (text stream from the local fake model server; asserts the recovery request keeps one copy of the first paragraph and carries the `collapse-repetition` interrupt).
+- LOW: `detectors/collapse.ts` and the wiring test; no existing detector thresholds or unrelated routing are changed.
+
+## 2026-08-25 - Cover streamed tool-call arguments
+
+### What changed and why
+
+- TTSR now feeds `toolcall_delta` events into the same collapse, control-leak, and manager-rule watcher used by text and thinking streams, keyed by `tool:<contentIndex>`.
+- Tool-scoped rules resolve the tool name from the partial assistant content block, while text-only rules remain excluded from tool streams.
+- A mid-tool-call collapse aborts system-owned remediation, removes all tool-call blocks from the aborted generation before persistence because the generation's remaining calls are suspect, keeps the assistant message coherent, and sends the shared activation record plus hidden corrective nudge.
+- Control-token-leak detection intentionally runs on tool arguments as part of detector parity; the existing kill switches therefore cover the tool lane without special cases.
+
+### Why an extension-local change is required
+
+- `agent-session.ts` already forwards `toolcall_delta` through the public `message_update` event and already applies `message_end` replacements before persistence. The fix belongs in the TTSR extension watcher and remediation policy; no core or provider change is required.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/extension-wiring.test.ts` replays the incident payload through the faux provider, proves bounded abort and clean persistence, and preserves nudge/activation ownership.
+- `test/ttsr/detector-collapse.test.ts` covers tool-stream false-positive exemptions; `test/ttsr/manager.test.ts` covers tool-name matching and text-only exclusion.
+- LOW: `index.ts` message-update routing; LOW: `message-update.ts` stream projection; LOW: `watch.ts`, `types.ts`, and tool-call remediation in `remediation.ts`.
+
+### Deviation ledger correction
+
+| Tool-arg snapshot matching (`matcherDigest`) | Raw `toolcall_delta` JSON only | **Resolved for stream detection:** tool-call argument deltas now receive collapse/control-leak detection and `toolScopes` matching. Structured matcher digests and AST-adjacent path-aware argument snapshots remain deferred. |
 
 ## 2026-08-05 - One activation, one visible record
 

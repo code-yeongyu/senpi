@@ -145,9 +145,8 @@ async function fetchOllamaModels(host: string, context: RefreshModelsContext): P
 		throw rejected[0]?.reason ?? context.signal.reason ?? new Error("Ollama catalog refresh aborted");
 	}
 	if (tags.length > 0 && rejected.length === tags.length) throw rejected[0]!.reason;
-	const stored = rejected.length > 0 ? await context.store.read() : undefined;
 	const previousById = new Map(
-		(stored?.models ?? [])
+		(context.stored?.models ?? [])
 			.filter(
 				(model): model is Model<"openai-completions"> =>
 					model.provider === "ollama" && model.api === "openai-completions",

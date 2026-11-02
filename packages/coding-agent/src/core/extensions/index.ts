@@ -2,6 +2,13 @@
  * Extension system for lifecycle events and custom tools.
  */
 
+export type {
+	ChildLifecycleReport,
+	DeliveryTicketId,
+	LifecycleApi,
+	ObligationToken,
+	WorkObligations,
+} from "../session-lifecycle-types.ts";
 export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.ts";
 export type { SourceInfo } from "../source-info.ts";
 export type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
@@ -24,8 +31,13 @@ export type {
 	SwitchSessionHandler,
 } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
+export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./secret-input.ts";
+export * from "./session-control-types.ts";
 export type {
 	AfterProviderResponseEvent,
+	AgentActivityOutcome,
+	AgentBeforeSettleEvent,
+	AgentBeforeSettleEventResult,
 	AgentEndEvent,
 	AgentSettledEvent,
 	AgentStartEvent,
@@ -44,14 +56,22 @@ export type {
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
+	BoundaryContextPreview,
+	BoundaryResult,
+	BoundaryState,
 	BuildSystemPromptOptions,
+	CompactionEntryDraft,
 	// Context
 	CompactOptions,
+	ContextEditEntryDraft,
 	// Events - Agent
 	ContextEvent,
 	// Event Results
 	ContextEventResult,
 	ContextUsage,
+	ContextWithSystemEvent,
+	CustomEntryDraft,
+	CustomMessageEntryDraft,
 	CustomToolCallEvent,
 	CustomToolResultEvent,
 	EditorFactory,
@@ -59,6 +79,7 @@ export type {
 	EditToolResultEvent,
 	// Message and Entry Rendering
 	EntryRenderer,
+	EntryRendererOptions,
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
@@ -82,11 +103,16 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionMode,
+	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
+	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionUIInputOptions,
+	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
 	FilesystemPolicy,
@@ -103,18 +129,22 @@ export type {
 	GrepToolResultEvent,
 	InlineExtension,
 	// Events - Input
+	InputAttribution,
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,
 	InputSource,
+	KernelPreludeContribution,
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,
 	LsToolResultEvent,
 	MarkdownTransformContext,
 	MarkdownTransformer,
+	McpServersChangeEvent,
 	// Events - Message
 	MessageEndEvent,
+	MessageEndEventResult,
 	MessageRenderer,
 	MessageRenderOptions,
 	MessageStartEvent,
@@ -122,6 +152,9 @@ export type {
 	ModelSelectEvent,
 	ModelSelectEventResult,
 	ModelSelectSource,
+	NormalizedBuildSystemPromptOptions,
+	PowerShellToolCallEvent,
+	PowerShellToolResultEvent,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,
@@ -130,10 +163,12 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
+	ProviderStreamEvent,
 	ReadToolCallEvent,
 	ReadToolResultEvent,
 	// Commands
 	RegisteredCommand,
+	RegisteredMcpServer,
 	RegisteredTool,
 	ReplacedSessionContext,
 	ResolvedCommand,
@@ -150,9 +185,15 @@ export type {
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeEvent,
 	SessionBeforeTreeResult,
+	SessionBoundaryDraft,
 	SessionCompactEvent,
+	SessionCompactFailedEvent,
+	SessionContext,
 	SessionEvent,
 	SessionInfoChangedEvent,
+	SessionKind,
+	SessionParkedEvent,
+	SessionResumedEvent,
 	SessionShutdownEvent,
 	// Events - Session
 	SessionStartEvent,
@@ -163,6 +204,8 @@ export type {
 	SetThinkingLevelHandler,
 	SystemPromptChangeEvent,
 	TerminalInputHandler,
+	ThinkingLevelSelectEvent,
+	ToolAnnotations,
 	// Events - Tool
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -174,13 +217,22 @@ export type {
 	ToolExecutionMode,
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
+	ToolExposure,
 	ToolInfo,
+	ToolLoadout,
+	ToolLoadoutChanges,
+	ToolNamespace,
+	ToolPermissionRequest,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,
 	TreePreparation,
 	TurnEndEvent,
+	TurnEndEventResult,
 	TurnStartEvent,
+	UIPromptEndEvent,
+	UIPromptKind,
+	UIPromptStartEvent,
 	// Events - User Bash
 	UserBashEvent,
 	UserBashEventResult,
@@ -192,12 +244,14 @@ export type {
 // Type guards
 export {
 	defineTool,
+	EMPTY_SESSION_CONTEXT,
 	ExecuteToolError,
 	isBashToolResult,
 	isEditToolResult,
 	isFindToolResult,
 	isGrepToolResult,
 	isLsToolResult,
+	isPowerShellToolResult,
 	isReadToolResult,
 	isToolCallEventType,
 	isWriteToolResult,

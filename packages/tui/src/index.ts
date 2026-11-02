@@ -1,6 +1,17 @@
 // Core TUI interfaces and classes
 
+import type { CellDimensions, ImageDimensions } from "./terminal-image.ts";
+import { calculateImageCellSize } from "./terminal-image.ts";
+
 export { Marked, type Token, type Tokens } from "marked";
+// Fullscreen transcript search
+export {
+	AltScreenSearchComponent,
+	type AltScreenSearchMatch,
+	type AltScreenSearchSegment,
+	findAltScreenSearchMatches,
+	getAltScreenSearchMatchKey,
+} from "./alt-screen-search.ts";
 // Autocomplete support
 export {
 	type AutocompleteItem,
@@ -9,11 +20,39 @@ export {
 	CombinedAutocompleteProvider,
 	type SlashCommand,
 } from "./autocomplete.ts";
+// Colors and styling
+export {
+	backgroundAnsi,
+	type Color,
+	type ColorMixSpace,
+	colorToHex,
+	colorToOkhsl,
+	colorToOklch,
+	colorToRgb,
+	foregroundAnsi,
+	type IndexedColor,
+	indexedColor,
+	mixColors,
+	type OkhslChannels,
+	type OklchChannels,
+	type OklchColorValue,
+	okhslColor,
+	oklchColor,
+	parseColor,
+	type RgbColorValue,
+	rgbColor,
+	styleText,
+	styleTextWithAnsi,
+	type TerminalColorMode,
+	type TextAttributes,
+	type TextStyle,
+} from "./colors.ts";
 // Components
 export { Box } from "./components/box.ts";
 export { CancellableLoader } from "./components/cancellable-loader.ts";
 export {
 	Editor,
+	type EditorKeywordHighlight,
 	type EditorOptions,
 	type EditorTheme,
 } from "./components/editor.ts";
@@ -30,7 +69,13 @@ export {
 	type MarkdownTheme,
 	resetMarkdownHighlightCallCount,
 } from "./components/markdown.ts";
-export { ScrollView, type ScrollViewOptions, type ScrollViewScrollbar } from "./components/scroll-view.ts";
+export { MouseRegion, type MouseRegionHandler } from "./components/mouse-region.ts";
+export {
+	ScrollView,
+	type ScrollViewOptions,
+	type ScrollViewScrollbar,
+	type ScrollViewScrollToOptions,
+} from "./components/scroll-view.ts";
 export {
 	type SelectItem,
 	SelectList,
@@ -52,9 +97,21 @@ export {
 	VStack,
 } from "./components/v-stack.ts";
 // Editor component interface (for custom editors)
-export type { EditorComponent } from "./editor-component.ts";
+export type { EditorComponent, EditorSubmitDetails } from "./editor-component.ts";
 // Fuzzy matching
-export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
+export { type FuzzyMatch, fuzzyFilter, fuzzyMatch, fuzzyMatchLower } from "./fuzzy.ts";
+// Atomic image markers (ids only - never image bytes)
+export {
+	type EditorImageState,
+	formatImageMarker,
+	IMAGE_MARKER_REGEX,
+	IMAGE_MARKER_SINGLE,
+	type ImageMarkerCanonicalization,
+	ImageMarkerRegistry,
+	type ImageMarkerRemoval,
+	imageMarkerId,
+	isImageMarker,
+} from "./image-markers.ts";
 // Keybindings
 export {
 	getKeybindings,
@@ -81,21 +138,47 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.ts";
+export {
+	decodeMouseButton,
+	isMouseSequence,
+	MOUSE_TRACKING,
+	MouseClickSynthesizer,
+	parseSgrMouseEvent,
+	parseWheelEvent,
+	type SgrMouseEvent,
+	toTuiMouseEvent,
+	type WheelEvent,
+} from "./mouse-input.ts";
+// Native platform integration
+export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
+export { oklabToOkhslLightness } from "./oklab.ts";
 export { type EditorPasteState, expandPasteMarkers } from "./paste-markers.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
-export { TuiAltScreen, type TuiAltScreenOptions } from "./TuiAltScreen.ts";
-export { TuiMainScreen } from "./TuiMainScreen.ts";
 // Terminal interface and implementations
-export { ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
+export {
+	type CursorPosition,
+	isAppleTerminalSession,
+	isWarpWslSession,
+	ProcessTerminal,
+	type ProcessTerminalOptions,
+	type Terminal,
+} from "./terminal.ts";
 // Terminal colors
 export {
-	parseOsc11BackgroundColor,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type TerminalColorScheme,
+	type TerminalColors,
 } from "./terminal-colors.ts";
 // Terminal image support
+export function calculateImageRows(
+	imageDimensions: ImageDimensions,
+	targetWidthCells: number,
+	cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 },
+): number {
+	return calculateImageCellSize(imageDimensions, targetWidthCells, undefined, cellDimensions).rows;
+}
 export {
 	allocateImageId,
 	buildKittyPlaceholderRow,
@@ -111,6 +194,7 @@ export {
 	getImageDimensions,
 	getJpegDimensions,
 	getPngDimensions,
+	getTerminalColorMode,
 	getWebpDimensions,
 	hyperlink,
 	type ImageDimensions,
@@ -122,6 +206,7 @@ export {
 	renderImage,
 	resetCapabilitiesCache,
 	setCapabilities,
+	setCapabilityOverrides,
 	setCellDimensions,
 	type TerminalCapabilities,
 	type TmuxPassthroughState,
@@ -130,23 +215,46 @@ export {
 export { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
 export {
 	type Component,
+	CompositeRevision,
 	Container,
 	CURSOR_MARKER,
+	claimFrameRow,
 	compositeTuiLine,
+	currentRenderRevision,
+	dispatchMouseEvent,
 	type Focusable,
+	type FrameLineBytesTotals,
+	frameLineBytesTotals,
+	frameMode,
+	frameScrollbackRows,
 	isFocusable,
 	isViewportTUI,
+	joinLineArrays,
+	mainScreenHistoryLines,
+	nextRenderRevision,
 	type OverlayAnchor,
+	type OverlayBounds,
 	type OverlayHandle,
 	type OverlayMargin,
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
+	renderAtFrameRow,
+	resetMainScreenHistoryLines,
 	type SizeValue,
 	TUI,
 	type TuiInputListener,
 	type TuiInputListenerResult,
+	type TuiMode,
+	type TuiMouseButton,
+	type TuiMouseDispatchResult,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	type TuiMouseEventType,
+	type TuiStopOptions,
 	type ViewportTUI,
 } from "./tui.ts";
+export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
+export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
 // Utilities
 export {
 	getGraphemeSegmenter,
@@ -158,3 +266,4 @@ export {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "./utils.ts";
+export type { WheelScrollLines } from "./wheel-scroll.ts";

@@ -1,14 +1,17 @@
 /**
- * Channel 3 proof for provider-stream stall escalation.
+ * Channel 3 proof that provider-stream stalls use the shared retry budget.
  *
  * The fake server accepts every primary-model request, writes SSE headers, and
- * then sends nothing, reproducing the hung-gateway class from the donated
- * session 019fa8da-43ad-70b7-b01b-8f34f4d907f2 (zero events until the agent
- * stream idle watchdog trips). The real source CLI must stall once, retry the
- * same model once, and on the second consecutive stall switch to the configured
- * fallback model, which streams the final marker. Without the escalation the
- * run replays the primary for the whole retry budget and never reaches the
- * fallback inside the wall-clock bound.
+ * then sends nothing, reproducing the hung-gateway class where the agent stream
+ * idle watchdog trips with zero events. A stall is an ordinary transient
+ * failure, so the real source CLI must spend the configured same-model budget
+ * (`retry.maxRetries`, i.e. 1 initial request + 3 retries) before escalating to
+ * the configured fallback model, which streams the final marker.
+ *
+ * This is the real-CLI proof for the reported
+ * `Retry failed after 1 attempts: Provider stream start timed out after 30000ms`:
+ * the stall class previously surrendered the same-model budget after a single
+ * retry probe.
  */
 
 import { createServer } from "node:http";
@@ -33,6 +36,8 @@ const FINAL_MARKER = "SENPI-QA-STALL-FALLBACK-RECOVERED-91c2";
 const EVIDENCE_SLUG = "provider-stream-stall-fallback";
 const FALLBACK_MODEL_ID = "mock-model-fallback";
 const IDLE_TIMEOUT_MS = 1500;
+const MAX_RETRIES = 3;
+const EXPECTED_PRIMARY_REQUESTS = MAX_RETRIES + 1;
 
 function startServer() {
 	const requests = [];
@@ -113,7 +118,7 @@ async function main() {
 					httpIdleTimeoutMs: IDLE_TIMEOUT_MS,
 					retry: {
 						enabled: true,
-						maxRetries: 3,
+						maxRetries: MAX_RETRIES,
 						baseDelayMs: 1,
 						provider: { maxRetries: 0, maxRetryDelayMs: 60000 },
 						fallbackChains: {
@@ -148,13 +153,13 @@ async function main() {
 			result.code === 0 &&
 			!result.timedOut &&
 			markerCount >= 1 &&
-			primaryRequests === 2 &&
+			primaryRequests === EXPECTED_PRIMARY_REQUESTS &&
 			fallbackRequests === 1 &&
 			elapsedMs < 45000;
 		checks.ok(
-			"second consecutive provider-stream stall escalates the real CLI to the fallback model",
+			"the real CLI spends the shared same-model retry budget on stalls before falling back",
 			pass,
-			`code=${result.code} marker=${markerCount} primary=${primaryRequests} fallback=${fallbackRequests} elapsedMs=${elapsedMs}`,
+			`code=${result.code} marker=${markerCount} primary=${primaryRequests} (expected ${EXPECTED_PRIMARY_REQUESTS}) fallback=${fallbackRequests} elapsedMs=${elapsedMs}`,
 		);
 		checkRealAuthUnchanged(checks, guard);
 		const dir = evidenceDir(EVIDENCE_SLUG);
@@ -166,6 +171,8 @@ async function main() {
 				{
 					command: "node .agents/skills/senpi-qa/scripts/mock-loop-stall-fallback.mjs",
 					idleTimeoutMs: IDLE_TIMEOUT_MS,
+					maxRetries: MAX_RETRIES,
+					expectedPrimaryRequests: EXPECTED_PRIMARY_REQUESTS,
 					exitCode: result.code,
 					timedOut: result.timedOut,
 					elapsedMs,

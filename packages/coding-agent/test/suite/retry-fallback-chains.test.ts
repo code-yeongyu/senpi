@@ -97,6 +97,103 @@ describe("fallback chain selectors", () => {
 		).toEqual({ "openai/gpt-5.4:high": ["anthropic/claude-sonnet-4-5:max"] });
 	});
 
+	it("does not resolve an implicit wildcard key", () => {
+		// A model without its own chain must still have an escape lane: thread
+		// 487d7c29 wedged terminal on nine consecutive upstream 500s because
+		// resolveChainKey returned undefined for the manually selected model.
+		const model = getModel("openai", "gpt-5.4");
+		const chains = { "*": ["anthropic/claude-sonnet-4-5:high"] };
+		expect(resolveChainKey(model, "high", chains, { allowWildcard: true })).toBeUndefined();
+		expect(resolveChainKey(model, undefined, chains, { allowWildcard: true })).toBeUndefined();
+	});
+
+	it("keeps explicit empty chains as opt-outs", () => {
+		const resolved = resolveRetryFallbackSettings({
+			fallbackChains: { "claude-fable-5": [], "gpt-5.4": [] },
+		});
+		expect(resolved.chains["claude-fable-5"]).toEqual([]);
+		expect(resolved.chains["gpt-5.4"]).toEqual([]);
+	});
+
+	it("withholds the wildcard unless the caller opts in", () => {
+		// An active fallback episode must keep walking its own chain; the wildcard
+		// is only offered to a session that resolved no chain at all.
+		const model = getModel("openai", "gpt-5.4");
+		expect(resolveChainKey(model, "high", { "*": ["anthropic/claude-sonnet-4-5"] })).toBeUndefined();
+	});
+
+	it("prefers exact and base keys over the wildcard", () => {
+		const model = getModel("openai", "gpt-5.4");
+		expect(
+			resolveChainKey(
+				model,
+				"high",
+				{
+					"openai/gpt-5.4:high": ["anthropic/claude-sonnet-4-5"],
+					"*": ["anthropic/claude-sonnet-4-5"],
+				},
+				{ allowWildcard: true },
+			),
+		).toBe("openai/gpt-5.4:high");
+		expect(
+			resolveChainKey(
+				model,
+				"max",
+				{
+					"openai/gpt-5.4": ["anthropic/claude-sonnet-4-5"],
+					"*": ["anthropic/claude-sonnet-4-5"],
+				},
+				{ allowWildcard: true },
+			),
+		).toBe("openai/gpt-5.4");
+	});
+
+	it("ignores wildcard chains through canonicalization", () => {
+		expect(canonicalizeFallbackChains({ "*": ["ANTHROPIC/claude-sonnet-4-5:MAX"] }, models)).toEqual({});
+	});
+
+	it("drops a tombstoned wildcard chain", () => {
+		expect(canonicalizeFallbackChains({ "*": [] }, models)).toEqual({});
+	});
+
+	it("does not ship a wildcard fallback lane", () => {
+		expect(DEFAULT_FALLBACK_CHAINS["*"]).toBeUndefined();
+		const resolved = resolveRetryFallbackSettings(undefined);
+		expect(resolved.chains["*"]).toBeUndefined();
+	});
+
+	it("ships the fable family an opus-only ladder led by Opus 5.5 without overriding thinking effort", () => {
+		const ladder = ["claude-opus-5-5", "claude-opus-5"];
+		const resolved = resolveRetryFallbackSettings(undefined);
+
+		expect(resolved.chains["claude-fable-5-1"]).toEqual(ladder);
+		expect(resolved.chains["claude-fable-5"]).toEqual(ladder);
+		expect(resolved.modelFallback).toBe(true);
+	});
+
+	it("ships Opus 5.5 its own same-family step-down ladder without overriding thinking effort", () => {
+		const resolved = resolveRetryFallbackSettings(undefined);
+
+		expect(resolved.chains["claude-opus-5-5"]).toEqual(["claude-opus-5"]);
+	});
+
+	it("keeps every shipped rung inside the anthropic opus family", () => {
+		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
+			expect(entries.length).toBeGreaterThan(0);
+			for (const entry of entries) expect(entry.startsWith("claude-opus-")).toBe(true);
+		}
+	});
+
+	it("never ships a pre-5 Opus rung, so a Claude session cannot land on claude-opus-4-x (senpi#3727)", () => {
+		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
+			for (const entry of entries) expect(entry).not.toMatch(/^claude-opus-4-/);
+		}
+	});
+
+	it("tombstones a shipped chain through canonicalization when the user empties it", () => {
+		expect(canonicalizeFallbackChains({ "claude-fable-5-1": [] }, models)).toEqual({});
+	});
+
 	it("prefers an exact thinking key, then the base key", () => {
 		const chains = {
 			"openai/gpt-5.4": ["anthropic/claude-sonnet-4-5"],
@@ -108,29 +205,38 @@ describe("fallback chain selectors", () => {
 		expect(resolveChainKey(model, "max", chains)).toBe("openai/gpt-5.4");
 	});
 
-	it("returns candidates after the current entry, using base matching when thinking differs", () => {
+	it("returns candidates after the current entry, treating another level of the same model as a rung", () => {
 		const entries = ["anthropic/claude-sonnet-4-5:max", "openrouter/qwen/qwen3-coder:exacto", "openai/gpt-5.4"];
 
 		expect(candidatesAfter(entries, "openai/primary:high")).toEqual(entries);
 		expect(candidatesAfter(entries, "openai/gpt-5.4:high")).toEqual([]);
-		expect(candidatesAfter(entries, "anthropic/claude-sonnet-4-5:high")).toEqual(entries.slice(1));
+		// The same model at ANOTHER level is a rung of its own. Consuming it as the
+		// current position dropped it from every chain whose head rung the caller
+		// holds separately - the plugin sends `models: [A:high, A:off, B]` as the
+		// entries `[A:off, B]` under the bare `A` key, and A:off was never scanned.
+		expect(candidatesAfter(entries, "anthropic/claude-sonnet-4-5:high")).toEqual(entries);
+		expect(candidatesAfter(entries, "anthropic/claude-sonnet-4-5:max")).toEqual(entries.slice(1));
 		expect(candidatesAfter(entries, "unknown/model")).toEqual(entries);
+	});
+
+	it("falls back to the same model at a lower level before moving to the next model", () => {
+		const entries = ["faux/primary:off", "faux/toggle"];
+
+		expect(candidatesAfter(entries, "faux/primary:high")).toEqual(entries);
 	});
 });
 
 describe("resolveRetryFallbackSettings chain defaults", () => {
 	const fableKey = "claude-fable-5";
 
-	it("keeps a shipped default chain when the user configures an unrelated model", () => {
+	it("keeps the shipped defaults beside an explicitly configured chain", () => {
 		const resolved = resolveRetryFallbackSettings({
 			fallbackChains: { "example-gateway/unrelated-model": ["example-gateway/unrelated-fallback:max"] },
 		});
 
 		expect(resolved.chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
 		expect(resolved.chains[fableKey]).toEqual(DEFAULT_FALLBACK_CHAINS[fableKey]);
-		expect(DEFAULT_FALLBACK_CHAINS[fableKey]).toHaveLength(3);
-		// The shipped default is provider-agnostic: bare ids only, expanded at canonicalization.
-		expect(Object.keys(DEFAULT_FALLBACK_CHAINS).every((key) => !key.includes("/"))).toBe(true);
+		expect(resolved.chains["claude-fable-5-1"]).toEqual(DEFAULT_FALLBACK_CHAINS["claude-fable-5-1"]);
 	});
 
 	it("replaces a colliding default outright and removes one set to an empty array", () => {
@@ -138,8 +244,7 @@ describe("resolveRetryFallbackSettings chain defaults", () => {
 			resolveRetryFallbackSettings({ fallbackChains: { [fableKey]: ["ccapi/kimi-k3:max"] } }).chains[fableKey],
 		).toEqual(["ccapi/kimi-k3:max"]);
 
-		// An empty list survives resolution as a tombstone; canonicalization is what
-		// removes the expanded default (see retry-fallback-expansion.test.ts).
+		// An empty list remains an explicit opt-out.
 		expect(resolveRetryFallbackSettings({ fallbackChains: { [fableKey]: [] } }).chains[fableKey]).toEqual([]);
 	});
 

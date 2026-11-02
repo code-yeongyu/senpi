@@ -160,6 +160,32 @@ describe("google-shared convertTools", () => {
 		});
 	});
 
+	it("strips non-standard 'optional' keyword from parametersJsonSchema when useParameters=false", () => {
+		const tools = [
+			makeTool({
+				$schema: "http://json-schema.org/draft-07/schema#",
+				type: "object",
+				properties: {
+					command: { type: "string", optional: true },
+				},
+				required: ["command"],
+			}),
+		];
+
+		const result = convertTools(tools, false);
+		const decl = result?.[0]?.functionDeclarations?.[0];
+
+		expect(decl).toBeDefined();
+		expect(decl?.parametersJsonSchema).toEqual({
+			$schema: "http://json-schema.org/draft-07/schema#",
+			type: "object",
+			properties: {
+				command: { type: "string" },
+			},
+			required: ["command"],
+		});
+	});
+
 	it("handles tools without $schema gracefully", () => {
 		const tools = [
 			makeTool({
@@ -199,5 +225,103 @@ describe("google-shared convertTools", () => {
 	it("returns undefined for empty tool list", () => {
 		expect(convertTools([])).toBeUndefined();
 		expect(convertTools([], true)).toBeUndefined();
+	});
+	it("preserves a legitimate property named 'optional' in parametersJsonSchema when useParameters=false", () => {
+		const tools = [
+			makeTool({
+				type: "object",
+				properties: {
+					optional: { type: "boolean", description: "legitimate parameter" },
+				},
+				required: ["optional"],
+			}),
+		];
+
+		const result = convertTools(tools, false);
+		const decl = result?.[0]?.functionDeclarations?.[0];
+
+		expect(decl).toBeDefined();
+		expect(decl?.parametersJsonSchema).toEqual({
+			type: "object",
+			properties: {
+				optional: { type: "boolean", description: "legitimate parameter" },
+			},
+			required: ["optional"],
+		});
+	});
+
+	it("preserves a legitimate property named 'optional' in parameters when useParameters=true", () => {
+		const tools = [
+			makeTool({
+				type: "object",
+				properties: {
+					optional: { type: "boolean", description: "legitimate parameter" },
+				},
+				required: ["optional"],
+			}),
+		];
+
+		const result = convertTools(tools, true);
+		const decl = result?.[0]?.functionDeclarations?.[0];
+
+		expect(decl).toBeDefined();
+		expect(decl?.parameters).toEqual({
+			type: "object",
+			properties: {
+				optional: { type: "boolean", description: "legitimate parameter" },
+			},
+			required: ["optional"],
+		});
+	});
+
+	it("preserves object-valued const/default/examples containing 'optional' key in parametersJsonSchema", () => {
+		const tools = [
+			makeTool({
+				type: "object",
+				properties: {
+					mode: {
+						type: "object",
+						const: { optional: true, keep: 1 },
+						default: { optional: false, keep: 2 },
+						examples: [{ optional: true, keep: 3 }],
+					},
+				},
+			}),
+		];
+
+		const result = convertTools(tools, false);
+		const decl = result?.[0]?.functionDeclarations?.[0];
+
+		expect(decl).toBeDefined();
+		expect(decl?.parametersJsonSchema).toEqual({
+			type: "object",
+			properties: {
+				mode: {
+					type: "object",
+					const: { optional: true, keep: 1 },
+					default: { optional: false, keep: 2 },
+					examples: [{ optional: true, keep: 3 }],
+				},
+			},
+		});
+	});
+
+	it("strips 'optional' from anyOf branches on both useParameters paths", () => {
+		const schema = {
+			anyOf: [{ type: "string", optional: true }, { type: "number" }],
+		};
+		const tools = [makeTool(schema)];
+
+		const falseResult = convertTools(tools, false);
+		const falseDecl = falseResult?.[0]?.functionDeclarations?.[0];
+		expect(falseDecl?.parametersJsonSchema).toEqual({
+			anyOf: [{ type: "string" }, { type: "number" }],
+		});
+
+		const trueResult = convertTools(tools, true);
+		const trueDecl = trueResult?.[0]?.functionDeclarations?.[0];
+		expect(trueDecl?.parameters).toEqual({
+			anyOf: [{ type: "string" }, { type: "number" }],
+		});
 	});
 });

@@ -145,6 +145,7 @@ describe("McpOAuthProvider + flows", () => {
 			codeVerifier: "old-verifier",
 			expiresAt: Date.now() + 60_000,
 			resource: fixture.mcpUrl,
+			issuer: fixture.baseUrl,
 		});
 		const manager = new McpRefreshManager(provider);
 		await expect(manager.ensureFresh()).rejects.toMatchObject({ oauthKind: "invalid_grant", terminal: true });
@@ -160,6 +161,7 @@ describe("McpOAuthProvider + flows", () => {
 			refreshToken: "RT_TRANSIENT",
 			expiresAt: Date.now() + 60_000,
 			resource: fixture.mcpUrl,
+			issuer: fixture.baseUrl,
 		});
 		const manager = new McpRefreshManager(provider, { maxRetries: 2, retryDelayMs: 5 });
 		await expect(manager.ensureFresh()).rejects.toMatchObject({ oauthKind: "transient", terminal: false });

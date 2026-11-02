@@ -1,0 +1,359 @@
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { extractChatGptSubscriptionAccountId } from "@earendil-works/pi-ai/utils/chatgpt-subscription-auth";
+import { z } from "zod";
+import { getAgentDir } from "../../config.ts";
+import { CredentialStoreBusyError, FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
+import { acquireStateFileLock, readStateFile, writeStateFileAtomic } from "./state-file.ts";
+
+export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
+
+const HEX_256_BIT = /^[0-9a-f]{64}$/;
+
+// Every object here is loose: the file is shared by every engine version on the machine (the CLI, the
+// desktop app's bundled engine, an older omo), so a field one version adds must be read past by the others,
+// not make them reset the whole document and its installation key (senpi#4090).
+const leaseSchema = z.looseObject({
+	id: z.string().min(1).max(128),
+	expiresAt: z.number().int().positive(),
+});
+
+const slotStateSchema = z.looseObject({
+	stateVersion: z.number().int().nonnegative(),
+	blockedUntil: z.number().int().positive().optional(),
+	blockReason: z.enum(["auth_error", "rate_limit", "account_disabled"]).optional(),
+	failureCount: z.number().int().nonnegative().optional(),
+	lastSuccessAt: z.number().int().positive().optional(),
+	credentialRevision: z.string().regex(HEX_256_BIT).optional(),
+	lease: leaseSchema.optional(),
+	// Rate limits that bind one model family on this slot, not the slot (senpi#2555).
+	// Absent in files written before; `blockedUntil` keeps meaning "account blocked".
+	modelBlocks: z.record(z.string().min(1), z.looseObject({ blockedUntil: z.number().int().positive() })).optional(),
+});
+
+/**
+ * The slot fields this engine reads and writes. Declared, not inferred from the loose schema: an inferred
+ * type carries the schema's `[k: string]: unknown` index signature, which turned every writer's
+ * `Omit<CredentialSlotState, "stateVersion">` into an unchecked bag, so a wrong-typed field would be
+ * written and then reset the whole file on the next read. Parsing stays loose; writing stays typed.
+ */
+export type CredentialSlotState = Readonly<{
+	stateVersion: number;
+	blockedUntil?: number;
+	blockReason?: "auth_error" | "rate_limit" | "account_disabled";
+	failureCount?: number;
+	lastSuccessAt?: number;
+	credentialRevision?: string;
+	lease?: { id: string; expiresAt: number };
+	modelBlocks?: Record<string, { blockedUntil: number }>;
+}>;
+
+// Both directions are compile-time checks that the declared type and the parsing schema agree on
+// every known field.
+type ParsedSlotState = z.infer<typeof slotStateSchema>;
+const parsedSlotsAreDeclaredSlots = (slot: ParsedSlotState): CredentialSlotState => slot;
+const declaredSlotsAreParsedSlots = (slot: CredentialSlotState): ParsedSlotState => slot;
+void parsedSlotsAreDeclaredSlots;
+void declaredSlotsAreParsedSlots;
+
+const documentSchema = z.looseObject({
+	schemaVersion: z.literal(1),
+	installationKey: z.string().regex(HEX_256_BIT),
+	providers: z.record(
+		z.string(),
+		z.looseObject({
+			lanes: z.record(
+				z.string(),
+				z.looseObject({
+					slots: z.record(z.string(), slotStateSchema),
+				}),
+			),
+		}),
+	),
+});
+
+export type CredentialPoolStateDocument = z.infer<typeof documentSchema>;
+
+export function credentialPoolStatePath(agentDir: string = getAgentDir()): string {
+	return join(agentDir, CREDENTIAL_POOL_STATE_FILENAME);
+}
+
+function freshDocument(): CredentialPoolStateDocument {
+	return { schemaVersion: 1, installationKey: randomBytes(32).toString("hex"), providers: {} };
+}
+
+function serialize(document: CredentialPoolStateDocument): string {
+	return JSON.stringify(document, null, 2);
+}
+
+/** The valid document in `content`, or undefined when it is missing, unreadable or invalid. */
+function parseDocument(content: string | undefined): CredentialPoolStateDocument | undefined {
+	if (content === undefined) return undefined;
+	try {
+		const parsed = documentSchema.safeParse(JSON.parse(content));
+		return parsed.success ? parsed.data : undefined;
+	} catch (error) {
+		if (error instanceof SyntaxError) return undefined;
+		throw error;
+	}
+}
+
+/** The two keys a stored slot's health can be recorded under (senpi#4093). */
+export type StoredSlotRevisions = {
+	/** The account: survives a token refresh. Every verdict on the account is recorded under it. */
+	readonly account: string;
+	/** The exact token material: a rejected-token verdict is recorded under it, so new material retires it. */
+	readonly material: string;
+};
+
+/**
+ * The stored health that applies to a slot's current material. A rejected token is a verdict on that
+ * token only, so an `auth_error` entry applies while the material is unchanged. Every other verdict
+ * (a limit, a billing refusal, a failure run) is on the account and survives a refresh. An entry written
+ * before account keys existed is keyed by material and keeps applying until its next write.
+ */
+export function applicableStoredState(
+	persisted: CredentialSlotState | undefined,
+	revisions: StoredSlotRevisions,
+): CredentialSlotState | undefined {
+	if (persisted === undefined) return undefined;
+	if (persisted.credentialRevision === revisions.material) return persisted;
+	if (persisted.blockReason === "auth_error") return undefined;
+	return persisted.credentialRevision === revisions.account ? persisted : undefined;
+}
+
+/**
+ * The account an OAuth access token belongs to, when the token says so: a ChatGPT token carries the
+ * account id and the user (`sub`); two members of one workspace share the account id but not their
+ * quota. Opaque tokens carry nothing, and the slot name alone names the account.
+ */
+function oauthAccountIdentity(access: string | undefined): string {
+	if (access === undefined) return "";
+	const accountId = extractChatGptSubscriptionAccountId(access);
+	if (accountId === undefined) return "";
+	return `${accountId}\0${jwtSubject(access) ?? ""}`;
+}
+
+function jwtSubject(token: string): string | undefined {
+	try {
+		const encoded = token.split(".")[1];
+		if (encoded === undefined) return undefined;
+		const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
+		const payload: unknown = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")));
+		const subject = payload !== null && typeof payload === "object" ? Reflect.get(payload, "sub") : undefined;
+		return typeof subject === "string" && subject.length > 0 ? subject : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export type SlotHealth = "ready" | "blocked" | "half_open";
+
+/** Deadlines are absolute so a restart never re-enables a cooling credential early. */
+export function slotHealth(state: CredentialSlotState | undefined, now: number): SlotHealth {
+	if (!state) return "ready";
+	// A billing block has no expiry; only credential replacement clears it. An auth
+	// block lasts until its re-probe time (senpi#3264), like a cooldown.
+	if (state.blockReason === "account_disabled") return "blocked";
+	if (state.blockedUntil !== undefined && state.blockedUntil > now) return "blocked";
+	if (state.blockedUntil !== undefined && state.lease !== undefined && state.lease.expiresAt > now) {
+		return "half_open";
+	}
+	return "ready";
+}
+
+/**
+ * File-locked health sidecar for credential pools. Never stores credential
+ * material: env slots are keyed by an installation-local HMAC revision so a
+ * rotated env value clears its own stale block without persisting a raw key
+ * hash anywhere.
+ */
+export class CredentialSlotRepository {
+	private readonly path: string;
+	private readonly lockWaitBudgetMs: number;
+
+	constructor(path: string = credentialPoolStatePath(), options: { readonly lockWaitBudgetMs?: number } = {}) {
+		this.path = path;
+		this.lockWaitBudgetMs = options.lockWaitBudgetMs ?? FILE_STORAGE_LOCK_RETRY_BUDGET_MS;
+	}
+
+	/**
+	 * Reads take no lock: writes land by atomic rename, so the file always holds
+	 * one complete document. Only a missing or invalid file falls through to the
+	 * locked path, which creates or resets it (senpi#3285). When that lock stays
+	 * busy too, the read answers with an empty, unsaved document: health is
+	 * advisory, and its random installation key matches no stored revision, so
+	 * every slot simply reads as healthy for this one request.
+	 */
+	private async readDocument(): Promise<CredentialPoolStateDocument> {
+		const stored = parseDocument(readStateFile(this.path));
+		if (stored !== undefined) return stored;
+		try {
+			return await this.withDocument((document) => ({ result: document }));
+		} catch (error) {
+			if (error instanceof CredentialStoreBusyError) return freshDocument();
+			throw error;
+		}
+	}
+
+	/**
+	 * The sidecar holds only health, so an unreadable or invalid document resets to
+	 * a fresh one instead of failing auth resolution; the worst outcome of a reset
+	 * is a cleared cooldown, never lost credential material.
+	 */
+	private async withDocument<T>(
+		fn: (document: CredentialPoolStateDocument) => { result: T; next?: CredentialPoolStateDocument },
+	): Promise<T> {
+		if (!existsSync(this.path)) mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+		const lock = await acquireStateFileLock(this.path, this.lockWaitBudgetMs);
+		try {
+			const stored = parseDocument(readStateFile(this.path));
+			const document = stored ?? freshDocument();
+			const { result, next } = fn(document);
+			if (next !== undefined || stored === undefined) {
+				lock.assertHeld();
+				await writeStateFileAtomic(this.path, serialize(next ?? document));
+			}
+			return result;
+		} finally {
+			await lock.release();
+		}
+	}
+
+	async installationKey(): Promise<string> {
+		return (await this.readDocument()).installationKey;
+	}
+
+	/**
+	 * Derives the persistence key for an env slot's health. HMAC over the
+	 * installation key means the revision is useless outside this installation
+	 * and never equals a raw hash of the key material.
+	 */
+	async envCredentialRevision(envVarName: string, envValue: string): Promise<string> {
+		const key = await this.installationKey();
+		return createHmac("sha256", key).update(`${envVarName}\0${envValue}`).digest("hex");
+	}
+
+	/**
+	 * The stored-lane twin of the env revision rule: binds a slot's health to
+	 * the material that earned it, so a re-login or token refresh replacing the
+	 * material retires the block. HMAC over the installation key, never raw
+	 * material (omo#7084).
+	 */
+	async storedCredentialRevision(
+		providerId: string,
+		slotName: string,
+		material: { key?: string; access?: string; refresh?: string },
+	): Promise<string> {
+		const key = await this.installationKey();
+		return createHmac("sha256", key)
+			.update(
+				`${providerId}\0${slotName}\0${material.key ?? ""}\0${material.access ?? ""}\0${material.refresh ?? ""}`,
+			)
+			.digest("hex");
+	}
+
+	/**
+	 * Both keys for a stored slot. The account key binds health to the account (provider, slot, the
+	 * identity the token names, or the API key), so a token refresh keeps it; the material key is
+	 * {@link storedCredentialRevision}. HMAC over the installation key, never raw material.
+	 */
+	async storedSlotRevisions(
+		providerId: string,
+		slotName: string,
+		material: { key?: string; access?: string; refresh?: string },
+	): Promise<StoredSlotRevisions> {
+		const key = await this.installationKey();
+		const account = createHmac("sha256", key)
+			.update(
+				`account\0${providerId}\0${slotName}\0${material.key ?? ""}\0${material.key === undefined ? oauthAccountIdentity(material.access) : ""}`,
+			)
+			.digest("hex");
+		return { account, material: await this.storedCredentialRevision(providerId, slotName, material) };
+	}
+
+	async listSlots(providerId: string, laneId: string): Promise<Record<string, CredentialSlotState>> {
+		const document = await this.readDocument();
+		return { ...document.providers[providerId]?.lanes[laneId]?.slots };
+	}
+
+	/**
+	 * Drops every health entry recorded for a provider and reports whether there was one. A clean
+	 * file is only read, never locked or written. Used when a provider's own lane becomes the only
+	 * owner of its account selection, so health the generic pool recorded earlier (often a block
+	 * pinned on the wrong account) cannot outlive the change (senpi#2081).
+	 */
+	async clearProvider(providerId: string): Promise<boolean> {
+		if ((await this.readDocument()).providers[providerId] === undefined) return false;
+		return this.withDocument((document) => {
+			if (document.providers[providerId] === undefined) return { result: false };
+			const { [providerId]: _retired, ...providers } = document.providers;
+			return { result: true, next: { ...document, providers } };
+		});
+	}
+
+	/**
+	 * Atomic read-modify-write for one slot's health. `stateVersion` increments
+	 * on every write so concurrent mutators can detect lost updates; returning
+	 * undefined removes the slot state entirely.
+	 */
+	async mutateSlotState(
+		providerId: string,
+		laneId: string,
+		slotId: string,
+		fn: (current: CredentialSlotState | undefined) => Omit<CredentialSlotState, "stateVersion"> | undefined,
+	): Promise<CredentialSlotState | undefined> {
+		return this.withDocument((document) => {
+			const provider = document.providers[providerId] ?? { lanes: {} };
+			const lane = provider.lanes[laneId] ?? { slots: {} };
+			const current = lane.slots[slotId];
+			const mutated = fn(current);
+			const slots = { ...lane.slots };
+			let result: CredentialSlotState | undefined;
+			if (mutated === undefined) {
+				delete slots[slotId];
+			} else {
+				result = { ...mutated, stateVersion: (current?.stateVersion ?? 0) + 1 };
+				slots[slotId] = result;
+			}
+			const next: CredentialPoolStateDocument = {
+				...document,
+				providers: {
+					...document.providers,
+					// Spread, not rebuilt: fields another engine wrote on this provider or lane are kept.
+					[providerId]: { ...provider, lanes: { ...provider.lanes, [laneId]: { ...lane, slots } } },
+				},
+			};
+			return { result, next };
+		});
+	}
+}
+
+export type HalfOpenLease = { leaseId: string; expiresAt: number };
+
+/**
+ * Transitions an expired cooldown atomically to half_open: exactly one caller
+ * wins the probe lease; everyone else keeps treating the slot as unavailable
+ * until the lease expires or the probe settles the block.
+ */
+export async function acquireHalfOpenLease(
+	repository: CredentialSlotRepository,
+	providerId: string,
+	laneId: string,
+	slotId: string,
+	options: { now?: number; leaseTtlMs?: number } = {},
+): Promise<HalfOpenLease | undefined> {
+	const now = options.now ?? Date.now();
+	const leaseTtlMs = options.leaseTtlMs ?? 30_000;
+	let lease: HalfOpenLease | undefined;
+	await repository.mutateSlotState(providerId, laneId, slotId, (current) => {
+		if (!current) return current;
+		const expired = current.blockedUntil !== undefined && current.blockedUntil <= now;
+		const leaseLive = current.lease !== undefined && current.lease.expiresAt > now;
+		if (!expired || leaseLive) return current;
+		lease = { leaseId: randomUUID(), expiresAt: now + leaseTtlMs };
+		return { ...current, lease: { id: lease.leaseId, expiresAt: lease.expiresAt } };
+	});
+	return lease;
+}

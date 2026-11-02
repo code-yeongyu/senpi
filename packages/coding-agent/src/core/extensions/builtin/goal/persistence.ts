@@ -315,7 +315,10 @@ function hasValidBlockedFields(value: Record<string, unknown>, status: GoalStatu
 function sanitizeContinuationState(goal: Goal): Goal {
 	const next: Goal = { ...goal };
 	if (!isNonNegativeSafeInteger(next.consecutiveContinuations)) delete next.consecutiveContinuations;
+	if (!isNonNegativeSafeInteger(next.unattendedContinuations)) delete next.unattendedContinuations;
+	if (!isNonNegativeSafeInteger(next.noProgressContinuations)) delete next.noProgressContinuations;
 	if (typeof next.lastContinuationSignature !== "string") delete next.lastContinuationSignature;
+	if (!isNonNegativeSafeInteger(next.continuationStoppedAt)) delete next.continuationStoppedAt;
 	return next;
 }
 

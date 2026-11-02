@@ -1,0 +1,25 @@
+4.114 {"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/tmp/cursor-p-qa","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","model":"Composer 2.5 Fast","permissionMode":"default"}
+4.114 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly: STREAMTEST OK and nothing else, then a 15-word sentence about coffee."}]},"session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd"}
+8.020 {"type":"thinking","subtype":"delta","text":"Preparing a reply with","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958613718}
+8.236 {"type":"thinking","subtype":"delta","text":" exactly \"STREAMTEST","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958613934}
+8.462 {"type":"thinking","subtype":"delta","text":" OK\" followed by a 15-word","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958614161}
+8.965 {"type":"thinking","subtype":"delta","text":" sentence about coffee.","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958614663}
+11.142 {"type":"thinking","subtype":"delta","text":"\n\nDrafting two 13-word","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616840}
+11.142 {"type":"thinking","subtype":"delta","text":" coffee sentences to","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616840}
+11.142 {"type":"thinking","subtype":"delta","text":" reach the required ","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616840}
+11.142 {"type":"thinking","subtype":"delta","text":"15-word count.","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616840}
+11.142 {"type":"thinking","subtype":"delta","text":"\n\nFound a 15-word coffee","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616840}
+11.142 {"type":"thinking","subtype":"delta","text":" sentence: \"I enjoy ","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616840}
+11.142 {"type":"thinking","subtype":"delta","text":"a freshly brewed cup","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616840}
+11.142 {"type":"thinking","subtype":"delta","text":" of coffee every morning","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.142 {"type":"thinking","subtype":"delta","text":" before starting my ","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.142 {"type":"thinking","subtype":"delta","text":"work day.\"","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.143 {"type":"thinking","subtype":"completed","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.143 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"STREAM"}]},"session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.143 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"TEST OK\n\n"}]},"session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.143 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I enjoy a freshly"}]},"session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.143 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" brewed cup of coffee"}]},"session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.143 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" every morning before starting"}]},"session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.143 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" my work day."}]},"session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","timestamp_ms":1786958616841}
+11.410 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"STREAMTEST OK\n\nI enjoy a freshly brewed cup of coffee every morning before starting my work day."}]},"session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd"}
+11.410 {"type":"result","subtype":"success","duration_ms":7296,"duration_api_ms":7296,"is_error":false,"result":"STREAMTEST OK\n\nI enjoy a freshly brewed cup of coffee every morning before starting my work day.","session_id":"14e3d8df-06e5-48d5-a1de-00edae06bddd","request_id":"def10c08-cbc4-403a-87a7-71a789bedc3d","usage":{"inputTokens":10389,"outputTokens":642,"cacheReadTokens":8928,"cacheWriteTokens":0}}

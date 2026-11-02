@@ -49,6 +49,7 @@ const FG_COLORS = {
 	thinkingHigh: "#2b2b2b",
 	thinkingXhigh: "#2c2c2c",
 	thinkingMax: "#2d2d2d",
+	skillMention: "#303030",
 	bashMode: "#2e2e2e",
 } satisfies Record<ThemeColor, string>;
 
@@ -107,6 +108,7 @@ const details: EvalToolDetails = {
 	language: "py",
 	...(fixture === "success" ? { summary: "load config" } : {}),
 	durationMs: fixture === "success" ? 1_250 : 900,
+	...(fixture === "success" ? { wallDurationMs: 2_000, toolCallCount: 3 } : {}),
 	toolCalls:
 		fixture === "success"
 			? [

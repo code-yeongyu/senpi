@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
+import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const CHILD_TIMEOUT_MS = 60_000;
 
 /**
- * Regression test for https://github.com/earendil-works/pi-mono/issues/2791
+ * Regression test for https://github.com/earendil-works/pi/issues/2791
  *
  * fs.watch() returns an FSWatcher (EventEmitter). If the watcher emits an
  * 'error' event after creation and no error handler is attached, Node.js

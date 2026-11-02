@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { parseArgs, printHelp } from "../src/cli/args.ts";
+import { normalizeSessionName, parseArgs, printHelp } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
 	describe("removed flags", () => {
@@ -140,16 +140,6 @@ describe("parseArgs", () => {
 			expect(result.appendSystemPrompt).toEqual(["Context A", "Context B"]);
 		});
 
-		test("parses --mode", () => {
-			const result = parseArgs(["--mode", "json"]);
-			expect(result.mode).toBe("json");
-		});
-
-		test("parses --mode rpc", () => {
-			const result = parseArgs(["--mode", "rpc"]);
-			expect(result.mode).toBe("rpc");
-		});
-
 		test("parses --session", () => {
 			const result = parseArgs(["--session", "/path/to/session.jsonl"]);
 			expect(result.session).toBe("/path/to/session.jsonl");
@@ -182,6 +172,48 @@ describe("parseArgs", () => {
 		});
 	});
 
+	// Issue #9045
+	describe("--mode flag", () => {
+		test.each(["text", "json", "rpc"] as const)("parses --mode %s", (mode) => {
+			const result = parseArgs(["--mode", mode]);
+			expect(result.mode).toBe(mode);
+			expect(result.diagnostics).toEqual([]);
+		});
+
+		test.each(["yaml", ""])("rejects invalid --mode value %j", (mode) => {
+			const result = parseArgs(["--mode", mode, "--version"]);
+			expect(result.mode).toBeUndefined();
+			expect(result.version).toBe(true);
+			expect(result.messages).toEqual([]);
+			expect(result.unknownFlags.size).toBe(0);
+			expect(result.diagnostics).toEqual([
+				{ type: "error", message: `Invalid mode "${mode}". Valid values: text, json, rpc` },
+			]);
+		});
+
+		test("reports a missing --mode value", () => {
+			const result = parseArgs(["--mode"]);
+			expect(result.mode).toBeUndefined();
+			expect(result.unknownFlags.size).toBe(0);
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--mode requires text, json, or rpc" }]);
+		});
+
+		test("does not consume another option as a --mode value", () => {
+			const result = parseArgs(["--mode", "--version"]);
+			expect(result.mode).toBeUndefined();
+			expect(result.version).toBe(true);
+			expect(result.unknownFlags.size).toBe(0);
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--mode requires text, json, or rpc" }]);
+		});
+
+		test("reports an invalid --mode value after a valid one", () => {
+			const result = parseArgs(["--mode", "json", "--mode", "yaml"]);
+			expect(result.diagnostics).toEqual([
+				{ type: "error", message: 'Invalid mode "yaml". Valid values: text, json, rpc' },
+			]);
+		});
+	});
+
 	describe("--name flag", () => {
 		test("parses --name flag with value", () => {
 			const result = parseArgs(["--name", "my-session"]);
@@ -196,6 +228,11 @@ describe("parseArgs", () => {
 		test("preserves empty values for main validation", () => {
 			const result = parseArgs(["--name", ""]);
 			expect(result.name).toBe("");
+		});
+
+		test("normalizes display names and rejects whitespace-only values", () => {
+			expect(normalizeSessionName("  named session  ")).toBe("named session");
+			expect(normalizeSessionName("   ")).toBeUndefined();
 		});
 
 		test("reports missing value", () => {
@@ -216,6 +253,21 @@ describe("parseArgs", () => {
 		test("parses --no-session flag", () => {
 			const result = parseArgs(["--no-session"]);
 			expect(result.noSession).toBe(true);
+		});
+
+		test("preserves custom session IDs for non-persisting commands", () => {
+			expect(parseArgs(["--session-id", "ephemeral-id", "--help"])).toMatchObject({
+				sessionId: "ephemeral-id",
+				help: true,
+			});
+			expect(parseArgs(["--session-id", "ephemeral-id", "--list-models"])).toMatchObject({
+				sessionId: "ephemeral-id",
+				listModels: true,
+			});
+			expect(parseArgs(["--session-id", "ephemeral-id", "--no-session"])).toMatchObject({
+				sessionId: "ephemeral-id",
+				noSession: true,
+			});
 		});
 	});
 
@@ -282,6 +334,20 @@ describe("parseArgs", () => {
 		test("parses multiple --theme flags", () => {
 			const result = parseArgs(["--theme", "./dark.json", "--theme", "./light.json"]);
 			expect(result.themes).toEqual(["./dark.json", "./light.json"]);
+		});
+	});
+
+	describe("--use-theme flag", () => {
+		test("parses --use-theme", () => {
+			const result = parseArgs(["--use-theme", "light"]);
+			expect(result.useTheme).toBe("light");
+		});
+
+		test("reports when the theme name value is missing", () => {
+			const result = parseArgs(["--use-theme", "--print"]);
+			expect(result.useTheme).toBeUndefined();
+			expect(result.print).toBe(true);
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--use-theme requires a theme name" }]);
 		});
 	});
 
@@ -354,28 +420,28 @@ describe("parseArgs", () => {
 		});
 	});
 
-	describe("--ui-mode flag", () => {
+	describe("--tui-mode flag", () => {
 		test.each(["regular", "fullscreen"] as const)("parses %s mode", (mode) => {
-			const result = parseArgs(["--ui-mode", mode]);
-			expect(result.uiMode).toBe(mode);
+			const result = parseArgs(["--tui-mode", mode]);
+			expect(result.tuiMode).toBe(mode);
 		});
 
 		test("rejects invalid modes", () => {
-			const result = parseArgs(["--ui-mode", "other"]);
+			const result = parseArgs(["--tui-mode", "other"]);
 			expect(result.diagnostics).toEqual([
-				{ type: "error", message: 'Invalid UI mode "other". Valid values: regular, fullscreen' },
+				{ type: "error", message: 'Invalid TUI mode "other". Valid values: regular, fullscreen' },
 			]);
 		});
 
 		test("requires a mode", () => {
-			const result = parseArgs(["--ui-mode"]);
-			expect(result.diagnostics).toEqual([{ type: "error", message: "--ui-mode requires regular or fullscreen" }]);
+			const result = parseArgs(["--tui-mode"]);
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--tui-mode requires regular or fullscreen" }]);
 		});
 
-		test("accepts --alt as a hidden fullscreen shortcut", () => {
-			const result = parseArgs(["--alt"]);
-			expect(result.uiMode).toBe("fullscreen");
-			expect(result.unknownFlags.has("alt")).toBe(false);
+		test("does not recognize the old --ui-mode flag", () => {
+			const result = parseArgs(["--ui-mode", "fullscreen"]);
+			expect(result.tuiMode).toBeUndefined();
+			expect(result.unknownFlags.get("ui-mode")).toBe("fullscreen");
 		});
 	});
 
@@ -430,6 +496,27 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--no-builtin-tools", "--tools", "read,bash"]);
 			expect(result.noBuiltinTools).toBe(true);
 			expect(result.tools).toEqual(["read", "bash"]);
+		});
+	});
+
+	describe("--auto-title-sessions flag", () => {
+		test("parses --auto-title-sessions", () => {
+			const result = parseArgs(["--auto-title-sessions"]);
+			expect(result.autoTitleSessions).toBe(true);
+			expect(result.unknownFlags.has("auto-title-sessions")).toBe(false);
+		});
+
+		test("is undefined when the flag is absent", () => {
+			const result = parseArgs(["--mode", "rpc", "--multi-session"]);
+			expect(result.autoTitleSessions).toBeUndefined();
+			expect(result.multiSession).toBe(true);
+		});
+
+		test("combines with rpc multi-session flags", () => {
+			const result = parseArgs(["--mode", "rpc", "--multi-session", "--auto-title-sessions"]);
+			expect(result.mode).toBe("rpc");
+			expect(result.multiSession).toBe(true);
+			expect(result.autoTitleSessions).toBe(true);
 		});
 	});
 

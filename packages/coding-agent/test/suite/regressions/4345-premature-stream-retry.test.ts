@@ -13,7 +13,7 @@ describe("issue #4345 premature OpenAI-compatible stream retry", () => {
 
 	it("uses one initial attempt plus three retries for a missing finish_reason", async () => {
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1, fallbackChains: { "*": [] } } },
 		});
 		harnesses.push(harness);
 		const errorMessage = "Stream ended without finish_reason";

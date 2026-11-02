@@ -1,5 +1,7 @@
 import { getKeybindings } from "@earendil-works/pi-tui";
 
+import { enginePauseSinceLastTurn } from "../../../engine-paused.ts";
+import { createSessionLogger } from "../../../session-log.ts";
 import type { AgentEndEvent, ExtensionAPI, ExtensionContext, MessageUpdateEvent } from "../../types.ts";
 import { appendRuleActivation, registerRuleActivationRenderer } from "../rule-activation/index.ts";
 import { parseRuleActivationDetails, RULE_ACTIVATION_ENTRY_TYPE } from "../rule-activation/types.ts";
@@ -8,7 +10,14 @@ import { registerTtsrCommands, type TtsrPublicState } from "./commands.ts";
 import { claimAbort, createGenerationState, markUserCancelled } from "./coordinator.ts";
 import { REPETITIVE_TURNS_RULE_NAME } from "./detectors/repetitive-turns.ts";
 import { discoverTtsrRulesSync } from "./discovery.ts";
+import {
+	ruleAlreadyCorrected,
+	TTSR_LOOP_STOPPED_ENTRY_TYPE,
+	TTSR_LOOP_STOPPED_EVENT,
+	ttsrLoopStoppedNotice,
+} from "./follow-up-limit.ts";
 import { TtsrManager } from "./manager.ts";
+import { getTtsrStreamDelta } from "./message-update.ts";
 import { REPETITIVE_TURNS_RULE_CONTENT } from "./prompts.ts";
 import { buildNudgeMessage, type TtsrNudgeMessage } from "./remediation.ts";
 import { collectAssistantText, RepetitiveTurnsLane, readPersistedAssistantTexts } from "./repetitive-turns-lane.ts";
@@ -25,7 +34,7 @@ import { StreamWatcher } from "./watch.ts";
 
 interface PendingRemediation {
 	readonly resolution: DetectionResolution;
-	readonly streamKind: "text" | "thinking";
+	readonly streamKind: "text" | "thinking" | "tool";
 }
 
 interface PendingRuleNudge {
@@ -186,11 +195,10 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	pi.on("message_update", (event: MessageUpdateEvent, ctx) => {
 		ensureInitialized(ctx);
 		if (disabled || manager === null || watcher === null) return;
-		const deltaEvent = event.assistantMessageEvent;
-		if (deltaEvent.type !== "text_delta" && deltaEvent.type !== "thinking_delta") return;
-		const source = deltaEvent.type === "text_delta" ? "text" : "thinking";
-		const streamKey = `${source}:${String(deltaEvent.contentIndex)}`;
-		const outcome = watcher.handleDelta(source, streamKey, deltaEvent.delta, generation);
+		const streamDelta = getTtsrStreamDelta(event);
+		if (streamDelta === null) return;
+		const { source, streamKey, delta, toolName } = streamDelta;
+		const outcome = watcher.handleDelta(source, streamKey, delta, generation, toolName);
 		if (outcome.resolution !== null && claimAbort(genState, outcome.resolution)) {
 			pendingRemediation = { resolution: outcome.resolution, streamKind: source };
 			ctx.abort("system");
@@ -198,7 +206,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		}
 		if (source === "text") {
 			const canArm = pendingRuleNudge === null && !genState.abortClaimed;
-			if (repetitiveTurns.observeTextDelta(deltaEvent.delta, canArm) && !genState.abortClaimed) {
+			if (repetitiveTurns.observeTextDelta(delta, canArm) && !genState.abortClaimed) {
 				genState.abortClaimed = true;
 				genState.abortOwner = "collapse-repetition";
 				genState.selfAbortAt = Date.now();
@@ -218,6 +226,10 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("message_end", (event) => {
+		// A completed message ends its stream: nothing it buffered can match a
+		// later message's deltas, so drop the tail windows now instead of holding
+		// them until the next turn_start reset.
+		manager?.resetBuffers();
 		if (genState.userCancelled) return undefined;
 		if (event.message.role !== "assistant") return undefined;
 		const turnText = collectAssistantText(event.message);
@@ -247,7 +259,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 					pendingNudge = outcome.nudge;
 				}
 				const merged = { ...event.message, ...outcome.replacement };
-				return { message: merged as unknown as typeof event.message };
+				return { message: merged };
 			} catch (error) {
 				pi.appendEntry("ttsr-remediation-error", {
 					message: error instanceof Error ? error.message : String(error),
@@ -260,7 +272,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		return undefined;
 	});
 
-	pi.on("agent_settled", () => {
+	pi.on("agent_settled", (_event, ctx) => {
 		if (pendingNudge === null || genState.userCancelled || settlingAgentEnd?.abortSource === "user") {
 			pendingNudge = null;
 			settlingAgentEnd = null;
@@ -268,6 +280,29 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		}
 		const nudge = pendingNudge;
 		pendingNudge = null;
+		const [rule] = nudge.details.rules;
+		if (rule !== undefined && ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) {
+			const logger = createSessionLogger(ctx.agentDir);
+			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, { rules: nudge.details.rules, at: Date.now() });
+			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: nudge.details.rules });
+			ctx.ui.notify(ttsrLoopStoppedNotice(rule), "warning");
+			try {
+				if (!enginePauseSinceLastTurn(ctx.sessionManager.getEntries())) {
+					pi.appendEntry("engine-paused", {
+						reason: "repetition",
+						rule,
+						customType: TTSR_INJECTION_CUSTOM_TYPE,
+						at: Date.now(),
+					});
+				}
+			} catch (error) {
+				logger.warn("engine_turn_record_write_failed", {
+					kind: "engine-paused",
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+			return;
+		}
 		pi.sendMessage(nudge, { triggerTurn: true });
 	});
 }

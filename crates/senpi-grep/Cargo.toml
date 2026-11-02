@@ -1,0 +1,25 @@
+[package]
+name = "senpi-grep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# JS abort listeners use closure finalizers (Node-API 5; supported by Node 24+).
+napi = { workspace = true, features = ["napi5"] }
+napi-derive.workspace = true
+ignore.workspace = true
+grep-searcher.workspace = true
+grep-regex.workspace = true
+regex-syntax.workspace = true
+grep-matcher.workspace = true
+globset.workspace = true
+rayon.workspace = true
+memchr.workspace = true
+
+[build-dependencies]
+napi-build.workspace = true

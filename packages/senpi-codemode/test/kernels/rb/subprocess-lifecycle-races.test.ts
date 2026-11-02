@@ -9,10 +9,13 @@ import {
 } from "../../../src/kernels/shared/subprocess-kernel.ts";
 
 class RaceSubprocess extends EventEmitter {
+	// POSIX: a pid above every platform's pid_max, so a real group signal fails with ESRCH and the direct kill is recorded.
+	readonly pid: number | undefined = process.platform === "win32" ? undefined : 2 ** 22 + 1;
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
 	readonly killedSignals: NodeJS.Signals[] = [];
-	readonly stdin = { writes: [] as string[], write: (chunk: string): number => this.stdin.writes.push(chunk) };
+	readonly stdinWrites: string[] = [];
+	readonly stdin = { writes: this.stdinWrites, write: (chunk: string): unknown => this.stdinWrites.push(chunk) };
 	private readonly exitOnKill: boolean;
 
 	constructor(exitOnKill = true) {
@@ -235,13 +238,23 @@ describe("SubprocessKernel settlement races", () => {
 });
 
 function createKernel(spawn: SubprocessSpawn): SubprocessKernel {
-	return new SubprocessKernel({
+	let initial: RaceSubprocess | undefined;
+	const readySpawn: SubprocessSpawn = (command, args, options) => {
+		const child = spawn(command, args, options);
+		if (!(child instanceof RaceSubprocess)) throw new Error("expected RaceSubprocess");
+		if (!initial) initial = child;
+		else queueMicrotask(() => child.emitMessage({ type: "ready" }));
+		return child;
+	};
+	const kernel = new SubprocessKernel({
 		command: "ruby",
 		args: ["runner.rb"],
-		spawn,
+		spawn: readySpawn,
 		sessionId: "session-1",
 		connection: { port: 39_001, token: "secret-token" },
 	});
+	initial?.emitMessage({ type: "ready" });
+	return kernel;
 }
 
 function spawnFrom(children: RaceSubprocess[]): SubprocessSpawn {

@@ -31,11 +31,16 @@ interface Harness {
 function createHarness(cwd: string): Harness {
 	const handlers = new Map<string, EventHandler>();
 	let tool: RegisteredTool | undefined;
+	const sessionManager = {};
 	const pi = {
 		registerTool(definition: unknown) {
-			tool = definition as RegisteredTool;
+			if ((definition as { name: string }).name === "web_search") tool = definition as RegisteredTool;
 		},
 		registerCommand() {},
+		getActiveTools() {
+			return ["web_search"];
+		},
+		setActiveTools() {},
 		on(eventName: string, handler: unknown) {
 			handlers.set(eventName, handler as EventHandler);
 		},
@@ -44,7 +49,7 @@ function createHarness(cwd: string): Harness {
 	if (!tool) throw new Error("websearch extension did not register a tool");
 
 	function contextFor(model: unknown): ExtensionContext {
-		return { model, cwd, hasUI: false } as unknown as ExtensionContext;
+		return { model, cwd, hasUI: false, sessionManager } as unknown as ExtensionContext;
 	}
 
 	return {

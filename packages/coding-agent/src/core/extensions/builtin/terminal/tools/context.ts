@@ -1,10 +1,13 @@
+import type { TextContent } from "@earendil-works/pi-ai";
+import type { TerminalSessionExit } from "@earendil-works/pi-pty";
 import type { TerminalManager } from "../manager.ts";
 import type { MonitorEvent, MonitorRegistry } from "../monitor-registry.ts";
-import type { TerminalRuntimeSession } from "../runtime-session.ts";
+import { splitModelOnlyNotices } from "../output-format.ts";
 import type { TimeoutAction } from "../settings.ts";
 
 /** Shared dependencies handed to every terminal tool factory. */
 export interface TerminalToolContext {
+	readonly redactSecretsInOutput?: boolean;
 	readonly manager: TerminalManager;
 	readonly cwd: string;
 	/** Explicit shell path from settings (settings-manager `shellPath`), if any. */
@@ -13,6 +16,8 @@ export interface TerminalToolContext {
 	readonly defaultRows: number;
 	/** Configured foreground deadline behavior; omitted direct contexts default to background. */
 	readonly timeoutAction?: TimeoutAction;
+	/** Resolved `terminal.maxDurableMonitors`; omitted contexts admit any number of persistent monitors. */
+	readonly maxDurableMonitors?: number | "unlimited";
 	/** Resolve the environment for spawned sessions (mirrors core bash `getShellEnv`). */
 	readonly getEnv: () => NodeJS.ProcessEnv;
 	/**
@@ -20,23 +25,67 @@ export interface TerminalToolContext {
 	 * expose PI_* session metadata to spawned commands like the core bash tool does.
 	 */
 	readonly getSessionContext?: () => import("../../../types.ts").ExtensionContext | undefined;
-	/** Registers a session when it transitions to background liveness. */
-	readonly onBackgroundStart?: (id: string, description: string, startedAtMs: number) => void;
+	/** Registers a session when it transitions to background liveness; `command` is what it runs, when known. */
+	readonly onBackgroundStart?: (id: string, description: string, startedAtMs: number, command?: string) => void;
+	/** A person or the model wrote to a session's stdin (`bash_input`): it is interactive from now on. */
+	readonly onSessionInput?: (id: string) => void;
 	/** Notified when a background session exits, so the notify layer can wake the agent. */
-	readonly onBackgroundExit?: (id: string, runtime: TerminalRuntimeSession) => void;
+	readonly onBackgroundExit?: (id: string, runtime: TerminalExitView) => void;
 	/** Session-scoped monitor state, sharing the terminal manager's bash-id namespace. */
 	readonly monitorRegistry?: MonitorRegistry;
 	/** Receives filtered monitor line and terminal-summary events. */
 	readonly onMonitorEvent?: (event: MonitorEvent) => void;
 	/** Resets session-global wake-budget delivery for a fresh or explicitly rearmed monitor. */
 	readonly onMonitorRearmed?: (id: string) => void;
+	/** Clears notifier bookkeeping when multiple paused monitors are resumed. */
+	readonly onMonitorsResumed?: (ids: readonly string[]) => void;
+	/**
+	 * Lazy persistence: bind the session's lease and manifest recorder before the first durable
+	 * registration. Resolves immediately when persistence is already bound or unavailable.
+	 */
+	readonly ensurePersistence?: () => Promise<void>;
+	/**
+	 * The tool child's execution barrier for terminal launches (senpi#3566 todo 9). When set, every command starts
+	 * behind a go-line shim inside its PTY: `wrap` rewrites the launch, and `release` records the started session with
+	 * the server and only then lets the command run. Absent on the in-process path, which spawns exactly as before.
+	 */
+	readonly launchBarrier?: TerminalLaunchBarrier;
+}
+
+/** What a background exit notice reads: on the tool child it is a summary the child sent, not the live session. */
+export interface TerminalExitView {
+	readonly exitResult: Pick<TerminalSessionExit, "exitCode" | "signal" | "cancelled" | "timedOut"> | null;
+	fullOutput(): string;
+}
+
+export interface TerminalLaunchBarrier {
+	wrap(command: string, args: readonly string[]): { readonly command: string; readonly args: readonly string[] };
+	release(session: {
+		readonly pid: number | undefined;
+		write(data: string): unknown;
+		onExit(listener: (exitCode: number | null) => void): unknown;
+	}): Promise<void>;
 }
 
 /** Minimal tool-result shape returned by the terminal tools. */
 export interface TerminalToolResult {
-	content: Array<{ type: "text"; text: string }>;
+	content: TextContent[];
 	details: Record<string, unknown> | undefined;
 	isError?: boolean;
+}
+
+/**
+ * Resolve a stable "mon_" monitor id to its current runtime id (bash_N/watch_N), passing a
+ * runtime id through unchanged. Companion tools may run against a manager that does not
+ * implement `resolveId` (narrower embedder/test managers expose `get` only); such managers
+ * have never seen a `mon_` id, so falling back to the id verbatim preserves the lookup they
+ * already supported. This is the single choke point for that rule — do not inline it.
+ */
+export function resolveTerminalId(
+	manager: Pick<TerminalManager, "get"> & Partial<Pick<TerminalManager, "resolveId">>,
+	id: string,
+): string {
+	return manager.resolveId?.(id) ?? id;
 }
 
 export function textResult(
@@ -48,4 +97,13 @@ export function textResult(
 
 export function errorResult(text: string): TerminalToolResult {
 	return { content: [{ type: "text", text }], details: undefined, isError: true };
+}
+
+/** A result whose truncation/drop notices are model-only parts (see `splitModelOnlyNotices`). */
+export function noticedResult(
+	text: string,
+	notices: ReadonlyArray<string | undefined>,
+	extra?: { details?: Record<string, unknown>; isError?: boolean },
+): TerminalToolResult {
+	return { content: splitModelOnlyNotices(text, notices), details: extra?.details, isError: extra?.isError };
 }

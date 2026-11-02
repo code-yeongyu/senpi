@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
 	comparePackageVersions,
+	formatVersionCheckError,
 	getLatestPiRelease,
 	getLatestPiVersion,
 	getReleaseChangelogUrl,
@@ -42,6 +43,20 @@ describe("version checks", () => {
 		expect(isNewerPackageVersion("2026.7.30-2", "2026.7.30")).toBe(true);
 	});
 
+	it.each<[string, string, -1 | 0 | 1]>([
+		["2026.11.02-1", "2026.11.2", 0],
+		["2026.11.02-1", "2026.11.2-1", 0],
+		["2026.11.02-1", "2026.11.3", -1],
+		["2026.11.02-1", "2026.11.2-2", -1],
+		["2026.11.2-10", "2026.11.2-9", 1],
+		["2026.10.31-2", "2026.11.02-1", -1],
+		["9999.0.0", "2026.11.02-1", 1],
+	])("orders padded and -N Senpi CalVer %s against %s as %i", (left, right, expected) => {
+		expect(Math.sign(comparePackageVersions(left, right) ?? Number.NaN)).toBe(expected);
+		expect(Math.sign(comparePackageVersions(right, left) ?? Number.NaN)).toBe(expected === 0 ? 0 : -expected);
+		expect(isNewerPackageVersion(left, right)).toBe(expected > 0);
+	});
+
 	it("returns only newer versions", async () => {
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
 		vi.stubGlobal("fetch", fetchMock);
@@ -71,7 +86,36 @@ describe("version checks", () => {
 			"https://github.com/code-yeongyu/senpi/blob/v2026.6.28-4/packages/coding-agent/CHANGELOG.md",
 		);
 	});
+	it("retries a transient version request when explicitly requested", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("fetch failed"))
+			.mockRejectedValueOnce(new Error("fetch failed"))
+			.mockResolvedValueOnce(Response.json({ version: "1.2.4" }));
+		vi.stubGlobal("fetch", fetchMock);
 
+		await expect(getLatestPiRelease("1.2.3", { retry: true })).resolves.toEqual({ version: "1.2.4" });
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
+	it("keeps automatic version checks to one request", async () => {
+		const fetchMock = vi.fn().mockRejectedValue(new Error("fetch failed"));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
+		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("formats nested network error details", () => {
+		const error = new Error("fetch failed", {
+			cause: new AggregateError([
+				Object.assign(new Error("connect timeout"), { code: "ETIMEDOUT" }),
+				Object.assign(new Error("network unreachable"), { code: "ENETUNREACH" }),
+			]),
+		});
+
+		expect(formatVersionCheckError(error)).toBe("fetch failed (ETIMEDOUT, ENETUNREACH)");
+	});
 	it("returns the active package metadata from the version check api", async () => {
 		const fetchMock = vi.fn(async () =>
 			Response.json({
@@ -110,5 +154,13 @@ describe("version checks", () => {
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+});
+
+describe("unparseable version pairs", () => {
+	it("never advertises an update for branded build labels", () => {
+		const label = "omo@c6e7dd7 2026-09-04 10:17 +09:00";
+		expect(isNewerPackageVersion("2026.9.3-3", label)).toBe(false);
+		expect(isNewerPackageVersion(label, "2026.9.3-3")).toBe(false);
 	});
 });

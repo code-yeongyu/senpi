@@ -2,7 +2,7 @@ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ExtensionAPI } from "../../src/index.ts";
+import type { ExtensionAPI, InputEvent } from "../../src/index.ts";
 import {
 	createHarness,
 	getAssistantTexts,
@@ -72,6 +72,23 @@ function getSessionWorkBarrier(harness: Harness): { readonly hasActiveWork: bool
 }
 
 describe("AgentSession queue characterization", () => {
+	it("emits a state event when queue modes change", async () => {
+		const harness = await createHarness();
+		harness.session.setSteeringMode("one-at-a-time");
+		harness.session.setFollowUpMode("all");
+		harness.session.setAutoCompactionEnabled(false);
+
+		expect(harness.eventsOfType("session_settings_changed")).toEqual([
+			expect.objectContaining({
+				steeringMode: "one-at-a-time",
+				followUpMode: "one-at-a-time",
+				autoCompactionEnabled: true,
+			}),
+			expect.objectContaining({ steeringMode: "one-at-a-time", followUpMode: "all", autoCompactionEnabled: true }),
+			expect.objectContaining({ steeringMode: "one-at-a-time", followUpMode: "all", autoCompactionEnabled: false }),
+		]);
+		harness.cleanup();
+	});
 	const harnesses: Harness[] = [];
 
 	afterEach(() => {
@@ -377,6 +394,54 @@ describe("AgentSession queue characterization", () => {
 		expect(getUserTexts(harness)).toEqual(["start", "after current run"]);
 		expect(assistantSeenBeforeFollowUp).toContain("");
 		expect(getAssistantTexts(harness)).toContain("follow-up response");
+	});
+
+	// Regression test for #8718.
+	it("runs direct steering and follow-up messages through input handlers", async () => {
+		const inputEvents: Array<Pick<InputEvent, "text" | "source" | "streamingBehavior">> = [];
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						inputEvents.push({
+							text: event.text,
+							source: event.source,
+							streamingBehavior: event.streamingBehavior,
+						});
+						if (event.text.startsWith("handle")) return { action: "handled" };
+						return { action: "transform", text: `transformed: ${event.text}` };
+					});
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("steered"),
+			fauxAssistantMessage("followed up"),
+		]);
+
+		await waitForToolStart;
+		inputEvents.length = 0;
+		try {
+			await harness.session.steer("steer me", undefined, { source: "rpc" });
+			await harness.session.steer("handle steer", undefined, { source: "rpc" });
+			await harness.session.followUp("follow me", undefined, { source: "rpc" });
+			await harness.session.followUp("handle follow", undefined, { source: "rpc" });
+
+			expect(inputEvents).toEqual([
+				{ text: "steer me", source: "rpc", streamingBehavior: "steer" },
+				{ text: "handle steer", source: "rpc", streamingBehavior: "steer" },
+				{ text: "follow me", source: "rpc", streamingBehavior: "followUp" },
+				{ text: "handle follow", source: "rpc", streamingBehavior: "followUp" },
+			]);
+			expect(harness.session.getSteeringMessages()).toEqual(["transformed: steer me"]);
+			expect(harness.session.getFollowUpMessages()).toEqual(["transformed: follow me"]);
+		} finally {
+			releaseToolExecution();
+		}
+		await promptPromise;
 	});
 
 	it("delivers multiple steering messages in order in one-at-a-time mode", async () => {
@@ -730,5 +795,48 @@ describe("AgentSession queue characterization", () => {
 		await harness.session.agent.waitForIdle();
 
 		expect(getUserTexts(harness)).toEqual(["hello", "conflict report"]);
+	});
+
+	it("sendCustomMessage with triggerTurn does not wait on the session-work barrier during extension binding", async () => {
+		// Repro of the resume-stuck deadlock: bindExtensions holds the session-work
+		// barrier while it emits session_start (readiness set + barrier held). A
+		// triggerTurn custom message sent from that emission (e.g. a goal continuation
+		// queued on resume) must not wait for the barrier to settle — the work it
+		// would wait on is the very emission that is delivering it.
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("resumed")]);
+
+		const barrier = Reflect.get(harness.session, "_sessionWorkBarrier") as { begin(): () => void };
+		Reflect.set(harness.session, "_extensionBindingPromptReadiness", new Set());
+		const finishBindingWork = barrier.begin();
+		try {
+			// Pre-fix this send waits on the held barrier forever; the race turns a
+			// hang into a failure.
+			await Promise.race([
+				harness.session.sendCustomMessage(
+					{
+						customType: "goal-continuation",
+						content: [{ type: "text", text: "resume goal" }],
+						display: false,
+						details: {},
+					},
+					{ triggerTurn: true, deliverAs: "followUp" },
+				),
+				new Promise<never>((_, reject) =>
+					setTimeout(() => reject(new Error("sendCustomMessage deadlocked on the binding-phase barrier")), 1000),
+				),
+			]);
+		} finally {
+			finishBindingWork();
+		}
+		await harness.session.agent.waitForIdle();
+
+		expect(
+			harness.session.messages.some(
+				(message) => message.role === "custom" && message.customType === "goal-continuation",
+			),
+		).toBe(true);
+		expect(getAssistantTexts(harness)).toContain("resumed");
 	});
 });

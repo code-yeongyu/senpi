@@ -7,6 +7,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 import { partialStrikethrough, strikeRevealCount } from "../../../../../modes/interactive/components/todo-strike.ts";
 import type { Theme } from "../../../../../modes/interactive/theme/theme.ts";
+import { resolvePromptSurface } from "../../../../dynamic-prompt/build.ts";
 import type {
 	AgentToolResult,
 	ExtensionAPI,
@@ -15,18 +16,22 @@ import type {
 	ToolRenderContext,
 	ToolRenderResultOptions,
 } from "../../../types.ts";
-import { normalizeTodoParams } from "../normalize.ts";
+import { normalizeTodoParams, prepareTodoArguments } from "../normalize.ts";
 import { TODO_TOOL_DESCRIPTION } from "../prompt.ts";
 import {
 	applyParams,
+	captureListAsk,
 	clonePhases,
 	findTaskByContent,
+	formatHandoffCue,
 	formatSummary,
 	getCompletionTransitions,
 	getTodoMarker,
+	handoffMomentOf,
 	nextActionableTask,
 	sanitizeTodoText,
 	TODO_STATE_ENTRY_TYPE,
+	type TodoAsk,
 	type TodoCompletionTransition,
 	type TodoOperation,
 	type TodoPhase,
@@ -44,7 +49,7 @@ const TodoOperationSchema = Type.Union(
 		Type.Literal("append"),
 		Type.Literal("view"),
 	],
-	{ description: "Operation to perform. Required — always pass it explicitly." },
+	{ description: "Operation to perform. Required: always pass it explicitly." },
 );
 
 const TodoPhaseInputSchema = Type.Object({
@@ -72,6 +77,8 @@ type TodoParams = Static<typeof TODO_PARAMS_SCHEMA>;
 type TodoAccessors = {
 	getCurrentPhases: () => TodoPhase[];
 	setCurrentPhases: (phases: TodoPhase[]) => void;
+	getCurrentAsk: () => TodoAsk | undefined;
+	setCurrentAsk: (ask: TodoAsk | undefined) => void;
 	syncWidget: (ctx: ExtensionContext, completedTasks?: readonly TodoCompletionTransition[]) => void;
 };
 
@@ -153,7 +160,7 @@ function formatPhaseSummary(phase: TodoPhase, index: number, theme: Theme): stri
 	const closed = phase.tasks.filter((task) => task.status === "completed" || task.status === "abandoned").length;
 	return theme.fg(
 		"dim",
-		`${phaseRomanNumeral(index)}. ${sanitizeTodoText(phase.name)} — ${closed}/${phase.tasks.length} done`,
+		`${phaseRomanNumeral(index)}. ${sanitizeTodoText(phase.name)} - ${closed}/${phase.tasks.length} done`,
 	);
 }
 
@@ -283,38 +290,52 @@ function getTextContent(result: AgentToolResult<TodoToolDetails>): string {
 export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): void {
 	const tool: ToolDefinition<typeof TODO_PARAMS_SCHEMA, TodoToolDetails, unknown> = {
 		name: "todo",
+		workspaceEffect: "read",
 		label: "Todo",
 		description: TODO_TOOL_DESCRIPTION,
 		promptSnippet: "Track phased tasks with one op-based todo tool; reference tasks by their exact content.",
 		promptGuidelines: [
-			"Use one todo operation at a time; batch it with the real work rather than making a solo todo turn.",
+			"Use one todo operation at a time, batched with the real work; never end a turn with a todo call as its only tool call.",
 			"Reference tasks and phases by their exact content/name; use view when the text is uncertain.",
 			"Mark work done immediately and use drop for tasks that are no longer needed.",
 		],
 		parameters: TODO_PARAMS_SCHEMA,
+		prepareArguments: (args) => prepareTodoArguments(args) as TodoParams,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<TodoToolDetails>> {
 			const previousPhases = clonePhases(accessors.getCurrentPhases());
+			const previousAsk = accessors.getCurrentAsk();
 			const normalized = normalizeTodoParams(params as Record<string, unknown>, previousPhases);
 			if (normalized.error || !normalized.entry) {
 				const error =
 					normalized.error ?? 'Missing "op". Example: {"op":"init","list":[{"phase":"Setup","items":["..."]}]}';
-				throw new Error(`${error}\n\n${formatSummary(previousPhases, [], true)}`);
+				throw new Error(`${error}\n\n${formatSummary(previousPhases, [], true, previousAsk)}`);
 			}
 			const entry = normalized.entry;
 			const corrections = normalized.corrections;
 			const readOnly = entry.op === "view";
+			const errors: string[] = [];
 			const applied = readOnly
-				? { phases: previousPhases, errors: [] as string[] }
+				? { phases: previousPhases, errors }
 				: applyParams(clonePhases(previousPhases), entry, corrections);
-			if (applied.errors.length > 0) throw new Error(formatSummary(previousPhases, applied.errors, readOnly));
+			if (applied.errors.length > 0) {
+				throw new Error(formatSummary(previousPhases, applied.errors, readOnly, previousAsk));
+			}
 			const completedTasks = readOnly ? [] : getCompletionTransitions(previousPhases, applied.phases);
+			// Only a list-creating call re-anchors the ask; every other op keeps it.
+			const createsList =
+				entry.op === "init" || (entry.op === "append" && previousPhases.every((phase) => phase.tasks.length === 0));
+			const ask = createsList
+				? (captureListAsk(ctx.sessionManager.getBranch(), Date.now()) ?? previousAsk)
+				: previousAsk;
 			if (!readOnly) {
 				pi.appendEntry(TODO_STATE_ENTRY_TYPE, {
 					schema: "v2",
 					phases: clonePhases(applied.phases),
+					...(ask ? { ask } : {}),
 				} satisfies TodoStateEntry);
 				accessors.setCurrentPhases(clonePhases(applied.phases));
+				accessors.setCurrentAsk(ask);
 				accessors.syncWidget(ctx, completedTasks);
 			}
 
@@ -323,9 +344,15 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 				phases: clonePhases(applied.phases),
 				storage: ctx.sessionManager.getSessionFile() ? "session" : "memory",
 			};
+			if (ask) details.ask = ask;
 			if (corrections.length > 0) details.corrections = corrections;
 			if (completedTasks.length > 0) details.completedTasks = completedTasks;
-			const summary = formatSummary(applied.phases, [], readOnly);
+			// A chat surface posts replies to a conversation, which has no handoff block to cue (senpi#2398).
+			const surface = ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env);
+			const cue = formatHandoffCue(
+				readOnly || surface === "chat" ? undefined : handoffMomentOf(previousPhases, applied.phases, createsList),
+			);
+			const summary = `${formatSummary(applied.phases, [], readOnly, ask)}${cue}`;
 			const text = corrections.length > 0 ? `${corrections.join("\n")}\n\n${summary}` : summary;
 
 			return { content: [{ type: "text", text }], details };
@@ -347,8 +374,10 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 				theme,
 				context.spinnerFrame,
 			);
-			const text = rendered || getTextContent(result) || "Todo list is empty.";
-			return new Text(text, 0, 0);
+			if (!rendered) return new Text(getTextContent(result) || "Todo list is empty.", 0, 0);
+			const ask = result.details?.ask;
+			// The in-progress row stays the bold Now line; a result without a captured ask renders as before.
+			return new Text(ask ? `${theme.fg("dim", `Ask: ${ask.text}`)}\n${rendered}` : rendered, 0, 0);
 		},
 	};
 

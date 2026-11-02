@@ -1,5 +1,13 @@
 # Upstream merge + changelog driver
 
+## Release-history and lock invariants
+
+- Preserve every released fork CalVer section byte-for-byte in package `CHANGELOG.md` files.
+- Preserve exactly one top-level `[Unreleased]` section per package. Translate adopted upstream release notes into
+  package changelog blocks in `changes/unreleased/<pr>.md`; never insert upstream SemVer headings into released history.
+- Treat generated dependency locks as integrity artifacts: every external npm entry must retain its `resolved`
+  tarball URL and `integrity` hash, and generators must produce identical hashes on consecutive runs.
+
 You are Codex running headless inside GitHub Actions on the `senpi` fork
 (`code-yeongyu/senpi`). Your job is to integrate the latest upstream release from
 `badlogic/pi-mono`, audit changelogs, and leave a PR-ready automation branch. Work only in
@@ -27,6 +35,24 @@ publish a pull request, push, or release.
 If the upstream release does not require any source, package, changelog, or pin change after
 inspection, write a short report and finish with `MERGE_RESULT: NO_RELEASE_NEEDED`.
 
+After every upstream merge, re-apply the recorded upstream exclusions before resolving
+anything else: run `git rm -rq --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)`
+(`--ignore-unmatch` keeps the step from failing on a path that is already absent), then
+re-check the list against the new upstream tree. Every path on it is an upstream feature the
+fork rejected on record; a new upstream path that belongs to a listed feature is added to the
+list together with its dated `changes.md` exclusion block.
+
+#### Fork-owned trees (upstream removed them)
+
+Upstream deleted the agent harness and its companions on 2026-10-01 (7fd478a2e) and moved that
+code into its own durable package, which the fork does not take. Every path listed in
+`.github/agent/fork-owned-trees.txt` stays exactly as **ours** after a merge: restore any path
+on that list from the fork side and never accept an upstream deletion or rewrite of it.
+The cost of keeping them is a manual port at every sync: diff upstream's
+`packages/durable/src/{tools,env,truncate.ts,harness/compaction.ts,storage}` from the previous
+pin to the new one, and port each real fix into the kept copy as its own commit with a test that
+fails without it.
+
 ### 2. Resolve conflicts (fork-aware)
 
 Resolve conflicts using these fork rules plus semantic judgement. For files that are
@@ -35,11 +61,64 @@ what the fork preserves and why.
 
 | Path / pattern | Resolution |
 |---|---|
-| `package-lock.json` | take **upstream** (`--theirs`), then regenerate with `npm install --package-lock-only --ignore-scripts` |
+| `package-lock.json` | take **ours** (`--theirs` is wrong here — see “Lock regeneration base” below), then regenerate with `PI_ALLOW_LOCKFILE_CHANGE=1 npm install --package-lock-only --ignore-scripts` followed by `npm run refresh-lock` |
 | `bun.lock` | remove it, regenerate with `bun install --ignore-scripts` (or take upstream if bun is unavailable) |
-| `**/changes.md` | keep **ours** (fork notes) |
+| `**/changes.md` | keep **ours** (fork notes), then run the carry-forward check below — `ours` alone silently deletes entries the other side added |
 | other `*.md` (docs, READMEs) | take **upstream** unless the fork intentionally diverged |
 | `packages/coding-agent/src/core/extensions/builtin/**` | fork-only directory; prefer **ours** unless upstream improves the same path |
+
+#### Lock regeneration base
+
+Regenerate from **ours**, never from `--theirs`. Both bases avoid a hand-merged lock, but upstream's base
+discards deliberate fork resolutions. Regeneration re-resolves from the merged `package.json` set either way, so
+upstream's dependency changes are still honored — the fork's base only preserves what the fork pinned on purpose.
+
+After regenerating, verify the hoisted version of every dev tool a type augmentation depends on still matches the
+fork's pin, because a hoist change is invisible in the lock diff but breaks compilation:
+
+```bash
+node -p "require('./node_modules/vitest/package.json').version"   # must match the fork's pinned major.minor.patch
+npx tsc --noEmit                                                   # must stay at zero errors
+```
+
+Incident that produced this rule (2026-08-19, upstream `59a71b23`): resolving the root lock with `--theirs` and
+regenerating hoisted `vitest` 4.1.9 instead of the fork's 4.1.10. `packages/evals` pins 4.1.10 exactly, so the
+fork's `declare module "vitest"` augmentation in `src/vitest-evals/artifacts.ts` and the code importing it bound to
+two different module instances, producing five `TaskMeta` type errors (`Property 'harness' does not exist`).
+Rebasing the lock on `ours` and regenerating restored the 4.1.10 hoist and cleared all five.
+
+#### changes.md carry-forward check
+
+`ours` is the right base for trackers, but it is not sufficient: when both sides added entries, keeping ours drops
+theirs silently, and a dropped entry leaves a production path uncovered for the *next* sync rather than failing now.
+After resolving every conflicted tracker, verify no path reference was lost:
+
+```bash
+# for each conflicted tracker, compare the repo-relative paths each side references
+git show <other-side-sha>:<tracker> | rg -o '(packages|scripts|crates)/[^`) ]+\.(ts|tsx|mjs|json|md)' | sort -u > /tmp/theirs.txt
+rg -o '(packages|scripts|crates)/[^`) ]+\.(ts|tsx|mjs|json|md)' <tracker> | sort -u > /tmp/ours.txt
+comm -23 /tmp/theirs.txt /tmp/ours.txt   # must be empty; anything listed was dropped
+```
+
+Re-add every dropped path as a **self-contained dated `## ` block** carrying all four canonical headings.
+`entryCovers` in `scripts/changes-md-policy.mjs` splits trackers into dated `## ` blocks and requires the path *and*
+all four sections inside the **same** block — appending the path into a neighbouring block does not count as
+coverage even though the text is present in the file.
+
+Authoritative verification is the full-tree audit, run **unpiped** so its exit code survives:
+
+```bash
+node scripts/audit-changes-md.mjs --format markdown   # must exit 0; expect "0 uncovered"
+```
+
+Never read a gate's status through a pipe (`... | tail`), which reports the pipeline's exit code instead of the
+script's. The PR gate `scripts/check-pr-changelog.mjs` is not a substitute: it counts only tracker entries the PR
+itself touched, so it can pass while the tree has an uncovered path.
+
+Incident that produced this rule (2026-08-19): merging current `origin/main` into the sync branch conflicted on
+three trackers; resolving them to `ours` deleted the entry `origin/main` had just added for
+`packages/coding-agent/src/core/footer-data-provider.ts`. The PR gate still passed; only
+`audit-changes-md.mjs` caught it, at 238/239 paths covered.
 
 Known fork-modified source files are not auto-resolvable; read their `changes.md` and merge
 semantically, preserving fork behavior while adopting upstream improvements:
@@ -66,8 +145,10 @@ merge commit, or add a follow-up commit `sync: record upstream pin <short-sha>`.
 
 ### 4. Audit the changelog
 
-Run `/cl` by following `.github/agent/commands/cl.md`. Add missing `## [Unreleased]` entries
-to the affected packages' `CHANGELOG.md` files. Commit changelog updates as
+Run `/cl` by following `.github/agent/commands/cl.md`. Add missing entries as affected-package
+`CHANGELOG.md` blocks in `changes/unreleased/<pr>.md`, not directly in `[Unreleased]`.
+Convert any direct additions with `node scripts/sync-changes-fragments.mjs from-diff --base origin/main --pr <n>`.
+Commit the fragment as
 `docs(changelog): audit upstream <short-sha>`.
 
 ### 5. Hands-on QA

@@ -9,6 +9,11 @@ import type {
 import type { McpLogger } from "../log.ts";
 import { fingerprintSecret } from "../log.ts";
 import { OAuthFlowError } from "./oauth-errors.ts";
+import {
+	canonicalAuthorizationServerIssuer,
+	credentialsMatchIssuer,
+	validatedAuthorizationServerIssuer,
+} from "./oauth-issuer.ts";
 import type { McpStoredAuth, McpTokenStore } from "./token-store.ts";
 
 // Buffer before absolute token expiry at which a refresh is considered due.
@@ -31,15 +36,57 @@ export function tokenExpiresAt(tokens: OAuthTokens, now = Date.now()): number | 
 	return now + tokens.expires_in * 1000;
 }
 
+/**
+ * The authorization server a stored grant belongs to (senpi#2940, GHSA-6qxp-vccf-f47h): its `issuer` stamp, or
+ * for a record saved before the stamp existed, the authorization server its sign-in discovered. A record with
+ * neither cannot be attributed, so its refresh token is never presented anywhere.
+ */
+export function storedGrantIssuer(record: McpStoredAuth | undefined): string | undefined {
+	return record?.issuer ?? record?.discoveryState?.authorizationServerUrl?.toString();
+}
+
+/**
+ * Fixes who an unstamped grant belongs to before the discovery record it falls back to is replaced (senpi#2940).
+ * A later discovery reflects what the MCP server advertises now, not where the grant was issued, so it must never
+ * attribute an existing grant: the grant keeps the server it was attributed to, or loses its refresh token.
+ */
+export function freezeGrantAttribution(record: McpStoredAuth | undefined): McpStoredAuth {
+	const next: McpStoredAuth = { ...(record ?? {}) };
+	if (next.issuer !== undefined || (next.accessToken === undefined && next.refreshToken === undefined)) return next;
+	const issuer = storedGrantIssuer(next);
+	if (issuer !== undefined) next.issuer = issuer;
+	else delete next.refreshToken;
+	return next;
+}
+
+/**
+ * Whether a stored discovery record carries its own evidence for the authorization server it names (senpi#4924):
+ * that server's metadata, the MCP server's protected-resource metadata naming it, or the MCP server's own origin
+ * (the SDK's legacy root fallback). A bare URL from anywhere else would send the SDK to an unverified server.
+ */
+function discoveryNamesItsServer(state: OAuthDiscoveryState, serverUrl: string): boolean {
+	if (state.authorizationServerMetadata !== undefined) return true;
+	const named = canonicalAuthorizationServerIssuer(String(state.authorizationServerUrl));
+	if (named === new URL(serverUrl).origin) return true;
+	return (
+		state.resourceMetadata?.authorization_servers?.some(
+			(server) => canonicalAuthorizationServerIssuer(String(server)) === named,
+		) ?? false
+	);
+}
+
 export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date.now()): OAuthTokens | undefined {
 	if (record?.accessToken === undefined || record.accessToken.length === 0) return undefined;
 	const expiresIn =
 		record.expiresAt === undefined ? undefined : Math.max(0, Math.ceil((record.expiresAt - now) / 1000));
+	const issuer = storedGrantIssuer(record);
 	return {
 		access_token: record.accessToken,
-		refresh_token: record.refreshToken,
+		// An unattributed refresh token is withheld: the SDK would post it to whichever server it discovers.
+		refresh_token: issuer === undefined ? undefined : record.refreshToken,
 		token_type: "Bearer",
 		...(expiresIn === undefined ? {} : { expires_in: expiresIn }),
+		...(issuer === undefined ? {} : { issuer }),
 	};
 }
 
@@ -47,6 +94,7 @@ export function mergeTokensIntoStoredAuth(
 	current: McpStoredAuth | undefined,
 	tokens: OAuthTokens,
 	serverUrl: string,
+	issuer?: string,
 ): McpStoredAuth {
 	const next: McpStoredAuth = {
 		...(current ?? {}),
@@ -58,6 +106,8 @@ export function mergeTokensIntoStoredAuth(
 	const expiresAt = tokenExpiresAt(tokens);
 	if (expiresAt !== undefined) next.expiresAt = expiresAt;
 	else delete next.expiresAt;
+	const stamp = tokens.issuer ?? issuer;
+	if (stamp !== undefined) next.issuer = stamp;
 	return next;
 }
 
@@ -85,9 +135,18 @@ export class McpOAuthProvider implements OAuthClientProvider {
 		return this.#options.clientMetadataUrl;
 	}
 
-	get clientMetadata(): OAuthClientMetadata {
+	get clientMetadata(): OAuthClientMetadata & { application_type?: "native" | "web" } {
 		const redirect = this.#options.redirectUrl;
 		return {
+			...(redirect === undefined
+				? {}
+				: {
+						application_type:
+							!["http:", "https:"].includes(new URL(redirect).protocol) ||
+							["127.0.0.1", "localhost", "[::1]"].includes(new URL(redirect).hostname)
+								? "native"
+								: "web",
+					}),
 			redirect_uris: redirect === undefined ? [] : [String(redirect)],
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
@@ -116,15 +175,50 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
-		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: info }));
+		const discovery = this.discoveryState();
+		const issuer =
+			discovery === undefined
+				? info.issuer && canonicalAuthorizationServerIssuer(info.issuer)
+				: validatedAuthorizationServerIssuer(discovery, this.serverName);
+		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: { ...info, issuer } }));
 	}
 
 	async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
-		await this.#store.update((current) => ({ ...(current ?? {}), discoveryState: state }));
+		const issuer = validatedAuthorizationServerIssuer(state, this.serverName);
+		const discoveryState = { ...state, authorizationServerUrl: issuer };
+		await this.#store.update((current) => {
+			const attributed = freezeGrantAttribution(current);
+			if (!credentialsMatchIssuer(attributed, issuer)) return { discoveryState };
+			const clientIssuer = attributed.clientInfo?.issuer ?? storedGrantIssuer(attributed);
+			return {
+				...attributed,
+				// Unattributed legacy registrations cannot be sent to the server discovered now.
+				clientInfo:
+					clientIssuer === undefined || attributed.clientInfo === undefined
+						? undefined
+						: { ...attributed.clientInfo, issuer },
+				discoveryState,
+			};
+		});
 	}
 
 	discoveryState(): OAuthDiscoveryState | undefined {
-		return this.#store.read()?.discoveryState;
+		const current = this.#store.read();
+		const state = current?.discoveryState;
+		// senpi#4924: a record that does not show where its authorization server came from is never handed out.
+		// The SDK would fetch metadata from the stored URL and post the saved grant there before anything checks
+		// that the MCP server names that server; callers discover from the MCP server instead.
+		if (state !== undefined && !discoveryNamesItsServer(state, this.serverUrl)) return undefined;
+		if (state !== undefined) {
+			try {
+				const issuer = validatedAuthorizationServerIssuer(state, this.serverName);
+				if (!credentialsMatchIssuer(current, issuer)) return undefined;
+			} catch (error) {
+				if (error instanceof OAuthFlowError) return undefined;
+				throw error;
+			}
+		}
+		return state;
 	}
 
 	tokens(): OAuthTokens | undefined {
@@ -132,7 +226,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
-		await this.#store.update((current) => mergeTokensIntoStoredAuth(current, tokens, this.serverUrl));
+		const discovery = this.discoveryState();
+		const issuer =
+			discovery === undefined
+				? tokens.issuer && canonicalAuthorizationServerIssuer(tokens.issuer)
+				: validatedAuthorizationServerIssuer(discovery, this.serverName);
+		await this.#store.update((current) => mergeTokensIntoStoredAuth(current, { ...tokens, issuer }, this.serverUrl));
 		this.#logFingerprint("saveTokens", tokens.access_token);
 	}
 

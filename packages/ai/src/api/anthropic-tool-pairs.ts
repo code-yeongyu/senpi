@@ -22,6 +22,10 @@ function isToolResultBlock(block: ContentBlockParam): block is Extract<ContentBl
 
 const SYNTHETIC_OUTPUT = "Tool output unavailable (interrupted before result)";
 
+function cloneWith<T extends object>(block: T, patch: Partial<T>): T {
+	return { ...block, ...patch };
+}
+
 function isMessageWithArrayContent<Role extends MessageParam["role"]>(
 	value: unknown,
 	role: Role,
@@ -37,15 +41,42 @@ function isUserMessageWithStringContent(value: unknown): value is MessageParam &
 	return isObject(value) && value.role === "user" && typeof value.content === "string";
 }
 
-function getToolUseIds(message: MessageParam & { content: ContentBlockParam[] }): string[] {
-	const ids: string[] = [];
-	const seen = new Set<string>();
+interface AssistantToolUseDedupe {
+	message: MessageParam & { role: "assistant"; content: ContentBlockParam[] };
+	changed: boolean;
+	expectedIds: string[];
+	remapQueues: Map<string, string[]>;
+}
+
+function dedupeAssistantToolUses(
+	message: MessageParam & { role: "assistant"; content: ContentBlockParam[] },
+	usedIds: Set<string>,
+): AssistantToolUseDedupe {
+	const content: ContentBlockParam[] = [];
+	const expectedIds: string[] = [];
+	const remapQueues = new Map<string, string[]>();
+	let changed = false;
 	for (const block of message.content) {
-		if (!isToolUseBlock(block) || block.id.length === 0 || seen.has(block.id)) continue;
-		seen.add(block.id);
-		ids.push(block.id);
+		if (!isToolUseBlock(block) || block.id.length === 0) {
+			content.push(block);
+			continue;
+		}
+		let finalId = block.id;
+		if (usedIds.has(finalId)) {
+			let suffix = 2;
+			while (usedIds.has(`${block.id}__dedup${suffix}`)) suffix += 1;
+			finalId = `${block.id}__dedup${suffix}`;
+			changed = true;
+		}
+		usedIds.add(finalId);
+		expectedIds.push(finalId);
+		const queue = remapQueues.get(block.id);
+		if (queue === undefined) remapQueues.set(block.id, [finalId]);
+		else queue.push(finalId);
+		content.push(finalId === block.id ? block : cloneWith(block, { id: finalId }));
 	}
-	return ids;
+	if (!changed) return { message, changed: false, expectedIds, remapQueues };
+	return { message: { ...message, content }, changed: true, expectedIds, remapQueues };
 }
 
 function syntheticToolResult(toolUseId: string): Extract<ContentBlockParam, { type: "tool_result" }> {
@@ -64,6 +95,7 @@ function sameBlocks(left: ContentBlockParam[], right: ContentBlockParam[]): bool
 function repairFollowingUserMessage(
 	message: MessageParam & { role: "user"; content: ContentBlockParam[] },
 	expectedIds: string[],
+	remapQueues: Map<string, string[]>,
 ): { message: MessageParam; changed: boolean } {
 	const expected = new Set(expectedIds);
 	const found = new Set<string>();
@@ -75,10 +107,15 @@ function repairFollowingUserMessage(
 			ordinary.push(block);
 			continue;
 		}
-		const id = block.tool_use_id;
+		const rawId = block.tool_use_id;
+		let id = rawId;
+		if (typeof rawId === "string") {
+			const queue = remapQueues.get(rawId);
+			if (queue !== undefined && queue.length > 0) id = queue.shift() as string;
+		}
 		if (typeof id !== "string" || !expected.has(id) || found.has(id)) continue;
 		found.add(id);
-		results.push(block);
+		results.push(id === rawId ? block : cloneWith(block, { tool_use_id: id }));
 	}
 
 	for (const id of expectedIds) {
@@ -100,23 +137,26 @@ function removeOrphanResults(message: MessageParam & { role: "user"; content: Co
 	return { message: { ...message, content }, changed: true };
 }
 
-/** Repairs Anthropic client tool_use/tool_result adjacency without mutating the input payload. */
+/** Repairs Anthropic client tool_use/tool_result adjacency and duplicate tool_use ids without mutating the input payload. */
 export function sanitizeAnthropicToolPairs(payload: unknown): unknown {
 	if (!hasMessagesArray(payload)) return payload;
 
 	let changed = false;
+	const usedToolUseIds = new Set<string>();
 	const sanitizedMessages: unknown[] = [];
 
 	for (let index = 0; index < payload.messages.length; index++) {
 		const unknownMessage = payload.messages[index];
 		if (isMessageWithArrayContent(unknownMessage, "assistant")) {
-			sanitizedMessages.push(unknownMessage);
-			const expectedIds = getToolUseIds(unknownMessage);
+			const deduped = dedupeAssistantToolUses(unknownMessage, usedToolUseIds);
+			sanitizedMessages.push(deduped.message);
+			changed ||= deduped.changed;
+			const expectedIds = deduped.expectedIds;
 			if (expectedIds.length === 0) continue;
 
 			const nextMessage = payload.messages[index + 1];
 			if (isMessageWithArrayContent(nextMessage, "user")) {
-				const repaired = repairFollowingUserMessage(nextMessage, expectedIds);
+				const repaired = repairFollowingUserMessage(nextMessage, expectedIds, deduped.remapQueues);
 				sanitizedMessages.push(repaired.message);
 				changed ||= repaired.changed;
 				index++;

@@ -1,8 +1,10 @@
 export function buildPublishArgs({ githubActions }) {
-	const args = ["publish", "--access", "public", "--tag", "latest"];
-	if (githubActions) {
-		args.push("--provenance");
+	if (!githubActions) {
+		throw new Error("GitHub Actions is required for provenance-backed npm publication.");
 	}
+
+	const args = ["publish", "--access", "public", "--tag", "latest"];
+	args.push("--provenance");
 	args.push("--ignore-scripts");
 	return args;
 }

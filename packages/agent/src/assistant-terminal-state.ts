@@ -1,4 +1,15 @@
-import { type AssistantMessage, type AssistantMessageEvent, isClassifierRefusal } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	type AssistantMessageEvent,
+	type CursorExecResolvedCarrier,
+	isClassifierRefusal,
+	isCursorExecResolved,
+	readProviderDiagnostic,
+	sanitizeProviderErrorMessage,
+	type ToolResultMessage,
+} from "@earendil-works/pi-ai";
+import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
+import { OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "@earendil-works/pi-ai/utils/retry";
 import type { AgentLoopConfig } from "./types.ts";
 
 const EMPTY_USAGE = {
@@ -12,8 +23,68 @@ const EMPTY_USAGE = {
 
 type TerminalAssistantMessageEvent = Extract<AssistantMessageEvent, { type: "done" | "error" }>;
 
+export class ProviderRetryWatchdogAbortError extends Error {
+	readonly providerCause: string;
+
+	constructor(providerCause: string) {
+		super(providerCause);
+		this.providerCause = providerCause;
+		this.name = "ProviderRetryWatchdogAbortError";
+	}
+}
+
+/**
+ * Marks a terminal message whose `toolUse` stop reason was demoted because the provider sent no
+ * tool call. Demotion rewrites the stop reason, so this diagnostic is the only surviving evidence
+ * that the turn was malformed rather than a clean stop; downstream recovery keys on it.
+ */
+export const EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC = "empty_tool_use_terminal_state";
+
+export function demoteToolUseWithoutToolCalls(message: AssistantMessage): AssistantMessage {
+	// Count raw blocks: cursor-resolved calls are legitimate completed tool calls and must not be demoted.
+	if (message.stopReason !== "toolUse" || message.content.some((block) => block.type === "toolCall")) return message;
+	return {
+		...message,
+		stopReason: "stop",
+		diagnostics: [
+			...(message.diagnostics ?? []),
+			{ type: EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, timestamp: Date.now(), details: {} },
+		],
+	};
+}
+
+export function promoteStopWithPendingToolCalls(message: AssistantMessage): AssistantMessage {
+	if (message.stopReason !== "stop") return message;
+	if (!message.content.some((block) => block.type === "toolCall")) return message;
+	return { ...message, stopReason: "toolUse" };
+}
+
+/** The stop reason the loop acts on; applied before `message_end` so every consumer sees the same object. */
+export function settleStopReason(message: AssistantMessage): AssistantMessage {
+	return demoteToolUseWithoutToolCalls(promoteStopWithPendingToolCalls(message));
+}
+
 export function shouldTerminateAssistantTurn(message: AssistantMessage): boolean {
 	return message.stopReason === "error" || message.stopReason === "aborted" || isClassifierRefusal(message);
+}
+
+export function isStreamIdleTimeoutError(error: unknown): boolean {
+	return error instanceof Error && error.name === "StreamIdleTimeoutError";
+}
+
+/**
+ * After tools already finished (Cursor exec-resolved or buffered results),
+ * a silent provider is a finished turn, not a failed one.
+ */
+export function shouldFinalizeIdleAsStop(
+	partialMessage: AssistantMessage | null,
+	providerToolResults: readonly ToolResultMessage[],
+): boolean {
+	if (!partialMessage) return false;
+	const toolCalls = partialMessage.content.filter((block) => block.type === "toolCall");
+	if (toolCalls.length === 0) return false;
+	if (providerToolResults.length > 0) return true;
+	return toolCalls.every((block) => isCursorExecResolved(block as CursorExecResolvedCarrier));
 }
 
 export function createTerminalFailureAssistantMessage(
@@ -23,7 +94,8 @@ export function createTerminalFailureAssistantMessage(
 	partialMessage: AssistantMessage | null,
 ): AssistantMessage {
 	const errorMessage = error instanceof Error ? error.message : String(error);
-	return {
+	const providerDiagnostic = reason === "error" ? readProviderDiagnostic(error) : undefined;
+	const message: AssistantMessage = {
 		role: "assistant",
 		content: partialMessage?.content ?? [{ type: "text", text: "" }],
 		api: partialMessage?.api ?? model.api,
@@ -31,12 +103,27 @@ export function createTerminalFailureAssistantMessage(
 		model: partialMessage?.model ?? model.id,
 		responseModel: partialMessage?.responseModel,
 		responseId: partialMessage?.responseId,
-		diagnostics: partialMessage?.diagnostics,
+		diagnostics:
+			reason === "error" && isOAuthRefreshUnavailableError(error)
+				? [
+						...(partialMessage?.diagnostics ?? []),
+						{
+							type: OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC,
+							timestamp: Date.now(),
+							details: { provider: model.provider },
+						},
+					]
+				: partialMessage?.diagnostics,
 		usage: partialMessage?.usage ?? EMPTY_USAGE,
 		stopReason: reason,
 		errorMessage: errorMessage || (reason === "aborted" ? "Request was aborted" : "Error"),
+		...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
+		...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 		timestamp: partialMessage?.timestamp ?? Date.now(),
 	};
+	// A thrown provider error never passed the stream boundary: classify and redact it the same way (senpi#4282).
+	sanitizeProviderErrorMessage(message);
+	return message;
 }
 
 export function normalizeTerminalAssistantMessage(

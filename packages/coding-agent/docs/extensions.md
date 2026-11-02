@@ -1,15 +1,15 @@
-> pi can create extensions. Ask it to build one for your use case.
+> senpi can create extensions. Ask it to build one for your use case.
 
 # Extensions
 
-Extensions are TypeScript modules that extend pi's behavior. They can subscribe to lifecycle events, register custom tools callable by the LLM, add commands, and more.
+Extensions are TypeScript modules that extend senpi's behavior. They can subscribe to lifecycle events, register custom tools callable by the LLM, add commands, and more.
 
-> **Placement for /reload:** Put extensions in `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (project-local) for auto-discovery. Use `pi -e ./path.ts` only for quick tests. Extensions in auto-discovered locations can be hot-reloaded with `/reload`.
+> **Placement for /reload:** Put extensions in `~/.senpi/agent/extensions/` (global) or `.senpi/extensions/` (project-local) for auto-discovery. Use `senpi -e ./path.ts` only for quick tests. Extensions in auto-discovered locations can be hot-reloaded with `/reload`.
 
 **Key capabilities:**
 - **Custom tools** - Register tools the LLM can call via `pi.registerTool()`
 - **Event interception** - Block or modify tool calls, inject context, customize compaction
-- **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, notify)
+- **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, question, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
 - **Model fallback** - The bundled [`/fallback`](#bundled-fallback-command) command manages global per-model retry chains. Use `/fallback <target> <fallback1> [fallback2 ...]` for scripts, or `/fallback` in the TUI to view and edit chains. `--no-model-fallback` and `SENPI_NO_FALLBACK=1` disable it for one run.
@@ -58,7 +58,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 
 ## Quick Start
 
-Create `~/.pi/agent/extensions/my-extension.ts`:
+Create `~/.senpi/agent/extensions/my-extension.ts`:
 
 ```typescript
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -106,7 +106,7 @@ export default function (pi: ExtensionAPI) {
 Test with `--extension` (or `-e`) flag:
 
 ```bash
-pi -e ./my-extension.ts
+senpi -e ./my-extension.ts
 ```
 
 ## Bundled /fallback Command
@@ -116,7 +116,7 @@ The bundled `model-fallback` extension registers `/fallback` to manage global pe
 Use the quick-set form in scripts or any non-TUI mode:
 
 ```text
-/fallback anthropic/claude-fable-5 ccapi/kimi-k3:max
+/fallback anthropic/claude-fable-5-1 ccapi/kimi-k3:max
 ```
 
 The first argument is the exact primary model selector; each later argument is an ordered fallback selector. Quick-set validates selectors before saving. At least one fallback is required:
@@ -135,18 +135,28 @@ Run `/fallback` without arguments in the TUI for a menu that can:
 
 Use quick-set in non-TUI modes; the no-argument menu requires interactive UI. Pass `--no-model-fallback` or set `SENPI_NO_FALLBACK=1` to disable fallback for that process without modifying saved settings.
 
+## Built-in Native Capabilities
+
+Senpi ships built-in extensions that inject provider-native server tools when the active model supports them. These run as ordinary extensions internally but are always loaded and require no user configuration beyond having valid credentials.
+
+**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
+
+**openai-web-search** injects the OpenAI Responses `web_search_preview` server tool following the same pattern: credential-gated, stripped on unsupported endpoints, arbitrated against its client-side counterpart.
+
+Both builtins use `before_provider_request` to mutate the outgoing payload and re-evaluate their gate on every `model_select`, so mid-session model switches flip between native and client tools without a restart.
+
 ## Extension Locations
 
 > **Security:** Extensions run with your full system permissions and can execute arbitrary code. Only install from sources you trust.
 
-Extensions are auto-discovered from trusted locations. Project-local `.pi/extensions` entries load only after the project is trusted.
+Extensions are auto-discovered from trusted locations. Project-local `.senpi/extensions` entries load only after the project is trusted.
 
 | Location | Scope |
 |----------|-------|
-| `~/.pi/agent/extensions/*.ts` | Global (all projects) |
-| `~/.pi/agent/extensions/*/index.ts` | Global (subdirectory) |
-| `.pi/extensions/*.ts` | Project-local |
-| `.pi/extensions/*/index.ts` | Project-local (subdirectory) |
+| `~/.senpi/agent/extensions/*.ts` | Global (all projects) |
+| `~/.senpi/agent/extensions/*/index.ts` | Global (subdirectory) |
+| `.senpi/extensions/*.ts` | Project-local |
+| `.senpi/extensions/*/index.ts` | Project-local (subdirectory) |
 
 Additional paths via `settings.json`:
 
@@ -163,7 +173,7 @@ Additional paths via `settings.json`:
 }
 ```
 
-To share extensions via npm or git as pi packages, see [packages.md](packages.md).
+To share extensions via npm or git as senpi packages, see [packages.md](packages.md).
 
 ## Available Imports
 
@@ -174,9 +184,9 @@ To share extensions via npm or git as pi packages, see [packages.md](packages.md
 | `@earendil-works/pi-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
 | `@earendil-works/pi-tui` | TUI components for custom rendering |
 
-npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
+npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `bun install`, and imports from `node_modules/` are resolved automatically.
 
-For distributed pi packages installed with `pi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`npm install --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
+For distributed senpi packages installed with `senpi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`bun add --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
 
 Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 
@@ -195,6 +205,15 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify("Done!", "info");
     ctx.ui.setStatus("my-ext", "Processing...");  // Footer status
     ctx.ui.setWidget("my-ext", ["Line 1", "Line 2"]);  // Widget above editor (default)
+
+    // Multi-question prompt (requires a UI)
+    const result = await ctx.ui.question({
+      questions: [{ id: "db", header: "Database", question: "Which DB?",
+        options: [{ label: "Postgres" }, { label: "SQLite" }], multiSelect: false }],
+      waitForAnswer: true,
+      timeoutMs: 1800000,
+    });
+    // result.outcome is "answered", "comment-submitted", "timed_out", "cancelled", or "unavailable"
   });
 
   // Register tools, commands, shortcuts, flags
@@ -207,7 +226,7 @@ export default function (pi: ExtensionAPI) {
 
 Extensions are loaded via [jiti](https://github.com/unjs/jiti), so TypeScript works without compilation.
 
-If the factory returns a `Promise`, pi awaits it before continuing startup. That means async initialization completes before `session_start`, before `resources_discover`, and before provider registrations queued via `pi.registerProvider()` are flushed.
+If the factory returns a `Promise`, senpi awaits it before continuing startup. That means async initialization completes before `session_start`, before `resources_discover`, and before provider registrations queued via `pi.registerProvider()` are flushed.
 
 ### Async factory functions
 
@@ -244,7 +263,7 @@ export default async function (pi: ExtensionAPI) {
 }
 ```
 
-This pattern makes the fetched models available during normal startup and to `pi --list-models`.
+This pattern makes the fetched models available during normal startup and to `senpi --list-models`.
 
 ### Long-lived resources and shutdown
 
@@ -257,14 +276,14 @@ Defer background resource startup until `session_start` or the command/tool/even
 **Single file** - simplest, for small extensions:
 
 ```
-~/.pi/agent/extensions/
+~/.senpi/agent/extensions/
 └── my-extension.ts
 ```
 
 **Directory with index.ts** - for multi-file extensions:
 
 ```
-~/.pi/agent/extensions/
+~/.senpi/agent/extensions/
 └── my-extension/
     ├── index.ts        # Entry point (exports default function)
     ├── tools.ts        # Helper module
@@ -274,11 +293,11 @@ Defer background resource startup until `session_start` or the command/tool/even
 **Package with dependencies** - for extensions that need npm packages:
 
 ```
-~/.pi/agent/extensions/
+~/.senpi/agent/extensions/
 └── my-extension/
     ├── package.json    # Declares dependencies and entry points
     ├── package-lock.json
-    ├── node_modules/   # After npm install
+    ├── node_modules/   # After bun install
     └── src/
         └── index.ts
 ```
@@ -297,14 +316,14 @@ Defer background resource startup until `session_start` or the command/tool/even
 }
 ```
 
-Run `npm install` in the extension directory, then imports from `node_modules/` work automatically.
+Run `bun install` in the extension directory, then imports from `node_modules/` work automatically.
 
 ## Events
 
 ### Lifecycle Overview
 
 ```
-pi starts
+senpi starts
   │
   ├─► project_trust (user/global and CLI extensions only, before project resources load)
   ├─► session_start { reason: "startup" }
@@ -360,12 +379,13 @@ user sends another prompt ◄─────────────────
   ├─► session_start { reason: "reload" }
   └─► resources_discover { reason: "reload" }
 
-/name or pi.setSessionName()
+/rename, /name, or pi.setSessionName()
   └─► session_info_changed
 
 /compact or auto-compaction
   ├─► session_before_compact (can cancel or customize)
-  └─► session_compact
+  ├─► session_compact (success)
+  └─► session_compact_failed (failure or abort)
 
 /tree navigation
   ├─► session_before_tree (can cancel or customize)
@@ -378,6 +398,9 @@ user sends another prompt ◄─────────────────
 thinking level changes (settings, keybinding, pi.setThinkingLevel())
   └─► thinking_level_select
 
+/login, RPC login_start, or an account command (extension-registered OAuth provider)
+  └─► provider_login_start (awaited, before the provider's login runs)
+
 exit (Ctrl+C, Ctrl+D, SIGHUP, SIGTERM)
   └─► session_shutdown
 ```
@@ -386,7 +409,7 @@ exit (Ctrl+C, Ctrl+D, SIGHUP, SIGTERM)
 
 #### project_trust
 
-Fired before pi decides whether to trust a project with dynamic configs (`.pi` or `.agents/skills`). It runs during startup and when session replacement (for example `/resume`) enters a cwd whose trust has not been resolved in the current process. Only user/global extensions and CLI `-e` extensions participate; project-local extensions are not loaded until after trust is resolved.
+Fired before senpi decides whether to trust a project with dynamic configs (`.senpi` or `.agents/skills`). It runs during startup and when session replacement (for example `/resume`) enters a cwd whose trust has not been resolved in the current process. Only user/global extensions and CLI `-e` extensions participate; project-local extensions are not loaded until after trust is resolved.
 
 ```typescript
 pi.on("project_trust", async (event, ctx) => {
@@ -399,23 +422,42 @@ pi.on("project_trust", async (event, ctx) => {
 });
 ```
 
-A `project_trust` handler must return `{ trusted: "yes" | "no" | "undecided" }`. A user/global or CLI extension that returns `"yes"` or `"no"` owns the decision; the first yes/no decision wins and suppresses the built-in trust prompt. Use `remember: true` to persist a yes/no decision; otherwise it applies only to the current process. Return `"undecided"` to let later handlers or the built-in trust flow decide. Check `ctx.hasUI` before prompting. If no handler returns yes/no, normal trust resolution continues: saved `trust.json` decisions apply first, then `defaultProjectTrust` controls whether pi asks, trusts, or declines by default.
+A `project_trust` handler must return `{ trusted: "yes" | "no" | "undecided" }`. A user/global or CLI extension that returns `"yes"` or `"no"` owns the decision; the first yes/no decision wins and suppresses the built-in trust prompt. Use `remember: true` to persist a yes/no decision; otherwise it applies only to the current process. Return `"undecided"` to let later handlers or the built-in trust flow decide. Check `ctx.hasUI` before prompting. If no handler returns yes/no, normal trust resolution continues: saved `trust.json` decisions apply first, then `defaultProjectTrust` controls whether senpi asks, trusts, or declines by default.
 
 ### Resource Events
 
 #### resources_discover
 
-Fired after `session_start` so extensions can contribute additional skill, prompt, and theme paths.
+Fired after `session_start` so extensions can contribute additional skill, prompt, theme, and hook config paths.
 The startup path uses `reason: "startup"`. Reload uses `reason: "reload"`.
 
 ```typescript
 pi.on("resources_discover", async (event, _ctx) => {
   // event.cwd - current working directory
   // event.reason - "startup" | "reload"
+  // event.scopedEntries - true: this host accepts { path, scope } entries (absent on older hosts)
   return {
     skillPaths: ["/path/to/skills"],
     promptPaths: ["/path/to/prompts"],
     themePaths: ["/path/to/themes"],
+  };
+});
+```
+
+Each entry in `skillPaths`, `promptPaths`, `themePaths`, and `hookPaths` is a `ResourceDiscoverEntry`: either a path string or `{ path, scope? }`.
+
+A bare string inherits its scope from the contributing extension. It becomes `system` when the extension is builtin, or when the extension comes from a system package (see [`pi.system`](packages.md#creating-a-pi-package)) and the path lies inside that package. Otherwise the path keeps the `temporary` scope contributed paths have always had.
+
+Use the object form to pin the scope explicitly, for example when a system extension surfaces data the user owns. Hosts that accept the object form set `event.scopedEntries` to `true`; a host that predates it omits the field and would treat an object as a path string, so an extension that must load on both returns plain paths when the field is absent:
+
+```typescript
+pi.on("resources_discover", async (event) => {
+  const userSkills = join(homedir(), "my-skills");
+  return {
+    skillPaths: [
+      "/path/inside/this/package/skills", // inherits the extension's scope
+      event.scopedEntries ? { path: userSkills, scope: "user" } : userSkills, // pinned where supported
+    ],
   };
 });
 ```
@@ -428,6 +470,62 @@ See [Session Format](session-format.md) for session storage internals and the Se
 
 Fired when a session is started, loaded, or reloaded.
 
+`event.attended === false` marks an unattended open. Automatic turns are held until
+real user input or explicit Resume, not attachment. `ctx.engineTurnsHeld()` reads
+that gate. A source that charges or renders before sending must check it first
+and call `ctx.noteHeldWake("goal")` (or its own source key) instead of charging.
+Source-only notices are consumed on release and reported through
+`held_wakes_released`; they never require a model payload to clear the hold.
+
+#### session_hold_changed
+
+`pi.on("session_hold_changed", (event, ctx) => ...)` fires when this session becomes paused or resumed
+(senpi#3811). `event.change` is `"paused"` or `"resumed"`, `event.pauseSeq` is the session's pause sequence, and
+`event.holds` lists the live records as `{ kind, key, data? }`: `session_hold` for a user Stop, `run_fence` for a
+run the Stop paused, `inherited_hold` while a parent's run keeps this task child paused, and `unattended`. A
+workflow runner uses it to pause the run a stopped session started.
+
+`ctx.getPauseState()` returns the same `{ pauseSeq, holds }` snapshot. `ctx.fenceRun({ kind, id })` keeps wakes
+whose `details.runRef` names that run as notices until the user resumes; untagged wakes are not affected by a
+fence. Human input and `resume_session` release fences together with the user's Stop.
+`ctx.releaseRunFence({ kind, id })` drops that run's fence when the run is cancelled: call it after the run is
+journaled terminal. Later wakes tagged with the run are admitted again, fences for other runs stay, and releasing a
+run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
+emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
+
+#### held_wakes_released
+
+`pi.on("held_wakes_released", (event, ctx) => ...)` receives
+`event.sources: Record<string, number>` after a hold is released. Re-read current
+source state before scheduling work. The goal builtin queues one fresh
+continuation only if the current goal remains active; held goal text is never
+replayed. For user input, other sources are coalesced into that input's context
+before its message, and this event follows the user turn. Explicit Resume runs
+one turn per non-goal source sequentially, then releases the goal last.
+
+The core backstop groups `goal-continuation` as `goal`, `senpi-monitor:*` as
+`monitor`, and `senpi-codemode:*` as `codemode`; other custom types keep their own
+key. It persists counts and only the latest payload per source. A monitor release
+includes the held count and latest event text.
+
+The shared internal ledger exposes `SessionHold { kind, key, since, data?,
+sourceCounts }`. Only `kind: "unattended"` is implemented here.
+`addHold(kind, { key?, data? })` defaults the identity key to the kind and preserves
+opaque metadata. Multiple keys of one kind remain independent records.
+`releaseAll("input" | "resume_session")` releases every current key; attachment
+does not release any. Persisted `session-hold` additions carry `key` and `data`,
+and release entries carry `keys`. Restart restores both identity and metadata.
+
+`getHold(key)` returns the current keyed record, or `undefined`.
+`release(keys, cause)` releases only the named keys and emits `session_resumed`
+only when the session stops being held, once per `session_paused`. `releaseAll(cause)` delegates to that
+operation. The cause union remains `"input" | "resume_session"`.
+`engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
+consumption; the ledger delegates to that one custody path.
+Each delivered snapshot acknowledges its own notice IDs. New wakes arriving
+during delivery stay held for the next release, including newer wakes from the
+same source. The goal-release event waits until that non-goal custody is empty.
+
 ```typescript
 pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
@@ -438,12 +536,53 @@ pi.on("session_start", async (event, ctx) => {
 
 #### session_info_changed
 
-Fired when the current session display name is set via `/name`, RPC, or `pi.setSessionName()`.
+Fired when the current session display name is set via `/rename`, `/name`, RPC, or `pi.setSessionName()`.
 
 ```typescript
 pi.on("session_info_changed", async (event, ctx) => {
   // event.name - current normalized name, or undefined if cleared
   ctx.ui.notify(`Session renamed: ${event.name ?? "(none)"}`, "info");
+});
+```
+
+#### session_parked / session_resumed
+
+These additive events describe attachment changes on a retained, in-process RPC
+session. `session_parked` fires once when its last client disconnects;
+`session_resumed` fires once when the first client reattaches to the still-open
+session. Additional attachments do not emit either event. Parking does not abort
+an active turn, close the session, or change its idle-eviction deadline.
+
+```typescript
+pi.on("session_parked", () => {
+  // Stop optional periodic work without discarding session state.
+});
+pi.on("session_resumed", () => {
+  // Restart periodic work; preserve any independent user-requested pause.
+});
+```
+
+Park and resume handlers run in transition order. Terminal file-monitor polling
+and prompt-cache keepalive pause while parked. The cache may expire during this
+pause; reattachment does not guarantee a warm cache. TUI sessions do not emit these
+events. Worker-runtime sessions have no in-host extension runner and currently
+do not emit them either. These extension events are distinct from the RPC wire
+`session_parked` record used when idle eviction or generation handoff releases a
+retained runtime.
+
+#### session_control_wake
+
+Fires when a control endpoint registered with [`pi.session.registerControlEndpoint`](#pisession) may have inbox
+work: `reason` is the edge a held delivery cares about most, `reasons` lists every edge the pass covers, and
+`delivery_ids` is present only for a `wake` command that named some. Edges: `idle`, `submission` (the user's last
+submission reached the runtime), `draft_cleared`, `command` (a `wake` over the endpoint), `inbox` (an entry
+created or deleted in `inboxDir`), `emitted` (an admitted delivery reached the transcript) and `continue` (the
+terminal continued after a stop). The event runs just before the registrant's `drain` on the same pass; one pass
+runs at a time, and edges during a pass merge into one more.
+
+```typescript
+pi.on("session_control_wake", (event) => {
+  if (event.reasons.includes("submission")) retryHeldDeliveries();
 });
 ```
 
@@ -463,7 +602,7 @@ pi.on("session_before_switch", async (event, ctx) => {
 });
 ```
 
-After a successful switch or new-session action, pi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "new" | "resume"` and `previousSessionFile`.
+After a successful switch or new-session action, senpi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "new" | "resume"` and `previousSessionFile`.
 Do cleanup work in `session_shutdown`, then reestablish any in-memory state in `session_start`.
 
 #### session_before_fork
@@ -480,7 +619,7 @@ pi.on("session_before_fork", async (event, ctx) => {
 });
 ```
 
-After a successful fork or clone, pi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "fork"` and `previousSessionFile`.
+After a successful fork or clone, senpi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "fork"` and `previousSessionFile`.
 Do cleanup work in `session_shutdown`, then reestablish any in-memory state in `session_start`.
 
 #### session_before_reload
@@ -500,7 +639,7 @@ pi.on("session_before_reload", () => {
 
 Use this to protect state a reload would destroy — for example running background children owned by the extension runtime. Keep handlers fast and side-effect free; hosts may consult the veto more than once per reload attempt.
 
-#### session_before_compact / session_compact
+#### session_before_compact / session_compact / session_compact_failed
 
 Fired on compaction. See [compaction.md](compaction.md) for details.
 
@@ -526,12 +665,28 @@ pi.on("session_before_compact", async (event, ctx) => {
 });
 
 pi.on("session_compact", async (event, ctx) => {
-  // event.compactionEntry - the saved compaction
+  // Consumers must check event.accepted before reading event.compactionEntry.
+  if (!event.accepted) {
+    // event.rejectionCause - why compaction was rejected
+    return;
+  }
+
+  // event.compactionEntry - the saved compaction (accepted events only)
   // event.fromExtension - whether extension provided it
   // event.reason - "manual" (/compact), "threshold", or "overflow"
   // event.willRetry - whether the aborted turn is retried after compaction (overflow recovery)
 });
+
+pi.on("session_compact_failed", async (event, ctx) => {
+  // event.reason - "manual" (/compact), "threshold", or "overflow"
+  // event.errorMessage - present for non-abort failures
+  // event.aborted - true for cancelled/aborted compactions
+  // event.willRetry - whether the aborted turn would have retried after compaction
+  // event.fromExtension - whether extension-provided compaction content was being used
+});
 ```
+
+This accepted/rejected contract has been emitted since [#248](https://github.com/code-yeongyu/senpi/pull/248): accepted events carry `compactionEntry`, while rejected events carry `accepted: false` and `rejectionCause` with no compaction entry. Built-in handlers are required to guard on `event.accepted`; for example, the `claude-sdk-oauth` session registry now does so before recording a compaction fork.
 
 #### session_before_tree / session_tree
 
@@ -564,19 +719,73 @@ Fired before a started session runtime is torn down. Use this to clean up resour
 pi.on("session_shutdown", async (event, ctx) => {
   // event.reason - "quit" | "reload" | "new" | "resume" | "fork"
   // event.targetSessionFile - destination session for session replacement flows
+  // event.signal - aborted when this handler exceeds the host's shutdown budget
   // Cleanup, save state, etc.
 });
 ```
+
+The host budgets each handler separately: a handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs a warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error, and continues teardown with the remaining handlers. Keep shutdown work short, and pass `event.signal` to anything that can block (subprocess waits, network calls, lock acquisition) so it stops when the host gives up on it. Both thresholds are settings; `0` disables either half. When a quit exits senpi, all handlers also share one total budget, `sessionShutdownQuitBudgetMs` (default 2000): once it runs out senpi stops waiting, logs the extension that overran it with the elapsed time, and exits. An RPC host closing one session keeps running and keeps only the per-handler limits. Write anything that must survive quit synchronously or early in the handler. See [settings.md](settings.md#shutdown-handler-budget).
+
+After the handlers return, senpi closes anything the extension instance's own code created during the session and still holds open: servers (`Bun.serve`, `Bun.listen`, `node:net` and `node:http` servers), `node:net` client sockets, and `setTimeout`/`setInterval` timers. It logs one line per extension naming what it closed, so a missing teardown shows up in the host's stderr. An extension's own code is its package directory when a `package.json` sits beside its entry file, otherwise the entry file alone; senpi's own packages never count, even when installed inside it. Inline factories passed through the SDK (`extensionFactories`) have no file to tell their code from senpi's, so nothing they open is reclaimed. Stopping your resources here yourself is still the right design; the reclaim is the safety net that keeps a long-lived host from accumulating what closed sessions forgot.
+
+This means a resource opened from a session callback (the factory, `session_start`, a tool, a command, an RPC handler) belongs to that session and ends with it. A server or timer meant to be shared across sessions must be owned by the extension's process-level scope instead: create it at module top level, outside the factory and every callback, so no session owns it.
+
+```typescript
+// Process-level: created once when the module loads, shared by every session, never reclaimed.
+const shared = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", () => {
+    // Session-level: closed with this session, by you or by senpi.
+    const perSession = setInterval(() => {}, 60_000);
+    pi.on("session_shutdown", () => clearInterval(perSession));
+  });
+}
+```
+
+#### session_move_export / session_move_import
+
+Moving a session to another device (`release_session` reason `move`, then RPC `move_session`) carries the session file, its extension sidecars and its resident blobs. State an extension keeps elsewhere (task records, logs, finished child sessions) follows only if the extension hands it over:
+
+```typescript
+pi.on("session_move_export", async (event, ctx) => {
+  // event.moveId - the move
+  // event.dir - an empty folder for this release attempt; write under a subfolder named after your extension
+  // event.signal - aborted when the host stops waiting on this handler; stop writing when it fires
+  // Throwing refuses the move: release_session answers release_failed and nothing is sealed.
+  // Each handler runs under the session_shutdown handler budget (sessionShutdownHandlerWarnMs warns, 2 s by
+  // default; sessionShutdownHandlerTimeoutMs caps, 10 s by default); one still running at the cap refuses the
+  // move the same way. A refused attempt's folder is removed, and only the attempt that seals the session is
+  // bundled, so anything a handler writes after its signal aborted never reaches the move.
+});
+
+pi.on("session_move_import", async (event, ctx) => {
+  // Fired right after session_start of an open that finds state a move brought in.
+  // event.dir - this delivery's own copy of what the sender's extensions wrote
+  // event.redelivered - true when this state was delivered before and not marked restored
+  // event.signal - aborted when the host stops waiting on this handler
+  // The state is marked restored and removed once every handler returned without throwing within the
+  // session_shutdown handler budget. Otherwise the failure is reported as an extension error and the next open
+  // delivers it again to every handler (redelivered: true), as does a crash before the hand-over is recorded.
+});
+```
+
+Import handlers must be idempotent: a handler that already applied the state, or part of it, may see the same state again, and restoring it twice must leave the same result as restoring it once. Use `event.redelivered` to skip work cheaply, for example by checking what you already restored for `event.moveId`.
+
+Setting `sessionShutdownHandlerTimeoutMs` to `0` removes the cap for move handlers too: a hung `session_move_export` handler then holds the `move` release (and, on its `interrupt` path, the session's closed admission) until it returns, and a hung `session_move_import` handler holds the session open.
 
 ### Agent Events
 
 #### before_agent_start
 
-Fired after user submits prompt, before agent loop. Can inject a message and/or modify the system prompt.
+Fired before an agent turn starts. Can inject a message and/or modify the system prompt.
 
 ```typescript
 pi.on("before_agent_start", async (event, ctx) => {
-  // event.prompt - user's prompt text
+  // event.prompt - user text for "prompt"; admitted/custom message text for the other triggers
+  // event.trigger - "prompt" for a user prompt, "delivery" for an admitted session-control
+  //   delivery, or "extension" for any other turn an extension triggered with
+  //   sendMessage(..., { triggerTurn: true }) (event.prompt is then that message's text)
   // event.images - attached images (if any)
   // event.systemPrompt - current chained system prompt for this handler
   //   (includes changes from earlier before_agent_start handlers)
@@ -603,13 +812,41 @@ pi.on("before_agent_start", async (event, ctx) => {
 });
 ```
 
-The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
+Messages append after the triggering prompt by default. Set `message.placement` to `"before-prompt"` to persist the message immediately before that prompt instead. This also applies to extension-triggered turns; it does not modify earlier history or the system prompt.
+
+The `systemPromptOptions` field gives extensions access to the same structured data senpi uses to build the system prompt. This lets you inspect what senpi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
+`event.preview` is `true` when senpi composes the next turn's system prompt before any user prompt exists. Prompt-cache prewarm sends that prefix only after the first real composer activity and only when `promptCache.keepAlive.enabled` is `true` (default `false`, so prewarm is off by default). Session start, resume, fork, reload, and extension-injected text never trigger prewarm. `ctx.getPromptCachePrefixRequest()` also returns this prefix to extensions. In a preview `event.prompt` is empty and no turn follows.
+
+A preview only reaches handlers that opt in with `{ previewSafe: true }`:
+
+```typescript
+pi.on(
+  "before_agent_start",
+  async (event) => {
+    if (event.preview === true) {
+      // Compose only: no one-shot state, no work, no session changes.
+      return { systemPrompt: `${event.systemPrompt}\n\nProject conventions...` };
+    }
+    return { systemPrompt: `${event.systemPrompt}\n\nProject conventions...`, message: drainNotices() };
+  },
+  { previewSafe: true },
+);
+```
+
+Opt in only when the handler has no side effects in a preview: it returns the same `systemPrompt` a real turn would get and consumes no one-shot state, starts no work, and changes nothing a later turn observes (the builtin `compaction`, `hooks`, and `prompt-url-widget` handlers return early; `rules` and `openai-image-gen` compose without committing state). A handler registered without the option is never called for a preview. While any registered `before_agent_start` handler lacks it, senpi skips the preview entirely, because a prefix composed without that handler's additions would not match the first turn; the prewarm then appends a `prompt-cache-prewarm` custom entry with `phase: "skipped"` and a `reason` naming the extensions.
+
+Set `systemPromptCache` on the result to say whether your change to `systemPrompt` is the same in every session (`"stable"`) or differs between sessions, turns or commits (`"volatile"`, e.g. a memory block or per-prompt hook output). Builtin extensions default to `"stable"`, every other extension to `"volatile"`. senpi sends the prompt up to the first volatile change as its own cached prefix where the provider supports it (Anthropic: a separate `system` block holding the system cache breakpoint), so a new session in the same working directory reads tools and that prefix from cache even when its tail differs (the base prompt names the cwd, so sessions in different directories do not share it); the rendered prompt text is unchanged (senpi#4447). Extensions that build their own provider request from `ctx.getSystemPrompt()` pass `ctx.getSystemPromptStablePrefix()` as `systemPromptStablePrefix` so that request splits the prompt the same way.
+
+Register with `{ runLast: true }` to run after every `before_agent_start` handler registered without it, whatever order the extensions loaded in; run-last handlers keep their registration order among themselves, on real turns and previews alike. Builtin run-last handlers run after every other extension's run-last handlers: the builtin MCP extension uses this so `<mcp_instructions>` always closes the system prompt, even after your own run-last addition (senpi#4448). Because those instructions are also declared `"volatile"`, every stable addition, including one from an extension that loads after MCP, lands before them inside the cached prefix.
+
+`ctx.getPromptCachePrefixRequest({ signal })` resolves `{ status: "ready", request }` or `{ status: "skipped", reason }`. It is skipped when a handler is not preview-safe, when no model is selected, when `signal` aborts, and when a user prompt starts its turn first: senpi cancels every in-flight preview before a real turn dispatches `before_agent_start`, so the two passes never run the same handlers concurrently.
+
 #### agent_start / agent_end / agent_settled
 
-`agent_start` fires when a low-level agent run begins. `agent_end` fires when that run ends, but Pi may still auto-retry, auto-compact and retry, or continue with queued follow-up messages. Use `agent_settled` for status integrations that need to know Pi will not continue running automatically.
+`agent_start` fires when a low-level agent run begins. `agent_end` fires when that run ends, but senpi may still auto-retry, auto-compact and retry, or continue with queued follow-up messages. Use `agent_settled` for status integrations that need to know senpi will not continue running automatically.
 
 ```typescript
 pi.on("agent_start", async (_event, ctx) => {});
@@ -623,6 +860,49 @@ pi.on("agent_settled", async (_event, ctx) => {
 });
 ```
 
+`agent_before_settle` fires just before `agent_settled` and is the final actionable boundary: like `turn_end`, its handlers can append entries and request one continuation (see [turn_start / turn_end](#turn_start--turn_end)). `agent_settled` stays notification-only. Runs requested from `agent_settled` handlers start after every settled handler has finished, so handlers never see a reentrant `agent_start` during the same notification. Session subscribers (RPC clients, the TUI) receive `agent_settled` before these handlers run, so a slow handler never delays a client's view of the finished turn; anything that tears a session down (TUI shutdown, host idle exit, a release or move) waits for `agent_idle`, which follows the handlers; host idle exit waits at most one idle window, so a handler that never resolves cannot keep the host alive. A person's next prompt stops the host waiting on every settled handler that is still running: they keep running, `session.log` records the held one as `extension_handler_stalled` with `stage: "released"`, nothing is shown as an error, and the prompt's turn starts at once. A slow `agent_settled` handler is logged, never shown as a notice.
+
+For a run that settles without a continuation, the order is: extension `agent_end` handlers, session `agent_end` subscribers, extension `agent_before_settle` handlers, session `agent_settled` subscribers, then extension `agent_settled` handlers. The publish-first rule applies only to `agent_settled`; other hooks retain their existing ordering. Handler failures still reach extension error listeners; failures after a handler was released are recorded as `extension_handler_stalled` with `stage: "late_failure"`.
+
+#### ui_prompt_start / ui_prompt_end
+
+Notification-only lifecycle events for blocking user-facing extension UI prompts. They fire around `ctx.ui.select()`, `ctx.ui.confirm()`, `ctx.ui.input()`, `ctx.ui.editor()`, and `ctx.ui.custom()` so host/status integrations can report "waiting for user" instead of just "running".
+
+Nested or overlapping prompts are coalesced into one outer waiting span. Handlers are invoked best-effort and are not awaited before showing or closing the prompt.
+
+```typescript
+pi.on("ui_prompt_start", async (event, ctx) => {
+  // event.reason === "ui_prompt"
+  // event.kind: "select" | "confirm" | "input" | "editor" | "custom"
+  // event.title: prompt title when available
+});
+
+pi.on("ui_prompt_end", async (event, ctx) => {
+  // Pi is no longer waiting on that UI prompt span.
+});
+```
+
+#### Pending-question bus events
+
+These additive events use `pi.events.on(...)`, not `pi.on(...)`:
+
+| Channel | Payload | Meaning |
+|---------|---------|---------|
+| `ask-user:asked` | `{ ctx, request, variant }` | One fresh runtime registration of a built-in question, in either `waitForAnswer` mode. The hooks builtin dispatches a `Notification` with `kind: "ask-user-asked"`, the request ID and question headers. |
+| `ask-user:settled` | `{ ctx, request, response, variant }` | The existing answer notification, still skipped for `cancelled`. `response.resolvedBy` identifies the answering surface when present. |
+| `ask-user:closed` | `{ requestId, status, resolvedBy? }` | Exactly one terminal outcome per question, including cancellation, timeout, orphaned restart recovery and unavailable UI. |
+| `herdr:blocked` | `{ active: true, label, id }` or `{ active: false, id }` | A built-in question or host select/confirm/input/editor dialog opens or settles. Question labels are `<header> — <question>`; dialog labels are their titles. |
+
+Track blocked IDs as a set, not a boolean: requests can overlap. Each question registration emits one active/inactive pair, including cancellation, timeout, abort and orphaned restart recovery. A dangling disk call recovered after restart gets one new runtime registration; its persisted recovery marker prevents registering it again. Reconnect replay and UI hydration reuse an existing registration and do not repeat arrival events or the terminal bell. The builtin owns question events, so UI integrations must not emit a second pair when resolving the question.
+
+Question registration also retains an `ask-user:question` custom session entry containing `{ requestId, headers }`. This is display-only metadata, excluded from model context, for labeling compact answer chips during replay; it is not another bus event. The model-facing `[Answer to question ...]` message keeps the frame and the answer's structure in its first text block; each of the user's own words (a comment, a typed answer) follows after its own label block (`[The user's comment for question <id>]`). A blocking answer keeps its words in the tool result's `details.userWords` (`{ label, text }[]`), and the session's message conversion sends them as a user message after that batch's tool results instead of inside the result. A tool of your own can do the same by setting `details.userWords`.
+
+`resolvedBy` is `local_ui` for a terminal answer, `rpc_connection` for an RPC client answer, and
+`control_endpoint` for an answer through the terminal control endpoint. It is absent for a question
+that ends without an answer. Blocking tool results carry it in their details too. Reload preserves
+pending questions and does not emit `closed` merely for detaching the old UI; an outcome that ends
+while detached is published once on the next live binding.
+
 #### turn_start / turn_end
 
 Fired for each turn (one LLM response + tool calls).
@@ -633,9 +913,11 @@ pi.on("turn_start", async (event, ctx) => {
 });
 
 pi.on("turn_end", async (event, ctx) => {
-  // event.turnIndex, event.message, event.toolResults
+  // event.turnIndex, event.message, event.toolResults, event.entries
 });
 ```
+
+`turn_end` and `agent_before_settle` are actionable boundaries. Their handlers can chain proposed `custom`, `custom_message`, `context_edit`, or `compaction` entries and return `continue: true` for one next model request, for example `return { entries: [...event.entries, draft], continue: true }`. Entries persist in order, and the continuation does not change steering or follow-up scheduling. Guard continuation conditions, because an unconditional continuation loops. The exported `TurnEndEvent` and `AgentBeforeSettleEvent` declarations carry the full validation and ordering contract.
 
 #### message_start / message_update / message_end
 
@@ -701,6 +983,10 @@ pi.on("tool_execution_end", async (event, ctx) => {
 
 Fired before each LLM call. Modify messages non-destructively. See [Session Format](session-format.md) for message types.
 
+`event.source` is `"agent"` for the live agent request and `"projection"` for `prepareProviderRequest` calls, including summarizer inputs. Projections must not advance state belonging to the live request, even when their messages match the branch. The session journal can lag a live request, so transcript equality is not a reliable substitute for this marker.
+
+`ctx.prepareProviderRequest(messages, excludeExtensionPath?, options?)` returns the projected context and its payload transform. In this release the transform excludes server-search tools by default, while retaining client function tools such as `web_search`. Call `ctx.prepareProviderRequest(messages, undefined, { allowServerSearch: true })` when a request must mirror the main turn's native tools and include fields, as keepalive does. Cache-friendly compaction retains the original main-turn payload hook separately; standalone summaries and session titles exclude server search.
+
 ```typescript
 pi.on("context", async (event, ctx) => {
   // event.messages - deep copy, safe to modify
@@ -708,6 +994,36 @@ pi.on("context", async (event, ctx) => {
   return { messages: filtered };
 });
 ```
+
+`context` handlers see conversation messages without the prompt and tool system messages; senpi restores that state after they run, so filtering or slicing messages no longer drops the system prompt or tool declarations.
+
+By default `event.messages` is a deep copy of the live transcript, so in-place edits never reach the session. A handler that never mutates message objects in place can declare it and skip that copy:
+
+```typescript
+pi.on("context", (event, ctx) => {
+  // Reads only; returns new lists/objects instead of editing in place
+  return { messages: event.messages.filter(m => keep(m)) };
+}, { mutatesMessages: false });
+```
+
+`mutatesMessages: false` is an opt-in performance declaration: the handler may return a new list and new message objects, but must never assign to a property of a message it received, or of anything nested in one. When every `context` and `context_with_system` handler about to run declares it, senpi shares the live transcript instead of cloning the whole context each turn; while any handler has not declared it, the deep copy stays for everyone.
+
+#### context_with_system
+
+Runs after `context` handlers on the full transcript, including system messages, and sends the result verbatim. Use it only when a request-local transformation must own the complete transcript, and keep a system message at index zero.
+
+```typescript
+pi.on("context_with_system", async (event, ctx) => {
+  // event.messages - full transcript, system messages included
+  return { messages: event.messages };
+});
+```
+
+The same `{ mutatesMessages: false }` registration option is honored here; one undeclared handler of either hook keeps the per-turn deep copy for the whole pipeline.
+
+#### provider_stream_event
+
+Fires for each parsed provider stream event before senpi normalizes it. The event identifies the provider, API, and model; `event.data` is the earliest structured value available, not necessarily the original HTTP bytes or SSE frame. Treat it as read-only, because mutation can affect normalization. The event is notification-only and is not persisted. Handlers are awaited in stream order, so slow handlers delay stream consumption; handler errors are reported without changing the provider response. See [`debug-provider.ts`](../examples/extensions/debug-provider.ts) for an opt-in viewer.
 
 #### before_provider_headers
 
@@ -720,7 +1036,7 @@ pi.on("before_provider_headers", (event, ctx) => {
   // Add or override — e.g. a session id for gateway tracing/attribution
   event.headers["x-session-id"] = ctx.sessionManager.getSessionId();
 
-  // Drop a tracking header pi adds for this call
+  // Drop a tracking header senpi adds for this call
   event.headers["X-OpenRouter-Title"] = null;
 });
 ```
@@ -731,7 +1047,7 @@ Runs once per provider request; retries reuse the same headers rather than re-fi
 
 Fired after the provider-specific payload is built, right before the request is sent. Handlers run in extension load order. Returning `undefined` keeps the payload unchanged. Returning any other value replaces the payload for later handlers and for the actual request.
 
-This hook can rewrite provider-level system instructions or remove them entirely. Those payload-level changes are not reflected by `ctx.getSystemPrompt()`, which reports Pi's system prompt string rather than the final serialized provider payload.
+This hook can rewrite provider-level system instructions or remove them entirely. Those payload-level changes are not reflected by `ctx.getSystemPrompt()`, which reports senpi's system prompt string rather than the final serialized provider payload.
 
 ```typescript
 pi.on("before_provider_request", (event, ctx) => {
@@ -798,13 +1114,39 @@ pi.on("thinking_level_select", async (event, ctx) => {
 
 Use this to update extension UI when `pi.setThinkingLevel()`, model changes, or built-in thinking-level controls change the active thinking level.
 
+#### tool_activated
+
+Fired after the active tool set gains tools. This covers `pi.setActiveTools()`, a `tool_search` promotion, and a by-name call that activates a deferred tool. The event is notification-only: handler return values are ignored.
+
+```typescript
+pi.on("tool_activated", async (event, ctx) => {
+  // event.toolNames - only the tools that just became active
+  if (event.toolNames.includes("my_tool")) await warmUp(ctx);
+});
+```
+
+#### provider_login_start
+
+Fired when the OAuth login of a provider registered with `pi.registerProvider(name, { oauth })` starts, before the provider's own `oauth.login` runs. It fires for every login entry point: `/login`, RPC `login_start`, and account commands. Every handler is awaited in order, so a host can prepare what the login needs first, for example download and pin the Claude Code binary and set `CLAUDE_CODE_EXECUTABLE` before the `anthropic-subscription` login resolves it. Return values are ignored. A handler that throws is reported as an extension error and the login still runs. There is no handler time budget: the login's own cancel and idle timeout bound it through `event.signal`.
+
+```typescript
+pi.on("provider_login_start", async (event) => {
+  // event.provider - the provider id being logged in
+  // event.signal - aborts when the login is cancelled
+  // event.progress(message) - shows a progress line in the login UI
+  if (event.provider !== "anthropic-subscription") return;
+  event.progress("Downloading Claude Code");
+  process.env.CLAUDE_CODE_EXECUTABLE = await downloadPinnedClaude(event.signal);
+});
+```
+
 ### Tool Events
 
 #### tool_call
 
 Fired after `tool_execution_start`, before the tool executes. **Can block.** Use `isToolCallEventType` to narrow and get typed inputs.
 
-Before `tool_call` runs, pi waits for previously emitted Agent events to finish draining through `AgentSession`. This means `ctx.sessionManager` is up to date through the current assistant tool-calling message.
+Before `tool_call` runs, senpi waits for previously emitted Agent events to finish draining through `AgentSession`. This means `ctx.sessionManager` is up to date through the current assistant tool-calling message.
 
 In the default parallel tool execution mode, sibling tool calls from the same assistant message are preflighted sequentially, then executed concurrently. `tool_call` is not guaranteed to see sibling tool results from that same assistant message in `ctx.sessionManager`.
 
@@ -814,7 +1156,8 @@ Behavior guarantees:
 - Mutations to `event.input` affect the actual tool execution
 - Later `tool_call` handlers see mutations made by earlier handlers
 - No re-validation is performed after your mutation
-- Return values from `tool_call` only control blocking via `{ block: true, reason?: string }`
+- Return values from `tool_call` control blocking via `{ block: true, reason?: string, terminate?: boolean }`
+- `terminate` only applies to a blocked call; the agent stops early only when every finalized result in the batch is terminating
 
 ```typescript
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
@@ -830,7 +1173,7 @@ pi.on("tool_call", async (event, ctx) => {
     event.input.command = `source ~/.profile\n${event.input.command}`;
 
     if (event.input.command.includes("rm -rf")) {
-      return { block: true, reason: "Dangerous command" };
+      return { block: true, reason: "Dangerous command", terminate: true };
     }
   }
 
@@ -902,7 +1245,7 @@ pi.on("tool_result", async (event, ctx) => {
 
 #### user_bash
 
-Fired when user executes `!` or `!!` commands. **Can intercept.**
+Fired when user executes `!` or `!!` commands. **Can intercept.** A handler that returns `undefined` passes the command to the next handler, and then to local execution if no handler takes it. Returning `operations` or `result` stops propagation. `user_bash` fails closed: a handler error or an invalid defined result blocks the command instead of falling through to later handlers or local execution.
 
 ```typescript
 import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
@@ -915,7 +1258,7 @@ pi.on("user_bash", (event, ctx) => {
   // Option 1: Provide custom operations (e.g., SSH)
   return { operations: remoteBashOps };
 
-  // Option 2: Wrap pi's built-in local bash backend
+  // Option 2: Wrap senpi's built-in local bash backend
   const local = createLocalBashOperations();
   return {
     operations: {
@@ -948,6 +1291,7 @@ pi.on("input", async (event, ctx) => {
   // event.text - raw input (before skill/template expansion)
   // event.images - attached images, if any
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
+  // event.attribution - "user" (a person sent it) or "agent" (an extension, tool, subagent, another agent's RPC client, or the session)
   // event.streamingBehavior - "steer" | "followUp" | undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
@@ -974,10 +1318,23 @@ pi.on("input", async (event, ctx) => {
 });
 ```
 
+`source` names the channel the input arrived on; `attribution` names who sent it. Typed input is `"user"`. An RPC client's `prompt`, `steer` and `follow_up` are `"user"` only when that connection declared the `interactive_user` role with `set_client_info`; from any other RPC client (for example a parent agent driving a child session) they are `"agent"`. Input an extension sends with `sendUserMessage` is `"agent"`, except a person's answer to a question that the extension delivers through it, which stays `"user"` with `source: "extension"`. React to `attribution === "user"` when only the person's own messages should count, for example to lift a stop the user set.
+
 **Results:**
 - `continue` - pass through unchanged (default if handler returns nothing)
 - `transform` - modify text/images, then continue to expansion
 - `handled` - skip agent entirely (first handler to return this wins)
+
+#### input_disposition
+
+Fired once the session has decided what happens to an input an `input` handler saw. `event.inputId` matches that `input` event; `event.disposition` is `"handled"` (a handler or command consumed it), `"rejected"`, `"started"` (it began a turn) or `"queued"` (it waits as a steer or follow-up). An input queued while a turn runs gets `"queued"` when it is queued and then `"started"` when its message is delivered into a turn, always in that order.
+
+```typescript
+pi.on("input_disposition", async (event, ctx) => {
+  // event.inputId - the id of the matching input event
+  // event.disposition - "handled" | "rejected" | "started" | "queued"
+});
+```
 
 Transforms chain across handlers. See [input-transform.ts](../examples/extensions/input-transform.ts) and [input-transform-streaming.ts](../examples/extensions/input-transform-streaming.ts) for `streamingBehavior`-aware routing.
 
@@ -1015,6 +1372,14 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
+### ctx.loadedExtensionPaths
+
+Optional read-only list of resolved paths for every successfully loaded extension, including event-only extensions. Builtin and inline factories retain synthetic identifiers such as `<builtin:herdr>`. The runner resolves file paths against the session working directory and provides this list to event, command, and tool contexts; older hosts and hand-built contexts may omit it.
+
+The builtin `herdr` reporter reads this list at session start. Inside a herdr TUI pane it reports pending questions and host dialogs as `blocked`, active turns/subagents/monitors as `working`, and otherwise `idle`, using source `custom:senpi`. It reports session titles and releases the pane only on quit, not reload or session navigation.
+
+To avoid competing lifecycle reporters, it defers to a loaded user-authored `herdr-*.ts`, `.js`, or `.mjs` file. A managed file whose first 400 bytes contain `HERDR_INTEGRATION_ID=` does not trigger deferral: herdr's managed `herdr-agent-state.ts` can remain installed. Remove your own reporter from the loaded extensions if you want the builtin to take over; no user files are changed automatically.
+
 ### ctx.isProjectTrusted()
 
 Returns whether project-local trust is active for the current session context. This includes temporary trust decisions and CLI trust overrides, not just saved decisions in the global trust store.
@@ -1029,16 +1394,47 @@ For `tool_call`, this state is synchronized through the current assistant messag
 
 ```typescript
 ctx.sessionManager.getEntries()             // All entries
-ctx.sessionManager.getBranch()              // Current branch
+ctx.sessionManager.getBranch()              // Current branch (from the latest compaction window once the session compacted)
+ctx.sessionManager.getFullBranch()          // Current branch over the whole history, read from the session file
+ctx.sessionManager.reduceHistory(reducer)   // Fold every entry (like getEntries()) without holding the history; see below
 ctx.sessionManager.buildContextEntries()    // Active branch entries with compaction applied
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
+
+A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only, and do not rely on `parentId`: an entry kept across a compaction can carry a rewritten link, as in `getEntries()`. A reducer that throws starts over on the next call.
+
+```typescript
+const latestNote = { initial: () => undefined, add: (latest, entry) => (entry.type === "custom" && entry.customType === "note" ? entry : latest) };
+const note = ctx.sessionManager.reduceHistory(latestNote);
+```
+
+### ctx.goalStoreFile
+
+Optional read-only getter for the absolute path to the current session's authoritative goal-store file. The host resolves it from the session manager and `ctx.cwd`; reading it performs no file creation. Persisted sessions honor session-directory overrides, while in-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Do not derive it from `getSessionFile()`.
+
+Shell tools and eval kernels expose this value as `PI_GOAL_STORE_FILE` and `ctx.cwd` as `PI_SESSION_CWD`. Hand-built contexts and older hosts may omit the getter, in which case `PI_GOAL_STORE_FILE` is unset.
+
+### ctx.onUserActivity()
+
+Optional subscription-only hook for host-authenticated activity. `ctx.onUserActivity(listener)` calls a synchronous listener with `"draft"` for actual terminal composer edits or `"prompt"` for user-originated prompt, steer, or follow-up admission, including RPC. It returns an unsubscribe function and is also removed when the extension generation retires. The host owns the emitter; `pi.events.emit("user_activity", ...)` cannot invoke this hook. Extension `pasteToEditor`, programmatic draft restoration, and lifecycle events do not publish activity.
+
+Cache prewarm consumes the first activity per session generation. It is opt-in via `promptCache.keepAlive.enabled` (default `false`): a first draft edit may prewarm, while prompt admission uses the real request instead of issuing an extra warm call. This one-shot policy does not gate the existing idle keep-alive loop after completed turns.
+
+### ctx.afterSessionStart()
+
+Optional hook for work a `session_start` handler must not publish until startup is prepared. `ctx.afterSessionStart(publish)` runs `publish` synchronously once every `session_start` handler of the current dispatch has returned, in the order calls were made (the same point where turns requested during `session_start` start). Outside a `session_start` dispatch it runs `publish` immediately. If the session is switched, replaced, reloaded or disposed before the dispatch ends, `publish` does not run, because its `ctx` is stale. `publish` may return a promise; a rejection is reported as an extension error instead of becoming an unhandled rejection. It never waits for anything `publish` starts: use it to publish a question, not to await its answer. The built-in ask-user extension uses it for questions recovered on resume or reload. Hand-built contexts and older hosts may omit it; call `publish` directly then.
 
 ### ctx.modelRegistry / ctx.model / ctx.thinkingLevel / ctx.scopedModels
 
 Access to models, providers, and resolved authentication. `ctx.modelRegistry.getProvider(id)` returns the effective pi-ai provider, while `getProviderAuth(id)` resolves its current API key, headers, base URL, and provider-scoped environment without requiring a loaded model. `ctx.model` is the active model, and `ctx.thinkingLevel` is its current effective thinking level.
 
 `ctx.scopedModels` is the read-only list of models scoped to the current session — the same set the `/scoped-models` command shows. It is resolved at session start from the `--models` CLI flag and the `enabledModels` setting (matched against the available catalogue with minimatch on `provider/modelId` or a bare `modelId`). It is empty when no scoping is configured, meaning every available model is usable. Each entry is `{ model, thinkingLevel? }`, where `thinkingLevel` is set only when a pattern pinned it (e.g. `anthropic/*:high`). Use it to populate a model picker that mirrors the built-in one instead of enumerating the whole catalogue via `ctx.modelRegistry.getAvailable()`.
+
+#### Streaming model calls
+
+Use `ctx.modelRegistry.streamSimple(model, context, options)` for provider-neutral options such as `reasoning`, or `stream()` for API-specific options. Both use configured providers and resolve authentication, including for providers registered with `pi.registerProvider()`. Use these instead of `pi-ai/compat` streaming functions, which cannot see extension provider registrations.
+
+Both return an `AssistantMessageEventStream`. Iterate it for response events and await `.result()` for the final message. Setup failures produce error events and error results.
 
 ### ctx.signal
 
@@ -1050,7 +1446,7 @@ Use this for abort-aware nested work started by extension handlers, for example:
 - file or process helpers that accept `AbortSignal`
 
 `ctx.signal` is typically defined during active turn events such as `tool_call`, `tool_result`, `message_update`, and `turn_end`.
-It is usually `undefined` in idle or non-turn contexts such as session events, extension commands, and shortcuts fired while pi is idle.
+It is usually `undefined` in idle or non-turn contexts such as session events, extension commands, and shortcuts fired while senpi is idle.
 
 ```typescript
 pi.on("tool_result", async (event, ctx) => {
@@ -1067,11 +1463,11 @@ pi.on("tool_result", async (event, ctx) => {
 
 ### ctx.isIdle() / ctx.abort() / ctx.hasPendingMessages()
 
-Control flow helpers. `ctx.isIdle()` is false while Pi is processing an agent run, automatic retry, auto-compaction retry, or queued continuation.
+Control flow helpers. `ctx.isIdle()` is false while senpi is processing an agent run, automatic retry, auto-compaction retry, or queued continuation.
 
 ### ctx.shutdown()
 
-Request a graceful shutdown of pi.
+Request a graceful shutdown of senpi.
 
 - **Interactive mode:** Deferred until the agent becomes idle (after processing all queued steering and follow-up messages).
 - **RPC mode:** Deferred until the next idle state (after completing the current command response, when waiting for the next command).
@@ -1098,6 +1494,10 @@ if (usage && usage.tokens > 100_000) {
 }
 ```
 
+### ctx.getCompactionModel()
+
+Optional on hosts that expose session-owned summarization routing. While the session account is usable, returns the configured `compaction.model` when it resolves to a model whose provider has credentials and whose account can serve, and the current session model otherwise (an override that cannot serve is logged as `compaction_model_fallback`, once per cause until the cause changes or the override is used; before credential availability is known, the override is kept and builtin summarization falls back to the session model if it has no credentials at request time). For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
+
 ### ctx.compact()
 
 Trigger compaction without awaiting completion. Use `onComplete` and `onError` for follow-up actions.
@@ -1116,7 +1516,7 @@ ctx.compact({
 
 ### ctx.getSystemPrompt()
 
-Returns Pi's current system prompt string.
+Returns senpi's current system prompt string.
 
 - During `before_agent_start`, this reflects chained system-prompt changes made so far for the current turn.
 - It does not include later `context` message mutations.
@@ -1136,7 +1536,7 @@ Command handlers receive `ExtensionCommandContext`, which extends `ExtensionCont
 
 ### ctx.getSystemPromptOptions()
 
-Returns the base inputs Pi currently uses to build the system prompt.
+Returns the base inputs senpi currently uses to build the system prompt.
 
 ```typescript
 const options = ctx.getSystemPromptOptions();
@@ -1221,7 +1621,7 @@ Options:
 
 ### ctx.navigateTree(targetId, options?)
 
-Navigate to a different point in the session tree:
+Navigate to a different point in the session tree. Rejects with `SessionStreamingError` while an agent response is streaming, even with `summarize: false`; that leaves the active branch unchanged and rejects the promise rather than returning `{ cancelled: true }`. Wait for the response to finish (for example, with `await ctx.waitForIdle()` in a command handler) and retry:
 
 ```typescript
 const result = await ctx.navigateTree("entry-id-456", {
@@ -1237,6 +1637,53 @@ Options:
 - `customInstructions`: Custom instructions for the summarizer
 - `replaceInstructions`: If true, `customInstructions` replaces the default prompt instead of being appended
 - `label`: Label to attach to the branch summary entry (or target entry if not summarizing)
+- `expectedLeafId`: The leaf observed when choosing the target. A moved leaf rejects with `AssistantEditError` (`reason: "stale-leaf"`, `code: "stale_leaf"`) before navigation.
+
+The positional form remains supported. You can also put the selected message's `entryId` and all options in the first argument:
+
+```typescript
+await ctx.navigateTree({
+  entryId: selectedEntry.id,
+  expectedLeafId: observedLeafId,
+  summarize: false,
+});
+```
+
+Both forms use the same tree-selection rule: user/custom entries select their parent; other entries select themselves. A root prompt selects an empty conversation. Address the selection by `entry.id`, never by `leafId`: extension metadata can advance the leaf beyond the message. Keep the observed leaf as the concurrency token rather than re-reading it when submitting a delayed action.
+
+### ctx.editAssistantMessage(entryId, text, options?)
+
+Replace an assistant response with an edited copy. The session leaf moves to the entry's parent and the copy (text only - tool calls and thinking blocks are dropped) is appended as the new leaf, so the original stays on an abandoned branch. Fires `session_before_tree` (cancellable) and `session_tree`.
+
+```typescript
+const result = await ctx.editAssistantMessage("entry-id-456", "The corrected answer.", {
+  expectedLeafId: ctx.sessionManager.getLeafId() ?? undefined,
+  summarize: false,
+});
+// result: { cancelled: boolean; unchanged?: boolean; entryId?: string }
+```
+
+Options:
+- `expectedLeafId`: the leaf you last observed; the edit rejects with an `AssistantEditError` (`reason: "stale-leaf"`) when the session moved on, before anything is written
+- `summarize` / `customInstructions`: summarize the abandoned branch like `ctx.navigateTree`
+
+Rejections are typed: `SessionStreamingError` (`code: "streaming"`) while a response streams, and `AssistantEditError` with `reason` `not-found` / `not-assistant` / `empty` / `stale-leaf` (`code` gives the wire spelling). `unchanged: true` means the text matched the original and nothing was appended.
+
+### ctx.editUserMessage(entryId, text, options?)
+
+Replace a user prompt with an edited copy, preserving its attachments. The copy is appended under the original prompt's parent; the original prompt and its replies remain on an abandoned branch. No agent turn starts. Like assistant edits, this fires `session_before_tree` (cancellable) and `session_tree` and is available in RPC, print, and interactive command contexts, including host-backed interactive sessions.
+
+```typescript
+const result = await ctx.editUserMessage(selectedEntry.id, "The corrected prompt.", {
+  expectedLeafId: observedLeafId,
+  summarize: false,
+});
+// result: { cancelled: boolean; unchanged?: boolean; entryId?: string }
+```
+
+The option object is identical to `ctx.editAssistantMessage`: `summarize`, `customInstructions`, and `expectedLeafId`. The token is forwarded unchanged. Rejections are `UserEditError` with `reason` `not-found` / `not-user` / `empty` / `stale-leaf` (`code`: `not_found` / `not_user` / `empty` / `stale_leaf`), or `SessionStreamingError` (`code: "streaming"`). `unchanged: true` means nothing was appended; `cancelled: true` means the edit was cancelled.
+
+On an edit, `result.entryId` identifies the new message, not necessarily the current leaf: a `session_tree` extension can append metadata after the message. Use the message ID for later edits/selections and the separately observed leaf only for concurrency checks.
 
 ### ctx.switchSession(sessionPath, options?)
 
@@ -1382,9 +1829,119 @@ export default function (pi: ExtensionAPI) {
 
 ## ExtensionAPI Methods
 
+### pi.sessionKind / pi.sessionContext
+
+Read-only facts about the session this extension instance was loaded for, available at factory time so an extension
+can decide what to register before it registers anything:
+
+| Property | Type | Value |
+|---|---|---|
+| `pi.cwd` | `string` | Absolute working directory of this session |
+| `pi.sessionKind` | `"interactive" \| "worker"` | Visibility class the opener chose (`open_session.kind`); `interactive` for classic launches and any open that omits it |
+| `pi.sessionContext` | `Readonly<Record<string, string>>` | Opaque labels the opener attached (`open_session.context`), or `{}` |
+
+```typescript
+export default function ({ pi }) {
+  // One extension set serves every session of a shared daemon; gate per session, not per host.
+  if (pi.sessionKind === "worker" && pi.sessionContext.role === "child") {
+    pi.registerTool(reportToParentTool);
+    return;
+  }
+  pi.registerCommand("review", reviewCommand);
+}
+```
+
+The engine never interprets `sessionContext`: it takes no part in authentication, model selection, resource loading
+or any other host decision, and it is republished only on `list_sessions { include_workers: true }`. Its caps are
+enforced at the RPC boundary (at most 32 keys matching `^[a-z][a-z0-9_]*$`, each value at most 16 KiB, at most 32 KiB
+of JSON in total), so an extension receives an already-validated map. Both values are frozen for the session's life;
+there is no setter. See [Session kind and context](rpc.md#session-kind-and-context-open_session) for the wire side.
+
+### pi.session
+
+The session's control surface: how a message another local session sent is admitted into this one, and how the
+session is exposed to those senders. Nothing here keeps a queue of its own; an admitted delivery waits in the
+runtime's steering or follow-up queue like the user's queued input. The protocol side is
+[Interactive sessions expose a control endpoint](rpc.md#interactive-sessions-expose-a-control-endpoint).
+
+| Method | Returns | Behaviour |
+|---|---|---|
+| `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. An endpoint lives for one extension generation: a reload disposes the endpoints the retiring generation registered (also one whose registration finishes after the reload began, which answers `failed`), so register again from `session_start` with reason `reload`. Repeated failures of `drain` show one notice until a pass succeeds. |
+| `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
+| `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
+| `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
+| `relocationOffered()` | `boolean` | Whether the session's host offers continuing it on another computer right now. The builtin relocation tools are active only while it is `true`. |
+| `relocationTargets(signal?)` | `Promise<RelocationTargetsResult>` | The user's other computers the session's host offers to continue on (`listed`), or `unavailable` when no host offers relocation. |
+| `requestRelocation({ target, reason }, signal?)` | `Promise<RelocationRequestResult>` | Asks the host to continue this session on `target` when the current turn ends (`scheduled`); never interrupts the turn. `unavailable` or `refused` leaves the session working here. See `docs/rpc.md` "Continuing a session on another computer". |
+
+```typescript
+export default function ({ pi }) {
+  pi.on("session_start", async () => {
+    await pi.session.registerControlEndpoint({
+      inboxDir: inboxPath,
+      drain: async () => ({
+        admitted: readInbox().map((d) => ({
+          delivery_id: d.id,
+          kind: pi.session.admitExternalMessage({ delivery_id: d.id, text: d.text, deliverAs: "followUp" }).kind,
+        })),
+      }),
+    });
+  });
+}
+```
+
 ### pi.on(event, handler)
 
-Subscribe to events. See [Events](#events) for event types and return values.
+Subscribe to events. See [Events](#events) for event types and return values. `pi.on()` returns a function that unsubscribes that registration. Handlers added or removed during a dispatch apply to later dispatches, not the one in progress.
+
+```typescript
+const off = pi.on("turn_end", () => {});
+off();
+```
+
+### pi.rpc.emit(name, data)
+
+Publish an extension-owned event to RPC clients:
+
+```typescript
+pi.rpc.emit("acme.job.updated", {
+  jobId: "job-42",
+  status: "running",
+});
+```
+
+`name` must be non-empty and `data` must be JSON-serializable. Delivery is additive and
+fire-and-forget: RPC clients receive the event only when they advertise the `extension_events`
+capability. In multi-session mode the host adds the owning routing `sessionId` to the wire record.
+Unflagged clients and non-RPC modes do not receive a transport record.
+
+Use this for extension-to-client state such as progress snapshots. It is separate from
+extension-local event-bus communication and must not carry secrets, prompts, transcripts, or other
+data the client did not explicitly opt into receiving.
+
+### pi.rpc.handle(name, handler)
+
+Register one structured request handler that an RPC client can invoke without turning the request
+into a model prompt:
+
+```typescript
+pi.rpc.handle("acme.job.cancel", async (data) => {
+  const input = CancelJobInput.parse(data);
+  await cancelJob(input.jobId);
+  return { cancelled: true };
+});
+```
+
+`name` must be non-empty and unique across the loaded extension generation. The handler receives
+opaque `unknown` data and may return any JSON-serializable value synchronously or asynchronously.
+Extensions own validation for their request names; Senpi owns request correlation, multi-session
+routing, stale-generation rejection, and bounded unknown/duplicate-name errors.
+
+Use this for trusted RPC-client controls over extension-owned state. Do not use slash-command
+prompts as a control transport: `pi.rpc.handle` executes directly without invoking the model. An
+older Senpi host that does not expose `handle` can be supported by feature-detecting the method
+before registration.
 
 ### pi.registerTool(definition)
 
@@ -1397,6 +1954,21 @@ Use `pi.setActiveTools()` to enable or disable tools (including dynamically adde
 Use `promptSnippet` to opt a custom tool into a one-line entry in `Available tools`, and `promptGuidelines` to append tool-specific bullets to the default `Guidelines` section when the tool is active.
 
 **Important:** `promptGuidelines` bullets are appended flat to the `Guidelines` section with no tool name prefix. Each guideline must name the tool it refers to — avoid "Use this tool when..." because the LLM cannot tell which tool "this" means. Write "Use my_tool when..." instead.
+
+Use `kernelPrelude` to give the `eval` kernels globals that call your tool while it is active. It takes `javascript` and `python` statements, one `documentation` line for the eval prompt's helper list, and the `exports` those statements define. Each snippet runs before a cell only when one of its exports is missing, and a deactivated tool's exports are removed before the next cell. Exports must not shadow built-in kernel helpers such as `display` or `tool`.
+
+Use `permissionParser` to classify your tool's calls for the permission system. It receives the call input and the working directory and returns requests (`permission`, `patterns`, `always`), so a rule like `my_tool:read=allow` can grant one tier while another stays gated. Without it, every call is one request named after the tool. A built-in parser for the same tool name always wins.
+
+```typescript
+pi.registerTool({
+  name: "my_tool",
+  // ...
+  permissionParser: (input) => {
+    const tier = input.action === "add" ? "exec" : "read";
+    return [{ permission: "my_tool", patterns: [tier], always: [tier] }];
+  },
+});
+```
 
 See [dynamic-tools.ts](../examples/extensions/dynamic-tools.ts) for a full example.
 
@@ -1515,9 +2087,13 @@ automatically and must call their own policy if they access the filesystem.
 
 ### pi.registerMcpServer(name, config)
 
-Register an MCP server that the agent can use. This is a **factory-time only**
-API: it must be called inside the extension factory before the factory returns.
-Calling it after startup throws because registration is tied to extension load.
+Register an MCP server for the current session. Servers registered while the
+extension factory runs connect on `session_start`, together with the `mcp.json`
+servers. Servers registered later reach an extension that handles
+`mcp_servers_change` right away (see below); when no extension handles it, the
+built-in MCP support picks them up at its next attach (`session_start` after a
+reload or session switch), and no error is reported meanwhile. Registrations are
+not saved: register again on every load.
 
 `config` accepts the same fields as `mcpServers.<name>` in `mcp.json` (see the
 [MCP server fields reference](mcp.md#server-fields-mcpserversname)): `type`,
@@ -1549,8 +2125,9 @@ Same-name precedence:
   `project`) wins over an extension-declared server, including `enabled: false`.
 - An extension-declared server replaces an untrusted placeholder from an
   untrusted project config and records a diagnostic.
-- Across extensions, the first loaded extension wins; later collisions log a
-  warning naming both extension paths.
+- Across extensions, the extension earliest in the session's extension order
+  wins (see `pi.getMcpServers()` below); later collisions log a warning naming
+  both extension paths.
 
 A stdio declaration that omits `cwd` defaults to the extension's registration
 cwd (the cwd passed to the factory), not the ambient `process.cwd()`.
@@ -1558,6 +2135,53 @@ cwd (the cwd passed to the factory), not the ambient `process.cwd()`.
 Extension factories re-run on `/reload`, so declarations are refreshed then.
 In-process senpi-task children load no extensions, so they see no
 extension-declared MCP servers.
+
+### pi.unregisterMcpServer(name)
+
+Remove an MCP server this extension registered. Names registered by another
+extension are left alone.
+
+### pi.getMcpServers()
+
+Every MCP server registered by the extensions of the current session, in the
+session's extension order, as `{ name, config, extensionPath }` copies
+(`RegisteredMcpServer`). That order puts inline extension factories and the
+default built-in extensions before file extensions, whatever order they loaded
+in; a built-in loaded by path with `-e builtin:<id>` is ordered with the file
+paths instead. Before the session binds its extensions (while extension
+factories run), the list holds only the extensions loaded so far, in load order.
+When a session is created with a pass that resolves project trust (at startup,
+or on a switch into a folder whose trust is not cached yet), a trusted project's
+own extensions load after the factories, so a factory reading the list then does
+not see their servers; without that pass, every file extension loads before the
+factories. Extensions the resource loader
+left out of the session (replaced, disabled, filtered) contribute nothing, and
+on a name clash the registration from the extension earliest in the session's
+extension order wins. For extensions that connect MCP servers
+themselves, such as `pi-mcp-adapter`: read it on `session_start` and handle
+`mcp_servers_change` for later changes.
+
+### mcp_servers_change
+
+Fired after the extensions are bound whenever an extension registers or
+unregisters an MCP server, with `servers` listing every registered server after
+the change (same shape as `pi.getMcpServers()`). Registrations made while the
+extensions load do not fire it; read them with `pi.getMcpServers()` on
+`session_start`.
+
+Handling this event marks an extension as the one that connects registered
+servers: the built-in MCP support then does not connect them (one connection per
+server) while it keeps connecting the `mcp.json` servers. When no loaded
+extension handles the event, the built-in MCP support connects registered
+servers as before. Subscribe only if your extension connects them: the built-in
+support reads the rule when it attaches on `session_start`, so a handler that
+only observes leaves registered servers unconnected, and one subscribed after
+that attach connects them next to the built-in support.
+
+```typescript
+pi.on("session_start", () => connect(pi.getMcpServers()));
+pi.on("mcp_servers_change", (event) => connect(event.servers));
+```
 
 ### pi.sendMessage(message, options?)
 
@@ -1580,7 +2204,79 @@ pi.sendMessage({
   - `"steer"` (default) - Queues the message while streaming. Delivered after the current assistant turn finishes executing its tool calls, before the next LLM call.
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
-- `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`).
+- `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
+- `ticket` - A delivery ticket from `pi.lifecycle.obligations`. Returning from
+  `sendMessage` does not acknowledge model consumption.
+  With `items`, the ticket covers the whole batch. It is admitted before anything is written: an unknown,
+  closed, consumed or in-delivery ticket rejects the promise with `DeliveryTicketRefused` and no item is
+  kept, so a retry never duplicates notices. A held batch hands the ticket to its notices; a batch a user
+  abort (Esc or Stop) drops during admission keeps it when it is decided again; a re-send while the
+  ticket's message is still queued answers that message's receipts when it carries the same items, and is
+  rejected with `DeliveryTicketRefused` (`reason: "different_items"`) when it carries other items; the queued
+  message is written as first sent. When `clearQueue` removes the queued message before it is written, the
+  original send and every joined re-send reject with `QueuedDeliveryCleared` (its `itemIds` name the batch).
+- `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
+  carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
+  Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended
+  hold, or a fence on that item's `runRef`), every item is stored as its own notice (`notice_persisted`, with
+  the item's own `content` and `details`, or the batch content when an item has none), all written in one entry, so
+  the batch is kept whole or not at all: if that write fails the promise rejects and no item is kept; otherwise the batch is
+  delivered as one message and every receipt names that message's entry (`message_persisted`). A held item's notice
+  is delivered on its own when the session resumes, and a later wake from the same producer never replaces it.
+  A host without item custody (an embedder's runtime) delivers the batch as a plain message and the promise
+  answers `undefined`, as an engine without `items` would. The itemized return type also admits `void`, so an
+  `ExtensionAPI` implementation or test double written with a single `sendMessage(...): void` signature stays
+  assignable; treat `void` like `undefined` (no receipts). Without `items`, `sendMessage` returns nothing, as before.
+
+```typescript
+const receipts = await pi.sendMessage(
+  { customType: "my-coordinator:wake", content: "Task A finished\n\nTask B finished", display: false },
+  {
+    triggerTurn: true,
+    deliverAs: "followUp",
+    items: [
+      { itemId: "a", producer: "task", runRef: { kind: "task", id: "t1" }, content: "Task A finished" },
+      { itemId: "b", producer: "task", content: "Task B finished" },
+    ],
+  },
+);
+```
+
+### pi.lifecycle
+
+Use `pi.lifecycle.obligations.open(key, kind, detail?)` to retain unfinished work
+before it can leave a producer. `kind` is `"children"` or `"background"`; opening
+the same live key is idempotent. Keys starting with `delivery:` or `wake-source:` are
+reserved for the engine: `open` and `transfer` refuse them with a `ReservedCustodyKey`
+error. The returned token supports:
+
+- `transfer(nextKey, kind?)`: moves custody synchronously, opening the next owner
+  before closing the current one. Transferring a closed token is an error.
+- `ticket()`: obtains the stable delivery identity for `sendMessage(..., { ticket })`.
+- `heldAsNotice(noticeId)`: closes custody after a durable held notice exists.
+- `close("consumed" | "cancelled" | "passive")`: releases producer-owned work.
+
+The engine acknowledges a ticket when its custom message enters model context
+at `message_start`, including a steer into an existing run. Its work stays in
+that run's custody until `agent_idle`. A failed delivery retains custody for retry;
+a passive message closes immediately; a held message closes against the persisted
+session-notice identity. Restart redelivers unconsumed queued messages once, but
+never replays a consumed result or reruns an interrupted tool.
+
+`pi.lifecycle.reportChild({ taskId, childSessionId, runEpoch, generation, state,
+label?, since?, waitingOn?, terminal? })` persists runner-owned child state. `label`
+is a producer-authored name and `since` is the child's own state-entry time (ISO);
+an unparseable `since` is dropped. `waitingOn` takes the `SessionLifecycle.waitingOn`
+shape described in [RPC session lifecycle](rpc.md#session-lifecycle), named lists
+included; its counts stay authoritative and the child's human waits are not kept.
+A nonterminal report appears in the parent's `waitingOn.childReports` as
+`{ taskId, childSessionId, runEpoch, state, label?, since? }`. Stale epoch/generation
+pairs are ignored; a higher `runEpoch` clears the old terminal status. Terminal
+values are `completed`, `error`, `lost`, `interrupted`, and `cancelled`. Child UI
+requests remain automatically answered by their runners, not routed to a person.
+
+`pi.lifecycle.markRunCompleted({ runId })` records successful workflow completion
+for the current epoch's label. It does not request automatic thread settlement.
 
 ### pi.sendUserMessage(content, options?)
 
@@ -1599,20 +2295,36 @@ pi.sendUserMessage([
 // During streaming - must specify delivery mode
 pi.sendUserMessage("Focus on error handling", { deliverAs: "steer" });
 pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
+
+// Opt in to extension command dispatch and skill/prompt template expansion
+pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
 ```
 
 **Options:**
 - `deliverAs` - Required when agent is streaming:
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
+- `expandPromptTemplates` - Dispatch extension commands and expand skill commands and prompt templates. Defaults to `false`.
 
-When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, throws an error.
+A content array with several text parts becomes one user message whose text parts stay separate text blocks; `input` handlers see them joined by a newline, and a handler that rewrites the text turns them into one block. A built-in later ask-user answer (`[Answer to question <id>]` frame plus labelled word blocks) is never rewritten, so its frame and the user's words stay in separate blocks.
+
+When not streaming, the message is sent immediately and triggers a new turn; from a `session_start` handler, that turn starts once every extension's `session_start` handler has returned. When streaming without `deliverAs`, throws an error.
+
+From a command handler, send the text before the handler returns: messages another session delivers are held behind the user's own input only until the command's handler settles, so text sent after that (a detached timer, a background task) can land behind a delivered message.
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
-### pi.appendEntry(customType, data?)
+### pi.appendEntry(customType, data?, options?)
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
+
+Pass `{ startupBookkeeping: true }` for an entry your extension writes at session start without any user action (a scan record, an environment fingerprint). A session that closes without a conversation then leaves no file behind if it holds only setup entries and such bookkeeping. Leave the option unset for anything a user created or anything billed: an unmarked entry keeps the session file.
+
+```typescript
+pi.on("session_start", () => {
+  pi.appendEntry("my-ext.scan", { at: Date.now() }, { startupBookkeeping: true });
+});
+```
 
 ```typescript
 pi.appendEntry("my-state", { count: 42 });
@@ -1668,7 +2380,12 @@ Labels persist in the session and survive restarts. Use them to mark important p
 
 Register a command.
 
-If multiple extensions register the same command name, pi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
+`argumentHint` is shown next to the command in the picker. A command with an `argumentHint`
+expects input: picker Enter completes `/command ` and waits for arguments. Set
+`requiresArguments: false` when the arguments are optional so Enter submits immediately,
+or `requiresArguments: true` to wait without a hint. Without either, Enter submits.
+
+If multiple extensions register the same command name, senpi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
 
 ```typescript
 pi.registerCommand("stats", {
@@ -1720,14 +2437,14 @@ Each entry has this shape:
   sourceInfo: {
     path: string;
     source: string;
-    scope: "user" | "project" | "temporary";
+    scope: "user" | "project" | "temporary" | "system";
     origin: "package" | "top-level";
     baseDir?: string;
   };
 }
 ```
 
-Use `sourceInfo` as the canonical provenance field. Do not infer ownership from command names or from ad hoc path parsing.
+Use `sourceInfo` as the canonical provenance field. Do not infer ownership from command names or from ad hoc path parsing. The `system` scope marks resources the harness itself provides: builtin and bundled extensions, the generated global-default extension shims in the agent extensions directory, command-line packages whose manifest declares `pi.system`, and what those contribute.
 
 Built-in interactive commands (like `/model` and `/settings`) are not included here. They are handled only in interactive
 mode and would not execute if sent via `prompt`.
@@ -1738,7 +2455,7 @@ Register a custom TUI renderer for custom messages with your `customType`. Custo
 
 ### pi.registerMarkdownTransformer(transformer)
 
-Register a transformer for the Markdown in normal user text, assistant text, and thinking blocks. Transformers run in extension load order, and each transformer receives the Markdown returned by the previous transformer. After the chain finishes, Pi renders the transformed content with its built-in renderer.
+Register a transformer for the Markdown in normal user text, assistant text, and thinking blocks. Transformers run in extension load order, and each transformer receives the Markdown returned by the previous transformer. After the chain finishes, senpi renders the transformed content with its built-in renderer.
 
 The transformer receives the Markdown string and a context with:
 
@@ -1755,7 +2472,17 @@ pi.registerMarkdownTransformer((markdown, { messageType, isStreaming }) => {
 });
 ```
 
-If a transformer throws, Pi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new user messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive.
+If a transformer throws, senpi keeps the Markdown produced so far and continues with the next transformer. The hook is display-only: the original message remains unchanged in the session and model context. It runs for new user messages, assistant streaming updates, restored session messages, and terminal width changes, so transformers should remain synchronous and inexpensive.
+
+### pi.registerMemoryReporter(name, reporter)
+
+Contribute figures to the on-demand memory report (`SENPI_MEMORY_REPORT=1`, see [RPC](rpc.md#memory_report)). The report carries the numbers `reporter()` returns under `name`; non-finite values are dropped, and a reporter that throws is listed under `reporterErrors` instead. The reporter runs only when a report is taken, never on a timer, so keep it synchronous and O(1): return counters you already maintain.
+
+```typescript
+pi.registerMemoryReporter("myCache", () => ({ entries: cache.size, approxBytes: cacheBytes }));
+```
+
+Names the report owns (`sessionId`, `takenAt`, `pid`, `main`, `kernels`, `residentStore`, `tuiRenderCache`, `heapSnapshot`, `reporterErrors`) throw at registration. When two extensions register the same name, the first loaded wins.
 
 ### pi.registerEntryRenderer(customType, renderer)
 
@@ -1775,6 +2502,14 @@ pi.registerEntryRenderer("status-card", (entry, { expanded }, theme) => {
 });
 
 pi.appendEntry("status-card", { title: "Indexed files", count: 17 });
+```
+
+Pass an optional third argument to let a newer entry update the card before it instead of adding a second card. `replaces(previous, next)` is consulted only when the card directly before the new entry (nothing visible in between) renders an entry of the same custom type; returning `true` swaps that card for the new one, both live and when a session is resumed.
+
+```typescript
+pi.registerEntryRenderer("status-card", renderStatusCard, {
+  replaces: (previous, next) => previous.data?.jobId === next.data?.jobId,
+});
 ```
 
 ### pi.registerShortcut(shortcut, options)
@@ -1807,6 +2542,31 @@ if (pi.getFlag("plan")) {
 }
 ```
 
+### pi.getPermissionPreset()
+
+The permission preset the built-in permission system enforces for this session right now (`"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"` or `"ask"`). It resolves like the permission system does: the `--permission-preset` flag, then project and global settings (with the same untrusted-project handling), then the `full-access` default. A preset flag changed on a live session is applied before the read. It returns `undefined` when the permission system is not running for the session, its setup failed, or the session is not bound yet (during extension loading).
+
+```typescript
+pi.on("tool_call", () => {
+  if (pi.getPermissionPreset() === "full-access") {
+    // Nothing will prompt for permission in this session.
+  }
+});
+```
+
+### pi.getSubscriptionLimits()
+
+Every subscription account's latest limit windows, the same records RPC `get_subscription_limits` serves: `{ provider, account, windows, reportedAt, plan?, error? }`. The engine polls each signed-in Claude and ChatGPT subscription account's usage endpoint (interactive and RPC modes) and turns update the same records, so an account's windows are known before its first turn. An account nothing has reported for is absent. `error` says why the last poll failed (for example `auth stale - run /login`); the windows beside it are the last ones reported.
+
+### pi.onSubscriptionLimits(listener)
+
+Calls `listener(limits)` each time an account's limits are reported and returns the unsubscribe. Unsubscribe on `session_shutdown`.
+
+```typescript
+const stop = pi.onSubscriptionLimits((limits) => render(pi.getSubscriptionLimits()));
+pi.on("session_shutdown", () => stop());
+```
+
 ### pi.exec(command, args, options?)
 
 Execute a shell command.
@@ -1815,6 +2575,19 @@ Execute a shell command.
 const result = await pi.exec("git", ["status"], { signal, timeout: 5000 });
 // result.stdout, result.stderr, result.code, result.killed
 ```
+
+### pi.redactForUpload(text, options?)
+
+Redact text before sending it off this machine, with the same rules `/share` uses: this machine's home path, account and host names, credentials, private keys, emails and IP addresses. Pass `extraLiterals` for other identity values you know about (for example a remote host's account name). The result is idempotent.
+
+```typescript
+const { text, counts } = pi.redactForUpload(logText, { extraLiterals: ["build-runner-07"] });
+// counts: { "home path": 1, credential: 2 }
+```
+
+### pi.hostVersion
+
+The running senpi version string.
 
 ### pi.getActiveTools() / pi.getAllTools() / pi.setActiveTools(names)
 
@@ -1828,7 +2601,7 @@ const all = pi.getAllTools();
 //   description: "Read file contents...",
 //   parameters: ...,
 //   promptGuidelines: ["Use read to examine files instead of cat or sed."],
-//   sourceInfo: { path: "<builtin:read>", source: "builtin", scope: "temporary", origin: "top-level" }
+//   sourceInfo: { path: "<builtin:read>", source: "builtin", scope: "system", origin: "top-level" }
 // }, ...]
 const builtinTools = all.filter((t) => t.sourceInfo.source === "builtin");
 const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.sourceInfo.source !== "sdk");
@@ -1836,7 +2609,18 @@ pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current 
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
-`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, and `sourceInfo`.
+### pi.armToolBarrier(spec) / pi.releaseToolBarrier(id)
+
+Hold the workspace-changing tools of a turn until you are ready, for example while you capture a checkpoint of the workspace. `pi.armToolBarrier({ id, deadlineMs })` arms the session's tool barrier; while it is armed, every tool not declared `workspaceEffect: "read"` waits before it runs. Armed while the session is idle (for example from `before_agent_start`), it belongs to the next turn. It opens on `pi.releaseToolBarrier(id)` (which returns `false`, a no-op, when no barrier with that id is armed), when its turn ends, or after `deadlineMs` (1..600000), which emits the `tool_barrier_expired` session event. Stop ends the wait. `id` is 1-256 characters; arming again replaces the id and ceiling while calls already waiting keep waiting.
+
+```typescript
+pi.on("before_agent_start", () => {
+  pi.armToolBarrier({ id: "checkpoint", deadlineMs: 30_000 });
+  void captureCheckpoint().finally(() => pi.releaseToolBarrier("checkpoint"));
+});
+```
+
+`pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `kernelPrelude`, `permissionParser`, and `sourceInfo`.
 
 Typical `sourceInfo.source` values:
 - `builtin` for built-in tools
@@ -1845,7 +2629,7 @@ Typical `sourceInfo.source` values:
 
 ### pi.setModel(model)
 
-Set the current model. Returns `false` if no API key is available for the model. See [models.md](models.md) for configuring custom models.
+Set the model for the current session. The change is recorded in session history and restored when that session is resumed, but it does not change the configured `defaultProvider` or `defaultModel` used by new sessions. Returns `false` if authentication is not configured for the model's provider. See [models.md](models.md) for configuring custom models.
 
 ```typescript
 const model = ctx.modelRegistry.find("anthropic", "claude-sonnet-4-5");
@@ -1859,7 +2643,9 @@ if (model) {
 
 ### pi.getThinkingLevel() / pi.setThinkingLevel(level)
 
-Get or set the thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
+Get the current thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
+
+`pi.setThinkingLevel()` changes the thinking level for the current session. The change is recorded in session history and restored when that session is resumed, but it does not change the configured default used by new sessions.
 
 ```typescript
 const current = pi.getThinkingLevel();  // "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
@@ -1888,6 +2674,12 @@ pi.events.emit("my:event", { ... });
 ## Config reload
 
 Senpi's default-on `config-reload` builtin watches configured global surfaces and trusted project-local `.senpi` surfaces. A real content change requests the normal full session reload when the agent is idle; busy or compacting sessions defer it until a safe idle edge. When an extension vetoes the reload through `session_before_reload` (for example while subagents it owns are still running), the change also defers quietly: one `Hot-reload deferred: <reason>` notice per distinct veto reason, silent retries on later idle edges plus a periodic veto recheck, and the usual `Hot-reloading:`/`Hot-reloaded:` notifications only once the veto clears and the reload actually runs. Parseable built-in files (`settings.json`, `models.json`, and `keybindings.json`) are validated before reload, so a rejected edit keeps the running configuration active.
+
+> **Cost on a multi-session host:** the watcher runs per session. Each session's `config-reload` instance lazily spawns one
+> `node:worker_threads` Worker for recursive filesystem watching, so a host serving N sessions carries about N extra
+> OS threads and ~5 MB per session ([senpi#1794](https://github.com/code-yeongyu/senpi/issues/1794)). It is the
+> dominant per-session cost of a shared RPC daemon ([RPC: session runtime](rpc.md#session-runtime---session-runtime-in-processworker));
+> a host whose settings disable the builtin adds no thread per session at all.
 
 Configure it in `settings.json` with optional fields; omitted fields use the defaults shown here. Invalid `configReload` fields are ignored individually, so a malformed block falls back to these defaults rather than disabling watching:
 
@@ -1940,7 +2732,9 @@ Register or override a model provider dynamically. Useful for proxies, custom en
 
 Calls made during the extension factory function are queued and applied once the runner initialises. Calls made after that — for example from a command handler following a user setup flow — take effect immediately without requiring a `/reload`.
 
-Dynamic providers can implement `refreshModels`. Pi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/store/network/signal context. The extension decides whether to persist the catalog through `context.store`; live servers such as llama.cpp can ignore it.
+Dynamic providers can implement `refreshModels`. Senpi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/stored-catalog/network/signal context. The extension decides whether to persist catalog metadata through generation-checked `context.publish({ persist: entry })`; live servers can return models without persisting them.
+
+`context.signal` is always a concrete signal and provider callbacks must pass it to blocking I/O. Public `ModelRuntime.refresh()` and `ModelRegistry.refresh()` calls accept an optional signal and are unbounded when it is omitted; extensions and applications choose their own deadlines. Cancellation stops the caller waiting even if a provider ignores the signal, but cooperation is still required to stop the underlying work.
 
 Extensions that need native provider auth, filtering, refresh, or stream behavior can register a complete `Provider` from `@earendil-works/pi-ai`. The provider becomes the composition base and `models.json` overrides still apply above it.
 
@@ -1992,8 +2786,8 @@ pi.registerProvider("my-proxy", {
   ]
 });
 
-// Register a live llama.cpp catalog without persisting discovered models
-pi.registerProvider("llama.cpp", {
+// Register a live local catalog without persisting discovered models
+pi.registerProvider("local-server", {
   baseUrl: "http://localhost:8080/v1",
   apiKey: "local",
   api: "openai-completions",
@@ -2012,7 +2806,7 @@ pi.registerProvider("llama.cpp", {
   }
 });
 
-// Override baseUrl for an existing provider (keeps all models)
+// Override baseUrl for an existing provider (keeps all models; a models.json baseUrl still wins)
 pi.registerProvider("anthropic", {
   baseUrl: "https://proxy.example.com"
 });
@@ -2030,7 +2824,8 @@ pi.registerProvider("corporate-ai", {
       const code = await callbacks.onPrompt({ message: "Enter code:" });
       return { refresh: code, access: code, expires: Date.now() + 3600000 };
     },
-    async refreshToken(credentials) {
+    async refreshToken(credentials, signal) {
+      signal.throwIfAborted();
       // Refresh logic
       return credentials;
     },
@@ -2045,15 +2840,19 @@ The object form accepts a complete pi-ai `Provider`, including native `auth`, `g
 
 **Legacy config options:**
 - `name` - Display name for the provider in UI such as `/login`.
-- `baseUrl` - API endpoint URL. Required when defining models.
+- `baseUrl` - API endpoint URL. Required when defining models. A user's `models.json` `baseUrl` for the provider, or `models[i].baseUrl` for one model, takes precedence over this value and over model-level `baseUrl` values, for chat, image, and classifier models alike, and also becomes the provider's reported `baseUrl`.
 - `apiKey` - API key literal, environment interpolation (`$ENV_VAR` or `${ENV_VAR}`), or leading `!command`. Required when defining models (unless `oauth` provided). `$$` escapes `$`, and `$!` escapes a literal `!` without triggering command execution.
 - `api` - API type: `"anthropic-messages"`, `"openai-completions"`, `"openai-responses"`, etc.
 - `headers` - Custom headers to include in requests.
 - `authHeader` - If true, adds `Authorization: Bearer` header automatically.
 - `models` - Array of model definitions. If provided, replaces all existing models for this provider. Model definitions can set `baseUrl` to override the provider endpoint for that model.
-- `refreshModels` - Async dynamic discovery callback. Its returned models replace extension-provided models. Use the scoped `context.store` only when results should persist.
+- `refreshModels` - Async dynamic discovery callback. Its returned models replace extension-provided models. `context.stored` contains the persisted provider snapshot; use generation-checked `context.publish({ persist: entry })` only when updated catalog data should persist. Use `persist: null` to delete that snapshot.
 - `oauth` - OAuth provider config for `/login` support. When provided, the provider appears in the login menu.
 - `streamSimple` - Custom streaming implementation for non-standard APIs.
+
+When `models.json` sets a `baseUrl` for a provider (or `models[i].baseUrl` for a model), every model of that provider carries it, whichever extension registered the provider. An extension that supplies its own transport (`streamSimple`, `images`, `classifiers`, or a native `Provider`'s `stream`) must send requests to `model.baseUrl`; a transport that builds its own URL ignores the user's setting.
+
+The built-in `cursor-cli-oauth` provider is the one exception: it runs the Cursor CLI, which has no base-URL option. When `models.json` sets a `baseUrl` for it (provider-level or `models[i].baseUrl`), senpi shows a notice at startup that Cursor does not support changing the address, and requests still go to Cursor.
 
 See [custom-provider.md](custom-provider.md) for advanced topics: custom streaming APIs, OAuth details, model definition reference.
 
@@ -2071,6 +2870,10 @@ pi.registerCommand("my-setup-teardown", {
   },
 });
 ```
+
+### pi.registerVirtualModel(definition)
+
+Register an experimental virtual model: a selectable model whose `route(request, ctx)` picks a physical model and thinking level for each request. It appears in `/model`, `--model`, and settings like any other model, and the footer shows the routed model. `pi.unregisterVirtualModel(provider, id)` removes it. See [Virtual Models](virtual-models.md) for the routing contract, router state, and a complete example.
 
 ## State Management
 
@@ -2159,6 +2962,11 @@ pi.registerTool({
   name: "my_tool",
   label: "My Tool",
   description: "What this tool does (shown to LLM)",
+  exposure: "search",
+  searchText: "Look up items in the project todo list",
+  searchKeywords: ["todo", "task", "planning"],
+  searchGroup: "my_extension",
+  allowLazyActivation: true,
   promptSnippet: "List or add items in the project todo list",
   promptGuidelines: [
     "Use my_tool for todo planning instead of direct file edits when the user asks for a task list."
@@ -2208,25 +3016,41 @@ pi.registerTool({
 });
 ```
 
-**Usage accounting:** If a tool makes nested LLM calls, return their combined `Usage` as `usage`. Pi persists it on the tool result and includes it in footer, `/session`, and RPC session totals. `tool_result` handlers can inspect or replace this value.
+**Usage accounting:** If a tool makes nested LLM calls, return their combined `Usage` as `usage`. Senpi persists it on the tool result and includes it in footer, `/session`, and RPC session totals. `tool_result` handlers can inspect or replace this value.
 
-**Signaling errors:** To mark a tool execution as failed (sets `isError: true` on the result and reports it to the LLM), throw an error from `execute`. Returning a value never sets the error flag regardless of what properties you include in the return object.
+**Signaling errors:** There are two ways to mark a tool execution as failed (sets `isError: true` on the result, the `tool_execution_end` event, and the `toolResult` message the LLM sees):
+
+- Throw an error from `execute`. The thrown message becomes the result text and `details` is empty.
+- Return a normal result with `isError: true`. `content` and `details` are delivered unchanged, so the LLM can still branch on your typed `details` while every error surface (TUI row background, RPC `isError`, `tool_result` handlers) treats the call as a failure. Omitting `isError` or setting it to `false` is a success.
 
 **Early termination:** Return `terminate: true` from `execute()` to hint that the automatic follow-up LLM call should be skipped after the current tool batch. This only takes effect when every finalized tool result in that batch is terminating. See [examples/extensions/structured-output.ts](../examples/extensions/structured-output.ts) for a minimal example where the agent ends on a final structured-output tool call.
 
 ```typescript
-// Correct: throw to signal an error
+// Throw when there is nothing structured to report
 async execute(toolCallId, params) {
   if (!isValid(params.input)) {
     throw new Error(`Invalid input: ${params.input}`);
   }
   return { content: [{ type: "text", text: "OK" }], details: {} };
 }
+
+// Return isError: true when the LLM should still see typed details
+async execute(toolCallId, params) {
+  const outcome = await createTeam(params);
+  if (outcome.kind === "member_start_rejected") {
+    return {
+      content: [{ type: "text", text: outcome.reason }],
+      details: { kind: "runtime_error", code: outcome.kind },
+      isError: true,
+    };
+  }
+  return { content: [{ type: "text", text: "Created" }], details: { kind: "created" } };
+}
 ```
 
 **Important:** Use `StringEnum` from `@earendil-works/pi-ai` for string enums. `Type.Union`/`Type.Literal` doesn't work with Google's API.
 
-**Argument preparation:** `prepareArguments(args)` is optional. If defined, it runs before schema validation and before `execute()`. Use it to mimic an older accepted input shape when pi resumes an older session whose stored tool call arguments no longer match the current schema. Return the object you want validated against `parameters`. Keep the public schema strict. Do not add deprecated compatibility fields to `parameters` just to keep old resumed sessions working.
+**Argument preparation:** `prepareArguments(args)` is optional. If defined, it runs before schema validation and before `execute()`. Use it to mimic an older accepted input shape when senpi resumes an older session whose stored tool call arguments no longer match the current schema. Return the object you want validated against `parameters`. Keep the public schema strict. Do not add deprecated compatibility fields to `parameters` just to keep old resumed sessions working.
 
 Example: an older session may contain an `edit` tool call with top-level `oldText` and `newText`, while the current schema only accepts `edits: [{ oldText, newText }]`.
 
@@ -2275,7 +3099,7 @@ pi.registerTool({
 
 ### Overriding Built-in Tools
 
-Extensions can override built-in tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) by registering a tool with the same name. Interactive mode displays a warning when this happens.
+Extensions can override built-in tools (`read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, `ls`) by registering a tool with the same name. Interactive mode displays a warning when this happens.
 
 ```bash
 # Extension's read tool replaces built-in read
@@ -2297,13 +3121,14 @@ See [examples/extensions/tool-override.ts](../examples/extensions/tool-override.
 **Your implementation must match the exact result shape**, including the `details` type. The UI and session logic depend on these shapes for rendering and state tracking.
 
 Built-in tool implementations:
-- [read.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/read.ts) - `ReadToolDetails`
-- [bash.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/bash.ts) - `BashToolDetails`
-- [edit.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/edit.ts)
-- [write.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/write.ts)
-- [grep.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/grep.ts) - `GrepToolDetails`
-- [find.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/find.ts) - `FindToolDetails`
-- [ls.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/ls.ts) - `LsToolDetails`
+- [read.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/read.ts) - `ReadToolDetails`
+- [bash.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/bash.ts) - `BashToolDetails`
+- [powershell.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/powershell.ts) - `PowerShellToolDetails`
+- [edit.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/edit.ts)
+- [write.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/write.ts)
+- [grep.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/grep.ts) - `GrepToolDetails`
+- [find.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/find.ts) - `FindToolDetails`
+- [ls.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/ls.ts) - `LsToolDetails`
 
 ### Remote Execution
 
@@ -2334,11 +3159,13 @@ pi.registerTool({
 });
 ```
 
-**Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
+**Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `PowerShellOperations`, `LsOperations`, `FindOperations`.
+
+`GrepOperations` is deprecated and has been removed from `GrepToolOptions`; the engine-backed grep tool no longer supports filesystem or file-reading overrides. Use the engine selector and filesystem policy hooks instead.
 
 For `user_bash`, extensions can reuse pi's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 
-The bash tool also supports a spawn hook to adjust the command, cwd, or env before execution:
+The `bash` and `powershell` tools also support a spawn hook to adjust the command, cwd, or env before execution:
 
 ```typescript
 import { createBashTool } from "@earendil-works/pi-coding-agent";
@@ -2352,7 +3179,7 @@ const bashTool = createBashTool(cwd, {
 });
 ```
 
-`createBashTool()` exposes the current session to commands through `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL`. Injection happens before `spawnHook`, so hooks receive these values in `env` and preserve them when they spread the existing environment as above. Set `exposeSessionEnvironment: false` to disable them:
+`createBashTool()` and `createPowerShellTool()` expose the current session to commands through `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_SESSION_CWD`, `PI_GOAL_STORE_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL`. Injection happens before `spawnHook`, so hooks receive these values in `env` and preserve them when they spread the existing environment as above. Set `exposeSessionEnvironment: false` to disable them:
 
 ```typescript
 const bashTool = createBashTool(cwd, {
@@ -2360,7 +3187,7 @@ const bashTool = createBashTool(cwd, {
 });
 ```
 
-See [Bash tool session environment](environment-variables.md#bash-tool-session-environment) for variable semantics. See [examples/extensions/ssh.ts](../examples/extensions/ssh.ts) for a complete SSH example with `--ssh` flag.
+See [Shell tool session environment](environment-variables.md#shell-tool-session-environment) for variable semantics. See [examples/extensions/ssh.ts](../examples/extensions/ssh.ts) for a complete SSH example with `--ssh` flag.
 
 ### Output Truncation
 
@@ -2434,7 +3261,7 @@ export default function (pi: ExtensionAPI) {
 
 ### Custom Rendering
 
-Tools can provide `renderCall` and `renderResult` for custom TUI display. See [tui.md](tui.md) for the full component API and [tool-execution.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/modes/interactive/components/tool-execution.ts) for how tool rows are composed.
+Tools can provide `renderCall` and `renderResult` for custom TUI display. See [tui.md](tui.md) for the full component API and [tool-execution.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/interactive/components/tool-execution.ts) for how tool rows are composed.
 
 By default, tool output is wrapped in a `Box` that handles padding and background. A defined `renderCall` or `renderResult` must return a `Component`. If a slot renderer is not defined, `tool-execution.ts` uses fallback rendering for that slot.
 
@@ -2559,42 +3386,73 @@ If a slot renderer is not defined or throws:
 
 ### Dynamic Tool Loading
 
-Extensions can register many tools while keeping only a small initial set active. A tool can then add more tools with `pi.setActiveTools()` during execution. Pi detects purely additive changes, records the newly available tool names on that tool result, and applies the updated active set before the next model request.
+Extensions can ship large tool catalogs without bloating the model's context window by opting into declarative search exposure. A tool declared with `exposure: "search"` is indexed in the shared `tool_search` catalog and remains inactive (costing zero prompt tokens) until the model searches for it.
 
-This works with every model. Models with native deferred-loading support preserve the stable prompt prefix and load the new definitions at the tool-result position. Other models use the fallback described below.
+The declarative API handles the entire lifecycle:
+1. Register tools with `exposure: "search"`. The tools stay out of the initial active set.
+2. The shared `tool_search` builtin (always active) indexes their `name`, `label`, `description`, `searchText`, and `searchKeywords`.
+3. When the model needs a capability, it calls `tool_search`.
+4. Senpi automatically promotes matching tools to the active set for the next model request.
+5. On supported models (Anthropic, OpenAI), this promotion uses native deferred loading protocols to preserve prompt cache stability.
 
-The lifecycle is:
+Tools promoted via search are tied to your extension's identity. If your extension is reloaded, they stay active; if your extension is removed, they are cleaned up.
 
-1. Register every tool with `pi.registerTool()` so it appears in `pi.getAllTools()`.
-2. Keep loader tools, such as `search_tools`, active and leave searchable tools inactive.
-3. During loader execution, call `pi.setActiveTools([...currentTools, ...matchingTools])`. The change must be additive: do not remove currently active tools in the same call.
-4. Pi records which tools were added on the loader's tool result.
-5. Before the next model response, Pi exposes the added definitions using native deferred loading when supported, or the normal active tool list otherwise.
+#### Declarative Fields
 
-You do not need to return provider-specific tool references or mark the loader as a special search tool. The active-tool change is the signal. Names passed to `pi.setActiveTools()` must already be registered; unknown names are ignored.
+Add these fields to `pi.registerTool(...)`:
+
+- **`exposure`**: `"direct" | "search" | "eval" | "model-only" | "hidden"`. `"model-only"` declares the tool to the model while active but never lets other tools call it; `"hidden"` keeps it registered but unreachable. The upstream literals `"deferred"` and `"codemode"` are accepted and normalized to `"search"` and `"eval"`. Default is `"direct"` (tool is auto-activated immediately). Use `"search"` for large catalogs. Use `"eval"` to keep a tool registered and enabled while withholding it from the model's direct tool list whenever `eval` is available. It remains callable as `tool.<name>(...)` inside eval and discoverable through `tool_schema`; direct model calls return an eval-form hint instead of executing it. Without `eval` (including a child allowlist that omits it), otherwise enabled tools stay directly callable. Built-in `bash`, `powershell` and `grep` declare `"eval"`. The SDK's explicit `evalOnlyToolNames` override still replaces the default policy.
+- **`searchText`**: Supplemental text indexed by `tool_search`. Never sent to the model. Useful for domain terms that don't belong in the tool description.
+- **`searchKeywords`**: Synonyms or domain terms, indexed with the same weight as the tool name. Never sent to the model.
+- **`searchGroup`**: Organizational filter group. Defaults to your extension's label.
+- **`namespace`** and **`annotations`**: Optional grouping and behavior hints, for example from an MCP server.
+- **`workspaceEffect`**: `"read" | "write"`. A `"read"` tool runs while a tool barrier is armed (see `pi.armToolBarrier`); any other tool, including one that leaves this unset, waits for the barrier's release. Declare `"read"` only for tools that never change files, processes or other workspace state.
+- **`outputSchema`**: Optional schema for `structuredContent`; a result can also set `isError`.
+- **`allowLazyActivation`**: Default `true`. If `false`, the tool is hidden from `tool_search` completely and cannot be lazily activated during code mode execution. Explicit activation via `pi.setActiveTools()` is still allowed.
+
+**Important:** You cannot register a tool named `tool_search` yourself; it is a reserved name.
+
+A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
+
+#### Prompt Cache Warning
+
+Activating a tool that includes `promptSnippet` or `promptGuidelines` rebuilds the system prompt. Even when the provider supports deferred schemas, changing the system prompt may invalidate the cached prefix. Lazily loaded tools should usually rely on their `description` and omit active-only prompt metadata to get the best cache performance.
+
+#### Advanced: DIY Dynamic Loading
+
+For advanced use cases like project-specific routing or custom remote catalogs, extensions can skip `exposure: "search"` and manage the active set imperatively. A tool can add more tools with `pi.setActiveTools()` during execution. Senpi detects purely additive changes, records the newly available tool names on that tool result, and applies the updated active set before the next model request.
+
+The DIY lifecycle is:
+
+1. Register every tool with `exposure: "direct"` (or omit it) but explicitly remove them from the active set during `session_start` using `pi.setActiveTools()`.
+2. Keep your custom loader tool active.
+3. During loader execution, call `pi.setActiveTools([...currentTools, ...matchingTools])`. The change must be additive.
+4. Senpi exposes the added definitions before the next model response.
 
 #### Models with native deferred loading
 
 - **Anthropic**
   - **Models:** Sonnet, Opus, Fable version 4.5 or newer (without Haiku)
   - **Native representation:** Deferred definitions use `defer_loading`; the load point uses `tool_reference` content.
+- **Fireworks Messages API**
+  - **Native representation:** Deferred definitions use `defer_loading`; the load point uses `tool_reference` content.
+  - **Loader names:** Use `ToolSearch` or `tool_search` for prefix deferral. Other loader names still work, but Fireworks includes the loaded schemas in the initial tool prefix, losing the cache benefit.
+  - This does not change API routing: Fireworks GLM models and Kimi K3 use Chat Completions, not Messages.
 - **OpenAI**
   - **Models:** `gpt-5.4` and newer family
-  - **Native representation:** Pi adds completed client `tool_search_call` and `tool_search_output` items at the load point.
+  - **Native representation:** Senpi adds completed client `tool_search_call` and `tool_search_output` items at the load point.
 
 For a verified custom model or proxy, native handling can be enabled with `compat.supportsToolReferences: true` for `anthropic-messages`, or `compat.supportsToolSearch: true` for `openai-responses` and `openai-codex-responses`. Leave these disabled unless the endpoint and model accept the corresponding native protocol.
 
 #### Fallback behavior
 
-For all other models and providers, dynamic activation still works: Pi sends the complete current active tool list normally on the next request. The model can call the newly activated tools, but adding their definitions may invalidate the provider's cached prompt prefix.
+For all other models and providers, dynamic activation still works: senpi sends the complete current active tool list normally on the next request. The model can call the newly activated tools, but adding their definitions may invalidate the provider's cached prompt prefix.
 
-Pi also uses this safe fallback when the active set is not purely additive, such as replacing one group of tools with another. Tool removals therefore work, but they do not use deferred loading.
+Senpi also uses this safe fallback when the active set is not purely additive, such as replacing one group of tools with another. Tool removals therefore work, but they do not use deferred loading.
 
-For the best cache behavior, keep the loader tool active for the whole session and add tools instead of replacing the active set. Also note that activating a tool with `promptSnippet` or `promptGuidelines` rebuilds the system prompt; that system-prompt change can invalidate the prefix even when the provider supports deferred schemas. Lazily loaded tools should usually rely on their tool `description` and omit active-only prompt metadata.
+#### DIY Custom Search Tool Example
 
-#### Search tool example
-
-The following extension registers two searchable tools, removes them from the initial active set, and keeps only `search_tools` as their loader. The example uses simple keyword matching, but the search implementation could use BM25, embeddings, a remote catalog, or project-specific routing.
+The following extension registers two tools, removes them from the initial active set, and keeps only a custom `search_tools` as their loader. The example uses simple keyword matching, but the search implementation could use embeddings or a remote catalog.
 
 ```typescript
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -2727,6 +3585,64 @@ const text = await ctx.ui.editor("Edit:", "prefilled text");
 ctx.ui.notify("Done!", "info");  // "info" | "warning" | "error"
 ```
 
+#### Private secret input
+
+`ctx.ui.input(title, placeholder, { secret: true })` collects a single-line secret
+without putting it into model messages, session history, ordinary answer ledgers,
+or replay buffers. The string goes only to the requesting extension. The TUI masks
+it; RPC requires the presenting connection's explicit `secret_input_v1` and
+`interactive_user` handshake. Ordinary input is unchanged.
+
+Check the descriptor first: older JavaScript hosts silently ignore unknown options.
+The descriptor promises the guarded contract, not a currently connected presenter.
+
+```typescript
+if (ctx.ui.capabilities?.secretInput !== true) {
+  return { applied: false, reason: "host_unsupported" };
+}
+let value: string | undefined;
+try {
+  value = await ctx.ui.input("Credential", undefined, { secret: true });
+} catch (error: unknown) {
+  if (typeof error === "object" && error !== null &&
+      "code" in error && error.code === "secret_input_unavailable" &&
+      "reason" in error &&
+      (error.reason === "headless" || error.reason === "client_unsupported" ||
+       error.reason === "no_presenter")) {
+    return { applied: false, reason: error.reason };
+  }
+  throw error;
+}
+if (value === undefined) return { applied: false, reason: "cancelled" };
+// Consume value privately here. Never log, notify, throw, or return the value.
+return { applied: true, length: value.length };
+```
+
+Empty strings, Unicode and leading/trailing spaces are preserved. Control characters
+and multiline input are refused, never normalized. Cancellation, abort and timeout
+return `undefined`. Secret input defaults to a 30-minute deadline; a supplied timeout
+must be finite and positive. Repainting, progress or re-presentation cannot renew it.
+An already-aborted signal returns `undefined` without opening a dialog.
+
+Print/JSON mode throws `SecretInputUnavailableError` with code
+`secret_input_unavailable` and reason `headless`, while `ctx.hasUI` remains false.
+An unsupported RPC client gets `client_unsupported`; an ownerless call with no
+eligible presenter gets `no_presenter`. There is no plaintext or stdin fallback.
+The `ephemeral` option does not weaken secret privacy.
+
+Typed-secret login prompts use this API on supporting contexts. A new host refuses
+API-key `/login` from an old external client or attach binary, with fixed guidance:
+“This client cannot collect a secret; use the TUI or the host's settings route.”
+Older contexts without the descriptor retain their existing plain login call, an
+explicit legacy gap. Text, manual-code and select prompts retain their behavior.
+
+This is not taint tracking or a sandbox for extensions. Trusted extension code can
+leak the returned string. Keep labels and placeholders non-secret. File staging,
+if needed, belongs to the extension on the agent host, with private permissions,
+exclusive creation and explicit cleanup. The engine creates no secret file and
+cannot promise erasure of immutable JavaScript strings or protection from OS-level
+terminal recording, debuggers or a malicious client.
+
 #### Timed Dialogs with Countdown
 
 Dialogs support a `timeout` option that auto-dismisses with a live countdown display:
@@ -2752,6 +3668,11 @@ if (confirmed) {
 - `input()` returns `undefined`
 
 #### Manual Dismissal with AbortSignal
+
+Local terminal `select`, `confirm`, and `input` dialogs also accept
+`ephemeral: true`. Their visible contents remain local; they emit no generic
+blocked events, replacement labels, identifiers, or pending markers. This option is
+not an RPC field or permission to present MCP input on another session.
 
 For more control (e.g., to distinguish timeout from user cancel), use `AbortSignal`:
 
@@ -2784,6 +3705,11 @@ See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.
 // Status in footer (persistent until cleared)
 ctx.ui.setStatus("my-ext", "Processing...");
 ctx.ui.setStatus("my-ext", undefined);  // Clear
+// The TUI reserves the "session-lifecycle" key for the session lifecycle status; setStatus ignores it.
+
+// Subagent tree spend, shown after the session's own cost: "$0.380 (+1.270)"
+ctx.ui.setSubagentCost(1.27);
+ctx.ui.setSubagentCost(undefined);  // Clear
 
 // Working loader (shown during streaming)
 ctx.ui.setWorkingMessage("Thinking deeply...");
@@ -2809,6 +3735,8 @@ ctx.ui.setWorkingIndicator();  // Restore default spinner
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"]);
 // Widget below editor
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"], { placement: "belowEditor" });
+// Choices: the TUI shows "label: command" on the last line; an RPC client gets them as `widgetActions`
+ctx.ui.setWidget("my-widget", ["Session is large"], { actions: [{ label: "Start fresh", command: "/handoff" }] });
 ctx.ui.setWidget("my-widget", (tui, theme) => new Text(theme.fg("accent", "Custom"), 0, 0));
 ctx.ui.setWidget("my-widget", undefined);  // Clear
 
@@ -3024,6 +3952,7 @@ export default function (pi: ExtensionAPI) {
 **Key points:**
 - Extend `CustomEditor` (not base `Editor`) to get app keybindings (escape to abort, ctrl+d, model switching)
 - Call `super.handleInput(data)` for keys you don't handle
+- Custom editors keep the standalone working row by default. Pass `{ embedWorkingStatus: true }` as the fourth `CustomEditor` constructor argument to use the built-in editor-border spinner instead.
 - Factory receives `tui`, `theme`, and `keybindings` from the app
 - Use `ctx.ui.getEditorComponent()` before `setEditorComponent()` to wrap the previously configured custom editor
 - Pass `undefined` to restore default: `ctx.ui.setEditorComponent(undefined)`
@@ -3117,7 +4046,7 @@ const highlighted = highlightCode(code, lang, theme);
 
 - Extension errors are logged, agent continues
 - `tool_call` errors block the tool (fail-safe)
-- Tool `execute` errors must be signaled by throwing; the thrown error is caught, reported to the LLM with `isError: true`, and execution continues
+- Tool `execute` errors are signaled by throwing or by returning a result with `isError: true`; either way the result reaches the LLM with `isError: true` and execution continues (a returned result keeps its `content` and `details`)
 
 ## Mode Behavior
 

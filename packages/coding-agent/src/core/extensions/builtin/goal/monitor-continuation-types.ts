@@ -15,6 +15,8 @@ export interface SystemAbortOptions extends AgentEndOptions {
 	readonly willRetry: boolean;
 }
 
+export type ProviderRecoveryOptions = SystemAbortOptions;
+
 export type ContinuingGoalContinuationVerdict = Extract<GoalContinuationVerdict, { kind: "continue" }>;
 export type DelayedContinuationKind = GoalWaitKind;
 export type ResumptionChannelCounts = Readonly<Record<string, number>>;

@@ -1,8 +1,8 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FAILURE_TRIP_THRESHOLD } from "../../src/core/extensions/builtin/compaction/circuit-breaker.ts";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
-import { hardCap } from "../../src/core/extensions/builtin/compaction/per-turn-cap.ts";
+import { MAX_SUMMARIZATION_ATTEMPT_RETRIES } from "../../src/core/extensions/builtin/compaction/summarization-retry.ts";
 import type { ExtensionHandler } from "../../src/core/extensions/index.ts";
 import {
 	connectionErrorResponse,
@@ -10,13 +10,27 @@ import {
 	createBlockingContext,
 } from "../helpers/blocking-compaction-harness.ts";
 
+/** One summarization now costs its initial attempt plus the shared retry budget. */
+const SUMMARIZATION_ATTEMPTS = 1 + MAX_SUMMARIZATION_ATTEMPT_RETRIES;
+
 const FORMER_SOFT_CAP = 3;
+const FORMER_ABSOLUTE_CAP = 10;
 
 const registrations: Array<{ unregister: () => void }> = [];
 
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+
 afterEach(() => {
+	vi.useRealTimers();
 	for (const registration of registrations.splice(0)) registration.unregister();
 });
+
+async function settleRetryBackoff<T>(operation: T | PromiseLike<T>): Promise<T> {
+	await vi.runAllTimersAsync();
+	return await operation;
+}
 
 function captureHandlers(): Map<string, ExtensionHandler<never, unknown>> {
 	const handlers = new Map<string, ExtensionHandler<never, unknown>>();
@@ -57,16 +71,19 @@ describe("blocking compaction route guards (issue #527)", () => {
 		expect(beforeAgentStart).toBeDefined();
 		const harness = createBlockingContext({ usageTokens: 9_950 });
 		registrations.push(harness.registration);
-		harness.registration.setResponses(Array.from({ length: 8 }, () => connectionErrorResponse()));
+		harness.registration.setResponses(
+			Array.from({ length: 8 * SUMMARIZATION_ATTEMPTS }, () => connectionErrorResponse()),
+		);
 
 		for (let attempt = 0; attempt < 8; attempt++) {
-			await beforeAgentStart?.(createBeforeAgentStartEvent() as never, harness.ctx);
+			const compaction = beforeAgentStart?.(createBeforeAgentStartEvent() as never, harness.ctx);
+			if (compaction) await settleRetryBackoff(compaction);
 		}
 
-		expect(harness.registration.state.callCount).toBe(FAILURE_TRIP_THRESHOLD);
+		expect(harness.registration.state.callCount).toBe(FAILURE_TRIP_THRESHOLD * SUMMARIZATION_ATTEMPTS);
 	});
 
-	it("bounds successful hard-limit blocking compactions by the absolute session cap", async () => {
+	it("keeps successful hard-limit blocking compactions open past the former session cap", async () => {
 		const handlers = captureHandlers();
 		const beforeAgentStart = handlers.get("before_agent_start");
 		const sessionCompact = handlers.get("session_compact");
@@ -74,7 +91,7 @@ describe("blocking compaction route guards (issue #527)", () => {
 		expect(sessionCompact).toBeDefined();
 		const harness = createBlockingContext({ usageTokens: 9_950 });
 		registrations.push(harness.registration);
-		const attempts = hardCap + 2;
+		const attempts = FORMER_ABSOLUTE_CAP + 2;
 		harness.registration.setResponses(
 			Array.from({ length: attempts }, () => fauxAssistantMessage("## Goal\ncompact summary")),
 		);
@@ -88,7 +105,7 @@ describe("blocking compaction route guards (issue #527)", () => {
 			}
 		}
 
-		expect((harness.ctx.applyCompaction as ReturnType<typeof vi.fn>).mock.calls.length).toBe(hardCap);
+		expect((harness.ctx.applyCompaction as ReturnType<typeof vi.fn>).mock.calls.length).toBe(attempts);
 	});
 
 	it("admits a compaction past the former soft cap within the same provider turn", async () => {
@@ -149,7 +166,7 @@ describe("blocking compaction route guards (issue #527)", () => {
 		}
 		await turnEnd?.({ type: "turn_end" } as never, harness.ctx);
 
-		// The next provider turn must still admit below the absolute cap.
+		// The next provider turn must remain open regardless of successful history.
 		await beforeAgentStart?.(createBeforeAgentStartEvent() as never, harness.ctx);
 		expect((harness.ctx.applyCompaction as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(appliedAtCap);
 	});

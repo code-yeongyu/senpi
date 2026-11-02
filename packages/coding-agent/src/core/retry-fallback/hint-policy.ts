@@ -43,13 +43,19 @@ export function nextInTurnDelayMs(
 	hintedWaitCapMs: number,
 	nowMs: number,
 ): InTurnResult {
+	// Every same-model 429 wait is floored by the exponential schedule so repeated
+	// short provider hints cannot pin the retry cadence at a few milliseconds and
+	// hammer an already rate-limited model. Longer hints still win.
+	const exponentialFloorMs = baseDelayMs * 2 ** (state.attempt - 1);
+
 	// Phase: half-used -> consecutive 429 with deadline sleep
 	if (state.probePhase === "half-used") {
 		const deadlineMs = hintMs !== undefined ? nowMs + hintMs : (state.hintDeadlineMs ?? nowMs);
 		const remaining = Math.max(0, deadlineMs - nowMs);
-		const newCumulative = state.cumulativeHintedWaitMs + remaining;
+		const delayMs = Math.max(remaining, exponentialFloorMs);
+		const newCumulative = state.cumulativeHintedWaitMs + delayMs;
 		return {
-			delayMs: remaining,
+			delayMs,
 			probePhase: "done",
 			hintDeadlineMs: deadlineMs,
 			cumulativeHintedWaitMs: newCumulative,
@@ -59,7 +65,7 @@ export function nextInTurnDelayMs(
 
 	// Phase: idle -> first hinted 429, probe at hint/2
 	if (state.probePhase === "idle" && hintMs !== undefined) {
-		const delay = Math.ceil(hintMs / 2);
+		const delay = Math.max(Math.ceil(hintMs / 2), exponentialFloorMs);
 		const deadlineMs = nowMs + hintMs;
 		const newCumulative = state.cumulativeHintedWaitMs + delay;
 		return {
@@ -71,8 +77,9 @@ export function nextInTurnDelayMs(
 		};
 	}
 
-	// Phase: done (or idle without hint = non-429 / no-hint fallback) -> exponential or hint override
-	const delay = hintMs ?? baseDelayMs * 2 ** (state.attempt - 1);
+	// Phase: done (or idle without hint = non-429 / no-hint fallback) -> exponential,
+	// raised further only by a hint longer than the floor
+	const delay = Math.max(hintMs ?? 0, exponentialFloorMs);
 	return {
 		delayMs: delay,
 		probePhase: "done",
@@ -87,8 +94,9 @@ export type DegradedRateLimitAction = { kind: "in-turn"; delayMs: number } | { k
 /**
  * Policy for a 429-class failure when no fallback candidate is usable: no-hint
  * (and tier1) failures retry in-turn on the exponential schedule, tier2 hints
- * retry in-turn with the wait clamped to the in-turn cap, and only tier3
- * (probe-back-max or longer) hinted waits stay terminal.
+ * retry in-turn with the wait clamped to the in-turn cap but floored by the same
+ * exponential schedule, and only tier3 (probe-back-max or longer) hinted waits
+ * stay terminal.
  */
 export function degradeWithoutFallback(
 	tier: HintTier,
@@ -99,7 +107,11 @@ export function degradeWithoutFallback(
 ): DegradedRateLimitAction {
 	if (tier === "tier3-fallback-only") return { kind: "fail", hintMs: hintMs ?? 0 };
 	if (tier === "tier2-fallback-probe-back") {
-		return { kind: "in-turn", delayMs: Math.min(hintMs ?? hintedWaitCapMs, hintedWaitCapMs) };
+		// Cap-clamped, but never below the exponential floor for this attempt.
+		return {
+			kind: "in-turn",
+			delayMs: Math.max(Math.min(hintMs ?? hintedWaitCapMs, hintedWaitCapMs), baseDelayMs * 2 ** (attempt - 1)),
+		};
 	}
 	return { kind: "in-turn", delayMs: baseDelayMs * 2 ** (attempt - 1) };
 }

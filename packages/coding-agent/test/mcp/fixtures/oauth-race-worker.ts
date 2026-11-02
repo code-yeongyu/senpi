@@ -29,12 +29,22 @@ async function main(): Promise<void> {
 		clientId: "race-client",
 	});
 
+	// Single-shot mode (barrier arg "-"): perform exactly one refresh attempt and
+	// report. The lock-OFF control case uses this so the parent test can force the
+	// racy interleaving deterministically (explicit lost-update between two
+	// single-shot workers) instead of hoping two concurrent processes collide.
+	if (barrierFile === "-") {
+		const attempt = await runtimeAttempt(agentDir ?? "", mcpUrl ?? "", provider, store);
+		process.stdout.write(`${JSON.stringify({ tag, ...attempt })}\n`);
+		return;
+	}
+
 	// Two-phase file barrier so both worker processes fire their refresh within the
-	// same scheduling window even on a busy host — otherwise the concurrent-refresh
-	// race the control case proves (and the contention the lock-ON case relies on)
-	// does not reliably reproduce. Phase 1: wait for both processes to arrive.
-	// Phase 2: both signal ready and busy-wait on a 1ms poll so the two attempts are
-	// released together, replacing a fixed 20ms sleep that left them skewed under load.
+	// same scheduling window even on a busy host. Phase 1: wait for both processes
+	// to arrive. Phase 2: both signal ready and busy-wait on a 1ms poll so the two
+	// attempts are released together. Only the lock-ON test uses this path; its
+	// assertions hold under ANY interleaving (the lock serializes the refresh), so
+	// it does not depend on the barrier actually producing overlap.
 	appendFileSync(barrierFile ?? "", `${tag}\n`);
 	for (let i = 0; i < 400; i++) {
 		if (
@@ -57,36 +67,7 @@ async function main(): Promise<void> {
 	}
 
 	const first = await runtimeAttempt(agentDir ?? "", mcpUrl ?? "", provider, store);
-	if (!lockDisabled) {
-		process.stdout.write(`${JSON.stringify({ tag, ...first })}\n`);
-		return;
-	}
-
-	appendFileSync(barrierFile ?? "", `${tag}:after\n`);
-	for (let i = 0; i < 200; i++) {
-		if (
-			readFileSync(barrierFile ?? "", "utf8")
-				.trim()
-				.split("\n")
-				.filter((line) => line.endsWith(":after")).length >= 2
-		)
-			break;
-		await sleep(10);
-	}
-	await sleep(20);
-	await store.update((current) =>
-		current === undefined ? undefined : { ...current, expiresAt: Date.now() + 60_000 },
-	);
-	const postRace = await runtimeAttempt(agentDir ?? "", mcpUrl ?? "", provider, store);
-	process.stdout.write(
-		`${JSON.stringify({
-			tag,
-			...first,
-			postRaceOk: postRace.ok,
-			postRaceKind: postRace.kind,
-			postRaceRefreshHash: postRace.refreshHash,
-		})}\n`,
-	);
+	process.stdout.write(`${JSON.stringify({ tag, ...first })}\n`);
 }
 
 async function runtimeAttempt(

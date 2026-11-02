@@ -1,7 +1,8 @@
-import { type ExecFileException, execFile, spawnSync } from "child_process";
+import { type ExecFileException, execFile } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, type Stats, statSync, unwatchFile, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
 import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.ts";
+import { isWSL } from "../utils/wsl.ts";
 
 export type GitPaths = {
 	repoDir: string;
@@ -47,17 +48,6 @@ export function findGitPaths(cwd: string): GitPaths | null {
 	}
 }
 
-/** Ask git for the current branch. Returns null on detached HEAD or if git is unavailable. */
-function resolveBranchWithGitSync(repoDir: string): string | null {
-	const result = spawnSync("git", ["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"], {
-		cwd: repoDir,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-	});
-	const branch = result.status === 0 ? result.stdout.trim() : "";
-	return branch || null;
-}
-
 /** Ask git for the current branch asynchronously. Returns null on detached HEAD or if git is unavailable. */
 function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
 	return new Promise((resolvePromise) => {
@@ -81,7 +71,7 @@ function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
 }
 
 function isWslEnvironment(): boolean {
-	return process.platform === "linux" && !!(process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP);
+	return process.platform === "linux" && isWSL();
 }
 
 function isWindowsMountedRepoPath(repoDir: string): boolean {
@@ -94,13 +84,14 @@ function shouldPollGitHead(repoDir: string): boolean {
 
 /**
  * Provides git branch and extension statuses - data not otherwise accessible to extensions.
- * Token stats, model info available via ctx.sessionManager and ctx.model.
+ * Context usage on ctx.getContextUsage(), token stats on ctx.sessionManager.getEntries(), model info on ctx.model.
  */
 export class FooterDataProvider {
 	private cwd: string;
 	private static readonly WATCH_DEBOUNCE_MS = 500;
 
 	private extensionStatuses = new Map<string, string>();
+	private subagentCost: number | undefined = undefined;
 	private cachedBranch: string | null | undefined = undefined;
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
@@ -126,7 +117,13 @@ export class FooterDataProvider {
 	/** Current git branch, null if not in repo, "detached" if detached HEAD */
 	getGitBranch(): string | null {
 		if (this.cachedBranch === undefined) {
-			this.cachedBranch = this.resolveGitBranchSync();
+			const head = this.readBranchFromHead();
+			this.cachedBranch = head.branch;
+			// A reftable repo writes `ref: refs/heads/.invalid` into HEAD, so only git knows
+			// the branch. Asking it here would run a process on the caller's thread - on a
+			// shared RPC host that is every session's event loop - so the footer shows the
+			// provisional value and subscribers are notified when git answers.
+			if (head.needsGitProbe) void this.refreshGitBranchAsync();
 		}
 		return this.cachedBranch;
 	}
@@ -151,9 +148,20 @@ export class FooterDataProvider {
 		}
 	}
 
-	/** Internal: clear extension statuses */
-	clearExtensionStatuses(): void {
-		this.extensionStatuses.clear();
+	/** Internal: clear extension statuses, keeping the host-owned keys in `keep` */
+	clearExtensionStatuses(keep: ReadonlySet<string> = new Set()): void {
+		for (const key of this.extensionStatuses.keys()) if (!keep.has(key)) this.extensionStatuses.delete(key);
+		this.subagentCost = undefined;
+	}
+
+	/** USD spent by the subagent tree under this session, as reported via ctx.ui.setSubagentCost() */
+	getSubagentCost(): number | undefined {
+		return this.subagentCost;
+	}
+
+	/** Internal: set the subagent tree's spend; a negative or non-finite figure is not a spend and clears it */
+	setSubagentCost(costUsd: number | undefined): void {
+		this.subagentCost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : undefined;
 	}
 
 	/** Number of unique providers with available models (for footer display) */
@@ -236,34 +244,23 @@ export class FooterDataProvider {
 		}
 	}
 
-	private resolveGitBranchSync(): string | null {
+	/** Branch as HEAD states it; `needsGitProbe` marks a reftable HEAD only git can resolve. */
+	private readBranchFromHead(): { branch: string | null; needsGitProbe: boolean } {
 		try {
-			if (!this.gitPaths) return null;
+			if (!this.gitPaths) return { branch: null, needsGitProbe: false };
 			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
-			if (content.startsWith("ref: refs/heads/")) {
-				const branch = content.slice(16);
-				return branch === ".invalid" ? (resolveBranchWithGitSync(this.gitPaths.repoDir) ?? "detached") : branch;
-			}
-			return "detached";
+			if (!content.startsWith("ref: refs/heads/")) return { branch: "detached", needsGitProbe: false };
+			const branch = content.slice(16);
+			return branch === ".invalid" ? { branch: "detached", needsGitProbe: true } : { branch, needsGitProbe: false };
 		} catch {
-			return null;
+			return { branch: null, needsGitProbe: false };
 		}
 	}
 
 	private async resolveGitBranchAsync(): Promise<string | null> {
-		try {
-			if (!this.gitPaths) return null;
-			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
-			if (content.startsWith("ref: refs/heads/")) {
-				const branch = content.slice(16);
-				return branch === ".invalid"
-					? ((await resolveBranchWithGitAsync(this.gitPaths.repoDir)) ?? "detached")
-					: branch;
-			}
-			return "detached";
-		} catch {
-			return null;
-		}
+		const head = this.readBranchFromHead();
+		if (!head.needsGitProbe || !this.gitPaths) return head.branch;
+		return (await resolveBranchWithGitAsync(this.gitPaths.repoDir)) ?? "detached";
 	}
 
 	private clearGitWatchers(): void {
@@ -335,10 +332,6 @@ export class FooterDataProvider {
 			};
 			watchFile(this.headWatchFilePath, { interval: 1000 }, this.headWatchFileListener);
 		}
-		if (!this.headWatcher && !pollGitHead) {
-			return;
-		}
-
 		// In reftable repos, branch switches update files in the reftable directory
 		// instead of HEAD. Watch it separately so the footer picks up those changes.
 		const reftableDir = join(this.gitPaths.commonGitDir, "reftable");
@@ -350,13 +343,9 @@ export class FooterDataProvider {
 				},
 				() => this.handleGitWatcherError(),
 			);
-			if (!this.reftableWatcher) {
-				return;
-			}
 
 			const tablesListPath = join(reftableDir, "tables.list");
 			if (existsSync(tablesListPath)) {
-				this.reftableTablesListPath = tablesListPath;
 				this.reftableTablesListWatcher = watchWithErrorHandler(
 					tablesListPath,
 					() => {
@@ -364,11 +353,28 @@ export class FooterDataProvider {
 					},
 					() => this.handleGitWatcherError(),
 				);
-				if (!this.reftableTablesListWatcher) {
-					return;
+				// Polling is the fallback for environments where fs.watch is unusable
+				// (descriptor limits, unsupported filesystems), so it must be armed even
+				// when watcher creation just failed. The path is recorded after the
+				// attempt because a failure synchronously clears watcher state.
+				this.reftableTablesListPath = tablesListPath;
+				let previousTablesListContent: string | undefined;
+				try {
+					previousTablesListContent = readFileSync(tablesListPath, "utf8");
+				} catch {
+					// The file may disappear between existsSync and the first poll.
 				}
 				watchFile(tablesListPath, { interval: 250 }, (current, previous) => {
+					let contentChanged = false;
+					try {
+						const currentContent = readFileSync(tablesListPath, "utf8");
+						contentChanged = previousTablesListContent !== currentContent;
+						previousTablesListContent = currentContent;
+					} catch {
+						contentChanged = true;
+					}
 					if (
+						contentChanged ||
 						current.mtimeMs !== previous.mtimeMs ||
 						current.ctimeMs !== previous.ctimeMs ||
 						current.size !== previous.size
@@ -385,4 +391,5 @@ export class FooterDataProvider {
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
 	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
->;
+> &
+	Partial<Pick<FooterDataProvider, "getSubagentCost">>;

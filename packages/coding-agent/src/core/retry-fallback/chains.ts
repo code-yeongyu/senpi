@@ -19,6 +19,7 @@ export type FallbackModelLookup =
 			getAll(): Model<Api>[];
 			isUsingOAuth?(model: Model<Api>): boolean;
 			hasConfiguredAuth?(model: Model<Api>): boolean;
+			isFallbackEligible?(model: Model<Api>): boolean;
 	  };
 
 function availableModels(lookup: FallbackModelLookup): Model<Api>[] {
@@ -34,6 +35,7 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 	const registry = lookup as {
 		isUsingOAuth?(model: Model<Api>): boolean;
 		hasConfiguredAuth?(model: Model<Api>): boolean;
+		isFallbackEligible?(model: Model<Api>): boolean;
 	};
 	return {
 		isUsingOAuth: (model) => registry.isUsingOAuth?.(model) === true,
@@ -41,6 +43,26 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 			typeof registry.hasConfiguredAuth === "function"
 				? (model) => registry.hasConfiguredAuth?.(model) === true
 				: undefined,
+		isFallbackEligible: typeof registry.isFallbackEligible === "function" ? memoizedEligibility(registry) : undefined,
+	};
+}
+
+/**
+ * Eligibility is a provider's switch (`fallbackEligible`), read from settings on disk; one
+ * canonicalization pass used to ask it once per catalog model, a 150-450 ms stall on the first
+ * fallback check of a session. Settings cannot change within one synchronous pass, so each
+ * provider is asked once per pass.
+ */
+function memoizedEligibility(registry: {
+	isFallbackEligible?(model: Model<Api>): boolean;
+}): (model: Model<Api>) => boolean {
+	const known = new Map<string, boolean>();
+	return (model) => {
+		const cached = known.get(model.provider);
+		if (cached !== undefined) return cached;
+		const eligible = registry.isFallbackEligible?.(model) !== false;
+		known.set(model.provider, eligible);
+		return eligible;
 	};
 }
 
@@ -113,13 +135,32 @@ export function baseSelector(selector: Pick<FallbackSelector, "provider" | "id">
 }
 
 /**
+ * A rung's identity: the model plus the thinking level it runs at. An entry
+ * without an explicit level inherits the running level, so it names the rung in
+ * flight rather than a second rung of that model.
+ */
+export function rungSelector(selector: Pick<FallbackSelector, "provider" | "id" | "thinkingLevel">): string {
+	const base = baseSelector(selector);
+	return selector.thinkingLevel ? `${base}:${selector.thinkingLevel}` : base;
+}
+
+/**
  * Converts validated configuration to canonical selector strings for runtime lookup.
  *
- * A bare key (no provider prefix) is a model-family policy: it expands to one
- * canonical key per provider serving that family, so a chain shipped for
- * `claude-fable-5` applies no matter which provider the user attached it through.
+ * A bare key or entry (no provider prefix) is a model-family policy: it expands
+ * only to that model vendor's first-party providers (see `FIRST_PARTY_PROVIDERS`),
+ * so a chain shipped for `claude-fable-5` applies on both Anthropic lanes and
+ * never lands a rung on a reseller the user did not name.
  * Provider-qualified keys and entries keep exact semantics, and an explicit key
  * always overrides the expansion it collides with.
+ */
+/**
+ * Chain key matched when no exact or base key resolves for the current model.
+ * Exists so a model without its own configured chain still has an escape lane:
+ * without it, a hard-failing upstream wedges the session terminal even though
+ * healthy fallback targets exist (desktop thread 487d7c29, 2026-08-28: nine
+ * consecutive upstream 500s, zero fallback attempts, terminal error).
+ * Users disable it with the `"*": []` tombstone.
  */
 export function canonicalizeFallbackChains(chains: FallbackChains, lookup: FallbackModelLookup): FallbackChains {
 	const models = availableModels(lookup);
@@ -128,11 +169,11 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 	const explicitKeys = new Set<string>();
 	const tombstones = new Set<string>();
 
-	const expandEntries = (entries: readonly string[], keySelector: string): string[] =>
+	const expandEntries = (entries: readonly string[], keySelector: string, sessionProvider: string): string[] =>
 		entries.flatMap((entry) => {
 			const bare = parseBareSelector(entry);
 			if (bare) {
-				return rankFamilyModels(models, bare.family, tiers, { limit: MAX_PROVIDERS_PER_FAMILY })
+				return rankFamilyModels(models, bare.family, tiers, { limit: MAX_PROVIDERS_PER_FAMILY, sessionProvider })
 					.map((model) =>
 						bare.thinkingLevel ? `${formatSelector(model)}:${bare.thinkingLevel}` : formatSelector(model),
 					)
@@ -156,7 +197,7 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 			const keySelector = bareKey.thinkingLevel
 				? `${formatSelector(model)}:${bareKey.thinkingLevel}`
 				: formatSelector(model);
-			const canonicalEntries = expandEntries(entries, keySelector);
+			const canonicalEntries = expandEntries(entries, keySelector, model.provider);
 			if (canonicalEntries.length > 0) canonical[keySelector] = canonicalEntries;
 		}
 	}
@@ -171,7 +212,7 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 			continue;
 		}
 		explicitKeys.add(keySelector.toLowerCase());
-		const canonicalEntries = expandEntries(entries, keySelector);
+		const canonicalEntries = expandEntries(entries, keySelector, parsedKey.provider);
 		if (canonicalEntries.length > 0) canonical[keySelector] = canonicalEntries;
 	}
 
@@ -187,25 +228,57 @@ export function resolveChainKey(
 	currentModel: Model<Api>,
 	currentThinking: ThinkingLevel | undefined,
 	chains: FallbackChains,
+	options?: { allowWildcard?: boolean; fastSibling?: Model<Api> },
 ): string | undefined {
-	const base = formatSelector(currentModel);
-	const exact = currentThinking ? `${base}:${currentThinking}` : base;
+	return (
+		ownChainKey(currentModel, currentThinking, chains) ??
+		siblingChainKey(currentModel, currentThinking, chains, options?.fastSibling)
+	);
+}
+
+function ownChainKey(
+	model: Model<Api>,
+	thinking: ThinkingLevel | undefined,
+	chains: FallbackChains,
+): string | undefined {
+	const base = formatSelector(model);
+	const exact = thinking ? `${base}:${thinking}` : base;
 	if (Object.hasOwn(chains, exact)) return exact;
-	return Object.hasOwn(chains, base) ? base : undefined;
+	if (Object.hasOwn(chains, base)) return base;
+	return undefined;
+}
+
+// A session started on a `-fast` alias runs on its base model (service-tier swaps them), so a chain
+// keyed by that alias still governs it (omo#12063). Only the catalog-paired same-provider sibling counts.
+function siblingChainKey(
+	model: Model<Api>,
+	thinking: ThinkingLevel | undefined,
+	chains: FallbackChains,
+	sibling: Model<Api> | undefined,
+): string | undefined {
+	if (!sibling || sibling.provider !== model.provider) return undefined;
+	return ownChainKey(sibling, thinking, chains);
 }
 
 function formatParsedSelector(selector: FallbackSelector): string {
-	const base = baseSelector(selector);
-	return selector.thinkingLevel ? `${base}:${selector.thinkingLevel}` : base;
+	return rungSelector(selector);
+}
+
+/** The explicit `:level` suffix of a selector string, when it has one. */
+function explicitThinkingLevel(selector: string): string | undefined {
+	const normalized = selector.trim().toLowerCase();
+	const lastColon = normalized.lastIndexOf(":");
+	if (lastColon === -1) return undefined;
+	const suffix = normalized.slice(lastColon + 1);
+	return isValidThinkingLevel(suffix) ? suffix : undefined;
 }
 
 function normalizedBase(selector: FallbackSelector | string): string {
 	if (typeof selector !== "string") return baseSelector(selector).toLowerCase();
 
 	const normalized = selector.trim().toLowerCase();
-	const lastColon = normalized.lastIndexOf(":");
-	if (lastColon === -1 || !isValidThinkingLevel(normalized.slice(lastColon + 1))) return normalized;
-	return normalized.slice(0, lastColon);
+	const level = explicitThinkingLevel(normalized);
+	return level === undefined ? normalized : normalized.slice(0, normalized.lastIndexOf(":"));
 }
 
 function normalizedExact(selector: FallbackSelector | string): string {
@@ -225,6 +298,13 @@ export function candidatesAfter(
 	if (exactIndex !== -1) return chainEntries.slice(exactIndex + 1);
 
 	const base = normalizedBase(currentSelector);
-	const baseIndex = chainEntries.findIndex((entry) => normalizedBase(entry) === base);
+	// Only a same-base entry WITHOUT a level is the position: it inherits the
+	// running level, so it is the rung in flight. A same-base entry at another
+	// explicit level is a rung of its own - with `["X:off", "Y"]` and the session
+	// on X:high, matching on the base alone consumed X:off as the position and the
+	// chain skipped straight past it to Y.
+	const baseIndex = chainEntries.findIndex(
+		(entry) => normalizedBase(entry) === base && explicitThinkingLevel(entry) === undefined,
+	);
 	return baseIndex === -1 ? chainEntries : chainEntries.slice(baseIndex + 1);
 }

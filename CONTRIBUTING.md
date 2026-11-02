@@ -20,7 +20,7 @@ If you use an agent, run it from the senpi repo root directory so it picks up `A
 
 ## Fork Strategy (READ BEFORE EDITING `src/`)
 
-senpi periodically rebases on `upstream/main` (i.e. `badlogic/pi-mono`). To keep rebases clean:
+senpi periodically merges selected upstream releases from `upstream` (i.e. `badlogic/pi-mono`). To keep merge commits reviewable:
 
 1. **Extension-first** — every new feature lands as a builtin extension under `packages/coding-agent/src/core/extensions/builtin/`, or as a user extension under `packages/coding-agent/examples/extensions/`. Touch `core/` only when no extension hook can do the job.
 2. **`changes.md` contract** — any modification to an upstream-tracked file MUST add a section to the nearest `changes.md` documenting *what changed, why, why an extension couldn't handle it, and expected merge-conflict zones*. See the existing files for templates.
@@ -29,10 +29,13 @@ senpi periodically rebases on `upstream/main` (i.e. `badlogic/pi-mono`). To keep
 ## Before Submitting a PR
 
 ```bash
-node scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
-node scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
-npm run check     # Biome + tsc + browser-smoke check (pre-commit equivalent)
-npm test          # Vitest across workspaces (skips live-API)
+# Bun is the fleet-standard invocation.
+bun install --ignore-scripts
+npm install --ignore-scripts # Contributor-compatible alternative
+bun scripts/devenv-setup.mjs                 # default: npm prebuilds, no Rust toolchain required
+bun scripts/devenv-setup.mjs --with-native   # optional: install pinned Rust toolchain and build native Rust workspace
+bun run check     # oxlint + oxfmt + lint ratchet + tsc + browser-smoke check (pre-commit equivalent)
+bun run test          # Vitest across workspaces (skips live-API)
 ./pi-test.sh      # Optional: live-API integration suite (env-gated; requires API keys)
 ```
 
@@ -41,9 +44,9 @@ Use `--with-native` only when working on native Rust code; it reads `rust-toolch
 toolchain when `rustup` is available, and then runs the Rust native build/check path when a Cargo workspace exists. If Rust is
 missing, the setup prints the exact rustup command to run instead of bootstrapping global tooling silently.
 
-`npm run check` and `npm test` must pass. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
+`bun run check` and `bun run test` must pass. The legacy npm equivalents remain supported for contributors: root scripts fan out through `scripts/run-workspaces.mjs` with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites in the same order. `./pi-test.sh` is only required when your change touches a provider that the live tests exercise.
 If you touch MCP dependencies, keep `@modelcontextprotocol/sdk` exact-pinned and verify the workspace install with
-`npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi`.
+`bun pm ls @modelcontextprotocol/sdk` (npm equivalent: `npm ls @modelcontextprotocol/sdk --workspace @code-yeongyu/senpi`).
 
 Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
@@ -57,45 +60,49 @@ senpi uses **CalVer** (Calendar Versioning), distinct from upstream `badlogic/pi
 
 Locally:
 ```bash
-npm run release             # uses today's UTC date
-npm run release -- --dry-run   # preview without committing
+bun run release             # uses today's UTC date
+bun run release --dry-run   # preview without committing
 ```
 
 The release script (`scripts/release.mjs`) imports `scripts/calver.mjs` to compute the next version, then:
-1. Bumps all 5 workspace `package.json` files in lockstep.
+1. Bumps every workspace listed in `scripts/release-packages.mjs` in lockstep.
 2. Updates each package's `CHANGELOG.md`: `## [Unreleased]` → `## [<version>] - YYYY-MM-DD`.
-3. Commits `release: v<version>`, tags `v<version>`, publishes to npm with `--tag latest`.
+3. Commits `release: v<version>`, tags it, and creates the fresh next-cycle
+   `## [Unreleased]` commit.
 4. Pushes `main` and the tag to `origin`.
-5. Re-inserts a fresh `## [Unreleased]` section to each changelog.
+5. The tag-triggered binary workflow builds and stages public artifacts.
+6. The trusted `publish-npm.yml` workflow publishes all registry packages through GitHub OIDC with npm provenance.
+7. After npm succeeds, the binary workflow makes the staged GitHub Release public.
+
+Source workspace manifests are intentionally private. Real npm publication is
+only supported through the trusted workflow; use `bun run publish:dry` for local
+package validation.
 
 ### CalVer rules
 
 - First release of the day: `YYYY.M.D` (e.g. `2026.5.13`).
 - Same-day re-release: `YYYY.M.D-N` where N ≥ 2 (e.g. `2026.5.13-2`).
-- All 5 workspaces always share the version.
+- All workspaces listed in `scripts/release-packages.mjs` always share the version.
 - Tags are `v<version>` — `build-binaries.yml` triggers on these.
 
 ### Upstream sync
 
-You do NOT manually merge upstream. `.github/workflows/upstream-agent-merge.yml` polls `badlogic/pi-mono` hourly and, when a new upstream release lands, runs Codex headless inside the runner to merge it on an automation branch.
+Merge upstream releases in a dedicated worktree from an up-to-date fork `main`. Merge the selected tag or commit
+directly, preserve a real two-parent merge commit, and never squash or rebase away upstream ancestry.
 
-The agent uses the committed `merge-upstream` skill and `/cl` changelog-audit command (under `.github/agent/`) plus the fork conflict-resolution rules in `.github/agent/merge-driver.md`. On a clean, building, changelog-audited merge, the workflow opens a PR, waits for checks and QA evidence, merges it with a merge commit, runs a fresh `/cl` audit on `main`, and then lets the release run only when package changelog entries make it release-worthy (`scripts/release.mjs` tags `vX.Y.Z` and pushes; `build-binaries.yml` publishes from the tag).
+Use `.github/upstream.json` as the machine-readable baseline, the committed `merge-upstream` skill and `/cl`
+changelog-audit command under `.github/agent/`, and the per-file rules in
+`.github/agent/merge-driver.md`. The `changes.md` files in fork-modified subdirectories describe what the fork
+preserves and why.
 
-- **Clean merge** → PR branch is merged into `main` with a merge commit, changelog audited, QA gates pass, and a new release is cut automatically when release-worthy.
-- **Conflicts / QA failure** → the agent aborts, writes `.github/agent/last-merge-report.md`, and the workflow opens an issue labeled `sync-conflict`. Resolve manually following the per-file rules in `.github/agent/merge-driver.md`; the `changes.md` files in fork-modified subdirectories tell you what the fork preserves and why.
-
-Requires `UPSTREAM_AUTOMATION_TOKEN`, `CODEX_CONFIG_TOML_B64`, and either `CODEX_AUTH_JSON_B64` or `QUOTIO_API_KEY`. Optional QA/config secrets include `CODEX_QUOTIO_CONFIG_TOML_B64`, `CODEX_CCAPI_CONFIG_TOML_B64`, `SENPI_AUTH_JSON_B64`, `SENPI_MODELS_JSON_B64` or `SENPI_MODELS_JSON_GZ_B64`, and `SENPI_SETTINGS_JSON_B64`. See `.github/agent/README.md`.
-
-To trigger manually:
-```bash
-gh workflow run upstream-agent-merge.yml -f force=true
-```
+Before updating the pull request, complete the dual-parent diff audit, changelog and lock integrity audit, focused
+and canonical tests, and strict CLI/RPC/TUI manual QA. Merge only after those local gates are clean.
 
 ### CHANGELOG entries
 
 > Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
-This still applies. The release script will surface `[Unreleased]` entries; maintainers curate them before cutting a release.
+Maintainers curate package `CHANGELOG.md` blocks in `changes/unreleased/<pr>.md`; the release script compiles them into the changelogs at the release cut.
 
 ## Quality Bar for Issues
 
@@ -121,8 +128,8 @@ PRs that bloat the core or skip `changes.md` will be asked to convert to an exte
 
 ## Style
 
-- TAB indent (Biome `indentWidth: 3`). 120-column line width.
-- Match the style of the surrounding file. The codebase is largely consistent — Biome plus the existing patterns are the source of truth.
+- TAB indent (oxfmt `tabWidth: 3`). 120-column line width.
+- Match the style of the surrounding file. The codebase is largely consistent — oxlint, oxfmt and the existing patterns are the source of truth.
 - Use the path aliases defined in root `tsconfig.json` (`@earendil-works/pi-*`, `@code-yeongyu/senpi*`).
 
 ### Why are weekend issues lower priority?

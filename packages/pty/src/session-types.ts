@@ -1,7 +1,7 @@
 import type { Buffer } from "node:buffer";
 import type { NativePtyLoadResult } from "./native-loader.ts";
 
-export type TerminalSessionBackend = "native" | "pipe-fallback";
+export type TerminalSessionBackend = "native" | "pipe-fallback" | "bun";
 export type TerminalSessionDataHandler = (chunk: Buffer) => void;
 export type TerminalSessionSignal = NodeJS.Signals;
 
@@ -24,6 +24,15 @@ export interface TerminalSessionNativeOptions {
 	readonly cols: number;
 	readonly rows: number;
 	readonly timeoutMs?: number;
+}
+
+export interface TerminalSessionTerminateOptions {
+	/** Signal delivered first; defaults to SIGTERM. */
+	readonly signal?: TerminalSessionSignal;
+	/** How long to wait for a graceful exit before escalating to SIGKILL. Default 5000ms. */
+	readonly graceMs?: number;
+	/** How long to wait for the exit after SIGKILL before giving up. Default 1000ms. */
+	readonly forcedGraceMs?: number;
 }
 
 export interface TerminalSessionOperationResult {
@@ -64,6 +73,8 @@ export interface TerminalSessionHandle {
 	readonly kill: (signal?: TerminalSessionSignal) => TerminalSessionOperationResult | undefined;
 	readonly waitExit?: () => Promise<unknown>;
 	readonly wait?: () => Promise<unknown>;
+	readonly pid?: number;
+	readonly processGroupId?: number;
 }
 
 export type CreateNativeTerminalSession = (
@@ -75,4 +86,6 @@ export interface TerminalSessionDependencies {
 	readonly nativeLoadResult?: NativePtyLoadResult;
 	readonly createNativeSession?: CreateNativeTerminalSession;
 	readonly env?: Readonly<Record<string, string | undefined>>;
+	readonly runtimeVersions?: import("./session-bun.ts").BunRuntimeVersions;
+	readonly bunRuntime?: import("./session-bun.ts").BunRuntime;
 }

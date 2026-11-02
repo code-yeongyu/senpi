@@ -229,7 +229,9 @@ describe("hint-aware 429 tier routing", () => {
 		// No fallback — exponential retry on same model.
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 		// First retry delay = baseDelayMs * 2^0 = 1000.
-		expect(harness.eventsOfType("auto_retry_start").map((e) => e.delayMs)).toEqual([1000]);
+		expect(harness.eventsOfType("auto_retry_start").map((e) => e.delayMs)).toSatisfy(
+			(d: number[]) => d.length === 1 && d[0]! >= 1000 && d[0]! < 1250,
+		);
 		expect(harness.eventsOfType("auto_retry_end").map((e) => e.success)).toEqual([true]);
 		expect(harness.faux.state.callCount).toBe(2);
 	});
@@ -255,7 +257,9 @@ describe("hint-aware 429 tier routing", () => {
 		await harness.session.prompt("hello");
 
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
-		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([1000]);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toSatisfy(
+			(d: number[]) => d.length === 1 && d[0]! >= 1000 && d[0]! < 1250,
+		);
 		expect(harness.faux.getCallLog().filter((call) => call.modelId === "faux-1")).toHaveLength(2);
 	});
 
@@ -304,7 +308,9 @@ describe("hint-aware 429 tier routing", () => {
 		await harness.session.prompt("hello");
 
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
-		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([1000]);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toSatisfy(
+			(d: number[]) => d.length === 1 && d[0]! >= 1000 && d[0]! < 1250,
+		);
 		expect(harness.faux.getCallLog().filter((call) => call.modelId === "faux-1")).toHaveLength(2);
 	});
 

@@ -9,6 +9,9 @@ import {
 	startHermeticRpcSession,
 	waitForSessionWrites,
 } from "./helpers/rpc-hermetic.ts";
+import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 describe("RPC mode", () => {
 	let session: RpcHermeticSession | undefined;
@@ -157,7 +160,7 @@ describe("RPC mode", () => {
 	test("should get provider accounts without credential material", async () => {
 		await client.start();
 
-		const accounts = await client.getProviderAccounts("claude-sdk-oauth");
+		const accounts = await client.getProviderAccounts("anthropic-subscription");
 		expect(accounts).toEqual([]);
 		expect(JSON.stringify(accounts)).not.toMatch(/sk-ant/);
 	}, 30000);

@@ -54,7 +54,11 @@ describe("risky main-model warning", () => {
 		(selectedModel) => {
 			const fakeThis = {
 				chatContainer: new Container(),
+				toolOutputExpanded: false,
 				ui: { requestRender: vi.fn() },
+				showNoticeBox(spec: unknown): void {
+					(InteractiveMode as any).prototype.showNoticeBox.call(fakeThis, spec);
+				},
 			};
 
 			warningMethod().call(fakeThis, selectedModel);
@@ -64,7 +68,7 @@ describe("risky main-model warning", () => {
 			expect(plain).toContain(RISKY_MAIN_MODEL_WARNING);
 			expect(plain).toContain("Risky model warning");
 			expect(rendered).toContain(theme.getFgAnsi("error"));
-			expect(fakeThis.chatContainer.children).toHaveLength(4);
+			expect(fakeThis.chatContainer.children).toHaveLength(2);
 			expect(fakeThis.ui.requestRender).toHaveBeenCalledExactlyOnceWith();
 		},
 	);
@@ -84,7 +88,7 @@ describe("risky main-model warning", () => {
 	test("checks a model selected through the full or favorites selector", async () => {
 		const selectedModel = model({ id: "qwen3-coder" });
 		const fakeThis = {
-			session: { setModel: vi.fn(async () => undefined) },
+			session: { setModel: vi.fn(async () => undefined), setSessionModel: vi.fn(async () => undefined) },
 			footer: { invalidate: vi.fn() },
 			updateEditorBorderColor: vi.fn(),
 			showStatus: vi.fn(),
@@ -96,7 +100,10 @@ describe("risky main-model warning", () => {
 		const selectModelFromUi = Reflect.get(InteractiveMode.prototype, "selectModelFromUi");
 		if (typeof selectModelFromUi !== "function") throw new Error("InteractiveMode.selectModelFromUi is missing");
 
-		await selectModelFromUi.call(fakeThis, selectedModel);
+		await selectModelFromUi.call(fakeThis, selectedModel, undefined, {
+			origin: { source: "picker" },
+			persistDefault: false,
+		});
 
 		expect(fakeThis.showRiskyMainModelWarning).toHaveBeenCalledExactlyOnceWith(selectedModel);
 	});

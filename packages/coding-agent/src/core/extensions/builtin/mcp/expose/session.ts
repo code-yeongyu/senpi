@@ -1,11 +1,19 @@
-import type { ExtensionAPI } from "../../../types.ts";
-import { cachedToolsToCatalogEntries, collectToolCatalog, type McpToolCatalogEntry } from "../catalog.ts";
+import type { ExtensionAPI, ExtensionUIContext } from "../../../types.ts";
+import type { ToolSearchService } from "../../tool-search/service.ts";
+import {
+	cachedToolsToCatalogEntries,
+	collectToolCatalog,
+	type McpToolCatalogEntry,
+	mcpRegistrationIdentity,
+} from "../catalog.ts";
 import type { McpCachedServerCatalog } from "../catalog-cache.ts";
 import type { ResolvedMcpConfig } from "../config-schema.ts";
 import type { ServerConnection } from "../connection.ts";
 import type { McpOutputArtifacts } from "../guard/output-guard.ts";
+import type { McpInvocationResolver } from "../invocation.ts";
 import { createMcpLogger, type McpLogger } from "../log.ts";
 import type { McpPromptServer } from "../prompts.ts";
+import type { McpRequestOrigin } from "../request-origin.ts";
 import { createMcpResourceTools, type McpResourceServer } from "../resources.ts";
 import { computeMcpExposurePolicy } from "./policy.ts";
 import type { McpCatalogRegistrationOptions } from "./register.ts";
@@ -17,6 +25,8 @@ export type McpSessionRegistration = McpTierBRegistration & {
 };
 
 export interface McpDirectRegistrationEntry {
+	readonly requestOrigin?: () => McpRequestOrigin | undefined;
+	readonly bindPresentation?: (ui: ExtensionUIContext) => void;
 	readonly name: string;
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
@@ -25,12 +35,19 @@ export interface McpDirectRegistrationEntry {
 	readonly cachedCatalog?: McpCachedServerCatalog;
 	readonly ensureFresh?: () => Promise<void>;
 	readonly ensureCachedToolConnected?: () => Promise<void>;
+	readonly invocation?: McpInvocationResolver;
+	/** A startup connect still owns this server's catalog; its refresh registers it. */
+	readonly startupCatalogPending?: boolean;
+	/** Service admission and registry updates never enumerate a remote server. */
+	readonly localCatalogOnly?: boolean;
+	readonly onRegistered?: (identity: string) => void;
 }
 
 export async function registerDirectMcpTools(
 	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 	config: ResolvedMcpConfig,
 	entries: Iterable<McpDirectRegistrationEntry>,
+	toolSearchService: ToolSearchService,
 	options: McpCatalogRegistrationOptions = {},
 ): Promise<McpSessionRegistration | undefined> {
 	const registeredEntries: McpToolCatalogEntry[] = [];
@@ -39,16 +56,21 @@ export async function registerDirectMcpTools(
 	const proxyGateways: { server: string; entries: McpToolCatalogEntry[] }[] = [];
 	const resourceServers: McpResourceServer[] = [];
 	const promptServers: McpPromptServer[] = [];
+	const recordRegisteredListings: Array<() => void> = [];
 	for (const entry of entries) {
 		const server = config.servers[entry.name];
 		if (server?.config === undefined) continue;
 		const catalog =
 			entry.cachedCatalog === undefined
-				? entry.connection.state === "connected"
+				? entry.connection.state === "connected" &&
+					entry.startupCatalogPending !== true &&
+					entry.localCatalogOnly !== true
 					? await collectToolCatalog(entry.name, entry.connection, server.config, {
 							agentDir: entry.agentDir,
 							artifacts: entry.artifacts,
 							ensureFresh: entry.ensureFresh,
+							invocation: entry.invocation,
+							requestOrigin: entry.requestOrigin,
 							outputGuard: config.settings.outputGuard,
 						})
 					: []
@@ -62,12 +84,19 @@ export async function registerDirectMcpTools(
 							agentDir: entry.agentDir,
 							artifacts: entry.artifacts,
 							ensureFresh: entry.ensureFresh,
+							invocation: entry.invocation,
+							requestOrigin: entry.requestOrigin,
 							outputGuard: config.settings.outputGuard,
 						},
 					);
+		const identity = mcpRegistrationIdentity(catalog, entry.cachedCatalog);
+		recordRegisteredListings.push(() => entry.onRegistered?.(identity));
 		const cachedPrompts = entry.cachedCatalog?.prompts ?? [];
 		if (cachedPrompts.length > 0) {
 			promptServers.push({
+				ensureFresh: entry.ensureFresh,
+				bindPresentation: entry.bindPresentation,
+				requestOrigin: entry.requestOrigin,
 				connection: entry.connection,
 				prompts: cachedPrompts,
 				requestTimeoutMs: server.config.requestTimeoutMs,
@@ -77,6 +106,8 @@ export async function registerDirectMcpTools(
 		const cachedResources = entry.cachedCatalog?.resources ?? [];
 		if (cachedResources.length > 0) {
 			resourceServers.push({
+				ensureFresh: entry.ensureFresh,
+				requestOrigin: entry.requestOrigin,
 				agentDir: entry.agentDir,
 				artifacts: entry.artifacts,
 				connection: entry.connection,
@@ -101,13 +132,16 @@ export async function registerDirectMcpTools(
 		proxyGateways.length === 0 &&
 		options.refreshActiveSetWhenEmpty !== true
 	) {
+		for (const record of recordRegisteredListings) record();
 		return undefined;
 	}
 	const utilityTools = resourceServers.length > 0 ? createMcpResourceTools(() => resourceServers) : [];
 	const registration = registerMcpTierBTools(
 		pi,
 		{ activeEntries, proxyGateways, registeredEntries, searchMode, settings: config.settings, utilityTools },
+		toolSearchService,
 		(message) => createMcpLogger("service").warn(message),
 	);
+	for (const record of recordRegisteredListings) record();
 	return { ...registration, promptServers, resourceServers };
 }

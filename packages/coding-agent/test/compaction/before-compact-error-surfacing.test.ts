@@ -16,6 +16,8 @@ import type {
 	SessionBeforeCompactResult,
 } from "../../src/core/extensions/index.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
+import type { HistoryReducer } from "../../src/core/session-history-reduce.ts";
+import { reduceEntries } from "../helpers/reduce-entries.ts";
 
 type Registration = FauxProviderRegistration;
 
@@ -92,6 +94,7 @@ function createHarness(options?: { withAuth?: boolean }): Harness {
 		sessionManager: {
 			getEntries: () => [],
 			getBranch: () => [],
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries([], reducer),
 		} as unknown as ExtensionContext["sessionManager"],
 		modelRegistry,
 		model,
@@ -145,9 +148,12 @@ describe("session_before_compact error surfacing", () => {
 		// Given
 		const harness = createHarness();
 		harness.registration.setResponses([
+			// A refusal: it stays unauthorized for the deterministic fallback, so the
+			// provider detail is what reaches the cancel reason (issue #1741).
 			fauxAssistantMessage("", {
 				stopReason: "error",
 				errorMessage: "faux: request blocked by provider policy",
+				stopDetails: { type: "refusal" },
 			}),
 		]);
 
@@ -178,7 +184,7 @@ describe("session_before_compact error surfacing", () => {
 		expect(call?.context.systemPrompt).toBe("TEST AGENT SYSTEM PROMPT");
 	});
 
-	it("cancels with a stop-reason diagnosis when the summarization response has no text", async () => {
+	it("cancels with a boundary diagnosis when empty-summary recovery has no retained branch", async () => {
 		// Given: the model spends the whole output budget on thinking (adaptive
 		// reasoning models do this without being asked) and the stream ends at
 		// the token cap with zero text content.
@@ -190,11 +196,18 @@ describe("session_before_compact error surfacing", () => {
 		// When
 		const result = await harness.beforeCompact(createEvent(), harness.ctx);
 
-		// Then: the cancel reason names the real failure (no text + stop reason)
-		// instead of the undiagnosable "returned no summary".
+		// Then: this classified failure enters deterministic recovery, but the
+		// deliberately boundary-less fixture cannot retain a safe suffix.
 		expect(result?.cancel).toBe(true);
-		expect(result?.reason ?? "").toContain("no text");
-		expect(result?.reason ?? "").toContain("stopReason: length");
+		expect(JSON.parse(result?.reason?.split("\n")[1] ?? "{}")).toEqual({
+			rejectionReason: "missing-preparation-boundary",
+			contextWindow: 128_000,
+			reserveTokens: 16_384,
+			budgetTokens: 111_616,
+			budgetExceeded: false,
+			candidatesChecked: 0,
+			rejectionCounts: {},
+		});
 	});
 
 	it("cancels with the credential error when summarization auth is unavailable", async () => {
@@ -210,7 +223,7 @@ describe("session_before_compact error surfacing", () => {
 		expect(result?.reason ?? "").toContain("credentials unavailable");
 	});
 
-	it("cancels without a reason when the user aborted the compaction signal", async () => {
+	it("stands down without a cancel when the compaction signal is already aborted", async () => {
 		// Given
 		const harness = createHarness();
 		harness.registration.setResponses([fauxAssistantMessage("never used")]);
@@ -220,9 +233,10 @@ describe("session_before_compact error surfacing", () => {
 		// When
 		const result = await harness.beforeCompact(createEvent({ signal: controller.signal }), harness.ctx);
 
-		// Then: no extension reason means agent-session's aborted branch renders
-		// the plain "Compaction cancelled" instead of a misleading rejection error.
-		expect(result?.cancel).toBe(true);
-		expect(result && "reason" in result ? result.reason : undefined).toBeUndefined();
+		// Then: no cancel result means core's own aborted classification renders
+		// the plain "Compaction cancelled", and no session_compact accepted:false
+		// is emitted, so an abort never counts as a circuit-breaker failure
+		// (issue #886).
+		expect(result).toBeUndefined();
 	});
 });

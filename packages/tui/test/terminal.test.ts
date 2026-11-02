@@ -1,8 +1,21 @@
 import assert from "node:assert";
+import * as fs from "node:fs";
+import * as net from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
 import { mock, describe as nodeDescribe, it as nodeIt } from "node:test";
 import { vi, describe as vitestDescribe, it as vitestIt } from "vitest";
 import { setKittyProtocolActive } from "../src/keys.ts";
-import { keyboardEnhancementEnabled, normalizeAppleTerminalInput, ProcessTerminal } from "../src/terminal.ts";
+import {
+	keyboardEnhancementEnabled,
+	normalizeAppleTerminalInput,
+	normalizeNativeShiftEnterInput,
+	normalizeWarpWslShiftEnterInput,
+	ProcessTerminal,
+	resolveBurstWindowMs,
+	resolveEscapeTimeoutMs,
+} from "../src/terminal.ts";
+import { isWslSession } from "../src/wsl-session.ts";
 
 const isVitest = process.env.VITEST === "true";
 type TestCallback = () => void | Promise<void>;
@@ -74,6 +87,101 @@ function setupTerminalStopHarness(wasRaw: boolean, restoreRawMode: (mode: boolea
 	};
 }
 
+describe("resolveBurstWindowMs", () => {
+	it("uses PI_TUI_BURST_WINDOW_MS when configured, including 0 to never hold", () => {
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "80" }), 80);
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "80", SSH_TTY: "/dev/pts/1" }), 80);
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "0" }), 0);
+	});
+
+	it("waits longer over SSH, where paste chunks arrive further apart", () => {
+		assert.ok(resolveBurstWindowMs({ SSH_TTY: "/dev/pts/1" }) > resolveBurstWindowMs({}));
+		assert.equal(
+			resolveBurstWindowMs({ SSH_CONNECTION: "1 2 3 4" }),
+			resolveBurstWindowMs({ SSH_TTY: "/dev/pts/1" }),
+		);
+	});
+
+	it("ignores invalid PI_TUI_BURST_WINDOW_MS values", () => {
+		for (const value of ["abc", "-5", "Infinity", ""]) {
+			assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: value }), resolveBurstWindowMs({}));
+		}
+	});
+});
+
+describe("resolveEscapeTimeoutMs", () => {
+	it("uses PI_TUI_ESC_TIMEOUT when configured", () => {
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80" }, "darwin"), 80);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80", SSH_TTY: "/dev/pts/1" }, "darwin"), 80);
+	});
+
+	it("ignores invalid PI_TUI_ESC_TIMEOUT values", () => {
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "abc" }, "darwin"), 50);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "0" }, "darwin"), 50);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "-5" }, "darwin"), 50);
+		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "" }, "darwin"), 50);
+	});
+
+	it("defaults to 100ms over SSH", () => {
+		assert.equal(resolveEscapeTimeoutMs({ SSH_CONNECTION: "10.0.0.1 22" }, "darwin"), 100);
+		assert.equal(resolveEscapeTimeoutMs({ SSH_TTY: "/dev/pts/1" }, "darwin"), 100);
+	});
+
+	it("defaults to 100ms on the WSL environment markers", () => {
+		assert.equal(resolveEscapeTimeoutMs({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), 100);
+		assert.equal(resolveEscapeTimeoutMs({ WSL_INTEROP: "/run/WSL/123_interop" }, "linux"), 100);
+		assert.equal(resolveEscapeTimeoutMs({ WSLENV: "WT_SESSION" }, "linux"), 100);
+	});
+
+	it("defaults to the standard 50ms otherwise", () => {
+		assert.equal(resolveEscapeTimeoutMs({}, "darwin"), 50);
+	});
+});
+
+describe("isWslSession (#3628)", () => {
+	const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tui-wsl-"));
+	const microsoftVersion = path.join(fixtureDir, "microsoft-version");
+	const plainLinuxVersion = path.join(fixtureDir, "plain-linux-version");
+	fs.writeFileSync(microsoftVersion, "Linux version 5.15.167.4-microsoft-standard-WSL2 (root@x86_64) GNU/Linux\n");
+	fs.writeFileSync(plainLinuxVersion, "Linux version 6.8.0-45-generic GNU/Linux\n");
+
+	it("detects WSL through each env marker", () => {
+		assert.equal(isWslSession({ WSL_DISTRO_NAME: "Ubuntu" }, "linux"), true);
+		assert.equal(isWslSession({ WSL_INTEROP: "/run/WSL/123_interop" }, "linux"), true);
+		assert.equal(isWslSession({ WSLENV: "WT_SESSION" }, "linux"), true);
+	});
+
+	it("falls back to the kernel version file when the environment is sanitized", () => {
+		assert.equal(isWslSession({}, "linux", microsoftVersion), true);
+		assert.equal(isWslSession({}, "linux", plainLinuxVersion), false);
+		assert.equal(isWslSession({}, "linux", path.join(fixtureDir, "missing")), false);
+	});
+
+	it("stays false off Linux", () => {
+		assert.equal(isWslSession({ WSL_DISTRO_NAME: "Ubuntu" }, "win32"), false);
+		assert.equal(isWslSession({ WSL_DISTRO_NAME: "Ubuntu" }, "darwin", microsoftVersion), false);
+	});
+});
+
+describe("normalizeNativeShiftEnterInput", () => {
+	it("rewrites Return to CSI-u Shift+Enter when native Shift detection is enabled and Shift is pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", true, true), "\x1b[13;2u");
+	});
+
+	it("leaves Return unchanged when native Shift detection is disabled", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", false, true), "\r");
+	});
+
+	it("leaves Return unchanged when Shift is not pressed", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\r", true, false), "\r");
+	});
+
+	it("leaves non-Return input unchanged", () => {
+		assert.equal(normalizeNativeShiftEnterInput("\x1b[13;2u", true, true), "\x1b[13;2u");
+		assert.equal(normalizeNativeShiftEnterInput("a", true, true), "a");
+	});
+});
+
 describe("normalizeAppleTerminalInput", () => {
 	it("rewrites Apple Terminal Return to CSI-u Shift+Enter when Shift is pressed", () => {
 		assert.equal(normalizeAppleTerminalInput("\r", true, true), "\x1b[13;2u");
@@ -90,6 +198,201 @@ describe("normalizeAppleTerminalInput", () => {
 	it("leaves non-Return input unchanged", () => {
 		assert.equal(normalizeAppleTerminalInput("\x1b[13;2u", true, true), "\x1b[13;2u");
 		assert.equal(normalizeAppleTerminalInput("a", true, true), "a");
+	});
+});
+
+describe("normalizeWarpWslShiftEnterInput", () => {
+	it("does not check the WSL socket when Warp is not detected", () => {
+		let socketChecks = 0;
+		assert.equal(
+			normalizeWarpWslShiftEnterInput("\n", { WSL_INTEROP: "/run/WSL/321_interop" }, "linux", () => {
+				socketChecks += 1;
+				return true;
+			}),
+			"\n",
+		);
+		assert.equal(socketChecks, 0);
+	});
+
+	it("rejects regular files, directories, and symlinks to non-sockets", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tui-wsl-"));
+		const regularFile = path.join(tempDir, "regular-file");
+		const directory = path.join(tempDir, "directory");
+		const symlinkToFile = path.join(tempDir, "symlink-to-file");
+		fs.writeFileSync(regularFile, "not a socket");
+		fs.mkdirSync(directory);
+		fs.symlinkSync(regularFile, symlinkToFile);
+		const env = { WARP_SESSION_ID: "session", WSL_INTEROP: "/run/WSL/123_interop" };
+		try {
+			for (const entry of [regularFile, directory, symlinkToFile]) {
+				assert.equal(
+					normalizeWarpWslShiftEnterInput("\n", env, "linux", () => fs.statSync(entry).isSocket()),
+					"\n",
+					entry,
+				);
+			}
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("accepts a symlink to a real socket", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tui-wsl-"));
+		const socketPath = path.join(tempDir, "interop.sock");
+		const socketAlias = path.join(tempDir, "interop-alias");
+		const server = net.createServer();
+		try {
+			await new Promise<void>((resolve, reject) => {
+				server.once("error", reject);
+				server.listen(socketPath, resolve);
+			});
+			fs.symlinkSync(socketPath, socketAlias);
+			assert.equal(
+				normalizeWarpWslShiftEnterInput(
+					"\n",
+					{ WARP_SESSION_ID: "session", WSL_INTEROP: "/run/WSL/123_interop" },
+					"linux",
+					() => fs.statSync(socketAlias).isSocket(),
+				),
+				"\x1b[13;2u",
+			);
+		} finally {
+			server.close();
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("rewrites Warp-on-WSL LF as explicit Shift+Enter", () => {
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					TERM_PROGRAM: "WarpTerminal",
+					WARP_SESSION_ID: "session",
+					WSL_DISTRO_NAME: "Ubuntu",
+					WSL_INTEROP: "/run/WSL/1_interop",
+				},
+				"linux",
+				() => true,
+			),
+			"\x1b[13;2u",
+		);
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					WARP_SESSION_ID: "session",
+					WSL_INTEROP: "/run/WSL/1_interop",
+				},
+				"linux",
+				() => true,
+			),
+			"\x1b[13;2u",
+		);
+	});
+
+	it("rejects spoofed Warp and WSL markers", () => {
+		const validWsl = { WARP_SESSION_ID: "session", WSL_INTEROP: "/run/WSL/123_interop" };
+		assert.equal(
+			normalizeWarpWslShiftEnterInput("\n", { ...validWsl, WARP_SESSION_ID: "" }, "linux", () => true),
+			"\n",
+		);
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{ TERM_PROGRAM: "WarpTerminal", ...validWsl, WARP_SESSION_ID: undefined },
+				"linux",
+				() => true,
+			),
+			"\n",
+		);
+		for (const interop of [
+			"/run/WSL/not-a-real-socket",
+			"/run/WSL/123",
+			"/run/WSL/123_interop-extra",
+			"/tmp/123_interop",
+		]) {
+			assert.equal(
+				normalizeWarpWslShiftEnterInput("\n", { ...validWsl, WSL_INTEROP: interop }, "linux", () => true),
+				"\n",
+				interop,
+			);
+		}
+		assert.equal(
+			normalizeWarpWslShiftEnterInput("\n", validWsl, "linux", () => false),
+			"\n",
+		);
+	});
+
+	it("does not treat empty or non-Linux WSL markers as a target session", () => {
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_DISTRO_NAME: "",
+				},
+				"linux",
+			),
+			"\n",
+		);
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_INTEROP: "/run/WSL/1_interop",
+				},
+				"darwin",
+				() => true,
+			),
+			"\n",
+		);
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_INTEROP: "spoofed",
+				},
+				"linux",
+			),
+			"\n",
+		);
+	});
+
+	it("leaves other terminals, remote or multiplexed sessions, and input unchanged", () => {
+		assert.equal(normalizeWarpWslShiftEnterInput("\n", { WSL_DISTRO_NAME: "Ubuntu" }, "linux"), "\n");
+		assert.equal(normalizeWarpWslShiftEnterInput("\n", { TERM_PROGRAM: "WarpTerminal" }, "linux"), "\n");
+		assert.equal(
+			normalizeWarpWslShiftEnterInput("\r", {
+				TERM_PROGRAM: "WarpTerminal",
+				WSL_DISTRO_NAME: "Ubuntu",
+			}),
+			"\r",
+		);
+		for (const key of ["TMUX", "TMUX_PANE", "STY", "ZELLIJ"] as const) {
+			assert.equal(
+				normalizeWarpWslShiftEnterInput("\n", {
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_DISTRO_NAME: "Ubuntu",
+					[key]: "active",
+				}),
+				"\n",
+				key,
+			);
+		}
+		for (const key of ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"] as const) {
+			assert.equal(
+				normalizeWarpWslShiftEnterInput("\n", {
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_DISTRO_NAME: "Ubuntu",
+					[key]: "active",
+				}),
+				"\n",
+				key,
+			);
+		}
 	});
 });
 
@@ -222,6 +525,21 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("forwards device attributes replies that answer other queries", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?7u");
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), undefined);
+
+			// The TUI's color query uses DA1 as its own sentinel.
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), "\x1b[?62;4;52c");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("forwards normal input while waiting for Kitty response", () => {
 		const harness = setupNegotiation();
 		try {
@@ -229,6 +547,51 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 
 			assert.equal(harness.getInput(), "a");
 			assert.equal(harness.terminal.kittyProtocolActive, false);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("holds a newline that follows text within the burst window by default", () => {
+		const harness = setupNegotiation({
+			PI_TUI_BURST_WINDOW_MS: undefined,
+			SSH_TTY: undefined,
+			SSH_CONNECTION: undefined,
+		});
+		try {
+			harness.send("a");
+			harness.send("b\n");
+			assert.equal(harness.getInput(), "b");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("forwards a newline that follows text at once when PI_TUI_BURST_WINDOW_MS is 0", () => {
+		const harness = setupNegotiation({ PI_TUI_BURST_WINDOW_MS: "0", SSH_TTY: undefined, SSH_CONNECTION: undefined });
+		try {
+			harness.send("a");
+			harness.send("b\n");
+			assert.equal(harness.getInput(), "\n");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("forwards Warp-on-WSL LF unchanged for non-editor consumers", () => {
+		const harness = setupNegotiation({
+			TERM_PROGRAM: "WarpTerminal",
+			WARP_SESSION_ID: undefined,
+			WARP_TERMINAL_SESSION_UUID: undefined,
+			WSL_DISTRO_NAME: "Ubuntu",
+			WSL_INTEROP: undefined,
+		});
+		try {
+			harness.send("\n");
+			assert.equal(harness.getInput(), "\n");
+
+			harness.send("\r");
+			assert.equal(harness.getInput(), "\r");
 		} finally {
 			harness.cleanup();
 		}
@@ -272,7 +635,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		const harness = setupNegotiation();
 		try {
 			harness.send("\x1b[");
-			advanceTimersByTime(10);
+			advanceTimersByTime(50); // StdinBuffer sequence timeout, not the lone-ESC timeout
 
 			assert.equal(harness.getInput(), undefined);
 
@@ -343,6 +706,87 @@ describe("ProcessTerminal stop", () => {
 
 	it("does not throw when raw-mode restoration fails during stop", () => {
 		// Given
+		const eio = Object.assign(new Error("setRawMode failed with errno: 5"), { errno: 5 });
+		const harness = setupTerminalStopHarness(false, () => {
+			throw eio;
+		});
+
+		try {
+			// When / Then
+			assert.doesNotThrow(() => harness.terminal.stop());
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("does not throw when Bun reports the dead terminal only in the message", () => {
+		// Given
+		const bunShimEio = new Error("setRawMode failed with errno: 5");
+		const harness = setupTerminalStopHarness(false, () => {
+			throw bunShimEio;
+		});
+
+		try {
+			// When / Then
+			assert.doesNotThrow(() => harness.terminal.stop());
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("does not throw when the message carries the EPIPE errno", () => {
+		// Given
+		const bunShimEpipe = new Error("setRawMode failed with errno: 32");
+		const harness = setupTerminalStopHarness(false, () => {
+			throw bunShimEpipe;
+		});
+
+		try {
+			// When / Then
+			assert.doesNotThrow(() => harness.terminal.stop());
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("rethrows raw-mode failures whose message carries no dead-terminal errno", () => {
+		// Given
+		const unrelated = new Error("boom");
+		const harness = setupTerminalStopHarness(false, () => {
+			throw unrelated;
+		});
+
+		try {
+			// When / Then
+			assert.throws(
+				() => harness.terminal.stop(),
+				(error: unknown) => error === unrelated,
+			);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("rethrows raw-mode failures carrying a non-dead errno in the message", () => {
+		// Given
+		const unrelated = new Error("setRawMode failed with errno: 22");
+		const harness = setupTerminalStopHarness(false, () => {
+			throw unrelated;
+		});
+
+		try {
+			// When / Then
+			assert.throws(
+				() => harness.terminal.stop(),
+				(error: unknown) => error === unrelated,
+			);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("does not throw when Node reports the dead terminal by error code", () => {
+		// Given
 		const eio = Object.assign(new Error("setRawMode failed"), { code: "EIO" });
 		const harness = setupTerminalStopHarness(false, () => {
 			throw eio;
@@ -371,6 +815,26 @@ describe("ProcessTerminal stop", () => {
 			);
 		} finally {
 			harness.cleanup();
+		}
+	});
+});
+
+describe("ProcessTerminal progress", () => {
+	it("writes a valid OSC 9;4 clear sequence", () => {
+		const terminal = new ProcessTerminal();
+		const writes: string[] = [];
+		const previousWrite = process.stdout.write;
+
+		process.stdout.write = ((chunk: string | Uint8Array) => {
+			writes.push(String(chunk));
+			return true;
+		}) as typeof process.stdout.write;
+
+		try {
+			terminal.setProgress(false);
+			assert.deepEqual(writes, ["\x1b]9;4;0\x07"]);
+		} finally {
+			process.stdout.write = previousWrite;
 		}
 	});
 });

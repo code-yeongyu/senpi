@@ -18,6 +18,7 @@ type InteractiveModePrototypeWithHandleCtrlZ = {
 };
 
 function callHandleCtrlZ(context: HandleCtrlZThis): void {
+	Object.assign(context, { pauseQuestionMouseCapture: vi.fn(), resumeQuestionMouseCapture: vi.fn() });
 	(interactiveModePrototype as InteractiveModePrototypeWithHandleCtrlZ).handleCtrlZ.call(context);
 }
 

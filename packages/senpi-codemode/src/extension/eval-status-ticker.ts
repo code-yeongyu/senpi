@@ -1,5 +1,6 @@
 import type { EvalDetachedCellStatusEntry } from "../tool/detached-cell-manager.ts";
 import { formatEvalCellStatus } from "./eval-status.ts";
+import { isStaleExtensionContextError } from "./stale-context.ts";
 
 /** Footer live-elapsed refresh cadence while at least one detached cell is running. */
 export const EVAL_STATUS_TICK_INTERVAL_MS = 1000;
@@ -17,7 +18,8 @@ export interface EvalStatusTickerOptions {
  * Drives a once-per-second footer refresh while detached eval cells are running so
  * the "↗ py · … (Ns)" elapsed label advances live instead of freezing between
  * cell-set transitions. Same shape as the terminal builtin's MonitorStatusTicker:
- * the interval is unref'd, and ticks producing the already-rendered label are skipped.
+ * the interval is unref'd, ticks producing the already-rendered label are skipped, and a
+ * render that hits a retired extension context retires the ticker until the next sync.
  */
 export class EvalStatusTicker {
 	private readonly render: EvalStatusRender;
@@ -43,7 +45,7 @@ export class EvalStatusTicker {
 	sync(entries: readonly EvalDetachedCellStatusEntry[]): void {
 		this.entries = entries;
 		this.hasRendered = false;
-		this.tick();
+		if (!this.tick()) return;
 		if (entries.length === 0) {
 			this.stopInterval();
 			return;
@@ -69,11 +71,24 @@ export class EvalStatusTicker {
 		}
 	}
 
-	private tick(): void {
+	/** Returns false when the render hit a retired context and the ticker retired. */
+	private tick(): boolean {
 		const status = formatEvalCellStatus(this.entries, this.now());
-		if (this.hasRendered && status === this.lastRenderedStatus) return;
+		if (this.hasRendered && status === this.lastRenderedStatus) return true;
 		this.hasRendered = true;
 		this.lastRenderedStatus = status;
-		this.render(status);
+		try {
+			this.render(status);
+		} catch (error) {
+			// A context retired by session replacement or reload throws from inside the
+			// interval callback, where nothing catches it and the process exits. Retire
+			// instead; the next sync() (with a live context) re-arms the ticker.
+			if (isStaleExtensionContextError(error)) {
+				this.stop();
+				return false;
+			}
+			throw error;
+		}
+		return true;
 	}
 }

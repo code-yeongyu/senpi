@@ -12,12 +12,15 @@ const importOAuthModule = (specifier: string): Promise<unknown> => {
 };
 
 type OAuthFlowLoaders = {
-	anthropic: () => OAuthAuth | Promise<OAuthAuth>;
-	openaiCodex: () => OAuthAuth | Promise<OAuthAuth>;
+	chatgptSubscription: () => OAuthAuth | Promise<OAuthAuth>;
+	openaiChatGPT: () => OAuthAuth | Promise<OAuthAuth>;
 	githubCopilot: () => OAuthAuth | Promise<OAuthAuth>;
 	openrouter: () => OAuthAuth | Promise<OAuthAuth>;
 	kimiCoding: () => OAuthAuth | Promise<OAuthAuth>;
+	meta: () => OAuthAuth | Promise<OAuthAuth>;
 	xai: () => OAuthAuth | Promise<OAuthAuth>;
+	cursor: () => OAuthAuth | Promise<OAuthAuth>;
+	devin: () => OAuthAuth | Promise<OAuthAuth>;
 	radius: (options: { name: string; gateway: string }) => OAuthAuth | Promise<OAuthAuth>;
 };
 
@@ -28,14 +31,15 @@ export function registerBundledOAuthFlowLoaders(loaders: OAuthFlowLoaders): void
 	bundledLoaders = loaders;
 }
 
-export const loadAnthropicOAuth = async (): Promise<OAuthAuth> => {
-	if (bundledLoaders) return bundledLoaders.anthropic();
-	return ((await importOAuthModule("./anthropic.ts")) as { anthropicOAuth: OAuthAuth }).anthropicOAuth;
+export const loadChatGptSubscriptionOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.chatgptSubscription();
+	return ((await importOAuthModule("./chatgpt-subscription.ts")) as { chatgptSubscriptionOAuth: OAuthAuth })
+		.chatgptSubscriptionOAuth;
 };
 
-export const loadOpenAICodexOAuth = async (): Promise<OAuthAuth> => {
-	if (bundledLoaders) return bundledLoaders.openaiCodex();
-	return ((await importOAuthModule("./openai-codex.ts")) as { openaiCodexOAuth: OAuthAuth }).openaiCodexOAuth;
+export const loadOpenAIChatGPTOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.openaiChatGPT();
+	return ((await importOAuthModule("./openai-chatgpt.ts")) as { openaiChatGPTOAuth: OAuthAuth }).openaiChatGPTOAuth;
 };
 
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> => {
@@ -53,9 +57,24 @@ export const loadKimiCodingOAuth = async (): Promise<OAuthAuth> => {
 	return ((await importOAuthModule("./kimi-coding.ts")) as { kimiCodingOAuth: OAuthAuth }).kimiCodingOAuth;
 };
 
+export const loadMetaOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.meta();
+	return ((await importOAuthModule("./meta.ts")) as { metaOAuth: OAuthAuth }).metaOAuth;
+};
+
 export const loadXaiOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.xai();
 	return ((await importOAuthModule("./xai.ts")) as { xaiOAuth: OAuthAuth }).xaiOAuth;
+};
+
+export const loadCursorOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.cursor();
+	return ((await importOAuthModule("./cursor.ts")) as { cursorOAuth: OAuthAuth }).cursorOAuth;
+};
+
+export const loadDevinOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.devin();
+	return ((await importOAuthModule("./devin.ts")) as { devinOAuth: OAuthAuth }).devinOAuth;
 };
 
 export const loadRadiusOAuth = async (options: { name: string; gateway: string }): Promise<OAuthAuth> => {

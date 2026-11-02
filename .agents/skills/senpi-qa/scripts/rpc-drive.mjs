@@ -16,12 +16,19 @@
  *        [--provider P --model M] [--evidence SLUG]
  *   node rpc-drive.mjs --with-mock openai-responses --with-reasoning \
  *        --prompt "say PONG" --evidence rpc-reasoning
+ *   node rpc-drive.mjs --attach <socket> --state   # get_state from a host already listening there
+ *
+ * The tested CLI runs on Bun (>= 1.4); `--child node` or `--child binary:<path>` picks another
+ * runtime (lib/common.mjs resolveChildRuntime). The evidence receipt records it as `child_runtime`.
  */
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox, spawnCli } from "./lib/common.mjs";
+import { childRuntime, createChecks, evidenceDir, guardRealAuth, installCleanupHooks, makeSandbox } from "./lib/common.mjs";
 import { startFakeModelServer } from "./lib/fake-model-server.mjs";
+import { RpcClient } from "./lib/rpc-client.mjs";
+
+export { RpcClient };
 import {
 	ALL_APIS,
 	API_PRESETS,
@@ -33,102 +40,6 @@ import {
 
 const SCENARIO_PROVIDER = "claude-sdk-oauth";
 const SCENARIO_MODEL_ID = "claude-sonnet-4-5";
-
-/**
- * Minimal JSON-lines RPC client over a spawned `--mode rpc` child.
- * Resolves send() promises by matching the response `id`; buffers events.
- */
-export class RpcClient {
-	constructor({ env, cwd, extraArgs = [] } = {}) {
-		this.child = spawnCli(["--mode", "rpc", "--no-session", "--no-context-files", ...extraArgs], { env, cwd });
-		this.pending = new Map();
-		this.events = [];
-		this.eventWaiters = [];
-		this.responses = [];
-		this.seq = 0;
-		this._buf = "";
-		this.child.stdout.on("data", (chunk) => this._onData(chunk));
-		this.stderr = "";
-		this.child.stderr.on("data", (d) => {
-			this.stderr += d.toString();
-		});
-	}
-
-	_onData(chunk) {
-		this._buf += chunk.toString();
-		let nl;
-		while ((nl = this._buf.indexOf("\n")) >= 0) {
-			const line = this._buf.slice(0, nl).trim();
-			this._buf = this._buf.slice(nl + 1);
-			if (!line) continue;
-			let msg;
-			try {
-				msg = JSON.parse(line);
-			} catch {
-				continue; // non-protocol noise (tsx/startup) — ignore
-			}
-			if (msg && msg.type === "response") {
-				this.responses.push(msg);
-				const waiter = msg.id !== undefined ? this.pending.get(msg.id) : undefined;
-				if (waiter) {
-					this.pending.delete(msg.id);
-					waiter.resolve(msg);
-				}
-			} else if (msg && msg.type) {
-				this.events.push(msg);
-				for (const waiter of [...this.eventWaiters]) {
-					if (!waiter.pred(msg)) continue;
-					clearTimeout(waiter.timer);
-					this.eventWaiters.splice(this.eventWaiters.indexOf(waiter), 1);
-					waiter.resolve(msg);
-				}
-			}
-		}
-	}
-
-	/** Send a command; resolves with the correlated response line. */
-	send(cmd, { timeoutMs = 45000 } = {}) {
-		const id = cmd.id ?? `req-${++this.seq}`;
-		const payload = { ...cmd, id };
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.pending.delete(id);
-				reject(new Error(`RPC timeout after ${timeoutMs}ms for ${cmd.type} (stderr: ${this.stderr.slice(-400)})`));
-			}, timeoutMs);
-			this.pending.set(id, {
-				resolve: (m) => {
-					clearTimeout(timer);
-					resolve(m);
-				},
-			});
-			this.child.stdin.write(`${JSON.stringify(payload)}\n`);
-		});
-	}
-
-	/** Wait until an event matching `pred` is observed (or already was). */
-	waitForEvent(pred, { timeoutMs = 60000 } = {}) {
-		const found = this.events.find(pred);
-		if (found) return Promise.resolve(found);
-		return new Promise((resolve, reject) => {
-			const waiter = {
-				pred,
-				resolve,
-				timer: setTimeout(() => {
-					this.eventWaiters.splice(this.eventWaiters.indexOf(waiter), 1);
-					reject(new Error(`event wait timeout after ${timeoutMs}ms`));
-				}, timeoutMs),
-			};
-			this.eventWaiters.push(waiter);
-		});
-	}
-
-	/** End stdin so the RPC process exits cleanly. */
-	close() {
-		try {
-			this.child.stdin.end();
-		} catch {}
-	}
-}
 
 async function selfTest() {
 	installCleanupHooks();
@@ -153,6 +64,7 @@ async function selfTest() {
 	);
 
 	checks.ok("no real provider API was required to boot RPC", true, "offline sandbox, get_state is local");
+	checks.ok("CLI child runtime", client.child.spawnfile === childRuntime().command, `child_runtime=${childRuntime().label}`);
 
 	client.close();
 	await new Promise((r) => setTimeout(r, 300));
@@ -169,7 +81,7 @@ async function selfTest() {
 	process.exit(passed ? 0 : 1);
 }
 
-async function driveScenarioClaudeSdkOauthAccounts() {
+async function driveScenarioAnthropicSubscriptionAccounts() {
 	installCleanupHooks();
 	const guard = guardRealAuth();
 	const checks = createChecks("rpc-drive.mjs --scenario claude-sdk-oauth-accounts");
@@ -273,6 +185,21 @@ async function driveState() {
 	box.cleanup();
 }
 
+/** Open a session on the host listening at `socket` and print its get_state response. */
+async function driveAttachState(socket) {
+	installCleanupHooks();
+	const client = new RpcClient({ attach: socket, cwd: process.cwd() });
+	try {
+		const opened = await client.send({ type: "open_session", cwd: process.cwd() });
+		if (opened.success !== true) throw new Error(`open_session refused: ${JSON.stringify(opened)}`);
+		const res = await client.send({ type: "get_state", sessionId: opened.data.sessionId });
+		process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
+		if (res.success !== true) process.exitCode = 1;
+	} finally {
+		client.close();
+	}
+}
+
 async function drivePrompt(message, { provider, model, slug, mockApi, withReasoning }) {
 	installCleanupHooks();
 	const guard = guardRealAuth();
@@ -322,6 +249,7 @@ async function drivePrompt(message, { provider, model, slug, mockApi, withReason
 			const dir = evidenceDir(slug);
 			writeFileSync(join(dir, "rpc-events.jsonl"), client.events.map((event) => JSON.stringify(event)).join("\n"));
 			writeFileSync(join(dir, "rpc-last-assistant.txt"), text);
+			writeFileSync(join(dir, "receipt.json"), `${JSON.stringify({ child_runtime: childRuntime().label }, null, 2)}\n`);
 			process.stderr.write(`evidence: ${dir}\n`);
 		}
 		return text;
@@ -344,12 +272,18 @@ if (mockApi && !API_PRESETS[mockApi]) {
 	process.stderr.write(`unknown --with-mock API ${mockApi}. valid: ${ALL_APIS.join(", ")}\n`);
 	process.exit(2);
 }
-if (argv[0] === "--self-test") {
+const attachSocket = flag("--attach");
+if (argv.includes("--self-test")) {
 	selfTest();
-} else if (argv[0] === "--state") {
+} else if (attachSocket !== undefined && argv.includes("--state")) {
+	driveAttachState(attachSocket).catch((e) => {
+		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
+		process.exit(1);
+	});
+} else if (argv.includes("--state")) {
 	driveState();
-} else if (argv[0] === "--scenario" && argv[1] === "claude-sdk-oauth-accounts") {
-	driveScenarioClaudeSdkOauthAccounts().catch((e) => {
+} else if (flag("--scenario") === "claude-sdk-oauth-accounts") {
+	driveScenarioAnthropicSubscriptionAccounts().catch((e) => {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
 		process.exit(1);
 	});
@@ -384,6 +318,8 @@ if (argv[0] === "--self-test") {
 			"                                           # verify claude-sdk-oauth provider accounts + model selection over RPC",
 			"  node rpc-drive.mjs --prompt <msg> ...    drive a real turn (needs a model)",
 			"  node rpc-drive.mjs --with-mock <api> --with-reasoning --prompt <msg> [--evidence SLUG]",
+			"  node rpc-drive.mjs --attach <socket> --state   get_state from a running host",
+			"  any channel: --child node | --child binary:<path>   (default: the tested CLI runs on Bun >= 1.4)",
 			"",
 		].join("\n"),
 	);

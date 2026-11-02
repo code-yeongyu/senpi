@@ -116,6 +116,11 @@ export interface TransformMessagesOptions {
 	 * compatibility payloads.
 	 */
 	preserveUnsignedThinking?: boolean;
+	/**
+	 * Normalize tool-call IDs even when stored provider/API/model metadata match
+	 * the target. Enable only for target protocols whose wire contract requires it.
+	 */
+	normalizeSameModelToolCallIds?: boolean;
 }
 
 /**
@@ -138,11 +143,12 @@ export function transformMessages<TApi extends Api>(
 	const preserveThinking = options.preserveThinking ?? true;
 	const preserveTextSignatures = options.preserveTextSignatures ?? false;
 	const preserveUnsignedThinking = options.preserveUnsignedThinking ?? false;
+	const normalizeSameModelToolCallIds = options.normalizeSameModelToolCallIds ?? false;
 
 	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
 	const transformed = imageAwareMessages.map((msg) => {
-		// User messages pass through unchanged
-		if (msg.role === "user") {
+		// System and user messages pass through unchanged
+		if (msg.role === "system" || msg.role === "user") {
 			return msg;
 		}
 
@@ -170,7 +176,7 @@ export function transformMessages<TApi extends Api>(
 					// Redacted thinking is opaque encrypted content, only valid for the same model.
 					// Drop it for cross-model to avoid API errors.
 					if (block.redacted) {
-						return isSameModel && preserveProviderState ? { ...block } : [];
+						return isSameModel ? { ...block } : [];
 					}
 					const hasUsableSignature =
 						typeof block.thinkingSignature === "string" && block.thinkingSignature.trim().length > 0;
@@ -206,7 +212,7 @@ export function transformMessages<TApi extends Api>(
 						delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
 					}
 
-					if (!isSameModel && normalizeToolCallId) {
+					if ((!isSameModel || normalizeSameModelToolCallIds) && normalizeToolCallId) {
 						const normalizedId = normalizeToolCallId(toolCall.id, model, assistantMsg);
 						if (normalizedId !== toolCall.id) {
 							toolCallIdMap.set(toolCall.id, normalizedId);
@@ -232,6 +238,9 @@ export function transformMessages<TApi extends Api>(
 	// result after its declaring assistant. Results are emitted adjacent to their
 	// calls because Anthropic requires that ordering. A reused ID starts a new
 	// pairing window, so a later result cannot repair an earlier call.
+	// System messages are transparent to this accounting: they keep their source
+	// position, and because matched results are pulled forward, one that lands
+	// between a call and its result is emitted after that result.
 	const result: Message[] = [];
 	const toolResultsById = new Map<string, { message: ToolResultMessage; sourceIndex: number; consumed: boolean }[]>();
 	const nextToolCallIndexById = new Map<string, number[]>();

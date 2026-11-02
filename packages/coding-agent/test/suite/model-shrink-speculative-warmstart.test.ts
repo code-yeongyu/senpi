@@ -1,5 +1,4 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type Context, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -40,27 +39,12 @@ function seedSessionWithUsage(harness: Harness, inputTokens: number): void {
 	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 }
 
-function captureNextProviderContext(
-	harness: Harness,
-	timeoutMs = 5_000,
-): Promise<{ context: Context; signal: AbortSignal | undefined }> {
-	return new Promise((resolve, reject) => {
-		const timeout = setTimeout(() => reject(new Error("timed out waiting for provider call")), timeoutMs);
-		harness.faux.setResponses([
-			(context, options) => {
-				clearTimeout(timeout);
-				resolve({ context, signal: options?.signal });
-				return fauxAssistantMessage("warm summary");
-			},
-		]);
-	});
-}
-
 const BIG_MODEL = { id: "faux-big", contextWindow: 1_000_000, maxTokens: 16_384 };
 const SMALL_MODEL = { id: "faux-small", contextWindow: 100_000, maxTokens: 16_384 };
 
 describe("model window shrink speculative warm start", () => {
-	it("starts a speculative summary at switch time when history exceeds the smaller window", async () => {
+	it("refuses an oversized window shrink before speculative work or model mutation", async () => {
+		// given
 		const harness = await createHarness({
 			models: [BIG_MODEL, SMALL_MODEL],
 			extensionFactories: [compactionExtension],
@@ -69,33 +53,16 @@ describe("model window shrink speculative warm start", () => {
 		seedSessionWithUsage(harness, 600_000);
 		const smallModel = harness.getModel("faux-small");
 		if (!smallModel) throw new Error("faux-small not registered");
-		const providerCall = captureNextProviderContext(harness);
+		harness.session.setFavoriteModels([{ model: harness.getModel() }, { model: smallModel }]);
 
-		await harness.session.setModel(smallModel);
+		// when
+		await harness.session.cycleModel();
 
-		const { context: summarizationContext, signal } = await providerCall;
-		const messages = summarizationContext.messages;
-		const lastMessage = messages[messages.length - 1];
-		const lastText =
-			lastMessage && Array.isArray(lastMessage.content)
-				? lastMessage.content
-						.filter((block) => block.type === "text")
-						.map((block) => block.text)
-						.join("\n")
-				: "";
-		expect(lastText).toContain("<summary>");
-
-		const bigModel = harness.getModel("faux-big");
-		if (!bigModel) throw new Error("faux-big not registered");
-		await harness.getExtensionRunner().emitModelSelect({
-			type: "model_select",
-			model: smallModel,
-			previousModel: bigModel,
-			source: "set",
-			systemPrompt: harness.session.systemPrompt,
-			systemPromptOptions: { cwd: harness.tempDir },
-		});
-		expect(signal?.aborted).toBe(false);
-		expect(harness.faux.state.callCount).toBe(1);
+		// then: #1873 holds the shrink for the next send instead of refusing it, and
+		// the contract this case exists for is unchanged - the decision happens before
+		// any speculative work and before the active model moves.
+		expect(harness.session.pendingModelSwitch?.model.id).toBe("faux-small");
+		expect(harness.session.model?.id).toBe("faux-big");
+		expect(harness.faux.state.callCount).toBe(0);
 	});
 });

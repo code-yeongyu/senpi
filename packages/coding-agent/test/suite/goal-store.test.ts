@@ -113,7 +113,7 @@ describe("goal store JSON recovery", () => {
 	});
 
 	it("preserves an inert token budget in the current goal store", async () => {
-		// Given: current-store goals may carry tokenBudget as inert app-server wire metadata.
+		// Given: current-store goals may carry tokenBudget as inert legacy metadata.
 		const ref = await tempStore("thread-current-token-budget");
 		const goal = { ...(await createGoal(ref, "Keep the current token budget")), tokenBudget: 8_192 };
 		await writeGoal(ref, goal);
@@ -771,6 +771,37 @@ describe("goal store (budget-free)", () => {
 		expect(completed.status).toBe("complete");
 		expect(typeof completed.completedAt).toBe("number");
 		expect(completed.lastStartedAt).toBeUndefined();
+	});
+
+	it("lets a user resume a completed goal as the same active goal", async () => {
+		const ref = await tempStore("thread-resume-complete");
+		const created = await createGoal(ref, "Resume completed work");
+		const completed = await updateGoal(ref, { status: "complete" });
+		await recordContinuationDelivered(ref, `${created.id}:completed`);
+
+		const resumed = await updateGoal(ref, { status: "active" }, "user");
+
+		expect(resumed).toMatchObject({
+			id: created.id,
+			objective: created.objective,
+			status: "active",
+			consecutiveContinuations: 0,
+		});
+		expect(resumed.completedAt).toBeUndefined();
+		expect(resumed.lastStartedAt).toBeGreaterThan(completed.updatedAt);
+		expect(resumed.lastContinuationSignature).toBeUndefined();
+		expect(await readGoal(ref)).toEqual(resumed);
+	});
+
+	it("still rejects pausing a completed goal", async () => {
+		const ref = await tempStore("thread-pause-complete");
+		await createGoal(ref, "Keep completion terminal by default");
+		await updateGoal(ref, { status: "complete" });
+
+		await expect(updateGoal(ref, { status: "paused" }, "user")).rejects.toThrow(
+			"illegal goal transition: complete -> paused",
+		);
+		expect((await readGoal(ref))?.status).toBe("complete");
 	});
 
 	it("clears the store while preserving the versioned file", async () => {

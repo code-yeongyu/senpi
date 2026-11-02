@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import type { ExtensionContext, ExtensionToolContext } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
 import senpiCodemode, { type CodemodeExtensionAPI } from "../src/index.ts";
@@ -37,8 +37,8 @@ class WiringPi {
 	async executeTool(): Promise<never> {
 		throw new Error("nested tool execution was not expected");
 	}
-	sendUserMessage(content: string): void {
-		this.messages.push(content);
+	sendMessage(message: { customType: string; content: string; display: boolean }): void {
+		this.messages.push(message.content);
 	}
 	async emit(event: string, payload: unknown, ctx: ExtensionContext): Promise<void> {
 		for (const entry of this.handlers.filter((handler) => handler.event === event)) await entry.handler(payload, ctx);
@@ -83,7 +83,12 @@ async function sessionCwd(): Promise<string> {
 	return cwd;
 }
 
-function wiringContext(cwd: string, mode: "tui" | "rpc", calls: StatusCall[], themeCalls: string[]): ExtensionContext {
+function wiringContext(
+	cwd: string,
+	mode: "tui" | "rpc",
+	calls: StatusCall[],
+	themeCalls: string[],
+): ExtensionToolContext {
 	const base = fakeExtensionContext();
 	// Object.create(null) keeps the fake structurally typed like fakeExtensionContext()'s ui,
 	// so only the members the status wiring touches need to exist.
@@ -102,6 +107,7 @@ function wiringContext(cwd: string, mode: "tui" | "rpc", calls: StatusCall[], th
 	};
 	ui.theme = theme;
 	const sessionManager = Object.create(null);
+	sessionManager.getSessionId = (): string => "status-wiring-test-session";
 	sessionManager.getSessionFile = (): string => join(artifactsRoot, `${crypto.randomUUID()}.jsonl`);
 	return { ...base, cwd, mode, hasUI: true, ui, sessionManager };
 }
@@ -109,7 +115,7 @@ function wiringContext(cwd: string, mode: "tui" | "rpc", calls: StatusCall[], th
 async function detachOne(
 	pi: WiringPi,
 	kernel: FakeKernel,
-	ctx: ExtensionContext,
+	ctx: ExtensionToolContext,
 	cellId: string,
 	summary: string,
 ): Promise<void> {

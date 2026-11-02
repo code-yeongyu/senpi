@@ -821,7 +821,7 @@ Likely new files:
 Likely modified files:
 
 - `packages/tui/src/tui.ts`
-- `packages/tui/src/TuiAltScreen.ts`
+- `packages/tui/src/tui-alt-screen.ts`
 - `packages/tui/src/index.ts`
 - `packages/tui/src/keybindings.ts` only if new configurable actions are required
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
@@ -834,7 +834,7 @@ Likely modified files:
 - `packages/tui/CHANGELOG.md`
 - `packages/coding-agent/CHANGELOG.md`
 
-Do not modify released changelog sections. Add entries under the existing `## [Unreleased]` subsections.
+Do not modify released changelog sections. Add package `CHANGELOG.md` blocks in `changes/unreleased/<pr>.md`.
 
 ## Test plan
 

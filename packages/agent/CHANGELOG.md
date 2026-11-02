@@ -10,9 +10,2251 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Added an unprepared, scoped ToolHost batch boundary with the existing in-process scheduler as its default ([#5030](https://github.com/code-yeongyu/senpi/pull/5030)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Added an execution ledger with durable endpoint transitions, lease and restart recovery, and portable ledger conformance cases ([#5004](https://github.com/code-yeongyu/senpi/pull/5004)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Compaction relies on declared message and tool-call argument types instead of redundant assertions; runtime behavior is unchanged ([#4979](https://github.com/code-yeongyu/senpi/pull/4979)).
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- `@earendil-works/pi-agent-core/testing/win32-sim`: a win32 simulation profile for code-level Windows tests ([#4510](https://github.com/code-yeongyu/senpi/pull/4510))
+- `@earendil-works/pi-agent-core/conformance`: the durable-core conformance case registry, a suite hash over case IDs and implementation hashes, a manifest export, and a suite runner that reports pass or fail per case and never skips ([#4727](https://github.com/code-yeongyu/senpi/pull/4727), fixes [#4726](https://github.com/code-yeongyu/senpi/issues/4726)).
+- Durable core: the DurableStore contract (atomic commit with adopt-on-durable, owner-epoch claim that raises the epoch by exactly one, ID minting, record and document scans, claim + import between hosts), an in-memory backend, the single admission line above the store, and the STORE-01..07 and KILL-STORE-01..06 conformance cases, registered in the `@earendil-works/pi-agent-core/conformance` registry and exported from it with the store contract and the host adapter interface, so other packages' host adapters run the same cases ([#4730](https://github.com/code-yeongyu/senpi/pull/4730), fixes [#4729](https://github.com/code-yeongyu/senpi/issues/4729)).
+- Durable core: the WakeHost contract (a recovery alarm armed before admitted work and kept armed while any admission is in flight, so a concurrent update or fire cannot clear it before the work commits, updated from the loop's wake after each commit, re-armed before resume on fire, and a fallback on every new instance), a Bun timer host serving many sessions with alarms persisted in each session's DurableStore under the owner epoch and re-checked across machine sleep, and the WAKE-01..03, WAKE-RET-01, KILL-WAKE-01..08 and MULTI-HOST-01 conformance cases, registered in the `@earendil-works/pi-agent-core/conformance` registry and exported from it together with the WakeHost contract, the Bun timer host, the store-backed alarm persistence, the wake conformance adapter types and manual timers, so other hosts run the same cases ([#4735](https://github.com/code-yeongyu/senpi/pull/4735), fixes [#4733](https://github.com/code-yeongyu/senpi/issues/4733)).
+- Durable core: the Transport contract (opaque frames on named lanes with per-lane order, exactly-once delivery, resume from each lane's last ACK after the carrier re-attaches, per-lane backpressure, and a per-lane retransmit deadline, so ACK progress on one lane never postpones a lost frame's resend on another) with a carrier seam, a reference transport over an in-process carrier addressed by local endpoints (owner-only Unix sockets on POSIX, named pipes on Windows), and the TRANSPORT-01..03, MULTI-LANE-01, MULTI-FAIR-01..02 and FAULT-TRANSPORT-01..05 conformance cases with five deterministic fault profiles, exported with the adapter types from `@earendil-works/pi-agent-core/conformance` ([#4741](https://github.com/code-yeongyu/senpi/pull/4741), fixes [#4738](https://github.com/code-yeongyu/senpi/issues/4738)).
+
+### Changed
+
+### Fixed
+
+- Share tree-sitter runtime initialization across concurrent grammar loads, including uncached parsers, and serialize different runtime paths through pending grammar loads. Retain missing-grammar cache entries and allow later loads after failures without evicting newer cache entries ([#4752](https://github.com/code-yeongyu/senpi/pull/4752)).
+
+### Removed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+- Assistant stream-start events carry an optional `streaming` marker so consumers can distinguish live model streams from prepared and synthetic messages ([#4231](https://github.com/code-yeongyu/senpi/pull/4231)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Empty-assistant recovery forwards captured records for the kept attempt only, so recovered streams (including Claude models) reach the internal agent channel ([#4307](https://github.com/code-yeongyu/senpi/pull/4307))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- An internal-only, ordered agent channel carries captured stream records; public listeners and extensions do not see it and their events are unchanged ([#4277](https://github.com/code-yeongyu/senpi/pull/4277))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Settle response stop reasons before `message_end` so `turn_end` handlers resolve the persisted assistant entry when a provider ends with `stop` and pending tool calls or `toolUse` without tool calls ([#3029](https://github.com/code-yeongyu/senpi/issues/3029)).
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Harness compaction uses request-level context when a provider reports cumulative billing for multiple internal requests ([omo#10792](https://github.com/code-yeongyu/oh-my-openagent/issues/10792)).
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+- Every assistant response the agent loop streams carries `timing`: when the request was issued, its first and last streamed token, when it ended, and its streamed generation time. It is saved with the session, so time to first token and a reply's generation rate can be shown after a reload and by RPC clients ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
+- A run that fails on an error from the `queuedInputPort` (`claim`, `release`, `commitConsumption`) ends with a failure message marked `failureSource: "local"`, so callers can tell a local failure from a provider one ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The `pico3` harness bash tool no longer SIGKILLs its own process group when a run is aborted after `bash` failed to start (Node < 24.22 / 26.10 signals the caller's group for a child without a pid) ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+- `AgentOptions.queuedInputPort`: the owner of queued input claims every drain, releases every restore, and commits consumption before any queued message reaches a provider request; a rejected commit keeps it queued ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A turn you stop with a reason (`abort("user stop")`, or an object with a `message`) shows that reason, capped at 500 characters, not "Request was aborted" ([#3510](https://github.com/code-yeongyu/senpi/issues/3510)).
+- A turn you stop while its context transform or API key lookup is still running ends with your stop, not with "Provider stream start timed out" and advice to raise a timeout setting ([#3481](https://github.com/code-yeongyu/senpi/issues/3481)).
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Aborting a turn while its context transform or API key lookup is still running behaves as it did before the start bound covered that work: the request still goes out with the aborted signal and the turn ends aborted; the bound only ends a step that nothing else ended.
+
+- A turn no longer waits forever when the context transform, the API key lookup or the provider's stream function never finishes: the start bound (or the idle bound when none is set) now covers that work and ends the turn with a provider timeout ([#3471](https://github.com/code-yeongyu/senpi/issues/3471)).
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-12] - 2026-10-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-11] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- On Windows, `NodeExecutionEnv` stops a command's process tree without `taskkill /T`: the tree is computed from creation times and each process is ended by pid, so an older, unrelated process holding a recycled parent pid is never killed ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
+
+### Removed
+
+## [2026.10.10-10] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-9] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Terminal assistant messages preserve a structural retry diagnostic when request preparation fails on transient OAuth refresh ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
+
+### Removed
+
+## [2026.10.10-6] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-5] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- In `one-at-a-time` follow-up and steering modes, consecutive queued non-user messages (custom notices) are delivered together in one turn; user messages are still delivered one per turn and in order ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+- Removed the inherited `AgentOptions.shouldStopAfterTurn` and `AgentLoopConfig.shouldStopAfterTurn`. Use `finishTurn` and return `{ action: "end" }` to stop after the completed turn. `finishTurn` runs after the assistant message and every tool result are finalized and before `turn_end`, and its decision applies after `turn_end`. It also runs for error and aborted responses, which stay hard exits, so guard them to keep the old normal-response-only behavior:
+
+  ```ts
+  finishTurn: async (turn, signal) => {
+    if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return;
+    return (await shouldStop(turn, signal)) ? { action: "end" } : undefined;
+  },
+  ```
+
+- The inherited `StreamFn` now receives the branded `TranscriptContext` instead of `Context`, so custom stream functions find the system prompt as the leading system message of `context.messages` (read it with `getCurrentSystemPrompt()`) because there is no `systemPrompt` field.
+
+### Added
+
+- Added the inherited `prepareRequest` hook, which runs before every provider request, including the first. Return `{ context: { ...context, messages: persistedMessages } }` to install canonical context after already-selected input is emitted, without another queue poll.
+
+- Added the inherited `finishTurn` hook. Return `{ action: "end" }` to end a normal run after `turn_end`, `undefined` to keep normal scheduling, or `{ action: "continue" }` to make sure one more provider request happens.
+
+- Added the inherited `Agent.peekQueuedMessages()`, which previews the next queue-selected batch without consuming it.
+
+- Added the inherited `onProviderStreamEvent` agent option, passed to provider streams so callers can observe parsed provider events before normalization ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)).
+
+- The agent loop records the requested thinking level as `thinkingLevel` on each assistant message (inherited).
+
+### Changed
+
+### Fixed
+
+- Fixed inherited harness reads misclassifying text files that begin with `GIF` as images ([#9755](https://github.com/earendil-works/pi/issues/9755)).
+
+### Removed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Published Node bundles now load their embedded JavaScript tree-sitter grammar for structural reads instead of silently falling back to the heuristic folder. ([#2032](https://github.com/code-yeongyu/senpi/issues/2032))
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- `AgentState.providerDiagnostic` mirrors the structured provider failure family of the turn that set `errorMessage`, and terminal failure messages synthesized from a thrown provider error keep the diagnostic its adapter attached. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.26] - 2026-09-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.25] - 2026-09-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.24-3] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.24-2] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+- `AgentState.declaredTools` / `AgentContext.declaredTools`: a superset of the active tools to declare to models that accept an allowed-tools restriction. The provider receives the declared tools plus `activeToolNames`; calls still resolve against the active tools only. ([#2095](https://github.com/code-yeongyu/senpi/issues/2095))
+
+### Changed
+
+### Fixed
+
+- Tool-call name correction is more lenient about case and namespaces. A call resolves to the single matching registered tool when it differs only by a recased full name (`MCP__srv__tool` for `mcp__srv__Tool`), a namespace whose id contains underscores (`mcp__my_server__Memory` for `memory`), or a missing namespace the registered tool carries (`create_issue` for `mcp_github_create_issue`). Names that match more than one tool still fail. ([#2111](https://github.com/code-yeongyu/senpi/issues/2111))
+- A tool call whose `mcp__<id>__` gateway namespace prefix is capitalized, such as `Mcp__686f__Eval` or `MCP__686f__Eval`, now resolves to the unique registered tool the same way `mcp__686f__Eval` does, instead of failing with `Tool <name> not found`. Replayed native tool-search references with a capitalized prefix fold onto the request's tools the same way. ([#2104](https://github.com/code-yeongyu/senpi/issues/2104))
+
+### Removed
+
+## [2026.9.24] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `tool_execution_start` names the tool a call resolves to, matching `tool_execution_end` and the tool result, and the `[auto-corrected]` tool-name notice is a model-only text part. ([#2064](https://github.com/code-yeongyu/senpi/issues/2064))
+
+### Removed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-2] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool call whose name differs from a registered tool only by a `mcp__<id>__` gateway namespace, letter case, or `-`/`_` separators now runs that tool when exactly one tool matches, instead of failing with `Tool <name> not found`. Hooks, events and the tool result carry the registered name, and the result starts with an `[auto-corrected]` note. Ambiguous names still fail. ([#2025](https://github.com/code-yeongyu/senpi/issues/2025))
+
+### Removed
+
+## [2026.9.23] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-4] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-3] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-2] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Preparing a tool call's arguments no longer rewrites the assistant message the model actually produced. Shims that normalize in place — the `eval` run summary clamp and the `edit` tool's `edits` coercion — now run against a detached copy. On the `claude-sdk-oauth` lane this removes the dominant cause of `Session continuity lost - resent the full conversation (assistant_rewritten)`, where a clamped summary made an otherwise unchanged turn look rewritten and forced a full-history re-send. ([#1472](https://github.com/code-yeongyu/senpi/issues/1472))
+
+### Removed
+
+## [2026.9.22] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.21-2] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the test runner to Vitest 5.0.1 and V8 coverage to @vitest/coverage-v8 5.0.1, and migrated session timing benchmarks to the new benchmark API. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+
+### Fixed
+
+### Removed
+
+## [2026.9.21] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the bundled dependencies: typebox 1.3.27 -> 1.3.34, ignore 7.0.8 -> 7.0.9 and yaml 2.9.0 -> 2.9.1. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+
+### Fixed
+
+### Removed
+
+## [2026.9.20] - 2026-09-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.19-2] - 2026-09-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.19] - 2026-09-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-6] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-5] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-4] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-3] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-2] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.17-4] - 2026-09-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.17-3] - 2026-09-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.17-2] - 2026-09-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.17] - 2026-09-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.16-3] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.16-2] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.16] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
+- Added structural read folders and a segmented read view, exported as `selectedReadFolder`, `createDefaultReadSummary`, `createSegmentedReadView` and the `ReadFolder` type. A folder is a pure, synchronous lexer over TS/JS/JSON that marks foldable interiors (bodies of four or more lines, comments of six or more) and refuses any fold that overlaps a declaration header: class heritage, decorators, parameter lists, return types, arrow-return object types, computed member names, destructuring targets and nested declaration headers stay visible, and class bodies made only of fields, static blocks or accessors are never folded. Ambiguous lexical input (unproved type-operator or angle syntax, unclosed literals, unicode-set regexes) yields `parse_failure` instead of a partial fold. The view keeps exact source slices, inserts an ellipsis line per elision and lists numeric `offset`/`limit` rereads in its footer; it unfolds breadth-first until 50 source lines are visible and returns `no_summary` for inputs under 100 lines, oversized skeletons or views with no byte saving. No parser runtime, WASM or subprocess is added ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+
+### Changed
+
+- Default `read` calls on eligible `.json` files now return the structural view. TypeScript and JavaScript stay raw: the measured candidate missed the required median saving for both, so only JSON is selected in the frozen `READ_FOLDER_SELECTION`. Explicit `offset`/`limit` requests, truncated input, markdown and `.txt` keep the verbatim path. `createReadTool()` with no options uses `selectedReadFolder`; passing an options object without `folder` reads raw, and a custom folder can be injected. The tool also honors an abort that arrives while the file bytes are being read ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+
+### Fixed
+
+- The empty-assistant recovery wrapper (`withEmptyAssistantRecovery`) no longer withholds a wrapped model's thinking until its first visible text or tool call. The attempt now starts forwarding on the first meaningful content event (a non-blank `thinking_delta`, a visible `text_delta`, `toolcall_start`, or a `text_end`/`thinking_end` with content), so reasoning streams live and the assistant `message_start` reaches subscribers when the provider's `start` event does. The Kimi XTML lane is the one exception: its thinking channel is where misrouted text tool calls land and `recoverKimiXtmlThinking` only rewrites the finished message, so a leaked protocol fragment forwarded live could not be retracted; that lane keeps the buffered contract. An attempt that never forwarded anything keeps the existing silent retry and bounded "twice" errors. An attempt that had already forwarded reasoning and then stopped empty (or reported `tool_use` without a tool call) is no longer replayed inside the stream; it ends as a retryable `error` that keeps the streamed content and carries the `empty_assistant_response_recovery` / `empty_tool_use_response_recovery` diagnostic with `{ retries: 0, forwarded: true }`, and the session's turn retry re-requests it ([#1733](https://github.com/code-yeongyu/senpi/issues/1733)).
+
+### Removed
+
+## [2026.9.15-2] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.15] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.13-2] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `convertToLlm` still drops failed assistant turns, but `dropFailedAssistantTurns` is imported from `@earendil-works/pi-ai/utils/drop-failed-assistant-turns` so the `./harness/session` entry stays off the AI barrel.
+
+### Removed
+
+## [2026.9.13] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12-3] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+- Removed the withdrawn manual-drive configuration, action inspection methods, action outcomes, and snapshot action field from `AgentHarness`; the harness now runs on upstream's runtime/drive generation.
+
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.10] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool result returned with `isError: true` is now treated as a tool error: `tool_execution_end.isError` and the `toolResult` message carry the flag while `content` and `details` stay intact, so structured failures (team, memory, terminal tools) render and report as failures instead of successes. `AgentToolResult` declares the optional `isError` field.
+
+### Removed
+
+## [2026.9.9-2] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Recover a provider response that reports the `tool_use` stop reason while carrying no tool-call block. The turn is retried once on models that already use stream recovery, and the contradictory terminal state is demoted to a coherent stop for every model, so a lost tool call no longer ends the turn silently.
+
+### Removed
+
+## [2026.9.7-2] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.6] - 2026-09-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-3] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-2] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-3] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-2] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed proxied assistant responses dropping persisted provider-native thinking levels.
+- Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
+- Fixed Windows `NodeExecutionEnv` aborts crashing when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
+
+- Fixed queued steering and follow-up messages still reaching the provider after a queue clear on a terminating continuation: the terminating continuation boundary now runs before the drained queue is refreshed, so a clear or replacement at `turn_start` wins over pending input.
+- Fixed `prepareNextTurn` and `prepareNextTurnWithContext` being skipped on completed turns without tool calls: the next-turn preparation now runs after every completed assistant turn that can reach the preparation boundary, including a normal stop response, while the terminating queue boundary and ownership refresh are preserved before a continuation provider request.
+- Fixed next-turn compaction firing on completed turns that will not reach the provider: compaction is now gated on real provider admission (a tool continuation or queued message actually being admitted), while the next-turn callback keeps running on every completed turn and the late queue re-sample and one bounded callback replay after compaction are retained.
+
+- The harness `convertToLlm` (`packages/agent/src/harness/messages.ts`) now drops assistant turns with `stopReason` `error` or `aborted`, and the tool results orphaned by that drop, from its output via the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai`, so compaction, branch summarization, and any consumer building an LLM request from the converted list never replay a failed provider turn's partial text or unexecuted tool calls. A call id re-declared by a kept assistant keeps its result.
+
+### Removed
+
+## [2026.9.4] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-2] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-4] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-3] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Provider stream-start timeout errors now name `retry.provider.streamStartTimeoutMs` and explain that `0` disables the guard.
+
+### Removed
+
+## [2026.9.2-2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.31] - 2026-08-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-3] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-2] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.29] - 2026-08-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.28-2] - 2026-08-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.28] - 2026-08-28
+
+### Breaking Changes
+
+### Added
+
+- Harness tool contexts accept an optional `postMutate` hook. It runs inside the file mutation queue immediately after `write` or `edit` commits its bytes, so a formatter or normalizer can adjust the file as an atomic part of the same mutation. `edit` recomputes its diff and unified patch against the post-hook file contents whenever the hook may have touched the file, and a rejecting hook is reported as an appended warning note rather than discarding the landed write. Tool behavior is unchanged when no hook is supplied.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.27] - 2026-08-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed single-object `edit` tool inputs failing validation by accepting them as one-edit arrays ([#7835](https://github.com/earendil-works/pi/issues/7835)).
+- Fixed root Markdown files such as `README.md` and `AGENTS.md` in skill directories being reported as broken skills unless they declare valid skill frontmatter ([#7805](https://github.com/earendil-works/pi/issues/7805)).
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the shared TypeBox runtime to 1.3.18, keeping agent schemas aligned with the protocol, AI, coding-agent, and codemode packages.
+
+### Fixed
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-3] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-2] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20-2] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Provider idle after completed Cursor tools (or buffered exec results) now ends the turn as `stop` instead of hanging until `StreamIdleTimeoutError` ([#999](https://github.com/code-yeongyu/senpi/pull/999) by [@leeseunguk](https://github.com/leeseunguk)).
+- Cursor often ends a turn as `stop` while the assistant message still contains toolCall blocks. Those turns now continue as `toolUse` so pending tools run instead of being dropped ([#1016](https://github.com/code-yeongyu/senpi/pull/1016) by [@leeseunguk](https://github.com/leeseunguk)).
+- Cursor exec handler factories now receive the owning run's abort signal instead of the per-request
+  idle-timeout controller, so native Cursor exec tool calls pass the run-ownership check again instead
+  of failing every call with `Tool execution has no active run` ([#1002](https://github.com/code-yeongyu/senpi/pull/1002) by [@HeiTuz](https://github.com/HeiTuz)).
+
+### Removed
+
+## [2026.8.19] - 2026-08-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Aborting a run now releases a tool call that ignores its abort signal and never settles. Tool execution races the run's abort signal instead of awaiting the tool alone, so the run reaches `agent_end` and the session goes idle instead of hanging with an unresponsive ESC while the TUI shows `Running <tool>` ([#970](https://github.com/code-yeongyu/senpi/pull/970)).
+
+### Removed
+
+## [2026.8.18-3] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+- `ThinkingSelection` provenance now travels from agent state through `createLoopConfig`, mid-run
+  `prepareNextTurn` updates (undefined leaves unchanged, null clears), and the remote proxy's
+  serializable options, letting providers distinguish an explicit user choice from the
+  always-materialized effective reasoning level.
+
+### Changed
+
+- `AgentLoopConfig.cursorExecHandlers` additionally accepts a factory taking the owning run's abort signal, so
+  a host bridge can bind each Cursor exec stream to the run that opened it. The plain-object form is unchanged.
+
+### Fixed
+
+### Removed
+
+## [2026.8.18-2] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Late Cursor exec-bridge lifecycle events that settle after an abort or timeout are tied to their originating run, so they neither raise an unhandled `Agent listener invoked outside active run` error nor leak into a replacement run ([#935](https://github.com/code-yeongyu/senpi/pull/935)).
+
+### Removed
+
+## [2026.8.18] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Added
+
+- The agent loop understands Cursor's server-driven tool execution: tool calls the `cursor-agent` provider already executed mid-stream (marked `kCursorExecResolved`) are never re-executed, their provider-buffered results are appended right after the assistant message (also on error/abort paths so calls never end up unpaired), and the stream idle watchdog re-arms while the provider reports pending local tool work instead of aborting a healthy request. `AgentOptions.cursorExecHandlers` carries the host's exec bridge onto the loop config, and `Agent.emitExternalEvent()` lets bridge-run tools surface `tool_execution_*` lifecycle events ([#910](https://github.com/code-yeongyu/senpi/pull/910)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Windows process-tree shutdown now resolves `taskkill.exe` through absolute `System32` and `Sysnative` paths before PATH lookup, executes synchronously so same-tick exits still terminate descendants, and falls back to the direct child only when no launcher can start ([#807](https://github.com/code-yeongyu/senpi/pull/807) by [@yeongjunyoo](https://github.com/yeongjunyoo)).
+
+### Removed
+
+## [2026.8.14] - 2026-08-14
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.13-2] - 2026-08-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.13] - 2026-08-13
+
+### Breaking Changes
+
+- Replaced the legacy harness session model with the lane-based `Session`, `SessionStorage`, and `SessionRepo`
+  APIs, including durable operation records, global facts, shared sequence numbers, and tree-scoped lane views.
+- Promoted `AgentHarness` v2 and the new session API to the default export, removed the experimental subpaths,
+  and removed the legacy JSONL and in-memory repository APIs.
+- Required harness file-system implementations to provide atomic same-filesystem `renameFile()` semantics.
+
+### Added
+
+- Added typed AI-request and harness telemetry schemas, reusable callbacks, and a generated schema reference.
+- Added bounded branch-entry queries, indexed open-operation recovery, a compile-complete `AgentHarness` v2
+  scaffold, and the append-only v4 `JsonlSessionRepo`.
+- Added `AgentOptions.shouldStopAfterTurn`, arbitrary OpenAI-compatible `samplingParams` proxy forwarding, and
+  blocked-tool `terminate` handling for all-terminating batches.
+
+### Changed
+
+- Backfilled the durable `AgentHarness` design docs (`docs/harness.md`, `docs/harness-v2.md`) from upstream
+  v0.83.0; upstream v0.82.1 and v0.83.0 shipped no other agent-package changes.
+
+### Fixed
+
+- Fixed `Agent.reset()` mutating transcript and runtime state during active runs; reset now rejects until idle.
+- Fixed Windows path handling for execution-environment basenames, recursive skill loading, and prompt templates.
+- Fixed JSONL session IDs being treated as globally unique across working directories.
+- Fixed JSONL forks and torn-tail repairs publishing non-atomically after interrupted writes.
+
+### Removed
+
+## [2026.8.12-4] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12-3] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12-2] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.12] - 2026-08-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-6] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-5] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-4] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.11-3] - 2026-08-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Refresh `abortServerSideFallback` from the host's next-turn snapshot so an active agent run cannot carry a prior
   model's server-fallback policy into the next provider request
   ([#796](https://github.com/code-yeongyu/senpi/pull/796)).
+- The Node harness Windows process-tree kill no longer raises an uncaught `spawn taskkill ENOENT`. It tries every
+  absolute `System32` / `Sysnative` `taskkill.exe` before the PATH-resolved name, runs synchronously so a teardown
+  that exits in the same tick still terminates its children, and degrades to killing the direct child only when no
+  launcher starts at all ([#812](https://github.com/code-yeongyu/senpi/issues/812),
+  [#807](https://github.com/code-yeongyu/senpi/pull/807)).
 
 ### Removed
 

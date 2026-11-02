@@ -4,6 +4,7 @@ import {
 	type Context,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type Provider,
 	Type,
 } from "@earendil-works/pi-ai";
@@ -13,6 +14,9 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { probeModelRuntimeImport } from "./helpers/esm-import-graph-probe.ts";
 import { registerModelRuntimeRecoveryRetryBoundaryCase } from "./model-runtime-recovery-retry-boundaries.ts";
 import { registerModelRuntimeRecoveryBoundaryCases } from "./model-runtime-text-toolcall-recovery-boundaries.ts";
+import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const leak = '<invoke name="Echo"><parameter name="value">hello</parameter></invoke>';
 const tools: Context["tools"] = [
@@ -127,7 +131,8 @@ describe("ModelRuntime text tool-call recovery", () => {
 		for (const call of calls) {
 			expect(call.model.id).toBe("claude-selected");
 			expect(call.model.baseUrl).toBe("https://wire.test/v1");
-			expect(call.context).toBe(context);
+			// Providers receive the caller context in TranscriptContext form (A2 C-AI-2), not the caller object.
+			expect(call.context).toEqual(normalizeContext(context));
 			expect(call.options).toMatchObject({ headers: { "x-once": "yes" }, apiKey: "test" });
 		}
 	});

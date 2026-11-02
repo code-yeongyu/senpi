@@ -1,9 +1,11 @@
+import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import type { FallbackChains } from "./chains.ts";
 
 export interface ProviderRetrySettings {
 	timeoutMs?: number;
 	streamStartTimeoutMs?: number;
-	streamRetryTimeoutMs?: number; // first-request liveness cap after a provider timeout; default: 30000, 0 disables
+	keepAliveTimeoutMs?: number; // how long keep-alive bytes alone (SSE pings, comment keep-alives) may hold a request without content; default: 900000, 0 disables
+	streamRetryTimeoutMs?: number; // retry-continuation watchdog cap after a provider timeout; reconciled to max(cap, streamStartTimeoutMs) so a granted stream-start budget is never cut short; default: 30000, 0 disables
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
 }
@@ -12,7 +14,10 @@ export interface RetrySettings {
 	enabled?: boolean;
 	maxRetries?: number;
 	baseDelayMs?: number;
+	/** Hard ceiling on one agent-level retry wait, applied after profile/hint/jitter planning; default: 60000. */
+	maxAgentDelayMs?: number;
 	provider?: ProviderRetrySettings;
+	providers?: Record<string, import("./profile-override.ts").RetryPolicyOverride>;
 	modelFallback?: boolean;
 	fallbackChains?: Record<string, string[]>;
 	fallbackRevertPolicy?: "cooldown-expiry" | "never";
@@ -29,12 +34,25 @@ export interface ResolvedRetryFallbackSettings {
 
 /**
  * Shipped defaults are declared as model families (bare ids, no provider prefix).
- * `canonicalizeFallbackChains` expands them against the live registry, so the
- * chain follows Fable 5 whichever provider serves it - the builtin Anthropic
- * provider, the Claude SDK OAuth extension, a gateway, or Bedrock.
+ * `canonicalizeFallbackChains` expands them against the live registry, so the chain
+ * follows Fable 5 whichever provider serves it - the builtin Anthropic provider, the
+ * Anthropic Subscription extension, a gateway, or Bedrock.
+ *
+ * The ladder never leaves the Anthropic Opus family. The previous shipped default was
+ * removed because it led with cross-family rungs (`k3`, `kimi-k3`), which moved a Claude
+ * session onto another vendor mid-turn and could rank a guaranteed-refusal OAuth lane
+ * first; a same-family step-down carries neither problem. There is still deliberately no
+ * wildcard lane.
+ *
+ * Rungs stay on current-generation Opus: a Claude session must never step down to
+ * `claude-opus-4-8` or `claude-opus-4-6` (senpi#3727).
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	"claude-fable-5": ["k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
+	...(FABLE55_LAUNCH.released ? { [FABLE55_LAUNCH.modelId]: ["claude-opus-5-5", "claude-opus-5"] } : {}),
+	// Rungs carry no explicit level so fallback inherits the session's current thinking effort (senpi#4103).
+	"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-opus-5-5": ["claude-opus-5"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {
@@ -66,9 +84,7 @@ function isStringArray(value: unknown): value is string[] {
  * `deepMergeSettings`; this only resolves defaults against the merged result.
  */
 function resolveFallbackChains(value: unknown): FallbackChains {
-	if (value === undefined) return cloneDefaultFallbackChains();
-	if (!isPlainObject(value)) return cloneDefaultFallbackChains();
-
+	if (value === undefined || !isPlainObject(value)) return cloneDefaultFallbackChains();
 	const chains: Record<string, readonly string[]> = cloneDefaultFallbackChains();
 	for (const [key, entries] of Object.entries(value)) {
 		if (!isStringArray(entries)) return cloneDefaultFallbackChains();

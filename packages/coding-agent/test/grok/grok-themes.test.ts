@@ -10,8 +10,13 @@
  *  3. Every remaining schema key is present — no missing keys versus the
  *     `dark.json` (night) / `light.json` (day) coverage — and every key NOT
  *     named by §Palette inherits the corresponding dark/light value verbatim.
+ *     The grok themes were derived from the classic dark/light palette; the upstream
+ *     sync adopted the OKHSL dark/light palette while keeping the grok themes (D-14),
+ *     so inheritance is checked against that classic palette (`fixtures/classic-*.json`,
+ *     the pre-sync dark.json/light.json with only the theme name changed).
  */
 import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DynamicBorder } from "../../src/modes/interactive/components/dynamic-border.ts";
 import {
@@ -19,6 +24,8 @@ import {
 	getResolvedThemeColors,
 	getThemeByName,
 	getThemeExportColors,
+	loadThemeFromPath,
+	setRegisteredThemes,
 } from "../../src/modes/interactive/theme/theme.ts";
 import { fg, GROK_COLOR_MODES, initGrokTheme, resetGrokThemeCapabilities } from "./theme-assertions.ts";
 
@@ -26,6 +33,19 @@ const themeDir = new URL("../../src/modes/interactive/theme/", import.meta.url);
 
 function readThemeJson(file: string): { name: string; colors: Record<string, string | number> } {
 	return JSON.parse(fs.readFileSync(new URL(file, themeDir), "utf-8"));
+}
+
+/** Resolve a classic palette fixture through the real theme loader (same hex normalization as the grok themes). */
+function resolveClassicPalette(name: "classic-dark" | "classic-light"): {
+	colors: Record<string, string>;
+	exportColors: ReturnType<typeof getThemeExportColors>;
+} {
+	setRegisteredThemes([loadThemeFromPath(fileURLToPath(new URL(`./fixtures/${name}.json`, import.meta.url)))]);
+	try {
+		return { colors: getResolvedThemeColors(name), exportColors: getThemeExportColors(name) };
+	} finally {
+		setRegisteredThemes([]);
+	}
 }
 
 /**
@@ -73,7 +93,10 @@ const NIGHT_PALETTE_MAP: Record<string, string> = {
 	bashMode: "#9ece6a", // accents.green
 };
 
-/** §Palette → ThemeColor mapping for grok-day: the Grok Day accent slots. */
+/**
+ * §Palette → ThemeColor mapping for grok-day: the Grok Day accent slots. The plan writes these
+ * hex values in uppercase; resolved theme colors are canonical lowercase hex (upstream colorToHex).
+ */
 const DAY_PALETTE_MAP: Record<string, string> = {
 	accent: "#2F64D2", // grokDay.blue
 	border: "#585858", // borders.modal — generic modal/overlay border token
@@ -124,7 +147,7 @@ for (const { label, trueColor } of GROK_COLOR_MODES) {
 		it("grok-day resolves every §Palette-named key to its exact plan hex", () => {
 			const resolved = getResolvedThemeColors("grok-day");
 			for (const [key, hex] of Object.entries(DAY_PALETTE_MAP)) {
-				expect(resolved[key], `grok-day ${key}`).toBe(hex);
+				expect(resolved[key], `grok-day ${key}`).toBe(hex.toLowerCase());
 			}
 		});
 
@@ -141,8 +164,8 @@ for (const { label, trueColor } of GROK_COLOR_MODES) {
 			const nightJson = readThemeJson("grok-night.json");
 			// No missing keys versus dark.json.
 			expect(Object.keys(nightJson.colors).sort()).toEqual(Object.keys(darkJson.colors).sort());
-			// Keys not named by §Palette inherit the resolved dark.json value verbatim.
-			const darkResolved = getResolvedThemeColors("dark");
+			// Keys not named by §Palette inherit the resolved classic dark value verbatim.
+			const darkResolved = resolveClassicPalette("classic-dark").colors;
 			const nightResolved = getResolvedThemeColors("grok-night");
 			for (const key of Object.keys(darkJson.colors)) {
 				if (!(key in NIGHT_PALETTE_MAP)) {
@@ -156,17 +179,17 @@ for (const { label, trueColor } of GROK_COLOR_MODES) {
 			const dayJson = readThemeJson("grok-day.json");
 			// No missing keys versus light.json.
 			expect(Object.keys(dayJson.colors).sort()).toEqual(Object.keys(lightJson.colors).sort());
-			// Keys not named by §Palette inherit the resolved light.json value verbatim.
-			const lightResolved = getResolvedThemeColors("light");
+			// Keys not named by §Palette inherit the resolved classic light value verbatim.
+			const classicLight = resolveClassicPalette("classic-light");
+			const lightResolved = classicLight.colors;
 			const dayResolved = getResolvedThemeColors("grok-day");
 			for (const key of Object.keys(lightJson.colors)) {
 				if (!(key in DAY_PALETTE_MAP)) {
 					expect(dayResolved[key], `grok-day inherits light ${key}`).toBe(lightResolved[key]);
 				}
 			}
-			// Export backgrounds are not §Palette-named for day: inherit light verbatim.
-			const lightExport = getThemeExportColors("light");
-			expect(getThemeExportColors("grok-day")).toEqual(lightExport);
+			// Export backgrounds are not §Palette-named for day: inherit classic light verbatim.
+			expect(getThemeExportColors("grok-day")).toEqual(classicLight.exportColors);
 		});
 	});
 }

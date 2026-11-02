@@ -75,6 +75,18 @@ describe("parseBrandProfile", () => {
 			originator: "omo",
 		});
 	});
+
+	test("parses an optional executable command when present", () => {
+		const profile = parseBrandProfile('{"name":"OmO","command":"omo"}');
+
+		expect(profile?.command).toBe("omo");
+	});
+
+	test("leaves command undefined when the profile omits it", () => {
+		const profile = parseBrandProfile('{"name":"OmO"}');
+
+		expect(profile?.command).toBeUndefined();
+	});
 });
 
 describe("consumeBrandProfile", () => {
@@ -133,6 +145,7 @@ describe("config module brand integration", () => {
 		const config = await import("../src/config.ts");
 
 		expect(config.APP_NAME).toBe("senpi");
+		expect(config.APP_COMMAND).toBe("senpi");
 		expect(config.CONFIG_DIR_NAME).toBe(".senpi");
 		expect(config.CONFIG_FLAT_LAYOUT).toBe(false);
 		expect(config.DISPLAY_VERSION).toBe(config.VERSION);
@@ -193,5 +206,15 @@ describe("envValue", () => {
 			"SENPI_CODING_AGENT_DIR",
 			"PI_CODING_AGENT_DIR",
 		]);
+	});
+});
+
+describe("brand changelog contract", () => {
+	test("accepts an absolute changelog path and authored version", () => {
+		expect(
+			parseBrandProfile(
+				JSON.stringify({ name: "omo", changelog: { path: "/tmp/omo.md", version: "2026.9.11-omo" } }),
+			)?.changelog,
+		).toEqual({ path: "/tmp/omo.md", version: "2026.9.11-omo" });
 	});
 });

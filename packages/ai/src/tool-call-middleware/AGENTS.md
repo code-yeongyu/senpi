@@ -2,7 +2,9 @@
 
 Text-format tool-call protocols for providers that don't support native function calling. Wraps `openai-completions` streams and parses `<tool_call>` / XML / delimiter formats back into pi's canonical `toolCall` events. Fork-modified — see `changes.md`.
 
-Generated: 2026-08-07. Commit `4f26b8282`.
+Generated: 2026-08-24. Commit `baf15a54d`.
+
+Size: 21 files here + 9 under `protocols/` (~5.4k LOC). Complexity sits in `morph-xml.ts` (1.2k), `json-mix.ts` (854), `gemma4.ts` (809).
 
 ## FILES
 
@@ -60,6 +62,8 @@ tool-call-middleware/
 - **Strict parsing**: reject malformed XML/JSON instead of coercing into invalid strings (precedent: `morph-xml` array<object> handling).
 - **Delegate to `json-mix.ts`** for any new JSON-inside-delimiters protocol — minimizes drift across Hermes-family parsers.
 - **`xml-tool-tag-scanner.ts`** is the canonical streaming boundary detector; reuse it for any XML-tag-based protocol.
+- **Non-mutating context transform**: `context-transformer.ts` strips `tools`, injects the protocol prompt, serializes assistant tool calls, and rewrites tool results as user text — it returns new structures.
+- **Recovery replays sanitized calls only**: raw truncated markup never re-enters context; incomplete calls come back as canonical calls paired with error results.
 
 ## ANTI-PATTERNS
 

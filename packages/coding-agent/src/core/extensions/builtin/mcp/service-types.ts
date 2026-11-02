@@ -1,9 +1,10 @@
-import type { ExtensionContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
+import type { ExtensionContext, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import type { ServerAuthPlan } from "./auth/context.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection, ServerConnectionState } from "./connection.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
+import type { HostMcpRegistry } from "./host-registry.ts";
 import type { McpLogger } from "./log.ts";
 
 export type McpDisposeReason = Extract<SessionShutdownEvent["reason"], "quit" | "reload">;
@@ -17,6 +18,7 @@ export type McpWireJsonValue =
 	| { readonly [key: string]: McpWireJsonValue | undefined };
 
 export type McpWireAuthStatus = "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";
+export type McpWireServerStatus = ServerConnectionState | ResolvedMcpServer["state"];
 
 export type McpWireServerInfo = {
 	readonly name: string;
@@ -68,6 +70,8 @@ export type McpWireStatusServer = {
 	readonly resources: readonly McpWireResource[];
 	readonly resourceTemplates: readonly McpWireResourceTemplate[];
 	readonly authStatus: McpWireAuthStatus;
+	readonly status?: McpWireServerStatus;
+	readonly lastError?: string;
 };
 
 export type McpWireStatusSnapshot = {
@@ -75,6 +79,7 @@ export type McpWireStatusSnapshot = {
 };
 
 export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted"> & {
+	ui?: ExtensionUIContext;
 	mode?: ExtensionContext["mode"];
 	/**
 	 * Session history access, present on the real ExtensionContext. Only
@@ -94,9 +99,12 @@ export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted
 		extensionPath: string;
 		registrationCwd: string;
 	}[];
+	/** Whether a loaded extension handles `mcp_servers_change` and connects the registered servers instead. */
+	extensionConnectsMcpServers?: () => boolean;
 };
 
 export interface McpSessionOptions {
+	readonly mcpRegistry?: HostMcpRegistry;
 	readonly agentDir?: string;
 	readonly env?: Record<string, string | undefined>;
 	readonly logDir?: string;
@@ -134,23 +142,49 @@ export interface McpServerCounters {
 	reconnectCount: number;
 }
 
+/**
+ * Held by a startup connect from its start until it hands the server's catalog
+ * to a registration pass. While it owns registration, other passes register the
+ * catalog known when the connect began, never the in-flight one, so the catalog
+ * lands exactly once (#2177).
+ */
+export interface McpStartupCatalogClaim {
+	readonly cachedCatalog: McpCachedServerCatalog | undefined;
+	readonly ownsRegistration: () => boolean;
+	readonly settled: () => Promise<void>;
+}
+
 export interface McpConnectionEntry {
 	readonly key: string;
 	readonly name: string;
 	readonly configHash: string;
+	/** The admitted generation's identity; equals `configHash` for a server that declares no reference (senpi#3858). */
+	readonly generationHash?: string;
+	/** Present when the server declares references: whether a fresh snapshot no longer matches the admitted one. */
+	readonly generationChanged?: () => Promise<boolean>;
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
 	readonly createdAtMs: number;
 	readonly counters: McpServerCounters;
 	readonly agentDir?: string;
+	/** The env the connection spawned with; with `agentDir`, its credentials resolve against it (senpi#2986). */
+	readonly env?: Record<string, string | undefined>;
 	readonly artifacts?: McpOutputArtifacts;
 	readonly authPlan?: ServerAuthPlan;
+	readonly isCurrent?: () => boolean;
+	readonly credentialIdentity?: string;
+	readonly credentialsCurrent?: () => boolean;
+	readonly onCredentialsChanged?: () => Promise<void>;
 	cachedCatalog?: McpCachedServerCatalog;
 	cacheRefreshedAfterConnect: boolean;
+	catalogGeneration?: number;
+	startupCatalogClaim?: McpStartupCatalogClaim;
 	/** Full mcp tool names last registered for this server (list_changed diffing). */
 	knownToolNames?: string[];
 	/** Latest `/mcp status` list_changed delta line, e.g. "2 added (inactive), 1 removed". */
 	lastListChangedDelta?: string;
 	/** Teardown for the list_changed coalescer + subscription. */
 	disposeListChanged?: () => void;
+	/** Teardown for the control-inventory connection-state subscription. */
+	disposeWireStatus?: () => void;
 }

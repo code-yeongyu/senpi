@@ -1,16 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InMemoryModelsStore, type ModelsStoreEntry } from "../src/models-store.ts";
+import type { ModelsPublication, RefreshModelsContext } from "../src/models.ts";
+import { InMemoryModelsStore } from "../src/models-store.ts";
 import { ollamaProvider } from "../src/providers/ollama.ts";
 
 afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-function scopedStore(store: InMemoryModelsStore) {
+async function refreshContext(store: InMemoryModelsStore): Promise<RefreshModelsContext> {
 	return {
-		read: () => store.read("ollama"),
-		write: (entry: ModelsStoreEntry) => store.write("ollama", entry),
-		delete: () => store.delete("ollama"),
+		stored: await store.read("ollama"),
+		publish: async (publication: ModelsPublication) => {
+			if (publication.persist === null) await store.delete("ollama");
+			else if (publication.persist) await store.write("ollama", publication.persist);
+			publication.update?.();
+			return true;
+		},
+		allowNetwork: true,
+		signal: new AbortController().signal,
 	};
 }
 
@@ -108,8 +115,7 @@ describe("Ollama Cloud provider discovery", () => {
 
 		await provider.refreshModels?.({
 			credential: { type: "api_key", key: "test-key" },
-			store: scopedStore(store),
-			allowNetwork: true,
+			...(await refreshContext(store)),
 		});
 
 		expect(provider.getModels()).toEqual([
@@ -158,8 +164,7 @@ describe("Ollama Cloud provider discovery", () => {
 
 		await provider.refreshModels?.({
 			credential: { type: "api_key", key: "test-key" },
-			store: scopedStore(store),
-			allowNetwork: true,
+			...(await refreshContext(store)),
 		});
 
 		expect(provider.getModels().map((model) => model.id)).toEqual(["usable"]);

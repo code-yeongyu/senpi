@@ -1,18 +1,30 @@
-export { PiClient } from "./client.ts";
+export { Client, createClientServiceTransport } from "./client.ts";
+export { ClientDisposedError, DisconnectedError, ServerError } from "./errors.ts";
 export {
-	PiClientDisposedError,
-	PiDisconnectedError,
-	PiServerError,
-	PiSessionDetachedError,
-	PiSessionOwnershipError,
-} from "./errors.ts";
-export type { AcquireSessionOptions, PiSessionHandle, SessionLease, SessionLeaseMode } from "./session-handle.ts";
+	MaterializerConsumer,
+	MaterializerRefusal,
+	type MaterializerAdapter,
+	type MaterializerIdentity,
+	type MaterializerUnit,
+	type MaterializerTransaction,
+	type MaterializerOutcome,
+	type MaterializerRefusalCode,
+	type MaterializerSnapshot,
+} from "./materializer.ts";
+export {
+	parseMaterializerFrame,
+	type MaterializerEnvelope,
+	type MaterializerPayload,
+	type MaterializerSeed,
+} from "./materializer-wire.ts";
+export { RecoveryRepairController, RecoveryRepairAdviceError, type RecoveryRepairAction } from "./recovery-repair.ts";
 export type { ByteTransport, ByteTransportFactory, ByteTransportHandlers } from "./transport.ts";
 export type {
+	AttachmentChangeListener,
+	ClientOptions,
 	ConnectionState,
 	ConnectionStateChange,
-	CreateSessionOptions,
 	ListenerErrorHandler,
-	PiClientOptions,
+	ServiceSubscription,
 	Unsubscribe,
 } from "./types.ts";

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { fauxAssistantMessage, fauxText, fauxThinking } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import ttsrExtension from "../../src/core/extensions/builtin/ttsr/index.ts";
@@ -39,11 +39,27 @@ function readSessionEntries(harness: Harness): PersistedEntry[] {
 		.map((line) => JSON.parse(line) as PersistedEntry);
 }
 
+function textOf(message: PersistedMessage | undefined): string {
+	if (message === undefined || !Array.isArray(message.content)) return "";
+	return (message.content as Array<{ type: string; text?: string }>)
+		.filter((block) => block.type === "text")
+		.map((block) => block.text ?? "")
+		.join("");
+}
+
 function thinkingTextOf(message: PersistedMessage | undefined): string {
 	if (message === undefined || !Array.isArray(message.content)) return "";
 	return (message.content as Array<{ type: string; thinking?: string }>)
 		.filter((block) => block.type === "thinking")
 		.map((block) => block.thinking ?? "")
+		.join("");
+}
+
+function toolArgumentsOf(message: PersistedMessage | undefined): string {
+	if (message === undefined || !Array.isArray(message.content)) return "";
+	return (message.content as Array<{ type: string; arguments?: unknown }>)
+		.filter((block) => block.type === "toolCall")
+		.map((block) => JSON.stringify(block.arguments ?? ""))
 		.join("");
 }
 
@@ -136,6 +152,66 @@ describe("ttsr extension wiring", () => {
 		expect(harness.faux.getCallLog().length).toBe(2);
 		const finalText = assistantEntries.map((e) => getMessageText(e.message)).join("\n");
 		expect(finalText).toContain("recovered answer");
+	});
+
+	it("aborts a text stream that repeats the same paragraph, truncates from the first repeat, nudges, and continues", async () => {
+		const paragraph = (i: number) =>
+			`Now I'm writing step ${i} of the plan: defining the shared context block with rules and tool guidance, then each research lane with its own scoped prompt and report path. The implementation stays precise.`;
+		const loopText = `${Array.from({ length: 3 }, () => [0, 1, 2].map(paragraph).join("\n\n")).join("\n\n")}\n\n`;
+		harness.setResponses([
+			fauxAssistantMessage([fauxText(loopText)]),
+			fauxAssistantMessage([fauxText("recovered after paragraph loop")]),
+		]);
+		await harness.session.prompt("do work");
+		const entries = readSessionEntries(harness);
+		const assistants = entries.filter((e) => e.type === "message" && e.message?.role === "assistant");
+		const aborted = assistants[0]?.message;
+		const text = textOf(aborted);
+		expect(aborted?.stopReason).toBe("aborted");
+		expect(text.split(paragraph(0)).length - 1).toBe(1);
+		expect(text.length).toBeLessThan(loopText.length);
+		expect(notices).toEqual([]);
+		expect(entries.filter((e) => e.type === "custom" && e.customType === RULE_ACTIVATION_ENTRY_TYPE)).toHaveLength(1);
+		expect(entries).toContainEqual(
+			expect.objectContaining({
+				data: { kind: "ttsr", owner: "collapse-repetition", rules: ["collapse-repetition"], remediation: "nudge" },
+			}),
+		);
+		expect(entries.some((e) => e.type === "custom_message" && e.customType === TTSR_INJECTION_CUSTOM_TYPE)).toBe(
+			true,
+		);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(textOf(assistants[1]?.message)).toContain("recovered after paragraph loop");
+	});
+
+	it("aborts a collapsing tool argument stream before the flood and persists no flooded arguments", async () => {
+		const incident = readFileSync(new URL("./fixtures/incident-tool-args.txt", import.meta.url), "utf8");
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("bash", { command: incident }, { id: "incident-tool" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxText("recovered after tool stream interruption")]),
+		]);
+
+		await harness.session.prompt("run the command");
+
+		const entries = readSessionEntries(harness);
+		const assistantEntries = entries.filter((e) => e.type === "message" && e.message?.role === "assistant");
+		const aborted = assistantEntries[0]?.message;
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(aborted?.stopReason).toBe("aborted");
+		expect(toolArgumentsOf(aborted)).not.toContain("복 복 복 복 복 복 복 복 복 복");
+		expect(toolArgumentsOf(aborted).length).toBeLessThan(512);
+		expect(entries).toContainEqual(
+			expect.objectContaining({
+				customType: RULE_ACTIVATION_ENTRY_TYPE,
+				data: expect.objectContaining({ owner: "collapse-repetition" }),
+			}),
+		);
+		expect(
+			entries.some((entry) => entry.type === "custom_message" && entry.customType === TTSR_INJECTION_CUSTOM_TYPE),
+		).toBe(true);
+		expect(getMessageText(assistantEntries[1]?.message)).toContain("recovered after tool stream interruption");
 	});
 
 	it("replaces control-token leakage with an error shell and retries through the bounded machinery", async () => {

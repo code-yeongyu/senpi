@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/extensions/builtin/mcp
 
-Fork-native builtin MCP client. Registration #23 in `builtin/index.ts` — kept last so its provider-payload tap observes all co-resident builtin mutations. Entry: `index.ts` exports `default function mcpExtension(pi: ExtensionAPI): void`. `changes.md` is the active fork ledger; every divergence from upstream MCP SDK behavior goes there.
+Fork-native builtin MCP client. Registration #39 in `builtin/index.ts` — kept last so its provider-payload tap observes all co-resident builtin mutations. Entry: `index.ts` exports `default function mcpExtension(pi: ExtensionAPI): void`. `changes.md` is the active fork ledger; every divergence from upstream MCP SDK behavior goes there.
 
 ## SUBTREES
 
@@ -20,7 +20,7 @@ TypeBox schema in `config-schema.ts`. Config loader in `config.ts`: reads global
 
 ## EXPOSURE MODES
 
-Three modes: `direct` (tools register immediately), `search` (full catalog in tier-B, only `directTools` active, `tool_search` promotes on demand), `proxy` (single gateway tool, catalog hidden). `auto` never selects `proxy`; spec evidence: -27.3pp GSM8K structured-output regression (see `policy.ts` comment). Search tool name constant: `TOOL_SEARCH_TOOL_NAME = "tool_search"`.
+Three modes: `direct` (tools register immediately), `search` (full catalog in tier-B, only `directTools` active, the shared `tool_search` promotes on demand), `proxy` (single gateway tool, catalog hidden). `auto` never selects `proxy`; spec evidence: -27.3pp GSM8K structured-output regression (see `policy.ts` comment).
 
 ## ATTACH AND SESSION LIFECYCLE
 
@@ -32,7 +32,9 @@ Attach is **single-flight**: `attachPromise` memoizes the in-flight `attachSessi
 
 ## ELICITATION
 
-`elicitation.ts` implements MCP elicitation as form-only (no free-text). Must work headless and over RPC; the UI provider is injected at `before_agent_start` time via `setMcpElicitationUiProvider`.
+Legacy `elicitation.ts` implements form-only elicitation over TUI/RPC primitives; print/json processes omit its capability. A missing UI provider (including `ctx.hasUI` false) throws a processing error without calling primitives. An undefined dialog answer cancels without content; boolean Yes/No retains its typed meaning. No legacy path returns decline; explicit Decline controls are tracked separately.
+
+Modern MRTR lives in `modern/request.ts` and `modern/elicitation.ts`: binding-owned TUI forms require explicit submission; no human means local termination, never a fabricated decline. Origins, human capability, and continuation state remain private and request-local, independent of the legacy connection capability.
 
 ## TESTS AND DOCS
 

@@ -148,7 +148,11 @@ describe("eval tool-call capture", () => {
 						summary.resultPreview === "ok",
 				),
 		).toBe(true);
-		expect(toolResult.details.toolCalls[30]).toEqual({ name: "read", ok: true });
+		expect(toolResult.details.toolCalls[30]).toMatchObject({
+			name: "read",
+			ok: true,
+			durationMs: expect.any(Number),
+		});
 	});
 
 	it("capture: streams an enriched summary before finalization", async () => {

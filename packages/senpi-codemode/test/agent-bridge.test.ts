@@ -1,35 +1,14 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RESERVED_AGENT_TOOL } from "../src/bridge/reserved.ts";
-import { type AgentExecuteTool, type EvalAgentResult, runEvalAgent } from "../src/bridges/agent-bridge.ts";
+import { runReservedTool } from "../src/bridges/reserved-dispatch.ts";
+import type { EvalSchemaToolInfo } from "../src/bridges/schema-bridge.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
+import { marshalToolResult } from "../src/tool/image.ts";
 import type { EvalStatusEvent, ExecuteTool } from "../src/tool/types.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
-
-function textResult(text: string, details: unknown = {}): AgentToolResult<unknown> {
-	return { content: [{ type: "text", text }], details };
-}
-
-function withAvailability(executeTool: ExecuteTool, isToolAvailable: (name: string) => boolean): AgentExecuteTool {
-	return Object.assign(executeTool, { isToolAvailable });
-}
-
-type AgentHarness = {
-	readonly executeTool: AgentExecuteTool;
-	readonly taskToolName?: string;
-	readonly signal?: AbortSignal;
-	readonly emitStatus?: (event: EvalStatusEvent) => void;
-};
-
-function invokeAgent(args: unknown, harness: AgentHarness): Promise<EvalAgentResult> {
-	return runEvalAgent(args, {
-		callId: "agent-call-1",
-		taskToolName: harness.taskToolName ?? "task",
-		executeTool: harness.executeTool,
-		...(harness.signal ? { signal: harness.signal } : {}),
-		...(harness.emitStatus ? { emitStatus: harness.emitStatus } : {}),
-	});
-}
+import { invokeAgent, textResult, withAvailability } from "./workpool/agent-harness.ts";
+import { malformedHandles } from "./workpool/handle-fixtures.ts";
 
 describe("agent bridge", () => {
 	it("delegates the reserved call and coalesces task progress in cell updates", async () => {
@@ -47,9 +26,9 @@ describe("agent bridge", () => {
 		const executeTool = withAvailability(
 			async (toolName, params, options) => {
 				calls.push({ toolName, params });
-				options?.onUpdate?.(textResult("starting", { task_id: "st_progress", status: "running" }));
-				options?.onUpdate?.(textResult("done", { task_id: "st_progress", status: "completed" }));
-				return textResult("FAKE_RESULT", { task_id: "st_progress", status: "completed" });
+				options?.onUpdate?.(textResult("starting", { task_id: "st_abcd", run_epoch: 0, status: "running" }));
+				options?.onUpdate?.(textResult("done", { task_id: "st_abcd", run_epoch: 0, status: "completed" }));
+				return textResult("FAKE_RESULT", { task_id: "st_abcd", run_epoch: 0, status: "completed" });
 			},
 			(name) => name === "task",
 		);
@@ -79,7 +58,7 @@ describe("agent bridge", () => {
 			ok: true,
 			value: { text: "FAKE_RESULT" },
 		});
-		expect(evalResult.details.statusEvents).toEqual([{ op: "agent", id: "st_progress", status: "completed" }]);
+		expect(evalResult.details.statusEvents).toEqual([{ op: "agent", id: "st_abcd", status: "completed" }]);
 	});
 
 	it.each([
@@ -203,7 +182,11 @@ describe("agent bridge", () => {
 		const executeTool = withAvailability(
 			async (_toolName, value) => {
 				params = value;
-				return textResult("Started task", { task_id: "st_detail_123", status: "running" });
+				return textResult("Other st_deadbeef before st_abcdef", {
+					task_id: "st_123abc",
+					run_epoch: 3,
+					status: "running",
+				});
 			},
 			() => true,
 		);
@@ -213,21 +196,34 @@ describe("agent bridge", () => {
 
 		// Then
 		expect(params).toEqual({ prompt: "x", run_in_background: true });
-		expect(value).toEqual({ text: "Started task", id: "st_detail_123", handle: "agent://st_detail_123" });
+		expect(value).toEqual({
+			text: "Other st_deadbeef before st_abcdef",
+			id: "st_123abc",
+			handle: "agent://st_123abc",
+			run_epoch: 3,
+		});
 	});
 
-	it("falls back to extracting a background id from task text", async () => {
-		// Given
+	it.each(malformedHandles)("rejects malformed legacy handle details %j without prose fallback", async (details) => {
+		// Given: several plausible prose IDs must never become a successful handle.
 		const executeTool = withAvailability(
-			async () => textResult("Started task st_text_456 (running)"),
+			async () => textResult("Started st_deadbeef; related st_abcdef", details),
 			() => true,
 		);
+		// When / Then
+		await expect(invokeAgent({ prompt: "x", handle: true }, { executeTool })).rejects.toMatchObject({
+			code: "invalid_task_handle",
+		});
+	});
 
-		// When
-		const value = await invokeAgent({ prompt: "x", handle: true }, { executeTool });
-
-		// Then
-		expect(value).toMatchObject({ id: "st_text_456", handle: "agent://st_text_456" });
+	it("rejects misleading-success task errors even with valid typed identity", async () => {
+		const executeTool = withAvailability(
+			async () => ({ ...textResult("Started st_123abc", { task_id: "st_123abc", run_epoch: 0, isError: true }) }),
+			() => true,
+		);
+		await expect(invokeAgent({ prompt: "x", handle: true }, { executeTool })).rejects.toMatchObject({
+			code: "invalid_task_handle",
+		});
 	});
 
 	it("synthesizes defensive progress events from known and unknown details", async () => {
@@ -237,7 +233,7 @@ describe("agent bridge", () => {
 			async (_toolName, _params, options) => {
 				options?.onUpdate?.(textResult("tick", {}));
 				options?.onUpdate?.(
-					textResult("done", { task_id: "st_known", status: "completed", subagent_type: "reviewer" }),
+					textResult("done", { task_id: "st_cdef", run_epoch: 1, status: "completed", subagent_type: "reviewer" }),
 				);
 				return textResult("ok");
 			},
@@ -250,8 +246,26 @@ describe("agent bridge", () => {
 		// Then
 		expect(events).toEqual([
 			{ op: "agent", id: "lane", status: "running" },
-			{ op: "agent", id: "st_known", status: "completed", agent: "reviewer" },
+			{ op: "agent", id: "st_cdef", status: "completed", agent: "reviewer" },
 		]);
+	});
+
+	it("forwards requested kernel tool names and still denies unknown arguments", async () => {
+		const calls: unknown[] = [];
+		const executeTool = withAvailability(
+			async (_toolName, params) => {
+				calls.push(params);
+				return textResult("ok");
+			},
+			() => true,
+		);
+		await expect(invokeAgent({ prompt: "x", extra: true }, { executeTool })).rejects.toThrow(
+			"agent() received invalid arguments",
+		);
+		await expect(invokeAgent({ prompt: "x", tools: ["lookup", "pair"] }, { executeTool })).resolves.toEqual({
+			text: "ok",
+		});
+		expect(calls).toEqual([{ prompt: "x", run_in_background: false, tools: ["lookup", "pair"] }]);
 	});
 
 	it("drops unsupported isolation options and emits their warning", async () => {
@@ -284,6 +298,113 @@ describe("agent bridge", () => {
 		]);
 	});
 
+	// senpi#1910: probe the same catalog used by tool_schema(), not a host-name assumption.
+	it.each([
+		[true, "branch"],
+		[false, "patch"],
+		["branch", "branch"],
+		["patch", "patch"],
+	])("forwards advertised isolation and normalizes merge %j", async (merge, normalized) => {
+		const executeTool = vi.fn(async () => textResult("ok"));
+		const listTools = vi.fn(() => [
+			{ name: "task", parameters: { properties: {} } },
+			{ name: "lane_task", parameters: { properties: { isolated: { type: "boolean" } } } },
+		]);
+		const events: EvalStatusEvent[] = [];
+		const invoke = catalogAgent(executeTool, listTools, events);
+		await invoke({ prompt: "x", isolated: true, apply: false, merge });
+		expect(executeTool.mock.calls).toEqual([
+			[
+				"lane_task",
+				{ prompt: "x", run_in_background: false, isolated: true, apply: false, merge: normalized },
+				expect.any(Object),
+			],
+		]);
+		await invoke({ prompt: "x", isolated: false });
+		expect(executeTool).toHaveBeenLastCalledWith(
+			"lane_task",
+			{ prompt: "x", run_in_background: false, isolated: false },
+			expect.any(Object),
+		);
+		expect(listTools).toHaveBeenCalledTimes(1);
+		expect(events).toEqual([]);
+	});
+
+	it.each([undefined, {}, { properties: {} }, { properties: { apply: {}, merge: {} } }])(
+		"omits isolation when the selected host schema does not advertise it: %j",
+		async (parameters) => {
+			const executeTool = vi.fn(async () => textResult("ok"));
+			const events: EvalStatusEvent[] = [];
+			const invoke = catalogAgent(
+				executeTool,
+				() => [
+					{ name: "task", parameters: { properties: { isolated: {} } } },
+					{ name: "lane_task", parameters },
+				],
+				events,
+			);
+			await invoke({ prompt: "x", isolated: true, apply: false, merge: true });
+			expect(executeTool).toHaveBeenCalledWith(
+				"lane_task",
+				{ prompt: "x", run_in_background: false },
+				expect.any(Object),
+			);
+			expect(events).toHaveLength(1);
+			expect(events[0]).toHaveProperty("warning");
+		},
+	);
+
+	it.each([{}, { schema: { type: "object" } }])("rejects unapplied foreground isolation for %j", async (options) => {
+		const isolation = {
+			changes_applied: false,
+			patch_path: "/artifacts/task.patch",
+			branch_name: "isolation/task",
+			manual_command: "git apply /artifacts/task.patch",
+		};
+		const executeTool = async () => textResult('{"answer":42}', { isolation });
+		const pending = invokeAgent({ prompt: "x", ...options }, { executeTool });
+		await expect(pending).rejects.toMatchObject({
+			name: "AgentIsolationNotAppliedError",
+			code: "isolation_not_applied",
+		});
+		for (const field of ["patch_path", "branch_name", "manual_command"] as const) {
+			await expect(pending).rejects.toThrow(`${field}: ${isolation[field]}`);
+		}
+	});
+
+	it.each([true, null])(
+		"preserves foreground isolation metadata when changes_applied is %j",
+		async (changes_applied) => {
+			const isolation = {
+				changes_applied,
+				patch_path: "/artifacts/task.patch",
+				nested_patch_paths: ["nested.patch"],
+			};
+			const executeTool = async () => textResult('{"answer":42}', { isolation });
+			await expect(invokeAgent({ prompt: "x" }, { executeTool })).resolves.toEqual({
+				text: '{"answer":42}',
+				details: { isolation },
+			});
+			await expect(invokeAgent({ prompt: "x", schema: {} }, { executeTool })).resolves.toEqual({
+				text: '{"answer":42}',
+				data: { answer: 42 },
+				details: { isolation },
+			});
+		},
+	);
+
+	it("preserves supplied handle isolation without treating it as a foreground completion", async () => {
+		const isolation = { changes_applied: false, patch_path: "/artifacts/task.patch" };
+		const executeTool = async () => textResult("started", { task_id: "st_abc", run_epoch: 1, isolation });
+		await expect(invokeAgent({ prompt: "x", handle: true }, { executeTool })).resolves.toEqual({
+			text: "started",
+			id: "st_abc",
+			handle: "agent://st_abc",
+			run_epoch: 1,
+			details: { isolation },
+		});
+	});
+
 	it("propagates the cell abort signal to task execution", async () => {
 		// Given
 		const controller = new AbortController();
@@ -308,3 +429,22 @@ describe("agent bridge", () => {
 		await expect(pending).rejects.toThrow("cancelled by caller");
 	});
 });
+
+function catalogAgent(
+	executeTool: ExecuteTool,
+	listTools: () => readonly EvalSchemaToolInfo[],
+	events: EvalStatusEvent[],
+) {
+	return async (args: unknown) =>
+		await runReservedTool(RESERVED_AGENT_TOOL, {
+			callId: "catalog-agent",
+			args,
+			executeTool,
+			taskToolName: "lane_task",
+			taskOutputToolName: "task_output",
+			listTools,
+			signal: undefined,
+			emitStatus: (event) => events.push(event),
+			marshalToolResult,
+		});
+}

@@ -45,6 +45,7 @@ describe("Given a warm speculative summary made stale by an idle revision bump",
 			fauxAssistantMessage("fresh summary of the old context"),
 		]);
 		await handlers.beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx);
+		await handlers.waitForSpeculativeJob();
 
 		// When: a hidden custom message bumps the message revision while idle,
 		// then the next prompt crosses the compaction threshold.

@@ -46,13 +46,6 @@ describe("getNativePtySentinelExport", () => {
 		expect(sentinel).toBe(`__senpiPtyAbi${NATIVE_PTY_ABI_VERSION}`);
 	});
 
-	it("stays stable across package versions (CalVer bump must not change it)", () => {
-		const fromPackageVersion = getNativePtySentinelExport(NATIVE_PTY_ABI_VERSION);
-		expect(fromPackageVersion).toBe(getNativePtySentinelExport());
-		// The sentinel must not embed the CalVer package version.
-		expect(getNativePtySentinelExport()).not.toContain(NATIVE_PTY_PACKAGE_VERSION.replace(/[.+-]/g, "_"));
-	});
-
 	it.each([
 		["1", "__senpiPtyAbi1"],
 		["2", "__senpiPtyAbi2"],

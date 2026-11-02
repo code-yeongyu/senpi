@@ -2,8 +2,9 @@ import type { ResponseStreamEvent } from "openai/resources/responses/responses.j
 import { describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
-import type { AssistantMessage, AssistantMessageEvent, Context, Model } from "../src/types.ts";
+import type { Api, AssistantMessage, AssistantMessageEvent, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 vi.mock("openai", () => {
 	async function* createMockResponsesStream(): AsyncIterable<ResponseStreamEvent> {
@@ -124,13 +125,14 @@ async function* createCompletedEvents(): AsyncIterable<ResponseStreamEvent> {
 	} as unknown as ResponseStreamEvent;
 }
 
-async function* createIncompleteEvents(): AsyncIterable<ResponseStreamEvent> {
+async function* createIncompleteEvents(reason = "max_output_tokens"): AsyncIterable<ResponseStreamEvent> {
 	yield {
 		type: "response.incomplete",
 		sequence_number: 0,
 		response: {
 			id: "resp_incomplete",
 			status: "incomplete",
+			incomplete_details: { reason },
 			usage: {
 				input_tokens: 30,
 				output_tokens: 12,
@@ -187,7 +189,11 @@ async function* createPhasedMessageEvents(
 		yield {
 			type: "response.incomplete",
 			sequence_number: 2,
-			response: { id: "resp_phase", status: "incomplete" },
+			response: {
+				id: "resp_phase",
+				status: "incomplete",
+				incomplete_details: { reason: "max_output_tokens" },
+			},
 		} as ResponseStreamEvent;
 		return;
 	}
@@ -196,6 +202,42 @@ async function* createPhasedMessageEvents(
 		sequence_number: 2,
 		response: { id: "resp_phase", status: "completed" },
 	} as ResponseStreamEvent;
+}
+
+async function* createUnfinishedToolCallEvents(): AsyncIterable<ResponseStreamEvent> {
+	yield {
+		type: "response.output_item.added",
+		sequence_number: 0,
+		output_index: 0,
+		item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "bash", arguments: "" },
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.function_call_arguments.delta",
+		sequence_number: 1,
+		output_index: 0,
+		item_id: "fc_1",
+		delta: '{"command":"rm -rf /tmp/build',
+	} as ResponseStreamEvent;
+	yield {
+		type: "response.completed",
+		sequence_number: 2,
+		response: { id: "resp_unfinished", status: "completed" },
+	} as ResponseStreamEvent;
+}
+
+// llama.cpp omits output_index from every event and sends both done events after all deltas.
+async function* createToolCallsWithoutOutputIndexEvents(): AsyncIterable<ResponseStreamEvent> {
+	const call = (n: string) => ({ type: "function_call", id: `fc_${n}`, call_id: `call_${n}`, name: "bash" });
+	const events = [
+		{ type: "response.output_item.added", item: { ...call("a"), arguments: "" } },
+		{ type: "response.function_call_arguments.delta", item_id: "fc_a", delta: '{"command":"echo a"}' },
+		{ type: "response.output_item.added", item: { ...call("b"), arguments: "" } },
+		{ type: "response.function_call_arguments.delta", item_id: "fc_b", delta: '{"command":"echo b"}' },
+		{ type: "response.output_item.done", item: { ...call("a"), arguments: '{"command":"echo a"}' } },
+		{ type: "response.output_item.done", item: { ...call("b"), arguments: '{"command":"echo b"}' } },
+		{ type: "response.completed", response: { id: "resp_no_output_index", status: "completed" } },
+	];
+	for (const event of events) yield event as unknown as ResponseStreamEvent;
 }
 
 describe("OpenAI Responses terminal event handling", () => {
@@ -209,13 +251,69 @@ describe("OpenAI Responses terminal event handling", () => {
 		);
 	});
 
-	it("emits an error final result when the wrapper stream ends before a terminal response event", async () => {
+	it("rejects completed streams whose tool call never received output_item.done", async () => {
 		const model = createModel();
-		const context: Context = {
+
+		await expect(
+			processResponsesStream(
+				createUnfinishedToolCallEvents(),
+				createOutput(model),
+				new AssistantMessageEventStream(),
+				model,
+			),
+		).rejects.toThrow("OpenAI Responses stream completed with an unfinished tool call: bash (call_1|fc_1)");
+	});
+
+	// https://github.com/earendil-works/pi/issues/9974
+	it("rejects parallel tool calls without output_index instead of running mixed-up calls", async () => {
+		const model = createModel();
+
+		await expect(
+			processResponsesStream(
+				createToolCallsWithoutOutputIndexEvents(),
+				createOutput(model),
+				new AssistantMessageEventStream(),
+				model,
+			),
+		).rejects.toThrow("OpenAI Responses stream completed with an unfinished tool call: bash (call_a|fc_a)");
+	});
+
+	it("forwards parsed provider stream events in order", async () => {
+		const model = createModel();
+		const context = normalizeContext({
 			systemPrompt: "",
 			messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
 			tools: [],
-		};
+		});
+		const providerEvents: unknown[] = [];
+		const eventModels: Model<Api>[] = [];
+		const stream = streamOpenAIResponses(model, context, {
+			apiKey: "test",
+			onProviderStreamEvent: async (event, eventModel) => {
+				await Promise.resolve();
+				providerEvents.push(event);
+				eventModels.push(eventModel);
+			},
+		});
+
+		await stream.result();
+
+		expect(providerEvents).toHaveLength(3);
+		expect(providerEvents.map((event) => (event as ResponseStreamEvent).type)).toEqual([
+			"response.created",
+			"response.output_item.added",
+			"response.reasoning_text.delta",
+		]);
+		expect(eventModels).toEqual([model, model, model]);
+	});
+
+	it("emits an error final result when the wrapper stream ends before a terminal response event", async () => {
+		const model = createModel();
+		const context = normalizeContext({
+			systemPrompt: "",
+			messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }],
+			tools: [],
+		});
 		const stream = streamOpenAIResponses(model, context, { apiKey: "test" });
 		const events: AssistantMessageEvent[] = [];
 		let initialStopReason: AssistantMessage["stopReason"] | undefined;
@@ -304,7 +402,7 @@ describe("OpenAI Responses terminal event handling", () => {
 
 		expect(output.responseId).toBe("resp_incomplete");
 		expect(output.stopReason).toBe("length");
-		expect(output.rawStopReason).toBe("incomplete");
+		expect(output.rawStopReason).toBe("incomplete.max_output_tokens");
 		expect(output.usage).toMatchObject({
 			input: 25,
 			output: 12,
@@ -312,6 +410,30 @@ describe("OpenAI Responses terminal event handling", () => {
 			cacheWrite: 0,
 			totalTokens: 42,
 		});
+	});
+
+	it("finalizes content-filtered incomplete responses as non-retryable errors", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+
+		await processResponsesStream(createIncompleteEvents("content_filter"), output, stream, model);
+
+		expect(output.stopReason).toBe("error");
+		expect(output.rawStopReason).toBe("incomplete.content_filter");
+		expect(output.errorMessage).toBe("Response incomplete: content_filter");
+	});
+
+	it("preserves unknown provider incomplete reasons as non-retryable errors", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+
+		await processResponsesStream(createIncompleteEvents("max_time_limit"), output, stream, model);
+
+		expect(output.stopReason).toBe("error");
+		expect(output.rawStopReason).toBe("incomplete.max_time_limit");
+		expect(output.errorMessage).toBe("Response incomplete: max_time_limit");
 	});
 
 	it("rejects failed terminal events with the provider error", async () => {

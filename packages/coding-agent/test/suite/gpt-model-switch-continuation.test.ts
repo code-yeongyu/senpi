@@ -5,12 +5,14 @@
 // minus `input` — including `model` and `tools` — so any model/api switch already
 // invalidates the cached continuation in buildCachedWebSocketRequestBody and falls
 // back to a full client-side replay without `previous_response_id`.
+
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	closeOpenAICodexWebSocketSessions,
-	getOpenAICodexWebSocketDebugStats,
-	resetOpenAICodexWebSocketDebugStats,
+	closeChatGptSubscriptionWebSocketSessions,
+	getChatGptSubscriptionWebSocketDebugStats,
+	resetChatGptSubscriptionWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
 } from "../../../ai/src/api/openai-codex-responses.ts";
 import type { Context, Model, Tool } from "../../../ai/src/types.ts";
@@ -36,7 +38,7 @@ function codexModel(id: string): Model<"openai-codex-responses"> {
 		id,
 		name: id,
 		api: "openai-codex-responses",
-		provider: "openai-codex",
+		provider: "chatgpt-subscription",
 		baseUrl: "https://chatgpt.com/backend-api",
 		reasoning: true,
 		input: ["text"],
@@ -137,7 +139,7 @@ async function establishContinuation(
 		messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
 		tools,
 	};
-	const first = await streamOpenAICodexResponses(model, firstContext, {
+	const first = await streamOpenAICodexResponses(model, normalizeContext(firstContext), {
 		apiKey: mockToken(),
 		sessionId,
 		transport: "websocket-cached",
@@ -153,11 +155,11 @@ async function sendFollowUp(
 ): Promise<void> {
 	await streamOpenAICodexResponses(
 		model,
-		{
+		normalizeContext({
 			systemPrompt: "You are a helpful assistant.",
 			messages: [...messages, { role: "user", content: "Now finish", timestamp: 2 }],
 			tools,
-		},
+		}),
 		{ apiKey: mockToken(), sessionId, transport: "websocket-cached" },
 	).result();
 }
@@ -165,11 +167,11 @@ async function sendFollowUp(
 describe("codex continuation state across model switches", () => {
 	const harnesses: Harness[] = [];
 
-	afterEach(() => {
+	afterEach(async () => {
 		vi.unstubAllGlobals();
-		closeOpenAICodexWebSocketSessions();
-		resetOpenAICodexWebSocketDebugStats();
-		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+		closeChatGptSubscriptionWebSocketSessions();
+		resetChatGptSubscriptionWebSocketDebugStats();
+		while (harnesses.length > 0) await harnesses.pop()?.cleanup();
 	});
 
 	it("replays full input without previous_response_id when the tool set changes", async () => {
@@ -239,7 +241,7 @@ describe("codex continuation state across model switches", () => {
 			sentBodies,
 		);
 		await sendFollowUp(sessionId, codexModel("gpt-5.1-codex"), [namedTool("edit")], history);
-		expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({
+		expect(getChatGptSubscriptionWebSocketDebugStats(sessionId)).toMatchObject({
 			requests: 2,
 			lastPreviousResponseId: "resp_1",
 		});
@@ -247,11 +249,11 @@ describe("codex continuation state across model switches", () => {
 		// When: a model switch is rejected because no auth is configured.
 		const target = harness.getModel("faux-2");
 		if (!target) throw new Error("Missing faux-2 model");
-		await expect(harness.session.setModel(target)).rejects.toThrow("No API key");
+		await expect(harness.session.setModel(target)).rejects.toMatchObject({ name: "ModelSwitchAuthError" });
 
 		// Then: the continuation cache and the active model are untouched.
 		expect(harness.session.model?.id).toBe("faux-1");
-		expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({
+		expect(getChatGptSubscriptionWebSocketDebugStats(sessionId)).toMatchObject({
 			requests: 2,
 			lastPreviousResponseId: "resp_1",
 		});

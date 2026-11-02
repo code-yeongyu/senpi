@@ -235,6 +235,7 @@ function aggregateDecision(
 		case "PreCompact":
 		case "PostCompact":
 		case "Stop":
+		case "Notification":
 			return aggregateBlockingDecision(summaries);
 	}
 }

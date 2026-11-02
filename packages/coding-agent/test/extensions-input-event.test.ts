@@ -7,7 +7,7 @@ import { discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
-import { createModelRegistry } from "./model-runtime-test-utils.ts";
+import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 
 describe("Input Event", () => {
 	let tempDir: string;
@@ -30,7 +30,7 @@ describe("Input Event", () => {
 		for (let i = 0; i < extensions.length; i++) fs.writeFileSync(path.join(extensionsDir, `e${i}.ts`), extensions[i]);
 		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 		const sm = SessionManager.inMemory();
-		const mr = await createModelRegistry(AuthStorage.create(path.join(tempDir, "auth.json")));
+		const mr = await createInMemoryModelRegistry(AuthStorage.inMemory());
 		return new ExtensionRunner(result.extensions, result.runtime, tempDir, sm, mr);
 	}
 
@@ -93,6 +93,22 @@ describe("Input Event", () => {
 			await r.emitInput("x", undefined, source);
 			expect((globalThis as any).testVar).toBe(source);
 		}
+	});
+
+	it("attributes input from its source alone unless the caller says who sent it", async () => {
+		const r = await createRunner(
+			`export default p => p.on("input", async e => { globalThis.testVar = e.attribution; return { action: "continue" }; });`,
+		);
+		for (const [source, attribution] of [
+			["interactive", "user"],
+			["rpc", "agent"],
+			["extension", "agent"],
+		] as const) {
+			await r.emitInput("x", undefined, source);
+			expect((globalThis as { testVar?: unknown }).testVar).toBe(attribution);
+		}
+		await r.emitInput("x", undefined, "extension", undefined, "answer", "user");
+		expect((globalThis as { testVar?: unknown }).testVar).toBe("user");
 	});
 
 	it("passes streamingBehavior correctly", async () => {

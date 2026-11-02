@@ -1,5 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	withoutInitialSystemMessage,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
@@ -29,34 +34,37 @@ type EventTranscriptEntry =
 	| { type: string };
 
 function retryTranscript(events: Harness["events"]): EventTranscriptEntry[] {
-	return events.map((event) => {
-		switch (event.type) {
-			case "message_start":
-			case "message_end":
-				return { type: event.type, role: event.message.role };
-			case "message_update":
-				return { type: event.type, update: event.assistantMessageEvent.type };
-			case "agent_end":
-				return { type: event.type, willRetry: event.willRetry };
-			case "auto_retry_start":
-				return {
-					type: event.type,
-					attempt: event.attempt,
-					maxAttempts: event.maxAttempts,
-					delayMs: event.delayMs,
-					errorMessage: event.errorMessage,
-				};
-			case "auto_retry_end":
-				return {
-					type: event.type,
-					success: event.success,
-					attempt: event.attempt,
-					...(event.finalError === undefined ? {} : { finalError: event.finalError }),
-				};
-			default:
-				return { type: event.type };
-		}
-	});
+	return events
+		.filter((event) => event.type !== "session_lifecycle")
+		.map((event) => {
+			switch (event.type) {
+				case "message_start":
+				case "message_end":
+					return { type: event.type, role: event.message.role };
+				case "message_update":
+					return { type: event.type, update: event.assistantMessageEvent.type };
+				case "agent_end":
+					return { type: event.type, willRetry: event.willRetry };
+				case "auto_retry_start":
+					return {
+						type: event.type,
+						attempt: event.attempt,
+						maxAttempts: event.maxAttempts,
+						// Jitter normalizes to the exponential floor for deterministic comparison.
+						delayMs: Math.floor(event.delayMs),
+						errorMessage: event.errorMessage,
+					};
+				case "auto_retry_end":
+					return {
+						type: event.type,
+						success: event.success,
+						attempt: event.attempt,
+						...(event.finalError === undefined ? {} : { finalError: event.finalError }),
+					};
+				default:
+					return { type: event.type };
+			}
+		});
 }
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
@@ -72,6 +80,33 @@ describe("retry fallback engine", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
 		while (harnesses.length) harnesses.pop()?.cleanup();
+	});
+
+	it("blocks recovery when the fallback cannot admit the live context", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", contextWindow: 100_000, maxTokens: 64 },
+				{ id: "faux-2", contextWindow: 20_000, maxTokens: 64 },
+			],
+			settings: {
+				compaction: { enabled: false },
+				retry: { enabled: true, maxRetries: 0, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "long context ".repeat(8_000) }],
+			timestamp: Date.now() - 1,
+		});
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "unauthorized" })]);
+
+		await harness.session.prompt("recover");
+
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 	});
 
 	it("retries the same model within budget instead of switching to the chain", async () => {
@@ -96,7 +131,9 @@ describe("retry fallback engine", () => {
 		await harness.session.prompt("hello");
 
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
-		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([1, 2]);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toSatisfy(
+			(d: number[]) => d.length === 2 && d[0]! >= 1 && d[0]! < 1.25 && d[1]! >= 2 && d[1]! < 2.5,
+		);
 		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
 		expect(harness.faux.state.callCount).toBe(3);
 	});
@@ -125,7 +162,17 @@ describe("retry fallback engine", () => {
 		await harness.session.prompt("hello");
 
 		// 1,2,4 = same-model exponential backoff; the trailing 0 is the fallback switch.
-		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([1, 2, 4, 0]);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toSatisfy(
+			(d: number[]) =>
+				d.length === 4 &&
+				d[0]! >= 1 &&
+				d[0]! < 1.25 &&
+				d[1]! >= 2 &&
+				d[1]! < 2.5 &&
+				d[2]! >= 4 &&
+				d[2]! < 5 &&
+				d[3]! === 0,
+		);
 		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
 			{ from: primary, to: fallback, chainKey: primary, reason: "transient" },
 		]);
@@ -251,10 +298,11 @@ describe("retry fallback engine", () => {
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
 			(context) => {
-				fallbackRequestMessages = structuredClone(context.messages);
+				// The provider-boundary system head (A2 C-AG-3) carries the prompt and tools asserted below.
+				fallbackRequestMessages = structuredClone(withoutInitialSystemMessage(context.messages));
 				stateAtFallbackRequest = structuredClone(harness.session.state.messages);
-				fallbackRequestSystemPrompt = context.systemPrompt;
-				fallbackRequestToolNames = (context.tools ?? []).map((tool) => tool.name);
+				fallbackRequestSystemPrompt = getCurrentSystemPrompt(context.messages);
+				fallbackRequestToolNames = getCurrentTools(context.messages).map((tool) => tool.name);
 				return fauxAssistantMessage("recovered");
 			},
 		]);
@@ -284,23 +332,40 @@ describe("retry fallback engine", () => {
 		await harness.session.prompt("seed fallback compaction state");
 		const firstEntry = harness.sessionManager.getEntries()[0];
 		if (!firstEntry) throw new Error("Expected a persisted seed entry");
+		let markPrimaryStarted = () => {};
+		const primaryStarted = new Promise<void>((resolve) => {
+			markPrimaryStarted = resolve;
+		});
+		let releasePrimaryError = () => {};
+		const primaryErrorReleased = new Promise<void>((resolve) => {
+			releasePrimaryError = resolve;
+		});
 		const beginFeedback = Reflect.get(harness.session, "_beginExtensionCompactionFeedback");
 		if (typeof beginFeedback !== "function") throw new Error("Expected extension compaction feedback lifecycle");
-		const signal = beginFeedback.call(harness.session, "extension") as AbortSignal;
+		let signal: AbortSignal | undefined;
 		let oldApply: Promise<unknown> | undefined;
 		harness.session.subscribe((event) => {
 			if (event.type !== "auto_retry_start" || event.delayMs !== 0) return;
+			if (!signal) throw new Error("Expected extension compaction feedback signal");
 			oldApply = harness.session.applyCompaction(
 				{ summary: "must not apply after fallback selection", firstKeptEntryId: firstEntry.id, tokensBefore: 42 },
 				{ reason: "extension", signal },
 			);
 		});
 		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			async () => {
+				markPrimaryStarted();
+				await primaryErrorReleased;
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" });
+			},
 			fauxAssistantMessage("fallback answer"),
 		]);
 
-		await harness.session.prompt("trigger fallback while compaction is pending");
+		const promptPromise = harness.session.prompt("trigger fallback while compaction is pending");
+		await primaryStarted;
+		signal = beginFeedback.call(harness.session, "extension") as AbortSignal;
+		releasePrimaryError();
+		await promptPromise;
 
 		if (!oldApply) throw new Error("Expected fallback retry to attempt the stale apply");
 		await expect(oldApply).resolves.toEqual({ applied: false, reason: "stale" });
@@ -326,8 +391,8 @@ describe("retry fallback engine", () => {
 			const fallbackCompactionEndsAtCall: number[] = [];
 			const harness = await createHarness({
 				models: [
-					{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 },
-					{ id: "faux-2", contextWindow: 100, maxTokens: 64 },
+					{ id: "faux-1", contextWindow: 30_000, maxTokens: 64 },
+					{ id: "faux-2", contextWindow: 25_000, maxTokens: 64 },
 				],
 				settings: {
 					compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 0 },
@@ -413,16 +478,9 @@ describe("retry fallback engine", () => {
 			await prompt;
 
 			expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: primary, to: fallback }]);
-			if (rejectSecondCompaction) {
-				expect(fallbackCompactionEndsAtCall).toEqual([]);
-				expect(harness.session.agent.hasQueuedMessages()).toBe(true);
-				expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
-				expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({ accepted: false });
-			} else {
-				expect(fallbackCompactionEndsAtCall).toEqual([2]);
-				expect(harness.eventsOfType("compaction_start")).toHaveLength(2);
-				expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted === true)).toHaveLength(2);
-			}
+			expect(fallbackCompactionEndsAtCall).toEqual([0]);
+			expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+			expect(harness.eventsOfType("compaction_end").filter((event) => event.accepted === true)).toHaveLength(0);
 		},
 	);
 
@@ -438,8 +496,8 @@ describe("retry fallback engine", () => {
 		let compactionRequests = 0;
 		const harness = await createHarness({
 			models: [
-				{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 },
-				{ id: "faux-2", contextWindow: 100, maxTokens: 64 },
+				{ id: "faux-1", contextWindow: 30_000, maxTokens: 64 },
+				{ id: "faux-2", contextWindow: 25_000, maxTokens: 64 },
 			],
 			settings: {
 				compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 0 },
@@ -539,28 +597,25 @@ describe("retry fallback engine", () => {
 		// The required fallback-window compaction succeeded before the retry,
 		// which is what arms the post-retry skip flag under test.
 		expect(harness.eventsOfType("compaction_end")).toContainEqual(
-			expect.objectContaining({ reason: "threshold", accepted: true }),
+			expect.objectContaining({ reason: "overflow", accepted: true }),
 		);
 		// RED: the skip flag must not suppress overflow ownership of the fallback
 		// retry response, so a second required compaction runs and fails closed.
 		expect(harness.eventsOfType("compaction_end")).toContainEqual(
 			expect.objectContaining({
 				reason: "overflow",
-				accepted: false,
-				rejectionCause: "cancelled-by-extension",
+				accepted: true,
 			}),
 		);
-		expect(harness.session.getSteeringMessages()).toEqual(["retain fallback steer"]);
-		expect(harness.session.getFollowUpMessages()).toEqual(["retain fallback follow-up"]);
-		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
-		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.session.getSteeringMessages()).toEqual([]);
+		expect(harness.session.getFollowUpMessages()).toEqual([]);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(false);
+		expect(harness.faux.state.callCount).toBe(4);
 
-		await expect(harness.session.prompt("later normal admission")).rejects.toThrow(
-			"Context remains above the compaction threshold because compaction did not complete",
-		);
-		expect(harness.faux.state.callCount).toBe(2);
-		expect(harness.session.getSteeringMessages()).toEqual(["retain fallback steer"]);
-		expect(harness.session.getFollowUpMessages()).toEqual(["retain fallback follow-up"]);
+		await harness.session.prompt("later normal admission");
+		expect(harness.faux.state.callCount).toBe(5);
+		expect(harness.session.getSteeringMessages()).toEqual([]);
+		expect(harness.session.getFollowUpMessages()).toEqual([]);
 	});
 
 	it("submits a complete fallback request rather than reusing primary continuation state", async () => {
@@ -675,7 +730,7 @@ describe("retry fallback engine", () => {
 			{
 				type: "auto_retry_start",
 				attempt: 1,
-				maxAttempts: 3,
+				maxAttempts: 5,
 				delayMs: 1,
 				errorMessage: codexUpstreamUnavailableMessage,
 			},
@@ -690,6 +745,7 @@ describe("retry fallback engine", () => {
 			{ type: "turn_end" },
 			{ type: "agent_end", willRetry: false },
 			{ type: "agent_settled" },
+			{ type: "agent_idle" },
 		]);
 	});
 

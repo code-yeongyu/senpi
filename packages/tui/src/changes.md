@@ -1,11 +1,1355 @@
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/tui/src/components/input.ts`.
+- Add instance-owned masked Input rendering with faithful Unicode/whitespace, control rejection, and complete editing-state disposal.
+- Dispose editing state only for secret inputs; ordinary inputs retain their values and callbacks when reusable controls are removed and re-added during container rebuilds.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-12 - Optional inline emphasis hooks in MarkdownTheme
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts`: `MarkdownTheme` gains optional `strong`, `emphasis`, and `deleted` hooks. Inline `**strong**`, `*em*`, and `~~del~~` tokens use them when present and fall back to `bold`, `italic`, and `strikethrough`. A present hook is also applied inside the surrounding inline style context (heading or `DefaultTextStyle`), so a color it sets wins over that context color; the fallback path renders exactly as before. Headings, blockquotes, table headers, and `DefaultTextStyle` keep using the generic style functions.
+
+### Why
+
+- `packages/tui/src/components/markdown.ts`: themes can color inline emphasis without also recoloring headings and quotes, which wrap their text in the same `bold`/`italic` functions.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/markdown.ts`: inline token rendering is owned by the Markdown component.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/markdown.ts`: the `MarkdownTheme` interface and the `strong`/`em`/`del` cases in `renderInlineTokens`.
+
+## 2026-10-24 - The VS Code terminal is recognised when TERM_PROGRAM is missing (senpi#2826)
+
+### What changed
+
+- `packages/tui/src/terminal-capabilities.ts`: new exported `isVsCodeTerminal(env)`. It is true for `TERM_PROGRAM=vscode`, or when `TERM_PROGRAM` is empty and `VSCODE_IPC_HOOK_CLI` is set, which VS Code sets in every integrated terminal, local or remote. Terminals started from VS Code inherit the variable, so a terminal that sets its own `TERM_PROGRAM` wins. `detectTerminalCapabilities` uses it after every other terminal check, and now checks screen before it.
+- `packages/tui/src/terminal-image.ts`: `detectCapabilitiesFromEnvironment` uses it as well, after every other terminal check including herdr and JetBrains, so the runtime detector agrees. tmux and screen are still checked first, and `PI_HYPERLINKS` still overrides.
+- `packages/tui/test/terminal-image.test.ts`, new cases:
+  - a VS Code terminal over WSL with no `TERM_PROGRAM` (the reported environment) gets hyperlinks;
+  - the Git extension's handle alone does not;
+  - a plain `xterm-256color` stays off;
+  - `PI_HYPERLINKS=0` wins;
+  - inside tmux in VS Code the tmux probe still decides;
+  - another `TERM_PROGRAM`, screen and the JetBrains terminal each win over the inherited marker, in both detectors.
+- `packages/tui/test/kitty-graphics-probe.test.ts`: a herdr pane started from a VS Code terminal keeps the Kitty graphics probe (senpi #3698), and the file's environment reset now clears the VS Code variables.
+
+### Why
+
+In a VS Code terminal connected to WSL, `TERM_PROGRAM` was empty, so detection fell to the default `hyperlinks: false`. senpi printed tool-output paths as plain text, and Ctrl+click opened nothing.
+
+### Why an extension could not handle it
+
+Terminal capabilities are detected inside the TUI package before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal-capabilities.ts` and `packages/tui/src/terminal-image.ts`: the VS Code branch of each detector.
+
+## 2026-10-18 - A key release alone does not re-arm a yielded main-screen mouse (senpi#3604 follow-up)
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: while the mouse is yielded to the terminal, input re-arms tracking only when it is neither a terminal report nor a Kitty key release (`isKeyRelease`).
+
+### Why
+
+- With the Kitty keyboard protocol, a key held while the first wheel notch arrives sends its release afterwards, which re-armed tracking at once and cost another notch. Regression: `packages/tui/test/tui-main-screen-mouse.test.ts` ("a Kitty key release alone does not re-arm after a yield").
+
+### Why an extension could not handle it
+
+- Mouse tracking and input routing belong to the renderer.
+
+### Expected merge conflict zones
+
+- LOW: the re-arm condition in `TuiMainScreen.handleMouseInput`.
+
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/tui/src/utils.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: its stop/timeout/abort path signals the child only when it has a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-19 - herdr Kitty graphics probe (senpi#3698)
+
+### What changed
+
+- `packages/tui/src/terminal-capabilities.ts`: `TerminalCapabilities` gains an optional `imageProbe: "kitty"` set only while image support is still unknown and a runtime probe can settle it.
+- `packages/tui/src/terminal-image.ts`: detection recognizes herdr panes (`TERM_PROGRAM=herdr` / `HERDR_ENV=1`) — images stay off until probed, `imageProbe` is set, and the probe answer is latched process-wide (`setProbedImageProtocol`) so focus-event cache resets re-detect to the same result. Explicit `PI_IMAGE_PROTOCOL` / capability overrides strip the flag and keep precedence.
+- `packages/tui/src/tui.ts`: `TuiBase.start()` writes a 1x1 RGBA Kitty graphics query when the flag is set; `handleTerminalInput` consumes the matching APC reply. OK enables kitty (plus the `CSI 16 t` cell-size query and a repaint); an error, a reply for another id, or silence within 500 ms keeps the text fallback, so graphics sequences are never emitted blind. `stop()` drops a pending probe without resolving the latch.
+- `packages/tui/src/kitty-graphics-probe.ts` (fork-only): query builder, response classifier, timeout constant.
+
+### Why
+
+herdr panes set no environment variable identifying the outer terminal, so env-only detection disabled images inside herdr even when the outer terminal renders Kitty graphics (tool images fell back to `[image: <mime>]`); enabling kitty unconditionally instead leaks raw escape sequences when the outer terminal cannot render them (herdrdev/herdr#5295).
+
+### Why an extension could not handle it
+
+The probe is terminal I/O inside `TuiBase.start()` / `handleTerminalInput()` plus capability detection state in `terminal-image.ts`, both below any extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: `detectCapabilitiesFromEnvironment` and the override merge in `packages/tui/src/terminal-image.ts`.
+- LOW: `TuiBase.start()`/`stop()` and the `handleTerminalInput()` consume hooks in `packages/tui/src/tui.ts`; the `TerminalCapabilities` interface in `packages/tui/src/terminal-capabilities.ts`.
+
+
+## 2026-10-18 - Main-screen hands the wheel back to the terminal while a mouse lease is held (senpi#3604)
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: the first wheel report (button bit 64) while mouse tracking is on writes `MOUSE_TRACKING.disable` and enters a `yielded` state that keeps the lease; later mouse reports are consumed without dispatch. The next input that is not a terminal report (a key press or paste) re-arms tracking through `applyMouseTracking(true)` and still reaches the focused component. `applyMouseTracking` and `beforeTerminalStop` clear the state, so a released and re-acquired lease arms normally. `mouseCaptureState()` reports `"off" | "armed" | "yielded"`.
+- `packages/tui/src/tui.ts`: `TuiBase.mouseCaptureState()` (`"armed"` while an enabled lease exists, else `"off"`); `isTerminalReport` is exported for the main-screen renderer.
+
+### Why
+
+- In main-screen mode the transcript lives in the terminal's scrollback, which the app cannot scroll. With `?1000` on (a pending ask-user question holds a lease for clickable options), the terminal stopped scrolling and the renderer swallowed the wheel reports, so the wheel did nothing until the question was answered.
+- Tests: `packages/tui/test/tui-main-screen-mouse.test.ts` (yield on wheel, re-arm on a key that still reaches the editor, clicks dead while yielded and live after re-arm, no re-arm on terminal reports or focus changes, re-acquire after release).
+
+### Why an extension could not handle it
+
+- Mouse tracking bytes and input routing belong to the renderer; extensions only hold leases.
+
+### Expected merge conflict zones
+
+- MEDIUM: `TuiMainScreen.handleMouseInput` and `applyMouseTracking`. LOW: `TuiBase.mouseCaptureState`, the `isTerminalReport` export.
+
+## 2026-10-18 - Old WezTerm on Windows gets the image placeholder instead of a blank gap (Fixes senpi#3596)
+
+### What changed
+
+- `packages/tui/src/terminal-image.ts`: the WezTerm branch of `detectCapabilitiesFromEnvironment` reports `images: null` with `imageHint` when `isOldWindowsWezTerm(TERM_PROGRAM_VERSION, process.platform)` is true; `imageFallback` appends `imageHint` to the placeholder text. An explicit image choice (`PI_IMAGE_PROTOCOL` in `detectCapabilities`, an `images` override in `getCapabilities`) drops the detected hint through `withoutImageHint`, and `setCapabilityOverrides` compares `imageHint` too.
+- `packages/tui/src/terminal-capabilities.ts`: `TerminalCapabilities` gains optional `imageHint`, and `detectTerminalCapabilities` applies the same WezTerm rule.
+- `packages/tui/src/wezterm-windows-images.ts` (new): the version gate (`MIN_WEZTERM_WINDOWS_IMAGES_VERSION = 20250208-160106`, the build that bundled ConPTY 1.22) and the hint text. Missing or malformed versions and non-Windows platforms keep Kitty images; `PI_IMAGE_PROTOCOL` still overrides.
+
+### Why
+
+- `packages/tui/src/terminal-image.ts`: on Windows, WezTerm 20240203 (the latest stable) bundles a ConPTY that drops the Kitty graphics APC while passing plain text and OSC 1337, so images left blank rows. A byte capture through each bundled ConPTY showed the APC dropped by the 20240203 and 1.19 builds and delivered by 1.22 (nightly 20261010).
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal-image.ts`: capability detection and the placeholder text are renderer internals with no extension hook.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal-image.ts`: the WezTerm branch of `detectCapabilitiesFromEnvironment`, the import block, the override merges in `detectCapabilities` and `getCapabilities`, the `setCapabilityOverrides` equality check, and the tail of `imageFallback`.
+
+## 2026-10-18 - WSL and split-delivery Alt+key input reassembly (Refs senpi#3628)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `resolveEscapeTimeoutMs` takes an optional `platform` (default `process.platform`) and resolves WSL sessions to the 100ms remote reassembly window (renamed from the SSH-only constant) through the new fork-only `wsl-session.ts` `isWslSession` (env markers plus a `/proc/version` fallback); the plain default rises from 10ms to the standard 50ms.
+- `packages/tui/src/stdin-buffer.ts`: `DEFAULT_ESCAPE_TIMEOUT_MS` rises from 10ms to 50ms, and `process()` releases a pending lone ESC whose arrival gap exceeds the escape window through the fork-only `escape-window.ts` `isStaleEscape` before appending the new chunk. The clock decides, not flush-timer delivery.
+
+### Why
+
+- `packages/tui/src/terminal.ts`: Alt+Q (dequeue) on WSL arrived as ESC and q split across reads on the WSL interop pipe; the 10ms window flushed the ESC alone, so the chord never reached the keybinding layer.
+- `packages/tui/src/stdin-buffer.ts`: the same split on any transport now merges inside the standard 50ms window, and an over-window gap is deterministically released as a lone Escape (clock-gap decision at delivery time, independent of flush-timer ordering).
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts`: ProcessTerminal constructs the StdinBuffer internally; the escape reassembly window is terminal-lifecycle state.
+- `packages/tui/src/stdin-buffer.ts`: input framing runs before extensions see any key event.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: `resolveEscapeTimeoutMs` and the escape-timeout constants.
+- `packages/tui/src/stdin-buffer.ts`: `DEFAULT_ESCAPE_TIMEOUT_MS` and the `process()` gap accounting.
+
+## 2026-10-18 - Rows inserted above the viewport never scroll stale live-area rows into the scrollback (senpi#3649)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - The insert-scroll fast path now comes from `planViewportInsertScroll` in the new fork-only `viewport-insert-scroll.ts`. The plan also requires that the rows the scroll region pushes out of the viewport are the new frame's rows at those indexes and that the frame does not read as rows moved down from above (`shiftedBlockMoved`, which identical rows cannot fake); a frame whose rows were inserted at or above the viewport top takes the general repaint paths instead.
+  - `renderHeldRepaint` starts its rewrite where the old viewport's rows moved to (`insertedAboveViewport` in the new fork-only `viewport-shift.ts`), so rows that already sit in the scrollback are not written into it again. A shift counts only when the frame reads as rows moved down from above (`shiftedBlockMoved` in `viewport-shift.ts`: the skipped rows are exactly the rows already in the scrollback right above the old viewport, and the block above that keeps matching the shift holds at least one row that really moved, since identical blank or repeated rows prove nothing) and most old visible rows reappear at it; an in-place re-layout plus an append (the #2836 streamed table) keeps the old start, so no on-screen row goes missing from the scrollback. The rows inserted above stay stale until the existing catch-up replay, as the held contract already allows.
+- `packages/tui/test/regression-3649-live-area-insert-above.test.ts` covers both paths, the catch-up, the multiplexer path, a re-layout plus append under a tall live area, a plain append over identical rows across the viewport top, and an insertion above with identical rows right above the live area.
+
+### Why
+
+- `packages/tui/src/tui.ts`: with a tall /btw panel the live area fills the screen, so a running eval's expanded output grows at or above the viewport top. The scroll-region path then dropped the eval rows and pushed the stale top rows of the live area out of the viewport, and during a turn the held repaint re-pushed the rows above the viewport on every frame, so the panel and the eval output piled up and overwrote each other.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: the choice of repaint path and the rows written into native scrollback are private renderer state (`previousLines`, viewport top, hardware cursor, synchronized frame writes).
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the `insertScrollPlan` call in `doRender()`, the removed `createViewportInsertScrollPlan` method and `MAX_SCROLL_DIFF_ROWS` constant, and the start row of `renderHeldRepaint()`.
+
+## 2026-10-12 - Render diagnostics honor the caller's temporary directory (Refs senpi#3064)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: PI_TUI_DEBUG render dumps use `path.join(os.tmpdir(), "tui")` rather than literal `/tmp/tui`.
+- The diagnostic-permissions fixture uses its own temporary root for TMPDIR/TEMP/TMP and removes that entire root after the test.
+
+### Why
+
+- `packages/tui/src/tui.ts`: a workspace test left the shared `/tmp/tui` directory outside the run owner. Render dumps must follow the caller's configured temp ownership.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: the renderer chooses and creates the diagnostic path.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: PI_TUI_DEBUG path construction and diagnostic file permissions.
+
+## 2026-10-07 - Multiplexer focus events and width changes repaint the viewport only (senpi#1704)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - `handleTerminalInput`: inside a multiplexer (when the mux scrollback is preserved), a focus-out event repaints nothing. A focus-in resets the capability cache, invalidates, and marks one viewport repaint (`#muxViewportRepaintPending`) instead of `requestRender(true)`, which reset every cached frame and re-emitted the whole buffer.
+  - `doRender`: a width change inside a multiplexer repaints the re-wrapped viewport through `renderMuxViewportRepaint(..., "absolute")`. The repaint homes the cursor, because the pane already re-wrapped the screen. A pending focus repaint goes through `renderMuxViewportRepaint` too, with relative homing; it follows rows a queued frame added to the bottom, keeps the viewport top after a shrink (as the deleted-lines path does), and `stop()` and a width change clear the pending flag. A forced render (`previousWidth` -1) keeps the full-render path. An image row in the viewport still falls back to the no-3J full render.
+  - `renderMuxViewportRepaint` takes a `home` argument (`relative` by default, as before).
+- `packages/tui/test/mux-scrollback.test.ts`:
+  - new: a focus event repaints at most the visible rows (and focus out nothing), and a width change rewrites only the visible rows with no screen or scrollback clear;
+  - the existing mux width-change test now asserts a home plus a viewport repaint instead of a screen clear.
+
+### Why
+
+In a tmux pane, each focus event and each width change cleared the screen and re-emitted every line of the transcript buffer. That scrolled a full copy of the transcript into the pane's history per event (about 1.7k lines each, with a ~1.9k-line transcript), evicted real history, and flashed the pane mid-replay.
+
+### Why an extension could not handle it
+
+The render path and the focus handling belong to the TUI renderer.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the focus branch of `handleTerminalInput`, the `widthChanged` branch of `doRender`, and `renderMuxViewportRepaint`'s signature and homing.
+
+## 2026-10-07 - Hold the scrollback replay while a reply streams (senpi#2836)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - new `setScrollbackReplayHold(true | false | "until-input")` and `catchUpScrollback()`.
+  - While held, a main-screen frame that changes rows above the viewport while the line count changes takes `renderHeldRepaint()` instead of `renderScrollbackReplay()`. That rewrites the frame from the old viewport top down, so rows that scroll off land in scrollback in their current form, without `ESC[3J`. A user scrolled up keeps their place.
+  - Rows above the old viewport stay as the terminal shows them and are marked stale.
+  - The first key press, or `catchUpScrollback()`, triggers one catch-up replay. `"until-input"` keeps holding until that key press.
+  - What counts as a key press is decided after the color, color-scheme and other report consumers have run. `isTerminalReport()` excludes anything the terminal sends on its own: mouse and wheel reports, OSC/DCS/APC replies, DEC private reports such as the `ESC[?997;1n` theme flip, and window and cell-size reports.
+  - A pending catch-up that a resize frame skips leaves the rows marked stale for the next key press. `stop()` and forced resets clear the stale and pending flags. `stop()` keeps the hold itself, because the hold belongs to the turn: a `stop()`/`start()` handover for an external editor or a suspend mid-turn must not drop it. OSC/DCS/APC count as reports only with a body after the introducer, so a legacy Alt+] / Alt+Shift+P / Alt+_ key press still catches up.
+  - The multiplexer path, idle frames, resize and image rows behave as before.
+- `packages/tui/test/scrollback-replay-hold.test.ts`, a real `TUI` on a counting `VirtualTerminal` (60x12):
+  - a table widening every row streamed 30 rows deep causes 0 replays, and the newest row is on screen;
+  - a reader scrolled up 6 rows stays on the same row;
+  - 0 replays at turn end, all 30 rows in scrollback (some at older widths), exactly one replay at the next key that leaves every row at the final width, and none at the key after;
+  - idle frames still replay;
+  - mux panes still never replay, held or not;
+  - a wheel report, an OS theme flip, a cell-size reply and a late OSC reply leave a scrolled-up reader in place;
+  - after the turn, the next key releases the hold, so later updates replay normally again;
+  - the hold survives a `stop()`/`start()` handover mid-turn;
+  - a legacy `ESC]`, `ESC P` or `ESC _` key press catches up.
+
+  The first three fail on main. Removing the report filter fails the reports test, and making `"until-input"` never release fails the release test. Dropping the hold in `stop()` fails the handover test, and dropping the body check fails the Alt-key test.
+
+### Why
+
+A main-screen terminal cannot report its scroll position. Any frame that changed rows above the viewport replayed the whole scrollback, which throws a reader who scrolled up during a streaming reply back to the top, once per update.
+
+### Why an extension could not handle it
+
+Repaint decisions live inside the TUI renderer, below any extension.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the two non-mux `renderScrollbackReplay` call sites in `doRender()`, the start of `handleTerminalInput()`, and the new methods next to `renderNow()` and `renderMuxViewportRepaint()`.
+
 # TUI delta rendering fork changes
+
+## 2026-10-04 - Accepting a suggestion list that predates the text re-queries instead of splicing
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: `applyAutocompleteSuggestions()` records the text and cursor the shown list was computed for. When Tab, or Enter on a non-slash list, arrives after either changed, the editor re-queries the provider for the current token (`acceptRefreshedAutocomplete()`, `AutocompleteRequestOptions.acceptSelection`) and applies the best match of the fresh suggestions instead of the stale selected item.
+
+### Why
+
+- `applyCompletion()` was called with the cached `autocompletePrefix` against the live line. While a slow refresh was pending (an `fd` walk over `$HOME` takes longer than a typing gap), the `@` list stayed on screen and accepting it spliced the stale item into the new text: `@~/Dev` + Tab gave `@~/De@go/` instead of `@~/Developer/`.
+
+### Why an extension could not handle it
+
+- The key handling, the cached prefix, and the request sequencing are private to `Editor`; an `AutocompleteProvider` only sees the prefix it is handed.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the autocomplete field declarations, the Tab and confirm branches of the autocomplete-mode input handler, `runAutocompleteRequest()`, `applyAutocompleteSuggestions()`, `clearAutocompleteUi()`, and the request option signatures.
+
+## 2026-10-03 - The paste burst window is configurable and longer over SSH (senpi#2622)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `resolveBurstWindowMs()` returns `PI_TUI_BURST_WINDOW_MS` when it is a finite number of at least 0, otherwise 100 ms over SSH (`SSH_CONNECTION` / `SSH_TTY`) and 20 ms locally, mirroring `resolveEscapeTimeoutMs()`. `ProcessTerminal.setupStdinBuffer` passes it to `StdinBuffer` as `burstWindowMs`; `0` never holds a line break.
+
+### Why
+
+- The marker-free paste fallback (#2606) held a trailing line break for a fixed 20 ms on every transport, so paste chunks arriving further apart (routine over SSH) still split into separate prompts, with no way to widen the window (reported in senpi#2622).
+
+### Why an extension could not handle it
+
+- Stdin framing and the terminal's environment-derived settings are set up before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: the escape/burst constants, `resolveBurstWindowMs()` after `resolveEscapeTimeoutMs()`, and the `StdinBuffer` construction in `setupStdinBuffer`.
+
+## 2026-10-03 - A held paste line break survives an empty read and never joins a late paste (senpi#2621)
+
+### What changed
+
+- `packages/tui/src/stdin-buffer.ts`: `process()` clears the burst-release timer only once a read adds input, so a read that returns early (an empty decode of half a multibyte character, a dropped mouse fragment) keeps a held line break's release on time. When a read arrives while a line break is held, the clock decides: outside `burstWindowMs` the held break is released first (as Enter, or as the end of the paste it closes), so it never joins a later read's paste; inside the window it joins the read as before.
+
+### Why
+
+- An empty decoded read cleared the release timer and returned before re-arming it, so the held line break was stranded; when the rest of the character arrived, the break was prepended and glued into a paste, and an Enter never submitted (reported in senpi#2621).
+
+### Why an extension could not handle it
+
+- Stdin framing happens before any input reaches an extension.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/stdin-buffer.ts`: the top of `process()` and the held-line-break block after `this.buffer += str`.
+
+## 2026-10-03 - Coalesce marker-free paste bursts into one paste event (senpi#2600)
+
+### What changed
+
+- `packages/tui/src/stdin-buffer.ts`: `StdinBuffer` recognises a marker-free paste from stdin framing. A read with no ESC bytes that carries two or more line breaks (`\n`, `\r\n`, `\r`), or text after a line break, plus pasted text emits one `paste` event instead of per-character `data` events; typing delivers one key per read, so a read of bare Enters stays keystrokes and is forwarded at once. Text plus a trailing line break that arrives inside `burstWindowMs` (default 20ms) of the previous input holds the line break until the next read, a flush or the timeout, so a paste split across reads still lands as one block; a line break held within the window right after such a paste is released as part of the paste, never as Enter. Keystroke-paced input (gap above the window, first-ever input, ESC-bearing sequences, bracketed pastes) flows through the previous paths byte-identically. New options `burstWindowMs` and `now` (clock injection for tests).
+
+### Why
+
+- Terminals that do not send bracketed-paste markers deliver a multiline paste as plain text with newline bytes, so every line submitted as its own prompt: a 50-line paste became about 50 messages and the agent answered the last line (reported downstream in code-yeongyu/oh-my-openagent#9463).
+
+### Why an extension could not handle it
+
+- By the time an `input` event reaches an extension the host has already admitted one message per line: `agent-session.ts` awaits `emitInput` per message, so a later fragment is never dispatched until the earlier one resolves, and `InputEventResult` (`continue` | `transform` | `handled`) can only pass, rewrite, or consume that single event. Only stdin framing sees the burst before it becomes messages.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/stdin-buffer.ts`: the `process` framing tail around `extractCompleteSequences`, the `pasteMode` marker block, `flush`/`clear`.
+- `packages/tui/test/stdin-buffer.test.ts`: the `StdinBuffer unbracketed paste bursts` block.
+
+## 2026-10-02 - Frame-line byte accounting for the memory report (senpi#1960)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `TuiBase.setPreviousLines` maintains a process-global frame-line byte total (`senpi.tui.frame-line-bytes`), released on stop/forced reset; `frameLineBytesTotals()` reports the sum over live TUIs.
+- `packages/tui/src/index.ts`: exports `frameLineBytesTotals` and `FrameLineBytesTotals`.
+
+### Why
+
+- senpi#1960: the TUI holds the whole frame in `previousLines` for the differential pass, so a long session's transcript cost lives there. Making it measurable lets the memory report attribute the growth; no eviction is added (the terminal has no per-card visibility to evict on).
+
+### Why an extension could not handle it
+
+- Frame retention is renderer-internal; only the renderer can measure it without changing render output.
+
+### Expected merge conflict zones
+
+- LOW: additive module-level counter and the accounting inside `setPreviousLines`; no render-path behavior changes.
+
+## 2026-10-01 - Bound the line normalization memo (senpi#2508)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `normalizeLine` (the windowed repaint path) drops the oldest half of `normalizeMemo` once it holds more than twice the frame's lines (at least 4,096 entries). Full passes still rebuild the memo from the current frame.
+
+### Why
+
+The windowed path only ever added entries, so every distinct line drawn during a long run (spinner frames, streamed text) stayed in the memo. After a 10-minute event stream it held about 3.4 MB of map storage plus the line strings, the largest retainer in a heap-snapshot diff against a cold open of the same session.
+
+### Why an extension could not handle it
+
+This is the renderer's own cache.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: `normalizeLine` and the static fields beside `SEGMENT_RESET`.
+
+## 2026-10-01 - Render revisions keep long transcripts out of every frame (senpi#2508)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `Component.getRenderRevision?()` lets a component promise that its output is unchanged until the number changes; `nextRenderRevision()`/`currentRenderRevision()` are a process-wide clock every revision change draws from, and `CompositeRevision` derives a revision from children, re-reading them only after the clock moved. Plain `Container`s report their children's revision (subclasses opt in), and structural mutators move the clock. `Container.render` joins child arrays with native `concat` (`joinLineArrays`). A frame whose line count changed reuses the previous normalized prefix and normalizes only the changed tail (`applyResizedLineResets`). Image presence of the committed frame is measured once per frame array instead of twice per frame over every line.
+- `packages/tui/src/tui.ts` (frame rows): `renderAtFrameRow`/`claimFrameRow` let a container learn the absolute row where it renders, and `frameScrollbackRows()` reports how many leading rows of the last main-screen frame are in native scrollback, so containers can keep content there unchanged instead of forcing a full scrollback replay.
+- `packages/tui/src/tui.ts` (history size): `mainScreenHistoryLines()` sizes the main-screen history from the terminal's scrollback where it can be read (tmux `history-limit`, `PI_TUI_HISTORY_LINES`), else 2,000 lines, at least two screens and at most 5,000; `frameMode()` tells containers which renderer is drawing.
+- `packages/tui/src/tui-main-screen.ts`: click staleness is checked by capturing the committed frame and component list at press and comparing at release, instead of walking the component tree and copying every line on every frame.
+- `packages/tui/src/components/text.ts`, `packages/tui/src/components/markdown.ts`, `packages/tui/src/components/spacer.ts`, `packages/tui/src/components/box.ts`, `packages/tui/src/components/mouse-region.ts`: exact instances report a revision (Box and MouseRegion from their children); subclasses must opt in because they may render more than the base state (e.g. the animated `Loader`). Only revision-reporting instances advance the shared clock.
+- `packages/tui/src/index.ts`: export the revision API, `joinLineArrays`, `dispatchMouseEvent` and `TuiMouseDispatchResult`.
+
+### Why
+
+Every frame, including every keystroke, re-rendered and re-scanned the whole transcript, so keystroke latency grew with session length. Containers can now reuse settled history, and the renderer no longer pays O(lines) passes for unchanged prefixes.
+
+### Why an extension could not handle it
+
+Render scheduling, line normalization, diffing and the component contract live in the renderer core.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: `Component` interface, `Container`, `applyViewportLineResets`, `setPreviousLines`, mouse frame bookkeeping.
+- `packages/tui/src/tui-main-screen.ts`: `doRender` and press/release handling.
+- `packages/tui/src/components/{text,markdown,spacer,box,mouse-region}.ts`: invalidation and cache fields.
+
+## 2026-10-02 - Share the direct Warp-on-WSL session predicate
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: extracts `isWarpWslSession` from the Shift+Enter normalizer, retaining the Linux, non-empty Warp marker, validated interop socket, and SSH/multiplexer boundaries. The normalizer still checks only standalone LF input.
+- `packages/tui/src/index.ts`: exports `isWarpWslSession` so coding-agent clipboard defaults reuse the same environment boundary instead of duplicating detection.
+
+### Why
+
+- Clipboard shortcuts and Shift+Enter must agree on which direct Warp-on-WSL sessions qualify for compatibility behavior.
+
+### Why an extension could not handle it
+
+- Session detection is shared by TUI input normalization and the host's default keybinding table, before optional extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the Warp normalization helper in `packages/tui/src/terminal.ts` and terminal exports in `packages/tui/src/index.ts`.
+
+## 2026-10-01 - Optional command arguments submit on picker Enter (senpi#2479)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: add `SlashCommand.requiresArguments`; when omitted, a declared `argumentHint` means arguments are required.
+- `packages/tui/src/slash-command-autocomplete.ts`: derive `awaitsArguments` from an explicit `requiresArguments`, falling back to whether an `argumentHint` is present (or a prebuilt item's explicit flag).
+
+### Why
+
+Optional-argument commands such as `/model` must submit on the first Enter; required-argument commands still complete and wait.
+
+### Why an extension could not handle it
+
+The shared autocomplete provider determines the editor's submission decision before command dispatch.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/autocomplete.ts`: slash command metadata.
+- `packages/tui/src/slash-command-autocomplete.ts`: command item construction.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tui package
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: What changed: adopted upstream CJK-punctuation separators, prose wrappers (`(`, `[`, `{`, `<`, backtick) before `@`/path tokens, quoted-path suffix handling, trigger/debounce patterns and CJK letter auto-trigger, directory-first sort by label. Kept fork: `$` trigger character, `dollar-invocation-autocomplete.ts`, `slash-command-autocomplete.ts` (`getSlashCommandSuggestions` with contextual skill discovery); upstream's bare-name/full-name skill split in the slash branch is not adopted. Why: CJK and wrapped-path completion fixes; fork skill discovery contract pinned by `test/autocomplete-slash.test.ts`. Why an extension could not handle it: editor/autocomplete core. Expected merge conflict zones: autocomplete imports, slash branch of `getSuggestions`, `DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS` block.
+- `packages/tui/src/components/box.ts`: What changed: adopted upstream unpadded child-line cache (identity comparison per frame). Upstream's direct `bgFn(padded)` is NOT adopted: Box keeps `applyBackgroundToLine` so the fork's nested-background restore (d0bf401858) still applies inside boxes. Why: the auto-merge silently dropped the fork background fix for every Box. Why an extension could not handle it: component rendering. Expected merge conflict zones: `applyBg`.
+- `packages/tui/src/components/editor.ts`: What changed: adopted upstream CJK-punctuation separators, prose wrappers (`(`, `[`, `{`, `<`, backtick) before `@`/path tokens, quoted-path suffix handling, trigger/debounce patterns and CJK letter auto-trigger, directory-first sort by label. Kept fork: `$` trigger character, `dollar-invocation-autocomplete.ts`, `slash-command-autocomplete.ts` (`getSlashCommandSuggestions` with contextual skill discovery); upstream's bare-name/full-name skill split in the slash branch is not adopted. Why: CJK and wrapped-path completion fixes; fork skill discovery contract pinned by `test/autocomplete-slash.test.ts`. Why an extension could not handle it: editor/autocomplete core. Expected merge conflict zones: autocomplete imports, slash branch of `getSuggestions`, `DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS` block.
+- `packages/tui/src/components/markdown.ts`: What changed: kept the fork module-level `parseCache` (keyed by content hash, survives theme and width invalidation, cleared only by `clearRenderCache`); upstream's per-instance `cachedTokens` is not added because the fork cache already covers it. Why: same intent, fork cache is a superset. Why an extension could not handle it: component internals. Expected merge conflict zones: token parse block in `render`.
+- `packages/tui/src/fuzzy.ts`: What changed: fork `scoreMatch` now finds each query character with native `indexOf` (upstream "native substring" search); fork swap variants, `fuzzyMatchLower` and `isWordBoundaryPrefix` kept. Why: upstream fuzzy performance fix. Why an extension could not handle it: core helper. Expected merge conflict zones: `scoreMatch` loop.
+- `packages/tui/src/index.ts`: What changed: adopted upstream DA1 accounting (`pendingKeyboardProtocolDeviceAttributes`; unowed DA1 replies are forwarded) and reassembled negotiation sequences; `TERM=*-direct` counts as truecolor in both the legacy and the fork `detectTerminalCapabilities` paths; Kitty cell-aspect optimization; `getTerminalColorMode`; `oklabToOkhslLightness` export. Kept fork: cursor-position negotiation + `issueCursorQuery`, private-response discard, all EIO/dead-terminal guards, terminal-capabilities module split, `expandPasteMarkers` export. Why: upstream terminal fixes on the fork terminal module layout. Why an extension could not handle it: terminal protocol core. Expected merge conflict zones: stdin data handler, `handleKeyboardProtocolNegotiationSequence`, terminal-image imports, index native-platform/paste exports.
+- `packages/tui/src/latex.ts` (deleted): deleted in this sync (see the lane decision record).
+- `packages/tui/src/terminal-image.ts`: What changed: adopted upstream DA1 accounting (`pendingKeyboardProtocolDeviceAttributes`; unowed DA1 replies are forwarded) and reassembled negotiation sequences; `TERM=*-direct` counts as truecolor in both the legacy and the fork `detectTerminalCapabilities` paths; Kitty cell-aspect optimization; `getTerminalColorMode`; `oklabToOkhslLightness` export. Kept fork: cursor-position negotiation + `issueCursorQuery`, private-response discard, all EIO/dead-terminal guards, terminal-capabilities module split, `expandPasteMarkers` export. Why: upstream terminal fixes on the fork terminal module layout. Why an extension could not handle it: terminal protocol core. Expected merge conflict zones: stdin data handler, `handleKeyboardProtocolNegotiationSequence`, terminal-image imports, index native-platform/paste exports.
+- `packages/tui/src/terminal.ts`: What changed: adopted upstream DA1 accounting (`pendingKeyboardProtocolDeviceAttributes`; unowed DA1 replies are forwarded) and reassembled negotiation sequences; `TERM=*-direct` counts as truecolor in both the legacy and the fork `detectTerminalCapabilities` paths; Kitty cell-aspect optimization; `getTerminalColorMode`; `oklabToOkhslLightness` export. Kept fork: cursor-position negotiation + `issueCursorQuery`, private-response discard, all EIO/dead-terminal guards, terminal-capabilities module split, `expandPasteMarkers` export. Why: upstream terminal fixes on the fork terminal module layout. Why an extension could not handle it: terminal protocol core. Expected merge conflict zones: stdin data handler, `handleKeyboardProtocolNegotiationSequence`, terminal-image imports, index native-platform/paste exports.
+- `packages/tui/src/tui.ts`: What changed: adopted upstream v0.99.1 terminal color query (`queryTerminalColors`: OSC 10/11 + OSC 4 palette 0-15 + trailing DA1, `onLateReply`, `consumeTerminalColorResponse`), mouse forwarding that keeps keyboard focus on the forwarding host (`dispatchMouseEvent` focusTarget), and "never hide the cursor after stop()". Upstream's `hideTerminalCursor` guard is ported into the fork's `#setCursorVisibility` (hide calls are ignored while `stopped`) instead of a second cursor path. Kept fork: concrete legacy `TUI` class + `TuiBase` (no upstream `interface TUI`), viewport insert/scroll plans, render stats, bounded normalization, cached cursor visibility, tmux focus-event capability refresh for main-screen mode, and the fork's removal of the eager hide in `setShowHardwareCursor`. Removed with upstream: `queryTerminalBackgroundColor`, `queryTerminalColorScheme` (DSR 996), `consumeOsc11BackgroundResponse`. Why: upstream system theme (D-14) and theme-controller read terminal colors through `queryTerminalColors`; the fork renderer contract stays the owner of cursor state. Why an extension could not handle it: renderer lifecycle, terminal input demux and cursor ownership live in `TuiBase`. Expected merge conflict zones: top-level interface/const block after `PendingTerminalColorQuery`, the `TUI` contract docblock, `setShowHardwareCursor`, overlay show/hide cursor lines, `handleTerminalInput` prologue.
+- `packages/tui/src/utils.ts`: What changed: adopted upstream allocation-free `ansiCodeLength`/`asciiVisibleWidth` fast path (styled lines skip grapheme segmentation after theme changes), single-pass escape stripping, `updateTrackerFromText`/`splitIntoTokensWithAnsi` indexOf scanning, CJK autocomplete separator regexes. Kept fork: rotating two-generation width cache + `__widthCacheStats`, `coalesceAdjacentSgr`, background restore in `applyBackgroundToLine`; the fork DCS (tmux passthrough, doubled-ESC aware) branch is ported into `ansiCodeLength` so DCS stays stripped on every path. Why: upstream render-cost work plus fork tmux passthrough correctness. Why an extension could not handle it: width/ANSI primitives are core. Expected merge conflict zones: `ansiCodeLength` OSC/DCS/APC branches, width cache block.
+- `packages/tui/src/tui-alt-screen.ts`: What changed: upstream fullscreen wheel scrolling (`WheelScrollAccelerator`, `WheelScrollLines` incl. `"auto"`, `setWheelScrollLines`, Alt x5 delta computed once and passed to `routeWheel`), string copy-failure messages with a 5 s flash, centered scroll-to-end indicator, WezTerm row clearing before Kitty image frames. Fork mouse-input.ts parsers, `deleteAltScreenKittyImages` rename and click-focus ownership are unchanged. Why: adopted upstream fullscreen wheel acceleration (#9758) on top of the fork's alt-screen. Why an extension could not handle it: wheel routing is inside the alt-screen input loop. Expected merge conflict zones: `TuiAltScreenOptions`, constructor field init, wheel branch of the input handler, `routeWheel` signature.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the tui package ports upstream theme/terminal/autocomplete fixes onto the fork renderer (plan D-14, D-15).
+
+### Why an extension could not handle it
+
+The terminal renderer is a separate package below the coding-agent extension layer.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-28 - Picker rows that take arguments wait for them (omo #9042)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: `AutocompleteItem` gains the optional `awaitsArguments` flag.
+- `packages/tui/src/slash-command-autocomplete.ts` (fork-only): `getSlashCommandSuggestions` sets `awaitsArguments` on every row whose command declares an `argumentHint`; the hint still leads the description.
+- `packages/tui/src/components/editor.ts`: the editor keeps the provider items behind the open list (`autocompleteItems`). Confirming a `/` row whose item has `awaitsArguments` applies the completion (`/name `), closes the picker, and returns without submitting; other `/` rows still fall through to submit. `submitValue()` passes `{ rawText }` (the text before trimming) as the second `onSubmit` argument.
+- `packages/tui/src/editor-component.ts`: new `EditorSubmitDetails` and the optional second `onSubmit` parameter. `packages/tui/src/index.ts` exports the type.
+
+### Why
+
+- Enter on `/skill:ulw-execute` or `/model` in the picker submitted the bare command before the user could type its arguments. The leading-space escape for the coding-agent unknown-command check needs the untrimmed submission, which `onSubmit` never saw.
+
+### Why an extension could not handle it
+
+- The confirm key and the submission trimming live inside `Editor.handleInput`/`submitValue`; an extension editor would have to fork the whole component.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the `tui.select.confirm` branch, `applyAutocompleteSuggestions`, `clearAutocompleteUi`, and `submitValue`.
+- `packages/tui/src/autocomplete.ts`: the `AutocompleteItem` interface. `packages/tui/src/editor-component.ts`: the `onSubmit` declaration. `packages/tui/src/index.ts`: the `./editor-component.ts` export line.
+
+## 2026-09-24 - Fuzzy matching over pre-lowered text (senpi#2087)
+
+### What changed
+
+- `packages/tui/src/fuzzy.ts`: new exported `fuzzyMatchLower(queryLower, textLower)` holds the direct and letter/digit-swap scoring. `fuzzyMatch` lower-cases its inputs and delegates to it, so scoring has one source. `packages/tui/src/index.ts` exports `fuzzyMatchLower` next to `fuzzyMatch`.
+- `packages/tui/test/fuzzy.test.ts`: `fuzzyMatchLower` on lower-cased inputs returns exactly what `fuzzyMatch` returns for mixed-case pairs, swap variants included.
+
+### Why
+
+- `fuzzyMatch` lower-cases the whole text on every call. The coding-agent `/resume` search calls it once per token per session over tens of MB of transcript text, so the same text was lower-cased again on every keystroke.
+
+### Why an extension could not handle it
+
+- The scoring lives in the TUI package. A caller outside it can only reach `fuzzyMatch`, which always lower-cases.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/fuzzy.ts`: the `fuzzyMatch` body, now a delegating wrapper above `fuzzyMatchLower`.
+- `packages/tui/src/index.ts`: the `./fuzzy.ts` export line.
+
+## 2026-09-23 — Let hosts observe the real stderr destination (senpi#1879)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` accepts a host-owned stderr subscription and releases it on stop. `packages/tui/src/stderr-observer.ts` retains direct-stream observation for ordinary terminals without replacing a later writer during cleanup.
+
+### Why
+
+- A host can redirect stderr to a diagnostic log. Observing calls above that redirect falsely reports visible output and duplicates the working frame.
+
+### Why an extension could not handle it
+
+- Mouse geometry is invalidated inside the terminal, below extension components.
+
+### Expected merge conflict zones
+
+- Terminal construction, external-write observation and stop cleanup. Visible stdout/stderr must continue invalidating stale hit targets.
+
+## 2026-09-22 - Render-error diagnostics follow the host log directory (senpi#2000)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: new module-scoped `defaultDiagnosticLogDirectory()` and `renderErrorLogDirectory`. `TuiBase`'s constructor publishes its resolved `logDirectory` into that module scope, and `logRenderErrorOnce()` writes to it instead of re-deriving `os.homedir()/.senpi/agent`. The default when no host directory is supplied is unchanged.
+- `packages/tui/test/render-contract.test.ts`: a throwing child rendered by a TUI constructed with an explicit log directory writes `senpi-debug.log` into that directory and not into a `HOME`-derived path.
+
+### Why
+
+- `logRenderErrorOnce()` is reached from `Container.render()`, which has no TUI instance, so the path was hardcoded from `os.homedir()`. Hosts already pass a resolved agent directory (`logDirectory`), and `pi-debug.log` already honours it; only the render-error diagnostic did not.
+- Under a non-default brand the resolved agent directory is not `~/.senpi/agent`, so the only record of a component that throws every frame landed in a directory the operator never reads.
+- Suites that quarantine the agent directory but not `HOME` append to the developer's real `~/.senpi/agent/senpi-debug.log`; a single run of the coding-agent progressive-transcript suite was measured growing that file from 19,650 to 19,744 bytes. That leak is what led here, but it is **not** fixed by this change: that suite renders a container directly and never constructs a `TuiBase`, so no host directory is published and the fallback still resolves from `HOME`. Re-measured with this change applied, the same run still grew the file (19,744 -> 19,838). Closing it belongs to the coding-agent test setup, which must quarantine `HOME` the way it already quarantines the agent directory.
+
+### Why an extension could not handle it
+
+- Render containment and its diagnostic live inside `packages/tui`'s render path; an extension cannot reach `Container.render()`'s catch branch or the module-scoped logger.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the module-scoped diagnostic state block near `DIAGNOSTIC_LOG_MODE`, the `logRenderErrorOnce()` body, and the `TuiBase` constructor's `logDirectory` assignment.
+
+## 2026-09-20 - Keyboard focus requires the ability to receive keys (senpi#1882)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: new `canReceiveKeys()` export; `resolveMouseFocusTarget()` returns `Component | null` and resolves a clicked component that cannot receive keys to the deepest mounted ancestor that can, or to `null`; new private `findKeyFocusOwner()`.
+- `packages/tui/src/tui-main-screen.ts`: `applyMouseResult` skips a null focus owner, and the release branch only re-applies the click target's focus when the click handler left focus untouched.
+- `packages/tui/src/tui-alt-screen.ts`: same null handling in `applyMouseDispatchResult` (new `applyFocus` parameter) and the same click-handler precedence in `handleMouseEvent`.
+- `packages/tui/test/tui-alt-screen.test.ts`: the mouse-aware control keeps capture and drag routing, and the keyboard owner keeps focus. The previous expectation parked focus on a control with no `handleInput`, which is the defect this entry fixes.
+
+### Why
+
+- A clickable row (`MouseRegion`) or tab strip has no `handleInput`. Focusing it made `handleTerminalInput` drop every later keystroke, so answering an ask-user question with the mouse silently killed typing while output kept flowing.
+- The release branch applied the click target's focus after the click handler ran, so the composer focus restored by an ask-user submit was immediately overwritten.
+- Resolving at the renderer keeps every clickable surface correct without each call site opting in; a per-component opt-in missed the tab strip, which does not use `MouseRegion`.
+
+### Why an extension could not handle it
+
+- Mouse focus ownership is renderer state inside `packages/tui`; an extension cannot reorder focus application around click dispatch.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: `resolveMouseFocusTarget` signature and return type.
+- `packages/tui/src/tui-main-screen.ts` and `packages/tui/src/tui-alt-screen.ts`: the click branches of their mouse handlers.
+
+## 2026-09-20 - Resolve native clipboard helpers in the published bundle (senpi#1848)
+
+### What changed
+
+- `packages/tui/src/native-module-path.ts`: resolve the installed TUI entry with `import.meta.resolve`, fall back to `moduleRequire.resolve`, and accept the package-anchored candidate only when the entry is absolute.
+
+### Why
+
+- `packages/tui/src/native-module-path.ts`: Bun can return the bare package specifier from `require.resolve` inside an esbuild chunk. The resulting relative candidate cannot load the native helper, so Ctrl+V silently reads an empty clipboard.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/native-module-path.ts`: native helper discovery belongs to the TUI package, below extension clipboard handling.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/native-module-path.ts`: package resolution and its first candidate. The module-directory and executable-directory fallbacks retain their order.
+
+## 2026-09-17 - Repeated dollar mentions and styled skill tokens (senpi#1778)
+
+### What changed
+
+- `packages/tui/src/dollar-invocation-autocomplete.ts`: `getDollarInvocationContext` completes any `$query` at a whitespace boundary regardless of earlier `$` tokens; slash commands are offered only while the token is the first thing in the prompt; an exact known-skill token closes the popup. New `findDollarSkillMentions(line, knownSkills)` and `knownSkillNames(commands)`.
+- `packages/tui/src/autocomplete.ts`: `AutocompleteProvider.getMentionRanges?(line)` and `MentionRange`; `CombinedAutocompleteProvider` implements it from its `skill:` commands.
+- `packages/tui/src/components/editor.ts`: `LayoutLine` carries `logicalLine`/`startIndex`; `EditorTheme.mention?` styles resolved mention ranges. Row composition moved to `packages/tui/src/components/editor-line-render.ts` (`renderEditorLine`), which styles the cursor grapheme and each mention fragment separately so the cursor's SGR reset cannot bleed into a mention.
+
+### Why
+
+- senpi#1778: after one `$skill` the popup no longer opened for a later `$`, and a resolved mention was indistinguishable from prose.
+
+### Why an extension could not handle it
+
+- The editor owns row composition and the popup trigger policy.
+
+### Expected merge conflict zones
+
+- MEDIUM: `editor.ts` `render()` cursor branch (replaced by `renderEditorLine`) and the `layoutText` pushes; LOW: `autocomplete.ts` interface.
+
+## 2026-09-14 - Out-of-band tmux frame anchors (#1645)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` selects an injectable tmux CLI cursor source when TMUX_PANE is set. `packages/tui/src/tmux-cursor-query.ts` accepts only two matching pane-relative numeric readings at least 10 ms apart within the existing 750 ms total budget. The private query is still written; its replies cannot override the tmux source.
+
+### Why
+
+- `packages/tui/src/terminal.ts`: tmux 3.7b swallows private DECXCPR, leaving fresh short frames unclickable. Errors, malformed output, movement and timeout still leave placement unknown; timeout remains restart-only recovery.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts` owns the cursor broker and renderer calibration lifecycle, below extension input handling. Bare CPR remains forbidden.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: constructor options, pending query state, issue/settlement and private-response interception. Outside tmux the private protocol bytes are unchanged. The existing large terminal module is not refactored; the new source is below 250 pure LOC.
+
+## 2026-09-13 - Private cursor calibration and external-output recovery
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: adds the private DECXCPR broker, two/three-parameter response interception, shared in-flight promises, bounded timeout, late-fragment discard, and non-suppressing external-write observation. A timed-out broker stays fail-closed until restart because CPR has no request identifiers.
+- `packages/tui/src/tui.ts`: calibrates short frames against a matching committed placement/cursor snapshot and invalidates placement on external stdout/stderr writes. The pending-wrap CPR column just beyond the right margin is accepted.
+- `packages/tui/src/tui-main-screen.ts`: after external output, appends a fresh working frame before recalibration rather than guessing the old frame position from a moved cursor. Existing output and scrollback are not cleared.
+- `packages/tui/src/index.ts`: exports the cursor-position result type; custom terminals may omit the optional query/observation methods.
+
+### Why
+
+- `packages/tui/src/terminal.ts` and `packages/tui/src/index.ts`: private replies avoid collisions with modified function keys, while custom terminal implementations remain usable without CPR support.
+- `packages/tui/src/tui.ts` and `packages/tui/src/tui-main-screen.ts`: real-PTY QA showed that recalibrating an unchanged old frame after a stderr newline mapped a blank row onto an option. A fresh committed frame is necessary before its cursor can identify its origin.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts`, `packages/tui/src/tui.ts`, `packages/tui/src/tui-main-screen.ts`, and `packages/tui/src/index.ts`: terminal negotiation, write ownership, hardware cursor snapshots, and committed renderer geometry are below extension APIs.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: keyboard-negotiation interception, stdout guard, stderr observer, and lifecycle cleanup.
+- `packages/tui/src/tui.ts`: additive calibration members and stop cleanup; no terminal-input handler changes.
+- `packages/tui/src/tui-main-screen.ts`: fork-owned post-output append recovery and committed-frame calibration.
+- `packages/tui/src/index.ts`: terminal result-type exports.
+
+## 2026-09-13 - Regular-mode scoped click dispatch
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: consumes mouse input before extension listeners, enables click-only tracking for leases on supported terminals, and dispatches same-cell clicks against committed component and overlay geometry.
+- `packages/tui/src/tui.ts`: exposes mounted mouse-layout roots to the fork-owned main-screen renderer. No terminal input handler changes.
+
+### Why
+
+- `packages/tui/src/tui-main-screen.ts`: stale mouse reports must never reach the editor or extension input listeners; layout changes must cancel gestures rather than activate a replaced control.
+- `packages/tui/src/tui.ts`: overlay identity participates in the same committed-layout check as root component identity.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui-main-screen.ts` and `packages/tui/src/tui.ts`: the renderer owns terminal capture, input ordering, overlays, and committed hit geometry.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui-main-screen.ts`: fork-owned dispatch and tracking lifecycle.
+- `packages/tui/src/tui.ts`: additive protected mouse-layout root accessor only.
+
+## 2026-09-13 - Lease intent and fail-closed mouse geometry
+
+### What changed
+
+- `packages/tui/src/tui.ts`: adds idempotent capture leases, lifecycle blockers, placement epochs, and committed-frame anchors; unknown, stale, resized, and image-bearing frames cannot resolve mouse rows.
+
+### Why
+
+- `packages/tui/src/tui.ts`: inline clicks need reliable frame placement without changing renderer defaults or taking permanent terminal ownership.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: committed frame geometry, hardware cursor placement, and renderer lifecycle are private renderer state.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: one fullRender hook, resize/replay/insert-scroll/multiplexer epoch increments, and stop bookkeeping. Terminal input routing is untouched.
+
+## 2026-09-13 - Share mouse protocol parsing and retain owned fragments
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: four helper bodies delegate to `mouse-input.ts`; fullscreen selection, scrolling, search, and tracking bytes remain unchanged.
+- `packages/tui/src/index.ts`: exports the shared parser, protocol constants, and click synthesizer.
+- `packages/tui/src/stdin-buffer.ts`: retains incomplete owned SGR reports for at most 750 ms and 64 characters, discarding expired tails through a CSI terminator rather than leaking them into keyboard handling. A new escape boundary resynchronizes without stripping the next report's CSI prefix (pinned by an additional assertion-based RED/GREEN during final review).
+
+### Why
+
+- `packages/tui/src/tui-alt-screen.ts` and `packages/tui/src/index.ts`: regular-mode consumers need the same zero-based mouse protocol contract without duplicating private parsing.
+- `packages/tui/src/stdin-buffer.ts`: timeout-flushed mouse fragments previously exposed protocol tails as typed text.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui-alt-screen.ts`, `packages/tui/src/index.ts`, and `packages/tui/src/stdin-buffer.ts`: protocol framing and renderer-private helper ownership precede extension input dispatch.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui-alt-screen.ts`: helper delegations and one import; selection, scrollbar, and search logic are untouched.
+- `packages/tui/src/index.ts`: mouse exports.
+- `packages/tui/src/stdin-buffer.ts`: owned-fragment buffering and timeout flush.
+
+## 2026-09-12 - Carry-forwards from the upstream v0.85.x sync
+
+### What changed
+
+- `packages/tui/src/latex.ts` stays deleted; upstream f0592205f's seven relational-algebra join symbols now live in `packages/tui/src/components/latex.ts`, pinned by `test/components-latex-relations.test.ts`.
+- `packages/tui/src/tui.ts` keeps `PI_DEBUG_REDRAW` and the `pi-debug.log` filename instead of upstream c505f4c19's `PI_TUI_DEBUG_REDRAW` / `pi-tui-debug.log` rename.
+- `packages/tui/src/tui.ts` (`TuiBase.logDirectory`) keeps its `~/.senpi/agent` default, so over-wide crash dumps stay at `<home>/.senpi/agent/senpi-crash.log`; upstream's `os.tmpdir()` fallback when no log directory is supplied is not adopted.
+- `packages/tui/src/components/loader.ts` gains upstream's protected `getRenderedIndicator()` hook on top of the fork message/indicator formatters.
+
+### Why
+
+- The fork's debug and crash artifacts are documented under the `senpi` names and read by the QA harness; renaming them would break existing evidence tooling for no user benefit. The LaTeX symbol table belongs with the living component module.
+
+### Why an extension could not handle it
+
+- Renderer logging paths, crash dumps, and component internals are not reachable from extensions.
+
+### Expected merge conflict zones
+
+- `src/tui.ts` env-var and log-filename constants, `components/latex.ts` symbol tables, and `components/loader.ts` render hooks.
+
+## 2026-09-11 - Keep dollar skill hints active across multiline drafts
+
+### What changed
+
+- `packages/tui/src/dollar-invocation-autocomplete.ts`: dollar skill lookup no longer rejects nonzero logical editor lines, so multiline drafts and queued message composition can request the same filtered skill suggestions.
+- `packages/tui/test/autocomplete-dollar.test.ts` and `packages/tui/test/editor-dollar-autocomplete.test.ts`: cover later-line provider lookup and paste/follow-up typing through the real Editor surface.
+
+### Why
+
+- The editor remains active while a response is streaming and while follow-up text is queued. A pasted or multiline draft can place the cursor on a later logical line, and the previous line-zero-only guard silently suppressed the skill picker there.
+
+### Why an extension could not handle it
+
+- Logical cursor routing and autocomplete request admission are owned by the standalone TUI Editor/provider path below the interactive extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/dollar-invocation-autocomplete.ts` context gate and the focused dollar/editor tests.
+
+## 2026-09-11 - Offer skill hints for valid dollar tokens in prompt text
+
+### What changed
+
+- `packages/tui/src/dollar-invocation-autocomplete.ts`: dollar invocation lookup now resolves the token at the cursor after ordinary prompt text, while rejecting common shell variables and positional parameters before consulting the skill catalog. Existing leading skill chaining and trailing-space insertion remain unchanged.
+- `packages/tui/test/autocomplete.test.ts`: adds provider coverage for the mid-line skill hint and canonical `$skill` insertion.
+
+### Why
+
+- The Codex-style skill picker should appear when a user types `$` in a valid prompt token, not only when the line consists entirely of a leading dollar invocation. Shell-like forms such as `$HOME` and `$1` must remain literal.
+
+### Why an extension could not handle it
+
+- Dollar token extraction and completion arbitration run inside the standalone TUI autocomplete provider before interactive-mode extensions receive the editor event.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/dollar-invocation-autocomplete.ts` around token extraction and shell-variable classification.
+
+## 2026-09-10 - Use native TypeScript builds for omob performance
+
+### What changed
+
+- packages/tui/package.json: build uses tsgo for the emitted workspace build.
+
+### Why
+
+- The native compiler reduces omob build time without changing runtime JavaScript.
+
+### Why this lives in the fork
+
+- The package build manifest owns the compiler used by the fork's release pipeline.
+
+### Expected merge conflict zones
+
+- The `build` script in packages/tui/package.json.
+
+## 2026-09-04 - Port upstream terminal capability overrides
+
+### What changed
+
+- `packages/tui/src/terminal-image.ts`: adds an environment-based capability detection path (`detectCapabilitiesFromEnvironment` with a tmux client-termfeatures hyperlink probe, per-terminal classification including Zed, and conservative defaults for unknown terminals) used when the tmux probes are unavailable, honors the `PI_HYPERLINKS`, `PI_IMAGE_PROTOCOL`, and `PI_TRUE_COLOR` overrides, and merges stored overrides in `getCapabilities`; `setCapabilityOverrides` replaces the overrides and resets the cache (upstream e86823096 #8665 and 649214477 #8828).
+- `packages/tui/src/index.ts`: exports `setCapabilityOverrides`.
+
+### Why
+
+- Auto-detection misfires on unknown, multiplexed, or non-queried terminals; explicit overrides give users and branded distributions (the fork bridges the `SENPI_*` names through settings) a deterministic way to force hyperlink, image-protocol, and truecolor behavior.
+
+### Why an extension could not handle it
+
+- Capability detection and caching run inside the TUI package before components render; no extension seam sits between environment detection and the cached capabilities.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/terminal-image.ts` detection, environment fallback, and override merging; LOW: `packages/tui/src/index.ts` export list.
+
+## 2026-09-04 - Wrap the SIGWINCH self-signal
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `refreshTerminalDimensions` wraps the self-directed SIGWINCH in a try/catch that skips the refresh on failure, and `ProcessTerminal.start` uses it, so environments whose seccomp or LSM policies deny `kill` for the process no longer crash startup (upstream 605a1b038, #8898).
+
+### Why
+
+- The dimensions refresh after suspend/resume is best-effort; a policy-restricted signal threw during terminal start and aborted the whole TUI for a purely cosmetic refresh.
+
+### Why an extension could not handle it
+
+- The signal is sent from `ProcessTerminal` construction, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` `refreshTerminalDimensions` and its call site in `ProcessTerminal.start`.
+
+## 2026-09-04 - Order nested autocomplete results deterministically
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: fuzzy file completion merges a depth-1 listing of the base directory ahead of the recursive fd results (deduplicated), `walkDirectoryWithFd` accepts a `maxDepth`, and equal-score results tie-break by shallower depth, then shorter path, then locale order (upstream b37ebb7f2, #8669).
+
+### Why
+
+- Nested results previously interleaved unpredictably when scores tied; shallow matches first mirrors shell completion expectations and makes the ordering deterministic.
+
+### Why an extension could not handle it
+
+- The fd-backed provider internals score and order suggestions inside the TUI package.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/autocomplete.ts` suggestion merge and sort comparators.
+
+## 2026-09-04 - Fullscreen selection word joining and copy-on-select control
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: adds a `copyOnSelect` option (default true) with getter and setter, gates mouse-release auto-copy on it, joins slash and hyphen word segments during selection so paths and kebab-case tokens stay whole, and factors out `getActiveSelectionText`, `copyActiveSelectionToClipboard`, and `hasActiveSelection` for keyboard-driven copy (upstream 4e4949299 #8731 and 1ac6128e6 #8676).
+
+### Why
+
+- Fullscreen mode owns mouse selection, so it must mirror terminal word-selection behavior itself, and hosting modes need a seam to disable auto-copy and drive copying from a keybinding instead.
+
+### Why an extension could not handle it
+
+- Alt-screen viewport mouse handling and clipboard writes are TUI-internal.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/tui-alt-screen.ts` word-selection joining and the mouse-release copy path.
+
+## 2026-08-29 - Preserve upstream terminal input fixes
+
+### What changed
+
+- `packages/tui/src/components/editor.ts` and `packages/tui/src/terminal.ts` retain the current upstream terminal input behavior after synchronizing main.
+
+### Why
+
+- The PR merge must preserve both the upstream terminal changes and the callback lifecycle repair.
+
+### Why an extension could not handle it
+
+- Terminal input normalization and editor dispatch are owned by the TUI runtime.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts` and `packages/tui/src/terminal.ts`.
+
+## Warp on WSL LF is normalized to Shift+Enter (2026-08-24)
+
+### What changed
+
+- `packages/tui/src/components/editor.ts` applies the existing CSI-u Shift+Enter sequence to a
+  standalone LF only while the multiline editor handles it. `ProcessTerminal` forwards raw input,
+  so single-line inputs and selectors keep their existing Enter behavior. The conversion is limited
+  to Linux sessions where both Warp and non-empty WSL markers are present; plain CR Enter,
+  non-Warp terminals, non-WSL sessions, SSH/multiplexer sessions, and bracketed paste payloads keep
+  their existing input bytes.
+- `packages/tui/src/mux.ts`: `isMultiplexerSession()` accepts an optional environment so terminal
+  normalization reuses the shared tmux, GNU Screen, and Zellij detection without process-global test setup.
+- `packages/tui/test/terminal.test.ts`: focused coverage proves both supported Warp/WSL environment
+  markers, hardened platform/marker boundaries, and raw forwarding for non-editor consumers.
+
+### Why
+
+- Warp documents that its terminal sends Shift+Enter as LF (`0x0a`). In Senpi's legacy keyboard path,
+  that byte must also remain recognizable as Enter for terminals that send LF for plain Enter, so the
+  editor's submit binding wins before the Ctrl+J/newline binding. Normalizing only direct local
+  Warp-on-WSL sessions restores an unambiguous Shift+Enter identity while Warp's plain CR Enter
+  continues to submit. SSH and multiplexer sessions are excluded because their active client terminal
+  can differ from the inherited process environment. The editor-only boundary prevents this
+  compatibility workaround from changing submission semantics for other focused TUI components.
+- See [Warp #13782](https://github.com/warpdotdev/Warp/issues/13782) for the terminal byte behavior.
+
+### Why an extension could not handle it
+
+- Coding-agent extensions can transform raw input through `onTerminalInput`, but that hook cannot
+  correct the shared `ProcessTerminal` semantics for other TUI consumers or guarantee the default
+  behavior without optional extension loading. The terminal layer is the single cross-consumer seam.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` at `forwardInputSequence()` and its normalization helpers,
+  `packages/tui/src/mux.ts` at shared multiplexer detection, and `packages/tui/test/terminal.test.ts`
+  beside the existing native Shift+Enter normalization coverage.
+## 2026-08-27 - Preserve Windows Terminal scrollback during resize redraws
+
+### What changed
+
+- `packages/tui/src/tui.ts`: Windows full redraws continue to clear and repaint the visible screen, but no longer emit `ESC[3J`, which deletes the user's terminal scrollback buffer on ConPTY. Non-Windows non-multiplexer redraws retain their existing scrollback-clearing behavior.
+
+### Why
+
+- Windows Terminal's ConPTY resize and focus transitions can trigger a full redraw outside a multiplexer. Clearing scrollback is destructive and makes prior session output unrecoverable when the user returns to the terminal window.
+
+### Why this lives in the fork
+
+- The platform-specific redraw guard belongs in the TUI renderer's `fullRender()` path, where screen clearing and scrollback deletion are emitted together.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/tui.ts` around `TuiBase.doRender()` and the `fullRender()` scrollback-clear guard.
+- LOW: `packages/tui/test/mux-scrollback.test.ts` around resize scrollback emission assertions.
+
+## Dead-terminal detection reads Bun's errno-in-message shape (2026-08-26)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `isDeadTerminalError()` gains a third, last-resort branch that parses a
+  trailing `errno: <n>` out of the error message. It fires only when that number is a dead-terminal errno
+  that is stable across darwin and linux — `EIO` (5) and `EPIPE` (32). `ENOTCONN` is deliberately left out of
+  the numeric set because its value differs per platform (57 on darwin, 107 on linux). The existing string
+  `code` and numeric `errno` branches are unchanged and still win first, and any error that matches none of
+  the three branches still propagates out of `ProcessTerminal.stop()`.
+- `test/terminal.test.ts` pins the real Bun shape (a bare `new Error("setRawMode failed with errno: 5")`
+  with neither `code` nor `errno`), the `errno: 32` message form, and two rethrow fences: an unrelated
+  `new Error("boom")` and a live-but-unrelated `errno: 22` message.
+
+### Why
+
+- Bun 1.4.0's tty shim throws a plain `Error` for a failed `setRawMode()` ioctl: `code` and `errno` are both
+  absent and the number survives only in the message text (verified locally:
+  `{"isError":true,"hasCode":false,"hasErrno":false,"msg":"setRawMode failed with errno: 5"}`). The previous
+  classifier recognized only the two property shapes, so on a dead SSH/PTY peer the exception escaped
+  `ProcessTerminal.stop()` into `Tui.stop()` and `stopInteractiveTui()`, aborting shutdown and hanging the
+  session with `error: setRawMode failed with errno: 5`.
+
+### Why this lives in the fork
+
+- Raw-mode ownership and teardown are private `ProcessTerminal` lifecycle responsibilities running inside the
+  shutdown path. No extension surface sits between the saved raw-mode state and the stdin ioctl, so the
+  classification has to happen where the throw occurs.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts` around the dead-terminal errno constants and the `isDeadTerminalError()`
+  body.
+- LOW: `packages/tui/test/terminal.test.ts` around the `ProcessTerminal stop` suite.
+
+## 2026-08-26 - Guard stdin EIO when the controlling terminal detaches
+
+### What changed
+
+- `packages/tui/src/terminal.ts` arms a `process.stdin` "error" guard from `ProcessTerminal.start()` until a 250ms grace window after `stop()`: a vanished or re-backgrounded controlling terminal fails the next stdin read with EIO, and without a listener the EventEmitter rethrew it as an uncaught exception that killed the agent process. The classifier owns EIO only — Node's `code: "EIO"` and Bun's raw `errno: 5`/`-5` shapes — and every other stdin error keeps its default EventEmitter propagation. EIO is swallowed without pausing the stream, so a pgrp that regains the tty foreground keeps accepting input.
+
+### Why
+
+- When omo's launcher chain dies (e.g. external SIGTERM), the orphaned engine's pending stdin read on the now-background tty fails with EIO and crashed the process through `uncaughtException` ("exiting due to uncaughtException: EIO read"). The same hazard was fixed upstream-style in gajae #3758; this port adapts it to the fork's `ProcessTerminal` and adds the numeric-errno shape from the shutdown-time classifier.
+
+### Why this lives in the fork
+
+- The crash topology (launcher chain + orphaned engine) and the Bun runtime shim are fork-owned; the fork's terminal lifecycle differs from upstream's.
+
+### Expected merge conflict zones
+
+- `ProcessTerminal.start()`/`stop()` in `packages/tui/src/terminal.ts` during upstream syncs.
+
+## TUI runtime re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts` keeps the fork LaTeX pipeline (`latex_block` /
+  `latex_inline` / `latex_literal` token kinds, `latexToUnicode`, formula length caps, and
+  word-boundary guards) on top of upstream's renderer.
+- `packages/tui/src/terminal.ts` keeps dead-terminal detection (EIO/EPIPE/ENOTCONN plus Bun's raw
+  errno-5 macOS tty shim) and the `PI_TUI_KEYBOARD_PROTOCOL` enhancement gate.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The token-scanner section of `packages/tui/src/components/markdown.ts` and the raw-mode setup in
+  `packages/tui/src/terminal.ts`.
+
+## Alt-screen Kitty teardown keeps its disambiguated helper name after the 59a71b23 sync (2026-08-19)
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: re-diverges from upstream `59a71b235d` by exactly one
+  identifier. The private teardown helper stays `deleteAltScreenKittyImages()` (upstream calls it
+  `deleteKittyImages()`), and both call sites keep the fork name: the `stop()` synchronized-output
+  teardown sequence and the full-clear branch that falls back to it when no Kitty placements were
+  uploaded. The emitted escape bytes are byte-identical to upstream in every branch.
+
+### Why
+
+- The fork's alt-screen class shares a file-scope namespace with the module-level Kitty helpers
+  imported from `terminal-image.ts` (`deleteAllKittyImages`, `deleteAllKittyPlacements`). The
+  alt-screen-scoped name states which of the two deletion semantics the method wraps, so a reader
+  resolving the full-clear branch does not have to check whether `deleteKittyImages` is the imported
+  protocol helper or the class method that gates it on `imageProtocol === "kitty"`.
+
+### Why an extension could not handle it
+
+- `TuiAltScreen` teardown and its full-clear frame construction are private renderer internals that
+  emit terminal bytes directly; no extension surface exists between the class and the terminal.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/tui-alt-screen.ts` — the `stop()` teardown write, the private helper
+  declaration, and the `clearImages` ternary in the full-clear path. Upstream edits to the same three
+  hunks resolve by keeping the fork identifier and taking upstream's byte content.
+
+## Image markers canonicalize on insert/prune and carry owner payloads across undo (2026-08-18)
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: `insertImageMarker()` renumbers the
+  visible markers to canonical 1..k in reading order (via
+  `ImageMarkerRegistry.canonicalize`, previously dead code) and returns the
+  marker's FINAL canonical id instead of the insertion counter; `setText()`
+  canonicalizes after pruning so a surviving high id displays as `[Image #1]`;
+  `EditorSnapshot` carries an opaque `attachmentState` captured through the new
+  owner hooks and `undo()` restores it BEFORE firing the marker-order
+  notification; cursor position is preserved across the renumbering rewrite.
+- `packages/tui/src/editor-component.ts`: new optional paired
+  `snapshotAttachmentState`/`restoreAttachmentState` contract next to
+  `onImageMarkersChanged`, documented together with the tightened
+  `insertImageMarker` id semantics.
+- Regression coverage: `test/editor-image-marker.test.ts` pins out-of-order
+  insert canonicalization, post-prune renumbering, and multi-marker
+  delete+undo payload restoration.
+
+### Why
+
+- The insertion counter only produces reading-order numbers when the cursor
+  sits after every existing marker, so pasting in front of one displayed
+  `[Image #2][Image #1]`; the owner's reconcile-by-position then mispaired or
+  destroyed payloads. Undo restored marker text and registry ids but the
+  payloads live with the owner, so a delete+undo permanently lost the deleted
+  marker's image.
+
+### Why an extension could not handle it
+
+- The marker registry, undo stack, and the id semantics of
+  `insertImageMarker` are `Editor` internals below the component contract;
+  extensions cannot renumber marker text or hook the undo pop.
+
+### Expected merge conflict zones
+
+- MEDIUM: `insertImageMarker()` and the undo snapshot/restore block in
+  `packages/tui/src/components/editor.ts`.
+- LOW: the image-marker section of `packages/tui/src/editor-component.ts`.
+
+## Repository-wide changes.md audit backfill for renderer, terminal, and component surfaces (2026-08-17)
+
+### What changed
+
+- Backfill from the repository-wide changes.md audit (pin `914cf147`, tag v0.84.2): this entry names every upstream-owned TUI production path that still diverges from the pinned upstream tree, so the next upstream sync can resolve each file's fork intent. Behavioral history for most paths lives in the dated sections of this file; the entries added by this backfill carry the rest.
+- Renderer core: `packages/tui/src/tui.ts` holds the fork's differential renderer in `TuiBase` — synchronized autowrap-guarded frames, viewport-bounded normalize/diff, scrollback replay, the insert-scroll fast path, the configurable render fps cap, over-wide containment, the component `dispose()` contract, and mode-gated tmux focus routing (see the focus-routing entry below plus the 2026-08-14, 2026-07-31, 2026-07-04, 2026-07-03, and 2026-07-02 sections). `packages/tui/src/tui-main-screen.ts` is reduced to a thin main-screen subclass that owns render-state capture/restore; `packages/tui/src/tui-alt-screen.ts` differs from the pin only by the `deleteAltScreenKittyImages()` teardown rename (its focus, clipboard, and mouse-release behavior is upstream v0.84.2 parity, delivered by PR #892).
+- Terminal I/O: `packages/tui/src/terminal.ts` (external stdout guard while started, control-stripped OSC 0 titles, best-effort raw-mode restoration on dead terminals), `packages/tui/src/stdin-buffer.ts` (stateful UTF-8 reassembly of split multibyte chunks), and `packages/tui/src/terminal-image.ts` (Kitty graphics through tmux allow-passthrough, Unicode placeholder placement, tmux-reported cell dimensions).
+- Components and primitives: `packages/tui/src/components/box.ts` (disposal contract), `packages/tui/src/components/editor.ts` (paste-marker registry with provenance, atomic cursor discipline, autocomplete trigger characters), `packages/tui/src/components/image.ts` (per-row Kitty placeholder lines), `packages/tui/src/components/loader.ts` (`messageFormatter` animation plus `dispose()`), `packages/tui/src/components/markdown.ts` (LaTeX tokenizers and the bounded highlight cache), `packages/tui/src/components/select-list.ts` (the `renderRow` theme composer), `packages/tui/src/autocomplete.ts` (mixed `$`/`/` invocation picker and skill-namespace filtering), `packages/tui/src/editor-component.ts` (the paired paste-state API), `packages/tui/src/fuzzy.ts` (hot-path scoring and alphanumeric swap variants), `packages/tui/src/utils.ts` (two-generation width cache, terminal-output normalization, the `coalesceAdjacentSgr` utility), and `packages/tui/src/index.ts` (the fork export surface: paste markers, select-list row types, tmux helpers, markdown cache controls).
+- `packages/tui/src/latex.ts` is the upstream LaTeX module path, deleted in this fork: the converter was rewritten dependency-free and relocated to `packages/tui/src/components/latex.ts` (see the relocation entry below).
+
+### Why
+
+- Merges resolve tracker files to `ours`, so every divergent upstream-owned path needs an entry in its exact nearest tracker that names it; without this inventory the divergence is invisible to the audit and to the next sync.
+
+### Why an extension could not handle it
+
+- These paths are the renderer, terminal-protocol, and primitive layer itself: frame bytes, stdin framing, capability probes, paste registries, and package exports sit below the extension API that would otherwise carry such behavior.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/tui/src/tui.ts` (`TuiBase` render paths, scheduler, dispose, focus routing) and `packages/tui/src/tui-main-screen.ts` (the thin-subclass split itself).
+- MEDIUM: `packages/tui/src/components/editor.ts`, `packages/tui/src/components/markdown.ts`, `packages/tui/src/terminal-image.ts`, `packages/tui/src/terminal.ts`, and `packages/tui/src/utils.ts`.
+- LOW: `packages/tui/src/components/box.ts`, `packages/tui/src/components/image.ts`, `packages/tui/src/components/loader.ts`, `packages/tui/src/components/select-list.ts`, `packages/tui/src/autocomplete.ts`, `packages/tui/src/editor-component.ts`, `packages/tui/src/fuzzy.ts`, `packages/tui/src/stdin-buffer.ts`, `packages/tui/src/tui-alt-screen.ts`, and the `packages/tui/src/index.ts` export lists; `packages/tui/src/latex.ts` is a whole-file deletion to reconcile against `packages/tui/src/components/latex.ts`.
+
+## Component-tree disposal bounds long-session cleanup (2026-08-17)
+
+Landed 2026-06-17 (commit 4f6749bb7).
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `Component` declares optional `dispose?()` and `Container` implements tree-wide disposal — `dispose()` runs once (guarded by a `disposed` flag), `clear()` disposes the children it removes, `removeChild()` disposes the removed child, and `detachAll()` detaches without disposing for callers that reuse components.
+- `packages/tui/src/components/box.ts`: the same contract locally — `clear()` and `removeChild()` dispose affected children, `dispose()` is idempotent, and `detachAll()` preserves the previous non-disposing clear semantics for cache-preserving reuse.
+- `packages/tui/src/components/loader.ts`: `dispose()` stops the animation timer so a disposed loader cannot keep ticking.
+- `packages/tui/src/components/markdown.ts`: the module-level syntax-highlight cache is bounded with insertion accounting, and `clearRenderCache()` plus highlight call counters are exported through `packages/tui/src/index.ts` for teardown and tests.
+- Coverage: `packages/tui/test/component-dispose.test.ts` and `packages/tui/test/markdown-highlight.test.ts`.
+
+### Why
+
+- Resumed multi-thousand-entry sessions replace whole component subtrees; without a disposal contract, stale animation timers and unbounded module-level highlight caches accumulate for the process lifetime.
+
+### Why an extension could not handle it
+
+- Component lifecycle and module-level caches are TUI internals; extensions compose components but cannot inject tree-wide teardown or clear renderer-owned caches.
+
+### Expected merge conflict zones
+
+- LOW: the disposal methods in `packages/tui/src/components/box.ts` and `packages/tui/src/components/loader.ts`.
+- MEDIUM: `packages/tui/src/components/markdown.ts` cache accounting; LOW: its `packages/tui/src/index.ts` re-exports.
+- LOW: the `Container` method block in `packages/tui/src/tui.ts`.
+
+## SelectList theme renderRow composer (2026-08-17)
+
+Landed 2026-07-26 (commit 8abee395c).
+
+### What changed
+
+- `packages/tui/src/components/select-list.ts`: `SelectListTheme` gains optional `renderRow`, a composer receiving decomposed `SelectListRowParts` — selection prefix (with `selectedPrefix` already applied), truncated primary, column-aligned description, and selection state — and taking over row composition. Without a composer, rendering funnels through one legacy branch that reproduces the previous composition operand-for-operand; the previously dead `selectedPrefix` callback is now honored for selected prefixes.
+- `packages/tui/src/components/editor.ts`: threads the composer through the existing theme plumbing without widening the public editor API.
+- `packages/tui/src/index.ts` exports `SelectListRenderRow` and `SelectListRowParts`.
+- Coverage: `packages/tui/test/select-list-render-row.test.ts`, `packages/tui/test/select-list-characterization.test.ts` (byte-identical legacy output including truncation suffixes, column math, CJK widths, and the narrow-width path), and `packages/tui/test/editor-render-row.test.ts`.
+
+### Why
+
+- Row composition was hard-coded (prefix, primary, and description wrapped in one `selectedText()` call), which made it impossible to color a slash-command prefix independently of the selected-row background — the requirement the grok chrome's colored slash menu brought in.
+
+### Why an extension could not handle it
+
+- SelectList is the shared selector primitive consumed by editors and dialogs before any coding-agent extension UI hook runs; only the library can expose row decomposition.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/components/select-list.ts` around `composeRow()` and the theme interface.
+- LOW: the theme plumbing in `packages/tui/src/components/editor.ts` and the `packages/tui/src/index.ts` export list.
+
+## Fuzzy matcher hot path and alphanumeric swap variants (2026-08-17)
+
+Landed 2026-06-08 (commit af0ab07a0).
+
+### What changed
+
+- `packages/tui/src/fuzzy.ts`: `fuzzyMatch` scoring moved from a per-call closure into a top-level `scoreMatch`, and the per-character regex word-boundary test became char-code classification (`isWordBoundaryPrefix`). The whole-token letter/digit swap regex is generalized into `buildAlphanumericSwapQueries()`: every adjacent letter/digit transposition plus whole-token swaps, each scored with the flat `ALPHANUMERIC_SWAP_PENALTY` (5), best matching variant wins — so queries like `gpt5a` match `gpt-a5`.
+- Exact-match priority and slash-separated filter tokens are upstream v0.84.2 behavior (in the pin) and are not fork deltas.
+- Coverage: `packages/tui/test/fuzzy.test.ts` pins the adjacent-swap case.
+
+### Why
+
+- Selector filtering runs on every keystroke against large model registries; the closure allocation and per-character regex dominated the hot path, and single transposed alphanumerics previously failed to match.
+
+### Why an extension could not handle it
+
+- `fuzzyFilter` is the ranking primitive inside the shared autocomplete and selector stack; extensions receive filtered lists and cannot replace the matcher.
+
+### Expected merge conflict zones
+
+- MEDIUM: scoring and swap-variant construction in `packages/tui/src/fuzzy.ts`; upstream edits to the same functions will conflict textually.
+
+## LaTeX converter relocated under components (2026-08-17)
+
+Landed 2026-07-29 (commit 5655c1cd8).
+
+### What changed
+
+- `packages/tui/src/latex.ts` — the upstream-owned module path — no longer exists in this fork. The LaTeX converter was rewritten as the dependency-free, budgeted parser described in the 2026-07-29 "Native Unicode LaTeX in Markdown conversations" section and lives at `packages/tui/src/components/latex.ts`, beside its only consumer, the Markdown tokenizers in `packages/tui/src/components/markdown.ts`.
+- `packages/tui/src/index.ts` no longer re-exports `renderLatex` from the old path; conversion is internal to the Markdown component (the paste-marker exports took that slot).
+
+### Why
+
+- The fork's converter is a deliberate rewrite (bounded nesting budgets, balanced parsing, fallback to literal text), not an edit of upstream's module. Keeping it beside its consumer matches the package layout, and recording the deleted upstream path maps the next sync's deletion to this entry instead of resurrecting upstream's module at `packages/tui/src/latex.ts`.
+
+### Why an extension could not handle it
+
+- Math tokenization happens inside the Markdown component before extension-facing UI hooks; consistent rendering across every Markdown consumer requires the parser seam.
+
+### Expected merge conflict zones
+
+- The deleted `packages/tui/src/latex.ts` is a whole-file divergence: an upstream sync touching it must reconcile against `packages/tui/src/components/latex.ts`. LOW: the `packages/tui/src/index.ts` export slot.
+
+## Fullscreen focus routing and the PR #892 v0.84.2 sync repairs (2026-08-17)
+
+Landed 2026-08-16 (commit 03f46f57e, shipped in PR #892).
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `TuiBase.handleTerminalInput()` consumes tmux focus events only when `mode !== "fullscreen"`. Fullscreen renderers own focus events so they can clear exactly an active drag selection without forcing idle or completed-selection repaints; the main screen still refreshes terminal capabilities when focus returns to a multiplexer pane.
+- PR #892 (merge/upstream-20260816) delivered upstream v0.84.2, whose focus behaviors — skipping repaints of idle fullscreen sessions on focus loss, giving focused fullscreen overlays wheel and viewport keys, and fullscreen transcript search — previously failed here because the fork's `TuiBase` focus interception forced a redraw before the alt-screen selection logic ran. The routing above is the fork-side repair; `b25d5bdeb` realigned the upstream assertions with fork branding.
+- The upstream focus-loss tests carried by that sync (`packages/tui/test/tui-alt-screen.test.ts`) now run against the fork renderer.
+
+### Why
+
+- Three upstream focus-loss behaviors failed after the v0.84.2 merge until fork-side focus consumption was scoped to the main screen; without this entry the next sync would re-break or silently drop the repair.
+
+### Why an extension could not handle it
+
+- Focus events are consumed inside the renderer's input path before any component or extension sees the bytes.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `handleTerminalInput()` focus branch in `packages/tui/src/tui.ts`. LOW: `packages/tui/src/index.ts` import ordering.
+
+## Selection copy routes through the host clipboard (2026-08-17)
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts` carries upstream v0.84.2's selection-copy behavior (upstream issue #8110, delivered here by the PR #892 sync): copying an alt-screen selection writes through the host-clipboard seam that interactive mode wires on its side. The fork tree matches the pin for this behavior.
+- The residual fork delta in this file is the teardown rename `deleteAltScreenKittyImages()`, which keeps alt-screen image teardown distinct from the shared kitty deletion helpers.
+
+### Why
+
+- Recorded so the next upstream sync treats the clipboard path as upstream-owned parity rather than a fork delta to re-port, and so the audit's divergence for this file is attributed to the rename.
+
+### Why an extension could not handle it
+
+- Selection copy executes inside the fullscreen renderer's mouse/selection handler; no extension seam intercepts terminal mouse bytes.
+
+### Expected merge conflict zones
+
+- LOW: the `deleteAltScreenKittyImages()` rename sites; the clipboard path itself is upstream-owned.
+
+## Generic SGR mouse releases finish selection (2026-08-17)
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts` carries upstream v0.84.2's generic SGR mouse-release handling (upstream issue #7963, delivered by the PR #892 sync): `handleSelectionMouseEvent` accepts release events reporting the no-button code (`button === 3`) in addition to button 0, so a release that does not name a drag button still completes selection instead of being dropped.
+
+### Why
+
+- Recorded for sync parity like the host-clipboard entry: the behavior is upstream-owned and at pin parity here, and the file's only fork divergence remains the teardown rename.
+
+### Why an extension could not handle it
+
+- SGR mouse parsing and selection state are private to the fullscreen renderer's input path.
+
+### Expected merge conflict zones
+
+- LOW: the release guard in `handleSelectionMouseEvent`; upstream-owned otherwise.
+
+## 2026-08-16: add a prompt-leading mixed dollar invocation picker ([PR #909](https://github.com/code-yeongyu/senpi/pull/909))
+
+### What changed
+
+- `CombinedAutocompleteProvider` recognizes a prompt-leading `$` run.
+- The editor treats `$` as a built-in symbol autocomplete trigger, so the mixed picker opens on real keystrokes
+  rather than only through direct provider calls.
+- The first `$` token lists canonical `/command` rows before `$skill` rows and filters both with the same query.
+- Selecting a command inserts `/name `; selecting a skill inserts `$name `.
+- A second leading `$` token reopens only known skills, while inline or unknown-prefix dollar text stays literal.
+
+### Why
+
+- OmO Desktop and Senpi RPC now expose one mixed command/skill surface; the terminal needs the same invocation
+  affordance without teaching providers a new `$command` execution syntax.
+- Canonical insertion keeps existing slash command dispatch and the shared dollar skill parser authoritative.
+
+### Expected merge conflict zones
+
+- MEDIUM: `autocomplete.ts` trigger ordering and completion replacement.
+- LOW: `components/editor.ts` default autocomplete trigger characters.
+- LOW: additive `dollar-invocation-autocomplete.ts` and its focused test.
+
+## 2026-08-14: replay above-viewport growth in the viewport-remap branch
+
+### What changed
+
+- When a frame's content grows above the viewport and a visible row also changes (`viewportTop !== prevViewportTop` with `lineCountDelta !== 0`), the renderer now falls back to the canonical `renderScrollbackReplay` / mux dispatch instead of repainting only the visible rows in place.
+
+### Why
+
+- The in-place repaint emitted exactly `height` rows and returned, so rows inserted above the viewport (e.g. Ctrl+O expanding several tool blocks in one frame) never reached terminal scrollback even though `setPreviousLines` marked them painted — leaving mismatched headers and truncated results. The replay path re-emits the full canonical transcript.
+
+### Expected merge conflict zones
+
+- LOW: `tui.ts` the `viewportTop !== prevViewportTop` branch; LOW in `tui-render.test.ts`.
 
 ## 2026-08-05: dead-terminal raw-mode restoration is best-effort during shutdown
 
 ### What changed
 
-- `ProcessTerminal.stop()` still restores the raw-mode state captured by `start()`, but now treats `EIO`, `EPIPE`,
+- `packages/tui/src/terminal.ts`: `ProcessTerminal.stop()` still restores the raw-mode state captured by `start()`, but now treats `EIO`, `EPIPE`,
   and `ENOTCONN` from the teardown-time `setRawMode()` call as a dead terminal instead of crashing the exiting CLI.
+- The EIO classifier accepts both Node's string `code: "EIO"` shape and Bun's macOS raw positive `errno: 5`
+  shape, using numeric errno only when no string code is available.
+- The separate coding-agent classifier handles asynchronous stdout/stderr stream `error` events; this numeric fallback
+  stays scoped to the synchronous stdin `setRawMode()` ioctl that produced the observed Bun error shape.
 - Unexpected raw-mode restoration errors still propagate so shutdown does not hide unrelated defects.
 - `test/terminal.test.ts` covers successful restoration, the dead-terminal `EIO` regression, and unexpected-error
   propagation.
@@ -451,3 +1795,141 @@ Component-level caching is added in coding-agent components because high-frequen
   - ANSI escape bytes remain below the content-byte budget,
   - every `DECSET 2026` begin has a matching end,
   - no `fullRender(true)` equivalent clear occurs after the init phase.
+
+## Atomic image markers for clipboard-pasted images (2026-08-18)
+
+### What changed
+
+- `packages/tui/src/image-markers.ts` (new): `ImageMarkerRegistry` tracks the ids of atomic `[Image #N]` markers living in editor text, storing ids only and never image bytes. It guarantees the visible numbers stay a contiguous `1..k` sequence (via `canonicalize()`), exposes `authorizedMarkers()` for markers occurring exactly once (the only ones safe to treat as atomic), and supports single-occurrence removal plus `EditorImageState` snapshots for transfer between editor instances.
+- `packages/tui/src/paste-markers.ts`: marker segmentation generalized so paste markers and image markers share the same atomic-segment machinery instead of the paste path owning a private tokenizer.
+- `packages/tui/src/components/editor.ts`: image markers are treated as atomic editor segments. `insertImageMarker()` inserts the next `[Image #N]` marker at the cursor and returns its id, backspace/delete removes a marker whole, `getImageMarkerState()`/`setImageMarkerState()` export and install registry snapshots, and `onImageMarkersChanged` reports the ids in text reading order whenever markers are added, removed, pruned, or renumbered.
+- `packages/tui/src/editor-component.ts`: the `EditorComponent` interface gains the optional image-marker API (`insertImageMarker`, `getImageMarkerState`, `setImageMarkerState`, `onImageMarkersChanged`) with paired-contract docs: an editor exposing insertion without the change callback is treated as image-unaware and receives the plain text path instead.
+- `packages/tui/src/index.ts`: exports the image-marker surface (`ImageMarkerRegistry`, `EditorImageState`, `ImageMarkerCanonicalization`, `ImageMarkerRemoval`, `IMAGE_MARKER_REGEX`, `IMAGE_MARKER_SINGLE`, `formatImageMarker`, `isImageMarker`, `imageMarkerId`).
+
+### Why
+
+- Pasting a clipboard image used to insert the raw temp file path into the composer, leaking local filesystem paths into prompts and transcripts. Atomic markers let the editor display `[Image #1]` while the payload lives outside the text, and contiguous renumbering keeps the Nth marker mapped to the Nth submitted image.
+
+### Why an extension could not handle it
+
+- Cursor discipline, segment atomics, and the editor's text model are TUI internals; an extension can compose components but cannot make backspace delete a marker whole or keep registry ids synchronized with visible numbers across editor instances.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/tui/src/components/editor.ts` (segment handling around cursor movement and deletion) and `packages/tui/src/paste-markers.ts` (the generalized segmentation shared with paste markers).
+- LOW: `packages/tui/src/image-markers.ts` (new fork-owned file, no upstream counterpart), `packages/tui/src/editor-component.ts` (additive optional interface members), and the `packages/tui/src/index.ts` export lists.
+
+## 2026-09-03 - Port upstream #8028 bounded main-screen rendering
+
+### What changed
+
+- `packages/tui/src/tui.ts`: main-screen render writes are emitted in bounded 1 MiB chunks, including full redraws and differential updates, so large image-heavy frames cannot exceed V8 string limits while preserving the fork's synchronized frames and viewport renderer.
+
+### Why
+
+- Upstream #8028 prevents V8 string-length crashes when a main-screen render contains very large terminal-image payloads. The fork renderer lives in `TuiBase`, so the bounded write behavior is ported there rather than replacing the fork's thin `TuiMainScreen` subclass.
+
+### Why this lives in the fork
+
+- `TuiBase` owns the fork's main-screen differential renderer, insert-scroll path, scrollback handling, and lifecycle state; no extension boundary can safely split its terminal frame writes.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts` around full-render and differential-render terminal writes; `packages/tui/src/tui-main-screen.ts` remains a thin state-capture subclass.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/tui/src/components/box.ts`: fork `Container` disposal semantics (`dispose()` idempotent via a `disposed` flag, `clear()` disposing children, `detachAll()` detaching without disposing for reuse) alongside upstream's mouse layout cache and child hit-testing.
+- `packages/tui/src/components/editor.ts`: fork atomic paste and image markers (`MarkerKind`, marker-aware segmentation, `removePasteMarker`/`removeImageMarker` with renumbering), undo snapshots carrying attachment payloads, `normalizeWarpWslShiftEnterInput` seam and the `@`/`#`/`$` autocomplete triggers, on top of upstream's mouse selection.
+- `packages/tui/src/components/select-list.ts`: fork `SelectListRowParts`/`renderRow` row composer and ranking beside upstream's `mousePressedIndex`/`handleMouse`/`getVisibleRange`.
+- `packages/tui/src/index.ts`: fork exports (fullscreen transcript search, atomic image markers, `expandPasteMarkers`, `ProcessTerminalOptions`, `calculateImageRows`, `sanitizeTerminalLabel`/`shortenImagePath`) with upstream's `MouseRegion`/native clipboard exports.
+- `packages/tui/src/terminal.ts`: fork dead-terminal detection (`EIO`/`EPIPE`/`ENOTCONN` codes, Bun errno fallbacks), shared stdin error dispatcher, keyboard-enhancement state, Warp/WSL shift+enter normalization, `ProcessTerminalOptions.onExternalStdoutWrite`, multiplexer detection; upstream's `getNativePlatformHelper()` VT-input path was adopted.
+- `packages/tui/src/tui-alt-screen.ts`: the fork keeps the `deleteAltScreenKittyImages` teardown name (three call sites) around upstream's mouse/scrollbar/search additions.
+- `packages/tui/src/utils.ts`: fork two-generation width cache, `coalesceAdjacentSgr`, DCS/tmux passthrough escaping and grapheme/word helpers, plus upstream's `getActiveBackgroundAnsi`.
+
+### Why
+
+- The fork renderer's paste/image provenance, disposal contract, terminal fault tolerance and width caching are product invariants pinned by fork tests; upstream's mouse, scrollbar and native-platform work was layered onto them.
+
+### Why an extension could not handle it
+
+- These are the TUI library primitives every component and the coding agent build on.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/tui/src/components/editor.ts` marker handling and input dispatch; `packages/tui/src/terminal.ts` `ProcessTerminal` start/stop.
+- MEDIUM: `packages/tui/src/index.ts` export list; `packages/tui/src/utils.ts` width cache and ANSI helpers; `select-list.ts` render path.
+- LOW: `box.ts` lifecycle methods; `tui-alt-screen.ts` teardown call sites.
+
+## 2026-09-28 - The skill: namespace row drills down instead of submitting (senpi#2249)
+
+### What changed
+
+- `packages/tui/src/slash-command-autocomplete.ts`: `isSlashNamespaceItem(value)` names the namespace rule (a slash item whose value ends in `:`, today only `skill:`).
+- `packages/tui/src/autocomplete.ts`: `CombinedAutocompleteProvider.applyCompletion` completes a namespace item as `/skill:` with no trailing space, so the namespace's own list can follow; every other command keeps `/name `.
+- `packages/tui/src/components/editor.ts`: Enter and Tab on a namespace row apply that completion and re-request suggestions instead of submitting; public `openAutocomplete()` requests suggestions at the cursor.
+- `packages/tui/src/editor-component.ts`: optional `openAutocomplete?()` on `EditorComponent`.
+
+### Why
+
+- The `skill:` row is an autocomplete-only drill-down with no command behind it. Enter submitted `/skill: ` to the model, and the trailing space kept the skill list from opening even on Tab.
+
+### Why an extension could not handle it
+
+- Picker confirm handling and completion text live in the editor and the combined provider; an extension cannot intercept the editor's Enter before it submits.
+
+### Expected merge conflict zones
+
+- MEDIUM: the autocomplete `tui.select.confirm` and `tui.input.tab` branches in `packages/tui/src/components/editor.ts`; the slash-command branch of `CombinedAutocompleteProvider.applyCompletion` in `packages/tui/src/autocomplete.ts`.
+- LOW: the added optional member in `packages/tui/src/editor-component.ts`.
+
+## 2026-10-02 - Adopted upstream TUI fixes (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`
+- `packages/tui/src/components/box.ts`
+- `packages/tui/src/components/markdown.ts`
+- `packages/tui/src/components/text.ts`
+- `packages/tui/src/index.ts`
+- `packages/tui/src/tui-alt-screen.ts`
+- `packages/tui/src/utils.ts`
+
+The upstream fixes are kept: no color bleed at slice boundaries, less memory per rendered message, one copy of each rendered line, and slash-command completion after leading whitespace (D-13). The fork's regular default stays.
+
+### Why
+
+Up streaming rendering bugs the fork has the same code for; the alternate-screen default is the only upstream change not taken (D-5).
+
+### Why an extension could not handle it
+
+Rendering internals below any extension hook.
+
+### Expected merge conflict zones
+
+Upstream TUI fixes in these files at the next sync.
+
+## 2026-10-12 - Editor keyword-run highlight hook (senpi#3160)
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`
+- `packages/tui/src/components/editor-line-render.ts`
+- `packages/tui/src/index.ts`
+
+`EditorTheme` gains an optional `keywordHighlight` (`find` over the whole text joined with `\n`, `style` per character with its run offset and length). `Editor.render` caches runs per text and splits them per logical line and wrap chunk; `renderEditorLine` cuts segments at run edges, drops runs that overlap a mention, and styles the cursor grapheme in reverse video as before. `EditorKeywordHighlight` is exported from the barrel.
+
+### Why
+
+OmO's desktop composer paints reserved prompt keywords (`ulw`, `mass ulw`, `ulw research`, ...) with a rainbow; the TUI editor had no per-character decoration seam, so the same cue was missing in the terminal.
+
+### Why an extension could not handle it
+
+Row composition, wrapping and the cursor grapheme live inside `Editor.render`; an extension can only replace the whole editor, not decorate characters inside its rows.
+
+### Expected merge conflict zones
+
+- MEDIUM: `Editor.render` around the `renderEditorLine` call and `EditorTheme` in `packages/tui/src/components/editor.ts`.
+- LOW: the `Editor` export block in `packages/tui/src/index.ts`.

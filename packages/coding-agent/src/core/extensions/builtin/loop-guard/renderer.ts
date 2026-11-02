@@ -1,12 +1,26 @@
 import { noticeMessageRenderer } from "../../notice/index.ts";
 import type { MessageRenderer } from "../../types.ts";
 import type { LoopGuardDetection } from "./detectors.ts";
+import type { LoopGuardEscalationDetails } from "./notice.ts";
 
 export const renderLoopGuardNotice: MessageRenderer<LoopGuardDetection> = noticeMessageRenderer((message) => {
 	const details = message.details;
 	if (details === undefined) return undefined;
 	return { title: titleLine(details), why: whyLine(details), expandedLine: expandedLine(details) };
 });
+
+export const renderLoopGuardEscalation: MessageRenderer<LoopGuardEscalationDetails> = noticeMessageRenderer(
+	(message) => {
+		const details = message.details;
+		if (details === undefined) return undefined;
+		return {
+			title: `! Loop guard · turn interrupted (${details.toolName})`,
+			tone: "error",
+			why: `The agent ignored two warnings and repeated ${details.blockedCallCount} calls after blocking began.`,
+			expandedLine: "A user-role recovery message was queued and the active turn was stopped by a system abort.",
+		};
+	},
+);
 
 function titleLine(detection: LoopGuardDetection): string {
 	switch (detection.kind) {

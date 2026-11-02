@@ -2,10 +2,10 @@ import { readFileSync } from "fs";
 import { Image } from "../src/components/image.ts";
 import { Spacer } from "../src/components/spacer.ts";
 import { Text } from "../src/components/text.ts";
-import { TuiMainScreen } from "../src/TuiMainScreen.ts";
 import { ProcessTerminal } from "../src/terminal.ts";
 import { getCapabilities, getImageDimensions } from "../src/terminal-image.ts";
 import type { TUI } from "../src/tui.ts";
+import { TuiMainScreen } from "../src/tui-main-screen.ts";
 
 const testImagePath = process.argv[2] || "/tmp/test-image.png";
 
@@ -17,7 +17,7 @@ try {
 	imageBuffer = readFileSync(testImagePath);
 } catch (_e) {
 	console.error(`Failed to load image: ${testImagePath}`);
-	console.error("Usage: npx tsx test/image-test.ts [path-to-image.png]");
+	console.error("Usage: node test/image-test.ts [path-to-image.png]");
 	process.exit(1);
 }
 

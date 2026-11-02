@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createHarness, type Harness, type HarnessOptions } from "./suite/harness.ts";
 
 interface Deferred<T> {
@@ -29,14 +31,24 @@ export function waitForSessionName(harness: Harness): Promise<string | undefined
 	});
 }
 
-export function waitForTitleError(harness: Harness): Promise<string> {
-	return new Promise((resolve) => {
-		harness.session.extensionRunner.onError((error) => {
-			if (error.event === "session_title_generation") {
-				resolve(error.error);
-			}
-		});
+export function collectTitleRuntimeErrors(harness: Harness): string[] {
+	const errors: string[] = [];
+	harness.session.extensionRunner.onError((error) => {
+		if (error.event === "session_title_generation") {
+			errors.push(error.error);
+		}
 	});
+	return errors;
+}
+
+export function readTitleFailureLog(harness: Harness): Array<Record<string, unknown>> {
+	const path = join(harness.tempDir, "agent", "logs", "session.log");
+	if (!existsSync(path)) return [];
+	return readFileSync(path, "utf8")
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line) as Record<string, unknown>)
+		.filter((entry) => entry.event === "session_title_failed");
 }
 
 export async function waitForCallCount(harness: Harness, expected: number): Promise<void> {

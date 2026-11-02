@@ -1,468 +1,143 @@
-/**
- * RPC protocol types for headless operation.
- *
- * Commands are sent as JSON lines on stdin.
- * Responses and events are emitted as JSON lines on stdout.
- */
+/** Public RPC protocol surface. Definitions are grouped by responsibility. */
 
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai";
-import type { SessionStats } from "../../core/agent-session.ts";
-import type { BashResult } from "../../core/bash-executor.ts";
-import type { CompactionResult } from "../../core/compaction/index.ts";
-import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
-import type { SourceInfo } from "../../core/source-info.ts";
+export type { RpcSnapshot, RpcSnapshotMarker, RpcUiRequestEvent } from "./snapshot-types.ts";
 
-// ============================================================================
-// RPC Commands (stdin)
-// ============================================================================
-
-type RpcSessionCommand =
-	// Prompting
-	| {
-			id?: string;
-			type: "prompt";
-			message: string;
-			images?: ImageContent[];
-			streamingBehavior?: "steer" | "followUp";
-			thinkingLevel?: ThinkingLevel;
-	  }
-	| { id?: string; type: "steer"; message: string; images?: ImageContent[] }
-	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
-	| { id?: string; type: "abort" }
-	| { id?: string; type: "new_session"; parentSession?: string }
-
-	// State
-	| { id?: string; type: "get_state" }
-
-	// Model
-	| { id?: string; type: "set_model"; provider: string; modelId: string }
-	| { id?: string; type: "cycle_model" }
-	| { id?: string; type: "get_available_models" }
-
-	// Thinking
-	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel; scope?: "turn" }
-	| { id?: string; type: "cycle_thinking_level" }
-	| { id?: string; type: "get_available_thinking_levels" }
-
-	// Queue modes
-	| { id?: string; type: "set_steering_mode"; mode: "all" | "one-at-a-time" }
-	| { id?: string; type: "set_follow_up_mode"; mode: "all" | "one-at-a-time" }
-
-	// Compaction
-	| { id?: string; type: "compact"; customInstructions?: string }
-	| { id?: string; type: "set_auto_compaction"; enabled: boolean }
-
-	// Retry
-	| { id?: string; type: "set_auto_retry"; enabled: boolean }
-	| { id?: string; type: "abort_retry" }
-
-	// Bash
-	| { id?: string; type: "bash"; command: string; excludeFromContext?: boolean }
-	| { id?: string; type: "abort_bash" }
-
-	// Session
-	| { id?: string; type: "get_session_stats" }
-	| { id?: string; type: "export_html"; outputPath?: string }
-	| { id?: string; type: "switch_session"; sessionPath: string }
-	| { id?: string; type: "fork"; entryId: string }
-	| { id?: string; type: "clone" }
-	| { id?: string; type: "get_fork_messages" }
-	| { id?: string; type: "get_entries"; since?: string }
-	| { id?: string; type: "get_tree" }
-	| { id?: string; type: "get_last_assistant_text" }
-	| { id?: string; type: "set_session_name"; name: string }
-
-	// Messages
-	| { id?: string; type: "get_messages" }
-
-	// Commands (available for invocation via prompt)
-	| { id?: string; type: "get_commands" }
-
-	// Auth (task 13) is additive. get_auth_providers, login_api_key and logout
-	// answer synchronously. login_start responds immediately (flow-started) and
-	// completion is delivered via auth_login_url / auth_login_end EVENTS, because
-	// an interactive OAuth round-trip cannot fit the 30s request timeout.
-	| { id?: string; type: "get_auth_providers" }
-	| { id?: string; type: "login_start"; provider: string }
-	| { id?: string; type: "login_cancel"; provider: string }
-	| { id?: string; type: "login_api_key"; provider: string; key: string }
-	| { id?: string; type: "logout"; provider: string }
-
-	// Provider accounts (task 13) are additive. The desktop consumer contract
-	// lives in ../omo-desktop-app/packages/contracts/src/rpc.ts and is updated separately.
-	| { id?: string; type: "get_provider_accounts"; provider: string }
-	| { id?: string; type: "account_pin"; provider: string; name: string | null }
-	| { id?: string; type: "account_remove"; provider: string; name: string };
-
-/** Stable multi-session protocol error codes. */
-export const RPC_ERROR_UNKNOWN_SESSION = "unknown_session";
-export const RPC_ERROR_SESSION_CLOSING = "session_closing";
-export const RPC_ERROR_SESSION_PATH_IN_USE = "session_path_in_use";
-export const RPC_ERROR_MISSING_SESSION_ID = "missing_session_id";
-export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
-export const RPC_ERROR_INVALID_PATH = "invalid_path";
-export const RPC_ERROR_OPEN_FAILED = "open_failed";
-
-export type RpcErrorCode =
-	| typeof RPC_ERROR_UNKNOWN_SESSION
-	| typeof RPC_ERROR_SESSION_CLOSING
-	| typeof RPC_ERROR_SESSION_PATH_IN_USE
-	| typeof RPC_ERROR_MISSING_SESSION_ID
-	| typeof RPC_ERROR_MULTI_SESSION_DISABLED
-	| typeof RPC_ERROR_INVALID_PATH
-	| typeof RPC_ERROR_OPEN_FAILED;
-
-/** Every established command accepts an additive routing envelope. */
-export type RpcCommand =
-	| (RpcSessionCommand & { sessionId?: string })
-	| { id?: string; type: "get_protocol_info" }
-	| {
-			id?: string;
-			type: "open_session";
-			sessionPath?: string;
-			cwd?: string;
-			provider?: string;
-			modelId?: string;
-			thinkingLevel?: ThinkingLevel;
-			permissionPreset?: string;
-	  }
-	| { id?: string; type: "close_session"; sessionId: string }
-	| { id?: string; type: "list_sessions" };
-
-// ============================================================================
-// Auth provider info (get_auth_providers response)
-// ============================================================================
-
-/** One provider row for the /login and /logout selectors. */
-export interface RpcAuthProvider {
-	/** Provider id (e.g. "anthropic", "openai"). */
-	id: string;
-	/** Human-readable display name. */
-	name: string;
-	/** How this provider authenticates. */
-	authType: "oauth" | "api_key";
-	/** Auth status without exposing or refreshing any credential. */
-	status: RpcAuthStatus;
-}
-
-/** Auth status mirror (no credential values), from getProviderAuthStatus. */
-export interface RpcAuthStatus {
-	configured: boolean;
-	source?:
-		| "stored"
-		| "runtime"
-		| "environment"
-		| "fallback"
-		| "models_json_key"
-		| "models_json_command"
-		| "models_json_headers"
-		| "extension_headers";
-	label?: string;
-}
-
-/** Account-slot metadata safe to send to desktop clients. */
-export interface RpcProviderAccount {
-	name: string;
-	source: "login" | "import" | "env";
-	blocked: boolean;
-	pinned: boolean;
-}
-
-// ============================================================================
-// RPC Slash Command (for get_commands response)
-// ============================================================================
-
-/** A command available for invocation via prompt */
-export interface RpcSlashCommand {
-	/** Command name (without leading slash) */
-	name: string;
-	/** Human-readable description */
-	description?: string;
-	/** What kind of command this is */
-	source: "extension" | "prompt" | "skill";
-	/** Source metadata for the owning resource */
-	sourceInfo: SourceInfo;
-}
-
-// ============================================================================
-// RPC State
-// ============================================================================
-
-export interface RpcSessionState {
-	model?: Model<any>;
-	thinkingLevel: ThinkingLevel;
-	isStreaming: boolean;
-	isCompacting: boolean;
-	steeringMode: "all" | "one-at-a-time";
-	followUpMode: "all" | "one-at-a-time";
-	sessionFile?: string;
-	sessionId: string;
-	sessionName?: string;
-	autoCompactionEnabled: boolean;
-	messageCount: number;
-	pendingMessageCount: number;
-}
-
-// ============================================================================
-// RPC Responses (stdout)
-// ============================================================================
-
-// Success responses with data
-export type RpcResponse =
-	| {
-			id?: string;
-			type: "response";
-			command: "get_protocol_info";
-			success: true;
-			data: { protocolVersion: 1; capabilities: ["multi_session"]; mode: "classic" | "multi" };
-	  }
-	| {
-			id?: string;
-			type: "response";
-			command: "open_session";
-			success: true;
-			data: { sessionId: string; state: RpcSessionState };
-	  }
-	| { id?: string; type: "response"; command: "close_session"; success: true; data: Record<string, never> }
-	| {
-			id?: string;
-			type: "response";
-			command: "list_sessions";
-			success: true;
-			data: {
-				sessions: Array<{
-					sessionId: string;
-					durableSessionId?: string;
-					sessionPath?: string;
-					cwd: string;
-					name?: string;
-					status: "opening" | "open" | "closing" | "closed";
-				}>;
-			};
-	  }
-	// Prompting (async - events follow)
-	| { id?: string; type: "response"; command: "prompt"; success: true }
-	| { id?: string; type: "response"; command: "steer"; success: true }
-	| { id?: string; type: "response"; command: "follow_up"; success: true }
-	| { id?: string; type: "response"; command: "abort"; success: true }
-	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
-
-	// State
-	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
-
-	// Model
-	| {
-			id?: string;
-			type: "response";
-			command: "set_model";
-			success: true;
-			data: Model<any>;
-	  }
-	| {
-			id?: string;
-			type: "response";
-			command: "cycle_model";
-			success: true;
-			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
-	  }
-	| {
-			id?: string;
-			type: "response";
-			command: "get_available_models";
-			success: true;
-			data: { models: Array<Model<any> & { supportedThinkingLevels: ThinkingLevel[] }> };
-	  }
-
-	// Thinking
-	| { id?: string; type: "response"; command: "set_thinking_level"; success: true }
-	| {
-			id?: string;
-			type: "response";
-			command: "cycle_thinking_level";
-			success: true;
-			data: { level: ThinkingLevel } | null;
-	  }
-	| {
-			id?: string;
-			type: "response";
-			command: "get_available_thinking_levels";
-			success: true;
-			data: { levels: ThinkingLevel[] };
-	  }
-
-	// Queue modes
-	| { id?: string; type: "response"; command: "set_steering_mode"; success: true }
-	| { id?: string; type: "response"; command: "set_follow_up_mode"; success: true }
-
-	// Compaction
-	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
-	| { id?: string; type: "response"; command: "set_auto_compaction"; success: true }
-
-	// Retry
-	| { id?: string; type: "response"; command: "set_auto_retry"; success: true }
-	| { id?: string; type: "response"; command: "abort_retry"; success: true }
-
-	// Bash
-	| { id?: string; type: "response"; command: "bash"; success: true; data: BashResult }
-	| { id?: string; type: "response"; command: "abort_bash"; success: true }
-
-	// Session
-	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
-	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
-	| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
-	| { id?: string; type: "response"; command: "fork"; success: true; data: { text: string; cancelled: boolean } }
-	| { id?: string; type: "response"; command: "clone"; success: true; data: { cancelled: boolean } }
-	| {
-			id?: string;
-			type: "response";
-			command: "get_fork_messages";
-			success: true;
-			data: { messages: Array<{ entryId: string; text: string }> };
-	  }
-	| {
-			id?: string;
-			type: "response";
-			command: "get_entries";
-			success: true;
-			data: { entries: SessionEntry[]; leafId: string | null };
-	  }
-	| {
-			id?: string;
-			type: "response";
-			command: "get_tree";
-			success: true;
-			data: { tree: SessionTreeNode[]; leafId: string | null };
-	  }
-	| {
-			id?: string;
-			type: "response";
-			command: "get_last_assistant_text";
-			success: true;
-			data: { text: string | null };
-	  }
-	| { id?: string; type: "response"; command: "set_session_name"; success: true }
-
-	// Messages
-	| { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
-
-	// Commands
-	| {
-			id?: string;
-			type: "response";
-			command: "get_commands";
-			success: true;
-			data: { commands: RpcSlashCommand[] };
-	  }
-
-	// Auth (task 13)
-	| {
-			id?: string;
-			type: "response";
-			command: "get_auth_providers";
-			success: true;
-			data: { providers: RpcAuthProvider[] };
-	  }
-	// login_start returns immediately: success:true means the flow has started.
-	// The URL and completion arrive as auth_login_url / auth_login_end events.
-	| { id?: string; type: "response"; command: "login_start"; success: true }
-	| { id?: string; type: "response"; command: "login_cancel"; success: true }
-	| { id?: string; type: "response"; command: "login_api_key"; success: true }
-	| { id?: string; type: "response"; command: "logout"; success: true }
-	| {
-			id?: string;
-			type: "response";
-			command: "get_provider_accounts";
-			success: true;
-			data: { accounts: RpcProviderAccount[] };
-	  }
-	| { id?: string; type: "response"; command: "account_pin"; success: true }
-	| { id?: string; type: "response"; command: "account_remove"; success: true }
-
-	// Error response (any command can fail)
-	| { id?: string; type: "response"; command: string; success: false; error: string };
-
-// ============================================================================
-// Extension UI Events (stdout)
-// ============================================================================
-
-/** Emitted when an extension needs user input */
-export type RpcExtensionUIRequest =
-	| { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
-	| { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
-	| {
-			type: "extension_ui_request";
-			id: string;
-			method: "input";
-			title: string;
-			placeholder?: string;
-			timeout?: number;
-	  }
-	| { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
-	| {
-			type: "extension_ui_request";
-			id: string;
-			method: "notify";
-			message: string;
-			notifyType?: "info" | "warning" | "error";
-	  }
-	| {
-			type: "extension_ui_request";
-			id: string;
-			method: "setStatus";
-			statusKey: string;
-			statusText: string | undefined;
-	  }
-	| {
-			type: "extension_ui_request";
-			id: string;
-			method: "setWidget";
-			widgetKey: string;
-			widgetLines: string[] | undefined;
-			widgetPlacement?: "aboveEditor" | "belowEditor";
-	  }
-	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
-	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
-	// Additive (task 13/14): emitted ONLY when the client advertised the
-	// "custom_unsupported" capability. ctx.ui.custom cannot render a third-party
-	// component in RPC mode, so a flagged client gets this notice before custom()
-	// returns undefined. Default clients never see it (byte-identical behavior).
-	| { type: "extension_ui_request"; id: string; method: "custom_unsupported"; extensionName: string };
-
-// ============================================================================
-// Extension UI Commands (stdin)
-// ============================================================================
-
-/** Response to an extension UI request */
-export type RpcExtensionUIResponse =
-	| { type: "extension_ui_response"; id: string; value: string }
-	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true };
-
-/** Emitted when the effective session thinking level changes. */
-export interface RpcThinkingLevelChangedEvent {
-	type: "thinking_level_changed";
-	level: ThinkingLevel;
-}
-
-export interface RpcHighReasoningWarningEvent {
-	type: "high_reasoning_warning";
-	modelId: string;
-	provider: string;
-	thinkingLevel: ThinkingLevel;
-}
-
-/** Emitted after an account is added, removed, pinned, or blocked by refresh failure. */
-export interface RpcAuthAccountsChangedEvent {
-	type: "auth_accounts_changed";
-	provider: string;
-}
-
-/** Emitted when the SDK failover engine advances to a different account slot. */
-export interface RpcAccountFailoverEvent {
-	type: "account_failover";
-	provider: string;
-	from: string;
-	to: string;
-	reason: string;
-}
+export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
+export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
+export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
+export type {
+	RpcAbortQuiesce,
+	RpcEffectAnswer,
+	RpcQueuedInputChange,
+	RpcUnloadAnswer,
+	UnloadRefusalReason,
+} from "./rpc-effect-answer-types.ts";
+export type { RpcErrorCode } from "./rpc-error-types.ts";
+export {
+	RPC_ERROR_ATTACHED,
+	RPC_ERROR_ATTACHED_ELSEWHERE,
+	RPC_ERROR_CONTEXT_BUDGET,
+	RPC_ERROR_EFFECT_ID_CONFLICT,
+	RPC_ERROR_EMPTY_TEXT,
+	RPC_ERROR_ENTRY_NOT_FOUND,
+	RPC_ERROR_EVAL_CELL_NOT_FOUND,
+	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
+	RPC_ERROR_HOST_DRAINING,
+	RPC_ERROR_HOST_MEMORY_PRESSURE,
+	RPC_ERROR_HOST_STOPPING,
+	RPC_ERROR_INVALID_ARGUMENT,
+	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
+	RPC_ERROR_INVALID_LAUNCH_PROFILE,
+	RPC_ERROR_INVALID_PATH,
+	RPC_ERROR_INVALID_RELEASE_REASON,
+	RPC_ERROR_INVALID_SESSION_CONTEXT,
+	RPC_ERROR_INVALID_SESSION_ENV,
+	RPC_ERROR_INVALID_SESSION_ID,
+	RPC_ERROR_INVALID_SESSION_KIND,
+	RPC_ERROR_INVALID_SUBSCRIPTION,
+	RPC_ERROR_MEDIA_NOT_FOUND,
+	RPC_ERROR_MISSING_SESSION_ID,
+	RPC_ERROR_MODEL_NOT_FOUND,
+	RPC_ERROR_MULTI_SESSION_DISABLED,
+	RPC_ERROR_NO_MODEL_SELECTED,
+	RPC_ERROR_NOT_ASSISTANT,
+	RPC_ERROR_NOT_USER,
+	RPC_ERROR_OPEN_FAILED,
+	RPC_ERROR_OWNER_CHANGED,
+	RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED,
+	RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
+	RPC_ERROR_PROVIDER_UNAVAILABLE,
+	RPC_ERROR_RELEASE_FAILED,
+	RPC_ERROR_RELEASE_UNSUPPORTED,
+	RPC_ERROR_RESPONSE_TOO_LARGE,
+	RPC_ERROR_SESSION_BUSY,
+	RPC_ERROR_SESSION_BUSY_LIFECYCLE,
+	RPC_ERROR_SESSION_CLOSING,
+	RPC_ERROR_SESSION_HELD,
+	RPC_ERROR_SESSION_ID_IN_USE,
+	RPC_ERROR_SESSION_IDENTITY_MISMATCH,
+	RPC_ERROR_SESSION_NOT_ATTACHED,
+	RPC_ERROR_SESSION_NOT_HELD,
+	RPC_ERROR_SESSION_PATH_IN_USE,
+	RPC_ERROR_SESSION_RESERVATION_LIMIT,
+	RPC_ERROR_STALE_LEAF,
+	RPC_ERROR_STREAMING,
+	RPC_ERROR_SUBSCRIPTION_LIMIT,
+	RPC_ERROR_TRANSCRIPT_UNREADABLE,
+	RPC_ERROR_TURN_ACTIVE,
+	RPC_ERROR_UNKNOWN_COMMAND,
+	RPC_ERROR_UNKNOWN_SESSION,
+	RPC_ERROR_UNKNOWN_SUBSCRIPTION,
+	RPC_ERROR_UNSUPPORTED_TRANSPORT,
+	RPC_ERROR_WARM_FAILED,
+} from "./rpc-error-types.ts";
+export type { RpcCommand, RpcInboundRecord } from "./rpc-host-command-types.ts";
+export type { RpcHostRequest, RpcHostResponse, RpcRelocationDueEvent } from "./rpc-relocation-types.ts";
+export type {
+	RpcHostKernelMemory,
+	RpcHostLifecycleEvent,
+	RpcHostMemoryPressureEvent,
+	RpcHostStalledEvent,
+	RpcHostSupersededEvent,
+	RpcHostTrimmedEvent,
+	RpcSubscriptionLimitsEvent,
+} from "./rpc-host-lifecycle-types.ts";
+export type {
+	RpcLaunchProfile,
+	RpcLaunchProfileCore,
+	RpcProtocolIdentity,
+	RpcProtocolInfo,
+} from "./rpc-protocol-info-types.ts";
+export type {
+	RpcExtensionUIProgress,
+	RpcExtensionUIRequest,
+	RpcExtensionUIResponse,
+	RpcQuestionAnswers,
+	RpcQuestionOutcome,
+	RpcQuestionResolvedEvent,
+	RpcQuestionSpec,
+	RpcQuestionUiRequest,
+	RpcQuestionUpdatedEvent,
+	RpcSecretInputSettledEvent,
+} from "./rpc-question-types.ts";
+export type { RpcResponse } from "./rpc-response-types.ts";
+export type {
+	EditAssistantMessageResult,
+	EditUserMessageResult,
+	NavigateTreeResult,
+	RpcEvalCell,
+	RpcEvalCellSnapshot,
+} from "./rpc-result-types.ts";
+export type { RpcWhenIdle } from "./rpc-session-command-types.ts";
+export { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-session-command-types.ts";
+export type {
+	RpcAccountFailoverEvent,
+	RpcAuthAccountsChangedEvent,
+	RpcExtensionEvent,
+	RpcHighReasoningWarningEvent,
+	RpcLoadedSurfacesChangedEvent,
+	RpcModelChangedEvent,
+	RpcOpenQueuedEvent,
+	RpcPendingInputUpdateEvent,
+	RpcServiceTierChangedEvent,
+	RpcSessionClosedEvent,
+	RpcSessionClosedReason,
+	RpcSessionOpenedEvent,
+	RpcSessionParkedEvent,
+	RpcSessionReplacedEvent,
+	RpcSettingsSourceSelectedEvent,
+	RpcSkillInvocationEvent,
+	RpcThinkingLevelChangedEvent,
+} from "./rpc-session-event-types.ts";
+export type {
+	RpcAuthProvider,
+	RpcAuthStatus,
+	RpcLoadedExtension,
+	RpcLoadedMcpServer,
+	RpcMcpServerStatus,
+	RpcProviderAccount,
+	RpcSessionModelEntry,
+	RpcSessionState,
+} from "./rpc-session-state-types.ts";
+export type { SessionEffectStatusRecord as RpcEffectStatusEvent } from "./session-effect-status.ts";
+export type { SessionStatusRecord as RpcSessionStatusEvent } from "./session-status.ts";

@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
+import { permissionCheck } from "./permission-check.ts";
 import { type BridgeError, generateBridgeToken, verifyBridgeToken } from "./protocol.ts";
 
 const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
@@ -8,6 +9,8 @@ const LOOPBACK_HOST = "127.0.0.1";
 
 export interface BridgeHttpCallRequest {
 	callId: string;
+	/** The calling run's secret; the host resolves that run's kernel-tools capability from it. */
+	cellToken?: string;
 	toolName: string;
 	args: unknown;
 	signal: AbortSignal;
@@ -31,6 +34,8 @@ export interface BridgeServerOptions {
 	onCall: (request: BridgeHttpCallRequest) => Promise<unknown>;
 	onEmit: (event: BridgeHttpEmitEvent, signal: AbortSignal) => Promise<void>;
 	onCompletion: (request: BridgeHttpCompletionRequest) => Promise<unknown>;
+	/** Decides a kernel's kill-guard check (senpi#5349); needs no permission token, so it works in full-access mode. */
+	onKillGuardCheck?: (request: unknown) => unknown;
 }
 
 export interface BridgeServerHandle {
@@ -40,7 +45,7 @@ export interface BridgeServerHandle {
 }
 
 type JsonReply = { ok: true; value: unknown } | { ok: false; error: BridgeError };
-type Route = "/call" | "/emit" | "/completion";
+type Route = "/call" | "/emit" | "/completion" | "/permission_check" | "/kill_guard_check";
 
 export async function startBridgeServer(options: BridgeServerOptions): Promise<BridgeServerHandle> {
 	const token = options.token ?? generateBridgeToken();
@@ -49,6 +54,7 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
 	const server = createServer((request, response) => {
 		void handleRequest(request, response, token, options);
 	});
+	globalThis.__senpiCodemodeGateObserveResource?.("handles", server, "close");
 	server.on("connection", (socket) => {
 		sockets.add(socket);
 		socket.on("close", () => sockets.delete(socket));
@@ -91,7 +97,11 @@ async function handleRequest(
 		return;
 	}
 	const auth = parseBearerToken(request.headers.authorization);
-	if (!auth || !verifyBridgeToken(token, auth).ok) {
+	if (
+		route !== "/permission_check" &&
+		route !== "/kill_guard_check" &&
+		(!auth || !verifyBridgeToken(token, auth).ok)
+	) {
 		sendJson(response, 401, { ok: false, error: transportError("unauthorized", "Bridge authorization failed") });
 		return;
 	}
@@ -99,6 +109,30 @@ async function handleRequest(
 	const parsed = await readJsonBody(request, options.bodyLimitBytes ?? DEFAULT_BODY_LIMIT_BYTES);
 	if (!parsed.ok) {
 		sendJson(response, parsed.status, { ok: false, error: transportError(parsed.code, parsed.message) });
+		return;
+	}
+	if (route === "/permission_check") {
+		try {
+			sendJson(response, 200, { ok: true, value: await permissionCheck(parsed.value) });
+		} catch (error) {
+			sendJson(response, 200, { ok: false, error: bridgeError(error) });
+		}
+		return;
+	}
+
+	if (route === "/kill_guard_check") {
+		if (options.onKillGuardCheck === undefined) {
+			sendJson(response, 404, {
+				ok: false,
+				error: transportError("not_found", "The kill guard is off for this bridge"),
+			});
+			return;
+		}
+		try {
+			sendJson(response, 200, { ok: true, value: await options.onKillGuardCheck(parsed.value) });
+		} catch (error) {
+			sendJson(response, 200, { ok: false, error: bridgeError(error) });
+		}
 		return;
 	}
 
@@ -131,7 +165,13 @@ async function dispatchCall(body: unknown, options: BridgeServerOptions, signal:
 	try {
 		return {
 			ok: true,
-			value: await options.onCall({ callId: body.callId, toolName: body.toolName, args: body.args, signal }),
+			value: await options.onCall({
+				callId: body.callId,
+				...(typeof body.cellToken === "string" ? { cellToken: body.cellToken } : {}),
+				toolName: body.toolName,
+				args: body.args,
+				signal,
+			}),
 		};
 	} catch (error) {
 		return { ok: false, error: bridgeError(error) };
@@ -200,7 +240,14 @@ function parseEmitEvent(value: unknown): { ok: true; event: BridgeHttpEmitEvent 
 
 function routeFromUrl(rawUrl: string): Route | undefined {
 	const path = new URL(rawUrl, "http://127.0.0.1").pathname;
-	if (path === "/call" || path === "/emit" || path === "/completion") return path;
+	if (
+		path === "/call" ||
+		path === "/emit" ||
+		path === "/completion" ||
+		path === "/permission_check" ||
+		path === "/kill_guard_check"
+	)
+		return path;
 	return undefined;
 }
 
@@ -212,12 +259,22 @@ function parseBearerToken(header: string | undefined): string | undefined {
 
 function sendJson(response: ServerResponse, status: number, body: JsonReply): void {
 	if (response.destroyed) return;
-	response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-	response.end(JSON.stringify(body));
+	const encoded = JSON.stringify(body);
+	response.writeHead(status, {
+		"content-type": "application/json; charset=utf-8",
+		"content-length": Buffer.byteLength(encoded),
+	});
+	response.end(encoded);
 }
 
 function bridgeError(error: unknown): BridgeError {
-	if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
+	if (error instanceof Error)
+		return {
+			name: error.name,
+			message: error.message,
+			stack: error.stack,
+			...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+		};
 	return { message: String(error) };
 }
 

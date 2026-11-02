@@ -1,9 +1,8 @@
 import type { ByteConnectionAcceptor } from "./connection.ts";
 
-/** A transport listener that supplies ordered byte connections to PiServer. */
-export interface PiServerListener {
-	/** Human-readable bound address after startup, when the transport has one. */
-	readonly address?: string;
+/** Supplies established byte connections after any required transport authentication. */
+export interface ServerListener {
+	/** Starts listening and passes authorized connections to accept. */
 	start(accept: ByteConnectionAcceptor): Promise<void>;
 	close(): Promise<void>;
 }

@@ -2,12 +2,18 @@ import {
 	isExactVersionSpec,
 	packageDependencies,
 	packageNameFromLockPath,
+	registryMetadataError,
 	resolveExternalDependency,
 } from "./install-lock-utils.mjs";
 
 export function validateGeneratedFiles(options) {
-	const { installerPackageJson, installLock, internalNames, internalPackagePrefixes, allowedInstallScriptPackages } =
-		options;
+	const {
+		installerPackageJson,
+		installLock,
+		internalNames,
+		lockstepInternalNames,
+		allowedInstallScriptPackages,
+	} = options;
 	const errors = [];
 	const rootEntry = installLock.packages[""];
 	const includedPackageNames = new Set();
@@ -42,10 +48,14 @@ export function validateGeneratedFiles(options) {
 		if (entry.dev || entry.devOptional || entry.extraneous) {
 			errors.push(`${lockPath || "root"} contains dev/extraneous metadata`);
 		}
-		if (
-			internalPackagePrefixes.some((prefix) => packageName?.startsWith(prefix)) &&
-			entry.version !== installerPackageJson.version
-		) {
+		const metadataError = registryMetadataError(lockPath, entry);
+		// Internal workspaces (lockstep + bundled-internal like chord) carry a registry tarball URL
+		// without integrity because they are staged from the local tree, not fetched; exempt every
+		// internal name, not only the CalVer-locked ones.
+		if (metadataError && !internalNames.has(packageName)) {
+			errors.push(metadataError);
+		}
+		if (packageName && lockstepInternalNames.has(packageName) && entry.version !== installerPackageJson.version) {
 			errors.push(`${lockPath} internal package version ${entry.version} does not match ${installerPackageJson.version}`);
 		}
 		if (entry.hasInstallScript) {

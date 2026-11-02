@@ -1,4 +1,4 @@
-import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type Model, normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { streamProxy } from "../src/proxy.ts";
 
@@ -15,7 +15,7 @@ const model: Model<"openai-responses"> = {
 	maxTokens: 1,
 };
 
-const context: Context = { messages: [] };
+const context = normalizeContext({ messages: [] });
 
 const usage: AssistantMessage["usage"] = {
 	input: 0,

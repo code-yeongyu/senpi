@@ -135,7 +135,7 @@ export class DaxnutsComponent implements Component {
 		if (textPhase > 0 || this.tick >= this.maxTicks) {
 			lines.push(center(t.fg("accent", "Free Kimi K2.5 via OpenCode Zen")));
 			lines.push(center(t.fg("success", '"Powered by daxnuts"')));
-			lines.push(center(t.fg("muted", "— @thdxr")));
+			lines.push(center(t.fg("muted", "(@thdxr)")));
 		} else {
 			lines.push("");
 			lines.push("");

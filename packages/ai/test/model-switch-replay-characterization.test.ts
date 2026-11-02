@@ -4,9 +4,11 @@ import { convertMessages as convertGoogleMessages } from "../src/api/google-shar
 import { convertMessages as convertCompletionMessages } from "../src/api/openai-completions.ts";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
 import type { Context } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import {
 	APPLY_PATCH_TOOL,
 	COMPLETIONS_COMPAT,
+	EMPTY_USAGE,
 	HISTORY,
 	makeModel,
 	makePatchHistory,
@@ -15,13 +17,17 @@ import {
 
 async function captureAnthropicPayload(context: Context): Promise<unknown> {
 	let payload: unknown;
-	const stream = streamAnthropic(makeModel("anthropic-messages", "anthropic", "claude-target"), context, {
-		apiKey: "fake-api-key",
-		onPayload: (candidate) => {
-			payload = candidate;
-			throw new Error("payload captured before transport");
+	const stream = streamAnthropic(
+		makeModel("anthropic-messages", "anthropic", "claude-target"),
+		normalizeContext(context),
+		{
+			apiKey: "fake-api-key",
+			onPayload: (candidate) => {
+				payload = candidate;
+				throw new Error("payload captured before transport");
+			},
 		},
-	});
+	);
 	await stream.result();
 	if (payload === undefined) {
 		throw new Error("Anthropic payload was not captured");
@@ -40,8 +46,12 @@ describe("model-switch replay characterization", () => {
 		const context: Context = { messages: HISTORY, tools: [APPLY_PATCH_TOOL] };
 
 		// When
-		const customReplay = convertResponsesMessages(model, context, new Set(["openai"]));
-		const functionReplay = convertResponsesMessages(model, { messages: HISTORY }, new Set(["openai"]));
+		const customReplay = convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]));
+		const functionReplay = convertResponsesMessages(
+			model,
+			normalizeContext({ messages: HISTORY }),
+			new Set(["openai"]),
+		);
 
 		// Then
 		expect(customReplay).toMatchObject([
@@ -66,7 +76,7 @@ describe("model-switch replay characterization", () => {
 		const context: Context = { messages: makePatchHistory("openai-completions"), tools: [APPLY_PATCH_TOOL] };
 
 		// When
-		const replay = convertResponsesMessages(model, context, new Set(["openai"]));
+		const replay = convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]));
 
 		// Then: getFreeformToolInput (openai-responses-shared.ts:123) extracts the raw patch string.
 		expect(replay).toMatchObject([
@@ -95,7 +105,7 @@ describe("model-switch replay characterization", () => {
 		};
 
 		// When
-		const replay = convertResponsesMessages(model, context, new Set(["openai"]));
+		const replay = convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]));
 
 		// Then
 		expect(replay).toMatchObject([
@@ -143,10 +153,14 @@ describe("model-switch replay characterization", () => {
 		// When
 		const withFreeform = convertResponsesMessages(
 			model,
-			{ messages: mixedMessages, tools: [APPLY_PATCH_TOOL] },
+			normalizeContext({ messages: mixedMessages, tools: [APPLY_PATCH_TOOL] }),
 			new Set(["openai"]),
 		);
-		const withoutFreeform = convertResponsesMessages(model, { messages: mixedMessages }, new Set(["openai"]));
+		const withoutFreeform = convertResponsesMessages(
+			model,
+			normalizeContext({ messages: mixedMessages }),
+			new Set(["openai"]),
+		);
 
 		// Then: edit stays a function item in both branches; only apply_patch follows the declaration.
 		expect(withFreeform).toMatchObject([
@@ -175,11 +189,14 @@ describe("model-switch replay characterization", () => {
 		// When
 		const completionReplay = convertCompletionMessages(
 			makeModel("openai-completions", "openai", "gpt-target"),
-			context,
+			normalizeContext(context),
 			COMPLETIONS_COMPAT,
 		);
 		const anthropicPayload = await captureAnthropicPayload(context);
-		const googleReplay = convertGoogleMessages(makeModel("google-generative-ai", "google", "gemini-target"), context);
+		const googleReplay = convertGoogleMessages(
+			makeModel("google-generative-ai", "google", "gemini-target"),
+			normalizeContext(context),
+		);
 
 		// Then
 		expect(completionReplay).toMatchObject([
@@ -211,5 +228,100 @@ describe("model-switch replay characterization", () => {
 			{ role: "model", parts: [{ functionCall: { name: "apply_patch", args: { input: PATCH } } }] },
 			{ role: "user", parts: [{ functionResponse: { name: "apply_patch", response: { output: "Done!" } } }] },
 		]);
+	});
+
+	it("normalizes Kimi tool call ids for Anthropic-backed OpenAI gateways", () => {
+		// Given: this reproduces ~/.omo session 019fef2f-0c70-7074-a03a-f47d29b7a7ec,
+		// where Kimi stored `eval:18` before the conversation switched to OpenGateway Fable.
+		const context: Context = {
+			messages: [
+				{
+					role: "assistant",
+					content: [
+						{ type: "text", text: "Inspecting the session." },
+						{ type: "toolCall", id: "eval:18", name: "eval", arguments: { code: "1 + 1" } },
+					],
+					api: "openai-completions",
+					provider: "apitopia",
+					model: "kimi-k3-unlocked",
+					usage: EMPTY_USAGE,
+					stopReason: "toolUse",
+					timestamp: 1,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "eval:18",
+					toolName: "eval",
+					content: [{ type: "text", text: "2" }],
+					isError: false,
+					timestamp: 2,
+				},
+			],
+		};
+
+		// When
+		const replay = convertCompletionMessages(
+			makeModel("openai-completions", "opengateway", "anthropic/claude-fable-5"),
+			normalizeContext(context),
+			COMPLETIONS_COMPAT,
+		);
+
+		// Then
+		const assistant = replay[0];
+		const toolResult = replay[1];
+		if (assistant?.role !== "assistant" || assistant.tool_calls?.[0] === undefined || toolResult?.role !== "tool") {
+			throw new Error("unexpected OpenAI completions replay shape");
+		}
+		const normalizedId = assistant.tool_calls[0].id;
+		expect(normalizedId).toMatch(/^[a-zA-Z0-9_-]+$/);
+		expect(normalizedId.length).toBeLessThanOrEqual(40);
+		expect(normalizedId).not.toContain(":");
+		expect(toolResult.tool_call_id).toBe(normalizedId);
+	});
+
+	it("normalizes invalid same-model OpenAI completions tool call ids", () => {
+		// Given: a resumed OpenGateway conversation can contain an invalid ID from an
+		// older client even when its stored provider/model already match the target.
+		const context: Context = {
+			messages: [
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", id: "eval:18", name: "eval", arguments: { code: "1 + 1" } }],
+					api: "openai-completions",
+					provider: "opengateway",
+					model: "anthropic/claude-fable-5",
+					usage: EMPTY_USAGE,
+					stopReason: "toolUse",
+					timestamp: 1,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "eval:18",
+					toolName: "eval",
+					content: [{ type: "text", text: "2" }],
+					isError: false,
+					timestamp: 2,
+				},
+			],
+		};
+
+		// When
+		const replay = convertCompletionMessages(
+			makeModel("openai-completions", "opengateway", "anthropic/claude-fable-5"),
+			normalizeContext(context),
+			COMPLETIONS_COMPAT,
+		);
+
+		// Then
+		const assistant = replay[0];
+		const toolResult = replay[1];
+		if (assistant?.role !== "assistant" || assistant.tool_calls?.[0] === undefined || toolResult?.role !== "tool") {
+			throw new Error("unexpected OpenAI completions replay shape");
+		}
+		const normalizedId = assistant.tool_calls[0].id;
+		expect(normalizedId).toMatch(/^[a-zA-Z0-9_-]+$/);
+		expect(normalizedId.length).toBeLessThanOrEqual(40);
+		expect(normalizedId).not.toContain(":");
+		expect(toolResult.tool_call_id).toBe(normalizedId);
 	});
 });

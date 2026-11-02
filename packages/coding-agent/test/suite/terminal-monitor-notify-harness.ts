@@ -73,12 +73,13 @@ export function createNotifier(
 			maxLinesPerInjection: number;
 			maxCharsPerInjection: number;
 			wakeBudget: number;
+			wakesPerHour: number;
 		}>;
 	} = {},
 ) {
 	const scheduler = new FakeScheduler();
 	const sent: SentMessage[] = [];
-	const pauseMonitors = vi.fn(() => ["bash_budget"]);
+	const pauseMonitors = vi.fn((_ids: readonly string[]) => ["bash_budget"]);
 	const notifier = new MonitorNotifier({
 		sendMessage: (message, options) => sent.push({ message, options }),
 		getContext: () =>
@@ -93,6 +94,7 @@ export function createNotifier(
 			maxLinesPerInjection: 50,
 			maxCharsPerInjection: 4096,
 			wakeBudget: 5,
+			wakesPerHour: 12,
 			...overrides.settings,
 		}),
 		pauseMonitors,

@@ -1,8 +1,10 @@
+import type { ConverseStreamCommandInput } from "@aws-sdk/client-bedrock-runtime";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 
 const bedrockMock = vi.hoisted(() => ({
 	constructorCalls: [] as Array<Record<string, unknown>>,
+	streamEvents: undefined as unknown[] | undefined,
 }));
 
 vi.mock("@aws-sdk/client-bedrock-runtime", () => {
@@ -13,7 +15,16 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 			bedrockMock.constructorCalls.push(config);
 		}
 
-		send(): Promise<never> {
+		send(): Promise<unknown> {
+			if (bedrockMock.streamEvents) {
+				const events = bedrockMock.streamEvents;
+				return Promise.resolve({
+					$metadata: { httpStatusCode: 200 },
+					stream: (async function* () {
+						yield* events;
+					})(),
+				});
+			}
 			return Promise.reject(new Error("mock send"));
 		}
 	}
@@ -46,14 +57,35 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context, Message } from "../src/types.ts";
+import type { Context, Message, Model, Tool } from "../src/types.ts";
+import { resolveRootObjectSchema } from "../src/utils/tool-schema-compat.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
-const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
+const baseModel: Model<"bedrock-converse-stream"> = {
+	id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+	name: "Claude Sonnet 4.5 (US)",
+	api: "bedrock-converse-stream",
+	provider: "amazon-bedrock",
+	baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+	reasoning: true,
+	input: ["text", "image"],
+	cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+	contextWindow: 200000,
+	maxTokens: 64000,
+	compat: { supportsStrictMode: true },
+};
+
+const novaModel: Model<"bedrock-converse-stream"> = {
+	...baseModel,
+	id: "amazon.nova-lite-v1:0",
+	name: "Nova Lite",
+	reasoning: false,
+	compat: undefined,
+};
 
 async function capturePayload(context: Context, model = baseModel): Promise<unknown> {
 	let capturedPayload: unknown;
-	const s = streamBedrock(model, context, {
+	const s = streamBedrock(model, normalizeContext(context), {
 		cacheRetention: "none",
 		signal: AbortSignal.abort(),
 		onPayload: (payload) => {
@@ -85,13 +117,62 @@ describe("Bedrock constrained sampling", () => {
 		expect(toolConfig.tools[0].toolSpec.strict).toBe(true);
 
 		context.tools![0].constrainedSampling = { type: "json_schema", strict: "prefer" };
-		const novaPayload = await capturePayload(context, getModel("amazon-bedrock", "amazon.nova-lite-v1:0"));
+		const novaPayload = await capturePayload(context, novaModel);
 		const novaToolConfig = (
 			novaPayload as {
 				toolConfig: { tools: Array<{ toolSpec: { strict?: boolean } }> };
 			}
 		).toolConfig;
 		expect(novaToolConfig.tools[0].toolSpec.strict).toBeUndefined();
+	});
+});
+
+describe("Bedrock tool arguments", () => {
+	it("preserves empty property names in streamed tool arguments", async () => {
+		bedrockMock.streamEvents = [
+			{ messageStart: { role: "assistant" } },
+			{
+				contentBlockStart: {
+					contentBlockIndex: 0,
+					start: { toolUse: { toolUseId: "tool-1", name: "edit" } },
+				},
+			},
+			{
+				contentBlockDelta: {
+					contentBlockIndex: 0,
+					delta: {
+						toolUse: {
+							input: '{"path":"/workspace/foobar/file.js","edits":[{"oldText":"first","newText":"updated first"},{"oldText":"second","newText":"updated second","":""}]}',
+						},
+					},
+				},
+			},
+			{ contentBlockStop: { contentBlockIndex: 0 } },
+			{ messageStop: { stopReason: "tool_use" } },
+		];
+
+		try {
+			const message = await streamBedrock(
+				baseModel,
+				normalizeContext({ messages: [{ role: "user", content: "Use the tool", timestamp: Date.now() }] }),
+				{ cacheRetention: "none" },
+			).result();
+
+			expect(message.content[0]).toEqual({
+				type: "toolCall",
+				id: "tool-1",
+				name: "edit",
+				arguments: {
+					path: "/workspace/foobar/file.js",
+					edits: [
+						{ oldText: "first", newText: "updated first" },
+						{ oldText: "second", newText: "updated second", "": "" },
+					],
+				},
+			});
+		} finally {
+			bedrockMock.streamEvents = undefined;
+		}
 	});
 });
 
@@ -271,6 +352,64 @@ describe("bedrock convertMessages skips unknown content types", () => {
 		const p = payload as { messages: Array<{ role: string; content: unknown[] }> };
 		expect(p.messages).toHaveLength(0);
 	});
+
+	it("removes empty property names only from replayed Bedrock input", async () => {
+		const toolArguments: { path: string; edits: Array<Record<string, string>> } = {
+			path: "/workspace/foobar/file.js",
+			edits: [
+				{ oldText: "first", newText: "updated first" },
+				{ oldText: "second", newText: "updated second", "": "" },
+			],
+		};
+		const messages: Message[] = [
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: "tool-1",
+						name: "edit",
+						arguments: toolArguments,
+					},
+				],
+				api: "bedrock-converse-stream",
+				provider: "amazon-bedrock",
+				model: baseModel.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: Date.now(),
+			},
+			{
+				role: "toolResult",
+				toolCallId: "tool-1",
+				toolName: "edit",
+				content: [{ type: "text", text: "done" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+			{ role: "user", content: "Continue", timestamp: Date.now() },
+		];
+
+		const payload = await capturePayload({ messages });
+		const p = payload as {
+			messages: Array<{ content: Array<{ toolUse?: { input: unknown } }> }>;
+		};
+		expect(p.messages[0].content[0].toolUse?.input).toEqual({
+			path: "/workspace/foobar/file.js",
+			edits: [
+				{ oldText: "first", newText: "updated first" },
+				{ oldText: "second", newText: "updated second" },
+			],
+		});
+		expect(toolArguments.edits[1]).toEqual({ oldText: "second", newText: "updated second", "": "" });
+	});
 });
 
 describe("Bedrock foreign tool call id normalization", () => {
@@ -342,4 +481,71 @@ describe("Bedrock foreign tool call id normalization", () => {
 			expect(id).toMatch(/^[a-zA-Z0-9_-]+$/);
 		}
 	});
+});
+
+async function captureToolSchema(parameters: Tool["parameters"], strict = false) {
+	const original = structuredClone(parameters);
+	const tool: Tool = { name: "fixture", description: "Fixture", parameters };
+	if (strict) tool.constrainedSampling = { type: "json_schema", strict: "require" };
+	const payload = (await capturePayload({
+		messages: [{ role: "user", content: "test", timestamp: 0 }],
+		tools: [tool],
+	})) as ConverseStreamCommandInput;
+	expect(parameters).toEqual(original);
+	const spec = payload.toolConfig?.tools?.[0]?.toolSpec;
+	if (!spec) throw new Error("No tool spec captured");
+	return { schema: spec.inputSchema?.json as Record<string, unknown>, strict: spec.strict };
+}
+
+const schemaBranches = [
+	{
+		type: "object",
+		properties: { count: { type: "integer", minimum: 1 }, left: { type: "string", description: "Left value" } },
+		required: ["left"],
+	},
+	{
+		type: "object",
+		properties: { count: { type: "integer", maximum: 5 }, right: { type: "integer" } },
+		required: ["right"],
+	},
+];
+
+// #1947: the real request builder must emit object roots without dropping branch constraints.
+it.each([
+	["anyOf", ["common"], "anyOf"],
+	["oneOf", ["common"], "anyOf"],
+	["allOf", ["common", "left", "right"], "allOf"],
+] as const)("normalizes Bedrock root %s", async (combiner, required, propertyCombiner) => {
+	const parameters = {
+		...(combiner === "allOf" ? { type: "object" } : {}),
+		properties: { common: { type: "boolean" } },
+		required: ["common"],
+		[combiner]: schemaBranches,
+	};
+	if (combiner === "allOf") expect(resolveRootObjectSchema(parameters)).toEqual(parameters);
+	const { schema } = await captureToolSchema(parameters);
+	expect(schema.type).toBe("object");
+	expect(schema).not.toHaveProperty(combiner);
+	expect(schema.properties).toEqual({
+		common: { type: "boolean" },
+		left: schemaBranches[0].properties.left,
+		right: schemaBranches[1].properties.right,
+		count: { [propertyCombiner]: schemaBranches.map((branch) => branch.properties.count) },
+	});
+	expect(schema.required).toEqual(expect.arrayContaining([...required]));
+	expect(schema.required).toHaveLength(required.length);
+});
+
+it("adds Bedrock's missing root type without rewriting nested schemas", async () => {
+	const parameters = { properties: { value: { anyOf: [{ type: "string" }, { type: "number" }] } } };
+	expect((await captureToolSchema(parameters)).schema).toEqual({ type: "object", ...parameters });
+});
+
+it("normalizes the Bedrock root before required strict sampling", async () => {
+	const { schema, strict } = await captureToolSchema({ anyOf: schemaBranches }, true);
+	expect(strict).toBe(true);
+	expect(schema.type).toBe("object");
+	expect(schema).not.toHaveProperty("anyOf");
+	expect(schema.required).toEqual(expect.arrayContaining(["count", "left", "right"]));
+	expect(schema.additionalProperties).toBe(false);
 });

@@ -1,6 +1,7 @@
 export type SearchProvider =
 	| "exa"
 	| "tavily"
+	| "serpdive"
 	| "brave"
 	| "duckduckgo-html"
 	| "deepseek"
@@ -9,10 +10,31 @@ export type SearchProvider =
 	| "z-ai"
 	| "openai"
 	| "codex"
+	| "chatgpt-subscription"
+	| "google"
 	| "anthropic"
 	| "perplexity"
 	| "xai"
-	| "kimi";
+	| "kimi"
+	| "kagi"
+	| "startpage"
+	| "mojeek"
+	| "ecosia"
+	| "google-html"
+	| "exa-mcp"
+	| "searxng"
+	| "keenable"
+	| "parallel"
+	| "firecrawl"
+	| "openrouter"
+	| "public"
+	| "jina"
+	| "tinyfish"
+	| "synthetic"
+	| "ollama";
+
+/** Why a keyless engine refused a search; each reason puts the engine on a cooldown. */
+export type SearchBlockReason = "challenge" | "rate_limited" | "forbidden" | "network";
 
 export type SearchContextSize = "low" | "medium" | "high";
 export type CodexSearchMode = "cached" | "live";
@@ -23,6 +45,8 @@ export interface SearchProviderConfig {
 	provider: SearchProvider;
 	apiKey?: string;
 	baseUrl?: string;
+	/** Extra request headers the session credential requires; resolved from the model registry, never read from websearch.json. */
+	headers?: Record<string, string>;
 	searchEngineId?: string;
 	maxResults?: number;
 	model?: string;
@@ -37,12 +61,14 @@ export interface SearchProviderConfig {
 export interface SearchProviderEntry extends SearchProviderConfig {
 	priority?: number;
 	weight?: number;
+	fallbackModel?: string;
 }
 
 export interface WebsearchConfig {
 	strategy: RoutingStrategy;
 	fallback: boolean;
 	auto: boolean;
+	nativeModel?: string;
 	providers: SearchProviderEntry[];
 }
 
@@ -56,6 +82,8 @@ export interface SearchUserLocation {
 export interface SearchRequest {
 	query: string;
 	maxResults: number;
+	/** Set when a call chose its own count, so it outranks a provider entry's `maxResults`. */
+	maxResultsFromCall?: boolean;
 	allowedDomains?: string[];
 	blockedDomains?: string[];
 }
@@ -67,6 +95,8 @@ export interface BuiltSearchRequest {
 		headers: Record<string, string>;
 	};
 	body?: JsonObject;
+	/** A pre-encoded `application/x-www-form-urlencoded` body, sent instead of `body`. */
+	form?: string;
 }
 
 export interface SearchResultItem {
@@ -81,6 +111,7 @@ export interface SearchResultItem {
 export interface SearchDetails {
 	provider: SearchProvider;
 	entryId?: string;
+	model?: string;
 	query: string;
 	results: SearchResultItem[];
 	durationMs: number;
@@ -89,6 +120,9 @@ export interface SearchDetails {
 	attempts?: SearchAttempt[];
 	answer?: string;
 	error?: string;
+	blocked?: SearchBlockReason;
+	/** Seconds from a `Retry-After` response header. */
+	retryAfterSeconds?: number;
 }
 
 export interface SearchProgressDetails {
@@ -122,9 +156,13 @@ export type SearchRenderDetails = SearchDetails | SearchProgressDetails | Search
 export interface SearchAttempt {
 	provider: SearchProvider;
 	entryId?: string;
+	model?: string;
 	durationMs: number;
 	resultsCount: number;
 	error?: string;
+	blocked?: SearchBlockReason;
+	/** The engine was not queried because it is cooling down after an earlier block. */
+	skipped?: boolean;
 }
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];

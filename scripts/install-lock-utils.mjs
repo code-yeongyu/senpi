@@ -1,5 +1,20 @@
 import { posix } from "node:path";
 
+/**
+ * The indentation a lockfile already uses. Every lock-class artifact here is tab-indented and
+ * `npm install --package-lock-only` preserves whatever indent it finds, so a generator that
+ * re-serializes with a fixed width reformats the whole file and buries the dependency delta
+ * under thousands of whitespace-only lines.
+ */
+export function detectJsonIndent(source, fallback = "\t") {
+	const match = /^\{\r?\n([ \t]+)"/.exec(source);
+	return match ? match[1] : fallback;
+}
+
+export function serializeLockfile(lockfile, indent) {
+	return `${JSON.stringify(lockfile, null, indent)}\n`;
+}
+
 export function packageDependencies(entry) {
 	return {
 		...(entry.dependencies ?? {}),
@@ -98,6 +113,16 @@ export function packageNameFromLockPath(lockPath) {
 export function registryTarballUrl(packageName, version) {
 	const tarballName = packageName.startsWith("@") ? packageName.split("/")[1] : packageName;
 	return `https://registry.npmjs.org/${packageName}/-/${tarballName}-${version}.tgz`;
+}
+
+export function registryMetadataError(lockPath, entry) {
+	if (!lockPath.includes("node_modules/") || entry.inBundle || entry.link) return undefined;
+	if (typeof entry.resolved !== "string") return `${lockPath} is missing resolved registry metadata`;
+	if (!entry.resolved.startsWith("https://registry.npmjs.org/")) {
+		return `${lockPath} does not resolve from the npm registry: ${entry.resolved}`;
+	}
+	if (typeof entry.integrity !== "string") return `${lockPath} is missing integrity registry metadata`;
+	return undefined;
 }
 
 export function isExactVersionSpec(spec) {

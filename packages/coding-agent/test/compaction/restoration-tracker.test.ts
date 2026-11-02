@@ -18,8 +18,13 @@ import type {
 	ToolCallEvent,
 	ToolCallEventResult,
 } from "../../src/core/extensions/index.ts";
+import type { HistoryReducer } from "../../src/core/session-history-reduce.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { reduceEntries } from "../helpers/reduce-entries.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 interface RestorationGateHarness {
 	toolCall: ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
@@ -69,6 +74,7 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 	];
 	const sessionManager = {
 		getEntries: () => entries,
+		reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(entries, reducer),
 		getBranch: () => entries,
 	} as ExtensionContext["sessionManager"];
 
@@ -79,7 +85,7 @@ function createGateExtensionContext(settings: CompactionSettings): ExtensionCont
 			notify: vi.fn(),
 		}) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
@@ -128,6 +134,7 @@ function createAcceptedCompactEvent(): SessionCompactEvent {
 function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 	return {
 		type: "before_agent_start",
+		trigger: "prompt",
 		prompt: "continue",
 		systemPrompt: "base prompt",
 		systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],

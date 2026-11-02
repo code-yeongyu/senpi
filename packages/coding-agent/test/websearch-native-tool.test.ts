@@ -7,9 +7,12 @@ import type {
 	SearchProgressDetails,
 	WebsearchConfig,
 } from "../src/core/extensions/builtin/websearch/websearch/types.ts";
-import type { ExtensionContext } from "../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../src/core/extensions/types.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { createInMemoryExtensionSessionSettings } from "./helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "./support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 function successfulSearchResponse(): Response {
 	return new Response(
@@ -41,7 +44,7 @@ function toolContext(model: Model<Api> | undefined, modelRegistry: ModelRegistry
 		mode: "print",
 		hasUI: false,
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		sessionManager: Object.create(null) as ExtensionContext["sessionManager"],
 		modelRegistry,
 		model,
@@ -110,7 +113,7 @@ describe("vendored websearch native tool", () => {
 					progress.push(update.details);
 				}
 			},
-			toolContext(activeModel, modelRegistry),
+			toolContext(activeModel, modelRegistry) as ExtensionToolContext,
 		);
 
 		// then
@@ -147,7 +150,7 @@ describe("vendored websearch native tool", () => {
 					progress.push(update.details);
 				}
 			},
-			toolContext(activeModel, modelRegistry),
+			toolContext(activeModel, modelRegistry) as ExtensionToolContext,
 		);
 
 		// then
@@ -183,7 +186,7 @@ describe("vendored websearch native tool", () => {
 			{ query: "should not search" },
 			controller.signal,
 			undefined,
-			toolContext(activeModel, modelRegistry),
+			toolContext(activeModel, modelRegistry) as ExtensionToolContext,
 		);
 
 		// then
@@ -216,7 +219,7 @@ describe("vendored websearch native tool", () => {
 			{ query: "should stop" },
 			controller.signal,
 			undefined,
-			toolContext(activeModel, modelRegistry),
+			toolContext(activeModel, modelRegistry) as ExtensionToolContext,
 		);
 		await authStarted;
 		controller.abort(abortReason);

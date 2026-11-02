@@ -1,13 +1,71 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
-import { afterEach, describe, expect, it } from "vitest";
+import type { Component, TUI } from "@earendil-works/pi-tui";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { estimateTokens } from "../../src/core/compaction/index.ts";
 import btwExtension from "../../src/core/extensions/builtin/btw/index.ts";
 import {
 	buildSideQueryContext,
+	getSideQueryPromptContextWindow,
 	runSideQuery,
 	SIDE_QUERY_INSTRUCTION,
 } from "../../src/core/extensions/builtin/btw/side-query.ts";
+import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
+import { initTheme, type Theme } from "../../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../../src/utils/ansi.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
+
+type WidgetFactory = (tui: TUI, theme: Theme) => Component & { dispose?(): void };
+
+/** Installs a minimal TUI-mode UI context so /btw takes its widget branch instead of notify. */
+function installTuiHarness(harness: Harness) {
+	const widgets: Array<{ key: string; content: unknown }> = [];
+	const components: Component[] = [];
+	const notifications: Array<{ message: string; type: string | undefined }> = [];
+	const inputHandlers = new Set<(data: string) => unknown>();
+	const fakeTui = { requestRender: () => {} } as unknown as TUI;
+	const fakeTheme = {
+		fg: (_name: string, text: string) => text,
+		bold: (text: string) => text,
+	} as unknown as Theme;
+	const ui = {
+		notify: (message: string, type?: string) => {
+			notifications.push({ message, type });
+		},
+		setWidget: (key: string, content: unknown) => {
+			widgets.push({ key, content });
+			if (typeof content === "function") components.push((content as WidgetFactory)(fakeTui, fakeTheme));
+		},
+		onTerminalInput: (handler: (data: string) => unknown) => {
+			inputHandlers.add(handler);
+			return () => {
+				inputHandlers.delete(handler);
+			};
+		},
+	} as unknown as ExtensionUIContext;
+	harness.session.extensionRunner.setUIContext(ui, "tui");
+	return {
+		widgets,
+		components,
+		notifications,
+		feedInput: (data: string) => {
+			for (const handler of [...inputHandlers]) handler(data);
+		},
+		get inputHandlerCount() {
+			return inputHandlers.size;
+		},
+	};
+}
+
+function estimatePromptTokens(context: {
+	systemPrompt?: string;
+	messages: Parameters<typeof estimateTokens>[0][];
+}): number {
+	return (
+		estimateTokens({ role: "user", content: context.systemPrompt ?? "", timestamp: 0 }) +
+		context.messages.reduce((total, message) => total + estimateTokens(message), 0)
+	);
+}
 
 describe("buildSideQueryContext", () => {
 	it("appends the side instruction to the system prompt and the question as the final user message", () => {
@@ -29,6 +87,105 @@ describe("buildSideQueryContext", () => {
 		const mutable = [...history];
 		buildSideQueryContext({ systemPrompt: "BASE", history: mutable, question: "q" });
 		expect(mutable).toHaveLength(1);
+	});
+
+	it("bounds an oversized snapshot to the selected model prompt window", () => {
+		const promptContextWindow = 4_500;
+		const oldestMarker = `oldest-${"a".repeat(4_000)}`;
+		const newestMarker = `newest-${"b".repeat(4_000)}`;
+		const input = {
+			systemPrompt: "BASE",
+			history: [
+				{ role: "user" as const, content: oldestMarker, timestamp: 1 },
+				fauxAssistantMessage("old answer", { timestamp: 2 }),
+				{ role: "user" as const, content: newestMarker, timestamp: 3 },
+				fauxAssistantMessage("new answer", { timestamp: 4 }),
+			],
+			question: "what is newest?",
+			promptContextWindow,
+		};
+
+		const context = buildSideQueryContext(input);
+
+		expect(estimatePromptTokens(context)).toBeLessThanOrEqual(promptContextWindow);
+		expect(context.messages.some((message) => getMessageText(message) === oldestMarker)).toBe(false);
+		expect(context.messages.some((message) => getMessageText(message) === newestMarker)).toBe(true);
+		expect(getMessageText(context.messages.at(-1))).toBe("what is newest?");
+	});
+
+	it("keeps mandatory prompt content and valid tool pairs at the budget boundary", () => {
+		const promptContextWindow = 900;
+		const question = "keep this exact question";
+		const context = buildSideQueryContext({
+			systemPrompt: `BASE-${"s".repeat(800)}`,
+			history: [
+				{ role: "user", content: `old-${"o".repeat(2_000)}`, timestamp: 1 },
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "notes.md" } }],
+					api: "faux",
+					provider: "faux",
+					model: "faux-1",
+					usage: {
+						input: 125,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 125,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call-1",
+					toolName: "read",
+					content: [{ type: "text", text: `result-${"r".repeat(2_000)}` }],
+					isError: false,
+					timestamp: 3,
+				},
+				{ role: "user", content: "newest context", timestamp: 4 },
+			],
+			question,
+			promptContextWindow,
+		});
+
+		expect(context.systemPrompt).toContain("BASE-");
+		expect(context.systemPrompt).toContain(SIDE_QUERY_INSTRUCTION);
+		expect(getMessageText(context.messages.at(-1))).toBe(question);
+		expect(estimatePromptTokens(context)).toBeLessThanOrEqual(promptContextWindow);
+		const toolCallIds = new Set(
+			context.messages.flatMap((message) =>
+				message.role === "assistant"
+					? message.content.filter((part) => part.type === "toolCall").map((part) => part.id)
+					: [],
+			),
+		);
+		expect(
+			context.messages
+				.filter((message) => message.role === "toolResult")
+				.every((message) => toolCallIds.has(message.toolCallId)),
+		).toBe(true);
+	});
+
+	it("counts a large system prompt against the side-query budget", () => {
+		const promptContextWindow = 14_000;
+		const context = buildSideQueryContext({
+			systemPrompt: `BASE-${"s".repeat(10_000)}`,
+			history: [{ role: "user", content: `old-${"o".repeat(6_000)}`, timestamp: 1 }],
+			question: "keep the newest question",
+			promptContextWindow,
+		});
+
+		expect(estimatePromptTokens(context)).toBeLessThanOrEqual(promptContextWindow);
+		expect(getMessageText(context.messages.at(-1))).toBe("keep the newest question");
+	});
+
+	it("reserves at most half the context window for side-query output", () => {
+		expect(getSideQueryPromptContextWindow({ contextWindow: 2_000, maxTokens: 256 })).toBe(1_744);
+		expect(getSideQueryPromptContextWindow({ contextWindow: 2_000, maxTokens: 4_000 })).toBe(1_000);
+		expect(getSideQueryPromptContextWindow({ contextWindow: 2_000, maxTokens: 0 })).toBe(2_000);
 	});
 });
 
@@ -66,7 +223,8 @@ describe("runSideQuery", () => {
 		expect(result.replyText).toBe("the answer is 4");
 		expect(deltas.join("")).toBe("the answer is 4");
 		const call = faux.getCallLog().at(-1);
-		expect(call?.context.tools).toEqual([]);
+		// The faux call log replays tools from the transcript and omits them when none are declared (L2a decision 56).
+		expect(call?.context.tools).toBeUndefined();
 		expect(call?.options?.sessionId).toMatch(/^session-1:btw:/);
 	});
 
@@ -104,6 +262,7 @@ describe("runSideQuery", () => {
 					sessionId: "session-1",
 					establishmentTimeoutMs: 25,
 					streamFn: ((_model: unknown, _context: unknown, options?: { signal?: AbortSignal }) =>
+						// oxlint-disable-next-line eslint/require-yield -- the generator throws before its first yield by design
 						(async function* () {
 							await new Promise((_, reject) => {
 								options?.signal?.addEventListener("abort", () => reject(options.signal?.reason));
@@ -163,11 +322,27 @@ describe("/btw extension command", () => {
 
 		expect(harness.session.messages.length).toBe(messagesBefore);
 		const sideCall = harness.faux.getCallLog().at(-1);
-		expect(sideCall?.context.tools).toEqual([]);
+		// The faux call log replays tools from the transcript and omits them when none are declared (L2a decision 56).
+		expect(sideCall?.context.tools).toBeUndefined();
 		const sideMessages = sideCall?.context.messages ?? [];
 		expect(getMessageText(sideMessages.at(-1))).toBe("what did I just ask?");
 		expect(sideMessages.some((message) => getMessageText(message) === "main question")).toBe(true);
 		expect(sideCall?.context.systemPrompt).toContain(SIDE_QUERY_INSTRUCTION);
+	});
+
+	it("sends the side question to the credential's own API host (#8662)", async () => {
+		const harness = await setup();
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+		vi.spyOn(harness.session.modelRegistry, "getApiKeyAndHeaders").mockResolvedValue({
+			ok: true,
+			apiKey: "account-token",
+			baseUrl: "https://api.business.githubcopilot.com",
+		});
+		const streamSimple = vi.spyOn(harness.session.modelRegistry.modelRuntime, "streamSimple");
+
+		await harness.session.prompt("/btw which host?");
+
+		expect(streamSimple.mock.calls.at(-1)?.[0].baseUrl).toBe("https://api.business.githubcopilot.com");
 	});
 
 	it("shows usage feedback instead of calling the provider when the question is empty", async () => {
@@ -278,5 +453,144 @@ describe("/btw extension command", () => {
 		expect(firstAborted).toBe(true);
 		const lastCall = harness.faux.getCallLog().at(-1);
 		expect(getMessageText(lastCall?.context.messages.at(-1))).toBe("second");
+	});
+
+	it.each([
+		["raw", "\x1b"],
+		["kitty CSI-u", "\x1b[27u"],
+	])("dismisses a settled panel on %s Escape", async (_label, escapeSequence) => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+
+		await harness.session.prompt("/btw settled question");
+		expect(tui.widgets.map((widget) => widget.key)).toEqual(["btw"]);
+		expect(tui.inputHandlerCount).toBe(1);
+
+		tui.feedInput(escapeSequence);
+
+		expect(tui.widgets.at(-1)).toEqual({ key: "btw", content: undefined });
+		expect(tui.inputHandlerCount).toBe(0);
+	});
+
+	it("ignores a kitty Escape key release", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+
+		await harness.session.prompt("/btw settled question");
+		expect(tui.widgets.map((widget) => widget.key)).toEqual(["btw"]);
+		expect(tui.inputHandlerCount).toBe(1);
+
+		// Kitty CSI-u emits a release event after every press; a release whose
+		// press was consumed elsewhere must not dismiss the panel or cancel the query.
+		tui.feedInput("\x1b[27;1:3u");
+
+		expect(tui.widgets).toHaveLength(1);
+		expect(tui.inputHandlerCount).toBe(1);
+	});
+
+	it("renders the side answer as Markdown instead of raw syntax", async () => {
+		initTheme("dark");
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("## Steps\n\n- **bold** item with `code`")]);
+
+		await harness.session.prompt("/btw format check");
+
+		const lines =
+			tui.components
+				.at(-1)
+				?.render(80)
+				.map((line) => stripAnsi(line).trim()) ?? [];
+		expect(lines).toContain("btw: format check");
+		expect(lines).toContain("Steps");
+		expect(lines).toContain("- bold item with code");
+		expect(lines).toContain("(/btw or Esc to dismiss; clears on next message)");
+	});
+
+	it("cancels an in-flight side query on Escape while the main turn keeps streaming", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		let sideAborted = false;
+		let mainEntered!: () => void;
+		let sideEntered!: () => void;
+		let releaseMain!: () => void;
+		const mainInFlight = new Promise<void>((resolve) => {
+			mainEntered = resolve;
+		});
+		const sideInFlight = new Promise<void>((resolve) => {
+			sideEntered = resolve;
+		});
+		const mainGate = new Promise<void>((resolve) => {
+			releaseMain = resolve;
+		});
+		harness.setResponses([
+			async () => {
+				mainEntered();
+				await mainGate;
+				return fauxAssistantMessage("main answer");
+			},
+			async (_context, options) => {
+				sideEntered();
+				await new Promise<void>((resolve) => {
+					if (options?.signal?.aborted) {
+						sideAborted = true;
+						resolve();
+						return;
+					}
+					options?.signal?.addEventListener("abort", () => {
+						sideAborted = true;
+						resolve();
+					});
+				});
+				throw new Error("aborted");
+			},
+		]);
+
+		const main = harness.session.prompt("main question");
+		await mainInFlight;
+		const side = harness.session.prompt("/btw in-flight question");
+		await sideInFlight;
+
+		tui.feedInput("\x1b");
+		await side;
+
+		expect(sideAborted).toBe(true);
+		expect(tui.widgets.at(-1)).toEqual({ key: "btw", content: undefined });
+		expect(tui.inputHandlerCount).toBe(0);
+
+		releaseMain();
+		await main;
+	});
+
+	it("dismisses the active panel on a bare /btw instead of showing usage", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+
+		await harness.session.prompt("/btw open the panel");
+		expect(tui.widgets).toHaveLength(1);
+
+		await harness.session.prompt("/btw");
+
+		expect(tui.widgets.at(-1)).toEqual({ key: "btw", content: undefined });
+		expect(tui.notifications).toEqual([]);
+		expect(tui.inputHandlerCount).toBe(0);
+		expect(harness.faux.state.callCount).toBe(1);
+	});
+
+	it("keeps the usage hint for a bare /btw when no panel is active", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("unused")]);
+
+		await harness.session.prompt("/btw");
+
+		expect(tui.widgets).toEqual([]);
+		expect(tui.notifications).toHaveLength(1);
+		expect(tui.notifications[0]?.type).toBe("warning");
+		expect(tui.notifications[0]?.message).toContain("/btw");
+		expect(harness.faux.state.callCount).toBe(0);
 	});
 });

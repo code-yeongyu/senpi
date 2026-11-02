@@ -1,6 +1,7 @@
 import { compare, valid } from "semver";
 import { PACKAGE_NAME } from "../config.ts";
 import { type BrandUpdateChannel, brandProfile, envValue } from "../core/brand.ts";
+import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
 const REGISTRY_BASE_URL = "https://registry.npmjs.org";
@@ -23,7 +24,9 @@ export function readAvailableVersion(payload: unknown, channel: BrandUpdateChann
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 const RELEASE_CHANGELOG_BASE_URL = "https://github.com/code-yeongyu/senpi/blob";
 const RELEASE_CHANGELOG_PATH = "packages/coding-agent/CHANGELOG.md";
-const SENPI_CALVER_PATTERN = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([2-9]\d*))?$/;
+// Month and day may be zero-padded (`2026.11.02-1` as stamped in package.json) or not (npm's normalized
+// `2026.11.2-1`); a `-1` revision is the same release as the bare date.
+const SENPI_CALVER_PATTERN = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([1-9]\d*))?$/;
 
 export interface LatestPiRelease {
 	version: string;
@@ -38,7 +41,30 @@ function parseSenpiCalVer(version: string): readonly [number, number, number, nu
 	}
 	return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4] ?? 1)];
 }
+/** Unpadded form semver accepts, used when a CalVer version is compared with a plain semver version. */
+function canonicalCalVer([year, month, day, revision]: readonly [number, number, number, number]): string {
+	return revision > 1 ? `${year}.${month}.${day}-${revision}` : `${year}.${month}.${day}`;
+}
 
+/** Include useful errno details hidden behind Node's generic "fetch failed" error. */
+export function formatVersionCheckError(error: unknown): string {
+	const rootMessage = error instanceof Error && error.message ? error.message : String(error);
+	const cause = error instanceof Error ? error.cause : undefined;
+	const causes = cause instanceof AggregateError ? cause.errors : cause === undefined ? [] : [cause];
+	const codes = causes
+		.map((value) =>
+			typeof value === "object" && value !== null && "code" in value && typeof value.code === "string"
+				? value.code
+				: undefined,
+		)
+		.filter((code): code is string => code !== undefined);
+
+	if (codes.length > 0) return `${rootMessage} (${[...new Set(codes)].join(", ")})`;
+	const causeMessage = causes.find(
+		(value): value is Error => value instanceof Error && Boolean(value.message),
+	)?.message;
+	return causeMessage ? `${rootMessage} (cause: ${causeMessage})` : rootMessage;
+}
 export function comparePackageVersions(leftVersion: string, rightVersion: string): number | undefined {
 	const leftTrimmed = leftVersion.trim();
 	const rightTrimmed = rightVersion.trim();
@@ -53,8 +79,8 @@ export function comparePackageVersions(leftVersion: string, rightVersion: string
 		return 0;
 	}
 
-	const left = valid(leftTrimmed);
-	const right = valid(rightTrimmed);
+	const left = valid(leftCalVer ? canonicalCalVer(leftCalVer) : leftTrimmed);
+	const right = valid(rightCalVer ? canonicalCalVer(rightCalVer) : rightTrimmed);
 	if (!left || !right) {
 		return undefined;
 	}
@@ -63,10 +89,9 @@ export function comparePackageVersions(leftVersion: string, rightVersion: string
 
 export function isNewerPackageVersion(candidateVersion: string, currentVersion: string): boolean {
 	const comparison = comparePackageVersions(candidateVersion, currentVersion);
-	if (comparison !== undefined) {
-		return comparison > 0;
-	}
-	return candidateVersion.trim() !== currentVersion.trim();
+	// Unparseable pairs (e.g. branded build labels) are never "newer": an update
+	// we cannot order is not one we can advertise.
+	return comparison !== undefined && comparison > 0;
 }
 
 export function getReleaseChangelogUrl(version: string): string {
@@ -81,7 +106,7 @@ export function getReleaseChangelogUrl(version: string): string {
 
 export async function getLatestPiRelease(
 	currentVersion: string,
-	options: { timeoutMs?: number } = {},
+	options: { timeoutMs?: number; retry?: boolean } = {},
 ): Promise<LatestPiRelease | undefined> {
 	if (envValue("OFFLINE")) return undefined;
 
@@ -92,13 +117,19 @@ export async function getLatestPiRelease(
 		// advertising them would send the user after an update they cannot apply.
 		return undefined;
 	}
-	const response = await fetch(latestVersionUrl(channel), {
-		headers: {
-			"User-Agent": getPiUserAgent(currentVersion),
-			accept: "application/json",
+	const response = await fetchWithRetry(
+		latestVersionUrl(channel),
+		{
+			headers: {
+				"User-Agent": getPiUserAgent(currentVersion),
+				accept: "application/json",
+			},
 		},
-		signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS),
-	});
+		{
+			maxRetries: options.retry ? 2 : 0,
+			timeoutMs: options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS,
+		},
+	);
 	if (!response.ok) return undefined;
 
 	const data = (await response.json()) as { packageName?: unknown; version?: unknown; note?: unknown };
@@ -117,7 +148,7 @@ export async function getLatestPiRelease(
 
 export async function getLatestPiVersion(
 	currentVersion: string,
-	options: { timeoutMs?: number } = {},
+	options: { timeoutMs?: number; retry?: boolean } = {},
 ): Promise<string | undefined> {
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }

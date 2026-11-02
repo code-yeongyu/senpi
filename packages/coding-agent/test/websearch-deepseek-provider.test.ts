@@ -107,7 +107,7 @@ describe("vendored websearch deepseek provider", () => {
 		const payload = JSON.parse(await readFile(FIXTURE_PATH, "utf8")) as Record<string, unknown>;
 
 		// when
-		const results = normalizeSearchResponse("deepseek", payload);
+		const results = await normalizeSearchResponse("deepseek", payload);
 
 		// then
 		expect(results.length).toBeGreaterThan(0);

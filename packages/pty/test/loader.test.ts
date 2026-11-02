@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import {
 	getNativePtyCandidatePaths,
 	getNativePtyHost,
-	getNativePtySentinelExport,
 	loadNativePty,
 	type NativePtyBinding,
 	NativePtySentinelMismatchError,
@@ -60,10 +59,6 @@ describe("loadNativePty", () => {
 		expect(attempted).toEqual([candidate(host)]);
 	});
 
-	it("derives the sentinel export from the ABI version", () => {
-		expect(getNativePtySentinelExport(abiVersion)).toBe(sentinelExport);
-	});
-
 	it("returns a native-unavailable diagnostic when every candidate is missing", () => {
 		const attempted: string[] = [];
 		const result = loadNativePty({
@@ -94,6 +89,35 @@ describe("loadNativePty", () => {
 		expect(diagnostic.attemptedPath).toBe(expectedPaths[0]);
 		expect(diagnostic.attemptedPaths).toEqual(expectedPaths);
 		expect(attempted).toEqual(expectedPaths);
+	});
+
+	it("skips quarantined macOS prebuilds before require can trigger Gatekeeper", () => {
+		const host = "darwin-arm64";
+		const attempted: string[] = [];
+		const quarantined: string[] = [];
+
+		const result = loadNativePty({
+			arch: "arm64",
+			execDir,
+			moduleDir,
+			platform: "darwin",
+			isQuarantined(modulePath) {
+				quarantined.push(modulePath);
+				return modulePath === candidate(host);
+			},
+			requireBinding(modulePath) {
+				attempted.push(modulePath);
+				throw new Error(`Gatekeeper should have been avoided for ${modulePath}`);
+			},
+			runtime: "node",
+		});
+
+		expect(result.native).toBeNull();
+		expect(quarantined).toEqual(
+			getNativePtyCandidatePaths({ arch: "arm64", execDir, moduleDir, platform: "darwin" }),
+		);
+		expect(attempted).not.toContain(candidate(host));
+		expect(result.diagnostic?.cause).toContain(`${candidate(host)}: blocked because com.apple.quarantine is present`);
 	});
 
 	it("throws a typed sentinel mismatch error when a candidate loads without the versioned sentinel", () => {

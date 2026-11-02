@@ -2,7 +2,9 @@ import { type Model, modelsAreEqual } from "@earendil-works/pi-ai";
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import { ModelRegistry } from "../../../core/model-registry.ts";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
+import { createAmbientProviderCheck } from "../../../core/provider-default-selection.ts";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
+import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { rankModelSearchItems } from "../model-search-rank.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -22,8 +24,13 @@ interface ScopedModelItem {
 }
 
 type ModelScope = "all" | "narrowed";
-type ModelSelectorTui = Pick<TUI, "requestRender">;
+type ModelSelectorTui = Pick<TUI, "requestRender"> & { terminal?: { rows: number } };
 type ModelSelectorSource = ModelRuntime | ModelRegistry;
+
+export interface ModelSelection {
+	/** Also make it the default model for new sessions (the select-as-default key). */
+	readonly asDefault: boolean;
+}
 
 export interface ModelSelectorFavoriteOptions {
 	favoriteModelIds?: FavoriteModelIds;
@@ -56,9 +63,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private filteredModels: ModelItem[] = [];
 	private selectedIndex: number = 0;
 	private currentModel?: Model<any>;
-	private settingsManager: SettingsManager;
 	private modelRuntime: ModelSelectorSource;
-	private onSelectCallback: (model: Model<any>) => void;
+	private onSelectCallback: (model: Model<any>, selection: ModelSelection) => void;
 	private onCancelCallback: () => void;
 	private favoriteIds: FavoriteModelIds = [];
 	// Favorite membership snapshot taken when the selector opens. Ordering
@@ -81,10 +87,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	constructor(
 		tui: ModelSelectorTui,
 		currentModel: Model<any> | undefined,
-		settingsManager: SettingsManager,
+		// Kept for its callers: a selection no longer writes the default model itself (senpi#2870).
+		_settingsManager: SettingsManager,
 		modelRuntime: ModelSelectorSource,
 		scopedModels: ReadonlyArray<ScopedModelItem>,
-		onSelect: (model: Model<any>) => void,
+		onSelect: (model: Model<any>, selection: ModelSelection) => void,
 		onCancel: () => void,
 		initialSearchInput?: string,
 		favorites?: ModelSelectorFavoriteOptions,
@@ -93,7 +100,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 		this.tui = tui;
 		this.currentModel = currentModel;
-		this.settingsManager = settingsManager;
 		this.modelRuntime = modelRuntime;
 		this.scopedModels = scopedModels;
 		this.scope = scopedModels.length > 0 ? "narrowed" : "all";
@@ -120,7 +126,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 		this.addChild(
 			new Text(
-				`${keyHint("tui.select.confirm", "select")} ${keyHint("app.models.toggleFavorite", "favorite")}`,
+				`${keyHint("tui.select.confirm", "select")} ${keyHint("app.models.save", "select as default")} ${keyHint("app.models.toggleFavorite", "favorite")}`,
 				0,
 				0,
 			),
@@ -135,7 +141,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.searchInput.onSubmit = () => {
 			// Enter on search input selects the first filtered item
 			if (this.filteredModels[this.selectedIndex]) {
-				this.handleSelect(this.filteredModels[this.selectedIndex].model);
+				this.handleSelect(this.filteredModels[this.selectedIndex].model, { asDefault: false });
 			}
 		};
 		this.addChild(this.searchInput);
@@ -203,7 +209,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				await this.modelRuntime.refresh();
 				result = { aborted: false, errors: new Map() };
 			} else {
-				result = await this.modelRuntime.refresh({ signal: this.refreshAbortController.signal });
+				result = await refreshModelCatalogs(this.modelRuntime, this.refreshAbortController.signal);
 			}
 			if (this.closed) return;
 			this.refreshStatusMessage = "";
@@ -212,7 +218,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			} else if (result.errors.size === 1) {
 				this.errorMessage = `Could not refresh ${result.errors.keys().next().value}; showing cached models.`;
 			} else if (result.errors.size > 1) {
-				this.errorMessage = `Could not refresh ${result.errors.size} model catalogs; showing cached models.`;
+				this.errorMessage = `Could not refresh ${result.errors.size} model catalogs (${[...result.errors.keys()].join(", ")}); showing cached models.`;
 			} else {
 				this.errorMessage = this.modelRuntime.getError();
 				if (!this.errorMessage) {
@@ -223,12 +229,21 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.loadModelsFromSnapshot();
 			this.filterModels(this.searchInput.getValue());
 			this.tui.requestRender();
+		} catch (error) {
+			if (this.closed) return;
+			this.refreshStatusMessage = "";
+			this.errorMessage = timedOut
+				? "Model refresh timed out; showing cached models."
+				: `Could not refresh model catalogs: ${error instanceof Error ? error.message : String(error)}`;
+			this.updateList();
+			this.tui.requestRender();
 		} finally {
 			if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
 		}
 	}
 
-	private close(): void {
+	dispose(): void {
+		if (this.closed) return;
 		this.closed = true;
 		if (this.refreshTimeout) clearTimeout(this.refreshTimeout);
 		this.refreshAbortController.abort();
@@ -236,7 +251,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	private sortModels(models: ModelItem[]): ModelItem[] {
 		const sorted = [...models];
-		// Sort: current model first, then favorites, then by provider/model.
+		const isAmbient = createAmbientProviderCheck(this.modelRuntime);
+		// Sort: current model first, then favorites, then configured before ambient-only providers
+		// (senpi#2327), then by provider/model.
 		sorted.sort((a, b) => {
 			const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
 			const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
@@ -246,6 +263,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			const bIsFavorite = isFavoriteModel(this.favoriteIdsAtOpen, b.fullId);
 			if (aIsFavorite && !bIsFavorite) return -1;
 			if (!aIsFavorite && bIsFavorite) return 1;
+			const ambientCompare = Number(isAmbient(a.provider)) - Number(isAmbient(b.provider));
+			if (ambientCompare !== 0) return ambientCompare;
 			const providerCompare = a.provider.localeCompare(b.provider);
 			if (providerCompare !== 0) return providerCompare;
 			return a.id.localeCompare(b.id);
@@ -297,12 +316,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private updateList(): void {
 		this.listContainer.clear();
 
-		const maxVisible = 10;
+		// Window long registries using the same viewport-aware sizing as the
+		// extension selector, while retaining a stable fallback for test doubles.
+		const maxVisible = this.tui.terminal ? Math.max(5, Math.floor(this.tui.terminal.rows / 2)) : 10;
 		const startIndex = Math.max(
 			0,
 			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredModels.length - maxVisible),
 		);
 		const endIndex = Math.min(startIndex + maxVisible, this.filteredModels.length);
+
+		if (startIndex > 0) {
+			this.listContainer.addChild(new Text(theme.fg("muted", `  … ${startIndex} more above`), 0, 0));
+		}
 
 		// Show visible slice of filtered models
 		for (let i = startIndex; i < endIndex; i++) {
@@ -332,10 +357,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.listContainer.addChild(new Text(line, 0, 0));
 		}
 
-		// Add scroll indicator if needed
-		if (startIndex > 0 || endIndex < this.filteredModels.length) {
-			const scrollInfo = theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredModels.length})`);
-			this.listContainer.addChild(new Text(scrollInfo, 0, 0));
+		if (endIndex < this.filteredModels.length) {
+			this.listContainer.addChild(
+				new Text(theme.fg("muted", `  … ${this.filteredModels.length - endIndex} more below`), 0, 0),
+			);
 		}
 
 		// Show error message or "no results" if empty
@@ -388,7 +413,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selectedModel = this.filteredModels[this.selectedIndex];
 			if (selectedModel) {
-				this.handleSelect(selectedModel.model);
+				this.handleSelect(selectedModel.model, { asDefault: false });
+			}
+		}
+		// Select and make it the default for new sessions (senpi#2870)
+		else if (kb.matches(keyData, "app.models.save")) {
+			const selectedModel = this.filteredModels[this.selectedIndex];
+			if (selectedModel) {
+				this.handleSelect(selectedModel.model, { asDefault: true });
 			}
 		}
 		// Toggle favorite for selected model
@@ -397,7 +429,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 		// Escape or Ctrl+C
 		else if (kb.matches(keyData, "tui.select.cancel")) {
-			this.close();
+			this.dispose();
 			this.onCancelCallback();
 		}
 		// Pass everything else to search input
@@ -407,11 +439,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	private handleSelect(model: Model<any>): void {
-		this.close();
-		// Save as new default
-		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
-		this.onSelectCallback(model);
+	// A selection applies to this session; only an explicit select-as-default changes the default for new sessions (senpi#2870).
+	private handleSelect(model: Model<any>, selection: ModelSelection): void {
+		this.dispose();
+		this.onSelectCallback(model, selection);
 	}
 
 	private handleToggleFavorite(): void {

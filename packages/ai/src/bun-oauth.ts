@@ -1,8 +1,11 @@
-import { anthropicOAuth } from "./auth/oauth/anthropic.ts";
+import { chatgptSubscriptionOAuth } from "./auth/oauth/chatgpt-subscription.ts";
+import { cursorOAuth } from "./auth/oauth/cursor.ts";
+import { devinOAuth } from "./auth/oauth/devin.ts";
 import { githubCopilotOAuth } from "./auth/oauth/github-copilot.ts";
 import { kimiCodingOAuth } from "./auth/oauth/kimi-coding.ts";
 import { registerBundledOAuthFlowLoaders } from "./auth/oauth/load.ts";
-import { openaiCodexOAuth } from "./auth/oauth/openai-codex.ts";
+import { metaOAuth } from "./auth/oauth/meta.ts";
+import { openaiChatGPTOAuth } from "./auth/oauth/openai-chatgpt.ts";
 import { openRouterOAuth } from "./auth/oauth/openrouter.ts";
 import { createRadiusOAuth } from "./auth/oauth/radius.ts";
 import { xaiOAuth } from "./auth/oauth/xai.ts";
@@ -10,12 +13,15 @@ import { xaiOAuth } from "./auth/oauth/xai.ts";
 /** Register OAuth flows statically embedded in the standalone Bun binary. */
 export function registerBunOAuthFlows(): void {
 	registerBundledOAuthFlowLoaders({
-		anthropic: () => anthropicOAuth,
-		openaiCodex: () => openaiCodexOAuth,
+		chatgptSubscription: () => chatgptSubscriptionOAuth,
+		openaiChatGPT: () => openaiChatGPTOAuth,
 		githubCopilot: () => githubCopilotOAuth,
 		openrouter: () => openRouterOAuth,
 		kimiCoding: () => kimiCodingOAuth,
+		meta: () => metaOAuth,
 		xai: () => xaiOAuth,
+		cursor: () => cursorOAuth,
+		devin: () => devinOAuth,
 		radius: createRadiusOAuth,
 	});
 }

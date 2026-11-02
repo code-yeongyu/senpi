@@ -13,7 +13,6 @@ import {
 	type Api,
 	type AssistantMessageEventStream,
 	anthropicMessagesApi,
-	type Context,
 	createAssistantMessageEventStream,
 	type Model,
 	type OAuthCredentials,
@@ -21,6 +20,7 @@ import {
 	openAIResponsesApi,
 	type SimpleStreamOptions,
 	type ThinkingLevelMap,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -274,7 +274,7 @@ async function loginGitLab(callbacks: OAuthLoginCallbacks): Promise<OAuthCredent
 	};
 }
 
-async function refreshGitLabToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+async function refreshGitLabToken(credentials: OAuthCredentials, signal: AbortSignal): Promise<OAuthCredentials> {
 	const response = await fetch(`${GITLAB_COM_URL}/oauth/token`, {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -283,6 +283,7 @@ async function refreshGitLabToken(credentials: OAuthCredentials): Promise<OAuthC
 			grant_type: "refresh_token",
 			refresh_token: credentials.refresh,
 		}).toString(),
+		signal,
 	});
 	if (!response.ok) throw new Error(`Token refresh failed: ${await response.text()}`);
 	const data = (await response.json()) as {
@@ -305,7 +306,7 @@ async function refreshGitLabToken(credentials: OAuthCredentials): Promise<OAuthC
 
 export function streamGitLabDuo(
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
@@ -319,7 +320,10 @@ export function streamGitLabDuo(
 			if (!cfg) throw new Error(`Unknown model: ${model.id}`);
 
 			const directAccess = await getDirectAccessToken(gitlabAccessToken);
-			const modelWithBaseUrl = { ...model, baseUrl: cfg.baseUrl };
+			// The registration baseUrl stands for "the backend proxy of this model"; any other value is the
+			// user's models.json baseUrl and wins (senpi#4765).
+			const baseUrl = model.baseUrl === AI_GATEWAY_URL ? cfg.baseUrl : model.baseUrl;
+			const modelWithBaseUrl = { ...model, baseUrl };
 			const headers = { ...directAccess.headers, Authorization: `Bearer ${directAccess.token}` };
 			const streamOptions = { ...options, apiKey: "gitlab-duo", headers };
 

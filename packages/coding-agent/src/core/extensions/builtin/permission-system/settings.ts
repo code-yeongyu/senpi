@@ -1,5 +1,5 @@
 import type { Settings, SettingsManager } from "../../../settings-manager.ts";
-import { parsePermissionPresetName } from "./cli.ts";
+import { PERMISSION_PRESET_NAMES, parsePermissionPresetName } from "./cli.ts";
 import { DEFAULT_PERMISSION_PRESET, fromConfig, merge, rulesForPreset } from "./config.ts";
 import { loadApproved } from "./storage.ts";
 import type { PermissionConfig, PermissionPresetName, Ruleset } from "./types.ts";
@@ -26,7 +26,8 @@ export function loadPermissionSettings(
 	cliOverride: Ruleset,
 	projectDir: string,
 	cliPresetOverride?: PermissionPresetName,
-): { staticRuleset: Ruleset; approved: Ruleset } {
+	agentDir?: string,
+): { staticRuleset: Ruleset; approved: Ruleset; preset: PermissionPresetName } {
 	const globalSettings = settingsManager.getGlobalSettings() as Settings & PermissionSettings;
 	const globalPreset = parseSettingsPreset(globalSettings.permissionPreset, "global");
 	const globalPresetRuleset = globalPreset ? rulesForPreset(globalPreset) : [];
@@ -37,7 +38,10 @@ export function loadPermissionSettings(
 	const projectPresetRuleset = projectPreset ? rulesForPreset(projectPreset) : [];
 	const projectRuleset = projectSettings.permission ? fromConfig(projectSettings.permission) : [];
 
-	const cliPresetRuleset = cliPresetOverride ? rulesForPreset(cliPresetOverride) : [];
+	// The default already opens with full-access's wildcard allow, so a CLI full-access preset is
+	// redundant; re-appending it would only mask a user's explicit settings/CLI deny (senpi#2465).
+	const cliPresetRuleset =
+		cliPresetOverride && cliPresetOverride !== DEFAULT_PERMISSION_PRESET ? rulesForPreset(cliPresetOverride) : [];
 	const staticRuleset = merge(
 		rulesForPreset(DEFAULT_PERMISSION_PRESET),
 		globalPresetRuleset,
@@ -47,9 +51,10 @@ export function loadPermissionSettings(
 		cliPresetRuleset,
 		cliOverride,
 	);
-	const approved = loadApproved(projectDir);
+	const approved = agentDir === undefined ? [] : loadApproved(agentDir, projectDir);
 
-	return { staticRuleset, approved };
+	const preset = cliPresetOverride ?? projectPreset ?? globalPreset ?? DEFAULT_PERMISSION_PRESET;
+	return { staticRuleset, approved, preset };
 }
 
 function parseSettingsPreset(value: unknown, scope: "global" | "project"): PermissionPresetName | undefined {
@@ -63,7 +68,7 @@ function parseSettingsPreset(value: unknown, scope: "global" | "project"): Permi
 	const preset = parsePermissionPresetName(value);
 	if (!preset) {
 		throw new Error(
-			`Invalid ${scope} permissionPreset "${value}". Expected one of: full-access, workspace, read-only, ask.`,
+			`Invalid ${scope} permissionPreset "${value}". Expected one of: ${PERMISSION_PRESET_NAMES.join(", ")}.`,
 		);
 	}
 	return preset;

@@ -4,6 +4,11 @@
  * subset that rejects a sibling `type` keyword on schemas that also declare
  * `anyOf` / `oneOf` / `allOf`. This helper removes that redundancy while
  * preserving the schema's semantics.
+ *
+ * This is provider wire adaptation, not an MCP schema conversion or argument
+ * validator. MCP supplies its full schema (boolean roots use the equivalent
+ * allOf container); the original schema and model arguments are never rewritten.
+ * Root-union conversion below is explicitly lossy for object-only providers.
  */
 
 export type ToolSchemaFlavor = "moonshot-mfjs";
@@ -101,9 +106,13 @@ function collapseConstUnion(node: Record<string, unknown>): void {
  * so the root's own `properties` and `required` are merged with the branches'
  * rather than replaced by them.
  */
-function mergeRootObjectUnion(schema: Record<string, unknown>): Record<string, unknown> | undefined {
-	const branches = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : undefined;
-	if (branches === undefined || branches.length === 0) return undefined;
+function mergeRootObjectUnion(
+	schema: Record<string, unknown>,
+	combiner?: (typeof COMBINER_KEYS)[number],
+): Record<string, unknown> | undefined {
+	const selected = combiner ?? (Array.isArray(schema.anyOf) ? "anyOf" : "oneOf");
+	const branches = schema[selected];
+	if (!Array.isArray(branches) || branches.length === 0) return undefined;
 	if (schema.properties !== undefined && !isJsonObject(schema.properties)) return undefined;
 	if (schema.required !== undefined && !Array.isArray(schema.required)) return undefined;
 
@@ -125,13 +134,12 @@ function mergeRootObjectUnion(schema: Record<string, unknown>): Record<string, u
 			properties[name] =
 				existing === undefined || JSON.stringify(existing) === JSON.stringify(propertySchema)
 					? propertySchema
-					: { anyOf: [existing, propertySchema] };
+					: { [selected === "allOf" ? "allOf" : "anyOf"]: [existing, propertySchema] };
 		}
 	}
 
-	// Only names required by EVERY branch stay required; a name required by one
-	// branch alone would reject payloads the union accepts. Root-level `required`
-	// applies to all branches, so it is unioned back in.
+	// Unions require only branch-common names; intersections require every branch's
+	// names. Root-level required always applies.
 	const rootRequired = Array.isArray(schema.required)
 		? schema.required.filter((name): name is string => typeof name === "string")
 		: [];
@@ -147,15 +155,56 @@ function mergeRootObjectUnion(schema: Record<string, unknown>): Record<string, u
 	const commonBranchRequired = firstBranchRequired
 		? [...firstBranchRequired].filter((name) => branchRequiredSets.every((names) => names.has(name)))
 		: [];
-	const required = [...new Set([...rootRequired, ...commonBranchRequired])];
+	const required = [
+		...new Set([
+			...rootRequired,
+			...(selected === "allOf" ? branchRequiredSets.flatMap((names) => [...names]) : commonBranchRequired),
+		]),
+	];
 
-	const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = schema;
+	// A union's merged root drops each branch's own required names; keep them visible to the model (#5138).
+	const hints =
+		selected === "allOf"
+			? []
+			: objectBranches.flatMap((branch, index) => {
+					const own = [...(branchRequiredSets[index] ?? [])].filter((name) => !required.includes(name));
+					return own.length === 0 ? [] : [`REQUIRED for ${describeBranch(branch, index)}: ${own.join(", ")}.`];
+				});
+	const description =
+		hints.length === 0
+			? undefined
+			: [typeof schema.description === "string" ? schema.description : "", ...hints].filter(Boolean).join(" ");
+
+	const rest = { ...schema };
+	for (const key of combiner ? [combiner] : ["anyOf", "oneOf"]) delete rest[key];
 	return {
 		...rest,
+		...(description === undefined ? {} : { description }),
 		type: "object",
 		properties,
 		...(required.length > 0 ? { required } : {}),
 	};
+}
+
+/** Names a union branch by its first literal-valued property (`action=run`), else by position. */
+function describeBranch(branch: Record<string, unknown>, index: number): string {
+	if (isJsonObject(branch.properties)) {
+		for (const [name, propertySchema] of Object.entries(branch.properties)) {
+			const values = literalValues(propertySchema);
+			if (values.length > 0) return `${name}=${values.join("|")}`;
+		}
+	}
+	return `option ${index + 1}`;
+}
+
+function literalValues(schema: unknown): string[] {
+	if (!isJsonObject(schema)) return [];
+	if (Object.hasOwn(schema, "const")) return [String(schema.const)];
+	if (Array.isArray(schema.enum)) return schema.enum.map(String);
+	const branches = schema.anyOf;
+	if (!Array.isArray(branches)) return [];
+	const values = branches.map((branch) => literalValues(branch));
+	return values.every((value) => value.length === 1) ? values.flat() : [];
 }
 
 function normalizeNode(node: unknown, isRoot = false): unknown {
@@ -166,6 +215,8 @@ function normalizeNode(node: unknown, isRoot = false): unknown {
 	if (!isJsonObject(node)) {
 		return node;
 	}
+
+	delete node.optional;
 
 	const hasCombiner = COMBINER_KEYS.some((key) => Array.isArray(node[key]));
 	// The root of a tool's parameters must keep `type: "object"`; hoisting it into
@@ -214,19 +265,22 @@ export function normalizeToolParametersForOpenAICompat(schema: Record<string, un
 /**
  * Guarantee the wire shape every OpenAI-compatible backend requires for tool
  * parameters: a root object schema. A root union of object shapes is merged into
- * one object schema; a root that merely lost its `type` gets it restored.
+ * one object schema and a root that already declares a `type` is returned as-is.
+ * Every other root without a `type` gets `type: "object"`: a `$ref` root, a root
+ * `allOf`, and an `anyOf`/`oneOf` union that cannot merge because a branch is not
+ * an object shape. Any combiner is kept beside the added type.
  *
- * A root whose branches are not object shapes is left alone: forcing
- * `type: "object"` onto a scalar union would assert something the schema
- * contradicts, which is worse than the missing keyword. Tool parameters are
- * objects in practice, so this only guards against corrupting an exotic schema.
+ * DeepSeek and gateways forwarding to it reject a typeless root outright
+ * (`schema must be a JSON Schema of 'type: "object"', got 'type: null'`, #3245).
+ * The cost: for a union with no object branch the wire schema becomes stricter
+ * than the source (`type: "object"` beside `anyOf: [string, number]` is
+ * unsatisfiable). That is accepted because tool arguments are always JSON objects
+ * and are validated locally against the original, unnormalized schema.
  */
 function ensureRootObjectSchema(schema: Record<string, unknown>): Record<string, unknown> {
 	const merged = mergeRootObjectUnion(schema);
 	if (merged) return merged;
 	if (schema.type !== undefined) return schema;
-	const hasCombiner = COMBINER_KEYS.some((key) => Array.isArray(schema[key]));
-	if (hasCombiner) return schema;
 	return { ...schema, type: "object" };
 }
 
@@ -247,6 +301,21 @@ export function normalizeToolParametersForMoonshot(schema: Record<string, unknow
  */
 export function resolveRootObjectSchema(schema: Record<string, unknown>): Record<string, unknown> {
 	return mergeRootObjectUnion(structuredClone(schema)) ?? schema;
+}
+
+/** Bedrock Converse rejects root combiners, including allOf, even with an object type (#1947). */
+export function normalizeToolParametersForBedrock(schema: Record<string, unknown>): Record<string, unknown> {
+	let normalized = structuredClone(schema);
+	for (const combiner of COMBINER_KEYS) {
+		const branches = normalized[combiner];
+		if (Array.isArray(branches)) {
+			normalized[combiner] = branches.map((branch) =>
+				isJsonObject(branch) ? normalizeToolParametersForBedrock(branch) : branch,
+			);
+		}
+		normalized = mergeRootObjectUnion(normalized, combiner) ?? normalized;
+	}
+	return { type: "object", ...normalized };
 }
 
 function stripMoonshotAnnotations(node: unknown): Record<string, unknown> {

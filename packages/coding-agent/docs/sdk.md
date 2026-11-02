@@ -36,7 +36,7 @@ await session.prompt("What files are in the current directory?");
 ## Installation
 
 ```bash
-npm install @earendil-works/pi-coding-agent
+bun add @earendil-works/pi-coding-agent
 ```
 
 The SDK is included in the main package. No separate installation needed.
@@ -97,7 +97,7 @@ interface AgentSession {
   isStreaming: boolean;
 
   // In-place tree navigation within the current session file
-  navigateTree(targetId: string, options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string }): Promise<{ editorText?: string; cancelled: boolean }>;
+  navigateTree(targetId: string, options?: { intent?: "select" | "resume"; summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string; expectedLeafId?: string }): Promise<{ editorText?: string; cancelled: boolean }>;
 
   // Compaction
   compact(customInstructions?: string): Promise<CompactionResult>;
@@ -110,6 +110,10 @@ interface AgentSession {
   dispose(): void;
 }
 ```
+
+`session.navigateTree()` rejects with `SessionStreamingError` while an agent response is streaming, even with `summarize: false`. It does not queue navigation or return `{ cancelled: true }` for that conflict. Wait for the response to finish (for example, with `await session.waitForIdle()`) and retry. Rejection leaves the active branch unchanged.
+
+`session.navigateTree(id, { intent: "resume", expectedLeafId })` resumes at that exact entry, including user/custom messages, with no `editorText` and no automatic turn. Omitted intent (or `"select"`) keeps retry selection: user/custom targets select their parent and return editor text. Both intents share lifecycle, cancellation, summaries and the unchanged leaf-token guard. For exact resumption, generated summary/label entries are recorded without replacing the requested leaf; the summary is not part of the resumed context. See [RPC tree navigation](rpc.md#navigate_tree) for the corresponding wire contract.
 
 Session replacement APIs such as new-session, resume, fork, and import live on `AgentSessionRuntime`, not on `AgentSession`.
 
@@ -163,7 +167,7 @@ Important behavior:
 - `runtime.session` changes after those operations
 - event subscriptions are attached to a specific `AgentSession`, so re-subscribe after replacement
 - if you use extensions, call `runtime.session.bindExtensions(...)` again for the new session
-- creation returns diagnostics on `runtime.diagnostics`
+- creation returns diagnostics on `runtime.diagnostics`; a diagnostic may carry a machine `code` (today only `"model_unresolved"`: the requested model could not be resolved and the session fell back to the default model)
 - if runtime creation or replacement fails, the method throws and the caller decides how to handle it
 
 ```typescript
@@ -248,6 +252,7 @@ const state = session.agent.state;
 // state.tools: AgentTool[] - available tools
 // state.streamingMessage?: AgentMessage - current partial assistant message
 // state.errorMessage?: string - latest assistant error
+// state.providerDiagnostic?: ProviderDiagnostic - structured family of that error, when known
 
 // Replace messages (useful for branching or restoration)
 session.agent.state.messages = messages; // copies the top-level array
@@ -258,6 +263,34 @@ session.agent.state.tools = tools; // copies the top-level array
 // Wait for agent to finish processing
 await session.agent.waitForIdle();
 ```
+
+#### Provider failure diagnostics
+
+A failed turn is an assistant message with `stopReason: "error"` and a human-readable `errorMessage`. When the provider rejected the request with structured evidence, the same message also carries an optional `providerDiagnostic`, so callers can branch on the failure family without parsing `errorMessage`:
+
+```typescript
+// Shape of ProviderDiagnostic, exported from "@earendil-works/pi-ai":
+// {
+//   category: "auth" | "rate_limit" | "quota" | "context_limit" | "invalid_request" | "provider_unavailable" | "unknown";
+//   httpStatus?: number; // 400..599; absent for an error delivered inside an HTTP 200 stream
+//   code?: string; // provider token from a closed allowlist, e.g. "rate_limit_error", "insufficient_quota"
+//   evidence: "structured_status" | "structured_code";
+// }
+import type { ProviderDiagnostic } from "@earendil-works/pi-ai";
+
+session.subscribe((event) => {
+  if (event.type !== "message_end" || event.message.role !== "assistant") return;
+  if (event.message.providerDiagnostic?.category === "auth") promptForLogin();
+});
+
+// After the run settles, the latest failure is also on the agent state
+const diagnostic: ProviderDiagnostic | undefined = session.agent.state.providerDiagnostic;
+```
+
+- Only the Anthropic Messages and OpenAI-compatible Chat Completions adapters mint it today, from the HTTP status and error code of the SDK error their own transport call raised, an Anthropic `event: error` SSE envelope, or an OpenAI-compatible in-stream `error` chunk. Message text, response headers, request ids, and errors thrown by caller callbacks such as `onPayload` never produce one.
+- A recognized `code` decides the category (`evidence: "structured_code"`); without one, the status alone decides it (`evidence: "structured_status"`: 401 is `auth`, 400 `invalid_request`, 5xx `provider_unavailable`, and any other 4xx such as a bare 402/403/429 is `unknown`). A code that contradicts the status, or a status outside 400..599, yields no diagnostic. `billing_error` maps to `unknown`, not `quota`.
+- The field is at most 512 bytes. It is additive: `errorMessage`, retries, model fallback and CLI exit codes are identical with or without it. It is absent on aborted turns and on failures without structured provider evidence.
+- Values that crossed a boundary (a persisted session, a wire message) can be revalidated with `sanitizeProviderDiagnostic(value)` from `@earendil-works/pi-ai`, which returns a fresh canonical copy or `undefined`.
 
 ### Events
 
@@ -372,6 +405,13 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 const modelRuntime = await ModelRuntime.create();
 
+// create() restores cached catalogs but does not refresh them from pi.dev by default.
+// Opt in to a create-time network refresh and bound how long it may take:
+const refreshedRuntime = await ModelRuntime.create({
+  allowModelNetwork: true,
+  modelRefreshTimeoutMs: 15_000,
+});
+
 // Find specific built-in model (doesn't check if API key exists)
 const opus = getModel("anthropic", "claude-opus-4-5");
 if (!opus) throw new Error("Model not found");
@@ -401,6 +441,8 @@ If no model is provided:
 1. Tries to restore from session (if continuing)
 2. Uses default from settings
 3. Falls back to first available model
+
+Remote catalogs are persisted locally so later runtimes can restore them without a network request. The default file is `~/.pi/agent/models-store.json`; set `modelsStorePath` to choose another location, or inject `modelsStore` to control persistence. Network refreshes are throttled to once per provider every four hours unless forced. To force an immediate refresh, call `await modelRuntime.refresh({ allowNetwork: true, force: true, signal })`. Setting `PI_OFFLINE` disables model network access.
 
 To match CLI model parsing, use the exported resolver helpers:
 
@@ -452,7 +494,7 @@ for (const provider of modelRuntime.getProviders()) {
 }
 
 // Runtime API key override (not persisted to disk)
-modelRuntime.setRuntimeApiKey("anthropic", "sk-my-temp-key");
+await modelRuntime.setRuntimeApiKey("anthropic", "sk-my-temp-key");
 
 // Custom credential and model locations
 const customRuntime = await ModelRuntime.create({
@@ -468,6 +510,24 @@ const { session } = await createAgentSession({
   modelRuntime: customRuntime,
 });
 ```
+
+`login()`, `logout()`, `setRuntimeApiKey()`, and `removeRuntimeApiKey()` resolve after the affected provider's cached/built-in catalog, composition, and availability snapshot are locally consistent. They do not wait for remote catalog freshness. If credentials were committed but local synchronization fails, they reject with the exported `CredentialSynchronizationError`; inspect its `providerId`, `operation`, `credential`, and `cause` fields instead of retrying the credential mutation blindly.
+
+Public model/auth operations and `ModelRuntime.create({ signal })` accept optional abort signals and are unbounded when omitted. SDK applications own deadline policy for remote catalog freshness:
+
+```typescript
+const signal = AbortSignal.timeout(15_000);
+const result = await modelRuntime.refresh({
+  providers: ["anthropic"],
+  signal,
+});
+if (result.aborted) console.warn("Catalog refresh timed out; using cached models");
+for (const [providerId, error] of result.errors) {
+  console.warn(`Could not refresh ${providerId}:`, error);
+}
+```
+
+A failed or timed-out network refresh does not undo a successful credential operation. `refresh()` starts a new provider generation, so it does not wait behind an older stalled refresh and stale generations cannot publish afterward.
 
 > See [examples/sdk/09-api-keys-and-oauth.ts](../examples/sdk/09-api-keys-and-oauth.ts)
 
@@ -492,7 +552,7 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 Specify which built-in tools to enable:
 
-- Built-in tool names: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
+- Built-in tool names: `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, `ls`
 - Default built-ins: `read`, `bash`, `edit`, `write`
 - `noTools: "all"` disables all tools
 - `noTools: "builtin"` disables default built-ins while keeping extension and custom tools enabled
@@ -511,6 +571,11 @@ const { session } = await createAgentSession({
 // Pick specific tools
 const { session } = await createAgentSession({
   tools: ["read", "bash", "grep"],
+});
+
+// Use PowerShell instead of Bash on Windows
+const { session } = await createAgentSession({
+  tools: ["read", "powershell", "edit", "write"],
 });
 
 // Disable one tool while keeping the rest available
@@ -756,6 +821,11 @@ const { session: opened } = await createAgentSession({
   sessionManager: SessionManager.open("/path/to/session.jsonl"),
 });
 
+// Resume a session kept outside the filesystem, e.g. in a database
+const { session: restored } = await createAgentSession({
+  sessionManager: SessionManager.inMemory(process.cwd(), { id: sessionId }, entries),
+});
+
 // List sessions
 const currentProjectSessions = await SessionManager.list(process.cwd());
 const allSessions = await SessionManager.listAll(process.cwd());
@@ -938,7 +1008,7 @@ const modelRuntime = await ModelRuntime.create({
   modelsPath: "/custom/agent/models.json",
 });
 if (process.env.MY_KEY) {
-  modelRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY);
+  await modelRuntime.setRuntimeApiKey("anthropic", process.env.MY_KEY);
 }
 
 // Inline tool
@@ -1144,6 +1214,7 @@ AgentSessionRuntime
 // Auth and Models
 ModelRuntime // implements pi-ai Models and owns credential storage
 ModelRegistry // synchronous extension compatibility facade
+CredentialSynchronizationError
 resolveCliModel
 resolveModelScopeWithDiagnostics
 
@@ -1168,7 +1239,7 @@ SettingsManager
 // Tool factories
 createCodingTools
 createReadOnlyTools
-createReadTool, createBashTool, createEditTool, createWriteTool
+createReadTool, createBashTool, createPowerShellTool, createEditTool, createWriteTool
 createGrepTool, createFindTool, createLsTool
 
 // Types

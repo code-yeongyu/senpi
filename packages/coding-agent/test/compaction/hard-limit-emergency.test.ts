@@ -19,7 +19,10 @@ import type {
 	ExtensionHandler,
 } from "../../src/core/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { createInMemoryExtensionSessionSettings, HARD_LIMIT_SETTINGS } from "../helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 const registrations: Array<{ unregister: () => void }> = [];
 
@@ -66,7 +69,11 @@ function userMessage(text: string, timestamp: number): UserMessage {
 
 function createContextHandler(): ExtensionHandler<ContextEvent, ContextEventResult> {
 	let contextHandler: ExtensionHandler<ContextEvent, ContextEventResult> | undefined;
+	const storedEntries = SessionManager.inMemory();
 	const api = {
+		appendEntry: (customType: string, data?: unknown) => {
+			storedEntries.appendCustomEntry(customType, data);
+		},
 		on: (event: string, handler: ExtensionHandler<ContextEvent, ContextEventResult>) => {
 			if (event === "context") contextHandler = handler;
 		},
@@ -89,14 +96,13 @@ function createBeforeAgentStartHandler(): ExtensionHandler<BeforeAgentStartEvent
 }
 
 function createContext(contextWindow: number, maxTokens = contextWindow, compact = vi.fn()): ExtensionContext {
-	const sessionManager = Object.create(null) as ExtensionContext["sessionManager"];
-	sessionManager.getBranch = vi.fn(() => []);
+	const sessionManager = SessionManager.inMemory();
 	return {
 		hasUI: false,
 		mode: "print",
 		ui: Object.create(null) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
@@ -109,7 +115,7 @@ function createContext(contextWindow: number, maxTokens = contextWindow, compact
 		hasPendingMessages: () => false,
 		shutdown: vi.fn(),
 		getContextUsage: () => ({ tokens: contextWindow + 1, contextWindow, percent: 1.01 }),
-		getCompactionSettings: () => ({ enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 }),
+		getCompactionSettings: () => HARD_LIMIT_SETTINGS,
 		getLookAtSettings: () => ({ enabled: true, models: undefined }),
 		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
@@ -150,7 +156,7 @@ function createCompactionContext(): ExtensionContext {
 		mode: "print",
 		ui: Object.create(null) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry,
@@ -191,7 +197,7 @@ function collectToolPairIds(messages: AgentMessage[]): { toolCallIds: Set<string
 describe("compaction hard-limit emergency behavior", () => {
 	describe("Given hard-limit context can fit after tool-output truncation", () => {
 		describe("When context hook runs", () => {
-			it("Then no LLM compaction is requested and tool pairs remain intact", async () => {
+			it("Then prune-only recovery requests compaction and tool pairs remain intact", async () => {
 				// Given
 				const handler = createContextHandler();
 				const compact = vi.fn();
@@ -208,7 +214,7 @@ describe("compaction hard-limit emergency behavior", () => {
 
 				// Then
 				expect(estimateContextTokens(pruned).tokens).toBeLessThanOrEqual(2_000);
-				expect(compact).not.toHaveBeenCalled();
+				expect(compact).toHaveBeenCalledTimes(1);
 				const { toolCallIds, toolResultIds } = collectToolPairIds(pruned);
 				expect(toolCallIds).toEqual(toolResultIds);
 			});
@@ -330,6 +336,7 @@ describe("compaction hard-limit emergency behavior", () => {
 				const context = createCompactionContext();
 				const event: BeforeAgentStartEvent = {
 					type: "before_agent_start",
+					trigger: "prompt",
 					prompt: "continue",
 					systemPrompt: "system",
 					systemPromptOptions: Object.create(null) as BeforeAgentStartEvent["systemPromptOptions"],

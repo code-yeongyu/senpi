@@ -1,17 +1,104 @@
 # Providers
 
-Pi supports subscription-based providers via OAuth and API key providers via environment variables or auth file. Built-in catalogs ship with pi; configured providers may refresh newer catalogs and cache them in `~/.pi/agent/models-store.json` for offline use.
+Senpi supports subscription-based providers via OAuth and API key providers via environment variables or auth file. Built-in catalogs ship with senpi; configured providers may refresh newer catalogs and cache them in `~/.senpi/agent/models-store.json` for offline use.
 
 ## Table of Contents
 
+- [In-Turn Web Search](#in-turn-web-search)
 - [Subscriptions](#subscriptions)
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
-- [Cloud Providers](#cloud-providers)
+- [Provider Specific Config](#provider-specific-config)
 - [Ollama Cloud](#ollama-cloud)
-- [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
+
+## In-Turn Web Search
+
+The session model uses its provider's server search before the standalone
+`web_search` tool. A successful native search does not issue an auxiliary
+request on another model. A search-specific request error or native result
+error records one `websearch-native-fallback` entry and enables the standalone
+tool for that session/model, including later prompts and switches back to it.
+Starting a new session clears the failed-model set. Existing core retries own their retry
+when one is already pending; otherwise the extension continues once after
+the agent settles. User cancellation never schedules that continuation.
+A provider that recovers from a failed search and completes its answer does
+not receive a duplicate continuation. Sonar's inherent retrieval has no
+independent server-tool error contract; its model errors remain with core
+retry rather than receiving unsupported function-tool definitions.
+Standalone summaries, session titles and default projections exclude only server-search tools, not client function declarations. Tool-less requests do not gain empty tool arrays. Cache-friendly compaction and keepalive retain the exact main-turn payload transform, tools and include fields.
+
+Anthropic Messages supports `web_search_20250305`. The direct Anthropic API
+retains main's default-on behavior. Anthropic-compatible gateways
+must explicitly declare search and replay support. For example, merge this override into your existing provider entry,
+keeping its current credential configuration:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "baseUrl": "https://your-proxy.example/anthropic",
+      "modelOverrides": {
+        "claude-opus-5-5": {
+          "compat": { "supportsWebSearch": true }
+        }
+      }
+    }
+  }
+}
+```
+
+This opt-in was verified with a real ccapi search and exact encrypted-result
+replay. Senpi does not infer support from a proxy hostname. Anthropic requires
+the assistant blocks and their `encrypted_content` to be replayed unchanged.
+
+| Route | In-turn tool / API | Capability and replay contract |
+| --- | --- | --- |
+| Direct Anthropic API | `web_search_20250305`, Messages | Default-on (unchanged from main); `compat.supportsWebSearch: false` opts out. No new direct-endpoint probe is claimed here. |
+| Anthropic-compatible gateways, including ccapi | `web_search_20250305`, Messages | Opt-in `compat.supportsWebSearch: true`. ccapi search and encrypted-result replay verified live. |
+| OpenAI API / Azure | `web_search_preview`, Responses | Default-on (unchanged from main). Custom Responses endpoints remain opt-in `compat.supportsWebSearchPreview: true`. The current `web_search` name is also supported. |
+| ChatGPT/Codex subscription | `web_search`, Codex Responses | First-party subscription default, except Spark; custom endpoints require opt-in. Real search and output-item replay verified. |
+| xAI | `web_search`, Responses | Opt-in `compat.supportsWebSearchPreview: true`. Catalogs select the tool shape but do not enable it. Held OAuth probe: HTTP 403, not live-verified. |
+| Google Gemini / Vertex | `googleSearch`, GenerateContent | Opt-in `compat.supportsWebSearch: true` on Gemini 2/3. Held probe: HTTP 400 `API_KEY_INVALID`, not live-verified. Explicit mixed-tool rejection enables the session/model fallback. |
+| OpenRouter | `openrouter:web_search`, Chat Completions or Responses | Opt-in `compat.supportsWebSearch: true`; doc only, not live-verified. Uses OpenRouter's own tool shape. |
+| Moonshot PAYG | `$web_search` / `builtin_function`, Chat Completions | Opt-in `compat.supportsWebSearch: true`; doc only, not live-verified. Echoes server-generated arguments without another search request. Retires October 20, 2026. Cannot be discovered or lazily activated through tool_search, or declared on another route. |
+| Kimi for Coding | Anthropic-compatible Messages | Not live-verified (no personal credential). Coding-plan integration docs do not specify a server-search name/shape or replay contract. Not default-on; generic Messages opt-in is not verification. Follow-up [#3134](https://github.com/code-yeongyu/senpi/issues/3134). |
+| DeepSeek | Claude Code search on its Anthropic-compatible endpoint | Not live-verified (no personal credential). Claude Code docs claim API search but do not publish its raw shape/replay contract; a manually configured Messages route remains opt-in, not default-on. Built-in Chat Completions remains unsupported, and Responses docs list `web_search` as ignored. Follow-up [#3134](https://github.com/code-yeongyu/senpi/issues/3134). |
+| Z.AI PAYG chat | `web_search`, Chat Completions | Explicit `compat.supportsWebSearch: true` on that route; never enabled automatically on the coding-plan endpoint. |
+| GLM coding plan, z.ai Anthropic endpoint | `web_search_20250305`, Messages | Supported, opt-in `compat.supportsWebSearch: true`. Live response `msg_202610120132474ee314e9947c4ea2` returned server search with a `tool_result` block, which now remains visible and replays with its same-model server-tool pair even when the search usage counter is zero. OpenAI-compatible coding probe: not verified (length limit, no search payload); bigmodel.cn: not verified (HTTP 401, expired key). Remote MCP `webSearchPrime` remains a separate option. |
+| Perplexity Sonar | Search inherent in its main completion | No extra tool injection. Native-bypass routing is opt-in `compat.supportsWebSearch: true`; doc only, not live-verified. |
+| Exa, Tavily, Brave, Kagi, Serper, Serpdive, Keenable, Google CSE, SearXNG and result-page engines | Dedicated retrieval APIs/MCP | Standalone search fallbacks, not session-model server tools. |
+
+Official references:
+
+Custom xAI-compatible Responses entries declare both
+`supportsWebSearchPreview: true` and `webSearchToolType: "web_search"`.
+The type selection belongs to the model compatibility entry, not a provider-id
+or hostname guess. OpenAI-compatible endpoints that only support the legacy
+preview type can retain `webSearchToolType: "web_search_preview"`.
+
+- [Anthropic tool and replay](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
+- [OpenAI Responses search](https://developers.openai.com/api/docs/guides/tools-web-search)
+- [Codex cached/live search](https://developers.openai.com/codex/config-basic/)
+- [xAI Responses search](https://docs.x.ai/developers/tools/web-search)
+- [Google grounding](https://ai.google.dev/gemini-api/docs/google-search)
+- [Google SDK examples](https://github.com/googleapis/js-genai/blob/main/codegen_instructions.md)
+- [OpenRouter server search](https://openrouter.ai/docs/guides/features/server-tools/web-search)
+- [Moonshot built-in flow](https://platform.kimi.ai/docs/guide/use-web-search)
+- [Kimi coding endpoint](https://www.kimi.com/code/docs/en/third-party-tools/claude-code)
+- [DeepSeek Claude Code integration](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code)
+- [DeepSeek Responses compatibility: built-in search ignored](https://api-docs.deepseek.com/guides/responses_api#tools)
+- [Z.AI PAYG chat search](https://docs.z.ai/guides/tools/web-search)
+- [GLM coding-plan search MCP](https://docs.z.ai/devpack/mcp/search-mcp-server)
+- [GLM Claude Code / Anthropic integration](https://docs.z.ai/devpack/tool/claude)
+- [Perplexity migration and conversation contract](https://docs.perplexity.ai/docs/sonar/quickstart)
+
+The `nativeModel` setting and cheaper same-provider defaults apply only to
+auxiliary search on routes without an in-turn server tool. They cannot
+preempt server search: a different `nativeModel` setting is ignored on an enabled
+server-search route. If an eligible route needs the standalone fallback,
+that retry uses the session model rather than swapping to a cheaper model.
 
 ## Subscriptions
 
@@ -21,12 +108,15 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
+- Meta (Muse subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
+- Kimi Code (kimi.com / kimi.ai subscriptions)
 - Radius
+- Cursor (Pro/Ultra/Teams) — authentication only for now, see below
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
+Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
 
-### OpenAI Codex
+### ChatGPT Subscription
 
 - Requires ChatGPT Plus or Pro subscription
 - Officially endorsed by OpenAI: [Codex for OSS](https://developers.openai.com/community/codex-for-oss)
@@ -35,18 +125,23 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json`
 
 Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
 
-### Claude SDK OAuth
+- Sign in with `/login anthropic-subscription` (see [Anthropic Subscription](#anthropic-subscription)). senpi has no Claude sign-in of its own: the bundled Claude Code CLI runs `claude auth login` and keeps the login in its own credential store.
+- The plain `anthropic` provider takes Anthropic API keys only. A Claude OAuth token (`sk-ant-oat...`) given to it as a key, through `/login anthropic`, `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN` or a `models.json` `apiKey`, is refused before any request is sent, with an error that points at `/login anthropic-subscription`. senpi does not send Claude subscription tokens to the Anthropic API directly and does not present itself as Claude Code.
 
-The `claude-sdk-oauth` provider routes LLM calls through the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) - it spawns the real Claude Code engine - while senpi executes every tool itself. Subscription usage flows through Anthropic's official Claude Code surface.
+### Anthropic Subscription
 
-- Run `/login claude-sdk-oauth` to sign in with your Claude Pro/Max subscription (PKCE, same OAuth client as the Claude Code CLI). An existing Anthropic OAuth credential is offered as an import.
-- Multiple accounts: each `/login claude-sdk-oauth` adds another named account. `CLAUDE_CODE_OAUTH_TOKEN` (and `_2`..`_N`) are honored as read-only env accounts. `/claude-account` lists, adds, removes, and pins accounts; `--claude-account <name>` pins one for the session; `claudeSdkOauthProvider.pinnedAccount` pins one in settings.
+The `anthropic-subscription` provider routes LLM calls through the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) - it spawns the real Claude Code engine - while senpi executes every tool itself. Subscription usage flows through Anthropic's official Claude Code surface.
+
+- Run `/login anthropic-subscription` to sign in with your Claude Pro/Max subscription. The bundled Claude Code CLI runs `claude auth login --claudeai` for the account in its own account dir: choose the browser login, or the copy-code login and paste the code Anthropic shows. The CLI keeps the login and renews its token; senpi stores no Claude token and refreshes none. Accounts signed in through senpi's older built-in login are signed out and ask to sign in again.
+- Multiple accounts: each `/login anthropic-subscription` adds another named account. `CLAUDE_CODE_OAUTH_TOKEN` (and `_2`..`_N`) are honored as read-only env accounts. `/claude-account` lists, adds, removes, and pins accounts; `--claude-account <name>` pins one for the session; `anthropicSubscriptionProvider.pinnedAccount` pins one in settings.
 - Session affinity: one senpi session sticks to one account (rendezvous hashing), which keeps Anthropic's prompt cache warm - accounts never rotate mid-session except on automatic failover. Rate limits and auth errors block the account (with cooldown) and retry on the next account, before any visible output; once output has started, the error surfaces instead of replaying.
+- To stop instead of spending another account's allowance, set `anthropicSubscriptionProvider.accountFallback: false`. On managed lanes (`oauth-slots` and `config-dir`), only the explicitly pinned account, otherwise the resident session's account, otherwise the deterministic affinity winner may serve the request. A blocked selected account is not skipped on later requests. Same-account transient retries still work; an explicit account pin can select a different account. The default is `true`. This is independent of `retry.modelFallback` / `--no-model-fallback`; disable model fallback too if you do not want a different model or provider to serve the failed turn. The ambient lane has no managed-account fallback.
 - Default lane: **ambient** - with no `tokenInjection` setting the provider inherits the environment like the upstream extension (Claude Code CLI login or `ANTHROPIC_API_KEY`). Managed lanes (`oauth-slots`, `config-dir`) are opt-in via one settings line until the live subscription spike proves a managed default.
-- Settings (`claudeSdkOauthProvider`):
+- Ambient lane is explicit opt-in: a Claude Code CLI login on the host is not consent to spend that subscription, so the ambient lane is gated by `anthropicSubscriptionProvider.enabled` (default `false`, env override `SENPI_CLAUDE_SDK_OAUTH_ENABLED`). Before this gate existed, a logged-in Claude Code CLI made the provider available with no senpi-side action. An explicit senpi-side login is itself an opt-in: stored OAuth accounts in `auth.json` and `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts keep the provider available with the flag unset. Only the host-CLI-derived ambient lane requires the flag.
+- Settings (`anthropicSubscriptionProvider`):
   - `systemPromptMode` — controls how the system prompt is delivered. **`full`** (default) sends senpi's composed system prompt verbatim; the lane no longer rebuilds from the SDK `claude_code` preset, so all prompt regions (project rules, response-language instructions, etc.) reach the model. **`preset-append`** is the previous behaviour (deprecated, kept for one release; emits a one-time warning). **`override`** loads the system prompt from a file (`systemPromptFile`). The legacy `appendSystemPrompt` key still works: `false` → `preset-append`, `true`/unset → `full`; setting both keys makes `systemPromptMode` win and warns.
   - In `full` and `override` modes, `settingSources` defaults to `[]` on every lane because senpi's prompt already carries project context — loading the SDK's own CLAUDE.md would double-inject it. The CLI always prepends its own `"You are a Claude agent, built on Anthropic's Claude Agent SDK."` block, which senpi cannot suppress; `full` means the prompt is delivered intact, not that it is the only system-prompt text.
-  - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `systemPromptFile`.
+  - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `compactionOwner` (`senpi` default | `sdk` hands compaction to Claude Code's native auto-compact), `systemPromptFile`, `enabled` (default `false`; gates the ambient lane only).
 - **Environment overrides** (precedence: `env > project settings > global settings > default`; no new CLI flags):
 
   | Variable | Purpose |
@@ -54,13 +149,17 @@ The `claude-sdk-oauth` provider routes LLM calls through the official [Claude Ag
   | `SENPI_CLAUDE_SDK_OAUTH_SYSTEM_PROMPT_MODE` | `full` \| `preset-append` \| `override` |
   | `SENPI_CLAUDE_SDK_OAUTH_SYSTEM_PROMPT_FILE` | Path to the system prompt file (used with `override` mode) |
   | `SENPI_CLAUDE_SDK_OAUTH_RESUME` | `auto` (default) \| `off` — disables session reuse, restoring per-turn SDK queries |
+  | `SENPI_CLAUDE_SDK_OAUTH_ENABLED` | Overrides `enabled`; gates the ambient (host-CLI-derived) lane |
   | `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION` | `oauth-slots` \| `config-dir` \| `ambient` |
   | `SENPI_CLAUDE_SDK_OAUTH_SETTING_SOURCES` | Overrides `settingSources` |
   | `SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT` | Overrides `pinnedAccount` |
+  | `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK` | `0` / `false` disables managed-account fallback; `1` / `true` enables it |
+  | `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER` | Overrides `compactionOwner` (`senpi` \| `sdk`) |
 
   Every `SENPI_*` variable is stripped from the Claude Code subprocess environment on all three lanes; other inherited variables are preserved.
-- **Session reuse.** By default one long-lived SDK query spans the entire senpi session instead of a fresh one per turn, so conversations continue with only the new delta sent. Reuse fails closed to a fresh session on compaction, branch/fork navigation, account failover, an aborted turn, or any configuration change. Idle sessions retire after 30 minutes (max 32 resident); a session with an in-flight turn is never evicted. After a senpi process restart the lane always starts fresh. Set `resumeMode: "off"` (or `SENPI_CLAUDE_SDK_OAUTH_RESUME=off`) to restore the old per-turn behaviour. Accepted values are `"auto"` (default) and `"off"`; any other value is silently ignored.
-- Account state is exposed to desktop/automation clients: RPC `get_provider_accounts`, `account_pin`, `account_remove` and the `auth_accounts_changed` / `account_failover` events, mirrored through the app-server protocol. Token material is never included.
+- **Compaction.** senpi owns compaction on this lane by default: speculative and idle compaction, restoration, degradation recovery and per-model thresholds apply, the summary is written by the session's own model unless `compaction.model` is set, and an accepted compaction cold-seeds a fresh resident session from the compacted branch. So that only one side compacts, the lane pins the SDK's session-scoped `autoCompactEnabled: false` (overriding the user's global Claude Code preference) and sets `CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off` for the Claude Code subprocess, whose per-turn token reminder otherwise defeats prompt-cache reuse; at the hard limit Claude Code rejects the turn and senpi's overflow recovery compacts and retries it. If that compaction fails, the turn ends with the error instead of Claude Code compacting natively. Set `compactionOwner: "sdk"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=sdk`) to let the resident Claude Code session compact instead: the lane pins `autoCompactEnabled: true`, does not set `autoCompactWindow`, and senpi stands down its automatic compaction (manual `/compact` stays senpi's). The owner is fixed into the resident Claude Code process when it starts, so changing it mid-session restarts that process on the next turn. Under either owner senpi never rewrites a message the resident session already received, so its per-turn context reduction stays off on this lane. `resumeMode: "off"` restores per-turn sessions, where senpi always owns compaction.
+- **Session reuse.** By default one long-lived SDK query spans the entire senpi session instead of a fresh one per turn, so conversations continue with only the new delta sent. An accepted senpi compaction rewrites the transcript and forks to a fresh resident session; a rejected compaction leaves continuity unchanged. Reuse also fails closed on branch/fork navigation, account failover, an aborted turn, or any configuration change. Idle sessions retire after 30 minutes (max 32 resident); a session with an in-flight turn is never evicted. After a senpi process restart the lane always starts fresh. Set `resumeMode: "off"` (or `SENPI_CLAUDE_SDK_OAUTH_RESUME=off`) to restore the old per-turn behaviour. Accepted values are `"auto"` (default) and `"off"`; any other value is silently ignored.
+- Account state is exposed to desktop/automation clients: RPC `get_provider_accounts`, `account_pin`, `account_order`, `account_remove` and the `auth_accounts_changed` / `account_failover` events. Token material is never included.
 
 #### Session continuity self-check
 
@@ -83,21 +182,21 @@ ls -lt ~/.claude/projects/*/ | head
 
 ### Diagnosing Claude OAuth token consumption
 
-If your Claude Pro/Max subscription usage through `claude-sdk-oauth` feels unexpectedly high, check these in order:
+If your Claude Pro/Max subscription usage through `anthropic-subscription` feels unexpectedly high, check these in order:
 
 1. **Upgrade to v2026.8.3 or later.** Resume-first session continuity (#634-637) landed on 2026-08-03. On older builds, every turn after a divergence (compaction, abort, model switch, restart, failover) re-sends the entire conversation, which is the dominant token-burn mechanism.
 2. **Check which lane you are on.** The `ambient` lane (default) inherits the environment. `oauth-slots` and `config-dir` are managed lanes set via `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION`. The `config-dir` lane keeps each account's credentials in its own `CLAUDE_CONFIG_DIR`; no official SDK API moves a transcript across roots, so account failover on that lane always flattens (re-sends the full history) — this is a declared residual, not a bug.
-3. **Read the continuity observations.** Tail the session log and filter for `flatten` — each `flatten` line means the lane re-sent the whole conversation and lost prompt-cache hits. A healthy conversation shows one `bootstrap` followed by `delta` lines. Common flatten reasons: `transcript_missing`, `registry_miss`, `resume_initialization_failed`, `cross_root_unsupported` (config-dir only).
+3. **Read the continuity observations.** Tail the session log and filter for `flatten` — each `flatten` line means the lane re-sent the whole conversation and lost prompt-cache hits. A healthy conversation shows one `bootstrap` followed by `delta` lines. Common flatten reasons: `transcript_missing`, `registry_miss`, `resume_initialization_failed`, `cross_root_unsupported` (config-dir only). A `failed` line is a turn whose every attempt failed (quota, auth, query error); it re-sent nothing, and the retry resumes the session. Every line carries `sessionId`, so filter by it when several sessions share the log.
 4. **Prompt-cache retention.** Effective cache TTL depends on which lane you are on:
 
    | Lane | Effective TTL | Who controls it | How to override |
    | --- | --- | --- | --- |
-   | Claude SDK OAuth (subscription, `claude-sdk-oauth`) | 5 minutes | The Claude SDK owns `cache_control`; senpi cannot add breakpoints. senpi reports 300s for this lane so cache-aware budgets (tool waits, goal timing) size themselves correctly. | Not overridable |
-   | Direct Anthropic API (`api.anthropic.com`, API key or OAuth token) | 1 hour | senpi defaults retention to `long` on this lane. Note: Anthropic's own API default is 5 minutes; the 1h TTL is senpi's choice, and 1h cache writes cost 2x base input vs 1.25x for 5m ([Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)). | `PI_CACHE_RETENTION`, `cacheRetention` |
+   | Anthropic Subscription (subscription, `anthropic-subscription`) | 1 hour on a Claude subscription; 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch is set | Claude Code owns `cache_control` and picks the TTL; senpi cannot add breakpoints. senpi reports the same TTL so cache-aware budgets (tool waits, goal timing) size themselves correctly. A subscription past its usage limits drops to 5 minutes, which senpi cannot observe. | `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` or `1h` (also read by Claude Code) |
+   | Direct Anthropic API (`api.anthropic.com`, API key or OAuth token) | 5 minutes | senpi follows Anthropic's default cache retention. Opting into 1h retention makes cache writes cost 2x base input vs 1.25x for 5m ([Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)). | Set `PI_CACHE_RETENTION=long` or `cacheRetention: "long"` |
    | Anthropic-compatible providers (kimi-coding, fireworks, gateways) | 5 minutes | The 1h TTL is gated on the native `api.anthropic.com` base URL, so these lanes stay short. | `cacheRetention` |
 
    Override precedence: `cacheRetention` in `models.json` / the model catalog wins over everything. `PI_CACHE_RETENTION=long` selects long; any other set value forces short; unset falls back to the lane default above.
-5. **Goal-monitor timing.** The goal monitor's continuation backstop is derived from the model's cache-safe wait (TTL minus `promptCache.safetyBufferSeconds`, default 30), capped by `promptCache.goalBackstopMaxSeconds` (default 3570), instead of a fixed 4 minutes. On 5m lanes that means wakes every ~4m30s; on the 1h direct-API lane, up to 59m30s. Cache-warm notices show which warm iteration you are on.
+5. **Goal-monitor timing.** While at least one wake source is live, the goal monitor arms one periodic backstop of `promptCache.goalBackstopMaxSeconds` (default 270, so 4m30s: the 5-minute Anthropic prompt-cache TTL minus the 30s safety buffer; hard-capped at 1h). The normal resumption is event-driven: a monitor event or a finished background job starts a turn, and when the last wake source drains, exactly one continuation is queued about a second later. The backstop is the floor underneath that: a wake source can be misconfigured (a filter that never matches, a stream that never ends), so the goal re-checks at least once per backstop interval instead of waiting an hour on a source that will never deliver. Each backstop firing is a full main-model turn that re-sends the accumulated context; at the default it lands inside the prompt-cache TTL, so the cache stays warm. Raise `goalBackstopMaxSeconds` (up to 3600) to trade that re-check frequency for cost on a wait you trust, and use `promptCache.keepAlive` (opt-in, off by default) to keep the cache warm across such a long backstop. Cache-warm notices show which warm iteration you are on.
 6. **Wake sources that hold the goal backstop.** Anything that can wake a parked session publishes a `wake_source_state` event (`{source, activeCount}`): terminal monitors (`terminal-monitors`), background bash sessions including auto-detached and killed ones (`terminal-background-sessions`), detached `eval` cells (`senpi-codemode`), and omo-senpi background task children plus owned team members (`senpi-task`). The goal extension sums every source, so a goal waits inside the prompt-cache TTL while ANY of them is on duty instead of continuing immediately. The legacy `terminal_monitor_state` event is still emitted for external consumers and is folded onto the same `terminal-monitors` count.
 7. **Directive-block deduplication.** As of v2026.8.4, the flatten serialization collapses repeated `<ultrawork-mode>` directive blocks to a single copy, preventing the issue-#494 scenario where duplicated ~17KB directive blocks consumed up to 73% of the re-sent prompt. The continuity observation reports how many were collapsed and the payload size.
 
@@ -110,6 +209,11 @@ If your Claude Pro/Max subscription usage through `claude-sdk-oauth` feels unexp
 
 - Run `/login xai`, then select **Use a subscription**
 - `XAI_API_KEY` remains available through **Use an API key**
+
+### Meta (Muse subscription)
+
+- Run `/login meta`, then select **Sign in with Meta** to use Muse Spark models with your Muse subscription; the Model API key is refreshed automatically
+- `META_API_KEY` remains available through **Use an API key**
 
 ### OpenRouter
 
@@ -128,9 +232,74 @@ Upstreams that require explicit cache breakpoints get `cache_control` blocks thr
 
 senpi sends `prompt_cache_key` (set to the session id) on Moonshot requests. Kimi documents the field as required for the Kimi Code Plan and recommended for any multi-turn agent ([Kimi context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api)). Kimi reports cache hits as a flat `usage.cached_tokens` field, which senpi parses as cache-read tokens.
 
+### Kimi Code
+
+- Run `/login kimi-coding`, then select **Sign in with Kimi Code** and pick the service that hosts your account: **Mainland China (kimi.com)** or **Outside mainland China (kimi.ai)**
+- The region is stored with the credential; token refresh and model requests follow it (`auth.kimi.ai` + `api.kimi.ai/coding` for international accounts), so a `.ai` login keeps working after restarts and env changes
+- **Use an API key** asks the same region question and routes `KIMI_API_KEY` requests by it; `KIMI_CODE_REGION=global` (or `mainland-cn`) answers it for headless setups
+- `KIMI_CODE_OAUTH_HOST` / `KIMI_OAUTH_HOST` still override the auth host for new logins and for credentials saved before regions existed; a host other than the two official ones is kept verbatim and needs a `models.json` `baseUrl` for inference
+
 ### Radius
 
 Radius is a dynamic `pi-messages` gateway. `/login radius` stores OAuth tokens in `auth.json`; the gateway catalog is refreshed independently and cached in `models-store.json`. Custom Radius gateways can be declared in `models.json` with `"oauth": "radius"` and a gateway `baseUrl`.
+
+### Cursor
+
+- Run `/login cursor`, then approve the request in the browser (`cursor.com/loginDeepControl` deep link; the CLI polls until the browser approval releases the tokens)
+- Tokens are stored in `auth.json` and auto-refresh via `api2.cursor.sh/auth/exchange_user_api_key`, keeping the previous refresh token when Cursor does not rotate it
+- The model catalog is per account: after login it is discovered automatically through `GetUsableModels` (max-mode 1M-context variants included) and refreshed with `senpi update --models`
+- Chat runs over Cursor's native agent protocol (HTTP/2 Connect, `agent.v1.AgentService/Run`). Tool calling is fully supported: Cursor's server drives tools over an in-band exec channel, and senpi bridges those calls onto its real tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, plus MCP/extension tools), so approvals, sandboxing, and output truncation behave exactly like model-issued calls
+- Not supported (answered with typed refusals the model can route around): computer use, subagents, Cursor-managed background shells, canvas, smart-mode approval classification, and conversation search
+
+### Cursor CLI (fallback lane)
+
+Use the native `cursor` provider above by default - it is the first-party, primary path.
+
+`cursor-cli-oauth` is an opt-in fallback (never a replacement) that drives the locally installed `cursor-agent` CLI instead of Cursor's network protocol. It becomes usable when `cursor-agent` is installed, Senpi has a native `cursor` OAuth credential, and the lane has been explicitly enabled. Fall back to this lane when:
+
+- the native transport misbehaves on your setup - protocol drift after a Cursor update, Connect-RPC/HTTP2 failures the native provider cannot route around, or
+- you explicitly want Cursor's own agent harness - the model running inside the Cursor CLI with its built-in tools - rather than senpi executing the tools.
+
+#### Native Cursor vs the CLI lane
+
+| | Native `cursor` provider | `cursor-cli-oauth` lane |
+| --- | --- | --- |
+| Transport | Protobuf Connect-RPC to `api2.cursor.sh` (HTTP/2, `agent.v1.AgentService/Run`) | Local `cursor-agent -p <prompt> --output-format stream-json` subprocess |
+| Auth | senpi OAuth (`/login cursor`), tokens in `auth.json` | The same senpi OAuth flow; this lane stores multiple named accounts and injects each into a per-account file-store HOME immediately before every turn |
+| Tool execution | Cursor's server-driven exec channel bridges onto senpi's real tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, MCP/extension tools), so approvals, sandboxing, and truncation behave like model-issued calls | Runs INSIDE the Cursor CLI with no senpi approval, no senpi sandboxing, and no tool-level audit - a one-time acknowledgement is required before unattended execution |
+| Model catalog | Per-account `GetUsableModels` discovery, refreshed with `senpi update --models` | `cursor-agent models` listing (the full suffix-expanded effort x thinking x `-fast` ladder, 204 ids on the reference build), cached with a TTL; static fallback list when the CLI is missing or the probe fails |
+| Requirements | None beyond `/login cursor` | The `cursor-agent` CLI installed plus a native or managed Cursor OAuth credential; native credentials bootstrap automatically |
+
+#### Setup
+
+1. Install the CLI and make sure `~/.local/bin` is on `PATH` (it installs under `~/.local/share/cursor-agent` and symlinks `~/.local/bin/cursor-agent`):
+
+```bash
+curl https://cursor.com/install -fsS | bash
+```
+
+2. Sign in to native Cursor with `/login cursor`. When the CLI lane has no managed accounts, it automatically copies that stored OAuth credential into one managed `native` slot. The primary credential is preserved unchanged; repeated/concurrent startup does not create duplicates.
+3. `/login cursor-cli-oauth` remains available for separate or additional managed accounts. `/cursor-account import native` remains an explicit repair/manual-copy command, while bare `/cursor-account import` (or `import local`) copies the locally logged-in Cursor desktop/CLI credential.
+4. Manage accounts with `/cursor-account`:
+
+```
+/cursor-account [list | add | remove <name> | pin <name> | unpin | import [local | native] | acknowledge | status]
+```
+
+- The lane is disabled by default. A `cursor-agent` CLI being logged in on the machine is not consent to spend that subscription, so set `cursorCliOauthProvider.enabled: true` (or `SENPI_CURSOR_CLI_OAUTH_ENABLED=1`) to enable it and allow automatic native credential bootstrap. Before this gate existed, an installed and logged-in `cursor-agent` made the lane available with no senpi-side action.
+- `add`, `import local`, and `import native` explicitly persist enabled state and refresh model availability.
+- `import local` copies the locally logged-in Cursor desktop credential into a new slot: the source is read once, on this explicit request only, and copied - never referenced live.
+- `import native` copies the primary Senpi `cursor` provider's OAuth credential into a separate managed slot without moving, deleting, or refreshing the primary entry.
+- `pin <name>` (or the `cursorCliOauthProvider.pinnedAccount` setting) fixes one account for the session.
+- `status` reports the lane, the active account, and the context owner of a resumed CLI chat.
+
+**Multi-account behavior.** Each account gets its own durable credential home under `<agent dir>/cursor-cli-oauth/accounts/<name>/home` (directory mode 0700, `.cursor/auth.json` mode 0600, file credential store), which also holds that account's CLI chat history and is never deleted between turns. One senpi session sticks to one account (rendezvous hashing), and a rate-limited or auth-failing account is blocked with a cooldown while the turn fails over to the next account before any visible output; once output has started, the error surfaces instead of replaying.
+
+**Model switching on resume.** Each turn resumes the same CLI chat id (`--resume`). Switching the model mid-session keeps that chat, and the first post-switch turn carries a short recap block built from senpi's own recent exchanges so the new model re-orients (`contextRecapOnModelSwitch`, default on). A CLI-side context overflow restarts a fresh chat with the same recap instead of wedging the session.
+
+**No-approval acknowledgement.** This lane is the one case where a senpi provider runs tools senpi cannot gate: with force execution, the Cursor CLI executes its own tools autonomously - there is no senpi approval, no senpi sandboxing, and no tool-level audit for what it runs. The first force execution therefore refuses with the exact acknowledgement step: `/cursor-account acknowledge` (or set `cursorCliOauthProvider.noApprovalAcknowledgedAt` to the current ISO-8601 timestamp in senpi settings, once). With force execution disabled instead, the lane still answers but the Cursor CLI auto-rejects every tool call (one warning per session).
+
+**Plan alternative.** `cursorCliOauthProvider.executionMode: "plan"` sends `--mode plan`: the CLI only plans and never executes tools, so no acknowledgement is required - a way to use the lane before deciding to trust force execution. `cursorCliOauthProvider.denyCommands` additionally refuses exact full commands inside the per-account HOME's `cli-config.json` (globs are not supported).
 
 ## Ollama Cloud
 
@@ -149,6 +318,35 @@ The provider streams through Ollama's OpenAI-compatible `/v1/chat/completions` e
 Existing local Ollama configurations remain supported. When an `ollama` provider in `models.json` includes
 an explicit `models` catalog, that catalog takes precedence and Senpi does not run Ollama Cloud discovery.
 
+## B.AI
+
+Use `/login bai` to store an API key, or export `BAI_API_KEY`. B.AI model availability is credential-scoped,
+so refresh the catalog after login:
+
+```bash
+export BAI_API_KEY=...
+senpi update --models
+senpi --provider bai --model gpt-5.6-sol
+```
+
+Senpi discovers available IDs from `https://api.b.ai/v1/models` and enriches classified chat models with
+B.AI's documented context, output, input modality, reasoning-level, and standard pricing metadata. Because that
+list is credential-scoped, a model you are not entitled to never appears.
+
+B.AI serves one API key over three protocols and documents several models on more than one of them, so the
+endpoint is a client choice rather than a per-model property. Senpi pins one protocol per model: GPT and
+DeepSeek use OpenAI Responses (the two families B.AI names for that endpoint), Claude uses Anthropic Messages,
+and the remaining chat families use OpenAI Chat Completions.
+
+B.AI rejects a function tool whose root parameters schema declares no `type`. On the Responses endpoint Senpi
+merges such a union root into a single object schema so the tool keeps its parameters; the Chat Completions and
+Messages paths already do the same normalization for every provider. Image-only IDs such as `gpt-image-2` remain
+on B.AI's image API and are not listed as chat models.
+
+The catalog records B.AI's standard reference prices in USD per 1M tokens. They exclude temporary promotions,
+top-up bonuses, DeepSeek idle-period rates, and account benefits, so B.AI's final billing record remains
+authoritative.
+
 ## API Keys
 
 ### Environment Variables or Auth File
@@ -157,7 +355,7 @@ Use `/login` in interactive mode and select a provider to store an API key in `a
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi
+senpi
 ```
 
 | Provider | Environment Variable | `auth.json` key |
@@ -166,6 +364,7 @@ pi
 | Ant Ling | `ANT_LING_API_KEY` | `ant-ling` |
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
+| B.AI | `BAI_API_KEY` | `bai` |
 | Ollama Cloud | `OLLAMA_API_KEY` | `ollama` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
@@ -174,11 +373,15 @@ pi
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
+| Venice AI | `VENICE_API_KEY` | `venice` |
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`) | `cloudflare-ai-gateway` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
+| Meta | `META_API_KEY` | `meta` |
+| TypeSafe ([classifier models](models.md#classifier-models)) | `TYPESAFE_API_KEY` | `typesafe` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
+| OpenGateway | `OPENGATEWAY_API_KEY` | `opengateway` |
 | ZAI Coding Plan (Global) | `ZAI_API_KEY` | `zai` |
 | ZAI Coding Plan (China) | `ZAI_CODING_CN_API_KEY` | `zai-coding-cn` |
 | OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
@@ -187,10 +390,12 @@ pi
 | Hugging Face | `HF_TOKEN` | `huggingface` |
 | Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
 | Together AI | `TOGETHER_API_KEY` | `together` |
-| Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
+| Baseten | `BASETEN_API_KEY` | `baseten` |
+| Kimi For Coding | `KIMI_API_KEY` (+ `KIMI_CODE_REGION`) | `kimi-coding` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
-| Qwen Token Plan | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
+| Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
+| Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan-individual` |
 | Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` | `qwen-token-plan-cn` |
 | Xiaomi MiMo | `XIAOMI_API_KEY` | `xiaomi` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` | `xiaomi-token-plan-cn` |
@@ -198,11 +403,17 @@ pi
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
 | Alibaba Token Plan (ap-southeast-1) | `ALIBABA_TOKEN_PLAN_API_KEY` | `alibaba-token-plan` |
 
-Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
+With no key or token set, Anthropic uses workload identity federation when `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE` are set: the Anthropic SDK exchanges the identity token for a short-lived access token and refreshes it itself (re-reading the identity token file, so keep that file fresh for long sessions). `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID` are passed through when set.
+
+#### OpenGateway
+
+OpenGateway is an OpenAI-compatible multi-provider gateway serving OpenAI, Anthropic, Google, xAI, Moonshot, DeepSeek, ZAI, MiniMax, and Qwen models through one API key. Issue a key at <https://opengateway.ai/api-keys>, then `/login` and select **OpenGateway**, or export `OPENGATEWAY_API_KEY`. The data plane is `https://apis.opengateway.ai`; model ids use the gateway's `owner/model` format (for example `moonshotai/kimi-k3`, `anthropic/claude-fable-5`).
+
+Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/env-api-keys.ts).
 
 #### Auth File
 
-Store credentials in `~/.pi/agent/auth.json`:
+Store credentials in `~/.senpi/agent/auth.json`:
 
 ```json
 {
@@ -216,6 +427,7 @@ Store credentials in `~/.pi/agent/auth.json`:
   "opencode-go": { "type": "api_key", "key": "..." },
   "together": { "type": "api_key", "key": "..." },
   "qwen-token-plan":  { "type": "api_key", "key": "sk-sp-..." },
+  "qwen-token-plan-individual": { "type": "api_key", "key": "sk-sp-..." },
   "qwen-token-plan-cn": { "type": "api_key", "key": "sk-sp-..." },
   "xiaomi": { "type": "api_key", "key": "..." },
   "xiaomi-token-plan-cn":  { "type": "api_key", "key": "..." },
@@ -225,7 +437,60 @@ Store credentials in `~/.pi/agent/auth.json`:
 }
 ```
 
+`qwen-token-plan-individual` uses the same international endpoint and `QWEN_TOKEN_PLAN_API_KEY` as
+`qwen-token-plan`, but limits the picker to the models documented for Individual subscriptions. The existing
+provider keeps its broader catalog for backward compatibility. When using `auth.json`, store the
+credential under the provider you select; an environment variable is shared by both international providers.
+
 The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over environment variables.
+
+#### Multiple accounts per provider
+
+Any provider can hold more than one credential. The quickest way is numbered environment variables
+over the provider's primary key variable - a gap in the numbering is fine:
+
+```bash
+export OPENAI_API_KEY="sk-first"
+export OPENAI_API_KEY_2="sk-second"   # any provider: ANTHROPIC_API_KEY_2, GEMINI_API_KEY_2, ...
+```
+
+Stored credentials pool through an `accounts` array. The flat top-level fields always stay a valid
+credential (older binaries keep authenticating with them), and each slot's `name` is its stable
+identity:
+
+```json
+{
+  "openai": {
+    "type": "api_key",
+    "key": "sk-first",
+    "accounts": [
+      { "name": "default", "key": "sk-first", "source": "login" },
+      { "name": "work", "key": "sk-second", "source": "login" }
+    ],
+    "pinned": "work"
+  }
+}
+```
+
+With more than one account, requests rotate automatically: a session sticks to one account
+(session-affine selection), and a rate-limited or auth-failed account fails over to a healthy
+sibling **within the same provider and model** before the model fallback chain is consulted -
+credential rotation changes which account serves the request, never which model answers it.
+Rotation never happens after a response has started streaming. Cooldowns persist in
+`~/.senpi/agent/credential-pool-state.json` (health only - never key material).
+
+Manage accounts with `/account <provider> [list | pin <name> | unpin | remove <name>]`, and tune
+behavior per provider in `models.json`:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "credentials": { "rotation": true, "affinity": true, "cooldownBaseMs": 60000 }
+    }
+  }
+}
+```
 
 API key credentials can also include provider-scoped environment values. These values are used before process environment variables when resolving the credential key, provider/model headers, and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
 
@@ -243,7 +508,7 @@ API key credentials can also include provider-scoped environment values. These v
 }
 ```
 
-Use this when pi should use different provider settings than the project shell environment.
+Use this when senpi should use different provider settings than the project shell environment.
 
 ### Key Resolution
 
@@ -273,7 +538,7 @@ The `key` field supports command execution, environment interpolation, and liter
 
 OAuth credentials are also stored here after `/login` and managed automatically.
 
-## Cloud Providers
+## Provider Specific Config
 
 ### Azure OpenAI
 
@@ -313,14 +578,14 @@ export AWS_REGION=us-west-2
 Also supports ECS task roles (`AWS_CONTAINER_CREDENTIALS_*`) and IRSA (`AWS_WEB_IDENTITY_TOKEN_FILE`).
 
 ```bash
-pi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
+senpi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
 ```
 
 Prompt caching is enabled automatically for Claude models whose ID contains a recognizable model name (base models and system-defined inference profiles). With `PI_CACHE_RETENTION=long`, the 1-hour cache TTL is only requested for Claude Opus 4.5, Sonnet 4.5, and Haiku 4.5, the models AWS documents as supporting it ([Bedrock prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)); every other cacheable Bedrock Claude model uses 5 minutes on both the wire and the TTL estimate. For application inference profiles (whose ARNs don't contain the model name), set `AWS_BEDROCK_FORCE_CACHE=1` to enable cache points:
 
 ```bash
 export AWS_BEDROCK_FORCE_CACHE=1
-pi --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
+senpi --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
 ```
 
 If you are connecting to a Bedrock API proxy, the following environment variables can be used:
@@ -344,7 +609,7 @@ export AWS_BEDROCK_FORCE_HTTP1=1
 export CLOUDFLARE_API_KEY=...           # or use /login
 export CLOUDFLARE_ACCOUNT_ID=...
 export CLOUDFLARE_GATEWAY_ID=...        # create at dash.cloudflare.com → AI → AI Gateway
-pi --provider cloudflare-ai-gateway --model "claude-sonnet-4-5"
+senpi --provider cloudflare-ai-gateway --model "claude-sonnet-4-5"
 ```
 
 Routes to OpenAI, Anthropic, and Workers AI through Cloudflare AI Gateway. Workers AI uses the Unified API (`/compat`) and prefixed model IDs (`workers-ai/@cf/...`). OpenAI uses the OpenAI passthrough route (`/openai`) with native OpenAI model IDs such as `gpt-5.1`. Anthropic uses the Anthropic passthrough route (`/anthropic`) with native Anthropic model IDs such as `claude-sonnet-4-5`.
@@ -358,7 +623,7 @@ AI Gateway authentication uses `CLOUDFLARE_API_KEY` as `cf-aig-authorization`. U
 | Stored BYOK | Cloudflare token only | Cloudflare injects provider keys stored in the AI Gateway dashboard |
 | Inline BYOK | Cloudflare token plus upstream `Authorization` header | The request supplies the upstream provider key |
 
-For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
+For normal senpi usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
 
 ### Cloudflare Workers AI
 
@@ -367,10 +632,10 @@ For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires
 ```bash
 export CLOUDFLARE_API_KEY=...           # or use /login
 export CLOUDFLARE_ACCOUNT_ID=...
-pi --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
+senpi --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
 ```
 
-Pi automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
+Senpi automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
 
 ### Google Vertex AI
 
@@ -383,12 +648,6 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
-
-## llama.cpp
-
-Pi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.
-
-See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
 
 ## Custom Providers
 

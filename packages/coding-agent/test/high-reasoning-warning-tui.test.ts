@@ -15,9 +15,13 @@ describe("InteractiveMode.showHighReasoningWarning", () => {
 	});
 
 	test("renders a scary warning box naming the model+level and urging ultrabrain", () => {
-		const fakeThis: { chatContainer: Container; ui: { requestRender: () => void } } = {
+		const fakeThis = {
 			chatContainer: new Container(),
+			toolOutputExpanded: false,
 			ui: { requestRender: vi.fn() },
+			showNoticeBox(spec: unknown): void {
+				(InteractiveMode as any).prototype.showNoticeBox.call(fakeThis, spec);
+			},
 		};
 
 		const event = {
@@ -31,7 +35,7 @@ describe("InteractiveMode.showHighReasoningWarning", () => {
 			InteractiveMode as unknown as { prototype: { showHighReasoningWarning(this: unknown, event: unknown): void } }
 		).prototype.showHighReasoningWarning.call(fakeThis, event);
 
-		expect(fakeThis.chatContainer.children).toHaveLength(4);
+		expect(fakeThis.chatContainer.children).toHaveLength(2);
 		const rendered = stripAnsi(renderAll(fakeThis.chatContainer));
 		expect(rendered).toMatch(/WARNING/i);
 		expect(rendered).toContain("gpt-5.6-sol");
@@ -42,9 +46,13 @@ describe("InteractiveMode.showHighReasoningWarning", () => {
 	});
 
 	test("reflects the max level for a sol variant when max is selected", () => {
-		const fakeThis: { chatContainer: Container; ui: { requestRender: () => void } } = {
+		const fakeThis = {
 			chatContainer: new Container(),
+			toolOutputExpanded: false,
 			ui: { requestRender: vi.fn() },
+			showNoticeBox(spec: unknown): void {
+				(InteractiveMode as any).prototype.showNoticeBox.call(fakeThis, spec);
+			},
 		};
 		const event = {
 			type: "high_reasoning_warning",

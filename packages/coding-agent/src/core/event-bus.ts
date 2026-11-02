@@ -1,6 +1,18 @@
 import { EventEmitter } from "node:events";
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 
+export const EXTENSION_RPC_EVENT_CHANNEL = "senpi:extension-rpc-event";
+/**
+ * Emitted (with no data) right after an RPC client starts receiving extension events, so an
+ * extension holding a state snapshot can send it once instead of waiting for its next change.
+ */
+export const EXTENSION_RPC_SUBSCRIBED_CHANNEL = "senpi:extension-rpc-subscribed";
+
+export type ExtensionRpcEvent = {
+	readonly name: string;
+	readonly data: unknown;
+};
+
 export interface EventBus {
 	emit(channel: string, data: unknown): void;
 	on(channel: string, handler: (data: unknown) => void): () => void;

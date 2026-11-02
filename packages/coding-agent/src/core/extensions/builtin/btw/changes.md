@@ -1,4 +1,126 @@
+## 2026-10-27 - /btw side queries split the system prompt like the turn (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`, `packages/coding-agent/src/core/extensions/builtin/btw/side-query.ts`: the side query passes `ctx.getSystemPromptStablePrefix()` as `systemPromptStablePrefix`; the side-query instruction stays behind it.
+
+### Why
+
+- The side query reuses the turn's cached prefix only when its system blocks and breakpoint match the turn's.
+
+### Why an extension could not handle it
+
+- This is the btw builtin's own request builder.
+
+### Expected merge conflict zones
+
+- LOW: `buildSideQueryContext` in `side-query.ts` and the call in `index.ts`.
+
+## 2026-10-05 - /btw renders its answer as Markdown
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/panel.ts`: the panel body is split into a header `Text` (the question), a `Markdown` component for the answer using `getMarkdownTheme()` (the theme assistant messages use), and a footer `Text` (status line). The header and footer strings are unchanged apart from dropping the leading newline that used to separate them inside one `Text`.
+
+### Why
+
+- The answer was concatenated into a single `Text`, so headings, bold, inline code, lists, and code fences showed as raw `##`, `**`, and backticks while the same reply in the main transcript renders formatted.
+
+### Why an extension could not handle it
+
+- The widget is private to this builtin command.
+
+### Expected merge conflict zones
+
+- LOW: `panel.ts` constructor children and `repaint()`.
+
+## 2026-09-28 - /btw uses the credential's own API host (senpi#2309)
+
+### What changed
+
+- `btw/index.ts`: the side query's model carries `auth.baseUrl` from `getApiKeyAndHeaders` when the credential names one, since the explicit key passed to `runSideQuery` otherwise skips the runtime's per-credential host.
+
+### Why
+
+- A GitHub Copilot Business or Enterprise account is served from its own API host; the individual catalog host refuses its requests with `421 Misdirected Request` (omo#8662). The session's chat requests already honoured the credential's host, this path did not.
+
+### Why an extension could not handle it
+
+- The fix is inside this builtin's own request construction.
+
+### Expected merge conflict zones
+
+- LOW: the `runSideQuery` call in `btw/index.ts`.
+
 # changes — btw
+
+## 2026-09-13 - Explicit off switch: bare /btw and kitty-safe Escape
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`: bare `/btw` (no question) dismisses the active panel and aborts an in-flight side query instead of only printing usage; the usage hint remains when nothing is active. The panel's Escape listener matches through pi-tui `matchesKey(data, "escape")` instead of comparing against the raw `\x1b` byte.
+- `packages/coding-agent/src/core/extensions/builtin/btw/panel.ts`: the streaming and settled footers name `/btw` and Esc as the way to close the panel.
+
+### Why
+
+- Users had no discoverable way to turn the panel off: the settled footer only said it clears on the next message, and Escape also interrupts a streaming main turn. Under the kitty keyboard protocol (Ghostty, kitty, WezTerm) Escape arrives as `CSI 27 u`, so the raw byte comparison never matched and Escape silently did nothing.
+
+### Why an extension could not handle it
+
+- Both are internal to the builtin command and its widget; an external extension cannot reach the panel's input listener or the command's empty-argument branch.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` command handler head and the `onTerminalInput` callback; `panel.ts` `repaint()` footer strings.
+
+## 2026-08-13 - Preserve provider-header deletion markers
+
+### What changed
+
+- `/btw` passes model-registry `ProviderHeaders` directly into the runtime stream options, including `null`
+  values that delete inherited provider headers.
+
+### Why
+
+- The upstream auth contract widened during this merge. Materializing headers early would make a side query
+  retain a header that the active provider configuration explicitly removed.
+
+### Why an extension could not handle it
+
+- This is the builtin command's private registry-to-stream boundary; an external hook cannot restore a deletion
+  marker after it has been dropped.
+
+### Expected merge-conflict zones
+
+- LOW: `index.ts` auth forwarding and `side-query.ts` `SideQueryAuth`.
+
+## Model-aware side-query context budgeting (2026-08-12)
+
+### What changed
+
+- `/btw` now budgets the complete side-query prompt against the selected model's context window, including output
+  reserve, the session system prompt, the side-query instruction, captured history, and the final question.
+- Oversized captured snapshots run through the existing deterministic context reducer, orphaned tool-result repair, and
+  oldest-first pruning before provider dispatch. Small snapshots remain unchanged.
+- If mandatory prompt content cannot fit, `/btw` fails locally with an actionable `/compact` suggestion instead of
+  sending a provider request that is guaranteed to be rejected.
+
+### Why
+
+- `/btw` previously bypassed the main-turn context pipeline and replayed the full captured session snapshot directly to
+  the provider. Large sessions could therefore fail with `Your input exceeds the context window of this model` even
+  while normal main turns continued successfully.
+
+### Why an extension could not do this
+
+- The failure is inside the builtin command's private snapshot-to-provider path. An external extension cannot intercept
+  and structurally budget that ephemeral provider payload without replacing the builtin command.
+
+### Expected merge-conflict zones
+
+- `index.ts` around captured snapshot construction and side-query dispatch.
+- `side-query.ts` around context assembly and model runtime options.
+- `test/suite/btw-side-query.test.ts` around the builtin command and context-builder regression coverage.
 
 ## Runtime provider dispatch for side queries (2026-07-30)
 

@@ -5,6 +5,7 @@ import {
 	handleMessageEnd,
 	RECOVERY_INSTRUCTIONS,
 } from "../../src/core/extensions/builtin/compaction/degradation-monitor.ts";
+import { MAX_SUMMARIZATION_ATTEMPT_RETRIES } from "../../src/core/extensions/builtin/compaction/summarization-retry.ts";
 import type { ModelSelectEvent } from "../../src/core/extensions/index.ts";
 import {
 	connectionErrorResponse,
@@ -12,6 +13,9 @@ import {
 	createBlockingContext,
 	createCompactionHandlers,
 } from "../helpers/blocking-compaction-harness.ts";
+
+/** One summarization now costs its initial attempt plus the shared retry budget. */
+const SUMMARIZATION_ATTEMPTS = 1 + MAX_SUMMARIZATION_ATTEMPT_RETRIES;
 
 const registrations: Array<{ unregister: () => void }> = [];
 
@@ -72,11 +76,9 @@ describe("blocking compaction review hardening", () => {
 			const handlers = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 6_000 });
 			registrations.push(harness.registration);
-			harness.registration.setResponses([
-				connectionErrorResponse(),
-				connectionErrorResponse(),
-				connectionErrorResponse(),
-			]);
+			harness.registration.setResponses(
+				Array.from({ length: 3 * SUMMARIZATION_ATTEMPTS }, () => connectionErrorResponse()),
+			);
 			for (let attempt = 0; attempt < 3; attempt++) {
 				await expect(
 					handlers.beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx),
@@ -124,15 +126,26 @@ describe("blocking compaction review hardening", () => {
 	});
 
 	describe("Given the summarization response has no text", () => {
-		it("Then blocking compaction degrades silently as before", async () => {
+		it("Then blocking compaction applies deterministic recovery", async () => {
 			// Given
 			const { beforeAgentStart } = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_950 });
 			registrations.push(harness.registration);
 			harness.registration.setResponses([fauxAssistantMessage("", { stopReason: "stop" })]);
 
-			// When / Then
+			// When: required blocking compaction receives an empty generated summary.
 			await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).resolves.toBeUndefined();
+
+			// Then: the safe suffix is applied and the failure provenance is retained.
+			expect(harness.ctx.applyCompaction).toHaveBeenCalledWith(
+				expect.objectContaining({
+					details: expect.objectContaining({
+						origin: "required-compaction-recovery",
+						failureKind: "summarization-empty-summary",
+					}),
+				}),
+				expect.objectContaining({ reason: "extension" }),
+			);
 			expect(errorMessages(harness.endCompaction)).toHaveLength(0);
 		});
 	});

@@ -87,6 +87,11 @@ export class Loader extends Text {
 		this.updateDisplay();
 	}
 
+	override invalidate(): void {
+		super.invalidate();
+		this.updateDisplay();
+	}
+
 	setIndicator(indicator?: LoaderIndicatorOptions): void {
 		this.renderIndicatorVerbatim = indicator !== undefined;
 		this.frames = indicator?.frames !== undefined ? [...indicator.frames] : [...DEFAULT_FRAMES];
@@ -120,15 +125,25 @@ export class Loader extends Text {
 		}
 	}
 
-	private updateDisplay(): void {
+	protected getRenderedIndicator(animationElapsedMs: number = this.getAnimationElapsedMs()): string {
 		const frame = this.frames[this.currentFrame] ?? "";
-		const animationElapsedMs = Math.max(0, Date.now() - this.messageAnimationStartedAt);
-		const renderedFrame = this.indicatorFormatter
-			? this.indicatorFormatter(frame, animationElapsedMs)
-			: this.renderIndicatorVerbatim
-				? frame
-				: this.spinnerColorFn(frame);
-		const indicator = frame.length > 0 ? `${renderedFrame} ` : "";
+		if (frame.length === 0) {
+			return "";
+		}
+		if (this.indicatorFormatter) {
+			return this.indicatorFormatter(frame, animationElapsedMs);
+		}
+		return this.renderIndicatorVerbatim ? frame : this.spinnerColorFn(frame);
+	}
+
+	private getAnimationElapsedMs(): number {
+		return Math.max(0, Date.now() - this.messageAnimationStartedAt);
+	}
+
+	private updateDisplay(): void {
+		const animationElapsedMs = this.getAnimationElapsedMs();
+		const renderedFrame = this.getRenderedIndicator(animationElapsedMs);
+		const indicator = renderedFrame.length > 0 ? `${renderedFrame} ` : "";
 		const renderedMessage = this.messageFormatter
 			? this.messageFormatter(this.message, animationElapsedMs)
 			: this.messageColorFn(this.message);

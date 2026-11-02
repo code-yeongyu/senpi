@@ -50,6 +50,7 @@ function createSession(latestCacheHitRate = (1_500_000 / (49 + 1_500_000 + 44_00
 		isFastModeActive: () => false,
 		modelRuntime: {
 			isUsingOAuth: () => false,
+			isUsingSubscription: () => false,
 		},
 	};
 

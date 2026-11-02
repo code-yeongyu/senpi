@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GoalCacheWarmupEntryData } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 import { renderGoalCacheWarmupEntry } from "../../src/core/extensions/builtin/goal/cache-warm-renderer.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
@@ -28,27 +28,65 @@ describe("goal cache-warm entry renderer", () => {
 		initTheme("dark");
 	});
 
+	beforeEach(() => {
+		vi.stubEnv("TZ", "UTC");
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllEnvs();
+		vi.restoreAllMocks();
+	});
+
 	it("renders the scheduled wait with the cache story", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime("2026-07-29T00:00:00.000Z");
 		const text = renderToText({
 			phase: "scheduled",
 			goalId: "goal-1",
 			delayMs: 270_000,
+			dueAtMs: Date.parse("2026-07-29T00:04:30.000Z"),
 			activeMonitorCount: 1,
 			iteration: 2,
 			cache: { ttlSeconds: 300, cachedTokens: 120_000, estimatedSavedUsd: 0.324 },
 		});
 		expect(text).toContain("Cache-warm wait · iteration 2");
+		expect(text).toContain("ready 2026-07-29 00:04 UTC (4m 30s)");
 		expect(text).toContain("1 wake source on duty");
-		expect(text).toContain("5m prompt-cache TTL");
-		expect(text).toContain("~120K tokens kept warm");
-		expect(text).toContain("$0.324 saved");
+		expect(text).toMatch(/resumes as soon as a wake source\s+delivers/);
+		expect(text).toMatch(/5m\s+prompt-cache TTL/);
+		expect(text).not.toContain("stays inside");
+		expect(text).toContain("~120K cache-read/write tokens (cumulative)");
+		expect(text).toContain("$0.324 discount if reused");
 	});
 
-	it("renders the resumed wake with savings", () => {
+	// code-yeongyu/senpi#831: a best-effort cache has no TTL, so the card claims neither warmth nor savings.
+	it("describes a best-effort provider cache without a TTL, warmth, or savings claim", () => {
+		for (const phase of ["scheduled", "resumed"] as const) {
+			const text = renderToText({
+				phase,
+				goalId: "goal-best-effort",
+				delayMs: 3_570_000,
+				waitedMs: 3_570_000,
+				activeMonitorCount: 1,
+				iteration: 1,
+				cache: { cachedTokens: 120_000, cacheLifetime: "best-effort" },
+			});
+			expect(text).toContain("~120K cache-read/write tokens (cumulative)");
+			expect(text).toMatch(/best-effort/);
+			expect(text).not.toContain("TTL");
+			expect(text).not.toContain("kept warm");
+			expect(text).not.toContain("stayed warm");
+			expect(text).not.toContain("saved");
+		}
+	});
+
+	it("renders elapsed wait with a conditional cache estimate", () => {
 		const text = renderToText({
 			phase: "resumed",
 			goalId: "goal-1",
 			delayMs: 270_000,
+			dueAtMs: Date.parse("2026-07-29T00:04:30.000Z"),
 			waitedMs: 270_000,
 			activeMonitorCount: 2,
 			iteration: 3,
@@ -57,8 +95,35 @@ describe("goal cache-warm entry renderer", () => {
 		expect(text).toContain("Cache-warm wake · iteration 3");
 		expect(text).toContain("waited 4m 30s");
 		expect(text).toContain("2 wake sources on duty");
-		expect(text).toContain("~120K tokens stayed warm");
-		expect(text).toContain("$0.324 saved");
+		expect(text).toContain("~120K cache-read/write tokens (cumulative)");
+		expect(text).toContain("$0.324 discount if reused");
+	});
+
+	it("renders the ready time in the local timezone", () => {
+		vi.stubEnv("TZ", "Asia/Seoul");
+		const text = renderToText({
+			phase: "scheduled",
+			goalId: "goal-local-tz",
+			delayMs: 270_000,
+			dueAtMs: Date.parse("2026-07-29T00:04:30.000Z"),
+			activeMonitorCount: 1,
+		});
+		expect(text).toContain("ready 2026-07-29 09:04 GMT+9 (4m 30s)");
+		expect(text).not.toContain("UTC");
+	});
+
+	it("falls back to UTC when local timezone formatting fails", () => {
+		vi.spyOn(Intl, "DateTimeFormat").mockImplementation(() => {
+			throw new RangeError("timezone data unavailable");
+		});
+		const text = renderToText({
+			phase: "scheduled",
+			goalId: "goal-tz-fallback",
+			delayMs: 270_000,
+			dueAtMs: Date.parse("2026-07-29T00:04:30.000Z"),
+			activeMonitorCount: 1,
+		});
+		expect(text).toContain("ready 2026-07-29 00:04 UTC (4m 30s)");
 	});
 
 	it("does not claim warmth or savings when the cache TTL may have elapsed", () => {
@@ -70,6 +135,7 @@ describe("goal cache-warm entry renderer", () => {
 			cache: { ttlSeconds: 300, cachedTokens: 120_000, estimatedSavedUsd: 0.324 },
 		});
 		expect(scheduled).toContain("TTL may elapse");
+		expect(scheduled).toContain("resumes as soon as a wake source delivers");
 		expect(scheduled).not.toContain("stays inside");
 		expect(scheduled).not.toContain("kept warm");
 		expect(scheduled).not.toContain("saved");
@@ -96,6 +162,8 @@ describe("goal cache-warm entry renderer", () => {
 		});
 		expect(text).toContain("Cache-warm wait");
 		expect(text).toContain("1 wake source on duty");
+		expect(text).toContain("Stall backstop");
+		expect(text).toContain("resumes as soon as a wake source delivers");
 		expect(text).not.toContain("tokens");
 	});
 
@@ -110,11 +178,25 @@ describe("goal cache-warm entry renderer", () => {
 		expect(text).not.toContain("iteration");
 	});
 
+	it("falls back to elapsed-only wording for an invalid due time", () => {
+		const text = renderToText({
+			phase: "resumed",
+			goalId: "legacy-invalid-due",
+			delayMs: 270_000,
+			dueAtMs: Number.NaN,
+			waitedMs: 270_000,
+			activeMonitorCount: 1,
+		});
+		expect(text).toContain("waited 4m 30s");
+		expect(text).not.toContain("ready ");
+	});
+
 	it("reveals goal details when expanded", () => {
 		const collapsed = renderToText({
 			phase: "resumed",
 			goalId: "goal-42",
 			delayMs: 240_000,
+			dueAtMs: Date.parse("2026-07-29T00:04:00.000Z"),
 			waitedMs: 200_000,
 			activeMonitorCount: 1,
 			cache: { cachedTokens: 500 },
@@ -126,6 +208,7 @@ describe("goal cache-warm entry renderer", () => {
 				phase: "resumed",
 				goalId: "goal-42",
 				delayMs: 240_000,
+				dueAtMs: Date.parse("2026-07-29T00:04:00.000Z"),
 				waitedMs: 200_000,
 				activeMonitorCount: 1,
 				cache: { cachedTokens: 500 },
@@ -133,6 +216,6 @@ describe("goal cache-warm entry renderer", () => {
 			true,
 		);
 		expect(expanded).toContain("goal-42");
-		expect(expanded).toContain("waited 3m 20s");
+		expect(expanded).toContain("ready 2026-07-29 00:04 UTC (3m 20s)");
 	});
 });

@@ -134,6 +134,41 @@ describe("stream buffers", () => {
 		manager.resetBuffers();
 		expect(manager.checkDelta("dle", ctx())).toEqual([]);
 	});
+
+	it("caps each stream buffer to a tail window above the longest rule pattern", () => {
+		const manager = makeManager();
+		manager.addRule(makeRule("capped", { condition: ["needle-[0-9a-f]{8}"] }));
+		const cap = Math.max(1024, "needle-[0-9a-f]{8}".length * 4);
+		for (let i = 0; i < 100; i++) {
+			manager.checkDelta("x".repeat(200), ctx());
+		}
+		const lengths = manager.getStreamBufferLengths();
+		expect(lengths.get("text:main")).toBeDefined();
+		for (const length of lengths.values()) {
+			expect(length).toBeLessThanOrEqual(cap);
+		}
+	});
+
+	it("still matches a pattern whose match lands at the tail of the window", () => {
+		const manager = makeManager();
+		manager.addRule(makeRule("tail", { condition: ["needle-[0-9a-f]{8}"] }));
+		for (let i = 0; i < 100; i++) {
+			manager.checkDelta("x".repeat(200), ctx());
+		}
+		expect(manager.checkDelta("needle-1234", ctx())).toEqual([]);
+		expect(names(manager.checkDelta("abcd", ctx()))).toEqual(["tail"]);
+	});
+
+	it("clears the tail windows when a message completes", () => {
+		const manager = makeManager();
+		manager.addRule(makeRule("cleared"));
+		manager.checkDelta("nee", ctx());
+		manager.resetBuffers();
+		expect(manager.checkDelta("dle", ctx())).toEqual([]);
+		expect(manager.getStreamBufferLengths().size).toBe(1);
+		manager.resetBuffers();
+		expect(manager.getStreamBufferLengths().size).toBe(0);
+	});
 });
 
 describe("scope and glob gating", () => {
@@ -165,6 +200,24 @@ describe("scope and glob gating", () => {
 				),
 			),
 		).toEqual(["edit-ts"]);
+	});
+
+	it("tool-scoped rules match tool streams while text-only rules do not", () => {
+		const manager = makeManager();
+		manager.addRule(
+			makeRule("tool-only", {
+				scope: { allowText: false, allowThinking: false, toolScopes: [{ toolName: "bash" }] },
+			}),
+		);
+		manager.addRule(
+			makeRule("text-only", {
+				scope: { allowText: true, allowThinking: false, toolScopes: [] },
+			}),
+		);
+		expect(
+			names(manager.checkDelta("needle", ctx({ source: "tool", streamKey: "tool:0", toolName: "bash" }))),
+		).toEqual(["tool-only"]);
+		expect(names(manager.checkDelta("needle", ctx({ source: "text", streamKey: "text:0" })))).toEqual(["text-only"]);
 	});
 
 	it("wildcard tool scope matches any tool name", () => {

@@ -87,6 +87,18 @@ export class StreamingRevealController {
 		this.#applyTarget();
 	}
 
+	/**
+	 * True while this controller is the pacing writer for the given head message:
+	 * smooth streaming is on, the head carries no toolCall block (those dump in
+	 * full), and a component is still bound (before stop()). While true, callers
+	 * must not overwrite the component's content, or the next reveal tick
+	 * repaints a shorter prefix after their full write (dual-write flicker).
+	 */
+	isPacingHead(message: AssistantMessage): boolean {
+		if (!this.#target || !this.#component) return false;
+		return this.#getSmoothStreaming() && !message.content.some((block) => block.type === "toolCall");
+	}
+
 	stop(): void {
 		this.#stopTimer();
 		this.#target = undefined;

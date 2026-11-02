@@ -146,8 +146,55 @@ describe.each(WIDTHS)("eval renderer width %i", (width) => {
 		// Then
 		expectLinesWithinWidth(lines, width, "truncated preview");
 		expect(visibleText).toContain("earlier output lines");
-		expect(visibleText).toContain("[eval output truncated]");
+		expect(visibleText).not.toContain("[eval output truncated]");
 		expect(visibleText).not.toContain(outputLines[0]);
+	});
+
+	it("Given completed throughput badges when rendered then the wall-clock header remains visible within width", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 1_250,
+				wallDurationMs: 2_000,
+				toolCallCount: 2,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						durationMs: 1_250,
+					},
+				],
+			},
+			"ok",
+		);
+
+		// When
+		const lines = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext({ args: { language: "py", code: "work()", summary: "throughput", timeout: 420 } }),
+		).render(width);
+		const text = lines.join("\n");
+
+		// Then: at every width the terminal row stays one line (senpi#2933 review HIGH-1); at 40
+		// cols the lowest-priority segments (rate, elapsed, timeout) drop first and calls survive.
+		expectLinesWithinWidth(lines, width, "throughput badge");
+		expect.soft(text).toContain("2 calls");
+		if (width > 60) {
+			expect.soft(text).toContain("1.00");
+			expect.soft(text).toContain("calls/s");
+			expect.soft(text).toContain("2s");
+			expect(text).toContain("timeout 420s");
+		} else {
+			expect.soft(text).not.toContain("calls/s");
+		}
 	});
 });
 
@@ -237,12 +284,12 @@ describe("eval renderer cell detail width", () => {
 			"",
 		);
 
-		// When
+		// When: the collapsed row is one line (senpi#2933), so the detail render goes through expand
 		const lines = renderEvalResult(
 			givenResult,
-			{ expanded: false, isPartial: false },
+			{ expanded: true, isPartial: false },
 			undefined,
-			resultContext(),
+			resultContext({ expanded: true }),
 		).render(width);
 		const text = lines.join("\n");
 
@@ -253,6 +300,6 @@ describe("eval renderer cell detail width", () => {
 		expect.soft(text).toContain("read 12 chars");
 		expect.soft(text).toContain("worker-cell done");
 		expect.soft(text).toContain("display[1]");
-		expect.soft(text).toContain("Showing lines 10-12 of 12");
+		expect.soft(text).not.toContain("Showing lines 10-12 of 12");
 	});
 });

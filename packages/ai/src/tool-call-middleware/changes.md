@@ -1,6 +1,140 @@
 # Tool Call Middleware Changes
 
-# Tool Call Middleware Changes
+## 2026-10-26 - Recovery wrappers carry capture records with remapped indices (senpi#4307, part of #4272)
+
+### What changed
+
+- `recovery-event-stream.ts`: `RecoveryAssistantMessageEventStream` captures its own pushes, carries a capture already
+  attached to a pushed event onto its snapshot, relays scoped 1:1 copies (`relaying`: only the step's first push of
+  the source's type relays the source record, any later one records nothing), and registers a records reader that
+  keeps its cancellation lifecycle.
+- `recovery-stream-terminal.ts`, `recovery-stream-failure.ts`: a terminal that removes tool calls (superseded by a
+  server fallback receipt, aborted, cancelled, invalid event order) or forwards the unprojected source marks the first
+  index whose block vanished or moved as `rewrittenFrom` on its capture; records sent for that index and above
+  before the terminal are dropped by the reader.
+- `recovery-stream-wrapper.ts`, `recovery-native-projection.ts`: the invoke recovery reads source records in order.
+  Thinking and native tool-call events, which the projection copies from source blocks read after later deltas,
+  carry the source's emission-time block facts at the outer index; projection-built text and recovered calls are
+  captured at their own push. Source controls are remapped to the outer block that copies their source block, held
+  until an unannounced block is projected (a held control for a native call follows that call's start, as for
+  thinking), and dropped for prose the projection rebuilds.
+- `protocols/kimi-xtml/thinking-recovery-stream.ts`: passes every event through unchanged and relays the rewritten
+  terminal's capture. A record (event capture or control) crosses at its source index only while that index names an
+  existing block that no earlier thinking split can move in the rewritten terminal; a record before `start`, naming
+  no block, or behind an open or splitting thinking block is dropped, never guessed, and a block that lost one record
+  loses all its later ones.
+- `stream-wrapper.ts`: the legacy text-tool middleware captures its own pushes; it rebuilds every block from parser
+  output, so no source record is forwarded.
+
+### Why
+
+- Until this change these wrappers dropped every carrier and control (S02a-1's enforced downgrade), so a Claude id,
+  a Kimi id or a text-tool-call model delivered no internal records.
+
+### Expected merge conflict zones
+
+- None upstream: the directory is fork-only.
+
+## 2026-10-21 - Preserve request context across legacy projection (omo#10792)
+
+### What changed
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: legacy usage cloning preserves an explicitly supplied `contextUsage`, including `null`, while keeping absent fields absent.
+
+### Why
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: dropping the request measurement would make downstream context readers reinterpret cumulative billing as context.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: middleware projects provider messages before consumers see them.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`, `cloneLegacyUsage`.
+
+## 2026-09-08 - Preserve server fallback boundaries during recovery
+
+### What changed
+
+- `packages/ai/src/tool-call-middleware/recovery-stream-terminal.ts` removes executable tools before a valid fallback boundary and derives the terminal reason from surviving tools. Server-fallback abort diagnostics remain errors rather than being promoted into tool execution.
+
+### Why
+
+- `packages/ai/src/tool-call-middleware/recovery-stream-terminal.ts` previously retained tools projected before the provider discarded them, reviving abandoned calls in the current turn even though later replay was sanitized.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/tool-call-middleware/recovery-stream-terminal.ts` finalizes provider recovery before session/tool execution or extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/tool-call-middleware/recovery-stream-terminal.ts`: terminal reason calculation and source-error handling.
+
+## 2026-08-23 - Kimi XTML sep-less channel marker leak
+
+### What changed and why
+
+- Kimi models leak XTML channel markers into visible text when tool calling
+  fails mid-think: session 01a02505 (message 84281a4b, `kimi-k3-ultrafast-unlocked`)
+  ended a user-visible text block with the literal `<|close|>think\n` because the
+  marker arrives without its trailing `<|sep|>`. Both defenses missed it: the
+  stream recovery parser only recognized `<|sep|>`-terminated markers (the
+  fallback re-emitted the marker bytes as 2-char text slices), and
+  `recoverKimiXtmlThinking()` never scanned `text` blocks at all.
+- `markers.ts` now owns a single shared `XTML_CHANNEL_MARKER_PATTERN` consumed by
+  BOTH the stream parser and the message-level recovery, so the two paths cannot
+  drift again: a marker is `<|open|>`/`<|close|>` + optional channel name
+  (`call`/`argument` reserved for structural opens) + optional `<|sep|>`,
+  terminated by `<|sep|>`, a non-word character, or end of stream; a bare
+  `<|sep|>` is also a marker. `matchXtmlChannelMarker()` anchors it for the
+  streaming state machine.
+- `recovery-stream.ts` holds a buffer that could still grow into a longer marker
+  (name run, partial `<|sep|>`) instead of emitting bytes, defers to structural
+  `<|open|>call `/`<|open|>argument ` opens before generic matching, runs behind
+  a recovery code mask so fenced/inline code keeps marker-shaped literals, and
+  strips held complete markers at `finish()` rather than flushing them.
+- `thinking-recovery.ts` additionally strips markers from `text` blocks (same
+  code-mask treatment). Text-block stripping is silent: the
+  `kimi_xtml_thinking_recovery` diagnostic still fires only for thinking-channel
+  recovery, keeping the runtime-boundary diagnostics contract stable.
+- A word run after a marker is absorbed into the channel name
+  (`<|close|>thinkafter` strips whole), which is the only self-consistent reading
+  of the protocol; incomplete junk like `<|clo` still flushes as plain text.
+
+## 2026-08-18 - Wire-alias tool-name resolution in invoke recovery
+
+### What changed and why
+
+- Upstream gateways disguise tool names on the wire: ccapi-cf Pascal-cases
+  `todo` to `Todo`, and CC-pool layers expose non-native tools as
+  `mcp_<hash>-<Name>` (observed live: `mcp_49f0-Todo`). Reverse mapping only
+  rewrites native `tool_use` blocks, so a leaked text invoke keeps the wire
+  alias and the recovery resolver vetoed it as an unknown tool, emitting the
+  raw XML as literal text (incident: session 01a01381, event 1214,
+  `ccapi-clb/claude-opus-5`, stop_reason `tool_use` with zero tool calls).
+- `createToolResolver` now falls back to an alias map that strips CC-SDK
+  `mcp__server__tool` prefixes, hashed `mcp_<hash>-` prefixes, and collapses
+  remaining separators/case onto the registered name's alphanumerics.
+- The fallback runs only after exact and case-insensitive matching miss, so
+  existing precedence is unchanged. Two registered tools collapsing onto the
+  same alias key resolve to neither (mirrors the insensitive-map collision
+  rule), keeping hallucinated names as literal text.
+
+## 2026-08-18 - Cursor exec marker preservation
+
+### What changed and why
+
+- Recovery stream snapshots now retain enumerable symbol-keyed metadata on native
+  content blocks. This preserves Cursor's `kCursorExecResolved` marker through
+  Claude/Kimi model recovery so the agent loop does not execute an already-resolved
+  tool call a second time (fixes #938).
+- String-keyed snapshot cloning and recovered text-tool behavior are unchanged.
+
+### Why the extension system could not handle this
+
+- The marker must survive the provider-neutral model recovery wrapper before the
+  agent loop or extensions consume the assistant stream.
 
 ## 2026-08-09 - Claude missing-angle ANTML invoke recovery
 

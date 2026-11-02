@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { type CustomEntry, SessionManager } from "../../src/core/session-manager.ts";
-import { assistantMsg, userMsg } from "../utilities.ts";
+import { assistantMsg, readSessionFileRoles, userMsg } from "../utilities.ts";
 
 describe("SessionManager append and tree traversal", () => {
 	describe("append operations", () => {
@@ -321,12 +321,12 @@ describe("SessionManager append and tree traversal", () => {
 	});
 
 	describe("branchWithSummary", () => {
-		it("inserts branch summary and advances leaf", () => {
+		it("inserts branch summary with the source and destination and advances leaf", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("1"));
 			const _id2 = session.appendMessage(assistantMsg("2"));
-			const _id3 = session.appendMessage(userMsg("3"));
+			const id3 = session.appendMessage(userMsg("3"));
 
 			const usage = {
 				input: 10,
@@ -345,6 +345,7 @@ describe("SessionManager append and tree traversal", () => {
 			expect(summaryEntry).toBeDefined();
 			expect(summaryEntry?.parentId).toBe(id1);
 			if (summaryEntry?.type === "branch_summary") {
+				expect(summaryEntry.fromId).toBe(id3);
 				expect(summaryEntry.summary).toBe("Summary of abandoned work");
 				expect(summaryEntry.usage).toEqual(usage);
 			}
@@ -479,45 +480,33 @@ describe("createBranchedSession", () => {
 		expect(entries.map((e) => e.id)).toEqual([id1, id2, id4, id5]);
 	});
 
-	it("does not duplicate entries when forking from first user message", () => {
+	it("does not duplicate entries when forking from before the first user message", () => {
 		const tempDir = join(tmpdir(), `session-fork-dedup-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 
 		try {
 			// Create a persisted session with a couple of turns
 			const session = SessionManager.create(tempDir, tempDir);
-			const id1 = session.appendMessage(userMsg("first question"));
+			const modelChangeId = session.appendModelChange("anthropic", "claude-sonnet-4-5");
+			session.appendMessage(userMsg("first question"));
 			session.appendMessage(assistantMsg("first answer"));
-			session.appendMessage(userMsg("second question"));
-			session.appendMessage(assistantMsg("second answer"));
 
-			// Fork from the very first user message (no assistant in the branched path)
-			const newFile = session.createBranchedSession(id1);
+			// Fork from a setup entry (no user or assistant message in the branched path)
+			const newFile = session.createBranchedSession(modelChangeId);
 			expect(newFile).toBeDefined();
 
-			// The branched path has no assistant, so the file should not exist yet
-			// (deferred to _persist on first assistant, matching newSession() contract)
+			// Nothing to save yet, so the file is created later by the first user message
 			expect(existsSync(newFile!)).toBe(false);
+
+			session.appendMessage(userMsg("new question"));
+			expect(existsSync(newFile!)).toBe(true);
 
 			// Simulate extension adding entry before assistant (like preset on turn_start)
 			session.appendCustomEntry("preset-state", { name: "plan" });
-
-			// Now the assistant responds
 			session.appendMessage(assistantMsg("new answer"));
 
-			// File should now exist with exactly one header and no duplicate IDs
-			expect(existsSync(newFile!)).toBe(true);
-			const content = readFileSync(newFile!, "utf-8");
-			const lines = content.trim().split("\n").filter(Boolean);
-			const records = lines.map((line) => JSON.parse(line));
-
-			expect(records.filter((r) => r.type === "session")).toHaveLength(1);
-
-			const entryIds = records
-				.filter((r) => r.type !== "session")
-				.map((r) => r.id)
-				.filter((id): id is string => typeof id === "string");
-			expect(new Set(entryIds).size).toBe(entryIds.length);
+			// Exactly one header and each entry written once
+			expect(readSessionFileRoles(newFile!)).toEqual(["session", "model_change", "user", "custom", "assistant"]);
 		} finally {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -569,27 +558,20 @@ describe("createBranchedSession", () => {
 		}
 	});
 
-	it("writes file immediately when forking from a point with assistant messages", () => {
-		const tempDir = join(tmpdir(), `session-fork-with-assistant-${Date.now()}`);
+	it("writes file immediately when forking at a user message", () => {
+		const tempDir = join(tmpdir(), `session-fork-with-user-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 
 		try {
 			const session = SessionManager.create(tempDir, tempDir);
-			session.appendMessage(userMsg("first question"));
-			const id2 = session.appendMessage(assistantMsg("first answer"));
-			session.appendMessage(userMsg("second question"));
-			session.appendMessage(assistantMsg("second answer"));
+			const id1 = session.appendMessage(userMsg("first question"));
+			session.appendMessage(assistantMsg("first answer"));
 
-			// Fork including the assistant message
-			const newFile = session.createBranchedSession(id2);
-			expect(newFile).toBeDefined();
-
-			// Path includes an assistant, so file should be written immediately
+			const newFile = session.createBranchedSession(id1);
 			expect(existsSync(newFile!)).toBe(true);
-			const content = readFileSync(newFile!, "utf-8");
-			const lines = content.trim().split("\n").filter(Boolean);
-			const records = lines.map((line) => JSON.parse(line));
-			expect(records.filter((r) => r.type === "session")).toHaveLength(1);
+
+			session.appendMessage(assistantMsg("new answer"));
+			expect(readSessionFileRoles(newFile!)).toEqual(["session", "user", "assistant"]);
 		} finally {
 			rmSync(tempDir, { recursive: true, force: true });
 		}

@@ -1,5 +1,9 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Model, ProviderStreams } from "../types.ts";
+import { assistantEvents, pushAssistantProgress, setAssistantReader } from "../utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { isOAuthRefreshUnavailableError } from "../utils/oauth-refresh-error.ts";
+import { describeReplacedInstall } from "../utils/provider-failure-description.ts";
+import { OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "../utils/retry.ts";
 
 function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMessage {
 	return {
@@ -17,7 +21,18 @@ function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMe
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: "error",
-		errorMessage: error instanceof Error ? error.message : String(error),
+		errorMessage: describeReplacedInstall(error) ?? (error instanceof Error ? error.message : String(error)),
+		...(isOAuthRefreshUnavailableError(error)
+			? {
+					diagnostics: [
+						{
+							type: OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC,
+							timestamp: Date.now(),
+							details: { provider: model.provider },
+						},
+					],
+				}
+			: {}),
 		timestamp: Date.now(),
 	};
 }
@@ -33,10 +48,15 @@ class LazyAssistantMessageEventStream extends AssistantMessageEventStream {
 
 	setCancellationHandler(handler: () => Promise<void>): void {
 		this.cancellationHandler = handler;
+		// The forwarder carries records, so this wrapper is carrier-aware and keeps its cancellation for them.
+		setAssistantReader(this, (project) => this.withCancellation(this.mapIterator(project)));
 	}
 
 	override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
-		const iterator = super[Symbol.asyncIterator]();
+		return this.withCancellation(super[Symbol.asyncIterator]());
+	}
+
+	private withCancellation<T>(iterator: AsyncIterator<T>): AsyncIterator<T> {
 		return {
 			next: () => iterator.next(),
 			return: async () => {
@@ -71,7 +91,10 @@ export function lazyStream(
 ): AssistantMessageEventStream {
 	const outer = new LazyAssistantMessageEventStream();
 	const inner = setup();
-	const iterator = inner.then((source) => source[Symbol.asyncIterator]());
+	// Progress crosses as it is read, so the forwarder loop runs exactly the turns it runs for events alone.
+	const iterator = inner.then((source) =>
+		assistantEvents(source, (progress) => pushAssistantProgress(outer, progress))[Symbol.asyncIterator](),
+	);
 	let cancellation: Promise<void> | undefined;
 	outer.setCancellationHandler(() => {
 		cancellation ??= iterator.then(async (sourceIterator) => {
@@ -96,11 +119,34 @@ export function lazyStream(
  * The module loads on first stream call; the host's import cache deduplicates
  * loads. Load failures terminate the returned stream with an error event.
  */
-export function lazyApi(load: () => Promise<ProviderStreams>): ProviderStreams {
-	return {
+export interface LazyApiCapabilities {
+	fetchDeferred?: boolean;
+	cancelDeferred?: boolean;
+}
+
+export function lazyApi(load: () => Promise<ProviderStreams>, capabilities?: LazyApiCapabilities): ProviderStreams {
+	const api: ProviderStreams = {
 		stream: (model, context, options) =>
 			lazyStream(model, async () => (await load()).stream(model, context, options)),
 		streamSimple: (model, context, options) =>
 			lazyStream(model, async () => (await load()).streamSimple(model, context, options)),
 	};
+
+	if (capabilities?.fetchDeferred) {
+		api.fetchDeferred = (model, handle, options) =>
+			lazyStream(model, async () => {
+				const implementation = await load();
+				if (!implementation.fetchDeferred) throw new Error("API does not support deferred responses");
+				return implementation.fetchDeferred(model, handle, options);
+			});
+	}
+	if (capabilities?.cancelDeferred) {
+		api.cancelDeferred = async (model, handle, options) => {
+			const implementation = await load();
+			if (!implementation.cancelDeferred) throw new Error("API cannot cancel deferred responses");
+			await implementation.cancelDeferred(model, handle, options);
+		};
+	}
+
+	return api;
 }

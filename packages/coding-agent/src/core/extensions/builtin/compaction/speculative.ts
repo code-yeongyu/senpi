@@ -1,76 +1,102 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	type AssistantMessageEventStream,
-	type Context,
 	hasCredentialHeaders,
 	isContextOverflow,
 	isRetryableAssistantError,
+	isRetryableErrorMessage,
 	type Message,
 	type Model,
-	type StreamOptions,
-	sanitizeAnthropicToolPairs as sanitizeAnthropicPayload,
-	type TextContent,
+	retryTransientCall,
 	type Tool,
 } from "@earendil-works/pi-ai";
-import { stream } from "@earendil-works/pi-ai/compat";
 import {
 	type CompactionPreparation,
 	type CompactionResult,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
+	estimateTokens,
 	prepareCompaction,
 } from "../../../compaction/index.ts";
 import {
-	consumeStreamWithIdleTimeout,
-	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-	DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+	createSummarizationDeadline,
+	StreamDurationBudgetError,
+	StreamIdleTimeoutError,
+	SummarizationTotalBudgetError,
+	summarizationMaxDurationMs,
+	summarizationTotalBudgetMs,
 } from "../../../compaction/stream-watchdog.ts";
+import {
+	createWarmAnchorSnapshot,
+	isWarmSummaryAnchorValid,
+	type WarmAnchorSnapshot,
+} from "../../../compaction/warm-anchor.ts";
+import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../../credential-pool/failover.ts";
 import { convertToLlm } from "../../../messages.ts";
-import type { ModelRegistry } from "../../../model-registry.ts";
+import type { ModelRegistry, ResolvedRequestAuth } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage, ProviderRequestPreparation } from "../../types.ts";
+import { pruneToolResults } from "./emergency-prune.ts";
 import {
 	allowOverflowRetry,
 	boundSummarizationInput,
-	estimateTotalTokens,
-	pruneOldMessagesToBudget,
 	SUMMARIZATION_INPUT_BUDGET_RATIO,
 	SummarizationOverflowExhaustedError,
 	shrinkSummarizationInputForOverflowRetry,
 } from "./overflow-retry.ts";
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
-import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
+import {
+	generateSummaryMessage,
+	getSummaryText,
+	hasSummarizationReasoningOverride,
+	isAssistantMessage,
+} from "./speculative-summary.ts";
+
+import { allowSummarizationRetry, DEFAULT_SUMMARIZATION_RETRY_POLICY } from "./summarization-retry.ts";
+
 import { extractTaskIntent, resolveInheritedTaskIntent } from "./task-intent.ts";
-import * as truncation from "./tool-truncation.ts";
+
+export {
+	createEmergencyPruneLatch,
+	type EmergencyPruneLatch,
+	hardLimitEmergencyPrune,
+	truncateContextMessages,
+} from "./emergency-prune.ts";
+
 import { computeStructuralYield } from "./yield.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 200_000;
-const EMERGENCY_CONTEXT_TARGET_RATIO = 0.95;
 // Hysteresis: the emergency prune engages at EMERGENCY_CONTEXT_TARGET_RATIO but only
 // releases once the context falls below this lower ratio. A single threshold makes a
 // session parked near the limit alternate between the pruned and un-pruned history on
 // consecutive requests; because pruning rewrites old tool results, every alternation
 // invalidates the provider prompt-cache prefix and re-bills the whole conversation.
-const EMERGENCY_CONTEXT_RELEASE_RATIO = 0.85;
-const SUMMARY_TOKEN_HEADROOM = 32_768;
-const SUMMARY_CONTEXT_WINDOW_RESERVE_RATIO = 0.5;
 const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
 type CompactionProgressCallback = (delta: string) => void;
 
 export interface SpeculativeCompactionContext {
+	/** Absolute session directory; subprocess-backed providers (Claude SDK) refuse a summary request without it. */
+	cwd: string;
 	model: Model<any> | undefined;
 	sessionManager: ReadonlySessionManager;
 	modelRegistry?: ModelRegistry;
 	getContextUsage(): ContextUsage | undefined;
 	getCompactionSettings?(): CompactionPreparation["settings"];
+	getCompactionModel?(): Model<any> | undefined;
 	getMessageRevision(): number;
 	getSystemPrompt?(): string;
+	getSystemPromptStablePrefix?(): string | undefined;
 	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
+	isIdle?(): boolean;
 	applyCompaction(
 		precomputed: CompactionResult,
-		options: { reason: "extension"; expectedRevision: number; signal?: AbortSignal },
+		options: {
+			reason: "extension";
+			expectedRevision?: number;
+			expectedWarmAnchor?: WarmAnchorSnapshot;
+			signal?: AbortSignal;
+		},
 	): Promise<ApplyCompactionResult>;
 }
 
@@ -86,6 +112,8 @@ export interface SpeculativeCompactionSnapshot {
 	customInstructions?: string;
 	/** Agent system prompt; used to make the summarization request look like normal agent traffic. */
 	systemPrompt?: string;
+	/** The turn's stable prefix of `systemPrompt`, so the summary request splits it like the turn (senpi#4447). */
+	systemPromptStablePrefix?: string;
 	/** Agent tool definitions; forwarded so the request shape matches normal agent traffic. */
 	tools?: Tool[];
 }
@@ -112,19 +140,61 @@ export type SummaryRequestFailureKind = "upstream-stream-truncated";
 export class SummaryRequestError extends Error {
 	readonly transient: boolean;
 	readonly failureKind?: SummaryRequestFailureKind;
+	/**
+	 * The provider refused the request (refusal/sensitive stop details) rather
+	 * than failing it. Carried explicitly because the message text cannot encode
+	 * it, and because a refusal must never authorize destructive context
+	 * reduction: dropping older detail would not make the model comply.
+	 */
+	readonly refused: boolean;
 
-	constructor(message: string, transient: boolean, failureKind?: SummaryRequestFailureKind) {
+	constructor(message: string, transient: boolean, failureKind?: SummaryRequestFailureKind, refused = false) {
 		super(message);
 		this.name = "SummaryRequestError";
 		this.transient = transient;
 		this.failureKind = failureKind;
+		this.refused = refused;
 	}
 }
 
 const UPSTREAM_STREAM_TRUNCATED_PATTERN = /(?:^|[^A-Za-z0-9_])upstream_stream_truncated(?:[^A-Za-z0-9_]|$)/;
 
+/**
+ * Only failures with no cheaper recovery earn another billed request.
+ *
+ * Every class that `classifyRequiredCompactionFallbackFailure` recognizes
+ * (watchdog timeouts, the compaction-wide total budget, terminal provider and
+ * credential failures, `upstream-stream-truncated`, overflow exhaustion,
+ * empty-summary generation failures) already
+ * has a deterministic zero-LLM recovery, and context overflow is answered by
+ * shrinking the input in the surrounding loop - replaying those would pay for a
+ * summarization the fallback can rebuild for free. The classes checked here are
+ * mirrored from that classifier rather than imported, because
+ * `deterministic-fallback.ts` imports this module.
+ */
+function isRetryableSummaryAttempt(error: unknown): boolean {
+	if (error instanceof StreamDurationBudgetError || error instanceof StreamIdleTimeoutError) return false;
+	if (error instanceof SummarizationTotalBudgetError) return false;
+	if (error instanceof SummarizationOverflowExhaustedError) return false;
+	if (error instanceof SummaryGenerationError) return false;
+	// Mirrors the `summarization-provider-failure` class: credential rotation has
+	// already spent every slot it may spend, and the marker means output was
+	// committed, so another billed attempt buys nothing the fallback cannot
+	// rebuild for free. Message text alone must not re-authorize it - the wrapped
+	// provider detail can read as transient (#1741).
+	if (error instanceof CredentialFailoverError) return false;
+	if (error instanceof Error && error.message.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return false;
+	if (error instanceof SummaryRequestError) return error.failureKind === undefined && error.transient;
+	if (error instanceof Error) return isRetryableErrorMessage(error.message);
+	return false;
+}
+
+function isRefusalStop(response: AssistantMessage): boolean {
+	return response.stopDetails?.type === "refusal" || response.stopDetails?.type === "sensitive";
+}
+
 function summaryRequestFailureKind(response: AssistantMessage): SummaryRequestFailureKind | undefined {
-	if (response.stopDetails?.type === "refusal" || response.stopDetails?.type === "sensitive") return undefined;
+	if (isRefusalStop(response)) return undefined;
 	return UPSTREAM_STREAM_TRUNCATED_PATTERN.test(response.errorMessage ?? "") ? "upstream-stream-truncated" : undefined;
 }
 
@@ -147,223 +217,6 @@ export class SummaryGenerationError extends Error {
  * would otherwise reject the request for models advertising contextWindow ==
  * maxTokens (every summarization request also carries conversation input).
  */
-function summaryMaxTokens(model: Model<any>, contextWindow: number): number {
-	const headroom = model.maxTokens > 0 ? Math.min(SUMMARY_TOKEN_HEADROOM, model.maxTokens) : SUMMARY_TOKEN_HEADROOM;
-	if (contextWindow > 0) {
-		return Math.min(headroom, Math.floor(contextWindow * SUMMARY_CONTEXT_WINDOW_RESERVE_RATIO));
-	}
-	return headroom;
-}
-
-/**
- * Reasoning override for summarization requests. Compaction must be fast: a
- * summarization request that inherits the provider's default reasoning mode
- * burns its latency (and output budget) on invisible thinking before emitting
- * the summary. Disable or minimize reasoning per wire family; adapters ignore
- * options their provider does not support. Mirrors how OpenAI Codex keeps its
- * compaction turn cheap.
- */
-function summarizationReasoningOptions(model: Model<any>): Record<string, unknown> {
-	if (!model.reasoning) return {};
-	if (model.api === "anthropic-messages") return { thinkingEnabled: false };
-	const reasoningEffort = (["low", "medium", "high"] as const).find(
-		(level) => model.thinkingLevelMap?.[level] !== null,
-	);
-	if (!reasoningEffort) return {};
-	switch (model.api) {
-		case "openai-responses":
-		case "openai-codex-responses":
-		case "azure-openai-responses":
-			return { reasoningEffort, reasoningSummary: null };
-		case "openai-completions":
-			return { reasoningEffort };
-		default:
-			return {};
-	}
-}
-
-function getSummaryText(message: Message): string {
-	const content = Array.isArray(message.content)
-		? message.content
-		: [{ type: "text" as const, text: message.content }];
-	return content
-		.filter((content): content is TextContent => content.type === "text")
-		.map((content) => content.text)
-		.join("\n")
-		.trim();
-}
-
-function isAssistantMessage(message: Message): message is AssistantMessage {
-	return message.role === "assistant" && "stopReason" in message;
-}
-
-/**
- * Providers registered through `pi.registerProvider()` (claude-sdk-oauth, Kiro, any
- * extension provider) exist only in Senpi's ModelRuntime, never in compat's builtin
- * api-registry, which rejects their api id outright. Dispatch through the runtime
- * whenever it is reachable and keep compat for contexts constructed without a registry.
- */
-function summarizationStream(
-	context: SpeculativeCompactionContext,
-	model: Model<any>,
-	requestContext: Context,
-	options: StreamOptions & Record<string, unknown>,
-): AssistantMessageEventStream {
-	const runtime = context.modelRegistry?.modelRuntime;
-	return runtime ? runtime.stream(model, requestContext, options) : stream(model, requestContext, options);
-}
-
-async function generateSummaryMessage(options: {
-	context: SpeculativeCompactionContext;
-	messages: AgentMessage[];
-	onProgress?: CompactionProgressCallback;
-	prompt: ReturnType<typeof buildPrompt>;
-	signal?: AbortSignal;
-	snapshot: SpeculativeCompactionSnapshot;
-	auth: {
-		apiKey?: string;
-		headers?: Record<string, string>;
-		extraBody?: Record<string, unknown>;
-	};
-}): Promise<Message | undefined> {
-	// Send the conversation as native LLM messages with the summarization
-	// instruction as a trailing user message, mirroring normal agent traffic.
-	// A single serialized `<conversation>` text dump of a large session is
-	// deterministically refused by Anthropic's anti-distillation classifier
-	// ("reverse engineering or duplicating model outputs"), while the same
-	// content as native blocks with the agent's system prompt and tools passes.
-	// Request-local controller: the idle watchdog must be able to tear down a
-	// stalled summarization request without aborting the caller's own signal.
-	const requestController = new AbortController();
-	const onCallerAbort = () => requestController.abort(options.signal?.reason);
-	if (options.signal) {
-		if (options.signal.aborted) onCallerAbort();
-		else options.signal.addEventListener("abort", onCallerAbort, { once: true });
-	}
-	try {
-		const requestMessages: AgentMessage[] = [
-			...options.messages,
-			{
-				role: "user",
-				content: [{ type: "text", text: options.prompt.user }],
-				timestamp: Date.now(),
-			},
-		];
-		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
-		const requestContext = {
-			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
-			messages: repairOrphanedToolResults(convertToLlm(providerRequest?.messages ?? requestMessages)),
-			...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
-		};
-		const headers = providerRequest
-			? await providerRequest.transformHeaders(options.auth.headers ?? {})
-			: options.auth.headers;
-		const responseStream = summarizationStream(options.context, options.snapshot.model, requestContext, {
-			apiKey: options.auth.apiKey,
-			headers,
-			extraBody: options.auth.extraBody,
-			onPayload: async (payload, model) => {
-				const sanitized = model.api === "anthropic-messages" ? sanitizeAnthropicPayload(payload) : payload;
-				return providerRequest ? await providerRequest.transformPayload(sanitized) : sanitized;
-			},
-			maxTokens: summaryMaxTokens(options.snapshot.model, options.snapshot.contextWindow),
-			signal: requestController.signal,
-			...summarizationReasoningOptions(options.snapshot.model),
-		});
-		await consumeStreamWithIdleTimeout(responseStream, {
-			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-			maxDurationMs: DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
-			abort: () => requestController.abort(),
-			signal: options.signal,
-			onEvent: (event) => {
-				if (event.type === "text_delta" && event.delta) {
-					options.onProgress?.(event.delta);
-				}
-			},
-		});
-		return await responseStream.result();
-	} finally {
-		if (options.signal) options.signal.removeEventListener("abort", onCallerAbort);
-	}
-}
-
-function pruneToolResults(messages: AgentMessage[], contextWindow: number, budgetRatio: number): AgentMessage[] {
-	const toolResults = messages
-		.filter((message) => message.role === "toolResult")
-		.map((message) => ({ content: message.content, details: undefined }));
-	if (toolResults.length === 0) return messages;
-
-	const prunedResults = truncation.prePruneToolOutputsToBudget(toolResults, contextWindow * budgetRatio);
-	let resultIndex = 0;
-	return messages.map((message) => {
-		if (message.role !== "toolResult") return message;
-		const pruned = prunedResults[resultIndex];
-		resultIndex++;
-		return pruned ? { ...message, content: pruned.content } : message;
-	});
-}
-
-export function truncateContextMessages(messages: AgentMessage[]): AgentMessage[] {
-	const toolResults = messages
-		.filter((message) => message.role === "toolResult")
-		.map((message) => ({ content: message.content, details: undefined }));
-	if (toolResults.length === 0) return messages;
-
-	const truncatedResults = truncation.truncateOversizedToolResults(toolResults);
-	let resultIndex = 0;
-	return messages.map((message) => {
-		if (message.role !== "toolResult") return message;
-		const truncated = truncatedResults[resultIndex];
-		resultIndex++;
-		return truncated ? { ...message, content: truncated.content } : message;
-	});
-}
-
-/**
- * Sticky engage/release state for {@link hardLimitEmergencyPrune}. Callers that
- * issue many requests for one session share a single latch so the emitted context
- * shape stays stable while the estimate hovers around the engage threshold.
- */
-export interface EmergencyPruneLatch {
-	engaged: boolean;
-}
-
-export function createEmergencyPruneLatch(): EmergencyPruneLatch {
-	return { engaged: false };
-}
-
-export function hardLimitEmergencyPrune(
-	messages: AgentMessage[],
-	contextWindow: number,
-	latch?: EmergencyPruneLatch,
-): {
-	messages: AgentMessage[];
-	needsAggressiveCompaction: boolean;
-} {
-	const targetTokens = Math.floor(contextWindow * EMERGENCY_CONTEXT_TARGET_RATIO);
-	const releaseTokens = Math.floor(contextWindow * EMERGENCY_CONTEXT_RELEASE_RATIO);
-	const totalTokens = estimateTotalTokens(messages);
-	// Without a latch this keeps the historical single-threshold behaviour.
-	const engaged = latch
-		? latch.engaged
-			? totalTokens > releaseTokens
-			: totalTokens > targetTokens
-		: totalTokens > targetTokens;
-	if (latch) latch.engaged = engaged;
-	if (!engaged) {
-		return { messages, needsAggressiveCompaction: false };
-	}
-	const noLlmPruned = truncateContextMessages(
-		pruneToolResults(messages, contextWindow, SUMMARIZATION_INPUT_BUDGET_RATIO),
-	);
-	if (estimateTotalTokens(noLlmPruned) <= targetTokens) {
-		return { messages: noLlmPruned, needsAggressiveCompaction: false };
-	}
-	return {
-		messages: pruneOldMessagesToBudget(noLlmPruned, targetTokens),
-		needsAggressiveCompaction: true,
-	};
-}
 
 export function getPromptVariant(options: {
 	reason: string;
@@ -399,17 +252,15 @@ export function createSpeculativeCompactionSnapshot(
 	if (!preparation) return undefined;
 
 	return {
-		generation: options.generation,
+		...options,
 		expectedRevision,
 		model,
 		contextWindow,
 		preparation,
 		branchEntries,
 		promptVariant: getPromptVariant({ reason: "extension", preparation }),
-		...(options.origin ? { origin: options.origin } : {}),
-		customInstructions: options.customInstructions,
 		systemPrompt: context.getSystemPrompt?.(),
-		tools: options.tools,
+		systemPromptStablePrefix: context.getSystemPromptStablePrefix?.(),
 	};
 }
 
@@ -428,65 +279,142 @@ export async function runExtensionCompaction(
 	onProgress?: CompactionProgressCallback,
 ): Promise<CompactionResult | undefined> {
 	if (signal?.aborted) return undefined;
-	const auth = await context.modelRegistry?.getApiKeyAndHeaders(snapshot.model);
+	// A provider is authenticated for summarization by a resolved key, a credential
+	// request header, or ambient request-time auth. The ambient marker comes from the
+	// same provider resolution normal turns use; an unconfigured keyed provider still
+	// has none of these and is rejected before a request.
+	const authenticated = (resolved: ResolvedRequestAuth | undefined): boolean =>
+		resolved?.ok === true && Boolean(resolved.apiKey || hasCredentialHeaders(resolved.headers) || resolved.ambient);
+	let selectedModel = context.getCompactionModel?.() ?? snapshot.model;
+	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
 	if (signal?.aborted) return undefined;
-	// A provider is authenticated for summarization by either a resolved key or a
-	// credential request header: `headers`-authenticated providers (models.json and
-	// extension providers alike) never resolve an apiKey, yet their normal agent
-	// turns are fully authenticated.
-	if (!auth?.ok || !(auth.apiKey || hasCredentialHeaders(auth.headers))) {
-		const detail =
-			auth && !auth.ok ? auth.error : `no credentials resolved for provider "${snapshot.model.provider}"`;
+	// A configured summary model whose credentials could not be confirmed earlier (#830) must not
+	// disable compaction: without credentials at request time, summarize on the session model.
+	if (selectedModel !== snapshot.model && !authenticated(auth)) {
+		selectedModel = snapshot.model;
+		auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+		if (signal?.aborted) return undefined;
+	}
+	const selectedSnapshot =
+		selectedModel === snapshot.model
+			? snapshot
+			: { ...snapshot, model: selectedModel, contextWindow: selectedModel.contextWindow };
+	if (!auth?.ok || !authenticated(auth)) {
+		const detail = auth && !auth.ok ? auth.error : `no credentials resolved for provider "${selectedModel.provider}"`;
 		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);
 	}
+	const requestSnapshot = auth.baseUrl
+		? { ...selectedSnapshot, model: { ...selectedModel, baseUrl: auth.baseUrl } }
+		: selectedSnapshot;
 
 	const prompt = buildPrompt({
-		variant: snapshot.promptVariant,
-		previousSummary: snapshot.preparation.previousSummary,
-		taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []),
-		customInstructions: snapshot.customInstructions,
+		variant: requestSnapshot.promptVariant,
+		previousSummary: requestSnapshot.preparation.previousSummary,
+		taskIntent: resolveInheritedTaskIntent(requestSnapshot.branchEntries ?? []),
+		customInstructions: requestSnapshot.customInstructions,
 	});
 	const promptTokens = approxTokens(prompt.user);
 	let messages = boundSummarizationInput(
 		pruneToolResults(
-			[...snapshot.preparation.messagesToSummarize, ...snapshot.preparation.turnPrefixMessages],
-			snapshot.contextWindow,
+			[...requestSnapshot.preparation.messagesToSummarize, ...requestSnapshot.preparation.turnPrefixMessages],
+			requestSnapshot.contextWindow,
 			SUMMARIZATION_INPUT_BUDGET_RATIO,
 		),
-		snapshot.contextWindow,
+		requestSnapshot.contextWindow,
 		promptTokens,
+	);
+	// One deadline for the whole compaction. The per-attempt budget scales with the
+	// input and every retry re-arms it, so without this a large session could hold
+	// the turn for attempt-budget x attempts with no bound the user can predict.
+	const deadline = createSummarizationDeadline(
+		summarizationTotalBudgetMs(requestSnapshot.preparation.settings.summarizationMaxDurationMs),
 	);
 	const overflowRetryStartMs = Date.now();
 	let overflowAttempts = 0;
+	const summarizationToolsOffered = (requestSnapshot.tools?.length ?? 0) > 0;
+	const reasoningOverrideOffered = hasSummarizationReasoningOverride(requestSnapshot.model);
+	let toolUseRetrySpent = false;
+	let reasoningOverrideRetrySpent = false;
 
 	while (true) {
 		if (signal?.aborted) return undefined;
 		let response: Message | undefined;
+		const currentMessages = messages;
+		const retryStartedMs = Date.now();
+		// Only the routes that block the user's turn retry here. The speculative
+		// warm-up owns its own bounded retry (`idle-retry.ts`) with idle/breaker
+		// guards re-evaluated between attempts, and a failed warm job must stay
+		// inheritable so the next blocking route degrades on it instead of paying
+		// for a second request.
+		const retryEligible = snapshot.origin === "core-route" || snapshot.origin === "blocking";
+		// The attempt budget and the retry gate share one input-size-scaled number,
+		// so a large session gets both a proportional attempt deadline and room to
+		// retry transient failures without the 120s-era retry budget disqualifying
+		// every slow attempt (#1068).
+		const attemptBudgetMs = summarizationMaxDurationMs(
+			messages.reduce((total, message) => total + estimateTokens(message), 0),
+			snapshot.preparation.settings.summarizationMaxDurationMs,
+		);
 		try {
-			response = await generateSummaryMessage({
-				context,
-				messages,
-				onProgress,
-				prompt,
-				signal,
-				snapshot,
-				auth: {
-					apiKey: auth.apiKey,
-					headers: auth.headers,
-					extraBody: auth.extraBody,
+			// The provider `error` stop is raised INSIDE the retried producer so a
+			// transient summarization failure spends the shared retry budget. The
+			// surrounding loop keeps overflow shrinking and abort handling, which
+			// must never be answered by replaying the same request.
+			response = await retryTransientCall(
+				async () => {
+					const attempt = await generateSummaryMessage({
+						context,
+						forbidToolCalls: toolUseRetrySpent,
+						// Re-clamped per attempt, not per loop turn: a retry that starts
+						// near the deadline gets only what is left, and none starts past it.
+						maxDurationMs: deadline.attemptBudgetMs(attemptBudgetMs),
+						messages: currentMessages,
+						onProgress,
+						prompt,
+						signal,
+						snapshot: requestSnapshot,
+						auth: {
+							apiKey: auth.apiKey,
+							headers: auth.headers,
+							extraBody: auth.extraBody,
+						},
+						...(reasoningOverrideRetrySpent ? { omitReasoningOptions: true } : {}),
+					});
+					if (
+						attempt &&
+						isAssistantMessage(attempt) &&
+						attempt.stopReason === "error" &&
+						!isContextOverflow(attempt, requestSnapshot.contextWindow)
+					) {
+						const failureKind = summaryRequestFailureKind(attempt);
+						throw new SummaryRequestError(
+							attempt.errorMessage || "Compaction summary request failed",
+							failureKind !== undefined || isRetryableAssistantError(attempt),
+							failureKind,
+							isRefusalStop(attempt),
+						);
+					}
+					return attempt;
 				},
-			});
+				(error) =>
+					retryEligible &&
+					deadline.remainingMs() > 0 &&
+					allowSummarizationRetry(Date.now() - retryStartedMs, attemptBudgetMs) &&
+					isRetryableSummaryAttempt(error),
+				DEFAULT_SUMMARIZATION_RETRY_POLICY,
+				signal,
+			);
 		} catch (error) {
 			if (signal?.aborted) return undefined;
 			throw error;
 		}
 		if (!response) return undefined;
 
-		if (isAssistantMessage(response) && isContextOverflow(response, snapshot.contextWindow)) {
+		if (isAssistantMessage(response) && isContextOverflow(response, requestSnapshot.contextWindow)) {
 			overflowAttempts++;
 			const elapsedMs = Date.now() - overflowRetryStartMs;
 			const retryMessages = allowOverflowRetry(overflowAttempts, elapsedMs)
-				? shrinkSummarizationInputForOverflowRetry(messages, snapshot.contextWindow, promptTokens)
+				? shrinkSummarizationInputForOverflowRetry(messages, requestSnapshot.contextWindow, promptTokens)
 				: undefined;
 			if (!retryMessages) {
 				throw new SummarizationOverflowExhaustedError(overflowAttempts, elapsedMs);
@@ -510,12 +438,36 @@ export async function runExtensionCompaction(
 				response.errorMessage || "Compaction summary request failed",
 				failureKind !== undefined || isRetryableAssistantError(response),
 				failureKind,
+				isRefusalStop(response),
 			);
 		}
 
 		const summary = getSummaryText(response);
 		if (!summary) {
 			const stopReason = isAssistantMessage(response) ? response.stopReason : "unknown";
+			// A summarizer can hijack the forwarded agent tools and answer with a
+			// bare tool call (observed on chatgpt-subscription gpt-5.6-sol, 2026-08-31),
+			// which used to surface as a terminal empty-summary failure. Spend one
+			// retry with tool calling forbidden; the tools stay in the request
+			// because Anthropic rejects tool_use history without the tools param.
+			if (stopReason === "toolUse" && summarizationToolsOffered && !toolUseRetrySpent) {
+				toolUseRetrySpent = true;
+				continue;
+			}
+			// Some OpenAI-completions relays complete with a normal stop but zero
+			// text when the summarization prompt pins an explicit reasoning effort
+			// (GLM-5.3-flash behind a custom relay, 2026-09-17: HTTP 200 carrying
+			// only the role prelude). Spend one retry without the reasoning
+			// override, but only when the first attempt carried one: a model with
+			// no override would just replay the identical prompt. On Anthropic the
+			// override is `thinkingEnabled: false`, so the retry runs with the
+			// provider's default thinking, clamped by the compaction deadline.
+			// Persistent emptiness still throws and the deterministic fallback
+			// owns recovery.
+			if (stopReason === "stop" && reasoningOverrideOffered && !reasoningOverrideRetrySpent) {
+				reasoningOverrideRetrySpent = true;
+				continue;
+			}
 			throw new SummaryGenerationError(
 				"empty-summary",
 				`summarization response contained no text (stopReason: ${stopReason})`,
@@ -558,15 +510,30 @@ export async function applyGeneratedCompaction(
 	compaction: CompactionResult | undefined,
 	signal?: AbortSignal,
 ): Promise<SpeculativeCompactionResult> {
+	const provider = context.model?.provider;
+	if ((provider === "cursor" || provider === "cursor-cli-oauth") && context.isIdle && !context.isIdle()) {
+		return { applied: false, reason: "rejected" };
+	}
 	if (!snapshot || !compaction) return { applied: false, reason: "unavailable" };
 
-	if (snapshot.generation !== getCurrentGeneration() || snapshot.expectedRevision !== context.getMessageRevision()) {
+	if (snapshot.generation !== getCurrentGeneration()) {
+		return { applied: false, reason: "stale" };
+	}
+
+	const revisionUnchanged = snapshot.expectedRevision === context.getMessageRevision();
+	const warmAnchor = createWarmAnchorSnapshot(snapshot.preparation.firstKeptEntryId, snapshot.branchEntries ?? []);
+	if (
+		!revisionUnchanged &&
+		(!warmAnchor || !isWarmSummaryAnchorValid(warmAnchor, context.sessionManager.getBranch()))
+	) {
 		return { applied: false, reason: "stale" };
 	}
 
 	return await context.applyCompaction(compaction, {
 		reason: "extension",
-		expectedRevision: snapshot.expectedRevision,
+		...(revisionUnchanged || !warmAnchor
+			? { expectedRevision: snapshot.expectedRevision }
+			: { expectedWarmAnchor: warmAnchor }),
 		signal,
 	});
 }

@@ -2,18 +2,54 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../../cli/args.ts";
 
 /**
- * Providers that never receive a bare selector. OpenRouter re-publishes other
- * vendors' catalogs under namespaced ids, so family expansion would silently
- * route a shipped default through a third-party reseller the user never chose.
- * An explicit `openrouter/...` selector the user wrote is unaffected.
+ * The only providers a bare selector reaches: each model vendor's own lanes,
+ * keyed by the vendor's model-id prefix. A bare id is a vendor policy, so a
+ * reseller, gateway, cloud re-host or user-added provider that also publishes
+ * the model is reached only through a selector that names it (`provider/id`).
+ * Every provider id here exists in the builtin catalog or is registered by a
+ * builtin extension (`anthropic-subscription`).
  */
-const BARE_EXPANSION_DENYLIST: ReadonlySet<string> = new Set(["openrouter", "openrouter-images"]);
+export const FIRST_PARTY_PROVIDERS: readonly { readonly family: RegExp; readonly providers: readonly string[] }[] = [
+	{ family: /^claude-/, providers: ["anthropic-subscription", "anthropic"] },
+	{ family: /^(?:gpt-|o\d)/, providers: ["chatgpt-subscription", "openai"] },
+	{ family: /^gemini-/, providers: ["google", "google-vertex"] },
+	{ family: /^(?:kimi-|k\d)/, providers: ["kimi-coding", "moonshotai", "moonshotai-cn"] },
+	{ family: /^glm-/, providers: ["zai", "zai-coding-cn"] },
+	{ family: /^grok-/, providers: ["xai"] },
+	{ family: /^deepseek-/, providers: ["deepseek"] },
+	{ family: /^(?:mistral|codestral|devstral|magistral|ministral|pixtral)/, providers: ["mistral"] },
+	{ family: /^minimax-/, providers: ["minimax", "minimax-cn"] },
+	{
+		family: /^mimo-/,
+		providers: ["xiaomi", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp", "xiaomi-token-plan-ams"],
+	},
+	{
+		family: /^qwen/,
+		providers: ["qwen-token-plan", "qwen-token-plan-individual", "qwen-token-plan-cn", "alibaba-token-plan"],
+	},
+];
+
+/**
+ * Whether a bare selector for `family` may resolve on `provider`. A known vendor
+ * resolves only on its first-party providers. An unknown vendor has no
+ * first-party lane to prefer, so it stays on `sessionProvider`, the provider the
+ * chain key already runs on: `resolveChainKey` only selects a key matching the
+ * running model's `provider/id`, so that provider is one the user chose. Bare
+ * keys pass no session provider: a key never routes a request, and each
+ * expanded key applies only to sessions already on its own provider.
+ */
+function inBareScope(provider: string, family: string, sessionProvider: string | undefined): boolean {
+	const normalized = provider.toLowerCase();
+	const vendor = FIRST_PARTY_PROVIDERS.find((entry) => entry.family.test(family));
+	if (vendor) return vendor.providers.includes(normalized);
+	return sessionProvider === undefined || normalized === sessionProvider.toLowerCase();
+}
 
 /**
  * Deterministic tie-break inside one auth tier. Earlier wins. Providers absent
  * from the table sort after every listed one, alphabetically.
  */
-const PROVIDER_PRECEDENCE: readonly string[] = ["claude-sdk-oauth", "anthropic", "kimi-coding"];
+const PROVIDER_PRECEDENCE: readonly string[] = ["anthropic-subscription", "anthropic", "kimi-coding"];
 
 export interface BareSelectorParts {
 	/** Model id without a provider prefix, e.g. `claude-opus-5`. */
@@ -34,6 +70,14 @@ export type FallbackAuthLookup = (model: Model<Api>) => boolean;
 export interface FallbackAuthTiers {
 	isUsingOAuth: FallbackAuthLookup;
 	hasConfiguredAuth?: FallbackAuthLookup;
+	/**
+	 * Deterministic usability gate, distinct from the auth tiers above. Auth
+	 * tiers rank; this filters, and only on a definitive `false`: a provider
+	 * whose own registration declares every unattended call refused (e.g. an
+	 * unacknowledged execution gate) must not consume a bare-expansion slot it
+	 * can never serve. Unknown eligibility stays included.
+	 */
+	isFallbackEligible?: FallbackAuthLookup;
 }
 
 function authTier(model: Model<Api>, tiers: FallbackAuthTiers): number {
@@ -104,7 +148,7 @@ function precedenceIndex(provider: string): number {
 }
 
 /**
- * Ranks one model per eligible provider: OAuth-credential providers first (a
+ * Ranks one model per in-scope, eligible provider: OAuth-credential providers first (a
  * logged-in subscription is the account the user actually wants used), then the
  * fixed precedence table, then alphabetically.
  */
@@ -112,12 +156,14 @@ export function rankFamilyModels(
 	models: readonly Model<Api>[],
 	family: string,
 	tiers: FallbackAuthTiers,
-	options: { limit?: number } = {},
+	options: { limit?: number; sessionProvider?: string } = {},
 ): Model<Api>[] {
 	const byProvider = new Map<string, Model<Api>[]>();
 	for (const model of models) {
-		if (BARE_EXPANSION_DENYLIST.has(model.provider.toLowerCase())) continue;
+		if (!inBareScope(model.provider, family, options.sessionProvider)) continue;
+		// Family first: eligibility reads provider settings from disk, and only family members need it.
 		if (!matchesFamily(model, family)) continue;
+		if (tiers.isFallbackEligible?.(model) === false) continue;
 		const bucket = byProvider.get(model.provider);
 		if (bucket) bucket.push(model);
 		else byProvider.set(model.provider, [model]);

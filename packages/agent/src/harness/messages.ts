@@ -1,4 +1,5 @@
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import { dropFailedAssistantTurns } from "@earendil-works/pi-ai/utils/drop-failed-assistant-turns";
 import type { AgentMessage } from "../types.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
@@ -40,7 +41,7 @@ export interface CustomMessage<T = unknown> {
 export interface BranchSummaryMessage {
 	role: "branchSummary";
 	summary: string;
-	fromId: string;
+	fromId: string | null;
 	timestamp: number;
 }
 
@@ -79,25 +80,29 @@ export function bashExecutionToText(msg: BashExecutionMessage): string {
 	return text;
 }
 
-export function createBranchSummaryMessage(summary: string, fromId: string, timestamp: string): BranchSummaryMessage {
+export function createBranchSummaryMessage(
+	summary: string,
+	fromId: string | null,
+	timestamp: string | number,
+): BranchSummaryMessage {
 	return {
 		role: "branchSummary",
 		summary,
 		fromId,
-		timestamp: new Date(timestamp).getTime(),
+		timestamp: typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime(),
 	};
 }
 
 export function createCompactionSummaryMessage(
 	summary: string,
 	tokensBefore: number,
-	timestamp: string,
+	timestamp: string | number,
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
 		summary,
 		tokensBefore,
-		timestamp: new Date(timestamp).getTime(),
+		timestamp: typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime(),
 	};
 }
 
@@ -106,7 +111,7 @@ export function createCustomMessage(
 	content: string | (TextContent | ImageContent)[],
 	display: boolean,
 	details: unknown | undefined,
-	timestamp: string,
+	timestamp: string | number,
 ): CustomMessage {
 	return {
 		role: "custom",
@@ -114,12 +119,12 @@ export function createCustomMessage(
 		content,
 		display,
 		details,
-		timestamp: new Date(timestamp).getTime(),
+		timestamp: typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime(),
 	};
 }
 
 export function convertToLlm(messages: AgentMessage[]): Message[] {
-	return messages
+	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -153,6 +158,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					};
+				case "system":
 				case "user":
 				case "assistant":
 				case "toolResult":
@@ -162,4 +168,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			}
 		})
 		.filter((m): m is Message => m !== undefined);
+	// Failed provider turns (stopReason error/aborted) must not be replayed by
+	// any lane that builds an LLM request from this output; dropping is
+	// deterministic, so earlier requests stay a prefix of later ones.
+	return dropFailedAssistantTurns(converted);
 }

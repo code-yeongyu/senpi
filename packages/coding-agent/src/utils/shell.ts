@@ -1,7 +1,14 @@
 import { existsSync } from "node:fs";
-import { delimiter } from "node:path";
-import { spawn, spawnSync } from "child_process";
+import { delimiter, join } from "node:path";
+import {
+	listWindowsProcessRowsSync,
+	type WindowsProcessRow,
+	windowsTreeKillArgs,
+} from "@earendil-works/pi-agent-core/node";
+import { spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
+import { withKillGuardRuntime } from "../core/kill-guard/runtime.ts";
+import { withBundledBunCommands } from "./bundled-bun.ts";
 
 /** Family of a resolved shell executable, used to pick invocation arguments. */
 export type ShellKind = "bash" | "sh" | "cmd" | "powershell";
@@ -64,11 +71,11 @@ function getShellConfigForPath(shellPath: string): ShellConfig {
 	}
 }
 
-function findBashOnPath(): string | null {
+function findExecutableOnPath(executable: string): string | null {
 	if (process.platform === "win32") {
 		// Windows: Use 'where' and verify file exists (where can return non-existent paths)
 		try {
-			const result = spawnSync("where", ["bash.exe"], {
+			const result = spawnSync("where", [executable], {
 				encoding: "utf-8",
 				timeout: 5000,
 				windowsHide: true,
@@ -87,7 +94,7 @@ function findBashOnPath(): string | null {
 
 	// Unix: Use 'which' and trust its output (handles Termux and special filesystems)
 	try {
-		const result = spawnSync("which", ["bash"], { encoding: "utf-8", timeout: 5000 });
+		const result = spawnSync("which", [executable], { encoding: "utf-8", timeout: 5000 });
 		if (result.status === 0 && result.stdout) {
 			const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
 			if (firstMatch) {
@@ -144,7 +151,7 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 		}
 
 		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
-		const bashOnPath = findBashOnPath();
+		const bashOnPath = findExecutableOnPath("bash.exe");
 		if (bashOnPath) {
 			return getBashShellConfig(bashOnPath);
 		}
@@ -163,7 +170,7 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 		return getBashShellConfig("/bin/bash");
 	}
 
-	const bashOnPath = findBashOnPath();
+	const bashOnPath = findExecutableOnPath("bash");
 	if (bashOnPath) {
 		return getBashShellConfig(bashOnPath);
 	}
@@ -171,7 +178,33 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 	return { shell: "sh", args: ["-c"] };
 }
 
+export const POWERSHELL_ARGS = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"] as const;
+
+/** Resolve PowerShell on Windows, preferring PowerShell 7 when available. */
+export function getPowerShellConfig(): ShellConfig {
+	if (process.platform !== "win32") {
+		throw new Error("The powershell tool is only available on Windows.");
+	}
+
+	const shell = findExecutableOnPath("pwsh.exe") ?? findExecutableOnPath("powershell.exe");
+	if (!shell) {
+		throw new Error("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.");
+	}
+
+	return { shell, args: [...POWERSHELL_ARGS] };
+}
+
+/** The environment agent-spawned shells get: the user's shell environment plus the kill guard's runtime layer. */
 export function getShellEnv(): NodeJS.ProcessEnv {
+	// The kill guard's runtime shims go first on PATH while the host has them active (senpi#5349).
+	return withKillGuardRuntime(getUserShellEnv());
+}
+
+/**
+ * The environment for a command the user typed (`!cmd`): no kill guard runtime layer, which judges only what the agent
+ * runs (senpi#5349).
+ */
+export function getUserShellEnv(): NodeJS.ProcessEnv {
 	const binDir = getBinDir();
 	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const currentPath = process.env[pathKey] ?? "";
@@ -179,54 +212,25 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 	const hasBinDir = pathEntries.includes(binDir);
 	const updatedPath = hasBinDir ? currentPath : [binDir, currentPath].filter(Boolean).join(delimiter);
 
-	return {
+	return withBundledBunCommands({
 		...process.env,
 		[pathKey]: updatedPath,
-	};
+	});
 }
 
 /**
  * Sanitize binary output for display/storage.
  * Removes characters that crash string-width or cause display issues:
  * - Control characters (except tab, newline, carriage return)
- * - Lone surrogates
- * - Unicode Format characters (crash string-width due to a bug)
- * - Characters with undefined code points
+ * - Unicode interlinear annotation characters U+FFF9..U+FFFB (crash string-width due to a bug)
  */
 export function sanitizeBinaryOutput(str: string): string {
-	// Use Array.from to properly iterate over code points (not code units)
-	// This handles surrogate pairs correctly and catches edge cases where
-	// codePointAt() might return undefined
+	// Fork fast path: most output has nothing to remove, so skip the scan-and-copy entirely.
 	if (!hasUnsafeDisplayCharacter(str)) {
 		return str;
 	}
-
-	return Array.from(str)
-		.filter((char) => {
-			// Filter out characters that cause string-width to crash
-			// This includes:
-			// - Unicode format characters
-			// - Lone surrogates (already filtered by Array.from)
-			// - Control chars except \t \n \r
-			// - Characters with undefined code points
-
-			const code = char.codePointAt(0);
-
-			// Skip if code point is undefined (edge case with invalid strings)
-			if (code === undefined) return false;
-
-			// Allow tab, newline, carriage return
-			if (code === 0x09 || code === 0x0a || code === 0x0d) return true;
-
-			// Filter out control characters (0x00-0x1F, except 0x09, 0x0a, 0x0x0d)
-			if (code <= 0x1f) return false;
-
-			// Filter out Unicode format characters
-			if (code >= 0xfff9 && code <= 0xfffb) return false;
-
-			return true;
-		})
-		.join("");
+	// All removed characters are single UTF-16 code units, so surrogate pairs are never split.
+	return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFF9-\uFFFB]/g, "");
 }
 
 function hasUnsafeDisplayCharacter(str: string): boolean {
@@ -239,25 +243,213 @@ function hasUnsafeDisplayCharacter(str: string): boolean {
 	return false;
 }
 
+/** A detached child we own until its whole process group is gone. */
+export interface TrackedDetachedChild {
+	/** Pid of the process we spawned; on unix it is also its own process-group leader. */
+	readonly pid: number;
+	/** Process group shutdown must kill. Equal to `pid`, because we spawn detached. */
+	readonly pgid: number;
+	/** The leader exited but its group still has members, so `pid` must not be signalled. */
+	readonly leaderExited: boolean;
+}
+
+interface TrackedDetachedChildState {
+	readonly pid: number;
+	readonly pgid: number;
+	leaderExited: boolean;
+}
+
 /**
  * Detached child processes must be tracked so they can be killed on parent
  * shutdown signals (SIGHUP/SIGTERM).
+ *
+ * What is tracked on unix is the process GROUP, not the bare pid: every tracked child is
+ * spawned `detached`, so it leads its own group, and a command like `sleep 30 &` or
+ * `nohup server &` keeps running in that group long after the shell that started it exited.
+ * Dropping the entry on the leader's exit orphaned those descendants past shutdown
+ * ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
  */
-const trackedDetachedChildPids = new Set<number>();
+const trackedDetachedChildren = new Map<number, TrackedDetachedChildState>();
 
 export function trackDetachedChildPid(pid: number): void {
-	trackedDetachedChildPids.add(pid);
+	trackedDetachedChildren.set(pid, { pid, pgid: pid, leaderExited: false });
 }
 
 export function untrackDetachedChildPid(pid: number): void {
-	trackedDetachedChildPids.delete(pid);
+	trackedDetachedChildren.delete(pid);
+}
+
+/** Read-only snapshot of the tracked groups (diagnostics and tests; never module state). */
+export function listTrackedDetachedChildren(): readonly TrackedDetachedChild[] {
+	return Array.from(trackedDetachedChildren.values(), (entry) => Object.freeze({ ...entry }));
+}
+
+/**
+ * Record that a tracked child exited. Ownership is released only when its process group
+ * is empty; while descendants survive there, shutdown must still be able to kill them.
+ * Windows has no such group, so the entry is dropped on exit as before.
+ */
+export function noteDetachedChildExited(pid: number): void {
+	const entry = trackedDetachedChildren.get(pid);
+	if (entry === undefined) return;
+	if (process.platform === "win32" || !processGroupIsAlive(entry.pgid)) {
+		trackedDetachedChildren.delete(pid);
+		return;
+	}
+	entry.leaderExited = true;
+}
+
+/** Drop tracked groups that have no members left, so a long session cannot accumulate entries. */
+export function pruneTrackedDetachedChildren(): void {
+	if (process.platform === "win32") return;
+	for (const [pid, entry] of trackedDetachedChildren) {
+		if (trackedDetachedChildIsGone(entry)) trackedDetachedChildren.delete(pid);
+	}
+}
+
+function signalTargetExists(target: number): boolean {
+	try {
+		process.kill(target, 0);
+		return true;
+	} catch (error) {
+		// EPERM means the target exists but is not ours to signal; only ESRCH proves it is gone.
+		return (error as NodeJS.ErrnoException).code !== "ESRCH";
+	}
+}
+
+function processGroupIsAlive(pgid: number): boolean {
+	return signalTargetExists(-pgid);
+}
+
+function trackedDetachedChildIsGone(entry: TrackedDetachedChildState): boolean {
+	if (processGroupIsAlive(entry.pgid)) return false;
+	// A leader that already exited must not be probed by pid: that number can have been
+	// recycled onto an unrelated process. An empty group is proof enough.
+	return entry.leaderExited || !signalTargetExists(entry.pid);
 }
 
 export function killTrackedDetachedChildren(): void {
-	for (const pid of trackedDetachedChildPids) {
-		killProcessTree(pid);
+	pruneTrackedDetachedChildren();
+	if (trackedDetachedChildren.size === 0) return;
+	// One listing for the whole batch: each tree kill would otherwise list every process again.
+	const rows = process.platform === "win32" ? listWindowsProcesses() : undefined;
+	for (const entry of trackedDetachedChildren.values()) {
+		if (process.platform === "win32") killWindowsProcessTree(entry.pid, undefined, () => rows);
+		else killTrackedDetachedGroup(entry);
 	}
-	trackedDetachedChildPids.clear();
+	trackedDetachedChildren.clear();
+}
+
+/**
+ * Kill a tracked group on unix.
+ *
+ * The direct-pid fallback of `killProcessTree()` is deliberately not reused here: a tracked
+ * entry can outlive its leader by minutes, and signalling that stale pid could hit whatever
+ * unrelated process the kernel has since given the number to. Only a leader still known to
+ * be alive may be signalled directly.
+ */
+function killTrackedDetachedGroup(entry: TrackedDetachedChildState): void {
+	try {
+		process.kill(-entry.pgid, "SIGKILL");
+		return;
+	} catch {
+		// The group is already empty, or this child never led one.
+	}
+	if (entry.leaderExited) return;
+	try {
+		process.kill(entry.pid, "SIGKILL");
+	} catch {
+		// Process already dead.
+	}
+}
+
+/**
+ * Ordered `taskkill` launchers to try, most reliable first.
+ *
+ * `spawn("taskkill", ...)` relies on a PATH lookup, so any session whose PATH lost
+ * `%SystemRoot%\System32` (a POSIX-style PATH inherited from a Git Bash/MSYS launcher,
+ * a truncated user PATH, a locked-down service account) fails to resolve it. A broken PATH
+ * must not cost us the process-tree kill, so every absolute System32 location that actually
+ * exists is tried before the bare PATH-resolved name.
+ */
+export function windowsTaskkillCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
+	// A bare `SystemDrive` is drive-relative ("C:"), so anchor it before joining.
+	const systemDrive = env.SystemDrive ? `${env.SystemDrive}\\` : undefined;
+	const roots = [env.SystemRoot, env.SYSTEMROOT, env.windir, systemDrive && join(systemDrive, "Windows")];
+	const candidates: string[] = [];
+	for (const root of roots) {
+		if (!root) continue;
+		// Sysnative reaches the real 64-bit System32 from a 32-bit process, where System32
+		// is redirected to SysWOW64.
+		for (const systemDir of ["System32", "Sysnative"]) {
+			const absolute = join(root, systemDir, "taskkill.exe");
+			if (!candidates.includes(absolute) && existsSync(absolute)) candidates.push(absolute);
+		}
+	}
+	candidates.push("taskkill.exe");
+	return candidates;
+}
+
+function killProcessDirectly(pid: number): void {
+	try {
+		process.kill(pid);
+	} catch {
+		// Process already dead.
+	}
+}
+
+/** Upper bound on how long a shutdown may block waiting for `taskkill` to finish. */
+const TASKKILL_TIMEOUT_MS = 5_000;
+
+function listWindowsProcesses(): readonly WindowsProcessRow[] | undefined {
+	return listWindowsProcessRowsSync(TASKKILL_TIMEOUT_MS);
+}
+
+function taskkillHandledTree(taskkillPath: string, killArgs: readonly string[]): boolean {
+	if (killArgs.length === 0) return true;
+	try {
+		const result = spawnSync(taskkillPath, [...killArgs], {
+			stdio: "ignore",
+			windowsHide: true,
+			timeout: TASKKILL_TIMEOUT_MS,
+		});
+		// `error` means the launcher never started (ENOENT, EACCES); a null status means
+		// the timeout killed it. Any real taskkill exit code counts as handled.
+		return result.error === undefined && result.status !== null;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Kill a process and its descendants on Windows: one process listing (bounded by `TASKKILL_TIMEOUT_MS`)
+ * decides the tree, a process counting as a child only when it started at or after the parent it names,
+ * and `taskkill /F` ends each pid by name. `/T` would also adopt an unrelated older process through a
+ * recycled parent pid (senpi#2999); it is used only when no listing can be read.
+ *
+ * Synchronous on purpose. Shutdown paths call `killTrackedDetachedChildren()` and then
+ * `process.exit()` in the same tick (`emergencyTerminalExit()`), so neither an
+ * asynchronous killer nor a fallback wired to a child's `error` event would ever run and
+ * the tracked child would survive. `spawnSync` also reports a failed executable lookup on
+ * its returned `error` field instead of emitting it, so a PATH without
+ * `%SystemRoot%\System32` can no longer surface as an uncaught `spawn taskkill ENOENT`.
+ *
+ * The direct `process.kill` at the end is a degraded last resort reached only when no
+ * `taskkill.exe` can be launched at all. It maps to `TerminateProcess`, which does not
+ * touch descendants — the same limitation `packages/pty/src/pipe-fallback.ts` documents.
+ * Nothing in-process can walk a Windows process tree without an external tool, so this
+ * still beats leaving the whole tree running.
+ */
+export function killWindowsProcessTree(
+	pid: number,
+	taskkillPaths = windowsTaskkillCandidates(),
+	listProcesses: () => readonly WindowsProcessRow[] | undefined = listWindowsProcesses,
+): void {
+	const killArgs = windowsTreeKillArgs(pid, listProcesses());
+	for (const taskkillPath of taskkillPaths) {
+		if (taskkillHandledTree(taskkillPath, killArgs)) return;
+	}
+	killProcessDirectly(pid);
 }
 
 /**
@@ -265,16 +457,7 @@ export function killTrackedDetachedChildren(): void {
  */
 export function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
-		// Use taskkill on Windows to kill process tree
-		try {
-			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
-				stdio: "ignore",
-				detached: true,
-				windowsHide: true,
-			});
-		} catch {
-			// Ignore errors if taskkill fails
-		}
+		killWindowsProcessTree(pid);
 	} else {
 		// Use SIGKILL on Unix/Linux/Mac
 		try {

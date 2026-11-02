@@ -53,6 +53,7 @@ vi.mock("../src/core/output-guard.js", () => ({
 vi.mock("../src/modes/interactive/theme/theme.js", () => ({ theme: {} }));
 
 vi.mock("../src/modes/rpc/jsonl.js", () => ({
+	MAX_RPC_LINE_CHARACTERS: 16 * 1024 * 1024,
 	attachJsonlLineReader: vi.fn((_stream: NodeJS.ReadableStream, onLine: (line: string) => void) => {
 		rpcIo.lineHandler = onLine;
 		return () => {};
@@ -400,8 +401,12 @@ describe("Classic single-session RPC characterization pins (todo 2)", () => {
 				// MUTATION: inject a top-level sessionId key into the first emitted line
 				// at the write boundary (the same array writeRawStdout pushes to).
 				const cleanLines = [...rpcIo.outputLines];
-				const firstRecord = JSON.parse(cleanLines[0]!) as ParsedOutputLine;
-				rpcIo.outputLines[0] = `${JSON.stringify({ ...firstRecord, sessionId: "sess-mutation" })}\n`;
+				const [firstLine = "", ...remainingLines] = cleanLines[0]!.split("\n");
+				const firstRecord = JSON.parse(firstLine) as ParsedOutputLine;
+				rpcIo.outputLines[0] = [
+					JSON.stringify({ ...firstRecord, sessionId: "sess-mutation" }),
+					...remainingLines,
+				].join("\n");
 
 				// The REAL pin assertion must now throw on the mutated captured lines.
 				expect(() => assertNoSessionIdTagging("mutated prompt flow")).toThrow(/sessionId/);

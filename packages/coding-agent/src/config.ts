@@ -1,12 +1,14 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync } from "fs";
-import { homedir } from "os";
+import { homedir, userInfo } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
 import { createBunLauncherRepairCommand } from "./bun-global-launcher.ts";
 import { type BrandProfile, brandProfile, envValue } from "./core/brand.ts";
 import { findNearestParentConfigDir } from "./nearest-parent-config.ts";
+import { resolveInstallPath } from "./runtime-snapshot/marker.ts";
 import { spawnProcessSync } from "./utils/child-process.ts";
 import { normalizePath } from "./utils/paths.ts";
+import { stripBom } from "./utils/text.ts";
 
 // =============================================================================
 // Package Detection
@@ -24,6 +26,10 @@ export const isBunBinary =
 
 /** Detect if Bun is the runtime (compiled binary or bun run) */
 export const isBunRuntime = !!process.versions.bun;
+
+/** Detect the esbuild-bundled Node.js distribution. */
+declare const PI_BUNDLED_NODE: boolean;
+export const isBundledNode = typeof PI_BUNDLED_NODE !== "undefined" && PI_BUNDLED_NODE;
 
 // =============================================================================
 // Install Method Detection
@@ -84,7 +90,8 @@ export function detectInstallMethod(): InstallMethod {
 		return "bun-binary";
 	}
 
-	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
+	const moduleDir = resolveInstallPath(__dirname, findNodePackageDir(__dirname));
+	const resolvedPath = `${moduleDir}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
 
 	if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/")) {
 		return "pnpm";
@@ -103,7 +110,7 @@ export function detectInstallMethod(): InstallMethod {
 }
 
 function getInferredNpmInstall(): { root: string; prefix: string } | undefined {
-	const packageDir = getPackageDir();
+	const packageDir = getInstallPackageDir();
 	const path = process.platform === "win32" || packageDir.includes("\\") ? win32 : { basename, dirname };
 	const parent = path.dirname(packageDir);
 	let root: string | undefined;
@@ -134,7 +141,7 @@ function getSelfUpdateCommandForMethod(
 		case "pnpm": {
 			const match = readCommandOutput("pnpm", ["root", "-g"])
 				? undefined
-				: /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getPackageDir());
+				: /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getInstallPackageDir());
 			const binDirArgs = match
 				? [`--config.global-bin-dir=${process.env.PNPM_HOME || dirname(dirname(match[1]))}`]
 				: [];
@@ -242,7 +249,7 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 		case "pnpm": {
 			const root = readCommandOutput("pnpm", ["root", "-g"]);
 			if (root) return [root, dirname(root)];
-			const match = /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getPackageDir());
+			const match = /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getInstallPackageDir());
 			return match ? [match[1]] : [];
 		}
 		case "yarn": {
@@ -306,7 +313,7 @@ function getEntrypointPackageDir(): string | undefined {
 }
 
 function isSelfUpdatePathWritable(): boolean {
-	const packageDir = getPackageDir();
+	const packageDir = getInstallPackageDir();
 	try {
 		accessSync(packageDir, constants.W_OK);
 		accessSync(dirname(packageDir), constants.W_OK);
@@ -317,7 +324,7 @@ function isSelfUpdatePathWritable(): boolean {
 }
 
 function isManagedByGlobalPackageManager(method: InstallMethod, packageName: string, npmCommand?: string[]): boolean {
-	const packageDirs = [getPackageDir(), getEntrypointPackageDir()].filter((dir): dir is string => !!dir);
+	const packageDirs = [getInstallPackageDir(), getEntrypointPackageDir()].filter((dir): dir is string => !!dir);
 	const packageDirCandidates = packageDirs.flatMap((dir) => getPathComparisonCandidates(dir));
 	return getGlobalPackageRoots(method, packageName, npmCommand).some((root) => {
 		return getPathComparisonCandidates(root).some((normalizedRoot) => {
@@ -376,9 +383,26 @@ export function getUpdateInstruction(packageName: string): string {
 /**
  * Get the base directory for resolving package assets (themes, package.json, README.md, CHANGELOG.md).
  * - For Bun binary: returns the directory containing the executable
- * - For Node.js (dist/): returns __dirname (the dist/ directory)
- * - For tsx (src/): returns parent directory (the package root)
+ * - For Node.js and tsx: returns the package root containing package.json
+ * - Ignores Bun binary metadata copied into dist/ when the package root is available
  */
+export function findNodePackageDir(startDir: string): string {
+	let dir = startDir;
+	while (dir !== dirname(dir)) {
+		if (existsSync(join(dir, "package.json"))) {
+			const parent = dirname(dir);
+			// build:binary places Bun's metadata inside dist/. Node still needs the
+			// package root so its dist-relative asset paths do not become dist/dist/.
+			if (basename(dir) === "dist" && existsSync(join(parent, "package.json"))) {
+				return parent;
+			}
+			return dir;
+		}
+		dir = dirname(dir);
+	}
+	return startDir;
+}
+
 export function getPackageDir(): string {
 	// Allow override via environment variable (useful for Nix/Guix where store paths tokenize poorly)
 	const envDir = envValue("PACKAGE_DIR");
@@ -390,16 +414,75 @@ export function getPackageDir(): string {
 		// Bun binary: process.execPath points to the compiled executable
 		return dirname(process.execPath);
 	}
-	// Node.js: walk up from __dirname until we find package.json
-	let dir = __dirname;
-	while (dir !== dirname(dir)) {
-		if (existsSync(join(dir, "package.json"))) {
-			return dir;
-		}
-		dir = dirname(dir);
+	// The module does not move while the process runs, and renderers ask for this per tool card per frame.
+	nodePackageDir ??= findNodePackageDir(__dirname);
+	return nodePackageDir;
+}
+
+let nodePackageDir: string | undefined;
+
+/**
+ * Where the package manager installed this package. Equals `getPackageDir()` except in a process
+ * running from its runtime snapshot (`runtime-snapshot/`), whose assets live in the snapshot.
+ */
+export function getInstallPackageDir(): string {
+	const packageDir = getPackageDir();
+	return resolveInstallPath(packageDir, packageDir);
+}
+
+/** One asset directory shipped with the package, in both the Bun-binary and Node layouts. */
+interface ShippedAsset {
+	/** Directory name next to a compiled Bun binary. */
+	readonly binaryDir: string;
+	/** Path segments under the package's src/ or dist/ root. */
+	readonly sourceSegments: readonly string[];
+	/** A file the directory must contain; a root without it does not ship this asset. */
+	readonly probe: string;
+}
+
+const THEMES_ASSET: ShippedAsset = {
+	binaryDir: "theme",
+	sourceSegments: ["modes", "interactive", "theme"],
+	probe: "dark.json",
+};
+
+const EXPORT_TEMPLATE_ASSET: ShippedAsset = {
+	binaryDir: "export-html",
+	sourceSegments: ["core", "export-html"],
+	probe: "template.html",
+};
+
+const INTERACTIVE_ASSETS: ShippedAsset = {
+	binaryDir: "assets",
+	sourceSegments: ["modes", "interactive", "assets"],
+	probe: "clankolas.png",
+};
+
+function assetDirIn(root: string, asset: ShippedAsset): string {
+	if (isBunBinary) {
+		return join(root, asset.binaryDir);
 	}
-	// Fallback (shouldn't happen)
-	return __dirname;
+	const srcOrDist = existsSync(join(root, "src")) ? "src" : "dist";
+	return join(root, srcOrDist, ...asset.sourceSegments);
+}
+
+/**
+ * Resolve a shipped asset directory, preferring PACKAGE_DIR but never trusting it blindly.
+ *
+ * PACKAGE_DIR relocates the package root (Nix/Guix store paths), and a Bun binary that embeds this
+ * CLI pins it to the binary's own root. When such a root is inherited by a Node install of the CLI,
+ * the Node layout resolves under it to a directory that cannot exist and startup dies on ENOENT
+ * (an omo binary keeps its themes in a flat theme/, so the inherited root has no dist/ tree at all).
+ * Fall back to the running install whenever the preferred root does not actually ship the asset. When
+ * neither ships it the install is genuinely broken, and the running install's own path is returned so
+ * the resulting error names the tree that was supposed to carry the asset rather than a foreign root.
+ */
+function resolveShippedAssetDir(asset: ShippedAsset): string {
+	const preferred = assetDirIn(getPackageDir(), asset);
+	if (existsSync(join(preferred, asset.probe))) {
+		return preferred;
+	}
+	return assetDirIn(isBunBinary ? dirname(process.execPath) : findNodePackageDir(__dirname), asset);
 }
 
 /**
@@ -409,13 +492,7 @@ export function getPackageDir(): string {
  * - For tsx (src/): src/modes/interactive/theme/
  */
 export function getThemesDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "theme");
-	}
-	// Theme is in modes/interactive/theme/ relative to src/ or dist/
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "modes", "interactive", "theme");
+	return resolveShippedAssetDir(THEMES_ASSET);
 }
 
 /**
@@ -425,12 +502,7 @@ export function getThemesDir(): string {
  * - For tsx (src/): src/core/export-html/
  */
 export function getExportTemplateDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "export-html");
-	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "core", "export-html");
+	return resolveShippedAssetDir(EXPORT_TEMPLATE_ASSET);
 }
 
 /** Get path to package.json */
@@ -465,12 +537,7 @@ export function getChangelogPath(): string {
  * - For tsx (src/): src/modes/interactive/assets/
  */
 export function getInteractiveAssetsDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "assets");
-	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
+	return resolveShippedAssetDir(INTERACTIVE_ASSETS);
 }
 
 /** Get path to a bundled interactive asset */
@@ -493,7 +560,7 @@ interface PackageJson {
 
 let pkg: PackageJson = {};
 try {
-	pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
+	pkg = JSON.parse(stripBom(readFileSync(getPackageJsonPath(), "utf-8"))) as PackageJson;
 } catch (e: unknown) {
 	const err = e as NodeJS.ErrnoException;
 	if (err.code !== "ENOENT") throw e;
@@ -510,6 +577,8 @@ export const BRAND: BrandProfile | undefined = brandProfile();
 
 export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";
 export const APP_NAME: string = BRAND?.name || piConfigName || "pi";
+/** Command-line name; brands whose binary differs from their display name set this. */
+export const APP_COMMAND: string = BRAND?.command ?? APP_NAME;
 export const APP_TITLE: string = BRAND?.name || (piConfigName ? APP_NAME : "π");
 export const CONFIG_DIR_NAME: string = BRAND?.configDir || pkg.piConfig?.configDir || ".pi";
 /** True when the brand stores agent state directly under the config dir, with no `agent` segment. */
@@ -528,12 +597,18 @@ export function expandTildePath(path: string): string {
 	return normalizePath(path);
 }
 
-const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
+/**
+ * Base URL of an opt-in `/share` viewer, or undefined. There is no default: a
+ * viewer receives the gist id, so only one the user configured is used (#3524).
+ */
+export function getShareViewerBase(): string | undefined {
+	return envValue("SHARE_VIEWER_URL")?.trim() || undefined;
+}
 
-/** Get the share viewer URL for a gist ID */
-export function getShareViewerUrl(gistId: string): string {
-	const baseUrl = envValue("SHARE_VIEWER_URL") || DEFAULT_SHARE_VIEWER_URL;
-	return `${baseUrl}#${gistId}`;
+/** True when `/share` is switched off for this machine (`<PREFIX>_DISABLE_SHARE=1`). */
+export function isShareDisabledByEnvironment(): boolean {
+	const value = envValue("DISABLE_SHARE")?.trim().toLowerCase();
+	return value !== undefined && value !== "" && value !== "0" && value !== "false";
 }
 
 // =============================================================================
@@ -562,9 +637,61 @@ export function resolveAgentDir(cwd: string, homeDir: string, envDir?: string): 
 	return projectConfigDir ? join(projectConfigDir, "agent") : join(homeDir, CONFIG_DIR_NAME, "agent");
 }
 
+/** Config directories of the shipped brands; the active brand's own directory is added at call time. */
+const KNOWN_BRAND_CONFIG_DIRS = [".senpi", ".omo", ".pi"] as const;
+
+/** A test run resolved the real user's agent directory, where its writes would land in live state (#3867). */
+export class RealAgentDirInTestError extends Error {
+	override readonly name = "RealAgentDirInTestError";
+	readonly agentDir: string;
+
+	constructor(agentDir: string) {
+		super(
+			`Refusing to use the real agent directory ${agentDir} from a test run. ` +
+				"Point <BRAND>_CODING_AGENT_DIR at a temp dir, or set SENPI_TEST_USE_REAL_AGENT_DIR=1 to opt in.",
+		);
+		this.agentDir = agentDir;
+	}
+}
+
+/** Set only by senpi's own test harness (scripts/test-agent-dir.mjs), never inferred from VITEST or NODE_ENV. */
+function isGuardedTestRun(env: NodeJS.ProcessEnv): boolean {
+	return env.SENPI_TEST_AGENT_DIR_GUARD === "1";
+}
+
+function realHomeDir(): string | undefined {
+	try {
+		return userInfo().homedir;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Throws `RealAgentDirInTestError` when a senpi test run (`SENPI_TEST_AGENT_DIR_GUARD=1`) resolves an agent
+ * directory inside the real user's brand config directory. The real home comes from the account
+ * database, not `$HOME`, so a test that redirects `$HOME` to a temp dir still resolves freely.
+ */
+export function assertAgentDirAllowedInTests(
+	agentDir: string,
+	activeConfigDirName: string,
+	env: NodeJS.ProcessEnv = process.env,
+): void {
+	if (!isGuardedTestRun(env) || env.SENPI_TEST_USE_REAL_AGENT_DIR === "1") return;
+	const home = realHomeDir();
+	if (!home) return;
+	const target = resolve(agentDir);
+	for (const configDir of new Set([...KNOWN_BRAND_CONFIG_DIRS, activeConfigDirName])) {
+		const root = join(home, configDir);
+		if (target === root || target.startsWith(root + sep)) throw new RealAgentDirInTestError(target);
+	}
+}
+
 /** Get the agent config directory (e.g., ~/.senpi/agent/) */
 export function getAgentDir(): string {
-	return resolveAgentDir(process.cwd(), homedir(), envValue("CODING_AGENT_DIR"));
+	const agentDir = resolveAgentDir(process.cwd(), homedir(), envValue("CODING_AGENT_DIR"));
+	assertAgentDirAllowedInTests(agentDir, CONFIG_DIR_NAME);
+	return agentDir;
 }
 
 /**

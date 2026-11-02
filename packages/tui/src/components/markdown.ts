@@ -1,8 +1,8 @@
 // allow: SIZE_OK - existing markdown renderer is oversized; this merge only preserves behavior and cache-key correctness.
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
-import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { type Component, nextRenderRevision } from "../tui.ts";
+import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 import { latexToUnicode } from "./latex.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
@@ -401,6 +401,12 @@ export interface MarkdownTheme {
 	italic: (text: string) => string;
 	strikethrough: (text: string) => string;
 	underline: (text: string) => string;
+	/** Inline `**strong**` text (default: `bold`). */
+	strong?: (text: string) => string;
+	/** Inline `*emphasis*` text (default: `italic`). */
+	emphasis?: (text: string) => string;
+	/** Inline `~~deleted~~` text (default: `strikethrough`). */
+	deleted?: (text: string) => string;
 	highlightCode?: (code: string, lang?: string) => string[];
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
@@ -413,6 +419,8 @@ export interface MarkdownOptions {
 	preserveBackslashEscapes?: boolean;
 	/** Transform source Markdown before parsing, with the exact width available for content. */
 	transform?: (markdown: string, availableWidth: number) => string;
+	/** Render supported LaTeX math expressions as Unicode text (default: true). */
+	renderLatex?: boolean;
 }
 
 interface InlineStyleContext {
@@ -433,6 +441,7 @@ export class Markdown implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private revision = nextRenderRevision();
 
 	constructor(
 		text: string,
@@ -459,6 +468,17 @@ export class Markdown implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.markRevision();
+	}
+
+	/** Instances that expose a revision advance the shared clock; others (e.g. an animated subclass) stay local. */
+	private markRevision(): void {
+		this.revision = this.getRenderRevision() === undefined ? this.revision + 1 : nextRenderRevision();
+	}
+
+	/** Exact `Markdown` instances only; a subclass may render more than its source text. */
+	getRenderRevision(): number | undefined {
+		return Object.getPrototypeOf(this) === Markdown.prototype ? this.revision : undefined;
 	}
 
 	render(width: number): string[] {
@@ -492,7 +512,9 @@ export class Markdown implements Component {
 			this.paddingX,
 			this.paddingY,
 			this.theme.codeBlockIndent ?? "  ",
-			(this.options.preserveOrderedListMarkers ? 1 : 0) | (this.options.preserveBackslashEscapes ? 2 : 0),
+			(this.options.preserveOrderedListMarkers ? 1 : 0) |
+				(this.options.preserveBackslashEscapes ? 2 : 0) |
+				(this.options.renderLatex === false ? 4 : 0),
 			objectId(this.theme),
 			styleKey,
 			getCapabilities().images ?? "",
@@ -575,6 +597,7 @@ export class Markdown implements Component {
 
 		// Combine top padding, content, and bottom padding
 		const result = emptyLines.concat(contentLines, emptyLines);
+		flattenLines(result);
 
 		// Update cache
 		this.cachedText = this.text;
@@ -759,7 +782,7 @@ export class Markdown implements Component {
 
 			case "latex_block":
 				if (isLatexToken(token)) {
-					const formula = latexToUnicode(token.text);
+					const formula = this.options.renderLatex === false ? token.raw.trim() : latexToUnicode(token.text);
 					lines.push(styleContext ? styleContext.applyText(formula) : this.applyDefaultStyle(formula));
 					if (nextTokenType && nextTokenType !== "space") {
 						lines.push("");
@@ -872,6 +895,22 @@ export class Markdown implements Component {
 		return lines;
 	}
 
+	/**
+	 * Render inline `strong`/`em`/`del` through a theme hook. The hook is applied inside the surrounding style context,
+	 * so a color it sets wins over the heading or default text color instead of being overridden by it.
+	 */
+	private renderEmphasisHook(
+		tokens: Token[],
+		styleContext: InlineStyleContext,
+		styleFn: (text: string) => string,
+	): string {
+		const innerStyleContext: InlineStyleContext = {
+			applyText: (text: string) => styleContext.applyText(styleFn(text)),
+			stylePrefix: styleContext.stylePrefix + this.getStylePrefix(styleFn),
+		};
+		return styleFn(this.renderInlineTokens(tokens, innerStyleContext)) + styleContext.stylePrefix;
+	}
+
 	private renderInlineTokens(tokens: Token[], styleContext?: InlineStyleContext): string {
 		let result = "";
 		const resolvedStyleContext = styleContext ?? this.getDefaultInlineStyleContext();
@@ -902,12 +941,20 @@ export class Markdown implements Component {
 					break;
 
 				case "strong": {
+					if (this.theme.strong) {
+						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.strong);
+						break;
+					}
 					const boldContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
 					result += this.theme.bold(boldContent) + stylePrefix;
 					break;
 				}
 
 				case "em": {
+					if (this.theme.emphasis) {
+						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.emphasis);
+						break;
+					}
 					const italicContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
 					result += this.theme.italic(italicContent) + stylePrefix;
 					break;
@@ -919,7 +966,9 @@ export class Markdown implements Component {
 
 				case "latex_inline":
 					if (isLatexToken(token)) {
-						result += applyTextWithNewlines(latexToUnicode(token.text));
+						result += applyTextWithNewlines(
+							this.options.renderLatex === false ? token.raw : latexToUnicode(token.text),
+						);
 					}
 					break;
 
@@ -956,6 +1005,10 @@ export class Markdown implements Component {
 					break;
 
 				case "del": {
+					if (this.theme.deleted) {
+						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.deleted);
+						break;
+					}
 					const delContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
 					result += this.theme.strikethrough(delContent) + stylePrefix;
 					break;
@@ -1069,8 +1122,13 @@ export class Markdown implements Component {
 	 * Delegates to wrapTextWithAnsi() so ANSI codes + long tokens are handled
 	 * consistently with the rest of the renderer.
 	 */
-	private wrapCellText(text: string, maxWidth: number): string[] {
-		return wrapTextWithAnsi(text, Math.max(1, maxWidth));
+	private wrapCellText(text: string, maxWidth: number, stylePrefix = ""): string[] {
+		const lines = wrapTextWithAnsi(text, Math.max(1, maxWidth));
+		return lines.map((line, index) => {
+			// Reset text styles after each non-final fragment, then restore the surrounding style before padding and borders.
+			const styleReset = index < lines.length - 1 ? "\x1b[22;23;24;25;27;28;29;39m" : "";
+			return `${line}${styleReset}${stylePrefix}`;
+		});
 	}
 
 	/**
@@ -1201,7 +1259,7 @@ export class Markdown implements Component {
 		// Render header with wrapping
 		const headerCellLines: string[][] = token.header.map((cell, i) => {
 			const text = this.renderInlineTokens(cell.tokens || [], styleContext);
-			return this.wrapCellText(text, columnWidths[i]);
+			return this.wrapCellText(text, columnWidths[i], styleContext?.stylePrefix);
 		});
 		const headerLineCount = Math.max(...headerCellLines.map((c) => c.length));
 
@@ -1224,7 +1282,7 @@ export class Markdown implements Component {
 			const row = token.rows[rowIndex];
 			const rowCellLines: string[][] = row.map((cell, i) => {
 				const text = this.renderInlineTokens(cell.tokens || [], styleContext);
-				return this.wrapCellText(text, columnWidths[i]);
+				return this.wrapCellText(text, columnWidths[i], styleContext?.stylePrefix);
 			});
 			const rowLineCount = Math.max(...rowCellLines.map((c) => c.length));
 

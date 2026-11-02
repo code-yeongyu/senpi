@@ -7,6 +7,7 @@ import type {
 	CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import type { SessionManager } from "../src/core/session-manager.ts";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import {
@@ -14,6 +15,7 @@ import {
 	RpcSessionRegistry,
 	RpcSessionRegistryError,
 } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 /**
  * Todo 10: open_session resume/create parity + close semantics.
@@ -42,6 +44,7 @@ interface CapturedFactoryCall {
 
 function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFactory {
 	return async (options) => {
+		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		calls.push({
 			cwd: options.cwd,
 			launchProfile: options.launchProfile as Readonly<RpcSessionLaunchProfile> | undefined,
@@ -49,7 +52,7 @@ function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFac
 		});
 		return {
 			session: {
-				sessionManager: options.sessionManager,
+				...fakeSessionBase(options),
 				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},

@@ -116,7 +116,9 @@ describe("nextInTurnDelayMs", () => {
 		expect(result.hintDeadlineMs).toBe(7_001);
 	});
 
-	it("first hinted 429 with explicit zero: immediate, half-used", () => {
+	it("first hinted 429 with explicit zero: still waits the exponential floor, half-used", () => {
+		// A retry-now hint may not bypass same-model backoff pressure (#1005): the
+		// floor keeps repeated short hints from hammering an already rate-limited model.
 		const result = nextInTurnDelayMs(
 			{ probePhase: "idle", attempt: 1, cumulativeHintedWaitMs: 0 },
 			0,
@@ -124,15 +126,44 @@ describe("nextInTurnDelayMs", () => {
 			CAP,
 			5_000,
 		);
-		expect(result.delayMs).toBe(0);
+		expect(result.delayMs).toBe(BASE); // floor 2000 * 2^0
 		expect(result.probePhase).toBe("half-used");
 		expect(result.hintDeadlineMs).toBe(5_000);
+		expect(result.cumulativeHintedWaitMs).toBe(BASE);
 		expect(result.demoteToProbeBack).toBe(false);
+	});
+
+	it("first hinted 429 with a short hint: exponential floor wins over half-hint", () => {
+		const result = nextInTurnDelayMs(
+			{ probePhase: "idle", attempt: 1, cumulativeHintedWaitMs: 0 },
+			3_000,
+			BASE,
+			CAP,
+			0,
+		);
+		// ceil(3000/2) = 1500 < floor 2000 -> floored to 2000
+		expect(result.delayMs).toBe(2_000);
+		expect(result.probePhase).toBe("half-used");
+		expect(result.hintDeadlineMs).toBe(3_000);
+		// cumulative tracks the delay actually slept, not the un-floored half-hint
+		expect(result.cumulativeHintedWaitMs).toBe(2_000);
+	});
+
+	it("long provider hints still beat the exponential floor", () => {
+		const result = nextInTurnDelayMs(
+			{ probePhase: "done", attempt: 3, cumulativeHintedWaitMs: 0 },
+			30_000,
+			BASE,
+			CAP,
+			0,
+		);
+		// hint 30000 > floor 2000 * 2^2 = 8000
+		expect(result.delayMs).toBe(30_000);
 	});
 
 	// --- consecutive 429 after half-used (deadline sleep) ---
 
-	it("consecutive unhinted 429 after half: sleep remaining to prior deadline, then done", () => {
+	it("consecutive unhinted 429 after half: elapsed deadline still waits the exponential floor", () => {
 		const result = nextInTurnDelayMs(
 			{ probePhase: "half-used", hintDeadlineMs: 61_000, attempt: 2, cumulativeHintedWaitMs: 60_000 },
 			undefined,
@@ -140,10 +171,11 @@ describe("nextInTurnDelayMs", () => {
 			CAP,
 			61_000,
 		);
-		// no new hint -> keep deadline 61000; remaining = max(0, 61000 - 61000) = 0
-		expect(result.delayMs).toBe(0);
+		// no new hint -> keep deadline 61000; remaining = 0, floored to 2000 * 2^1 = 4000
+		expect(result.delayMs).toBe(4_000);
 		expect(result.probePhase).toBe("done");
 		expect(result.hintDeadlineMs).toBe(61_000);
+		expect(result.cumulativeHintedWaitMs).toBe(64_000);
 		expect(result.demoteToProbeBack).toBe(false);
 	});
 
@@ -229,7 +261,7 @@ describe("nextInTurnDelayMs", () => {
 
 	// --- explicit zero after half ---
 
-	it("explicit zero after half: immediate, done", () => {
+	it("explicit zero after half: exponential floor applies, done", () => {
 		const result = nextInTurnDelayMs(
 			{ probePhase: "half-used", hintDeadlineMs: 100_000, attempt: 2, cumulativeHintedWaitMs: 50_000 },
 			0,
@@ -237,10 +269,11 @@ describe("nextInTurnDelayMs", () => {
 			CAP,
 			60_000,
 		);
-		// new deadline = 60000 + 0 = 60000; remaining = max(0, 60000 - 60000) = 0
-		expect(result.delayMs).toBe(0);
+		// new deadline = 60000 + 0 = 60000; remaining = 0, floored to 2000 * 2^1 = 4000
+		expect(result.delayMs).toBe(4_000);
 		expect(result.probePhase).toBe("done");
 		expect(result.hintDeadlineMs).toBe(60_000);
+		expect(result.cumulativeHintedWaitMs).toBe(54_000);
 		expect(result.demoteToProbeBack).toBe(false);
 	});
 
@@ -280,7 +313,7 @@ describe("nextInTurnDelayMs", () => {
 
 	// --- after done: exponential with hint override ---
 
-	it("after done with fresh hint: hint overrides exponential", () => {
+	it("after done with a short fresh hint: exponential floor overrides the hint", () => {
 		const result = nextInTurnDelayMs(
 			{ probePhase: "done", attempt: 3, cumulativeHintedWaitMs: 120_000 },
 			5_000,
@@ -288,7 +321,8 @@ describe("nextInTurnDelayMs", () => {
 			CAP,
 			200_000,
 		);
-		expect(result.delayMs).toBe(5_000);
+		// hint 5000 < floor 2000 * 2^2 = 8000
+		expect(result.delayMs).toBe(8_000);
 		expect(result.probePhase).toBe("done");
 		expect(result.demoteToProbeBack).toBe(false);
 	});
@@ -437,6 +471,77 @@ describe("nextInTurnDelayMs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// nextInTurnDelayMs — exponential floor on same-model 429 waits (#1005)
+// ---------------------------------------------------------------------------
+
+describe("nextInTurnDelayMs exponential floor (#1005)", () => {
+	it("grows the same-model wait monotonically under repeated short hints", () => {
+		// attempt 1: 3s hint -> half-probe 1500 floored to 2000
+		const first = nextInTurnDelayMs(
+			{ probePhase: "idle", attempt: 1, cumulativeHintedWaitMs: 0 },
+			3_000,
+			BASE,
+			CAP,
+			0,
+		);
+		expect(first.delayMs).toBe(2_000);
+		expect(first.cumulativeHintedWaitMs).toBe(2_000);
+
+		// attempt 2: deadline already elapsed -> floored to at least 4000
+		const second = nextInTurnDelayMs(
+			{
+				probePhase: first.probePhase,
+				hintDeadlineMs: first.hintDeadlineMs,
+				attempt: 2,
+				cumulativeHintedWaitMs: first.cumulativeHintedWaitMs,
+			},
+			undefined,
+			BASE,
+			CAP,
+			10_000,
+		);
+		expect(second.delayMs).toBeGreaterThanOrEqual(4_000);
+		expect(second.cumulativeHintedWaitMs).toBe(first.cumulativeHintedWaitMs + second.delayMs);
+
+		// attempt 3: another short 5s hint cannot undo the accumulated pressure
+		const third = nextInTurnDelayMs(
+			{ probePhase: "done", attempt: 3, cumulativeHintedWaitMs: second.cumulativeHintedWaitMs },
+			5_000,
+			BASE,
+			CAP,
+			20_000,
+		);
+		expect(third.delayMs).toBe(8_000);
+		expect(third.delayMs).toBeGreaterThan(second.delayMs);
+	});
+
+	it("leaves a long provider delay untouched when the floor is smaller", () => {
+		const result = nextInTurnDelayMs(
+			{ probePhase: "done", attempt: 3, cumulativeHintedWaitMs: 0 },
+			30_000,
+			BASE,
+			CAP,
+			0,
+		);
+		expect(result.delayMs).toBe(30_000); // floor 8000 loses
+	});
+
+	it("demotion accounting uses the floored delay, not the raw hint", () => {
+		const result = nextInTurnDelayMs(
+			{ probePhase: "half-used", hintDeadlineMs: 10_000, attempt: 8, cumulativeHintedWaitMs: 40_000 },
+			undefined,
+			BASE,
+			100_000,
+			10_000,
+		);
+		// remaining = 0, floored to 2000 * 2^7 = 256000; cumulative 296000 > 100000 cap
+		expect(result.delayMs).toBe(256_000);
+		expect(result.cumulativeHintedWaitMs).toBe(296_000);
+		expect(result.demoteToProbeBack).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // degradeWithoutFallback
 // ---------------------------------------------------------------------------
 
@@ -456,6 +561,14 @@ describe("degradeWithoutFallback", () => {
 		expect(degradeWithoutFallback("tier2-fallback-probe-back", CAP + 60_000, 1, BASE, CAP)).toEqual({
 			kind: "in-turn",
 			delayMs: CAP,
+		});
+	});
+
+	it("floors tier2 hinted waits with the exponential schedule", () => {
+		// A tiny cap could otherwise let a degraded tier2 retry hammer the model (#1005).
+		expect(degradeWithoutFallback("tier2-fallback-probe-back", 5_000, 4, BASE, 5_000)).toEqual({
+			kind: "in-turn",
+			delayMs: BASE * 8, // 16_000 floor beats the 5_000 clamp
 		});
 	});
 

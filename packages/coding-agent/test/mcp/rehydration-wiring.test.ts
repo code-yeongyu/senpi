@@ -8,8 +8,8 @@
 // promoted tools through the same tier-B activation path tool_search uses.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TOOL_SEARCH_ACTIVATION_MARKER } from "../../src/core/extensions/builtin/mcp/expose/tool-search.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import { LEGACY_TOOL_SEARCH_ACTIVATION_MARKER } from "../../src/core/extensions/builtin/tool-search/engine/marker.ts";
 import { attach, awaitMcpToolRegistration, capturingPi, mcpRoot as makeMcpRoot } from "./fixtures/register-call.ts";
 import { cleanupRoots, setConfig, stdioServer, type TestRoot, waitForCondition } from "./fixtures/service-lifecycle.ts";
 
@@ -35,7 +35,7 @@ function historyWithActivation(names: string): unknown[] {
 		{
 			role: "toolResult",
 			toolName: "tool_search",
-			content: [{ type: "text", text: `Found tools.\n\n${TOOL_SEARCH_ACTIVATION_MARKER} ${names}` }],
+			content: [{ type: "text", text: `Found tools.\n\n${LEGACY_TOOL_SEARCH_ACTIVATION_MARKER} ${names}` }],
 		},
 	];
 }
@@ -65,13 +65,11 @@ describe("tool_search rehydration wiring", () => {
 		await attach(root, pi);
 		await awaitMcpToolRegistration("fx");
 
-		// Names no longer in the catalog stay dropped.
-		expect(getMcpService().rehydrateActiveToolsFromHistory(historyWithActivation("mcp_fx_tool_99"))).toEqual([]);
-
-		// A real restore, then a repeat scan of the same history adds nothing.
-		expect(getMcpService().rehydrateActiveToolsFromHistory(historyWithActivation("mcp_fx_tool_1"))).toEqual([
-			"mcp_fx_tool_1",
-		]);
+		// Names no longer in the catalog stay dropped while valid names in the
+		// same once-per-generation scan restore normally.
+		expect(
+			getMcpService().rehydrateActiveToolsFromHistory(historyWithActivation("mcp_fx_tool_99 mcp_fx_tool_1")),
+		).toEqual(["mcp_fx_tool_1"]);
 		const activeAfter = [...pi.getActiveTools()];
 		expect(getMcpService().rehydrateActiveToolsFromHistory(historyWithActivation("mcp_fx_tool_1"))).toEqual([]);
 		expect(pi.getActiveTools()).toEqual(activeAfter);

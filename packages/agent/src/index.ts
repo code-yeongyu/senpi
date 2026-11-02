@@ -1,18 +1,63 @@
-// Core Agent
 export { uuidv7 } from "@earendil-works/pi-ai";
+export type {
+	AttributeValue,
+	ExactTelemetryAttributes,
+	InferEventAttributes,
+	InferOptionalAttributes,
+	InferRequiredAndOptionalAttributes,
+	InferStartAttributes,
+	RecordedTelemetryEvent,
+	RecordedTelemetrySpan,
+	SchemaTelemetrySpan,
+	SpanAttributes,
+	SpanAttributes as TelemetrySpanAttributes,
+	SpanOptions,
+	SpanStatus,
+	TelemetryAttributeDefinition,
+	TelemetryAttributeMetadata,
+	TelemetryAttributeType,
+	TelemetryContext,
+	TelemetryEventAttributeDefinition,
+	TelemetryEventDefinition,
+	TelemetryParentDefinition,
+	TelemetrySchemaDefinition,
+	TelemetrySchemaSpanEndAttributes,
+	TelemetrySchemaSpanEventAttributes,
+	TelemetrySchemaSpanEventName,
+	TelemetrySchemaSpanName,
+	TelemetrySchemaSpanStartAttributes,
+	TelemetrySchemaSpanUnion,
+	TelemetrySpan,
+	TelemetrySpanDefinition,
+	TelemetryStartAttributeDefinition,
+	TypedSpanStarter,
+} from "@earendil-works/pi-telemetry";
+export {
+	createTypedSpanStarter,
+	defineTelemetrySchema,
+	InMemoryTelemetryContext,
+	NOOP_TELEMETRY_CONTEXT,
+} from "@earendil-works/pi-telemetry";
 export * from "./agent.ts";
-// Loop functions
 export * from "./agent-loop.ts";
+export { createInternalAgentChannel, type InternalAgentChannel, type OrderedAgentRecord } from "./internal-events.ts";
+export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
 export * from "./harness/agent-harness.ts";
 export {
 	type BranchPreparation,
 	type BranchSummaryDetails,
+	type BranchSummaryResult,
 	type CollectEntriesResult,
 	collectEntriesForBranchSummary,
+	type FileOperations,
+	type GenerateBranchSummaryOptions,
 	generateBranchSummary,
 	prepareBranchEntries,
 } from "./harness/compaction/branch-summarization.ts";
 export {
+	type CompactionPreparation,
+	type CompactionSettings,
+	type CompactResult,
 	calculateContextTokens,
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
@@ -27,39 +72,89 @@ export {
 	serializeConversation,
 	shouldCompact,
 } from "./harness/compaction/compaction.ts";
+export * from "./harness/context.ts";
 export * from "./harness/messages.ts";
 export * from "./harness/prompt-templates.ts";
-export { readSessionEntriesForFork } from "./harness/session/fork.ts";
-export {
-	createJsonlSessionStore,
-	type JsonlSessionStoreFileSystem,
-	type JsonlSessionStoreOptions,
-} from "./harness/session/jsonl-store.ts";
-export {
-	createInMemorySessionStore,
-	type InMemorySessionCreateOptions,
-} from "./harness/session/memory-store.ts";
-export * from "./harness/session/repository.ts";
-export * from "./harness/session/search-backend.ts";
-export {
-	buildContextEntries,
-	buildSessionContext,
-	type ContextEntryTransform,
-	type CustomEntryContextMessageProjector,
-	defaultContextEntryTransform,
-	type SessionContextBuildOptions,
-	sessionEntryToContextMessages,
-} from "./harness/session/session.ts";
+export * from "./harness/result.ts";
+export { type LaneSnapshotReduction, reduceLaneSnapshot } from "./harness/runtime/reducer.ts";
+export * from "./harness/session/index.ts";
 export * from "./harness/skills.ts";
 export * from "./harness/system-prompt.ts";
+export type {
+	AiSpan,
+	AiSpanAttributes,
+	AiSpanEndAttributes,
+	AiSpanEventAttributes,
+	AiSpanEventName,
+	AiSpanName,
+	AiSpanStartAttributes,
+	AiTelemetrySpan,
+	HarnessSpan,
+	HarnessSpanAttributes,
+	HarnessSpanEndAttributes,
+	HarnessSpanEventAttributes,
+	HarnessSpanEventName,
+	HarnessSpanName,
+	HarnessSpanStartAttributes,
+	HarnessTelemetrySpan,
+} from "./harness/telemetry.ts";
+export {
+	AGENT_TELEMETRY_SCHEMAS,
+	AI_TELEMETRY_SCHEMA,
+	HARNESS_TELEMETRY_SCHEMA,
+	startAiSpan,
+	startHarnessSpan,
+} from "./harness/telemetry.ts";
 export * from "./harness/tools/index.ts";
-// Harness
-export * from "./harness/types.ts";
+export {
+	type AgentHarnessResources,
+	type AgentHarnessStreamOptions,
+	type AgentHarnessStreamOptionsPatch,
+	type AgentHarnessTool,
+	type AgentHarnessToolContextSource,
+	type AgentHarnessToolInvocation,
+	type AgentHarnessToolUpdateCallback,
+	type AgentHarnessToolUpdateOptions,
+	BranchSummaryError,
+	type BranchSummaryErrorCode,
+	CompactionError,
+	type CompactionErrorCode,
+	type ExecutionEnv,
+	ExecutionError,
+	type ExecutionErrorCode,
+	err,
+	FileError,
+	type FileErrorCode,
+	type FileInfo,
+	type FileKind,
+	type FileSystem,
+	getOrThrow,
+	getOrUndefined,
+	ok,
+	type PromptTemplate,
+	type Shell,
+	type ShellExecOptions,
+	type ShellExecResult,
+	type ShellOutputCaptureOptions,
+	type ShellOutputLimits,
+	type ShellOutputMetadata,
+	type ShellOutputRetention,
+	type ShellOutputTruncation,
+	type ShellOutputUpdate,
+	type ShellOutputView,
+	type Skill,
+	toError,
+} from "./harness/types.ts";
+export { applyShellOutputUpdate } from "./harness/utils/output-capture.ts";
+export * from "./harness/utils/read-folders/index.ts";
+export * from "./harness/utils/read-folders/prepare.ts";
+export * from "./harness/utils/segmented-read-view.ts";
 export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
-// Proxy utilities
 export * from "./proxy.ts";
-// Stream defaults
+export * from "./response-timing.ts";
+export * from "./search/index.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
-// Types
+export { prepareToolArguments } from "./tool-arguments.ts";
+export { resolveToolNameAlias } from "./tool-name-alias.ts";
 export * from "./types.ts";

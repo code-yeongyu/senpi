@@ -1,136 +1,63 @@
-import { getShellEnv } from "../../../../utils/shell.ts";
+import { join } from "node:path";
+import { encodedSessionId } from "../../../session-sidecar-store.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
-import { TERMINAL_MONITOR_STATE_EVENT, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
-import { MonitorNotifier } from "./monitor-notify.ts";
+import { isEvalOnlyRouting } from "../eval-only-routing.ts";
+import {
+	buildToolContext,
+	bundleSinks,
+	createBundle,
+	sessionKeyOf,
+	type TerminalExtensionState,
+} from "./extension-state.ts";
+import { currentLeaseToken, releaseTerminalLease, retireLeaseToken } from "./manifest-lease.ts";
+import { MonitorNotifier, type MonitorSpillResult } from "./monitor-notify.ts";
+import { appendMonitorOverflow } from "./monitor-overflow-file.ts";
+import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
 import { TerminalNotifier } from "./notify.ts";
-import { TERMINAL_PROMPT_SECTION } from "./prompt.ts";
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
-import {
-	claimParkedBundle,
-	parkBundle,
-	type TerminalEventSinks,
-	TerminalSessionBundle,
-	teardownParkedBundle,
-} from "./session-bundle.ts";
-import { loadTerminalSettings, type ResolvedTerminalSettings, TERMINAL_SETTINGS_DEFAULTS } from "./settings.ts";
+import { buildTerminalPromptSection } from "./prompt.ts";
+import { createDigestSlot, registerRestoreDigestRenderer } from "./restore-digest.ts";
+import { detachPersistence, flushRestoreDigest, startPersistence, stopPersistence } from "./restore-session.ts";
+import { claimParkedBundle, parkBundle, teardownParkedBundle } from "./session-bundle.ts";
+import { loadTerminalSettings, TERMINAL_SETTINGS_DEFAULTS } from "./settings.ts";
 import { TERMINAL_BASH_TOOL, TERMINAL_COMPANION_TOOLS } from "./shared.ts";
+import { TerminalManifestWriter } from "./terminal-manifest.ts";
 import { createPtyBashTool } from "./tools/bash.ts";
 import { createBashInputTool } from "./tools/bash-input.ts";
 import { createBashOutputTool } from "./tools/bash-output.ts";
 import { createBashResizeTool } from "./tools/bash-resize.ts";
-import type { TerminalToolContext } from "./tools/context.ts";
+import { TERMINAL_CHILD_JOB_KINDS, terminalChildJob } from "./tools/child-placement.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
-import { createMonitorTool } from "./tools/monitor.ts";
+import { bindTerminalManifestWriter, createMonitorTool } from "./tools/monitor.ts";
 
-interface TerminalExtensionState {
-	bundle: TerminalSessionBundle | null;
-	settings: ResolvedTerminalSettings;
-	notifier: TerminalNotifier | null;
-	monitorNotifier: MonitorNotifier | null;
-	statusTicker: MonitorStatusTicker;
-	ctx: ExtensionContext | undefined;
-	shellPath: string | undefined;
-	steppedAside: boolean;
-	noticeShown: boolean;
-}
-
-/** Tests and SDK callers may hand partial contexts without a session manager. */
-function sessionKeyOf(ctx: ExtensionContext | undefined): string | undefined {
-	return ctx?.sessionManager?.getSessionId?.();
-}
-
-function createBundle(state: TerminalExtensionState): TerminalSessionBundle {
-	return new TerminalSessionBundle({
-		maxSessions: state.settings.maxSessions,
-		scrollback: state.settings.scrollback,
-	});
-}
-
-/** Sinks read the live instance state at call time, so notifier swaps need no re-bind. */
-function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): TerminalEventSinks {
-	return {
-		onMonitorEvent: (event) => state.monitorNotifier?.notifyEvent(event),
-		onMonitorState: (snapshot) => {
-			state.statusTicker.sync(snapshot);
-			pi.events?.emit(TERMINAL_MONITOR_STATE_EVENT, {
-				activeCount: snapshot.length,
-				monitors: snapshot.map((entry) => ({
-					id: entry.id,
-					description: entry.description,
-					paused: entry.paused,
-					startedAtMs: entry.startedAtMs,
-				})),
-			});
-			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
-				source: "terminal-monitors",
-				activeCount: snapshot.length,
-				monitors: snapshot.map((entry) => ({
-					id: entry.id,
-					description: entry.description,
-					startedAtMs: entry.startedAtMs,
-				})),
-			});
-		},
-		onBackgroundState: (snapshot) => {
-			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
-				source: "terminal-background-sessions",
-				activeCount: snapshot.length,
-				items: snapshot,
-			});
-		},
-		onBackgroundExit: (id, runtime) => state.notifier?.notifyCompletion(id, runtime),
-	};
-}
-
-function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState): TerminalToolContext {
-	const requireBundle = (): TerminalSessionBundle => {
-		// Lazily create a bundle so the tools work even when invoked directly (e.g. via the
-		// SDK) before `session_start` initializes one. `session_start` replaces it with a
-		// settings-configured bundle and tears down any earlier one.
-		if (!state.bundle) {
-			state.bundle = createBundle(state);
-			state.bundle.bind(bundleSinks(pi, state));
-		}
-		return state.bundle;
-	};
-	return {
-		get manager() {
-			return requireBundle().manager;
-		},
-		get cwd() {
-			return state.ctx?.cwd ?? process.cwd();
-		},
-		get shellPath() {
-			return state.shellPath;
-		},
-		get defaultCols() {
-			return state.settings.defaultCols;
-		},
-		get defaultRows() {
-			return state.settings.defaultRows;
-		},
-		get timeoutAction() {
-			return state.settings.timeoutAction;
-		},
-		get monitorRegistry() {
-			return requireBundle().monitors;
-		},
-		getEnv: () => getShellEnv(),
-		getSessionContext: () => state.ctx,
-		// Exit listeners registered before a reload reach the post-reload owner through the
-		// shared bundle, so this must dispatch via the bundle, never the instance notifier.
-		onBackgroundStart: (id: string, description: string, startedAtMs: number) => {
-			state.bundle?.notifyBackgroundStart(id, description, startedAtMs);
-		},
-		onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => {
-			state.bundle?.notifyBackgroundExit(id, runtime);
-		},
-		onMonitorRearmed: (id: string) => state.monitorNotifier?.rearm(id),
-	};
+/**
+ * Only paced (persistent command) watches of a session with a durable state dir get an overflow file.
+ * A failing file is reported once per monitor, not once per spilled chunk.
+ */
+function spillMonitorOverflow(
+	state: TerminalExtensionState,
+	warned: Set<string>,
+	id: string,
+	lines: readonly string[],
+): MonitorSpillResult | undefined {
+	const terminalDir = terminalStateDir(state.ctx);
+	const monitorId = state.bundle?.manager.monitorIdOf(id);
+	if (terminalDir === undefined || monitorId === undefined || state.bundle?.monitors.wakePacing(id) === undefined)
+		return undefined;
+	try {
+		return appendMonitorOverflow(terminalDir, monitorId, lines);
+	} catch (error) {
+		if (warned.has(monitorId)) return undefined;
+		warned.add(monitorId);
+		state.ctx?.ui?.notify?.(
+			`Could not write the overflow file of ${monitorId}: ${error instanceof Error ? error.message : String(error)}`,
+			"warning",
+		);
+		return undefined;
+	}
 }
 
 function shouldStepAside(ctx: ExtensionContext | undefined): boolean {
@@ -150,7 +77,7 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 	if (stepAside) {
 		for (const companion of TERMINAL_COMPANION_TOOLS) active.add(companion);
 		if (!state.noticeShown) {
-			state.ctx?.ui.notify("native Anthropic bash active — monitor sessions remain available", "info");
+			state.ctx?.ui.notify("native Anthropic bash active: monitor sessions remain available", "info");
 			state.noticeShown = true;
 		}
 	} else {
@@ -163,6 +90,8 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 }
 
 export function registerTerminalExtension(pi: ExtensionAPI): void {
+	let reducedMotion = false;
+	let agentBusy = false;
 	const state: TerminalExtensionState = {
 		bundle: null,
 		settings: TERMINAL_SETTINGS_DEFAULTS,
@@ -178,38 +107,64 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 						: ctx.ui.theme.bg("selectedBg", ctx.ui.theme.fg("text", status)),
 				);
 			},
+			// Pulse only in the TUI while the agent idles on its monitors; a busy turn already has
+			// the working spinner, and non-TUI hosts would just receive extra status events.
+			animate: () => !reducedMotion && !agentBusy && state.ctx?.mode === "tui",
 		}),
 		ctx: undefined,
 		shellPath: undefined,
 		steppedAside: false,
 		noticeShown: false,
+		lease: null,
+		manifestWriter: null,
+		ensurePersistence: null,
+		recordedBackgroundIds: new Set(),
+		keeper: null,
+		digestSlot: createDigestSlot(),
+		generation: 0,
+		restoreInFlight: Promise.resolve(),
+		parked: false,
 	};
 	const toolCtx = buildToolContext(pi, state);
 
-	pi.registerTool(createPtyBashTool(toolCtx));
-	pi.registerTool(createBashOutputTool(toolCtx));
-	pi.registerTool(createBashInputTool(toolCtx));
-	pi.registerTool(createBashResizeTool(toolCtx));
-	pi.registerTool(createKillBashTool(toolCtx));
+	const onChild = <T extends object>(tool: T, kind: Parameters<typeof terminalChildJob>[1]) => ({
+		...tool,
+		placement: "child" as const,
+		childJob: terminalChildJob(toolCtx, kind),
+	});
+	pi.registerTool(onChild(createPtyBashTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.bash));
+	pi.registerTool(onChild(createBashOutputTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.output));
+	pi.registerTool(onChild(createBashInputTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.input));
+	pi.registerTool(onChild(createBashResizeTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.resize));
+	pi.registerTool(onChild(createKillBashTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.kill));
 	pi.registerTool(createMonitorTool(toolCtx));
+	registerRestoreDigestRenderer(pi);
 
 	pi.on("session_start", async (event, ctx) => {
 		state.ctx = ctx;
-		const settingsManager = SettingsManager.create(ctx.cwd);
+		const settingsManager = SettingsManager.create(ctx.cwd, ctx.agentDir);
 		state.settings = loadTerminalSettings(settingsManager);
 		state.shellPath = settingsManager.getShellPath();
+		reducedMotion = settingsManager.getReducedMotion();
+		agentBusy = false;
 		state.notifier = new TerminalNotifier({
 			sendMessage: (message, options) => pi.sendMessage(message, options),
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 		});
 		state.monitorNotifier?.dispose();
+		const overflowWarned = new Set<string>();
 		state.monitorNotifier = new MonitorNotifier({
 			sendMessage: (message, options) => pi.sendMessage(message, options),
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 			getSettings: () => state.settings.monitor,
-			pauseMonitors: () => state.bundle?.monitors.pauseAll() ?? [],
+			pauseMonitors: (ids) => state.bundle?.monitors.pause(ids) ?? [],
+			wakesPerHour: (id) => {
+				const pacing = state.bundle?.monitors.wakePacing(id);
+				return pacing === undefined ? undefined : (pacing.wakesPerHour ?? state.settings.monitor.wakesPerHour);
+			},
+			spillOverflow: (id, lines) => spillMonitorOverflow(state, overflowWarned, id, lines),
 		});
 		const sessionKey = sessionKeyOf(ctx);
 		if (event.reason === "reload") {
@@ -224,27 +179,73 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			state.bundle = createBundle(state);
 		}
 		state.bundle ??= createBundle(state);
+		state.bundle.monitors.setRunawayGuard(state.settings.monitorRunaway);
 		state.bundle.bind(bundleSinks(pi, state));
+		const holdsLease = sessionKey !== undefined && currentLeaseToken(encodedSessionId(sessionKey)) !== undefined;
+		if (event.reason === "reload" && holdsLease) {
+			// Park/claim and the lease stay untouched: the same pid keeps holding it. The
+			// reload generation only rebinds the recorder so manifest coverage continues.
+			if (sessionKey !== undefined && terminalStateDir(ctx) !== undefined) {
+				const writer = new TerminalManifestWriter({ session: ctx.sessionManager });
+				// SF-2: seed from disk so the first post-reload write keeps the pre-reload entries.
+				await writer.seedFromDisk();
+				state.manifestWriter = writer;
+				state.recordedBackgroundIds.clear();
+				bindTerminalManifestWriter(sessionKey, writer);
+			}
+		} else if (sessionKey !== undefined) {
+			await startPersistence({ pi, state, toolCtx, sessionKey });
+		}
 		syncToolset(pi, state);
+	});
+
+	pi.on("agent_start", () => {
+		agentBusy = true;
+	});
+
+	pi.on("agent_end", () => {
+		agentBusy = false;
+	});
+
+	pi.on("session_parked", () => {
+		state.parked = true;
+		state.bundle?.monitors.setParked(true);
+		state.statusTicker.stop();
+	});
+
+	pi.on("session_resumed", () => {
+		state.parked = false;
+		state.bundle?.monitors.setParked(false);
+		if (state.bundle) state.statusTicker.sync(state.bundle.monitors.snapshot());
 	});
 
 	pi.on("model_select", async (event, ctx) => {
 		state.ctx = { ...ctx, model: event.model };
 		syncToolset(pi, state);
+		flushRestoreDigest(pi, state);
 	});
 
 	pi.on("input", (event) => {
-		if (event.source !== "extension") state.monitorNotifier?.noteActivity();
+		if (event.source === "extension") return;
+		state.monitorNotifier?.noteActivity();
+		flushRestoreDigest(pi, state);
+		const resumed = state.bundle?.monitors.resume() ?? [];
+		if (resumed.length > 0) state.monitorNotifier?.resume(resumed.map((monitor) => monitor.id));
 	});
 
 	pi.on("tool_call", () => {
 		state.monitorNotifier?.noteActivity();
 	});
 
-	pi.on("before_agent_start", async (event) => {
-		if (state.steppedAside) return undefined;
-		return { systemPrompt: `${event.systemPrompt}\n${TERMINAL_PROMPT_SECTION}` };
-	});
+	pi.on(
+		"before_agent_start",
+		async (event) => {
+			return {
+				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({ evalOnly: isEvalOnlyRouting(pi), ptyBash: !state.steppedAside })}`,
+			};
+		},
+		{ previewSafe: true },
+	);
 
 	pi.on("session_shutdown", async (event, ctx) => {
 		state.monitorNotifier?.dispose();
@@ -255,9 +256,29 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		if (event.reason === "reload" && state.bundle && sessionKey !== undefined) {
 			// Keep state.bundle referenced: exit listeners captured by this instance's tool
 			// context still route through the shared bundle after the new owner claims it.
+			// The lease is deliberately NOT released: the same pid keeps it across the reload.
+			state.keeper?.stop();
+			state.keeper = null;
+			detachPersistence(state, sessionKey);
 			state.bundle.park();
 			await parkBundle(sessionKey, state.bundle);
 			return;
+		}
+		const inheritedLease = state.lease === null;
+		if (sessionKey !== undefined) await stopPersistence(state, sessionKey);
+		if (inheritedLease && sessionKey !== undefined) {
+			const dir = terminalStateDir(ctx) ?? terminalStateDir(state.ctx);
+			// A reload generation inherits the pre-reload lease without re-acquiring it;
+			// releasing by (path, own pid) removes exactly that file and no foreign holder's.
+			if (dir !== undefined) {
+				const token = currentLeaseToken(encodedSessionId(sessionKey));
+				if (token !== undefined) retireLeaseToken(token);
+				await releaseTerminalLease({
+					path: join(dir, `${encodedSessionId(sessionKey)}.lease`),
+					pid: process.pid,
+					...(token === undefined ? {} : { token }),
+				});
+			}
 		}
 		const bundle = state.bundle;
 		state.bundle = null;
