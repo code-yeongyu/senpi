@@ -1,11 +1,11 @@
 {
  "repo": {
-  "head": "dd4e0c5bc676496a4fa5a59ee475d5a3c2506a40",
+  "head": "e82491e19bd6941d7bb3ad92a177fe72aebe7da2",
   "dirty": false
  },
  "platform": "darwin-arm64",
  "runtimes": {
-  "harness": "node@26.13.0",
+  "harness": "node@24.19.0",
   "child": "bun@1.4.4"
  },
  "hashes": {
@@ -15,7 +15,7 @@
   "cases": "sha256:76f40a54fbff42b6e0653d760f283c9408e5d4f566b63a1ca03ecfd54e415831",
   "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --cases E27 --repeat 3 --evidence e27-darwin-dd4e-final-clean-record",
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --cases E01,E02,E03,E04,E05,E06,E07,E08,E09,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E25,E26,E27,E28,E30 --repeat 3 --pipeline legacy --placement fused --evidence g5189-darwin-rec1",
  "hostPin": {
   "cpuModel": "Apple EQ-Synthetic CPU",
   "cores": 997,

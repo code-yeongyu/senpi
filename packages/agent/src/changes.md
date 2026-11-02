@@ -1,3 +1,43 @@
+## 2026-10-30 - Unprepared scoped ToolHost seam (senpi#5030)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts` passes raw batches and scope through the optional ToolHost before resolution, preparation and hooks; its default adapter calls the existing legacy scheduler.
+- `packages/agent/src/agent.ts` carries the host, scope and receipt callback into each loop configuration.
+- `packages/agent/src/types.ts` exposes the contract and configuration, with definitions in `packages/agent/src/execution/tool-host.ts`.
+
+### Why
+
+- The execution boundary must precede effectful preparation so a later executor can own the complete tool pipeline.
+
+### Why an extension could not handle it
+
+- Extensions receive callbacks after the loop has already resolved and prepared a call.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` batch dispatch and loop initialization; `packages/agent/src/agent.ts` options and loop configuration; `packages/agent/src/types.ts` execution configuration.
+
+## 2026-10-30 - Durable execution endpoint ledger (senpi#5004)
+
+### What changed
+
+- `packages/agent/src/execution/ledger.ts`, `ledger-types.ts`, `ledger-transition.ts`, and `ledger-codec.ts` implement the executor ledger over DurableStore.
+- `packages/agent/src/execution/testing/` supplies LEDGER-01..12 and KILL-LEDGER cases.
+- `packages/agent/src/conformance/registry.ts` and `packages/agent/src/conformance/index.ts` register and expose the portable cases.
+
+### Why
+
+- Execution identity, effect boundaries, terminal ordering and restart outcomes need one durable owner before prepared execution is integrated.
+
+### Why an extension could not handle it
+
+- The ledger is a host-neutral execution primitive below extension callbacks.
+
+### Expected merge conflict zones
+
+- LOW: the conformance registry and barrel exports; the execution modules are new.
+
 ## 2026-10-30 - Harness skill loader: ignore files no longer hide symlinked skills (senpi#5069)
 
 ### What changed

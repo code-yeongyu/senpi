@@ -1,3 +1,49 @@
+## 2026-10-30 - Clear SIWC sessions atomically and confirm remote revocation (part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: adds the optional OAuth revocation hook, injectable logout backoff, and typed confirmation result.
+- `packages/ai/src/auth/credential-store.ts`: atomically captures and clears selected slots before revocation outside the storage lock, retaining registration metadata and later login writes. Logout waits for in-flight exchanges and reports unconfirmed revocation for an unknown slot or failed discarded-token revocation.
+- `packages/ai/src/auth/resolve.ts`: does not refresh a signed-out registration.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` lets a login after sign-out take over the signed-out credential (flat or pooled projection) instead of appending a sibling slot, so the provider resolves the new session and the retained registration survives.
+- `packages/ai/src/auth/oauth-refresh.ts`: re-checks signed-out state and compare-and-swaps refresh writes; a cancelled or losing exchange revokes its newly minted token outside the store lock instead of restoring a signed-out slot. Logout collects exchanges through publication of the local clear and includes their cleanup failures in its result.
+
+### Why
+
+- `packages/ai/src/auth/types.ts`, `packages/ai/src/auth/credential-store.ts`, `packages/ai/src/auth/resolve.ts`, `packages/ai/src/auth/pool/slots.ts`, and `packages/ai/src/auth/oauth-refresh.ts`: SIWC sign-out must end the renewable session even when refresh is in flight, clear local secrets without remote confirmation, and retain the account/client mapping for a later sign-in.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts`, `packages/ai/src/auth/credential-store.ts`, `packages/ai/src/auth/resolve.ts`, `packages/ai/src/auth/pool/slots.ts`, and `packages/ai/src/auth/oauth-refresh.ts`: the provider hook, serialized credential mutation, and shared request-auth resolution are core auth contracts.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: OAuth hooks and logout options.
+- `packages/ai/src/auth/credential-store.ts`: atomic slot selection, token clear, and revocation orchestration.
+- `packages/ai/src/auth/resolve.ts`: stored OAuth resolution before refresh.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` signed-out branch.
+- `packages/ai/src/auth/oauth-refresh.ts`: stored-slot view, in-flight exchange registry, compare-and-swap, and discarded-token cleanup.
+
+## 2026-10-30 - A ChatGPT re-login replaces the saved account instead of appending a copy (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `OAuthAuth.accountIdentity?(credential)` (optional, synchronous): the signed-in account a credential's own material belongs to, or `undefined`.
+- `packages/ai/src/auth/helpers.ts`: `lazyOAuth` passes `accountIdentity` through without loading the flow module.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` takes `{ accountIdentity }`. A flat OAuth login whose identity matches saved accounts rewrites the first match in place (`replaceSameAccount`), keeping its name, label, source and position and dropping stale block fields. Later copies of the same account are removed, a pin/order naming one moves to the kept name, and the flat projection is re-pointed only when it carried one of them. A lone flat credential of the same account is overwritten. No identity, or no match, appends as before.
+
+### Why
+
+- oh-my-openagent#9633, senpi#4086: every re-login appended `login-N` and kept the old slot. Once the provider invalidated that token, session affinity kept ranking the dead slot first, and `/login` could not recover the session.
+
+### Why an extension could not handle it
+
+- The login write step is the shared persistence path inside `Models.login` and the auth store; no hook runs between the provider's login result and the write.
+
+### Expected merge conflict zones
+
+- LOW: the flat-login tail of `appendLoginSlot` and the `OAuthAuth` interface; `lazyOAuth`'s returned object.
+
 ## 2026-10-29 - Export the slot-selection block predicate (senpi#4885)
 
 ### What changed

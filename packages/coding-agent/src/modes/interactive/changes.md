@@ -1,3 +1,40 @@
+## 2026-10-31 - The extra-usage warning no longer sniffs sk-ant-oat API keys (senpi#5131)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `maybeWarnAboutAnthropicSubscriptionAuth` drops `isAnthropicSubscriptionAuthKey` and the `getAuth` read; it warns only on a stored `oauth` credential of `anthropic`. An `sk-ant-oat` key is refused by the provider before any request instead.
+
+### Why
+
+- senpi#5131: the warning described a request that is no longer sent.
+
+### Why an extension could not handle it
+
+- The startup warning is interactive-mode's own.
+
+### Expected merge conflict zones
+
+- LOW: the warning helper block near `ANTHROPIC_SUBSCRIPTION_AUTH_WARNING`.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/modes/interactive/attach-client.ts`, `packages/coding-agent/src/modes/interactive/attach-dialogs.ts`, `packages/coding-agent/src/modes/interactive/attach.ts`, `packages/coding-agent/src/modes/interactive/components/extension-input.ts`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, `packages/coding-agent/src/modes/interactive/session-control-commands.ts`.
+- Mask secret input, exclude raw extension listeners while focused, use fixed deadlines across attach re-offers, and dispose private editing state on every terminal outcome.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
 ## 2026-10-30 - Unrun tool cards of a failed turn say not run instead of the raw error (senpi#5064)
 
 ### What changed

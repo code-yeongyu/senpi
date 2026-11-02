@@ -1,3 +1,39 @@
+## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
+
+### What changed
+
+- `packages/ai/test/anthropic-claude-oauth-token-refused.test.ts`, `anthropic-cache-checkpoint-stability.test.ts`, `google-vertex-api-key-resolution.test.ts`: the `sk-ant-oat01-`, `sk-ant-api03-` and `AIza` fixtures are joined from a prefix and a body at runtime. The values are byte-identical; tests only.
+
+### Why
+
+- GitGuardian flagged the literal fixtures on every PR that merged main (senpi#5308); no scanner configuration is relaxed.
+
+### Why an extension could not handle it
+
+- Test sources only; nothing an extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the three test files' fixture constants.
+
+## 2026-10-30 - Mixed strict tool compatibility in catalog generation (senpi#4821)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: adds `mixedStrictTools: true` to the default and detected Chat Completions compatibility metadata, preserving the existing per-tool behavior unless a model explicitly disables mixing.
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: catalog generation must retain explicit no-mix overrides without changing the default behavior of other providers.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: compatibility metadata is generated build data, before runtime extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/scripts/generate-models.ts` `OPENAI_COMPLETIONS_DEFAULT_COMPAT` and `detectOpenAICompletionsCompat`.
+
 ## 2026-10-28 - GPT-6.1 Terra on the ChatGPT subscription (senpi#4578)
 
 ### What changed
