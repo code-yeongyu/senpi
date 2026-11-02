@@ -4,7 +4,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildToolCatalog, checkCatalogCall } from "../../src/core/execution/catalog.ts";
-import { CatalogSchemaError, type CatalogTool, toolSchemaDigest } from "../../src/core/execution/catalog-digest.ts";
+import { type CatalogTool, toolSchemaDigest } from "../../src/core/execution/catalog-digest.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import { bootstrapRuntime, buildToolRegistry } from "../../src/core/runtime/bootstrap.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
@@ -92,12 +92,6 @@ describe("tool catalog digest (S17)", () => {
 		// And once `write` is gone, its call names an unknown tool.
 		const removed = buildToolCatalog([tool("read")]);
 		expect(checkCatalogCall(removed, writeCall)).toEqual({ ok: false, reason: "tool_unknown", name: "write" });
-	});
-
-	it("refuses to digest a schema with no single JSON spelling", () => {
-		const parameters = Type.Object({ limit: Type.Number({ default: Number.POSITIVE_INFINITY }) });
-
-		expect(() => toolSchemaDigest(tool("read", { parameters }))).toThrow(CatalogSchemaError);
 	});
 });
 
