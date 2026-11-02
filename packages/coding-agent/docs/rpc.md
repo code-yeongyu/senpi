@@ -5568,7 +5568,8 @@ Extensions that run their own long jobs offer them through the root package expo
 `registerJobWidgetSource({ sessionId, id, kind, sources, brief, startedAtMs })` returns a handle (`notify`,
 `update`, `settle`, `dispose`), or `undefined` when the session has no widgets; a source is any
 `JobTextSource`, for example a `TextTap` the extension appends text to. `setJobWidgetAuthorResolver(resolver)`
-routes spec writing to a host-chosen model (behind an explicit `jobWidgets.model`), and
+routes spec writing to a host-chosen model (behind an explicit `jobWidgets.model`; when neither yields a model no
+spec is written, and the session's own model is never used), and
 `getJobWidgetState(sessionId)` reads the current state.
 
 ### agent_start

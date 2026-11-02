@@ -519,7 +519,7 @@ whose output has nothing worth charting stay plain. It needs no setup; the views
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `jobWidgets.enabled` | boolean | `true` | Build widgets at all; `false` taps no output and never calls a model |
-| `jobWidgets.model` | string | - | `provider/model-id` that writes the specs; otherwise a model the host provides, else the session's model |
+| `jobWidgets.model` | string | - | `provider/model-id` that writes the specs; otherwise a model the host provides; with neither, no spec is written (the session's model is never used) |
 | `jobWidgets.authorAfterMs` | number | `15000` | Job age in milliseconds before its spec is written |
 
 ### Shell
