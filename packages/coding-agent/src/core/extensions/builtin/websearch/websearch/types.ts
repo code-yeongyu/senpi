@@ -24,7 +24,8 @@ export type SearchProvider =
 	| "exa-mcp"
 	| "searxng"
 	| "keenable"
-	| "parallel";
+	| "parallel"
+	| "firecrawl";
 
 /** Why a keyless engine refused a search; each reason puts the engine on a cooldown. */
 export type SearchBlockReason = "challenge" | "rate_limited" | "forbidden" | "network";
