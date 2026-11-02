@@ -8,7 +8,7 @@ export function rowOf(rows: readonly ProcessRow[], pid: number): ProcessRow | un
 }
 
 /** Ancestors of `pid` (nearest first), stopping at pid 1 or a loop. */
-export function ancestors(rows: readonly ProcessRow[], pid: number): number[] {
+function ancestors(rows: readonly ProcessRow[], pid: number): number[] {
 	const chain: number[] = [];
 	const seen = new Set([pid]);
 	let current = rowOf(rows, pid);

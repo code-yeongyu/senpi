@@ -27,7 +27,7 @@ export interface KillGuardRequestOptions {
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 /** Parses a bridge request; `undefined` when it is not one of the three shapes. */
-export function parseKillGuardRequest(value: unknown): KillGuardRequest | undefined {
+function parseKillGuardRequest(value: unknown): KillGuardRequest | undefined {
 	if (!isRecord(value)) return undefined;
 	const vantagePid =
 		typeof value.vantagePid === "number" && Number.isInteger(value.vantagePid) ? value.vantagePid : undefined;

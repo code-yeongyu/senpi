@@ -5,22 +5,19 @@
  */
 export { judgeArgv, judgeCommand, judgeSignal } from "./command.ts";
 export { type PatternMode, type PatternVerdict, judgePattern } from "./pattern.ts";
+// The codemode JS worker imports this file by URL (`kill-guard/host.ts` KILL_GUARD_MODULE_URL, read in
+// senpi-codemode's `worker-kill-guard.js`), so knip cannot see the three names it calls.
 export {
-	createProcessView,
-	KILL_GUARD_DEADLINE_MS,
 	type KillGuardContextOptions,
 	type KillGuardSpawnSync,
+	/** @public read by senpi-codemode's worker-kill-guard.js through KILL_GUARD_MODULE_URL */
 	killGuardContext,
-	parsePsRows,
+	/** @public read by senpi-codemode's worker-kill-guard.js through KILL_GUARD_MODULE_URL */
 	spawnSyncFromBun,
+	/** @public read by senpi-codemode's worker-kill-guard.js through KILL_GUARD_MODULE_URL */
 	spawnSyncFromNode,
 } from "./process-view.ts";
-export {
-	decideKillGuardRequest,
-	type KillGuardRequest,
-	type KillGuardRequestOptions,
-	parseKillGuardRequest,
-} from "./request.ts";
+export { decideKillGuardRequest, type KillGuardRequest, type KillGuardRequestOptions } from "./request.ts";
 export type {
 	KillGuardContext,
 	KillGuardRule,

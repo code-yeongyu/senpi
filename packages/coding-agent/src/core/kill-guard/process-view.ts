@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import type { KillGuardContext, ProcessRow, ProcessView, SelectResult } from "./types.ts";
 
 /** The bound on one table read and on one dry run (DESIGN-12096 §4'). */
-export const KILL_GUARD_DEADLINE_MS = 2_000;
+const KILL_GUARD_DEADLINE_MS = 2_000;
 
 /** A synchronous spawn the judge may use; callers pass an original captured before any judging wrapper (A8). */
 export type KillGuardSpawnSync = (
@@ -47,7 +47,7 @@ export function spawnSyncFromBun(spawnSync: BunLikeSpawnSync): KillGuardSpawnSyn
 const PS_ROW = /^\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(.*)$/;
 
 /** `ps -A -o pid=,ppid=,pgid=,sess=,uid=,comm=,args=`; macOS pads `comm` and may put spaces in it, so it is display only. */
-export function parsePsRows(text: string): ProcessRow[] {
+function parsePsRows(text: string): ProcessRow[] {
 	const rows: ProcessRow[] = [];
 	for (const line of text.split("\n")) {
 		const match = PS_ROW.exec(line);
