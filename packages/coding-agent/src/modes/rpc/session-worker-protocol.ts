@@ -152,6 +152,8 @@ export type SessionWorkerToHost =
 			 * text without recursion, where its structured-clone reader drops a deep frame (Node ~4,000 levels; RULING-68). */
 			recordText?: string;
 			recovery?: RecoveryCarrier;
+			/** A bridge-started call's `tool_execution_start`: the key its producer minted with it (RULING-127 (b)). */
+			callKey?: string;
 			/** Transcript transitions the isolate's manager committed before this record, accepted just before it. */
 			transitions?: readonly TranscriptTransition[];
 			/** The next incarnation's baseline, on the `session_replaced` record that starts it. */

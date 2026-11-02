@@ -18,7 +18,8 @@ it("RULING-126 (1a) #5374 flag-off history and attach bytes are identical with a
 		const opened = await client.request({ type: "open_session", cwd: host.cwd, sessionPath });
 		const sessionId = String(dataOf(opened).sessionId);
 		const messages = dataOf(await client.request({ type: "get_messages", sessionId })).messages;
-		const entries = dataOf(await client.request({ type: "get_entries", sessionId })).entries;
+		const all = dataOf(await client.request({ type: "get_entries", sessionId })).entries as { type?: string }[];
+		const entries = all.filter((entry) => entry.type === "message");
 		const attacher = host.client(keyed ? "keyed-attach" : "plain-attach");
 		await attacher.request({ type: "open_session", cwd: host.cwd, sessionPath });
 		return { history: JSON.stringify({ messages, entries }), attached: attacher.received.join("\n") };

@@ -916,6 +916,20 @@ The host appends the field after the record's own, like the message ids above (`
 "sessionId": "rpc-1", "runtimeItemKey": "..."}`); legacy connections and every connection with the flag off receive
 the same bytes as before.
 
+**Key source (senpi#5374, RULING-126/127).** The producer mints the key, and the session file keeps it (see
+[session-format.md](session-format.md)), so the live record, the snapshot rows and the persisted entry name one key. A
+toolCall block's call is keyed `blk:<messageId>:<contentIndex>` from the block's own address, which the host's calls
+table derives the same way, so nothing extra travels on the wire. A call whose execution started before its block
+streamed (a bridge-started call) is keyed `exe:<uuid>`, minted with that start; the block that later joins it keeps that
+key, and the session file persists it on the block. The first key a call ever carries is its key for its lifetime: the
+host never re-keys a call. The host mints its own `<sessionEpoch>:<sequence>.<k>` key only for a call with no backing
+block (a nested call, reported with `parentToolCallId`). The three forms are distinct namespaces, but a key stays
+opaque: compare keys only for equality. A transcript entry a recovering compact peer reads carries the persisted keys as
+the session file holds them (`runtimeItemKey` on a toolCall part, `runtimeItemKey` or `callUnknown: true` on a
+toolResult entry), reused after a reload and never re-minted. `get_messages`, `get_entries`, attach replays and every
+legacy or flag-off record never carry them. A session written before senpi#5374 has no persisted keys; its parts get
+load-time keys, stable only for that load.
+
 #### release_recovery
 
 Behind the same flag, the consumer's receipt for an event lease (senpi#4272, S13). Send it only once the leased

@@ -52,7 +52,11 @@ function keysOf(file: string) {
 }
 
 async function runTurn(sessionManager?: SessionManager): Promise<string> {
-	const harness = await createHarness({ tools: [noop], persistSession: true, ...(sessionManager && { sessionManager }) });
+	const harness = await createHarness({
+		tools: [noop],
+		persistSession: true,
+		...(sessionManager && { sessionManager }),
+	});
 	harnesses.push(harness);
 	harness.setResponses([
 		fauxAssistantMessage(
@@ -100,12 +104,17 @@ it("RULING-127 (c) #5374 load, rewrite, reload keeps every key: a migration rewr
 	const file = await runTurn();
 	const before = keysOf(file);
 	const lines = linesOf(file);
-	writeFileSync(file, `${lines.map((line, index) => JSON.stringify(index === 0 ? { ...line, version: 2 } : line)).join("\n")}\n`);
+	writeFileSync(
+		file,
+		`${lines.map((line, index) => JSON.stringify(index === 0 ? { ...line, version: 2 } : line)).join("\n")}\n`,
+	);
 	const migrated = SessionManager.open(file, dirname(file));
 	expect(linesOf(file)[0]).toMatchObject({ type: "session", version: 3 });
 	expect(keysOf(file)).toEqual(before);
-	const branched = migrated.createBranchedSession(migrated.getLeafId() ?? expect.unreachable("no leaf"));
-	expect(keysOf(branched ?? expect.unreachable("no branched file"))).toEqual(before);
+	const branched =
+		migrated.createBranchedSession(migrated.getLeafId() ?? expect.unreachable("no leaf")) ??
+		expect.unreachable("no branched file");
+	expect(keysOf(branched)).toEqual(before);
 	const reloaded = SessionManager.open(branched, dirname(branched));
 	const [[entryId, persisted] = []] = before.parts;
 	expect([0, 1, 2].map((index) => reloaded.getToolCallKey(String(entryId), index))).toEqual(persisted);

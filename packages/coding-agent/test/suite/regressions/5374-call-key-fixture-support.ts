@@ -59,8 +59,11 @@ export function sessionLines(dir: string, keyed: boolean): readonly object[] {
 
 export function writeSession(dir: string, keyed: boolean, name = "session.jsonl"): string {
 	const file = join(dir, name);
-	writeFileSync(file, `${sessionLines(dir, keyed)
-		.map((line) => JSON.stringify(line))
-		.join("\n")}\n`);
+	writeFileSync(
+		file,
+		`${sessionLines(dir, keyed)
+			.map((line) => JSON.stringify(line))
+			.join("\n")}\n`,
+	);
 	return file;
 }

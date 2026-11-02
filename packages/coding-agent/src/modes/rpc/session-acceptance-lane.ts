@@ -187,6 +187,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		carrier: RecoveryCarrier | undefined,
 		canonical?: CanonicalUnit,
 		canonicalRefused = false,
+		callKey?: string,
 	): AcceptedRef | undefined {
 		const type = field(record, "type");
 		this.identities.clear();
@@ -197,7 +198,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		// included (RULING-13 Q9); a correlation change takes the sequence just before its record.
 		const correlation = folds ? correlationChange(this.correlation, this.turnId, record) : undefined;
 		const at = { sequence: this.sequence + (correlation ? 1 : 0), turnId: this.turnId };
-		const place = admitRecord(this.current, record, type, at, folds);
+		const place = admitRecord(this.current, record, type, at, folds, callKey);
 		if (!place) return undefined;
 		if (!folds && correlationChange(this.correlation, this.turnId, record)) this.refusedCorrelations += 1;
 		if (correlation) this.correlation = Object.freeze({ sequence: place.sequence - 1, ...correlation });

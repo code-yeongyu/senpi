@@ -114,6 +114,7 @@ import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
+import { BridgedCallKeys } from "./session-call-keys.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
 import {
@@ -1475,6 +1476,8 @@ export class AgentSession {
 	private readonly _writtenTicketEntries = new Map<string, string>();
 	/** How many sends that joined each ticket's queued message are still in flight. */
 	private readonly _carrierJoiners = new Map<string, number>();
+	/** Call keys minted with a bridge-started call's execution start (RULING-127 (b), senpi#5374). */
+	private readonly _bridgedCallKeys = new BridgedCallKeys();
 	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
@@ -4054,6 +4057,7 @@ export class AgentSession {
 			}
 		}
 		this._recoveryIdentity?.hint(event, consumedEntry);
+		this._bridgedCallKeys.observe(event);
 		this._emit(carryRecovery(event, sessionEvent), event);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
@@ -4095,6 +4099,7 @@ export class AgentSession {
 					entryId = this.sessionManager.appendOwnedMessage(event.message, {
 						inputSource: this._userInputSources.get(event.message),
 						recoveryOwner: recoveryCarrier(event),
+						...(event.message.role === "assistant" ? { bridgedCalls: this._bridgedCallKeys.take() } : {}),
 					});
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();

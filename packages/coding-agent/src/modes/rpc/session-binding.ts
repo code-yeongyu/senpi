@@ -7,6 +7,7 @@ import {
 	recoveryCarrier,
 	setSessionRecoveryEpoch,
 } from "../../core/session-recovery-identity.ts";
+import { executionCallKey } from "../../core/session-call-keys.ts";
 import { CanonicalPairing, carryCanonical } from "./compact-canonical-pairing.ts";
 import type { CanonicalRecord, CanonicalUnit } from "./compact-lane-transitions.ts";
 import { CompactProducerStamp } from "./compact-producer-stamp.ts";
@@ -82,7 +83,7 @@ export async function createRpcSessionBinding(
 		} else if (lane) {
 			lane.applyTranscript(journaled?.drainTranscript() ?? []);
 			const carrier = recoveryCarrier(record);
-			lane.accept(record, carrier, unit(carrier, canonical, record), refused);
+			lane.accept(record, carrier, unit(carrier, canonical, record), refused, executionCallKey(record));
 		} else carryCanonical(record, canonical, refused);
 		enqueueLegacyRecord(writer, sessionId, record);
 	};

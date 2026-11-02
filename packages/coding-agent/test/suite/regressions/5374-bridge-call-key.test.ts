@@ -37,36 +37,45 @@ function produce(order: "block-first" | "bridge-first", messageId: string) {
 	const session = SessionManager.create(dir, dir);
 	session.appendMessage({ role: "user", content: "go", timestamp: 0 });
 	session.appendOwnedMessage(message, { recoveryOwner: { messageId, epoch: "e" }, bridgedCalls: producer.take() });
-	const lines = readFileSync(session.getSessionFile() ?? expect.unreachable("no file"), "utf8").trim().split("\n");
+	const lines = readFileSync(session.getSessionFile() ?? expect.unreachable("no file"), "utf8")
+		.trim()
+		.split("\n");
 	const persisted = lines.map((line) => JSON.parse(line)).find((line) => line.message?.role === "assistant");
 	return { carried, persisted: persisted?.message.content[0]?.runtimeItemKey as string | undefined };
 }
 
-it.each(["block-first", "bridge-first"] as const)("RULING-127 (b) #5374 %s: one call, one key, live == persisted", async (order) => {
-	const rig = await callsRig();
-	try {
-		rig.record({ type: "turn_start" });
-		const owner = rig.start();
-		const { carried, persisted } = produce(order, owner.messageId);
-		if (order === "block-first") {
-			expect(carried).toBeUndefined();
-			rig.toolStart(owner, 0, call, "bash");
-			rig.lane.accept(start, undefined);
-		} else {
-			expect(carried).toMatch(/^exe:[0-9a-f-]{36}$/);
-			rig.lane.accept(start, undefined, undefined, false, carried);
-			rig.toolStart(owner, 0, call, "bash");
+it.each(["block-first", "bridge-first"] as const)(
+	"RULING-127 (b) #5374 %s: one call, one key, live == persisted",
+	async (order) => {
+		const rig = await callsRig();
+		try {
+			rig.record({ type: "turn_start" });
+			const owner = rig.start();
+			const { carried, persisted } = produce(order, owner.messageId);
+			if (order === "block-first") {
+				expect(carried).toBeUndefined();
+				rig.toolStart(owner, 0, call, "bash");
+				rig.lane.accept(start, undefined);
+			} else {
+				expect(carried).toMatch(/^exe:[0-9a-f-]{36}$/);
+				rig.lane.accept(start, undefined, undefined, false, carried);
+				rig.toolStart(owner, 0, call, "bash");
+			}
+			rig.toolEnd(owner, 0, call, "bash");
+			rig.end(owner, [call]);
+			const view = await rig.calls();
+			expect(view.calls).toHaveLength(1);
+			const key = order === "block-first" ? blockCallKey(owner.messageId, 0) : carried;
+			expect(view.calls[0]).toMatchObject({
+				runtimeItemKey: key,
+				owningMessageId: owner.messageId,
+				contentIndex: 0,
+			});
+			expect(view.calls[0]).not.toHaveProperty("callUnknown");
+			expect(persisted).toBe(key);
+			rig.lane.release(view.root);
+		} finally {
+			await rig.close();
 		}
-		rig.toolEnd(owner, 0, call, "bash");
-		rig.end(owner, [call]);
-		const view = await rig.calls();
-		expect(view.calls).toHaveLength(1);
-		const key = order === "block-first" ? blockCallKey(owner.messageId, 0) : carried;
-		expect(view.calls[0]).toMatchObject({ runtimeItemKey: key, owningMessageId: owner.messageId, contentIndex: 0 });
-		expect(view.calls[0]).not.toHaveProperty("callUnknown");
-		expect(persisted).toBe(key);
-		rig.lane.release(view.root);
-	} finally {
-		await rig.close();
-	}
-});
+	},
+);
