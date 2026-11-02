@@ -7,7 +7,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { AssistantProgress, ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
@@ -29,11 +29,13 @@ import {
 	type RpcOpenOptions,
 } from "./rpc-client-admissions.ts";
 export { RpcCommandError } from "./rpc-command-error.ts";
+export type { RpcClientEvent, RpcEventListener, RpcProviderAccountEvent } from "./rpc-client-events.ts";
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import { isProviderAccountEvent, type RpcClientEvent, type RpcEventListener } from "./rpc-client-events.ts";
 import { connectRpcClientSocket } from "./rpc-client-socket.ts";
 import {
 	armRequestDeadline,
@@ -50,22 +52,14 @@ import {
 import type {
 	EditAssistantMessageResult,
 	EditUserMessageResult,
-	RpcAccountFailoverEvent,
-	RpcAuthAccountsChangedEvent,
 	RpcCommand,
 	RpcEvalCell,
 	RpcEvalCellSnapshot,
-	RpcExtensionEvent,
 	RpcExtensionUIProgress,
-	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
-	RpcOpenQueuedEvent,
 	RpcProviderAccount,
 	RpcResponse,
-	RpcSecretInputSettledEvent,
 	RpcSessionModelEntry,
-	RpcSessionParkedEvent,
-	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
 	RpcUnloadAnswer,
@@ -121,36 +115,6 @@ type PromptOptions = ClientMessageIdentity & {
 	expandPromptTemplates?: boolean;
 	unknownCommandAsText?: boolean;
 };
-
-export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
-export type RpcClientEvent =
-	| RpcSecretInputSettledEvent
-	| (JsonAgentSessionEvent & ClientMessageIdentity & { readonly clientMessages?: readonly ClientMessageIdentity[] })
-	| RpcProviderAccountEvent
-	| RpcExtensionEvent
-	| RpcExtensionUIRequest
-	// The host swapped the live session behind this connection. Part of the public
-	// union so a typed client can discriminate on the type and read the new
-	// `durableSessionId` without casting: the command response carries only
-	// `{ cancelled }`, and a replacement may be driven by another client or an
-	// extension, so this is the only channel delivering the new identity.
-	| RpcSessionReplacedEvent
-	// The host parked a retained session at its idle window. Part of the public union
-	// because it REPLACES `session_closed` for that handle: a client that treats it as
-	// a close loses the session it was told to reopen by path.
-	| RpcSessionParkedEvent
-	// The host accepted an open_session and says where it is queued; the client also uses it to
-	// switch that open to its post-acknowledgement deadline (senpi#2209).
-	| RpcOpenQueuedEvent
-	// A compact recovery cut resets each tool call still open at it (senpi#5298, senpi#5300); listeners receive it as is.
-	| (Extract<AssistantProgress, { type: "message_tool_arguments_reset" }> & { readonly sessionId?: string })
-	| { type: "bash_start" }
-	| { type: "bash_end" };
-export type RpcEventListener = (event: RpcClientEvent) => void;
-
-function isProviderAccountEvent(event: RpcClientEvent): event is RpcProviderAccountEvent {
-	return event.type === "auth_accounts_changed" || event.type === "account_failover";
-}
 
 // ============================================================================
 // RPC Client
@@ -1342,6 +1306,7 @@ export class RpcClient {
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
 					event.type === "queued" ||
+					event.type === "socket_closing" ||
 					event.type === "message_tool_arguments_reset"
 				)
 					return;

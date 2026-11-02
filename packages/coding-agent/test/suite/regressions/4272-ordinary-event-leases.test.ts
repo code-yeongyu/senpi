@@ -224,7 +224,11 @@ it("S13-Q1 (2) leases are count-bounded per peer: past the stated bound the peer
 			host.writer.enqueue(routing, oversized(`call-${index}`, String(index % 10).repeat(263_000)));
 		await host.writer.flush();
 		expect(compact.inbox.filter((record) => leaseOf(record) !== undefined)).toHaveLength(bound);
-		expect(compact.inbox.at(-1)).toEqual({ type: "event_lease_refused", sessionId: routing, reason: "lease_limit" });
+		// RULING-124 (#5322): the refusal, then the record announcing the close it causes.
+		expect(compact.inbox.slice(-2)).toEqual([
+			{ type: "event_lease_refused", sessionId: routing, reason: "lease_limit" },
+			{ type: "socket_closing", code: "event_lease_refused", retryable: true, detail: "lease_limit" },
+		]);
 		expect(events.status()).toMatchObject({ open: bound, refused: { lease_limit: 1 } });
 		await host.drop("compact");
 		expect(events.status(), "the peer's end releases all its references").toMatchObject({ open: 0, contentBytes: 0 });

@@ -105,7 +105,7 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		)
 			return {
 				line: serializeJsonLine({ type: "compact_refused", sessionId, reason: "compact_endpoint_unsupported" }),
-				undelivered: () => this.fanout.get(target)?.connection.close?.(),
+				undelivered: () => this.fanout.get(target)?.close("compact_endpoint_unsupported"),
 			};
 		const admissionId =
 			this.ordinaryRoute(target, sessionId)?.routes[0] ?? this.fanout.admissionOf(target, sessionId);
@@ -135,7 +135,11 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 			};
 		}
 		process.stderr.write(`senpi rpc connection ${target} event lease refused (${minted.reason}); closing\n`);
-		this.fanout.get(target)?.connection.close?.();
-		return { line: serializeJsonLine({ type: "event_lease_refused", sessionId, reason: minted.reason }) };
+		const { reason } = minted;
+		return {
+			line: serializeJsonLine({ type: "event_lease_refused", sessionId, reason }),
+			// RULING-124: the refusal is the peer's last record before `socket_closing` and the close.
+			undelivered: () => this.fanout.get(target)?.close("event_lease_refused", reason),
+		};
 	}
 }

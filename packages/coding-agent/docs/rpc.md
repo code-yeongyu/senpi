@@ -940,6 +940,39 @@ before the route stops delivering. Per path:
   on the socket; the session's streams end with it.
 - A socket's end: nothing can be delivered on it any more; its streams end with it.
 
+**Engine-initiated socket close (senpi#5322, RULING-124).** With `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on, the engine
+never closes a socket that selected compact events without saying why. Before every close the engine itself decides,
+it stops the socket's record queue and writes one last record:
+
+```json
+{"type": "socket_closing", "code": "event_queue_failed", "retryable": true, "detail": "overflow"}
+```
+
+`detail` is optional. The engine then waits for that record to drain for at most 1 second and closes the socket
+regardless. On a host shutdown each socket drains its own queue and then receives its record, so a
+peer that stopped reading delays only itself. These waits, and the half-close that flushes the record, end at the
+shutdown's deadline: 2 seconds after the shutdown starts, inside the supervisor's 5-second stop window, and a socket
+still open then is destroyed. The deadline counts from the start of the shutdown, so it includes closing the host's
+sessions, which is not bounded on POSIX (senpi#5398) and can still push a stop past the window. When the transport is already broken (the write fails, or the drain is refused) the socket closes at once
+and the record may never arrive, so a client must not depend on it: a close with no `socket_closing` is handled as
+`retryable: true`. A legacy socket, and every socket with the flag off, is closed exactly as before, with no new record.
+
+`retryable` is fixed per code. `true`: the cause belongs to this connection (its queue, its lease budget, compact storage
+that may recover), so reconnect with backoff and recover through the recovery commands (`reset_stream`, a re-open).
+`false`: a new connection with the same selection gets the same answer, so reconnect without the compact selection, or
+stop.
+`host_shutdown` and `host_handoff` describe the socket, not a session: a client holding several sessions, or none, learns
+from them that the host itself went away (shutdown) or handed its endpoint to a newer generation (reconnect to it).
+
+| `code` | `retryable` | Sent when | `detail` |
+|---|---|---|---|
+| `checkpoint_unavailable` | `true` | A required or mirrored stream's checkpoint cannot be frozen | The refusal reason, for example `unavailable` |
+| `event_queue_failed` | `true` | The socket's event queue failed; follows its `overflow` record when it has one | `overflow`, `stall` or `transport_error` |
+| `event_lease_refused` | `true` | An event cannot be leased; follows its `event_lease_refused` record | `lease_limit` or `storage_unavailable` |
+| `compact_endpoint_unsupported` | `false` | A compact mirror of a session served only on the legacy wire; follows its `compact_refused` record | none |
+| `host_shutdown` | `true` | The host is shutting down; follows its sessions' `session_closed` records (`reason: "host_shutdown"`) | none |
+| `host_handoff` | `true` | The host drains for a newer generation; follows its sessions' handoff park records | none |
+
 #### interactive_user
 
 A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's

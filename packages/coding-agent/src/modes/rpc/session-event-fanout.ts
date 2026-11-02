@@ -7,28 +7,19 @@ import { EventLeases } from "./compact-event-leases.ts";
 import { legacyAttachView } from "./compact-legacy-view.ts";
 import { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import { RecoveryCheckpoints } from "./compact-recovery-state.ts";
-import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { COMPACT_EVENTS_CAPABILITY, MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { ExtensionTransportOwner } from "./extension-owner.ts";
 import { LegacyReplayStore } from "./legacy-replay-store.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import {
+	type RegisteredConnection,
+	type SessionEventWriterConnection,
+	transportOf,
+} from "./session-event-connection.ts";
 import { admissionOf, SessionRecoveryPins } from "./session-recovery-pins.ts";
+import { closeSocket, queueFailureDetail } from "./socket-closing.ts";
 import { type ShedMode, SocketEventSinkActor } from "./socket-event-fanout.ts";
 import { EVENT_RESYNC_CAPABILITY } from "./socket-peer-recovery.ts";
-
-export type RawWriter = (chunk: string) => void;
-export type BackpressureWaiter = () => Promise<void>;
-
-export interface SessionEventWriterConnection {
-	readonly writeRaw: RawWriter;
-	readonly waitForBackpressure: BackpressureWaiter;
-	/**
-	 * Tears the transport down. Called when this connection's event queue fails
-	 * (overflow, write error): the actor has already stopped delivering records
-	 * AND command responses, so a socket left open would strand the client on a
-	 * connection that can never answer again. Closing it lets the client resync.
-	 */
-	readonly close?: () => void;
-}
 
 const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"agent_start",
@@ -38,15 +29,6 @@ const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"session_closed",
 	"session_lifecycle",
 ]);
-
-type RegisteredConnection = {
-	readonly connection: SessionEventWriterConnection;
-	readonly actor: SocketEventSinkActor;
-	/** This registration's incarnation of the peer: the owner every checkpoint it freezes is bound to. */
-	readonly socketEpoch: string;
-	readonly selection: CompactSelection;
-	readonly owner: ExtensionTransportOwner;
-};
 
 export class SessionEventFanout {
 	requiredSessions?: (peer: string) => readonly string[];
@@ -101,7 +83,9 @@ export class SessionEventFanout {
 		const actor = new Actor(
 			connection,
 			(cause) => {
-				if (this.connections.get(id)?.actor === actor) {
+				const current = this.connections.get(id)?.actor === actor;
+				const compact = current && this.connectionHas(id, COMPACT_EVENTS_CAPABILITY);
+				if (current) {
 					owner.retire();
 					this.connections.delete(id);
 					this.connectionCapabilities.delete(id);
@@ -115,14 +99,17 @@ export class SessionEventFanout {
 				process.stderr.write(
 					`senpi rpc connection ${id} event queue failed; closing: ${cause instanceof Error ? cause.message : String(cause)}\n`,
 				);
-				connection.close?.();
+				void closeSocket(connection, actor, compact, "event_queue_failed", queueFailureDetail(cause));
 			},
 			options.maxQueueBytes,
 			options.stallMs,
 			this.shedMode,
 		);
 		if (actor instanceof AdmissionRoutingActor) actor.bind(this.checkpoints, socketEpoch, id);
-		this.connections.set(id, { connection, actor, socketEpoch, owner, selection: new CompactSelection() });
+		const close: RegisteredConnection["close"] = (code, detail) =>
+			void closeSocket(connection, actor, this.connectionHas(id, COMPACT_EVENTS_CAPABILITY), code, detail);
+		const selection = new CompactSelection();
+		this.connections.set(id, { connection: transportOf(connection), actor, socketEpoch, owner, selection, close });
 		this.connectionCapabilities.set(id, new Set());
 		this.connectionSessions.set(id, new Map());
 	}

@@ -45,7 +45,14 @@ type HostSessionRuntime = "in-process" | "worker" | "cli-default";
 
 export async function startWorkerHost(
 	extensionSource?: string,
-	options: { socket?: boolean; node?: boolean; preload?: string; sessionRuntime?: HostSessionRuntime } = {},
+	options: {
+		socket?: boolean;
+		node?: boolean;
+		preload?: string;
+		sessionRuntime?: HostSessionRuntime;
+		/** Extra host environment, e.g. a rollout flag the host reads at startup. */
+		env?: Readonly<Record<string, string>>;
+	} = {},
 ) {
 	// Worker by default: every rpc-worker-* suite asserts worker-isolate behavior, and a
 	// socket host otherwise defaults to the in-process runtime.
@@ -97,6 +104,7 @@ export async function startWorkerHost(
 				SENPI_OFFLINE: "1",
 				SENPI_RPC_CLOSE_GRACE_MS: "100",
 				...(useNode ? { SENPI_RUNTIME: "node" } : {}),
+				...options.env,
 			},
 			stdio: ["pipe", "pipe", "pipe"],
 		},
@@ -180,6 +188,6 @@ export async function startWorkerHost(
  * `--listen` host selects: every session runs IN the host process (no worker isolate,
  * no worker cap). Pass `sessionRuntime` to `startWorkerHost` to pin one explicitly.
  */
-export function startInProcessHost(extensionSource?: string) {
-	return startWorkerHost(extensionSource, { socket: true, sessionRuntime: "cli-default" });
+export function startInProcessHost(extensionSource?: string, env?: Readonly<Record<string, string>>) {
+	return startWorkerHost(extensionSource, { socket: true, sessionRuntime: "cli-default", ...(env && { env }) });
 }
