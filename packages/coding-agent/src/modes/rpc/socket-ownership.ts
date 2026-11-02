@@ -11,7 +11,7 @@
  * unlink only while the path still stat-matches that identity.
  */
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { dirname } from "node:path";
 import { resolveSocketTransportAddress } from "./socket-transport.ts";
@@ -43,6 +43,18 @@ export const SOCKET_IDENTITY_WAIT_MS = 30_000;
  * endpoint.
  */
 export const MAX_SOCKET_PATH_BYTES = 103;
+
+/**
+ * `<socket>.bind-<hex>`: the private 0700 directory a host binds its socket in (as `BIND_SCRATCH_SOCKET`) before
+ * publishing it at `<socket>` with `link(2)` (#5319). Named after the socket so `host gc` can reclaim one a crash left.
+ */
+export const BIND_SCRATCH_INFIX = ".bind-";
+export const BIND_SCRATCH_SOCKET = "s";
+
+/** A bind directory's name, for any socket it was made beside (the public one, or a successor's `.next-<gen>`). */
+export function isBindScratchName(name: string): boolean {
+	return /\.bind-[0-9a-f]{12}$/.test(name);
+}
 
 /**
  * Where a successor generation binds before it owns the public name. It never binds the live
@@ -129,10 +141,14 @@ export async function socketEntryListenerState(
 	return { verdict: "dead", evidence: "connect ECONNREFUSED, held by nobody" };
 }
 
-/** Reads the current identity of a socket path entry; `undefined` once absent. */
+/**
+ * Reads the current identity of the entry AT a socket path; `undefined` once absent. Read with `lstat`: a symlink
+ * is never followed and answers with its own identity, which can never match a bound socket's, so every
+ * ownership check reads it as somebody else's entry rather than as the socket it names.
+ */
 export async function statSocketIdentity(socketPath: string): Promise<SocketFileIdentity | undefined> {
 	try {
-		const { dev, ino } = await stat(socketPath);
+		const { dev, ino } = await lstat(socketPath);
 		return { dev, ino };
 	} catch (cause) {
 		if (isNodeErrorCode(cause, "ENOENT")) return undefined;

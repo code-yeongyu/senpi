@@ -105,6 +105,12 @@ const PRIVATE_FD_LEAVES = new Set([
 	"packages/coding-agent/dist/utils/private-fd-inherit.js",
 ]);
 
+// senpi#5319: the supervisor publishes its public endpoint through the socket host's bind (a private 0700 bind
+// directory, then link(2), so a symlink planted at the endpoint is never bound through). That adds exactly this leaf,
+// importing only Node builtins and socket-ownership/socket-transport, both already in the graph. Measured: 71 modules
+// (8 hop, 3 public auth, 4 private fd leaves), 3,972 source / 4,108 built bytes, 71 code lines.
+const ENDPOINT_BIND_LEAVES = new Set(["packages/coding-agent/dist/modes/rpc/host-socket-bind.js"]);
+
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
 	return [
@@ -122,8 +128,9 @@ describe("RPC host supervisor import graph", () => {
 		const internalHopLeaves = modules.filter((url) => INTERNAL_HOP_LEAVES.has(url)).length;
 		const publicAuthLeaves = modules.filter((url) => PUBLIC_AUTH_LEAVES.has(url)).length;
 		const privateFdLeaves = modules.filter((url) => PRIVATE_FD_LEAVES.has(url)).length;
+		const endpointBindLeaves = modules.filter((url) => ENDPOINT_BIND_LEAVES.has(url)).length;
 		console.info(
-			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves}, private fd ${privateFdLeaves})`,
+			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves}, private fd ${privateFdLeaves}, endpoint bind ${endpointBindLeaves})`,
 		);
 
 		const core = modules.filter((url) => url.startsWith("packages/coding-agent/dist/core/"));
@@ -132,9 +139,9 @@ describe("RPC host supervisor import graph", () => {
 		).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/interactive/"))).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/app-server/"))).toEqual([]);
-		expect(modules.length - internalHopLeaves - publicAuthLeaves - privateFdLeaves).toBeLessThanOrEqual(
-			SUPERVISOR_MODULE_CEILING,
-		);
+		expect(
+			modules.length - internalHopLeaves - publicAuthLeaves - privateFdLeaves - endpointBindLeaves,
+		).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 
 	// senpi#3743: a bundled install starts its supervisor through `dist/bundle/host-supervisor.js`. Before it
