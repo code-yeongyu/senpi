@@ -43,6 +43,20 @@ describe("version checks", () => {
 		expect(isNewerPackageVersion("2026.7.30-2", "2026.7.30")).toBe(true);
 	});
 
+	it.each<[string, string, -1 | 0 | 1]>([
+		["2026.11.02-1", "2026.11.2", 0],
+		["2026.11.02-1", "2026.11.2-1", 0],
+		["2026.11.02-1", "2026.11.3", -1],
+		["2026.11.02-1", "2026.11.2-2", -1],
+		["2026.11.2-10", "2026.11.2-9", 1],
+		["2026.10.31-2", "2026.11.02-1", -1],
+		["9999.0.0", "2026.11.02-1", 1],
+	])("orders padded and -N Senpi CalVer %s against %s as %i", (left, right, expected) => {
+		expect(Math.sign(comparePackageVersions(left, right) ?? Number.NaN)).toBe(expected);
+		expect(Math.sign(comparePackageVersions(right, left) ?? Number.NaN)).toBe(expected === 0 ? 0 : -expected);
+		expect(isNewerPackageVersion(left, right)).toBe(expected > 0);
+	});
+
 	it("returns only newer versions", async () => {
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
 		vi.stubGlobal("fetch", fetchMock);
