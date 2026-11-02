@@ -22,6 +22,7 @@ import { serperProvider } from "./providers/serper.ts";
 import type { BuildContext, FetchedPage, PageFetcher, ProviderModule, ResponseFormat } from "./providers/shared.ts";
 import { parseObjectPayload, resolveDomainFilters } from "./providers/shared.ts";
 import { startpageProvider } from "./providers/startpage.ts";
+import { syntheticProvider } from "./providers/synthetic.ts";
 import { tavilyProvider } from "./providers/tavily.ts";
 import { xaiProvider } from "./providers/xai.ts";
 import { zAiProvider } from "./providers/z-ai.ts";
@@ -60,6 +61,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	"exa-mcp": exaMcpProvider,
 	searxng: searxngProvider,
 	keenable: keenableProvider,
+	synthetic: syntheticProvider,
 };
 
 function buildContext(config: SearchProviderConfig, request: SearchRequest): BuildContext {
