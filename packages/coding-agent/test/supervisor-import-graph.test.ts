@@ -123,13 +123,7 @@ const PRIVATE_FD_LEAVES = new Set([
 // 2,605, 31 (the canonical endpoint key the fence shares with the ensure lock; its imports were already in the graph).
 // Measured: 75 modules.
 const STARTUP_EVENT_LEAVES = new Set(
-	[
-		"host-startup-beacon",
-		"host-startup-wire",
-		"host-lifecycle-startup",
-		"host-endpoint-owner",
-		"host-ensure-lock",
-	]
+	["host-startup-beacon", "host-startup-wire", "host-lifecycle-startup", "host-endpoint-owner", "host-ensure-lock"]
 		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
 		.concat(
 			"packages/coding-agent/dist/private-fd-startup-fillers.js",
