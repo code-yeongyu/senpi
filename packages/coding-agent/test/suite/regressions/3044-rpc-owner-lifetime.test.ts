@@ -5,11 +5,11 @@ import { syncBuiltinESMExports } from "node:module";
 import { Socket } from "node:net";
 import { join } from "node:path";
 import { mock } from "node:test";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { STOP_WAIT_BUDGET_MS } from "../../../src/modes/rpc/host-ensure-stop.ts";
-import { type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
+import { HANDOFF_LOCK_HOLD_MS, type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "../../../src/modes/rpc/host-lifecycle-policy.ts";
 import {
 	type GenerationScratch,
@@ -21,7 +21,7 @@ import {
 	supervisorLaunch,
 } from "../../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
-import { RpcOwnerProcesses } from "../../helpers/rpc-owner-processes.ts";
+import { EXIT_BOUND_MS, RpcOwnerProcesses } from "../../helpers/rpc-owner-processes.ts";
 import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-owner-caller.ts");
@@ -29,8 +29,32 @@ const roots: GenerationScratch[] = [];
 const processes = new RpcOwnerProcesses();
 const peers: JsonlPeer[] = [];
 const models: HeldAnthropicModel[] = [];
-const EXIT_BOUND_MS = 10_000;
+const CALLER_READINESS_MS = 30_000;
+const RPC_WAIT_MS = 20_000;
+const OWNER_GRACE_MS = 4_000;
+const TEST_MARGIN_MS = EXIT_BOUND_MS;
+// Readiness includes arming the native waiter; allGone waits for owners, then supervisors.
+const CALLER_BOUND_MS = CALLER_READINESS_MS + EXIT_BOUND_MS;
+const ALL_GONE_BOUND_MS = 2 * EXIT_BOUND_MS;
 const BUN_EXIT_BOUND_MS = EXIT_BOUND_MS + STOP_WAIT_BUDGET_MS;
+// #4874: outer deadlines include every sequential bounded wait, then a scheduling margin.
+const TEST_TIMEOUT_MS = {
+	exit: CALLER_BOUND_MS + 2 * EXIT_BOUND_MS + BUN_EXIT_BOUND_MS + TEST_MARGIN_MS,
+	peer: CALLER_BOUND_MS + 2 * RPC_WAIT_MS + EXIT_BOUND_MS + OWNER_GRACE_MS + ALL_GONE_BOUND_MS + TEST_MARGIN_MS,
+	turn: CALLER_BOUND_MS + 6 * RPC_WAIT_MS + EXIT_BOUND_MS + OWNER_GRACE_MS + ALL_GONE_BOUND_MS + TEST_MARGIN_MS,
+	retained: CALLER_BOUND_MS + 2 * RPC_WAIT_MS + EXIT_BOUND_MS + OWNER_GRACE_MS + TEST_MARGIN_MS,
+	reuse:
+		3 * CALLER_BOUND_MS + 3 * RPC_WAIT_MS + 2 * EXIT_BOUND_MS + OWNER_GRACE_MS + ALL_GONE_BOUND_MS + TEST_MARGIN_MS,
+	// The scratch socket has no competing ensure-lock holder; include the handoff's own hold budget.
+	handoff:
+		CALLER_BOUND_MS +
+		HANDOFF_LOCK_HOLD_MS +
+		2 * RPC_WAIT_MS +
+		EXIT_BOUND_MS +
+		OWNER_GRACE_MS +
+		ALL_GONE_BOUND_MS +
+		TEST_MARGIN_MS,
+};
 
 async function caller(
 	qa: GenerationScratch,
@@ -47,7 +71,7 @@ async function caller(
 	});
 	processes.owner(child);
 	const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error("caller readiness timeout")), 30_000);
+		const timer = setTimeout(() => reject(new Error("caller readiness timeout")), CALLER_READINESS_MS);
 		child.on("message", (message, handle) => {
 			if (typeof message !== "object" || message === null || !("type" in message)) return;
 			if (message.type === "supervisor" && "pid" in message && typeof message.pid === "number") {
@@ -81,14 +105,17 @@ async function rememberHost(qa: GenerationScratch): Promise<void> {
 	processes.remember(record.pid);
 }
 
-afterEach(async () => {
+afterEach(async ({ task }) => {
 	for (const peer of peers.splice(0)) peer.destroy();
 	for (const model of models.splice(0)) {
 		model.release();
 		await model.close();
 	}
-	await processes.cleanup();
-	for (const qa of roots.splice(0)) await rm(qa.root, { recursive: true, force: true });
+	try {
+		await processes.cleanup(task.result?.errors?.[0]);
+	} finally {
+		for (const qa of roots.splice(0)) await rm(qa.root, { recursive: true, force: true });
+	}
 }, STOP_WAIT_BUDGET_MS + 30_000);
 
 async function exitOwner(owner: ChildProcess, signal?: "SIGKILL"): Promise<void> {
@@ -101,21 +128,57 @@ async function exitOwner(owner: ChildProcess, signal?: "SIGKILL"): Promise<void>
 async function peer(qa: GenerationScratch, observe = false): Promise<JsonlPeer> {
 	const result = await JsonlPeer.connect(qa.socket);
 	peers.push(result);
-	expect(await result.request({ id: "info", type: "get_protocol_info", observe })).toMatchObject({ success: true });
+	expect(await result.request({ id: "info", type: "get_protocol_info", observe }, RPC_WAIT_MS)).toMatchObject({
+		success: true,
+	});
 	return result;
 }
 
 // Here elapsed time IS the assertion: a lifetime must survive the short owner-death exit window.
 async function survivesOwnerGrace(connection: JsonlPeer): Promise<void> {
-	await expect(connection.waitForClose(4_000)).rejects.toThrow("connection stayed open");
-	expect(await connection.request({ id: "still-serving", type: "get_protocol_info", observe: true })).toMatchObject({
-		success: true,
-	});
+	await expect(connection.waitForClose(OWNER_GRACE_MS)).rejects.toThrow("connection stayed open");
+	expect(
+		await connection.request({ id: "still-serving", type: "get_protocol_info", observe: true }, RPC_WAIT_MS),
+	).toMatchObject({ success: true });
 }
 
 // #3044: the real detached supervisor and real in-process host must not wait out the 15-minute idle policy.
 // POSIX process-table assertions follow the existing supervised lifecycle harness.
 describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
+	// #3289: a startup failure must remain visible even when PID identity changed before cleanup.
+	it.each([false, true])("preserves startup failure during changed-process cleanup (failed=%s)", async (failed) => {
+		const tracked = new RpcOwnerProcesses();
+		tracked.remember(process.pid);
+		const primary = new Error("spawned RPC socket host did not answer get_protocol_info within 10000ms");
+		const command = mock.method(childProcess, "execFileSync", () => "changed process");
+		syncBuiltinESMExports();
+		const signal = vi.spyOn(process, "kill").mockImplementation((_pid, value) => {
+			if (value !== 0) throw new Error("must not signal a changed process");
+			return true;
+		});
+		try {
+			const startup = async () => {
+				try {
+					if (failed) throw primary;
+				} finally {
+					await tracked.cleanup(failed ? primary : undefined);
+				}
+			};
+			if (failed)
+				await expect(startup()).rejects.toMatchObject({
+					message: primary.message,
+					cause: primary,
+					errors: [primary, expect.objectContaining({ message: `refusing changed process ${process.pid}` })],
+				});
+			else await expect(startup()).rejects.toThrow(`refusing changed process ${process.pid}`);
+			expect(signal.mock.calls.every(([, value]) => value === 0)).toBe(true);
+		} finally {
+			signal.mockRestore();
+			command.mock.restore();
+			syncBuiltinESMExports();
+		}
+	});
+
 	// #4845: Bun's inherited owner pipe can stay silent after SIGKILL; it must not disable death detection.
 	// Its fallback observation precedes the existing child-reap budget (#3054); idle exit must outlive both.
 	it.each([
@@ -134,64 +197,75 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			await exited;
 			await processes.allGone(bound);
 		},
-		BUN_EXIT_BOUND_MS + 30_000,
+		TEST_TIMEOUT_MS.exit,
 	);
 
-	it("keeps serving a second peer until it disconnects", async () => {
-		const qa = generationScratch("peer");
-		roots.push(qa);
-		const owner = await caller(qa);
-		const attached = await peer(qa);
-		await exitOwner(owner);
-		await survivesOwnerGrace(attached);
-		attached.destroy();
-		await processes.allGone();
-	}, 45_000);
+	it(
+		"keeps serving a second peer until it disconnects",
+		async () => {
+			const qa = generationScratch("peer");
+			roots.push(qa);
+			const owner = await caller(qa);
+			const attached = await peer(qa);
+			await exitOwner(owner);
+			await survivesOwnerGrace(attached);
+			attached.destroy();
+			await processes.allGone();
+		},
+		TEST_TIMEOUT_MS.peer,
+	);
 
-	it("finishes a disconnected in-flight turn before ownerless exit", async () => {
-		const qa = generationScratch("turn");
-		roots.push(qa);
-		const model = await HeldAnthropicModel.start();
-		models.push(model);
-		writeRpcModelsJson(qa.agentDir, model.origin);
-		const owner = await caller(qa);
-		const observer = await peer(qa, true);
-		const attached = await peer(qa);
-		const opened = await attached.request({
-			id: "open",
-			type: "open_session",
-			cwd: qa.cwd,
-			retainOnDisconnect: true,
-		});
-		const sessionId = openedSessionId(opened);
-		const data = opened.data;
-		if (typeof data !== "object" || data === null) throw new Error("missing open data");
-		const state: unknown = Reflect.get(data, "state");
-		if (typeof state !== "object" || state === null) throw new Error("missing session state");
-		const sessionFile: unknown = Reflect.get(state, "sessionFile");
-		if (typeof sessionFile !== "string") throw new Error("missing persisted session file");
-		const started = attached.waitFor((event) => event.type === "agent_start" && event.sessionId === sessionId);
-		await attached.request({ id: "prompt", type: "prompt", sessionId, message: "hold the turn" });
-		await started;
-		attached.destroy();
-		await exitOwner(owner, "SIGKILL");
-		await survivesOwnerGrace(observer);
-		model.release();
-		await processes.allGone();
-		const entries: unknown[] = (await readFile(sessionFile, "utf8"))
-			.trim()
-			.split("\n")
-			.map((line) => JSON.parse(line));
-		expect(entries).toContainEqual(
-			expect.objectContaining({
-				message: expect.objectContaining({
-					role: "assistant",
-					stopReason: "stop",
-					content: expect.arrayContaining([expect.objectContaining({ type: "text", text: "held turn complete" })]),
+	it(
+		"finishes a disconnected in-flight turn before ownerless exit",
+		async () => {
+			const qa = generationScratch("turn");
+			roots.push(qa);
+			const model = await HeldAnthropicModel.start();
+			models.push(model);
+			writeRpcModelsJson(qa.agentDir, model.origin);
+			const owner = await caller(qa);
+			const observer = await peer(qa, true);
+			const attached = await peer(qa);
+			const opened = await attached.request(
+				{ id: "open", type: "open_session", cwd: qa.cwd, retainOnDisconnect: true },
+				RPC_WAIT_MS,
+			);
+			const sessionId = openedSessionId(opened);
+			const data = opened.data;
+			if (typeof data !== "object" || data === null) throw new Error("missing open data");
+			const state: unknown = Reflect.get(data, "state");
+			if (typeof state !== "object" || state === null) throw new Error("missing session state");
+			const sessionFile: unknown = Reflect.get(state, "sessionFile");
+			if (typeof sessionFile !== "string") throw new Error("missing persisted session file");
+			const started = attached.waitFor(
+				(event) => event.type === "agent_start" && event.sessionId === sessionId,
+				RPC_WAIT_MS,
+			);
+			await attached.request({ id: "prompt", type: "prompt", sessionId, message: "hold the turn" }, RPC_WAIT_MS);
+			await started;
+			attached.destroy();
+			await exitOwner(owner, "SIGKILL");
+			await survivesOwnerGrace(observer);
+			model.release();
+			await processes.allGone();
+			const entries: unknown[] = (await readFile(sessionFile, "utf8"))
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line));
+			expect(entries).toContainEqual(
+				expect.objectContaining({
+					message: expect.objectContaining({
+						role: "assistant",
+						stopReason: "stop",
+						content: expect.arrayContaining([
+							expect.objectContaining({ type: "text", text: "held turn complete" }),
+						]),
+					}),
 				}),
-			}),
-		);
-	}, 45_000);
+			);
+		},
+		TEST_TIMEOUT_MS.turn,
+	);
 
 	it.each(["unowned", "live"] as const)(
 		"does not exit early when %s",
@@ -202,66 +276,75 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			const observer = await peer(qa, true);
 			if (mode === "unowned") await exitOwner(owner);
 			else {
-				const reused = once(owner, "message", { signal: AbortSignal.timeout(10_000) });
+				const reused = once(owner, "message", { signal: AbortSignal.timeout(EXIT_BOUND_MS) });
 				owner.send("reuse");
 				expect((await reused)[0]).toEqual({ type: "reused", reused: true });
 			}
 			await survivesOwnerGrace(observer);
 		},
-		45_000,
+		TEST_TIMEOUT_MS.retained,
 	);
 
-	it("refuses a different live owner and lets a new caller replace a dead one on reuse", async () => {
-		const qa = generationScratch("reuse");
-		roots.push(qa);
-		const owner = await caller(qa);
-		const attached = await peer(qa);
-		await caller(qa, "caller", "owner is still alive");
-		await exitOwner(owner);
-		const replacement = await caller(qa);
-		attached.destroy();
-		const observer = await peer(qa, true);
-		await survivesOwnerGrace(observer);
-		await exitOwner(replacement, "SIGKILL");
-		await processes.allGone();
-	}, 45_000);
+	it(
+		"refuses a different live owner and lets a new caller replace a dead one on reuse",
+		async () => {
+			const qa = generationScratch("reuse");
+			roots.push(qa);
+			const owner = await caller(qa);
+			const attached = await peer(qa);
+			await caller(qa, "caller", "owner is still alive");
+			await exitOwner(owner);
+			const replacement = await caller(qa);
+			attached.destroy();
+			const observer = await peer(qa, true);
+			await survivesOwnerGrace(observer);
+			await exitOwner(replacement, "SIGKILL");
+			await processes.allGone();
+		},
+		TEST_TIMEOUT_MS.reuse,
+	);
 
-	it("inherits the owner through a foreign generation handoff", async () => {
-		const qa = generationScratch("handoff");
-		roots.push(qa);
-		const owner = await caller(qa);
-		const original = childProcess.spawn;
-		const observed = mock.method(
-			childProcess,
-			"spawn",
-			(command: string, args: readonly string[], options: SpawnOptions) => {
-				if (!args[0]?.endsWith("host-lifecycle.ts")) return original(command, args, options);
-				const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
-				stdio[1] = "pipe";
-				const child = original(command, args, { ...options, stdio });
-				if (child.pid === undefined || !(child.stdout instanceof Socket)) throw new Error("missing successor pipe");
-				processes.successor(child, child.stdout);
-				return child;
-			},
-		);
-		syncBuiltinESMExports();
-		let result: HandoffResult;
-		try {
-			result = await handoffHost({
-				socket: qa.socket,
-				agentDir: qa.agentDir,
-				env: generationEnv(qa),
-				_test: { launch: supervisorLaunch },
-			});
-		} finally {
-			observed.mock.restore();
+	it(
+		"inherits the owner through a foreign generation handoff",
+		async () => {
+			const qa = generationScratch("handoff");
+			roots.push(qa);
+			const owner = await caller(qa);
+			const original = childProcess.spawn;
+			const observed = mock.method(
+				childProcess,
+				"spawn",
+				(command: string, args: readonly string[], options: SpawnOptions) => {
+					if (!args[0]?.endsWith("host-lifecycle.ts")) return original(command, args, options);
+					const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
+					stdio[1] = "pipe";
+					const child = original(command, args, { ...options, stdio });
+					if (child.pid === undefined || !(child.stdout instanceof Socket))
+						throw new Error("missing successor pipe");
+					processes.successor(child, child.stdout);
+					return child;
+				},
+			);
 			syncBuiltinESMExports();
-		}
-		expect(result.action).toBe("handoff");
-		await rememberHost(qa);
-		const observer = await peer(qa, true);
-		await survivesOwnerGrace(observer);
-		await exitOwner(owner);
-		await processes.allGone();
-	}, 60_000);
+			let result: HandoffResult;
+			try {
+				result = await handoffHost({
+					socket: qa.socket,
+					agentDir: qa.agentDir,
+					env: generationEnv(qa),
+					_test: { launch: supervisorLaunch },
+				});
+			} finally {
+				observed.mock.restore();
+				syncBuiltinESMExports();
+			}
+			expect(result.action).toBe("handoff");
+			await rememberHost(qa);
+			const observer = await peer(qa, true);
+			await survivesOwnerGrace(observer);
+			await exitOwner(owner);
+			await processes.allGone();
+		},
+		TEST_TIMEOUT_MS.handoff,
+	);
 });
