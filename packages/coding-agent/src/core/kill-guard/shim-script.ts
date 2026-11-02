@@ -214,7 +214,8 @@ ${killFunction(deadlineSeconds)}`;
  * The PROMPT_COMMAND that carries the `kill` wrapper into interactive bash, which reads no BASH_ENV. Before a prompt it
  * sources `bash_kill.sh` once per shell (the marker is an unexported variable keyed on `$$`, so a child bash sources it
  * again), then runs the user's own PROMPT_COMMAND with `$?` as the last command left it. A kill-guard hook inside the
- * user's value is not re-entered.
+ * user's value is not re-entered: the re-entry marker is a `local` of the function that evals the user's value, so it
+ * exists only while that eval runs, and bash drops it when Ctrl-C or an expansion error abandons the eval midway.
  */
 export function killGuardPromptCommand(dir: string): string {
 	const file = quote(`${dir}/${KILL_GUARD_BASH_KILL}`);
@@ -222,9 +223,9 @@ export function killGuardPromptCommand(dir: string): string {
 	return [
 		KILL_GUARD_PROMPT_HOOK_PREFIX,
 		`if [ "\${__senpi_kg_shell-}" != "$$" ]; then __senpi_kg_shell=$$; if [ -r ${file} ]; then . ${file}; fi; fi;`,
-		`if [ -n "\${SENPI_KILL_GUARD_USER_PROMPT_COMMAND-}" ] && [ "\${__senpi_kg_in-}" != "$$" ]; then __senpi_kg_in=$$;`,
-		`__senpi_kg_rc() { return "$1"; }; if __senpi_kg_rc "$__senpi_kg_q"; then eval ${user}; else eval ${user}; fi;`,
-		"__senpi_kg_in=; fi",
+		`if [ -n "\${SENPI_KILL_GUARD_USER_PROMPT_COMMAND-}" ] && [ "\${__senpi_kg_in-}" != "$$" ]; then`,
+		'__senpi_kg_rc() { return "$1"; }; __senpi_kg_run() { local __senpi_kg_in=$$;',
+		`if __senpi_kg_rc "$__senpi_kg_q"; then eval ${user}; else eval ${user}; fi; }; __senpi_kg_run "$@"; fi`,
 	].join(" ");
 }
 

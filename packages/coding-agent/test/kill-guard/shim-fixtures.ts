@@ -1,6 +1,7 @@
 // Shared setup for the kill guard's runtime-layer tests (senpi#5349, L2). The "real" kill/pkill/killall are recording
-// fakes placed on PATH before the system directories and the judge is a recording fake, so no test signals anything.
-import { spawnSync } from "node:child_process";
+// fakes placed on PATH before the system directories and the judge is a recording fake; the only pids a test names for
+// an allowed `kill` are sleepers it spawned in their own process group, so an escaped signal reaches nothing else.
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,11 +21,39 @@ export const SYSTEM_PATH = "/usr/bin:/bin";
 const RECORD = `printf '%s' "\${0##*/}" >> "$LOG"; for a do printf ' [%s]' "$a" >> "$LOG"; done; printf '\\n' >> "$LOG"`;
 
 /**
- * bash text that records, instead of running, the shell's own `kill` the guard's `kill` wrapper calls for an allowed argv
- * (`command kill ...`, logged as `builtin [kill] ...`); every other `command` call, including the judge watchdog's,
- * runs as usual.
+ * bash text that records, instead of running, the shell's own `kill`: the `command kill ...` the guard's `kill` wrapper
+ * calls for an allowed argv (logged as `builtin [kill] ...`) and any `builtin kill ...` (logged as
+ * `builtin-bypass [kill] ...`, so a wrapper that bypassed `command` fails the test without signalling). Every other
+ * `command` or `builtin` call, including the judge watchdog's, runs the real one with both shadows briefly removed.
  */
-export const SHELL_KILL_RECORDER = `command() { if [ "\${1-}" = kill ] && [ "\${FUNCNAME[1]-}" = kill ]; then printf 'builtin' >> "$LOG"; for a do printf ' [%s]' "$a" >> "$LOG"; done; printf '\\n' >> "$LOG"; else builtin command "$@"; fi; }`;
+export const SHELL_KILL_RECORDER = [
+	`__kg_record() { printf '%s' "$1" >> "$LOG"; shift; for a do printf ' [%s]' "$a" >> "$LOG"; done; printf '\\n' >> "$LOG"; }`,
+	`__kg_shadow() { command() { if [ "\${1-}" = kill ] && [ "\${FUNCNAME[1]-}" = kill ]; then __kg_record builtin "$@"; else __kg_unshadowed command "$@"; fi; }; builtin() { if [ "\${1-}" = kill ]; then __kg_record builtin-bypass "$@"; else __kg_unshadowed builtin "$@"; fi; }; }`,
+	'__kg_unshadowed() { local __kg_s=0; unset -f command builtin; "$@" || __kg_s=$?; __kg_shadow; return "$__kg_s"; }',
+	"__kg_shadow",
+].join("\n");
+
+export interface OwnedSleeper {
+	readonly pid: number;
+	stop(): void;
+}
+
+/**
+ * A `sleep` the test spawned as the leader of its own session and process group: the only pid (or, negated, group) a
+ * test lets a shell's `kill` name, so even a signal that escaped the recorders reaches only this child.
+ */
+export function spawnOwnedSleeper(): OwnedSleeper {
+	const child = spawn("sleep", ["300"], { detached: true, stdio: "ignore" });
+	child.unref();
+	const pid = child.pid;
+	if (pid === undefined) throw new Error("the test's sleeper did not start");
+	return {
+		pid,
+		stop() {
+			child.kill();
+		},
+	};
+}
 
 export function writeExecutable(path: string, content: string): void {
 	writeFileSync(path, content);

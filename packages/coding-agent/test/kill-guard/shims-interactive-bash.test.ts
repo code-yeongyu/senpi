@@ -1,22 +1,36 @@
 // senpi#5349 / code-yeongyu/oh-my-openagent#12096 (L2): an interactive bash reads no BASH_ENV, so the PROMPT_COMMAND hook
 // sources the same `kill` wrapper before the first prompt, after the user's startup files, and every line the shell
 // runs (typed, history-expanded, in a child shell) reaches it. Each script first stops the shell when `kill` is not the
-// guard's wrapper and records the shell's own `kill` instead of running it, so no test here sends a signal.
+// guard's wrapper and records the shell's own `kill` instead of running it, and every pid an allowed `kill` names is a
+// sleeper this file spawned in its own process group; the only other signal is the Ctrl-C a test's bash sends itself.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { killGuardEnvironment } from "../../src/core/kill-guard/runtime.ts";
-import { createShimFixture, posix, SHELL_KILL_RECORDER, type ShimFixture, TAG } from "./shim-fixtures.ts";
+import {
+	createShimFixture,
+	type OwnedSleeper,
+	posix,
+	SHELL_KILL_RECORDER,
+	type ShimFixture,
+	spawnOwnedSleeper,
+	TAG,
+} from "./shim-fixtures.ts";
 
 const WRAPPED = "if ! declare -f kill | grep -q __senpi_kg_decide; then echo NOT-WRAPPED; exit 99; fi";
 const GUARDED = [WRAPPED, SHELL_KILL_RECORDER];
 const ALL_PROCESSES = `${TAG} refused (R3 ALL_PROCESSES)`;
 
 let f: ShimFixture;
+let target: OwnedSleeper;
 beforeAll(() => {
 	f = createShimFixture();
+	target = spawnOwnedSleeper();
 });
-afterAll(() => f.cleanup());
+afterAll(() => {
+	target.stop();
+	f.cleanup();
+});
 
 const lines = (...typed: string[]) => `${[...typed, "exit"].join("\n")}\n`;
 
@@ -31,12 +45,13 @@ describe.runIf(posix)("bash's builtin kill in an interactive bash, through the P
 	it.each([[["-i"]], [["--norc", "-i"]], [["--posix", "-i"]]])(
 		"refuses `kill -9 -1` typed after the first prompt and hands an allowed kill to the shell (bash %j)",
 		(args) => {
-			const result = f.runInteractive(args, lines(...GUARDED, 'kill -9 -1; echo "status=$?"', "kill 4242"), f.env());
+			const typed = lines(...GUARDED, 'kill -9 -1; echo "status=$?"', `kill ${target.pid}`);
+			const result = f.runInteractive(args, typed, f.env());
 
 			expect(result.stdout).not.toContain("NOT-WRAPPED");
 			expect(result.stdout).toContain("status=126");
 			expect(result.stderr).toContain(ALL_PROCESSES);
-			expect(result.real).toBe("builtin [kill] [4242]\n");
+			expect(result.real).toBe(`builtin [kill] [${target.pid}]\n`);
 		},
 	);
 
@@ -74,13 +89,13 @@ describe.runIf(posix)("bash's builtin kill in an interactive bash, through the P
 	it("after `enable -n kill` still refuses `kill -9 -1` and runs an allowed kill through the PATH shim", () => {
 		const result = f.runInteractive(
 			["--norc", "-i"],
-			lines(WRAPPED, "enable -n kill || exit 99", 'kill 4242; echo "own=$?"', 'kill -9 -1; echo "all=$?"'),
+			lines(WRAPPED, "enable -n kill || exit 99", `kill ${target.pid}; echo "own=$?"`, 'kill -9 -1; echo "all=$?"'),
 			f.env(),
 		);
 
 		expect(result.stdout).toContain("own=0");
 		expect(result.stdout).toContain("all=126");
-		expect(result.real).toBe("kill [4242]\n");
+		expect(result.real).toBe(`kill [${target.pid}]\n`);
 	});
 
 	it("runs the user's own PROMPT_COMMAND after the hook, with $? as the last command left it", () => {
@@ -91,6 +106,21 @@ describe.runIf(posix)("bash's builtin kill in an interactive bash, through the P
 		);
 
 		expect(result.stdout).toContain("user-prompt rc=0\nuser-prompt rc=1\n");
+	});
+
+	it("keeps running the user's PROMPT_COMMAND on later prompts after Ctrl-C abandoned one run of it", () => {
+		// The user's PROMPT_COMMAND interrupts itself once, as Ctrl-C (or an agent's bash_input ctrl+c) would; the signal
+		// goes only to this test's own bash.
+		const userPrompt = 'echo user-prompt; if [ -z "$interrupted" ]; then interrupted=1; builtin kill -INT $$; fi';
+
+		const result = f.runInteractive(
+			["--norc", "-i"],
+			lines(WRAPPED, "echo first", "echo second"),
+			f.env({ PROMPT_COMMAND: userPrompt }),
+		);
+
+		expect(result.stdout).not.toContain("NOT-WRAPPED");
+		expect(result.stdout).toContain("first\nuser-prompt\nsecond\nuser-prompt\n");
 	});
 
 	it("keeps the user's PROMPT_COMMAND under a nested agent, whose shells reach their prompt (C1)", () => {
