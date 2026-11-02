@@ -38,6 +38,7 @@ export interface PrepareRuntimeOptions {
 /** A runtime factory that can also build its cwd-bound services alone, for `warm`. */
 export type PreparableRuntimeFactory = CreateAgentSessionRuntimeFactory & {
 	readonly prepare?: (options: PrepareRuntimeOptions) => Promise<void>;
+	readonly supportsCompact?: (profile?: AgentSessionLaunchProfile) => boolean;
 };
 
 /** The launch inputs that decide which extensions load, and so what a warm prepares. */

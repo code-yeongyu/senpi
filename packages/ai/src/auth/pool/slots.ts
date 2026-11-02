@@ -425,6 +425,16 @@ export function appendLoginSlot(
 		return flat;
 	}
 	const storedAccounts = Array.isArray(current.accounts) ? current.accounts : undefined;
+	if (!provided && "signedOut" in current && current.signedOut === true) {
+		// Sign-out keeps only the registration for a later sign-in (senpi#5003 W7). That sign-in takes over
+		// the flat projection; as a sibling slot it would leave the provider resolving to the signed-out copy.
+		const name = storedAccounts ? nextLoginSlotName(current) : DEFAULT_SLOT_NAME;
+		const base = storedAccounts ? upsertSlot(current, slotFromFlatCredentialNamed(flat, name)) : current;
+		const next = { ...base, ...flat, ...(storedAccounts ? { accounts: base.accounts } : {}) };
+		Reflect.deleteProperty(next, "signedOut");
+		onAllocated?.(name, "generated");
+		return next;
+	}
 	if (provided) {
 		// A pool merges onto the stored pool; a flat current keeps the whole-write
 		// shape because the provider's accounts already carry this login.

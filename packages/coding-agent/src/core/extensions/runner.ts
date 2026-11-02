@@ -57,6 +57,7 @@ import {
 import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
+import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
@@ -134,7 +135,52 @@ import type {
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.ts";
-import { RUNTIME_EXTENSION_PATH } from "./types.ts";
+import { type ExtensionRuntimeContext, RUNTIME_EXTENSION_PATH } from "./types.ts";
+
+const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
+	"offload",
+	"ui",
+	"mode",
+	"hasUI",
+	"cwd",
+	"agentDir",
+	"loadedExtensionPaths",
+	"modelRegistry",
+	"isProjectTrusted",
+	"kernelTools",
+	"evalHandleHost",
+	"shutdown",
+	"getLookAtSettings",
+	"getAskUserSettings",
+	"getImageSettings",
+	"getRegisteredMcpServers",
+	"extensionConnectsMcpServers",
+]);
+
+/** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
+const SESSION_IDENTITY_MEMBERS = new Set(["sessionManager", "goalStoreFile"]);
+
+function loopSideUnbound(member: string): Error {
+	return new Error(`${member} is loop-side and not bound: this extension runtime has no session`);
+}
+
+/** Narrow a context of a runner without a session to its runtime members (senpi#5223). */
+function withoutSession(context: ExtensionContext): void {
+	for (const key of Reflect.ownKeys(context)) {
+		if (typeof key !== "string" || RUNTIME_CONTEXT_MEMBERS.has(key)) continue;
+		if (SESSION_IDENTITY_MEMBERS.has(key)) {
+			Reflect.deleteProperty(context, key);
+			continue;
+		}
+		Object.defineProperty(context, key, {
+			configurable: true,
+			enumerable: true,
+			get() {
+				throw loopSideUnbound(key);
+			},
+		});
+	}
+}
 
 export { ExtensionRpcRequestNotFoundError } from "./rpc-request.ts";
 
@@ -249,6 +295,71 @@ type RunnerEmitEvent = Exclude<
 	| TurnEndEvent
 	| AgentBeforeSettleEvent
 >;
+
+export type ExtensionEventPlacement = "runtime" | "loop" | "split";
+
+/**
+ * Where each extension event belongs once the agent loop and the tool host run apart (senpi#5231): `runtime` events
+ * describe the tool host's own work, `loop` events describe turns, the transcript, provider requests and model
+ * selection, and `split` events have a side in each. A runner without a session manager does not dispatch `loop`
+ * events through `emit`. Adding an event to `ExtensionEvent` fails to compile until it is placed here.
+ */
+export const EXTENSION_EVENT_PLACEMENT = {
+	project_trust: "runtime",
+	resources_discover: "runtime",
+	mcp_servers_change: "runtime",
+	session_start: "split",
+	held_wakes_released: "loop",
+	session_hold_changed: "loop",
+	session_info_changed: "loop",
+	session_parked: "split",
+	session_resumed: "split",
+	session_before_switch: "loop",
+	session_before_fork: "loop",
+	session_before_reload: "runtime",
+	session_before_compact: "loop",
+	session_compact: "loop",
+	session_compact_failed: "loop",
+	session_shutdown: "split",
+	session_abort: "split",
+	session_extensions_removed: "runtime",
+	session_move_export: "loop",
+	session_move_import: "loop",
+	session_before_tree: "loop",
+	session_tree: "loop",
+	context: "loop",
+	context_with_system: "loop",
+	before_provider_request: "loop",
+	before_provider_headers: "loop",
+	after_provider_response: "loop",
+	provider_stream_event: "loop",
+	before_agent_start: "split",
+	agent_start: "loop",
+	agent_end: "split",
+	agent_before_settle: "loop",
+	agent_settled: "split",
+	session_control_wake: "loop",
+	ui_prompt_start: "runtime",
+	ui_prompt_end: "runtime",
+	turn_start: "split",
+	turn_end: "loop",
+	message_start: "loop",
+	message_update: "loop",
+	message_end: "split",
+	tool_execution_start: "runtime",
+	tool_execution_update: "runtime",
+	tool_execution_end: "runtime",
+	model_select: "loop",
+	provider_login_start: "split",
+	system_prompt_change: "loop",
+	thinking_level_select: "loop",
+	tool_activated: "runtime",
+	user_bash: "runtime",
+	input: "split",
+	input_disposition: "loop",
+	tool_call: "runtime",
+	tool_result: "runtime",
+} as const satisfies Record<ExtensionEvent["type"], ExtensionEventPlacement>;
 
 type SessionBeforeEvent = Extract<
 	RunnerEmitEvent,
@@ -501,7 +612,7 @@ function createNoOpSessionSettings(): ExtensionContextActions["sessionSettings"]
 	};
 }
 
-const noOpUIContext: ExtensionUIContext = {
+export const noOpUIContext: ExtensionUIContext = {
 	capabilities: { secretInput: true },
 	select: async () => undefined,
 	confirm: async () => false,
@@ -544,9 +655,11 @@ export class ExtensionRunner {
 	private extensions: Extension[];
 	private runtime: ExtensionRuntime;
 	private uiContext: ExtensionUIContext;
+	private uiBroker: RuntimeUiBroker | undefined;
+	private readonly brokerUIContexts = new WeakMap<ExtensionUIContext, ExtensionUIContext>();
 	private mode: ExtensionMode = "print";
 	private cwd: string;
-	private sessionManager: SessionManager;
+	private sessionManager: SessionManager | undefined;
 	private modelRegistry: ModelRegistry;
 	private eventBus: EventBus;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
@@ -657,7 +770,7 @@ export class ExtensionRunner {
 		extensions: Extension[],
 		runtime: ExtensionRuntime,
 		cwd: string,
-		sessionManager: SessionManager,
+		sessionManager: SessionManager | undefined,
 		modelRegistry: ModelRegistry,
 		eventBus: EventBus = createEventBus(),
 	) {
@@ -913,6 +1026,26 @@ export class ExtensionRunner {
 		this.mode = mode;
 	}
 
+	/**
+	 * Route this runner's UI through a runtime's UI broker (senpi#5228): its attached presenter answers, and with
+	 * none attached the UI is unbound. A session binds its UI with `setUIContext` and never sets a broker.
+	 */
+	setUiBroker(broker: RuntimeUiBroker | undefined): void {
+		this.uiBroker = broker;
+	}
+
+	private currentUIContext(): ExtensionUIContext {
+		if (this.uiBroker === undefined) return this.uiContext;
+		const presenter = this.uiBroker.presenter;
+		if (presenter === undefined) return noOpUIContext;
+		let wrapped = this.brokerUIContexts.get(presenter);
+		if (wrapped === undefined) {
+			wrapped = this.wrapUIPromptContext(presenter);
+			this.brokerUIContexts.set(presenter, wrapped);
+		}
+		return wrapped;
+	}
+
 	setToolHookLifecycleObserver(observer?: ExtensionToolHookLifecycleObserver): void {
 		this.toolHookLifecycleObserver = observer;
 	}
@@ -996,7 +1129,7 @@ export class ExtensionRunner {
 	}
 
 	getUIContext(): ExtensionUIContext {
-		return this.uiContext;
+		return this.currentUIContext();
 	}
 
 	/** True while session_start handlers run and the turns they trigger are still held. */
@@ -1005,7 +1138,7 @@ export class ExtensionRunner {
 	}
 
 	hasUI(): boolean {
-		return this.uiContext !== noOpUIContext;
+		return this.currentUIContext() !== noOpUIContext;
 	}
 
 	getExtensionPaths(): string[] {
@@ -1515,7 +1648,14 @@ export class ExtensionRunner {
 
 	getActiveTools(): string[] {
 		this.assertActive();
+		// The active set belongs to the loop; a runner without a session has none to report.
+		if (this.sessionManager === undefined) return [];
 		return this.runtime.getActiveTools();
+	}
+
+	private boundSessionManager(): SessionManager {
+		if (this.sessionManager === undefined) throw loopSideUnbound("sessionManager");
+		return this.sessionManager;
 	}
 
 	/**
@@ -1538,7 +1678,7 @@ export class ExtensionRunner {
 			},
 			get ui() {
 				runner.assertActive();
-				return runner.uiContext;
+				return runner.currentUIContext();
 			},
 			get mode() {
 				runner.assertActive();
@@ -1562,11 +1702,11 @@ export class ExtensionRunner {
 			},
 			get sessionManager() {
 				runner.assertActive();
-				return runner.sessionManager;
+				return runner.boundSessionManager();
 			},
 			get goalStoreFile() {
 				runner.assertActive();
-				return goalFilePath(goalStoreRef(runner.sessionManager, runner.cwd));
+				return goalFilePath(goalStoreRef(runner.boundSessionManager(), runner.cwd));
 			},
 			get browserEngine() {
 				runner.assertActive();
@@ -1644,7 +1784,7 @@ export class ExtensionRunner {
 						return tools.invoke(request, {
 							...(options && ("aborted" in options ? { signal: options } : options)),
 							invoker: kernelToolInvokerStorage.getStore() ?? {
-								sessionId: runner.sessionManager.getSessionId(),
+								sessionId: runner.boundSessionManager().getSessionId(),
 							},
 						});
 					},
@@ -1818,6 +1958,7 @@ export class ExtensionRunner {
 				runner.questionInput?.();
 			});
 		}
+		if (this.sessionManager === undefined) withoutSession(context);
 		return context;
 	}
 
@@ -1928,7 +2069,7 @@ export class ExtensionRunner {
 			throw err;
 		}
 		let valid = true;
-		const handlers = flattenHandlers(this.extensions, baseEvent.type);
+		const handlers = this.dropsLoopEvent(baseEvent.type) ? [] : flattenHandlers(this.extensions, baseEvent.type);
 
 		// Boundary handlers hold the agent loop's turn end and the run's settle, so they run under the same host budget
 		// as the lifecycle events and the turn deadline can release them (senpi#3650).
@@ -2074,7 +2215,13 @@ export class ExtensionRunner {
 		return this.emit({ type: "held_wakes_released", sources });
 	}
 
+	/** A runner without a session manager has no loop, so it dispatches no `loop` event (senpi#5231). */
+	private dropsLoopEvent(type: ExtensionEvent["type"]): boolean {
+		return this.sessionManager === undefined && EXTENSION_EVENT_PLACEMENT[type] === "loop";
+	}
+
 	emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+		if (this.dropsLoopEvent(event.type)) return Promise.resolve(undefined as RunnerEmitResult<TEvent>);
 		// Not async: other events keep the exact microtask timing of a direct dispatch.
 		// Turns requested from any session_start handler start after the last one returns (senpi#1972).
 		if (event.type === "session_start") return this.sessionStartTurns.dispatch(() => this.dispatchEmit(event));
@@ -2090,10 +2237,12 @@ export class ExtensionRunner {
 	 * the import hand-over keeps the moved state for the next open on an import failure.
 	 */
 	async emitSessionMove(event: SessionMoveEmission): Promise<readonly SessionMoveFailure[]> {
-		const calls = flattenHandlers(this.extensions, event.type).map(({ path, handler }) => ({
-			extensionPath: path,
-			call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
-		}));
+		const calls = (this.dropsLoopEvent(event.type) ? [] : flattenHandlers(this.extensions, event.type)).map(
+			({ path, handler }) => ({
+				extensionPath: path,
+				call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
+			}),
+		);
 		const failures = await runSessionMoveHandlers(event.type, calls, this.resolveSessionShutdownBudget().handler);
 		for (const failure of failures) this.emitError({ ...failure, event: event.type });
 		return failures;
@@ -2160,6 +2309,7 @@ export class ExtensionRunner {
 	}
 
 	async emitModelSelect(event: ModelSelectEvent): Promise<ModelSelectEventResult | undefined> {
+		if (this.dropsLoopEvent("model_select")) return undefined;
 		let result: ModelSelectEventResult | undefined;
 
 		for (const ext of this.extensions) {
@@ -2392,8 +2542,10 @@ export class ExtensionRunner {
 		source: ContextEvent["source"] = "agent",
 	): Promise<AgentMessage[]> {
 		return dispatchContextMessages(messages, {
-			contextHandlers: snapshotEventHandlers(this.extensions, "context"),
-			contextWithSystemHandlers: snapshotEventHandlers(this.extensions, "context_with_system"),
+			contextHandlers: this.dropsLoopEvent("context") ? [] : snapshotEventHandlers(this.extensions, "context"),
+			contextWithSystemHandlers: this.dropsLoopEvent("context_with_system")
+				? []
+				: snapshotEventHandlers(this.extensions, "context_with_system"),
 			createContext: (path) => this.createContext(path),
 			emitError: (error) => this.emitError(error),
 			excludeExtensionPath,
@@ -2425,7 +2577,10 @@ export class ExtensionRunner {
 	): Promise<unknown> {
 		let currentPayload = payload;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_request")) {
+		const requestHandlers = this.dropsLoopEvent("before_provider_request")
+			? []
+			: snapshotEventHandlers(this.extensions, "before_provider_request");
+		for (const { ext, handlers } of requestHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
 				try {
@@ -2455,7 +2610,10 @@ export class ExtensionRunner {
 	}
 
 	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_headers")) {
+		const headerHandlers = this.dropsLoopEvent("before_provider_headers")
+			? []
+			: snapshotEventHandlers(this.extensions, "before_provider_headers");
+		for (const { ext, handlers } of headerHandlers) {
 			for (const handler of handlers) {
 				try {
 					// Handlers mutate `headers` in place; the return value is ignored.

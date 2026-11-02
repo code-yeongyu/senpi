@@ -1,5 +1,41 @@
 # changes
 
+## 2026-11-02 - Order zero-padded and -1 CalVer versions (#5406, PR #5411)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: Senpi CalVer parsing accepts any `-N` revision with N >= 1 (`-1` equals the bare date, `-10` > `-9`) and compares month and day numerically, so `2026.11.02-1`, `2026.11.2-1` and `2026.11.2` are one release. When only one side is CalVer, the semver fallback receives that side in its canonical unpadded form.
+
+### Why
+
+- Release `2026.11.02-1` stamped a zero-padded version with a `-1` suffix. The pattern only accepted `-2` and higher, and semver rejects the padded `02`, so `isNewerPackageVersion` was always false: users on that release were never offered an update, and the self-update tests went red on main.
+
+### Why an extension could not handle it
+
+- Version ordering for the update check and `senpi update` runs in core bootstrap code before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `SENPI_CALVER_PATTERN` and `comparePackageVersions` in `packages/coding-agent/src/utils/version-check.ts`.
+
+## 2026-10-31 - Adopt Windows pipes by mode bits (#5137, PR #5142)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: exports `isFifoMode` and adopts an inherited descriptor when its file-type mode bits are FIFO, instead of `Stats.isFIFO()`, so adoption accepts every pair the parser accepts.
+
+### Why
+
+- On Windows source runtimes `Stats.isFIFO()` is false for real pipes, so a parsed pair was never adopted and the private channel silently stayed down.
+
+### Why an extension could not handle it
+
+- Private channel adoption runs during bootstrap, before extensions load.
+
+### Expected merge conflict zones
+
+- Inherited descriptor type checks.
+
 ## 2026-10-29 - Compose and protect inherited pipe pairs (#4859)
 
 ### What changed

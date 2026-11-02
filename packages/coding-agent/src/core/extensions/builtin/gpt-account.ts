@@ -1,6 +1,7 @@
 import type { AccountLoginReceipt } from "@earendil-works/pi-ai";
-import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
+import { describeCredentialAccount } from "../../../core/credential-account-status.ts";
 import { unblockPooledAccount } from "../../../core/credential-account-unblock.ts";
+import { accountLimitsFor, describeAccountLimits } from "../../subscription-limits/limit-summary.ts";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
@@ -33,10 +34,11 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID);
 	const lines = ["ChatGPT Subscription OAuth accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
+	const now = Date.now();
 	for (const account of accounts) {
-		const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
-		if (account.pinned) states.push("pinned");
-		lines.push(`  ${states.join(" | ")}`);
+		lines.push(`  ${describeCredentialAccount(account)}`);
+		const limits = accountLimitsFor(CHATGPT_SUBSCRIPTION_PROVIDER_ID, account.name);
+		lines.push(`    ${describeAccountLimits(limits, now)}`);
 	}
 	ctx.ui.notify(lines.join("\n"), "info");
 }
