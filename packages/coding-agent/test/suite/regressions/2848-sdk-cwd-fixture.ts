@@ -28,7 +28,9 @@ export function captureSdkRequests(): Options[] {
 	});
 	const query: SdkQuery = ({ prompt, options }) => {
 		captured.push(options ?? {});
-		if (typeof prompt !== "string" && (options?.sessionId || options?.resume)) {
+		// A one-shot native-frame seed (senpi#1977) also resumes, but from an in-memory store, and ends with its prompt.
+		const resident = (options?.sessionId || options?.resume) && options?.sessionStore === undefined;
+		if (typeof prompt !== "string" && resident) {
 			return new ScriptedResidentQuery(
 				prompt,
 				(sessionId, userUuid) => [

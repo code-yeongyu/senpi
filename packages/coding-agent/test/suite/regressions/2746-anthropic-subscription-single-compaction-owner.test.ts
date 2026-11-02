@@ -250,11 +250,15 @@ describe("senpi#2746 one compaction owner per anthropic-subscription turn", () =
 
 		// The next turn must not resume the Claude Code session that just compacted natively:
 		// it is rebuilt from senpi's own history in a fresh resident process.
+		const compactedLineage = compacted?.options?.sessionId ?? compacted?.options?.resume;
+		expect(compactedLineage).toBeDefined();
 		await lane.harness.session.prompt("second");
 
 		const rebuilt = servingQuery(lane.queries);
 		expect(rebuilt).not.toBe(compacted);
-		expect(rebuilt?.options?.resume).toBeUndefined();
+		// A native-frame seed (senpi#1977) resumes the transcript it just wrote from senpi's history under a fresh id;
+		// a flat replay resumes nothing. Either way the compacted lineage is never resumed.
+		expect(rebuilt?.options?.resume).not.toBe(compactedLineage);
 		expectSingleOwner(rebuilt, true);
 		expect(lane.calls()).toBe(2);
 		expect(lastAssistant(lane.harness)).toMatchObject({ stopReason: "stop" });

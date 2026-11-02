@@ -9,6 +9,7 @@ import type { ClientMessageIdentity } from "../../core/client-message-identity.t
 import type { SessionEntry } from "../../core/session-manager.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
+import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
 
 // ============================================================================
@@ -287,6 +288,7 @@ export type RpcSessionCommand =
 			maxBytes?: number;
 	  }
 	| { id?: string; type: "get_tree" }
+	| RpcRecoveryCommand
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
@@ -317,7 +319,7 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_auth_providers" }
 	| { id?: string; type: "login_start"; provider: string }
 	| { id?: string; type: "login_cancel"; provider: string }
-	| { id?: string; type: "login_api_key"; provider: string; key: string }
+	| { id?: string; type: "login_api_key"; provider: string; key: string; region?: string }
 	| { id?: string; type: "logout"; provider: string }
 	// Checks a key with the provider's model list without storing it (desktop #2510).
 	| { id?: string; type: "verify_api_key"; provider: string; key: string }

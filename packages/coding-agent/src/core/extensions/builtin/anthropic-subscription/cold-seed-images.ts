@@ -26,14 +26,17 @@ function source(origin: ReplayedImageOrigin): string {
 		: `returned by the ${origin.toolName} tool, id=${origin.toolCallId}`;
 }
 
+type ToolOrigin = Extract<ReplayedImageOrigin, { kind: "tool" }>;
+
 export const coldSeedImageText = {
-	toolOutput: (toolName: string): string =>
-		`[image returned by the ${toolName} tool to your own call (tool output, not a user attachment)]`,
-	userHistory: "[image the user attached in this earlier turn (history, not part of the current message)]",
+	/** Every tool image in the history, pending or answered, so its bytes never change when its turn ends (#5275). */
+	toolImage: (origin: ToolOrigin): string =>
+		`[image returned by the ${origin.toolName} tool, id=${origin.toolCallId} (tool output, not a user attachment): not shown in the history; an image from your current turn is attached after the history, any other was already seen, so run the tool again if you need it]`,
+	currentTurnToolOutput: (origin: ToolOrigin): string =>
+		`[image returned by the ${origin.toolName} tool, id=${origin.toolCallId}, to your own call in the current turn (tool output, not a user attachment)]`,
+	userHistory: "[image the user attached to this message of the history (not part of any newer message)]",
 	duplicate: (origin: ReplayedImageOrigin, first: ReplayedImageOrigin): string =>
 		`${subject(origin)}: identical to an image already shown above (${source(first)}); not attached again]`,
-	answered: (origin: Extract<ReplayedImageOrigin, { kind: "tool" }>): string =>
-		`[image returned earlier by the ${origin.toolName} tool, id=${origin.toolCallId}: already seen earlier in this conversation; run the tool again if you need it]`,
 	capped: (origin: ReplayedImageOrigin): string =>
 		`${subject(origin)}: omitted from this replay, which re-sends at most ${MAX_REPLAYED_HISTORY_IMAGES} earlier images; re-read the source if you need it]`,
 	unreadable: (origin: ReplayedImageOrigin): string =>
@@ -134,18 +137,126 @@ function isAnsweredToolImage(occurrence: ImageOccurrence): boolean {
 	return occurrence.answered && occurrence.origin.kind === "tool";
 }
 
+/** Decoded bytes of history images one native-frame replay re-sends at most, well under the API request limit. */
+export const MAX_REPLAYED_HISTORY_IMAGE_BYTES = 20 * 1024 * 1024;
+
 /**
- * Rewrites the image entries of a cold-seed history (#2490): a tool-result image
- * is labeled as tool output, identical bytes are sent once and referenced in text
- * afterwards, the replay is capped, and undecodable image data is dropped with a
- * note. Returns the replacement content for each history index that holds an
- * image; every other message is replayed unchanged.
+ * How many of `distinct` images (first-occurrence order) a frame replay cuts: none until the count reaches twice the
+ * target, then a multiple of the target, so the newest `MAX_REPLAYED_HISTORY_IMAGES` to `2x - 1` stay. The cut is a
+ * function of the append-only count alone, so appending history moves it once per `MAX_REPLAYED_HISTORY_IMAGES` new
+ * images, never per image, and every rebuild in between sends the same prefix bytes (senpi#1977).
+ */
+function frameCutCount(distinct: number): number {
+	if (distinct < 2 * MAX_REPLAYED_HISTORY_IMAGES) return 0;
+	return (
+		MAX_REPLAYED_HISTORY_IMAGES * Math.floor((distinct - MAX_REPLAYED_HISTORY_IMAGES) / MAX_REPLAYED_HISTORY_IMAGES)
+	);
+}
+
+/**
+ * Images that start before the byte cut: when the kept images exceed the byte cap, whole half-cap chunks of the
+ * cumulative byte range are cut, oldest first. Chunk edges are fixed points of the append-only sequence, so the cut
+ * moves once per half cap of new image bytes, not on every image.
+ */
+function byteCut(sizes: readonly number[]): number {
+	const total = sizes.reduce((sum, size) => sum + size, 0);
+	if (total <= MAX_REPLAYED_HISTORY_IMAGE_BYTES) return 0;
+	const chunk = MAX_REPLAYED_HISTORY_IMAGE_BYTES / 2;
+	const cutBytes = Math.ceil((total - MAX_REPLAYED_HISTORY_IMAGE_BYTES) / chunk) * chunk;
+	let start = 0;
+	let cut = 0;
+	for (const size of sizes) {
+		if (start >= cutBytes) break;
+		start += size;
+		cut += 1;
+	}
+	return cut;
+}
+
+/**
+ * The image policy of a native-frame cold seed (senpi#1977). Images stay where they were returned, inside their own
+ * turn, so no history label is needed and none is answered-dropped. Every decision depends only on earlier history:
+ * the first copy of identical bytes is sent and later copies become the `duplicate` note; past twice the image target
+ * the oldest images (tool images before the user's own) become the `capped` note in steps of the target; a byte cap
+ * cuts the oldest in half-cap steps; undecodable data becomes the `unreadable` note. The final user message is not
+ * history and is never passed here. Returns the replacement content for each history index that holds an image.
+ */
+export function frameHistoryImages(
+	history: Context["messages"],
+	sdkToolName: (piToolName: string) => string,
+): ReadonlyMap<number, readonly unknown[]> {
+	const contents = imageBearingContent(history, sdkToolName);
+	const occurrences = collectOccurrences(contents, 0);
+	if (occurrences.length === 0) return new Map();
+	const firstByHash = new Map<string, ImageOccurrence>();
+	for (const occurrence of occurrences) {
+		const hash = occurrence.decoded?.sha256;
+		if (hash !== undefined && !firstByHash.has(hash)) firstByHash.set(hash, occurrence);
+	}
+	const distinct = [...firstByHash.values()];
+	const cut = new Set<ImageOccurrence>();
+	const cutCount = frameCutCount(distinct.length);
+	for (const occurrence of [
+		...distinct.filter((candidate) => candidate.origin.kind === "tool"),
+		...distinct.filter((candidate) => candidate.origin.kind === "user"),
+	].slice(0, cutCount)) {
+		cut.add(occurrence);
+	}
+	const kept = distinct.filter((occurrence) => !cut.has(occurrence));
+	const sizes = kept.map((occurrence) => Buffer.byteLength(occurrence.decoded?.compactBase64 ?? "", "base64"));
+	for (const occurrence of kept.slice(0, byteCut(sizes))) cut.add(occurrence);
+
+	const replacements = new Map<number, Map<number, readonly unknown[]>>();
+	for (const occurrence of occurrences) {
+		const { origin, entry, decoded } = occurrence;
+		const first = decoded === undefined ? undefined : firstByHash.get(decoded.sha256);
+		let replacement: readonly unknown[];
+		if (decoded === undefined || first === undefined) {
+			replacement = [{ type: "text", text: coldSeedImageText.unreadable(origin) }];
+		} else if (first !== occurrence) {
+			replacement = [{ type: "text", text: coldSeedImageText.duplicate(origin, first.origin) }];
+		} else if (cut.has(occurrence)) {
+			replacement = [{ type: "text", text: coldSeedImageText.capped(origin) }];
+		} else {
+			replacement = [{ ...entry, data: Buffer.from(decoded.compactBase64, "base64").toString("base64") }];
+		}
+		const perMessage = replacements.get(occurrence.messageIndex) ?? new Map<number, readonly unknown[]>();
+		perMessage.set(occurrence.entryIndex, replacement);
+		replacements.set(occurrence.messageIndex, perMessage);
+	}
+	const rewritten = new Map<number, readonly unknown[]>();
+	for (const [messageIndex, perMessage] of replacements) {
+		const content = contents.get(messageIndex)?.content ?? [];
+		rewritten.set(
+			messageIndex,
+			content.flatMap((entry, entryIndex) => perMessage.get(entryIndex) ?? [entry]),
+		);
+	}
+	return rewritten;
+}
+
+export type ReplayedHistoryImages = {
+	/** Replacement content for each history index that holds an image; every other message is replayed unchanged. */
+	readonly history: ReadonlyMap<number, readonly unknown[]>;
+	/** The current turn's tool images, sent after the history and its cache breakpoint. */
+	readonly currentTurn: readonly unknown[];
+};
+
+/**
+ * Rewrites the image entries of a cold-seed history (#2490): identical bytes are sent once and referenced in text
+ * afterwards, the replay is capped, and undecodable image data is dropped with a note.
+ *
+ * What a history entry becomes depends only on the history before it, never on whether a later assistant message
+ * answered it, so a request rebuilt after the turn ends starts with the bytes the previous one cached (#5275). A tool
+ * image is therefore always a text note in the history; while its turn is in progress it is also sent in
+ * `currentTurn`, which comes after the cache breakpoint and simply disappears when the turn ends (#2768: an answered
+ * tool image is never re-sent). A user upload is replayed in place under the same label in every state.
  */
 export function replayHistoryImages(
 	history: Context["messages"],
 	sdkToolName: (piToolName: string) => string,
 	options: { readonly inProgressTurn?: boolean } = {},
-): ReadonlyMap<number, readonly unknown[]> {
+): ReplayedHistoryImages {
 	const contents = imageBearingContent(history, sdkToolName);
 	// Everything before this index is from turns the assistant already finished. A replay taken in
 	// the middle of a turn keeps that turn's own user message and tool results in history; they are
@@ -157,39 +268,47 @@ export function replayHistoryImages(
 			)
 		: history.findLastIndex((message) => message.role === "assistant");
 	const occurrences = collectOccurrences(contents, answeredBefore);
-	if (occurrences.length === 0) return new Map();
+	if (occurrences.length === 0) return { history: new Map(), currentTurn: [] };
 	const replayed = selectUserFirstThenMostRecent(occurrences);
-	const firstShown = new Map<string, ReplayedImageOrigin>();
+	const shownInHistory = new Map<string, ReplayedImageOrigin>();
+	const shownInCurrentTurn = new Map<string, ReplayedImageOrigin>();
 	const replacements = new Map<number, Map<number, readonly unknown[]>>();
+	const currentTurn: unknown[] = [];
+	const canonical = (entry: Record<string, unknown>, decoded: DecodedImage): Record<string, unknown> => ({
+		...entry,
+		data: Buffer.from(decoded.compactBase64, "base64").toString("base64"),
+	});
 
 	for (const occurrence of occurrences) {
 		const { origin, entry, decoded } = occurrence;
 		const hash = decoded?.sha256;
+		const shownEarlier = hash === undefined ? undefined : shownInHistory.get(hash);
 		let replacement: readonly unknown[];
-		const shownEarlier = hash === undefined ? undefined : firstShown.get(hash);
 		if (decoded === undefined || hash === undefined) {
 			replacement = [{ type: "text", text: coldSeedImageText.unreadable(origin) }];
-		} else if (origin.kind === "tool" && occurrence.answered && shownEarlier === undefined) {
-			replacement = [{ type: "text", text: coldSeedImageText.answered(origin) }];
-		} else if (!replayed.has(hash) && shownEarlier === undefined) {
+		} else if (shownEarlier !== undefined) {
+			replacement = [{ type: "text", text: coldSeedImageText.duplicate(origin, shownEarlier) }];
+		} else if (origin.kind === "tool") {
+			replacement = [{ type: "text", text: coldSeedImageText.toolImage(origin) }];
+			if (!occurrence.answered) {
+				const first = shownInCurrentTurn.get(hash);
+				if (first !== undefined) {
+					currentTurn.push({ type: "text", text: coldSeedImageText.duplicate(origin, first) });
+				} else if (!replayed.has(hash)) {
+					currentTurn.push({ type: "text", text: coldSeedImageText.capped(origin) });
+				} else {
+					shownInCurrentTurn.set(hash, origin);
+					currentTurn.push(
+						{ type: "text", text: coldSeedImageText.currentTurnToolOutput(origin) },
+						canonical(entry, decoded),
+					);
+				}
+			}
+		} else if (!replayed.has(hash)) {
 			replacement = [{ type: "text", text: coldSeedImageText.capped(origin) }];
 		} else {
-			const first = firstShown.get(hash);
-			if (first) {
-				replacement = [{ type: "text", text: coldSeedImageText.duplicate(origin, first) }];
-			} else {
-				firstShown.set(hash, origin);
-				const canonical = { ...entry, data: Buffer.from(decoded.compactBase64, "base64").toString("base64") };
-				// A user upload after the last assistant message belongs to the turn still in progress
-				// (a mid-turn replay keeps it in history), so only earlier uploads are labeled as history.
-				const label =
-					origin.kind === "tool"
-						? coldSeedImageText.toolOutput(origin.toolName)
-						: occurrence.answered
-							? coldSeedImageText.userHistory
-							: undefined;
-				replacement = label === undefined ? [canonical] : [{ type: "text", text: label }, canonical];
-			}
+			shownInHistory.set(hash, origin);
+			replacement = [{ type: "text", text: coldSeedImageText.userHistory }, canonical(entry, decoded)];
 		}
 		const perMessage = replacements.get(occurrence.messageIndex) ?? new Map<number, readonly unknown[]>();
 		perMessage.set(occurrence.entryIndex, replacement);
@@ -204,5 +323,5 @@ export function replayHistoryImages(
 			content.flatMap((entry, entryIndex) => perMessage.get(entryIndex) ?? [entry]),
 		);
 	}
-	return rewritten;
+	return { history: rewritten, currentTurn };
 }

@@ -4,6 +4,7 @@ import type {
 	SDKMessage,
 	SDKUserMessage,
 	SessionMessage,
+	SessionStore,
 	SettingSource,
 	ThinkingConfig,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -20,6 +21,7 @@ export type {
 	SDKMessage,
 	SDKUserMessage,
 	SessionMessage,
+	SessionStore,
 	SettingSource,
 	ThinkingConfig,
 };

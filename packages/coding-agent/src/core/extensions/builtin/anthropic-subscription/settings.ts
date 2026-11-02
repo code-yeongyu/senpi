@@ -10,6 +10,18 @@ export type AnthropicSubscriptionTokenInjection = "oauth-slots" | "config-dir" |
 /** Who compacts a resident lane: senpi's compaction stack (default) or the Claude Agent SDK's native auto-compact. */
 export type AnthropicSubscriptionCompactionOwner = "senpi" | "sdk";
 
+/**
+ * How a cold seed re-sends the history: `frames` seeds it as native turns of a resumed Claude Code transcript
+ * (senpi#1977); `flat` sends the legacy single `<conversation_history>` user message.
+ */
+export type AnthropicSubscriptionColdSeedReplay = "frames" | "flat";
+
+export function resolveColdSeedReplay(
+	settings: Pick<AnthropicSubscriptionProviderSettings, "coldSeedReplay">,
+): AnthropicSubscriptionColdSeedReplay {
+	return settings.coldSeedReplay ?? "frames";
+}
+
 /** The one place the default lives: senpi owns compaction unless `compactionOwner: "sdk"` opts out. */
 export function resolveCompactionOwner(
 	settings: Pick<AnthropicSubscriptionProviderSettings, "compactionOwner">,
@@ -37,6 +49,7 @@ export interface AnthropicSubscriptionProviderSettings {
 	readonly accountFallback?: boolean;
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
 	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
+	readonly coldSeedReplay?: AnthropicSubscriptionColdSeedReplay;
 }
 
 export type ResolvedSystemPromptMode = {
@@ -99,6 +112,10 @@ function parseCompactionOwner(value: unknown): AnthropicSubscriptionCompactionOw
 	return value === "senpi" || value === "sdk" ? value : undefined;
 }
 
+function parseColdSeedReplay(value: unknown): AnthropicSubscriptionColdSeedReplay | undefined {
+	return value === "frames" || value === "flat" ? value : undefined;
+}
+
 function parseEnvironmentBoolean(value: string | undefined): boolean | undefined {
 	if (value === undefined) return undefined;
 	switch (value.toLowerCase()) {
@@ -130,7 +147,9 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 	const accountFallback = typeof value.accountFallback === "boolean" ? value.accountFallback : undefined;
 	const tokenInjection = parseTokenInjection(value.tokenInjection);
 	const compactionOwner = parseCompactionOwner(value.compactionOwner);
+	const coldSeedReplay = parseColdSeedReplay(value.coldSeedReplay);
 	return {
+		...(coldSeedReplay !== undefined ? { coldSeedReplay } : {}),
 		...(enabled !== undefined ? { enabled } : {}),
 		...(appendSystemPrompt !== undefined ? { appendSystemPrompt } : {}),
 		...(systemPromptMode !== undefined ? { systemPromptMode } : {}),
@@ -155,7 +174,9 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 	const pinnedAccount = parseNonEmptyString(environment.SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT);
 	const accountFallback = parseEnvironmentBoolean(environment.SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK);
 	const compactionOwner = parseCompactionOwner(environment.SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER);
+	const coldSeedReplay = parseColdSeedReplay(environment.SENPI_CLAUDE_SDK_OAUTH_REPLAY);
 	return {
+		...(coldSeedReplay !== undefined ? { coldSeedReplay } : {}),
 		...(enabled !== undefined ? { enabled } : {}),
 		...(systemPromptMode !== undefined ? { systemPromptMode } : {}),
 		...(systemPromptFile !== undefined ? { systemPromptFile } : {}),

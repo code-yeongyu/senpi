@@ -24,8 +24,9 @@ export type CatalogFamily = (typeof CATALOG_FAMILIES)[number];
 const FAMILY_SET: ReadonlySet<string> = new Set(CATALOG_FAMILIES);
 
 /**
- * Who produces a family's members: `complete` enumerates every member, `partial` enumerates some and never declares
- * the rest absent (the loaded base S11 streams: its transcript, opaque and source members). The assembly is complete
+ * Who produces a family's members: `complete` enumerates every member (for the families fed by entry kinds, the
+ * catalog's members of this epoch plus the loaded base's stamped-row stream each names with a `base` member, S11c),
+ * `partial` enumerates some and never declares the rest absent (an unavailable transcript). The assembly is complete
  * only when every family is `complete`, and a complete producer that emitted nothing fails the gate (`assertCoverage`).
  */
 const PRODUCERS = ["complete", "partial"] as const;
@@ -48,13 +49,14 @@ export const FAMILY_PRODUCERS: FamilyProducers = {
 };
 
 /**
- * The producers at one root (RULING-61 Q1): a loaded base is a file range whose kinds this epoch never saw, and an
- * unavailable transcript enumerates nothing, so the families fed by entry kinds (transcript, opaque, source) are
- * then `partial`, never complete or empty. A client correlation refused at the protocol depth limit never became the
- * lane's standing one, so `identity` is then `partial` too: its member reports the count (RULING-67 (4)).
+ * The producers at one root (RULING-61 Q1): an unavailable transcript enumerates nothing, so the families fed by
+ * entry kinds (transcript, opaque, source) are then `partial`, never complete or empty. A loaded base keeps them
+ * complete since S11c: its members are the stamped rows of the base stream every one of them names. A client
+ * correlation refused at the protocol depth limit never became the lane's standing one, so `identity` is then
+ * `partial` too: its member reports the count (RULING-67 (4)).
  */
 export function familyProducers(transcript: TranscriptRoot, refusedCorrelations: number): FamilyProducers {
-	const exact = transcript.unavailable === null && (transcript.base?.count ?? 0) === 0;
+	const exact = transcript.unavailable === null;
 	const entries: Partial<Record<CatalogFamily, "partial">> = exact
 		? {}
 		: { transcript: "partial", opaque: "partial", source: "partial" };

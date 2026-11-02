@@ -3,6 +3,7 @@ import type { RetainedRoot } from "./compact-recovery-state.ts";
 import { type RecoveryOutcome, type RefusalReason, refusalReason } from "./compact-recovery-types.ts";
 import type { ActiveBlockView, ActiveMessageView } from "./compact-state-view.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import type { ResyncResume } from "./legacy-resync-view.ts";
 import { GeneratedFramesCursor, type LegacyViewCursor } from "./legacy-view-cursor.ts";
 import { omitNormalInlineMedia } from "./media-placeholders.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -112,6 +113,24 @@ function* blockFrames(
 	}
 }
 
+/**
+ * RULING-115: the cut carries a tool call's parsed arguments only, so each call still open at it is reset and resumes
+ * from offset 0 with its whole raw prefix; a call that had ended needs neither.
+ */
+function* toolResetFrames(message: ActiveMessageView): Generator<Frame> {
+	const usage = message.fields?.usage;
+	for (const { contentIndex, text, phase, block } of message.blocks) {
+		if (phase !== "open" || block?.type !== "toolCall") continue;
+		yield { type: "message_tool_arguments_reset", contentIndex, rawArgumentPrefix: "", parsedThrough: 0 };
+		if (text.length > 0)
+			yield {
+				type: "message_update",
+				...(usage === undefined ? {} : { usage }),
+				assistantMessageEvent: { type: "toolcall_delta", contentIndex, delta: text },
+			};
+	}
+}
+
 function* messageFrames(message: ActiveMessageView, resolved: ResolvedNames): Generator<Frame> {
 	const start = legacyMessage(message, "start");
 	if (!start) return;
@@ -214,21 +233,22 @@ export function legacyAttachView(
 export async function legacyResyncMessage(
 	sessionId: string,
 	source: RecoveryOutcome<RetainedRoot> | undefined,
-): Promise<unknown> {
-	if (!source) return null;
+): Promise<ResyncResume> {
+	if (!source) return { message: null };
 	if (!source.ok) {
 		if (REPORTED[refusalReason(source.failure)]) unavailable(sessionId, source.failure.reason);
-		return null;
+		return { message: null };
 	}
 	const { value } = source;
 	return value.hold(async () => {
 		try {
 			const message = await activeMessage(value);
-			return (message && legacyMessage(message, "current")) ?? null;
+			const current = message && legacyMessage(message, "current");
+			return current ? { message: current, frames: [...toolResetFrames(message)] } : { message: null };
 		} catch (cause) {
 			// Under the hold only the lane itself can release the root (a retirement): nothing to report then.
 			if (value.lane.holds(value.root)) unavailable(sessionId, cause);
-			return null;
+			return { message: null };
 		}
 	});
 }
