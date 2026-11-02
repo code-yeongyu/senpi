@@ -24,24 +24,30 @@ function sha256File(path) {
 	return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+/**
+ * The archive's members, keyed by name without a leading `./` (`tar -czf out -C root .` stores `./package/...`,
+ * `npm pack` stores `package/...`), each mapped to the name tar stored, which is the only name tar extracts by.
+ * @returns {Map<string, string>}
+ */
 function tarEntries(path) {
 	const list = spawnSync("tar", ["-tzf", path], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 	if (list.status !== 0) throw new Error(`could not list ${path} as a gzip tarball: ${list.stderr.trim()}`);
-	return new Set(
-		list.stdout
-			.split("\n")
-			.filter((entry) => entry !== "")
-			.map((entry) => entry.replace(/^\.\//, "")),
-	);
+	const entries = new Map();
+	for (const stored of list.stdout.split("\n")) {
+		const name = stored.replace(/^\.\//, "");
+		if (name !== "") entries.set(name, stored);
+	}
+	return entries;
 }
 
-function tarJson(path, entry) {
+function tarJson(path, entries, name) {
+	const entry = entries.get(name);
 	const read = spawnSync("tar", ["-xzOf", path, entry], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
-	if (read.status !== 0) throw new Error(`could not read ${entry} from ${path}: ${read.stderr.trim()}`);
+	if (read.status !== 0) throw new Error(`could not read ${name} from ${path}: ${read.stderr.trim()}`);
 	try {
 		return JSON.parse(read.stdout);
 	} catch (error) {
-		throw new Error(`${entry} in ${path} is not JSON: ${error.message}`);
+		throw new Error(`${name} in ${path} is not JSON: ${error.message}`);
 	}
 }
 
@@ -54,7 +60,7 @@ export function inspectSenpiTarball(tarballPath) {
 	const path = resolve(tarballPath);
 	const entries = tarEntries(path);
 	if (!entries.has("package/package.json")) throw new Error(`${path} has no package/package.json`);
-	const manifest = tarJson(path, "package/package.json");
+	const manifest = tarJson(path, entries, "package/package.json");
 	if (manifest.name !== SENPI_PACKAGE) throw new Error(`${path} is ${manifest.name}, not ${SENPI_PACKAGE}`);
 	if (typeof manifest.version !== "string") throw new Error(`${path} has no package version`);
 	const cli = typeof manifest.bin?.senpi === "string" ? manifest.bin.senpi.replace(/^\.\//, "") : undefined;
@@ -65,7 +71,8 @@ export function inspectSenpiTarball(tarballPath) {
 
 /**
  * A desktop engine bundle tarball (`tar -czf engine.tgz -C omo-runtime <platform>`, or packed at its root), checked
- * the way EQ.desktop's candidate loader reads it.
+ * the way EQ.desktop's candidate loader (`scripts/qa/fused-equivalence-desktop/engine.ts` `candidateEngine`) reads
+ * it: once extracted, the bundle is the `<platform>/` folder whenever the archive has one, else the archive root.
  * @param {string} tarballPath
  * @param {string} platform the golden platform of this run, e.g. `darwin-arm64`
  * @returns {{ path: string, sha256: string, senpiRef: string, omoRef: string, platform: string }}
@@ -73,9 +80,9 @@ export function inspectSenpiTarball(tarballPath) {
 export function inspectDesktopBundle(tarballPath, platform) {
 	const path = resolve(tarballPath);
 	const entries = tarEntries(path);
-	const dir = entries.has(`${platform}/bundle-manifest.json`) ? `${platform}/` : "";
-	if (!entries.has(`${dir}bundle-manifest.json`)) throw new Error(`${path} has no bundle-manifest.json`);
-	const manifest = tarJson(path, `${dir}bundle-manifest.json`);
+	const dir = [...entries.keys()].some((name) => name.startsWith(`${platform}/`)) ? `${platform}/` : "";
+	if (!entries.has(`${dir}bundle-manifest.json`)) throw new Error(`${path} has no ${dir}bundle-manifest.json`);
+	const manifest = tarJson(path, entries, `${dir}bundle-manifest.json`);
 	for (const field of ["senpiRef", "omoRef", "platform"])
 		if (typeof manifest[field] !== "string") throw new Error(`${path} bundle-manifest.json lacks ${field}`);
 	if (manifest.platform !== platform)
@@ -86,7 +93,9 @@ export function inspectDesktopBundle(tarballPath, platform) {
 
 /**
  * The receipt fields and the EQ.omo / EQ.desktop invocations for one senpi candidate. Throws before any run when the
- * two artifacts do not describe the same candidate.
+ * two artifacts do not describe the same candidate. Both commands start with bare `node`, as the drivers' own usage
+ * lines do; EQ.desktop's driver is a `.ts` file run through Node's type stripping, so that `node` must satisfy the
+ * desktop repo's `engines.node` (^24.13.1).
  * @param {{ senpiTarball: string, senpiRef: string, desktopBundle: string, platform: string,
  *   senpiRepo: string, omoRepo: string, desktopRepo: string }} input
  */
