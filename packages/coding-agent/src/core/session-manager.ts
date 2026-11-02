@@ -2098,8 +2098,13 @@ export class SessionManager {
 
 	/** The call key of entry `entryId`'s toolCall part at `contentIndex` (RULING-126/127): persisted, or load-time. */
 	getToolCallKey(entryId: string, contentIndex: number): string | undefined {
-		const entry = this.byId.get(entryId);
-		return entry && this.callKeys.keyOf(this._materializeEntry(entry), contentIndex);
+		const entry = this.getEntry(entryId);
+		return entry && this.callKeys.keyOf(entry, contentIndex);
+	}
+
+	/** `entry` as the session file holds it: its persisted call keys back in place (RULING-127 (c)). */
+	persistedEntry(entry: SessionEntry): FileEntry {
+		return this.callKeys.decorate(entry);
 	}
 
 	private _appendMessage(
@@ -2920,8 +2925,10 @@ export class SessionManager {
 		return materialized;
 	}
 
+	/** The file's whole history, its persisted call keys taken out like a load does (RULING-126 (1a)). */
 	private _loadFullHistoryEntries(): FileEntry[] {
-		return this.sessionFile ? sessionEntryLoader(this.sessionFile) : this.fileEntries;
+		if (!this.sessionFile) return this.fileEntries;
+		return sessionEntryLoader(this.sessionFile).map((entry) => this.callKeys.strip(entry));
 	}
 
 	/**
