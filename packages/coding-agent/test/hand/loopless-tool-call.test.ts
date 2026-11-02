@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
+import { grantLooplessExecuteToTestHarness } from "../../src/modes/rpc/loopless-execute-grant.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import { createLooplessRuntimeFactory, type LooplessRuntime } from "../../src/modes/rpc/runtime-factory-loopless.ts";
 
@@ -40,7 +41,7 @@ async function looplessRuntime(ran: number[], flags: readonly string[] = []): Pr
 			agentDir: join(scratch, "agent"),
 			appMode: "rpc",
 		},
-		{ extensionFactories: [echoExtension(ran)] },
+		{ extensionFactories: [echoExtension(ran)], executeGrant: grantLooplessExecuteToTestHarness() },
 	)({ cwd });
 	cleanups.push(async () => {
 		await runtime.dispose();
