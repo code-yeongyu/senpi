@@ -1,3 +1,89 @@
+## 2026-10-31 - List stream-keepalive.ts in the loop-core closure (senpi#5259)
+
+### What changed
+
+- `packages/agent/src/conformance/loop-core-manifest.ts`: `stream-keepalive.ts` is listed in `LOOP_CORE_MODULES`.
+
+### Why
+
+- `agent-loop.ts` imports it (senpi#4608), and the S06 boundary test (senpi#5002) refuses an unlisted local dependency, so main was red. The module is portable, so it belongs inside the closure.
+
+### Why an extension could not handle it
+
+- The loop-core boundary is a build-time conformance check on the agent package, not runtime behavior.
+
+## 2026-10-31 - The fused-equivalence job also runs the EQ.tui comparator unit test (senpi#5180)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `fused-equivalence` job's unit-test step (renamed `Normalizer and TUI comparator unit tests`) also runs `.agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs`, the contract that the EQ.tui comparator masks only the TUI header's release version.
+
+### Why
+
+- EQ.tui failed 0/7 on darwin-arm64 at every release because the header version was compared verbatim, and no CI job ran anything on the TUI surface. The comparator now masks that one token. The unit test runs on every PR, so the mask cannot widen or disappear unnoticed.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behaviour.
+
+### Expected merge conflict zones
+
+- LOW: the `fused-equivalence` job in `.github/workflows/ci.yml` is fork-only; upstream has no such job.
+
+## 2026-10-31 - Run the Windows pair release-proof cases (#4898)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Windows RPC job's pair-proof step also runs `host-private-fds-proof-gate.test.ts`, including the compiled-runtime stale-table case.
+
+### Why
+
+- The stale-table and release-gate cases must run on windows-latest under the pinned Bun.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- The Windows RPC job's test steps.
+
+## 2026-10-30 - Include every Python startup sidecar asset (senpi#5048)
+
+### What changed
+
+- `.github/workflows/ci.yml`: copy all `src/kernels/py/*.py` siblings into the isolated Windows Python host.
+
+### Why
+
+- Copying only `prelude.py` omitted the permission bridge and its identity dependencies, failing the compiled host at startup.
+
+### Why an extension could not handle it
+
+- CI constructs the isolated runtime before any extension can execute.
+
+### Expected merge conflict zones
+
+- LOW: the Python cold-start job's sidecar copy command.
+
+## 2026-10-30 - Run the TUI smoke regression test in CI (senpi#4989)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `fused-equivalence` job's normalizer step becomes `senpi-qa harness unit tests`. It installs tmux when the runner lacks it and runs `tui-smoke.test.mjs` next to `equivalence-normalize.test.mjs`.
+
+### Why
+
+- senpi#4986: the regression test proving the TUI smoke waits for a real render ran nowhere in CI.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the normalizer test step of `fused-equivalence` in `ci.yml`.
+
 ## 2026-10-29 - Run the compiled Windows pair and old-parser controls (#4859)
 
 ### What changed

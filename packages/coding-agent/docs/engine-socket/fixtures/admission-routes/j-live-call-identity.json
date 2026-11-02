@@ -1,0 +1,1020 @@
+{
+	"compact": [
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_start",
+				"contentIndex": 0,
+				"partial": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "toolCall",
+							"id": "reused",
+							"name": "read",
+							"arguments": {
+								"path": "note.txt"
+							}
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": "<tokens>",
+						"output": "<tokens>",
+						"cacheRead": "<tokens>",
+						"cacheWrite": "<tokens>",
+						"totalTokens": "<tokens>",
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "pending",
+					"timestamp": 1
+				}
+			},
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "reused",
+						"name": "read",
+						"arguments": {
+							"path": "note.txt"
+						}
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": "<tokens>",
+					"output": "<tokens>",
+					"cacheRead": "<tokens>",
+					"cacheWrite": "<tokens>",
+					"totalTokens": "<tokens>",
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "pending",
+				"timestamp": 1
+			},
+			"resolvedToolName": "read",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-1"
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_end",
+				"contentIndex": 0,
+				"toolCall": {
+					"type": "toolCall",
+					"id": "reused",
+					"name": "read",
+					"arguments": {
+						"path": "note.txt"
+					}
+				},
+				"partial": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "toolCall",
+							"id": "reused",
+							"name": "read",
+							"arguments": {
+								"path": "note.txt"
+							}
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": "<tokens>",
+						"output": "<tokens>",
+						"cacheRead": "<tokens>",
+						"cacheWrite": "<tokens>",
+						"totalTokens": "<tokens>",
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "pending",
+					"timestamp": 1
+				}
+			},
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "reused",
+						"name": "read",
+						"arguments": {
+							"path": "note.txt"
+						}
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": "<tokens>",
+					"output": "<tokens>",
+					"cacheRead": "<tokens>",
+					"cacheWrite": "<tokens>",
+					"totalTokens": "<tokens>",
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "pending",
+				"timestamp": 1
+			},
+			"resolvedToolName": "read",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-1"
+		},
+		{
+			"type": "tool_execution_start",
+			"toolCallId": "reused",
+			"toolName": "read",
+			"args": {
+				"path": "note.txt"
+			},
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "start",
+			"statusMessage": "running inline:1",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "update",
+			"statusMessage": "checking",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "end",
+			"statusMessage": "checking",
+			"completedAt": 1793491200000,
+			"status": "completed",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-1"
+		},
+		{
+			"type": "tool_execution_end",
+			"toolCallId": "reused",
+			"toolName": "read",
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "note body\n"
+					}
+				]
+			},
+			"isError": false,
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "ghost",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "start",
+			"statusMessage": "running inline:1",
+			"sessionId": "rpc-1",
+			"callUnknown": true
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "ghost",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "update",
+			"statusMessage": "checking",
+			"sessionId": "rpc-1",
+			"callUnknown": true
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "ghost",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "end",
+			"statusMessage": "checking",
+			"completedAt": 1793491200000,
+			"status": "completed",
+			"sessionId": "rpc-1",
+			"callUnknown": true
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_start",
+				"contentIndex": 0,
+				"partial": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "toolCall",
+							"id": "reused",
+							"name": "probe",
+							"arguments": {
+								"step": "two"
+							}
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": "<tokens>",
+						"output": "<tokens>",
+						"cacheRead": "<tokens>",
+						"cacheWrite": "<tokens>",
+						"totalTokens": "<tokens>",
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "pending",
+					"timestamp": 1
+				}
+			},
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "reused",
+						"name": "probe",
+						"arguments": {
+							"step": "two"
+						}
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": "<tokens>",
+					"output": "<tokens>",
+					"cacheRead": "<tokens>",
+					"cacheWrite": "<tokens>",
+					"totalTokens": "<tokens>",
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "pending",
+				"timestamp": 1
+			},
+			"resolvedToolName": "probe",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-2"
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_end",
+				"contentIndex": 0,
+				"toolCall": {
+					"type": "toolCall",
+					"id": "reused",
+					"name": "probe",
+					"arguments": {
+						"step": "two"
+					}
+				},
+				"partial": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "toolCall",
+							"id": "reused",
+							"name": "probe",
+							"arguments": {
+								"step": "two"
+							}
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": "<tokens>",
+						"output": "<tokens>",
+						"cacheRead": "<tokens>",
+						"cacheWrite": "<tokens>",
+						"totalTokens": "<tokens>",
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "pending",
+					"timestamp": 1
+				}
+			},
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "reused",
+						"name": "probe",
+						"arguments": {
+							"step": "two"
+						}
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": "<tokens>",
+					"output": "<tokens>",
+					"cacheRead": "<tokens>",
+					"cacheWrite": "<tokens>",
+					"totalTokens": "<tokens>",
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "pending",
+				"timestamp": 1
+			},
+			"resolvedToolName": "probe",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-2"
+		},
+		{
+			"type": "tool_execution_start",
+			"toolCallId": "reused",
+			"toolName": "probe",
+			"args": {
+				"step": "two"
+			},
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-2"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "probe",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "start",
+			"statusMessage": "running inline:1",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-2"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "probe",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "update",
+			"statusMessage": "checking",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-2"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "probe",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "end",
+			"statusMessage": "checking",
+			"completedAt": 1793491200000,
+			"status": "completed",
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-2"
+		},
+		{
+			"type": "tool_execution_update",
+			"toolCallId": "reused",
+			"toolName": "probe",
+			"args": {
+				"step": "two"
+			},
+			"partialResult": {
+				"content": [
+					{
+						"type": "text",
+						"text": "halfway"
+					}
+				],
+				"details": {}
+			},
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-2"
+		},
+		{
+			"type": "tool_execution_end",
+			"toolCallId": "reused",
+			"toolName": "probe",
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "probed"
+					}
+				],
+				"details": {}
+			},
+			"isError": false,
+			"sessionId": "rpc-1",
+			"runtimeItemKey": "call-2"
+		}
+	],
+	"legacy": [
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_start",
+				"contentIndex": 0,
+				"partial": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "toolCall",
+							"id": "reused",
+							"name": "read",
+							"arguments": {
+								"path": "note.txt"
+							}
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": "<tokens>",
+						"output": "<tokens>",
+						"cacheRead": "<tokens>",
+						"cacheWrite": "<tokens>",
+						"totalTokens": "<tokens>",
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "pending",
+					"timestamp": 1
+				}
+			},
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "reused",
+						"name": "read",
+						"arguments": {
+							"path": "note.txt"
+						}
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": "<tokens>",
+					"output": "<tokens>",
+					"cacheRead": "<tokens>",
+					"cacheWrite": "<tokens>",
+					"totalTokens": "<tokens>",
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "pending",
+				"timestamp": 1
+			},
+			"resolvedToolName": "read",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_end",
+				"contentIndex": 0,
+				"toolCall": {
+					"type": "toolCall",
+					"id": "reused",
+					"name": "read",
+					"arguments": {
+						"path": "note.txt"
+					}
+				},
+				"partial": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "toolCall",
+							"id": "reused",
+							"name": "read",
+							"arguments": {
+								"path": "note.txt"
+							}
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": "<tokens>",
+						"output": "<tokens>",
+						"cacheRead": "<tokens>",
+						"cacheWrite": "<tokens>",
+						"totalTokens": "<tokens>",
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "pending",
+					"timestamp": 1
+				}
+			},
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "reused",
+						"name": "read",
+						"arguments": {
+							"path": "note.txt"
+						}
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": "<tokens>",
+					"output": "<tokens>",
+					"cacheRead": "<tokens>",
+					"cacheWrite": "<tokens>",
+					"totalTokens": "<tokens>",
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "pending",
+				"timestamp": 1
+			},
+			"resolvedToolName": "read",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_execution_start",
+			"toolCallId": "reused",
+			"toolName": "read",
+			"args": {
+				"path": "note.txt"
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "start",
+			"statusMessage": "running inline:1",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "update",
+			"statusMessage": "checking",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "end",
+			"statusMessage": "checking",
+			"completedAt": 1793491200000,
+			"status": "completed",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_execution_end",
+			"toolCallId": "reused",
+			"toolName": "read",
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "note body\n"
+					}
+				]
+			},
+			"isError": false,
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "ghost",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "start",
+			"statusMessage": "running inline:1",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "ghost",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "update",
+			"statusMessage": "checking",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "read",
+			"toolCallId": "ghost",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "end",
+			"statusMessage": "checking",
+			"completedAt": 1793491200000,
+			"status": "completed",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_start",
+				"contentIndex": 0,
+				"partial": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "toolCall",
+							"id": "reused",
+							"name": "probe",
+							"arguments": {
+								"step": "two"
+							}
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": "<tokens>",
+						"output": "<tokens>",
+						"cacheRead": "<tokens>",
+						"cacheWrite": "<tokens>",
+						"totalTokens": "<tokens>",
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "pending",
+					"timestamp": 1
+				}
+			},
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "reused",
+						"name": "probe",
+						"arguments": {
+							"step": "two"
+						}
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": "<tokens>",
+					"output": "<tokens>",
+					"cacheRead": "<tokens>",
+					"cacheWrite": "<tokens>",
+					"totalTokens": "<tokens>",
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "pending",
+				"timestamp": 1
+			},
+			"resolvedToolName": "probe",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "message_update",
+			"assistantMessageEvent": {
+				"type": "toolcall_end",
+				"contentIndex": 0,
+				"toolCall": {
+					"type": "toolCall",
+					"id": "reused",
+					"name": "probe",
+					"arguments": {
+						"step": "two"
+					}
+				},
+				"partial": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "toolCall",
+							"id": "reused",
+							"name": "probe",
+							"arguments": {
+								"step": "two"
+							}
+						}
+					],
+					"api": "faux:fixture",
+					"provider": "faux",
+					"model": "faux-a",
+					"usage": {
+						"input": "<tokens>",
+						"output": "<tokens>",
+						"cacheRead": "<tokens>",
+						"cacheWrite": "<tokens>",
+						"totalTokens": "<tokens>",
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"stopReason": "pending",
+					"timestamp": 1
+				}
+			},
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "reused",
+						"name": "probe",
+						"arguments": {
+							"step": "two"
+						}
+					}
+				],
+				"api": "faux:fixture",
+				"provider": "faux",
+				"model": "faux-a",
+				"usage": {
+					"input": "<tokens>",
+					"output": "<tokens>",
+					"cacheRead": "<tokens>",
+					"cacheWrite": "<tokens>",
+					"totalTokens": "<tokens>",
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				},
+				"stopReason": "pending",
+				"timestamp": 1
+			},
+			"resolvedToolName": "probe",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_execution_start",
+			"toolCallId": "reused",
+			"toolName": "probe",
+			"args": {
+				"step": "two"
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "probe",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "start",
+			"statusMessage": "running inline:1",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "probe",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "update",
+			"statusMessage": "checking",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_hook_status",
+			"hookRunId": "<hook-run>",
+			"hookName": "PreToolUse",
+			"toolName": "probe",
+			"toolCallId": "reused",
+			"extensionPath": "<inline:1>",
+			"startedAt": 1793491200000,
+			"phase": "end",
+			"statusMessage": "checking",
+			"completedAt": 1793491200000,
+			"status": "completed",
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_execution_update",
+			"toolCallId": "reused",
+			"toolName": "probe",
+			"args": {
+				"step": "two"
+			},
+			"partialResult": {
+				"content": [
+					{
+						"type": "text",
+						"text": "halfway"
+					}
+				],
+				"details": {}
+			},
+			"sessionId": "rpc-1"
+		},
+		{
+			"type": "tool_execution_end",
+			"toolCallId": "reused",
+			"toolName": "probe",
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "probed"
+					}
+				],
+				"details": {}
+			},
+			"isError": false,
+			"sessionId": "rpc-1"
+		}
+	],
+	"snapshot": {
+		"calls": [
+			{
+				"runtimeItemKey": "call-2",
+				"toolCallId": "reused",
+				"requestedName": "probe",
+				"phase": "executing"
+			}
+		],
+		"settled": [
+			{
+				"runtimeItemKey": "call-1",
+				"role": "toolResult",
+				"status": "failed",
+				"toolCallId": "reused"
+			}
+		]
+	}
+}

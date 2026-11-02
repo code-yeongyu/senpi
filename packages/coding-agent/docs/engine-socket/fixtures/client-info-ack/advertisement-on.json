@@ -1,0 +1,19 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": true,
+	"id": "advertisement-on",
+	"advertisement": true,
+	"request": {
+		"id": "h",
+		"type": "get_protocol_info"
+	},
+	"expectedAck": {
+		"capabilities": [
+			"compact_message_updates_v1",
+			"event_resync"
+		]
+	}
+}
