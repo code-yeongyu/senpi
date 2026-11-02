@@ -74,6 +74,8 @@ export interface SearchUserLocation {
 export interface SearchRequest {
 	query: string;
 	maxResults: number;
+	/** Set when a call chose its own count, so it outranks a provider entry's `maxResults`. */
+	maxResultsFromCall?: boolean;
 	allowedDomains?: string[];
 	blockedDomains?: string[];
 }

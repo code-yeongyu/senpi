@@ -23,6 +23,8 @@ import type {
 } from "./types.ts";
 
 const MAX_ERROR_DETAIL_LENGTH = 500;
+/** Snippets are capped so a large result count cannot blow up the model context. */
+const MAX_RESULT_SNIPPET_LENGTH = 500;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 60_000;
 /** First cooldown after a keyless engine blocks a search; each consecutive block doubles it up to the cap. */
 export const ENGINE_COOLDOWN_BASE_MS = 60_000;
@@ -508,7 +510,7 @@ export function formatSearchText(details: SearchDetails): string {
 	for (const [index, item] of details.results.entries()) {
 		lines.push(`${index + 1}. ${item.title}`);
 		lines.push(`   ${item.url}`);
-		if (item.snippet) lines.push(`   ${item.snippet}`);
+		if (item.snippet) lines.push(`   ${truncate(item.snippet, MAX_RESULT_SNIPPET_LENGTH)}`);
 	}
 	lines.push("", "REMINDER: Include relevant sources from the URLs above in the final answer.");
 	return lines.join("\n");
