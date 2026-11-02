@@ -57,6 +57,33 @@ function context(): Context {
 }
 
 describe("devin-agent chat request", () => {
+	// senpi#3119: Cascade's Anthropic-family backend rejects every request whose tool schema has a ROOT
+	// anyOf/oneOf/allOf (`invalid_argument`); nested combinators are accepted.
+	it("sends tool schemas without root combinators and keeps nested ones", () => {
+		const parameters = {
+			type: "object",
+			properties: { a: { type: "string" }, b: { anyOf: [{ type: "string" }, { type: "number" }] } },
+			anyOf: [{ required: ["a"] }, { required: ["b"] }],
+		};
+		const before = structuredClone(parameters);
+		const request = buildDevinChatRequest({
+			model: MODEL,
+			context: normalizeContext({
+				...context(),
+				tools: [{ name: "pick", description: "Pick a or b", parameters }],
+			} as unknown as Context),
+			apiKey: "abc",
+			userJwt: "jwt-1",
+			cascadeId: "conv-1",
+		});
+
+		const schema = JSON.parse(request.tools[0]?.jsonSchemaString ?? "{}");
+		for (const combiner of ["anyOf", "oneOf", "allOf"]) expect(schema).not.toHaveProperty(combiner);
+		expect(schema).toMatchObject({ type: "object", properties: { a: { type: "string" } } });
+		expect(schema.properties.b).toEqual({ anyOf: [{ type: "string" }, { type: "number" }] });
+		expect(parameters).toEqual(before);
+	});
+
 	it("flattens the system prompt and orders history with Cascade roles", () => {
 		const request = buildDevinChatRequest({
 			model: MODEL,
