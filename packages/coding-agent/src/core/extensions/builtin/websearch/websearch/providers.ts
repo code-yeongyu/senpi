@@ -7,6 +7,7 @@ import { duckDuckGoHtmlProvider } from "./providers/duckduckgo-html.ts";
 import { ecosiaProvider } from "./providers/ecosia.ts";
 import { exaProvider } from "./providers/exa.ts";
 import { exaMcpProvider } from "./providers/exa-mcp.ts";
+import { firecrawlProvider } from "./providers/firecrawl.ts";
 import { googleProvider } from "./providers/google.ts";
 import { googleCseProvider } from "./providers/google-cse.ts";
 import { googleHtmlProvider } from "./providers/google-html.ts";
@@ -60,6 +61,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	"exa-mcp": exaMcpProvider,
 	searxng: searxngProvider,
 	keenable: keenableProvider,
+	firecrawl: firecrawlProvider,
 };
 
 function buildContext(config: SearchProviderConfig, request: SearchRequest): BuildContext {
