@@ -44,8 +44,10 @@ pub struct PtySessionOptions {
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
-    /// When set, the child gets exactly `env`; otherwise `env` is applied over this process's environment.
-    pub clear_env: bool,
+    /// When set, `env` names the child's whole environment: every variable this process inherited that `env`
+    /// leaves out is removed, so a variable the caller deleted never comes back from the OS environment
+    /// (senpi#5519). What portable-pty adds on top (the Windows registry environment, a default SHELL) is kept.
+    pub exact_env: bool,
     pub cols: u16,
     pub rows: u16,
     pub timeout: Option<Duration>,
@@ -58,7 +60,7 @@ impl PtySessionOptions {
             args: Vec::new(),
             cwd: None,
             env: Vec::new(),
-            clear_env: false,
+            exact_env: false,
             cols: 80,
             rows: 24,
             timeout: None,
@@ -80,8 +82,8 @@ impl PtySessionOptions {
         self
     }
 
-    pub fn clear_env(mut self) -> Self {
-        self.clear_env = true;
+    pub fn exact_env(mut self) -> Self {
+        self.exact_env = true;
         self
     }
 
@@ -139,8 +141,8 @@ impl PtySession {
         if let Some(cwd) = &opts.cwd {
             command.cwd(cwd);
         }
-        if opts.clear_env {
-            command.env_clear();
+        if opts.exact_env {
+            remove_inherited_absent(&mut command, &opts.env);
         }
         for (key, value) in &opts.env {
             command.env(key, value);
@@ -407,4 +409,29 @@ fn answer_conpty_cursor_query(
     }
     *answered_initial = true;
     let _ = input.send(CPR_RESPONSE);
+}
+
+#[cfg(windows)]
+fn env_name(name: &str) -> String {
+    name.to_ascii_uppercase()
+}
+
+#[cfg(not(windows))]
+fn env_name(name: &str) -> String {
+    name.to_string()
+}
+
+/// Removes each inherited variable `given` does not name, but only while the command still holds the inherited
+/// value: a value portable-pty took from the Windows registry instead (the user's own setting, possibly changed
+/// after this process started) differs from it and stays. `given` is applied afterwards, so it always wins.
+fn remove_inherited_absent(command: &mut CommandBuilder, given: &[(String, String)]) {
+    let named: std::collections::HashSet<String> = given.iter().map(|(key, _)| env_name(key)).collect();
+    for (key, inherited) in std::env::vars_os() {
+        if named.contains(&env_name(&key.to_string_lossy())) {
+            continue;
+        }
+        if command.get_env(&key) == Some(inherited.as_os_str()) {
+            command.env_remove(&key);
+        }
+    }
 }

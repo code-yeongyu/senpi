@@ -196,7 +196,7 @@ impl NativePtySessionOptions {
         // A JS caller's env is the complete child environment: the OS environment of a Bun process still holds
         // what JS deleted from process.env (omo#12157), and a None value is a deletion, never an inheritance.
         if let Some(env) = self.env {
-            options = options.clear_env();
+            options = options.exact_env();
             for (key, value) in env {
                 if let Some(value) = value {
                     options = options.env(key, value);

@@ -75,18 +75,19 @@ const envSession = createSession(
 	},
 );
 const envExit = await envSession.waitExit();
+const envOutput = Buffer.concat(envChunks).toString("utf8");
 const childNames = new Set(
-	Buffer.concat(envChunks)
-		.toString("utf8")
+	envOutput
 		.split(/\r?\n/)
-		.map((line) => line.replace(/^\u001b\[[0-9;?]*[A-Za-z]/g, "").split("=")[0]?.trim().toUpperCase())
+		.map((line) => line.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").split("=")[0]?.trim().toUpperCase())
 		.filter(Boolean),
 );
 const required = windows ? ["PATH", "SYSTEMROOT", "COMSPEC", "USERPROFILE", "TEMP"] : ["PATH", "HOME"];
 const missing = required.filter((name) => !childNames.has(name));
 if (envExit?.exitCode !== 0) throw new Error(`default shell env probe exited ${JSON.stringify(envExit)}`);
 if (missing.length > 0) throw new Error(`native PtySession child environment is missing ${missing.join(", ")}`);
-if (childNames.has(PROBE)) throw new Error(`native PtySession child inherited the deleted ${PROBE}`);
+// Absence is checked on the raw output: a ConPTY escape sequence before the name cannot hide a leak.
+if (envOutput.toUpperCase().includes(`${PROBE}=`)) throw new Error(`native PtySession child inherited the deleted ${PROBE}`);
 
 process.stdout.write(
 	JSON.stringify(
@@ -96,7 +97,7 @@ process.stdout.write(
 			methods: ["write", "resize", "kill", "waitExit"],
 			output,
 			exit,
-			childEnvironment: { required, missing, deletedAbsent: !childNames.has(PROBE), exit: envExit },
+			childEnvironment: { required, missing, deletedAbsent: !envOutput.toUpperCase().includes(`${PROBE}=`), exit: envExit },
 		},
 		null,
 		2,
