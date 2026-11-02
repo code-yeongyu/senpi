@@ -294,11 +294,6 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 		label: "Todo",
 		description: TODO_TOOL_DESCRIPTION,
 		promptSnippet: "Track phased tasks with one op-based todo tool; reference tasks by their exact content.",
-		promptGuidelines: [
-			"Use one todo operation at a time, batched with the real work; never end a turn with a todo call as its only tool call.",
-			"Reference tasks and phases by their exact content/name; use view when the text is uncertain.",
-			"Mark work done immediately and use drop for tasks that are no longer needed.",
-		],
 		parameters: TODO_PARAMS_SCHEMA,
 		prepareArguments: (args) => prepareTodoArguments(args) as TodoParams,
 		executionMode: "sequential",
