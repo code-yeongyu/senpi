@@ -14,9 +14,11 @@ import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import {
 	RPC_ERROR_INVALID_LAUNCH_PROFILE,
 	RPC_ERROR_INVALID_SESSION_CONTEXT,
+	RPC_ERROR_INVALID_SESSION_ENV,
 	RPC_ERROR_INVALID_SESSION_KIND,
 	RPC_ERROR_OWNER_CHANGED,
 } from "./rpc-types.ts";
+import { inheritedSessionEnv, type SessionEnv, sessionEnvError } from "./session-caller-env.ts";
 
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 
@@ -88,6 +90,9 @@ export function validatedOpenProfile(
 	const retryFallbackError = sessionRetryFallbackError(command.retryFallback);
 	if (retryFallbackError)
 		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
+	const envError = sessionEnvError(command.env);
+	if (envError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_ENV}: ${envError}`);
+	const sessionEnv = inheritedSessionEnv(parentSessionEnv(host, command.spawnedBy?.parentSessionId), command.env);
 	return {
 		cwd: command.cwd ?? host.defaults.cwd,
 		...(command.attended === false ? { attended: false as const } : {}),
@@ -114,5 +119,23 @@ export function validatedOpenProfile(
 		...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
 		...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
 		...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
+		...(sessionEnv !== undefined ? { sessionEnv } : {}),
 	};
+}
+
+/**
+ * The caller env of a task child's parent, when THIS host currently holds that parent (senpi#4381): a lane
+ * identity follows the task tree without every opener repeating it. A closed parent or one elsewhere
+ * contributes nothing. The opening connection is not tied to the parent: this is the attach trust boundary,
+ * since any client that names an open session can already attach to it and run its tools. A parent counts
+ * exactly when attach would accept it (open and bound); a closing or quarantined one contributes nothing.
+ */
+function parentSessionEnv(host: RouterContext, parentSessionId: string | undefined): SessionEnv | undefined {
+	if (parentSessionId === undefined) return undefined;
+	const parent = host.registry
+		.list()
+		.find((row) => row.durableSessionId === parentSessionId || row.sessionId === parentSessionId);
+	if (parent === undefined) return undefined;
+	const entry = host.registry.peek(parent.sessionId);
+	return entry?.state === "open" && host.bindings.has(parent.sessionId) ? entry.profile.sessionEnv : undefined;
 }

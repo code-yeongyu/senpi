@@ -5,7 +5,7 @@ import { readLastStop } from "./lifecycle-stop.ts";
 import type { LifecycleHold, SessionLifecycle } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
 
-export interface LifecycleRecord extends SessionLifecycle {
+export interface LifecycleRecord extends Omit<SessionLifecycle, "activity" | "activityRevision"> {
 	readonly sessionId: string;
 	readonly attentionSeq: number;
 	readonly synthetic: readonly SyntheticAttention[];

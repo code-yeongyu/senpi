@@ -37,6 +37,8 @@ export function createWorkerCore(transport, options) {
 	let memory = null;
 	let heapProbe = null;
 	let activeCell = null;
+	// The kill guard's judge, imported by URL before the runtime installs its wrappers (senpi#5349).
+	let killGuard;
 	const rejections = createRejectionReports({
 		activeCell: () => activeCell,
 		emitText: (data) => emit({ type: "text", stream: "stderr", data }),
@@ -50,6 +52,7 @@ export function createWorkerCore(transport, options) {
 		getRuntime: () => runtime,
 		emit: (message) => transport.send(message),
 		nestedInvokes,
+		runAuthority: options.runAuthority,
 	});
 
 	function emit(message) {
@@ -67,12 +70,16 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		const startedAtMs = performance.now();
+		if (killGuard?.notice !== undefined) {
+			emit({ type: "text", stream: "stderr", data: killGuard.notice });
+			killGuard = { ...killGuard, notice: undefined };
+		}
 		const release = Promise.withResolvers();
 		const cell = { cellId: message.cellId, interruption: null, released: false, release: release.reject };
 		activeCell = cell;
 		rejections.startCell(cell);
 		try {
-			const run = runInCell(cell, () =>
+			const execute = () => runInCell(cell, () =>
 				runtime.run(message.code, message.cellId, {
 					emit: (event) => {
 						if (releasedCellError() === undefined) emit(event);
@@ -80,6 +87,7 @@ export function createWorkerCore(transport, options) {
 					callTool: async (toolName, args) => await callTool(toolName, args),
 				}),
 			);
+			const run = options.runAuthority ? options.runAuthority(message.authority, execute, message.code) : execute();
 			const value = await Promise.race([run, release.promise]);
 			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
@@ -165,6 +173,13 @@ export function createWorkerCore(transport, options) {
 			return;
 		}
 		if (message.type === "init") {
+			if (message.killGuard !== undefined && killGuard === undefined) {
+				void loadKillGuard(message.killGuard).then((loaded) => {
+					killGuard = loaded;
+					onMessage(message);
+				});
+				return;
+			}
 			applySessionEnvironment(message.sessionEnv);
 			installSessionCwd(options.cwd, options.cwdInstallOptions);
 			installKernelWebView(requestWebViewPort);
@@ -174,10 +189,12 @@ export function createWorkerCore(transport, options) {
 				parallelPoolWidth: options.parallelPoolWidth,
 				localRoots: message.connection.localRoots,
 				artifactsDir: message.connection.artifactsDir,
+				permissionIO: options.permissionIO,
 				kernelGeneration: message.kernelGeneration ?? 1,
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				kernelToolsDisabled: message.kernelToolsDisabled === true,
+				...(killGuard?.guard === undefined ? {} : { killGuard: killGuard.guard }),
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 				onShellWaitChange: () => {
 					if (activeCell?.interruption) acknowledgeInterrupt();
@@ -231,6 +248,17 @@ export function createWorkerCore(transport, options) {
 	};
 }
 
+// Judge missing: the cell runs unguarded with one notice, as the design's L2 shim does when its judge is gone.
+async function loadKillGuard(spec) {
+	try {
+		const judge = await import(String(spec.moduleUrl));
+		return { guard: { judge, agentPid: spec.agentPid } };
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		return { notice: `[senpi:kill-guard] the kill guard's judge could not be loaded in this kernel (${detail}); signals from cells are not judged.\n` };
+	}
+}
+
 function durationMs(startedAtMs) {
 	return Math.max(0, Math.round(performance.now() - startedAtMs));
 }
@@ -265,7 +293,7 @@ function cellInterruptedError(reason) {
 
 function bridgeError(error) {
 	if (error instanceof Error) {
-		return { name: error.name, message: error.message, stack: error.stack, ...(typeof error.code === "string" ? { code: error.code } : {}) };
+		return { name: error.name, message: error.message, stack: error.stack, ...(typeof error.code === "string" ? { code: error.code } : {}), ...(error.code === "cell_permission_denied" && error.rule ? { permissionRule: error.rule } : {}) };
 	}
 	return { message: String(error) };
 }

@@ -126,7 +126,7 @@ describe("review accounting regressions (#3483)", () => {
 
 	it("keeps preset bytes captured from main before the review fold", () => {
 		// Given: main 89ecd50ca0 on the fixed facts above, refreshed for #4043's punctuation rewrite.
-		const expected = "407f98347f33af17ff045557febc86b075d0801beed99c0c61c6f3b5f4a34cb8";
+		const expected = "1ad93ccb222889f4d3c0769984687978146133229c0f2048a9753e5e1d8c8267";
 		// When
 		const { prompt } = presets.buildPreset("claude-opus-4-8", realisticOptions);
 		// Then: a byte-identity golden, not a size assertion.

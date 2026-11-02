@@ -456,15 +456,31 @@ describe("body prose", () => {
 
 /* ---------- 7. Precedence: explicit zero beats lower-precedence positive ---------- */
 
-describe("explicit zero precedence", () => {
-	it("retry-after: 0 + prose 30s -> 0", () => {
+describe("zoned clock reset prose (senpi#1771)", () => {
+	// 2023-11-14T22:13:20Z = 2023-11-15 07:13:20 in Asia/Seoul (UTC+9, no DST).
+	it("429 + 'resets 12am (Asia/Seoul)' -> until the next Seoul midnight", () => {
+		const nextSeoulMidnight = Date.UTC(2023, 10, 15, 15, 0, 0);
 		const result = extract429RetryAfterMs(
-			{ status: 429, headers: headers({ "retry-after": "0" }), bodyText: "try again in 30 seconds" },
+			{ status: 429, bodyText: "You've hit your session limit \u00b7 resets 12am (Asia/Seoul)" },
 			NOW,
 		);
-		expect(result).toBe(0);
+		expect(result).toBe(nextSeoulMidnight - NOW);
 	});
 
+	it("429 + 'resets Nov 20, 9am (UTC)' -> until that day and hour", () => {
+		const result = extract429RetryAfterMs(
+			{ status: 429, bodyText: "You've hit your weekly limit \u00b7 resets Nov 20, 9am (UTC)" },
+			NOW,
+		);
+		expect(result).toBe(Date.UTC(2023, 10, 20, 9, 0, 0) - NOW);
+	});
+
+	it("a clock time in prose without a rate-limit signal stays ineligible", () => {
+		expect(extract429RetryAfterMs({ status: 500, bodyText: "resets 12am (Asia/Seoul)" }, NOW)).toBeUndefined();
+	});
+});
+
+describe("explicit zero precedence", () => {
 	it("retry-after-ms: 0 + retry-after: 60 -> 0 (higher precedence wins with zero)", () => {
 		const result = extract429RetryAfterMs(
 			{ status: 429, headers: headers({ "retry-after-ms": "0", "retry-after": "60" }), bodyText: "" },

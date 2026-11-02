@@ -1,5 +1,62 @@
 # core/tools changes
 
+## 2026-11-02 - read can ignore the context model on a runtime without a session (senpi#5413)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: new `ReadToolOptions.contextModel` (default `true`). When `false`, `read` does not read `ctx.model`: no model-specific image note, and the image resize profile falls back to `resizeOptions`, as it already does when no execution context is passed.
+
+### Why
+
+- A runtime that owns no session (`bootstrapRuntime()` without a `sessionManager`, senpi#5223) refuses its loop-side context members by name, `model` included, so `read` threw on every call there. That runtime is how a tool-execution-only process will run the built-in tools (brain/hand split).
+
+### Why an extension could not handle it
+
+- `read` is a core built-in tool; how it reads its execution context is decided inside its definition.
+
+### Expected merge conflict zones
+
+- LOW: the `ReadToolOptions` property list and the two `model` reads in `createReadToolDefinition`'s image branch.
+
+## 2026-10-27 - The core bash tool applies the session's caller env (fixes senpi#4381)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `resolveSpawnContext` applies `ctx.sessionEnv` to the subprocess environment after the session's `PI_*` values, when the session environment is exposed.
+
+### Why
+
+- On a shared host the process environment is every session's; the variables a caller passed for ONE session must come from that session's context, as `OMO_BROWSER_ENGINE` does.
+
+### Why an extension could not handle it
+
+- The core bash tool's spawn environment is built inside the tool, out of reach of the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `exposeSessionEnvironment` block in `resolveSpawnContext`.
+
+## 2026-10-26 - Redact shell output before accumulation (senpi#4358)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/secret-output-redactor.ts`: bounded incremental tokenization for credential prefixes, JWTs, PEM private keys, Bearer credentials and secret-named assignments; preserve incomplete-token state across chunks and omit hidden OSC payloads.
+- Review fixes: detect credential prefixes inside URL/path/assignment tokens at non-alphanumeric boundaries, consume full charset-designation escapes, anchor AUTH/AUTHORIZATION key segments, require token-shaped Bearer values, and end unclosed quoted assignments at a newline.
+- Idle flush withholds tokens once a full public credential prefix or Bearer value has begun, including incomplete AWS/Google keys and JWTs. Mere prefix fragments (`I`, `e.g.`, `git`, `sk`, `AI`) remain visible. Delimiters release withheld tokens redacted or verbatim using complete-shape rules; EOF masks incomplete started shapes as public prefix plus `<redacted>`, without repeating published prefix characters. Secret assignment values remain masked from their first character.
+- `packages/coding-agent/src/core/tools/bash.ts`: opt-in per-stream redaction before output accumulation, streaming updates, truncation, structured output and spill writes; flush pending tokens on completion or error.
+
+### Why
+
+- Redacting a final result is too late: a partial token or an unredacted spill file can already have reached the agent.
+
+### Why an extension could not handle it
+
+- The accumulator and its spill writes are internal to the core tool's execution.
+
+### Expected merge conflict zones
+
+- `BashOperations` output callback options and `createShellToolDefinition` output ingestion/finalization.
+
 ## 2026-10-19 - Read-only built-in tools declare `workspaceEffect: "read"` (senpi#3717)
 
 ### What changed

@@ -6,15 +6,40 @@ import {
 	selectHerdrReport,
 } from "../../src/core/extensions/builtin/herdr/herdr-state.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
+import { getMcpMrtrPresentation } from "../../src/core/mcp-mrtr-presentations.ts";
 import { cleanupHerdrReporterFixtures, herdrReporterFixture } from "../suite/herdr-reporter-harness.ts";
 import { mrtrTui } from "./fixtures/mrtr-presentation.ts";
 
 afterEach(async () => {
 	await cleanupHerdrReporterFixtures();
+	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 });
 
 describe("ephemeral TUI wrappers", () => {
+	it.each([false, true])(
+		"UI created during shutdown has no live presentation authority (prior presentation=%s)",
+		async (priorPresentation) => {
+			// senpi#4226: cleanup may request UI before a presentation has ever been created.
+			const f = mrtrTui();
+			if (!priorPresentation) delete f.host.mcpMrtrPresentationLifetime;
+			let teardownUi: ExtensionUIContext | undefined;
+			f.host.runtimeHost = {
+				dispose: async () => {
+					teardownUi = f.host.createExtensionUIContext();
+				},
+			};
+			f.host.themeController = { disableAutoSync: vi.fn() };
+			f.host.ui = { terminal: { drainInput: async () => {} } };
+			f.host.stop = vi.fn();
+			vi.spyOn(process, "exit").mockImplementation(() => {
+				throw new Error("test exit");
+			});
+			await expect(f.host.shutdown({ fromSignal: true })).rejects.toThrow("test exit");
+			if (!teardownUi) throw new Error("Shutdown never disposed the session");
+			expect(getMcpMrtrPresentation(teardownUi) !== undefined).toBe(false);
+		},
+	);
 	it.each(["select", "input", "confirm"] as const)(
 		"private %s emits no blocked events or pending markers",
 		async (method) => {

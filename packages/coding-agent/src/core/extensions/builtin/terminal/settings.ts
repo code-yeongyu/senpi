@@ -29,6 +29,7 @@ export interface MonitorRunawayGuard {
 }
 
 export interface ResolvedTerminalSettings {
+	readonly redactSecretsInOutput?: boolean;
 	readonly defaultCols: number;
 	readonly defaultRows: number;
 	readonly scrollback: number;
@@ -42,6 +43,7 @@ export interface ResolvedTerminalSettings {
 }
 
 export const TERMINAL_SETTINGS_DEFAULTS: ResolvedTerminalSettings = {
+	redactSecretsInOutput: false,
 	defaultCols: DEFAULT_COLS,
 	defaultRows: DEFAULT_ROWS,
 	scrollback: DEFAULT_SCROLLBACK,
@@ -136,5 +138,8 @@ export function loadTerminalSettings(settingsManager: SettingsManager): Resolved
 	const global = settingsManager.getGlobalSettings().terminal;
 	const project = settingsManager.getProjectSettings().terminal;
 	const merged: TerminalSettings = { ...global, ...project };
-	return resolveTerminalSettings(merged);
+	return {
+		...resolveTerminalSettings(merged),
+		redactSecretsInOutput: settingsManager.getBashRedactSecretsInOutput(),
+	};
 }

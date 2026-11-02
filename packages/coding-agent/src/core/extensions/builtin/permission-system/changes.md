@@ -1,5 +1,169 @@
 # Permission System Builtin Extension
 
+## 2026-10-29 - Confirm paths on every measured local filesystem type (senpi#4790)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/alias-detector.ts`: `REAL_FS` is the design's measured allowlist (`apfs`, `hfs`, `ext4`, `xfs`, `btrfs`, `zfs`, `tmpfs`, `ntfs`, `exfat`, `overlay`, `virtiofs`, `nfs`, `nfs4`); the shipped set had dropped `hfs`, `ext4`, `xfs`, `zfs`, `ntfs`, `exfat` and `nfs4`. Every other type (devfs, fuse variants, autofs, proc, sysfs, SMB, 9p, squashfs, unmeasured local types such as ext2/ext3/vfat) still leaves its paths alias-bearing.
+
+### Why
+
+- On an ext4 or xfs root every path was reported alias-bearing (`fs-type:ext4`), which routed every plain request through the resolver worker and failed the path identity tests on Linux CI runners. A type in the set only lets a path count as unaliased when every component is listed verbatim by its parent, so case folding (per-directory on ext4 included) still flags any spelling the parent does not list.
+
+### Why an extension could not handle it
+
+- The detector is internal to the permission system's path identity check.
+
+### Expected merge conflict zones
+
+- LOW: the `REAL_FS` literal in `alias-detector.ts`.
+
+## 2026-10-29 - Visible Linux mounts and complete permission-service initialization (senpi#4392)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/mount-table.ts`: omit Linux mount entries hidden beneath an ancestor mounted later, so detector classification and volume keys use the visible mount.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/service.ts`: subscribe to resolver-state events only after the constructor's fallible initialization completes, so a failed construction cannot retain an unreleasable listener.
+- `packages/coding-agent/test/permission/python-canonical.test.ts`: exercise a real Python kernel, bridge, parser and permission service with an unavailable resolver, including allowed-file and path-deny controls. Python canonical fields use the service's existing identity validation and version check.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/mount-table.ts`: a listed child mount may no longer be visible after a later ancestor mount.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/service.ts`: unsuccessful construction must not leave a listener owned by an object that cannot be disposed. Python identity decisions also need the same resolver-independent canonical input as JavaScript.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/mount-table.ts` owns the worker's mount snapshot; `packages/coding-agent/src/core/extensions/builtin/permission-system/service.ts` owns subscription lifetime and consumes kernel identity.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/mount-table.ts` (visible-mount filtering) and `packages/coding-agent/src/core/extensions/builtin/permission-system/service.ts` (constructor subscription ordering).
+
+## 2026-10-28 - Decide path rules by file identity across spellings (senpi#4391)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/path-identity.ts`: the host twin of the kernel canonicalizer (same algorithm, same `PATH_IDENTITY_VERSION`, pinned by one table test that runs both) and `identityMatches`, which compares a rule's canonical prefix and folded glob suffix against a request's canonical path; the request target's volume decides whether case is folded.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/alias-detector.ts`: an import-safe, positive-confirmation detector of whether an alias may be in play for a path (absolute, no `.`/`..` or separator spellings, not under a mount-alias root, open-free walk unchanged, every component enumerated by its parent on an allowlisted filesystem type of a validated mount snapshot), with a validated `mount`/`/proc/self/mounts` parser whose snapshot is degraded as a whole on any rejected line, duplicate mount point or missing root, the firmlink rewrite, the lexical volume key, and a per-request readdir/entry budget. It only ever errs toward "alias in play".
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/path-identity-host.ts`, `path-identity-worker.ts`, `path-identity-protocol.ts`: a `worker_threads` resolver that performs every native `realpath`, walk and detector call off the host main thread; one worker per process; deadline `min(1500, floor(checkDeadlineMs * 0.75))` clocked from enqueue; a stalled request rejects itself and every queued request with `ETIMEDOUT`, terminates the worker and replaces it through a per-volume breaker (open after two consecutive timeouts, half-open after 5 s doubling to 60 s, closed on a successful probe); workers whose `terminate()` has not returned after 1 s are counted as abandoned, at most three per process, and the count drops when the call returns; eager rule fills are soft (250 ms, never counted, late answers stored). The host side imports no filesystem module: the breaker key is lexical. A worker that fails to start (a missing or broken module) is reported once on stderr and marks the resolver unavailable: every request answers `EUNAVAILABLE` at once, no deadline is waited out, and no request is refused for that reason. In that state a JS cell's decision stays exact, because the kernel thread already sends the canonical path: it is compared against each rule's anchored spelling (so an alias to a file a rule names on its canonical spelling is still refused), while requests without a kernel canonical match by spelling only.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/evaluate.ts`, `service.ts`, `decide-target.ts`, `deny-provenance.ts`: a rule for `read`, `edit`, `list` or `grep` paths now matches when it covers the path as written, the path as executed, or the canonical form of the executed path; `external_directory` carries no identity and keeps its own inode matcher under both `evaluate` and `evaluateWithIdentity` (one helper builds the matcher per permission, so the identity route adds to it and never replaces it; pinned by `evaluate-identity.test.ts` and the `4351-*` files). `ask()` takes `executed` and canonicalizes only when a path-class rule other than `*` exists; every resolver failure becomes `unresolvable` and never a thrown error; executed strings travel as `ruleAliases` only, so the written pattern stays the displayed and denied one. Rule-side canonical forms are cached per service, filled eagerly at rules load and lazily on first use, and dropped by `noteMutation` for every non-read decision that may have retargeted a rule chain. A request that cannot be resolved while a deny of its class exists, or that is alias-involved while a deny rule's own identity form is timed out, is refused with the rule `(path could not be resolved: CODE)`; a plain request is never refused by the resolver's state. The refusal names the user's layer for an identity match.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/events.ts`: `permission_rule_identity_unavailable` and `permission_resolver_state` events on every emitter.
+- `packages/coding-agent/src/modes/rpc/path-identity-status.ts`, `session-router-routing.ts`, `host-protocol-info.ts`, `host-status.ts`, `host-status-all.ts`, `rpc-protocol-info-types.ts`, `docs/rpc.md`: `get_protocol_info` and `senpi host status` report `path_identity_resolver: { state: "not_started" | "ready" | "unavailable", detail }` (`not_started` until a worker publishes its first mount snapshot, `ready` after it), so an operator sees a resolver whose worker could not start instead of inferring it from a missed match.
+- `scripts/build-coding-agent-bundle.mjs`, `scripts/build-binaries.sh`, `packages/coding-agent/package.json` (`build:binary`), `scripts/create-source-archive.sh`: the resolver worker ships in both layouts, emitted beside the host's chunk in the npm bundle (checked after the build) and embedded as an explicit entry at its source path in the compiled binaries; the host picks the entry per layout. `scripts/build-coding-agent-bundle.test.mjs` loads the host from a built bundle and resolves through its worker; `scripts/path-identity-worker-compile.test.ts` does the same from a compiled, relocated binary.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/path-identity.ts`: `identityMatches` applies the firmlink rewrite to both sides, so a native `realpath` that keeps the `/System/Volumes/Data` spelling (Node's on macOS) still meets a rule written on the canonical spelling, and the reverse.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/types.ts`, `service.ts`, `index.ts`: a `DeniedError` carries the identity its request was decided with, and the service releases per-request identity state when the request settles (denied, allowed, or answered), as it does its pending options.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`, `read-permission.ts`: path-class requests carry `executed`, the strings the tool opens (`read` -> the read path, `edit`/`write` -> the resolved target, `apply_patch` -> the patch target, `list` -> the resolved directory, `grep` -> its search paths only, `monitor` -> the resolved path, unknown tools with a path argument -> the resolved argument).
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/cell-decision.ts`, `index.ts`: a cell operation's `executedPath` joins the literal targets; a kernel canonical at the host's own version is used as is, any other is recomputed on the resolver worker (a Promise only in that case); write-class decisions note the mutation; the service receives the shared resolver.
+- Where two spellings of one file carry opposite rules, the last matching rule still wins, as it always has for the spelling that matched both.
+- Known limitation: path rules do not follow hard links; tracked in #4576.
+
+### Why
+
+- A rule written through a symlink, a `/tmp`-style alias, a different letter case or a different Unicode form must apply to the same file under every spelling that resolves to it, for deny and allow alike, without changing any decision for configurations that have no path rules.
+
+### Why an extension could not handle it
+
+- Rule evaluation, the request parsers and the cell decider own the identity that reaches a decision; only they can match by canonical form without re-normalizing the executed string.
+
+### Expected merge conflict zones
+
+- `service.ts` (`ask()` options and `decideTarget`), `evaluate.ts` (`evaluatePatterns` signature), `parsers.ts` (request construction), `cell-decision.ts` (decision shape), `events.ts` (emitter interface).
+
+## 2026-10-26 - Decision entry for eval-cell operations (#4384)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: export `bashPermissionRequests(command, cwd)` and reuse it in the bash-like parser without changing parser output.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/cell-decision.ts`: add per-session, synchronous deny-only decisions, enforcement state, ordered-user-ruleset epochs and change subscriptions. Failed setup activates enforcement and invalidates epochs on failure and recovery.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: register and retire cell authority with the permission extension lifecycle, publish successful and failed rules reloads, and detach retired sessions from later reloads.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/deny-provenance.ts`: share the existing deny provenance lookup with tool and cell decisions.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: later eval interposition must analyze exactly the requests that a tool call uses, including external directories.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/cell-decision.ts`: preserve each pattern's dispatch decision and identify the denying rule without prompting.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: the decision entry must follow live rules and fail closed after setup failure or retirement.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/deny-provenance.ts`: both refusal paths must report the same configured rule layer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`, `packages/coding-agent/src/core/extensions/builtin/permission-system/cell-decision.ts`, `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` and `packages/coding-agent/src/core/extensions/builtin/permission-system/deny-provenance.ts`: this is implemented inside the permission extension because it owns the live parser registry, service, preset, reload lifecycle and settings provenance; a separate extension cannot reproduce those private decisions reliably.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: bash-like request extraction.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/cell-decision.ts`: cell authority registration and state publication.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: permission lifecycle and reload wiring.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/deny-provenance.ts`: settings-layer provenance lookup.
+
+## 2026-10-26 - Retain resolved external-directory targets (senpi#4351)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/external-dir.ts`: return the symlink-resolved external target and compare directory device/inode identities for case-alias containment, including missing descendants.
+- External rules and remembered scopes now compare their existing literal prefix by device/inode without opening directories or folding case; trailing-slash directory approvals retain the resolved directory scope rather than granting its parent (binding review H1/H2).
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/external-pattern.ts`: verify case aliases after wildcards by component device/inode, preventing glob-deny bypasses while preserving exact case for distinct or missing targets and synchronous no-open matching (binding review H1-GLOB).
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts` and `packages/coding-agent/src/core/extensions/builtin/permission-system/read-permission.ts`: use that target for external request patterns and remembered scopes.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/types.ts`, `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`, and `packages/coding-agent/src/core/extensions/builtin/permission-system/service.ts`: carry lexical spellings separately for display and copy them when listing pending requests.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/prompt.ts`: show the resolved target alongside its original spelling, without trusting caller-supplied directory metadata or truncating literal stars.
+- Review fold: external-directory rules retain last-match-wins separately for absolute lexical, on-disk case-canonical, and resolved spellings, then take the most restrictive decision. Directory listings and device/inode checks preserve lexical ancestry across case aliases and wildcards before symlinks; raw display paths never affect policy, and remembered scopes stay resolved. Filesystem identity lookups remain evaluation-local, and prompts list every resolved target.
+- Resolution-chain review fold: branch between keeping and following every symlink, preserving intermediate spellings with a 16-spelling/40-hop limit that asks on exhaustion or loops. Component `lstat` identities retain case equivalence below non-listable ancestors without merging distinct symlink routes. Case recovery and directory listings are cached only within one decision; multi-path denials report only the target belonging to a denied alias. Document the intentional difference between a resolved-only configured allow and remembered "Always".
+- Dot-target review fold: normalize followed link targets against their containing directory before storing or walking the absolute spelling, closing intermediate-deny bypasses through `.`, `..`, and `../..`. Refuse new spellings over the bound before case-recovery directory reads. Cover relative-target rule precedence and document that a genuine intermediate spelling's blanket deny can still win when both endpoints allow.
+- Physical-walk review fold (supersedes the branching and lexical normalization above): traverse a component queue from a fully resolved position, applying `..` only to its physical parent and prepending raw link targets. Retain the absolute request, actual physical-prefix symlink routes, final path, and case forms; never synthesize relative targets under unresolved lexical parents. Enforce the 16-spelling bound before every insertion, including case forms, and retain the 40-hop fail-closed limit. Cover absolute/relative `S/..` deny bypasses, phantom-parent false denies, and the linear walk's exact spelling boundary.
+- Wildcard-suffix identity review fold: prove component case equivalence with lexical `lstat` identity, not the followed target, so distinct case-sensitive symlink entries sharing a destination cannot override each other's deny or cause a false denial; retain true case aliases and non-listable-ancestor handling.
+
+### Why
+
+- Classification resolved symlinks but rule evaluation and saved approvals still used the alias, allowing an alias approval to miss a deny on the actual target. Case-preserving string comparison also treated an internal case alias as external. Part of #4311.
+
+### Why an extension could not handle it
+
+- The builtin parser, classifier, and request renderer own the identity that reaches permission evaluation and approval persistence.
+
+### Expected merge conflict zones
+
+- `external-dir.ts` containment, `parsers.ts` external-request construction, `read-permission.ts` external reads, `index.ts` request construction, `types.ts` request fields, `service.ts` defensive copies, and `prompt.ts` external-directory display.
+
+## 2026-10-26 - A refusal is final for what the refused call was meant to do (senpi#4321)
+
+### What changed
+
+- `types.ts`: `RejectedError`, `CorrectedError` and `DeniedError` keep their first sentence, which clients match as a prefix, and then add the rule (`DENIAL_IS_FINAL`, built on `NO_OTHER_ROUTE`). The model must not get the same result another way (another tool, command, path or host), tells the user what was refused, and continues only with work that does not depend on it. With feedback, the model follows the feedback first.
+- `non-interactive.ts`: a no-UI refusal says the call did not run, carries the same rule, and frames the `--permission` override as the user's action.
+- `index.ts`: the deny provenance suffix says the user can edit the rule, instead of telling the model to edit it.
+
+### Why
+
+- "This specific tool call" read as permission to reach the refused result through a different tool. The provenance suffix told the model to edit its own permission rule.
+
+### Why an extension could not handle it
+
+- These texts are the permission builtin's own refusal results; another extension cannot rewrite them.
+
+### Expected merge conflict zones
+
+- `types.ts` (the three error constructors), `non-interactive.ts` (`handleNoUI` message).
+
+## 2026-10-27 - external_directory classifies the path the tool opens (senpi#4311)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: `withExternalDirectoryRequests` maps each raw argument through the resolver its tool uses before classifying it (write/edit/ls/find/glob: `resolveToCwd`; apply_patch: `resolvePatchPath`; grep: `resolveToCwd` with the same existing-literal-name-first, missing-name/file-prefix selector fallback as the tool; `multiedit`: raw and resolved; monitor: raw). grep `path` arrays are classified element by element. Each opened path then goes through `resolveExternalPath` (the senpi#4351 canonical spelling walk, still the source of truth); the lexical rule alias is taken from the opened path, and `originalPaths` keeps the raw argument. Patterns and Always scopes are de-duplicated by canonical target, while the rule aliases are merged (in order, without duplicates) from every opened spelling, so a rule on a symlink spelling still applies when the same call names the real path first.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/prompt.ts`: the external-directory prompt uses only the resolved request target, ignoring caller display metadata and preserving literal filename characters.
+- Review fold: selector-shaped grep paths use synchronous stat probes to preserve the synchronous dispatch fence; only ENOENT permits fallback. Tests cover literal names, non-file prefixes, spoofed display metadata, literal `*`, and platform-specific file-URL/UNC behavior.
+
+### Why
+
+- The check classified the raw text while the tools open the normalized path, so `@/abs/x`, `file:///abs/x`, Unicode-space spellings and grep arrays or line selectors reached files outside the workspace with no `external_directory` ask under the narrower presets.
+
+### Why an extension could not handle it
+
+- The parser registry is the permission system's own input to every decision (tool_call hook and codemode dispatch); an extension cannot replace a builtin parser.
+
+### Expected merge conflict zones
+
+- LOW: `parsers.ts` parser registrations and the external-directory branch of `prompt.ts` (fork-only permission system).
+
 ## 2026-10-26 - bash permission: evaluate every command segment (senpi#4317)
 
 ### What changed

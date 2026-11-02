@@ -14,8 +14,8 @@ export const WEBVIEW_METHODS = [
 	"scroll",
 	"scrollTo",
 	"resize",
-	"back",
-	"forward",
+	"goBack",
+	"goForward",
 	"reload",
 	"cdp",
 ] as const;

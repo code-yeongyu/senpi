@@ -36,6 +36,24 @@ describe("host session error mapping", () => {
 		});
 	});
 
+	// senpi#4411: a prompt the session cannot start for lack of credentials is a typed refusal (exit 3), not a host error.
+	it.each(["provider_credentials_missing", "provider_credentials_expired"] as const)(
+		"refuses %s with the provider",
+		(code) => {
+			const message = "No API key found for openai.";
+			expect(mapError(new RpcCommandError(message, code, { provider: "openai" }), "/rpc.sock")).toEqual({
+				exitCode: 3,
+				payload: {
+					action: "refuse",
+					reason: code,
+					detail: message,
+					socket: "/rpc.sock",
+					data: { provider: "openai" },
+				},
+			});
+		},
+	);
+
 	it("classifies lost transport separately from host refusals", () => {
 		expect(mapError(new RpcTransportGoneError(), "/rpc.sock")).toMatchObject({
 			exitCode: 1,

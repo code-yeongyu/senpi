@@ -28,7 +28,7 @@ function hasHaiku55CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getHaiku55CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasHaiku55CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasHaiku55CatalogSignal));
 }
 
 describe("Claude Haiku 5.5 prompt preset", () => {
