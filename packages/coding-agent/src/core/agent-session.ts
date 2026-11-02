@@ -14346,6 +14346,17 @@ export class AgentSession {
 	}
 
 	/**
+	 * Whether a non-builtin extension owns compaction through `session_before_compact`. Such a session can
+	 * still compact with `compaction.enabled: false`, so resume admission treats it as compaction-capable
+	 * (senpi#3121). The builtin compaction and hooks handlers do not count: they are always registered.
+	 */
+	hasCompactionOwner(): boolean {
+		return this._extensionRunner
+			.getHandlerExtensionPaths("session_before_compact")
+			.some((path) => !this._isBuiltinExtensionPath(path));
+	}
+
+	/**
 	 * Get the extension runner (for setting UI context and error handlers).
 	 */
 	get extensionRunner(): ExtensionRunner {
