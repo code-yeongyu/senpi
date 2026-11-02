@@ -80,6 +80,7 @@ import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.
 import { ClientAdmissions } from "./client-admissions.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import {
@@ -561,7 +562,13 @@ export function createRpcConnectionHandler(
 	const pendingExtensionRequests = new SessionExtensionUiRequests(uiRequestChanged);
 	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output, uiRequestChanged, () => options.clientInfo?.connectionId());
+	const raiserOrigin = () => connectionRoles.originOf(options.clientInfo?.connectionId());
+	const questions = new ConnectionQuestionBridge(
+		output,
+		uiRequestChanged,
+		() => options.clientInfo?.connectionId(),
+		raiserOrigin,
+	);
 	let secretHandshake = false;
 	const secretOwners = new Map<string, { connection: string | undefined; cancel?: () => void }>();
 	const secretCapable = (connection: string | undefined): boolean =>
@@ -611,6 +618,7 @@ export function createRpcConnectionHandler(
 		if (opts?.signal?.aborted) return Promise.resolve(defaultValue);
 
 		const id = crypto.randomUUID();
+		const raised = { ...request, ...remoteOriginField(raiserOrigin()) };
 		return new Promise((resolve, reject) => {
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -635,7 +643,7 @@ export function createRpcConnectionHandler(
 			}
 
 			pendingExtensionRequests.set(id, {
-				frame: { type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest,
+				frame: { type: "extension_ui_request", id, ...raised } as RpcExtensionUIRequest,
 				resolve: (response: RpcExtensionUIResponse) => {
 					cleanup();
 					resolve(parseResponse(response));
@@ -643,7 +651,7 @@ export function createRpcConnectionHandler(
 				reject,
 			});
 			if (request.grantSelect === true) grantRequests.set(id, options.clientInfo?.connectionId());
-			output({ type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest);
+			output({ type: "extension_ui_request", id, ...raised } as RpcExtensionUIRequest);
 		});
 	}
 	const selectGrantDialog: ExtensionUIContext["select"] = (title, choices, opts) =>
@@ -823,9 +831,17 @@ export function createRpcConnectionHandler(
 
 		async editor(title: string, prefill?: string): Promise<string | undefined> {
 			const id = crypto.randomUUID();
+			const frame: RpcExtensionUIRequest = {
+				type: "extension_ui_request",
+				id,
+				method: "editor",
+				title,
+				prefill,
+				...remoteOriginField(raiserOrigin()),
+			};
 			return new Promise((resolve, reject) => {
 				pendingExtensionRequests.set(id, {
-					frame: { type: "extension_ui_request", id, method: "editor", title, prefill },
+					frame,
 					resolve: (response: RpcExtensionUIResponse) => {
 						if ("cancelled" in response && response.cancelled) {
 							resolve(undefined);
@@ -837,7 +853,7 @@ export function createRpcConnectionHandler(
 					},
 					reject,
 				});
-				output({ type: "extension_ui_request", id, method: "editor", title, prefill } as RpcExtensionUIRequest);
+				output(frame);
 			});
 		},
 
@@ -1520,6 +1536,10 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_client_info": {
+				const origin = remoteOriginDeclaration(command.remoteOrigin, (declared) =>
+					connectionRoles.acceptsOrigin(currentConnectionId(), declared),
+				);
+				if ("refusal" in origin) return error(id, "set_client_info", origin.refusal);
 				const next = sessionDeclaration(
 					options,
 					command,
@@ -1528,6 +1548,7 @@ export function createRpcConnectionHandler(
 					replaceClientCapabilities,
 				);
 				if (next.refusal) return error(id, "set_client_info", next.refusal);
+				if (origin.origin !== undefined) connectionRoles.declareOrigin(currentConnectionId(), origin.origin);
 				clientCapabilities = next.capabilities;
 				if (command.capabilities !== undefined) {
 					secretHandshake = true;

@@ -1,3 +1,65 @@
+## 2026-11-02 - The agent proxy handles `message_tool_arguments_reset` (senpi#5300)
+
+### What changed
+
+- `packages/agent/src/proxy.ts`: `ProxyAssistantMessageEvent` gains the `message_tool_arguments_reset` record, typed from `AssistantProgress`. `processProxyEvent` moves unchanged in its other cases to the fork-only `packages/agent/src/proxy-event-reducer.ts` (proxy.ts was over the 250-line file ceiling); `streamProxy` imports it from there, and the package's public exports are unchanged.
+- `packages/agent/src/proxy-event-reducer.ts`: `processProxyEvent` replaces the tool call's raw arguments with the record's `rawArgumentPrefix` and re-parses them, so the next `toolcall_delta` extends that prefix. The delta and reset cases share one `setRawArguments` step. The record produces no public event.
+
+### Why
+
+- `packages/agent/src/proxy.ts`: the proxy was the only in-repo consumer that buffers raw tool-call arguments. A reset fell through to `Unhandled proxy event type`, so a following delta at offset 0 carrying the whole prefix was appended to the stale buffer. The call's arguments then parsed from a doubled string (`{"path":"a{"path":"a.ts"}` gave `{ path: "a{" }`).
+
+### Why an extension could not handle it
+
+- `streamProxy` decodes the proxy wire and owns the partial message; extensions see neither the proxy events nor the raw argument buffer.
+
+### Expected merge conflict zones
+
+- MEDIUM: an upstream change to `processProxyEvent` lands in `packages/agent/src/proxy.ts` but the function now lives in `packages/agent/src/proxy-event-reducer.ts`; port it there.
+- LOW: the `ProxyAssistantMessageEvent` union and the `parseStreamingJson`/`ToolCall` imports in `packages/agent/src/proxy.ts`.
+
+## 2026-10-31 - Harness provider requests carry the session cwd (senpi#5257, fixes #5256)
+
+### What changed
+
+- `packages/agent/src/harness/context.ts`: new `withSessionCwd(cwd, context)` / `getSessionCwd(context)` attach and read the session working directory on a context.
+- `packages/agent/src/harness/compaction/compaction.ts`: `createSummaryRequestOptions` adds `cwd` from the request options or the context, so every summary request it builds (history summary, split-turn prefix, branch summary, and the standalone `compact` / `generateSummaryWithUsage` / `generateBranchSummary` helpers) carries it.
+- `packages/agent/src/harness/runtime/drive/structural.ts`: compaction and branch-summary requests run under a context carrying `session.metadata.cwd`.
+- `packages/agent/src/harness/runtime/drive/generation.ts`: assistant turn requests pass `cwd: session.metadata.cwd`.
+
+### Why
+
+- A provider that requires an absolute session cwd (`anthropic-subscription`) rejected every harness compaction, branch summary and turn, because no harness request carried one (#5256, downstream oh-my-openagent#12026).
+
+### Why an extension could not handle it
+
+- The summary request options are built inside the harness; an extension never sees them before the provider rejects the request.
+
+### Expected merge conflict zones
+
+- LOW: `createSummaryRequestOptions` in `compaction.ts`, the summary branch of `performStructuralAttempt` in `structural.ts`, and the `streamSimple` options in `generation.ts`.
+
+## 2026-10-30 - Produce source-bound conformance archives (senpi#5059)
+
+### What changed
+
+- `packages/agent/scripts/pack-conformance-archive.ts` snapshots one selected commit, builds and packs its agent package, and includes the original registry-relative implementation sources with a SHA-256 manifest.
+- The producer loads the packed conformance export and compares its reconstructed manifest with the same commit's source manifest.
+- `packages/agent/scripts/deterministic-tar-gz.ts` writes the archive as a gzip ustar whose bytes depend only on its files (sorted entries, fixed mode/owner/mtime, no gzip timestamp); `Bun.Archive` stamps each entry with the build time, so two builds of one commit differed.
+- The archive regression test checks compressed round-trip bytes, digests, zero entry and gzip timestamps, byte-identical repeat builds, and the existing CONF.bun suite-hash contract.
+
+### Why
+
+- An external host needs both executable conformance cases and the exact source bytes used by the suite-hash contract. A compiled package alone cannot provide the latter.
+
+### Why an extension could not handle it
+
+- The artifact boundary belongs to the engine's package and source registry. A versioned producer keeps external hosts from inventing a separate hash input or mixing source revisions.
+
+### Expected merge conflict zones
+
+- LOW: agent package scripts and development dependencies; generated dependency lockfiles. New producer, test, and documentation files.
+
 ## 2026-10-30 - Unprepared scoped ToolHost seam (senpi#5030)
 
 ### What changed
