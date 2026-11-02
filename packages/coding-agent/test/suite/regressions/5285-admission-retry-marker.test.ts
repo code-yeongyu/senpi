@@ -46,7 +46,11 @@ function admissionLedger() {
 	const produced: string[] = [];
 	let calls = 0;
 	const waiters: { count: number; resolve: () => void }[] = [];
-	vi.spyOn(CompactAdmissions.prototype, "run").mockImplementation(function (this: CompactAdmissions, identity, produce) {
+	vi.spyOn(CompactAdmissions.prototype, "run").mockImplementation(function (
+		this: CompactAdmissions,
+		identity,
+		produce,
+	) {
 		calls++;
 		for (const waiter of waiters.filter((entry) => entry.count <= calls)) waiter.resolve();
 		return run.call(this, identity, (signal) => {
@@ -93,71 +97,91 @@ async function whilePending(peer: RawClient, body: Record<string, unknown>, extr
 	return { answers, produced: ledger.produced };
 }
 
-it.each(KINDS)("RULING-125 %s retry:true on a done row answers its stored result and admits nothing", async (kind) => {
-	await using host = await compactHost();
-	const peer = host.client("peer");
-	const body = await prepare(host, kind, true);
-	const ledger = admissionLedger();
-	const first = await peer.request({ ...body, admissionId: "done" });
-	expect(first).toMatchObject({ success: true, admissionId: "done" });
-	const retried = await peer.request({ ...body, admissionId: "done", retry: true });
-	expect(withoutId(retried)).toEqual(withoutId(first));
-	expect(ledger.produced).toEqual(["done"]);
-}, 600_000);
+it.each(KINDS)(
+	"RULING-125 %s retry:true on a done row answers its stored result and admits nothing",
+	async (kind) => {
+		await using host = await compactHost();
+		const peer = host.client("peer");
+		const body = await prepare(host, kind, true);
+		const ledger = admissionLedger();
+		const first = await peer.request({ ...body, admissionId: "done" });
+		expect(first).toMatchObject({ success: true, admissionId: "done" });
+		const retried = await peer.request({ ...body, admissionId: "done", retry: true });
+		expect(withoutId(retried)).toEqual(withoutId(first));
+		expect(ledger.produced).toEqual(["done"]);
+	},
+	600_000,
+);
 
-it.each(KINDS)("RULING-125 %s retry:true on a live pending id joins the in-flight admission", async (kind) => {
-	await using host = await compactHost();
-	const peer = host.client("peer");
-	const body = await prepare(host, kind, true);
-	const { answers, produced } = await whilePending(peer, body, { retry: true });
-	const [first, retried] = answers;
-	expect(first).toMatchObject({ success: true, admissionId: "live" });
-	expect(withoutId(retried)).toEqual(withoutId(first));
-	expect(produced).toEqual(["live"]);
-}, 600_000);
+it.each(KINDS)(
+	"RULING-125 %s retry:true on a live pending id joins the in-flight admission",
+	async (kind) => {
+		await using host = await compactHost();
+		const peer = host.client("peer");
+		const body = await prepare(host, kind, true);
+		const { answers, produced } = await whilePending(peer, body, { retry: true });
+		const [first, retried] = answers;
+		expect(first).toMatchObject({ success: true, admissionId: "live" });
+		expect(withoutId(retried)).toEqual(withoutId(first));
+		expect(produced).toEqual(["live"]);
+	},
+	600_000,
+);
 
-it.each(KINDS)("RULING-125 %s retry:true on a never-seen id answers admission_unknown and admits nothing", async (kind) => {
-	await using host = await compactHost();
-	const peer = host.client("peer");
-	const body = await prepare(host, kind, true);
-	const ledger = admissionLedger();
-	const answer = await peer.request({ ...body, admissionId: "never-seen", retry: true });
-	expect(answer).toMatchObject({
-		success: false,
-		error: "admission_admission_unknown",
-		errorData: { kind: "request_refused", reason: "admission_unknown" },
-	});
-	expect(ledger.produced).toEqual([]);
-}, 600_000);
+it.each(KINDS)(
+	"RULING-125 %s retry:true on a never-seen id answers admission_unknown and admits nothing",
+	async (kind) => {
+		await using host = await compactHost();
+		const peer = host.client("peer");
+		const body = await prepare(host, kind, true);
+		const ledger = admissionLedger();
+		const answer = await peer.request({ ...body, admissionId: "never-seen", retry: true });
+		expect(answer).toMatchObject({
+			success: false,
+			error: "admission_admission_unknown",
+			errorData: { kind: "request_refused", reason: "admission_unknown" },
+		});
+		expect(ledger.produced).toEqual([]);
+	},
+	600_000,
+);
 
-it.each(KINDS)("RULING-125 %s without the marker keeps duplicate handling for a live id", async (kind) => {
-	await using host = await compactHost();
-	const peer = host.client("peer");
-	const body = await prepare(host, kind, true);
-	const { answers, produced } = await whilePending(peer, body, {});
-	const [first, joined] = answers;
-	expect(first).toMatchObject({ success: true, admissionId: "live" });
-	expect(withoutId(joined)).toEqual(withoutId(first));
-	const repeated = await peer.request({ ...body, admissionId: "live" });
-	expect(withoutId(repeated)).toEqual(withoutId(first));
-	expect(produced).toEqual(["live"]);
-}, 600_000);
+it.each(KINDS)(
+	"RULING-125 %s without the marker keeps duplicate handling for a live id",
+	async (kind) => {
+		await using host = await compactHost();
+		const peer = host.client("peer");
+		const body = await prepare(host, kind, true);
+		const { answers, produced } = await whilePending(peer, body, {});
+		const [first, joined] = answers;
+		expect(first).toMatchObject({ success: true, admissionId: "live" });
+		expect(withoutId(joined)).toEqual(withoutId(first));
+		const repeated = await peer.request({ ...body, admissionId: "live" });
+		expect(withoutId(repeated)).toEqual(withoutId(first));
+		expect(produced).toEqual(["live"]);
+	},
+	600_000,
+);
 
 it.each(
 	KINDS.flatMap((kind) => [
 		{ kind, flag: "0", extra: { admissionId: "never-seen", retry: true } },
 		{ kind, flag: "1", extra: { retry: true } },
 	]),
-)("RULING-125 flag=$flag $kind: a legacy request ignores retry:true", async ({ kind, flag, extra }) => {
-	vi.stubEnv(FLAG, flag);
-	await using host = await statusHost();
-	const peer = host.client("peer");
-	const body = await prepare(host, kind, false);
-	const plain = await peer.request(body);
-	const fresh = kind === "open_session" ? { sessionPath: join(host.cwd, "marked.jsonl") } : {};
-	const marked = await peer.request({ ...body, ...fresh, ...extra });
-	expect(plain).toMatchObject({ success: true });
-	expect(marked).toMatchObject({ success: true });
-	expect(marked).not.toHaveProperty("admissionId");
-	expect(Object.keys(dataOf(marked)).sort()).toEqual(Object.keys(dataOf(plain)).sort());
-}, 600_000);
+)(
+	"RULING-125 flag=$flag $kind: a legacy request ignores retry:true",
+	async ({ kind, flag, extra }) => {
+		vi.stubEnv(FLAG, flag);
+		await using host = await statusHost();
+		const peer = host.client("peer");
+		const body = await prepare(host, kind, false);
+		const plain = await peer.request(body);
+		const fresh = kind === "open_session" ? { sessionPath: join(host.cwd, "marked.jsonl") } : {};
+		const marked = await peer.request({ ...body, ...fresh, ...extra });
+		expect(plain).toMatchObject({ success: true });
+		expect(marked).toMatchObject({ success: true });
+		expect(marked).not.toHaveProperty("admissionId");
+		expect(Object.keys(dataOf(marked)).sort()).toEqual(Object.keys(dataOf(plain)).sort());
+	},
+	600_000,
+);

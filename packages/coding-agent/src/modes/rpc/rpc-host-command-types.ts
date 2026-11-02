@@ -30,6 +30,8 @@ type RpcCommandBody =
 			id?: string;
 			type: "open_session";
 			admissionId?: string;
+			/** A C4.4 resend of `admissionId` (RULING-125, docs/rpc.md "Admission retries"); ignored with the flag off. */
+			retry?: true;
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
 			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
@@ -199,6 +201,8 @@ type RpcCommandBody =
 			 */
 			type: "subscribe_sessions";
 			admissionId?: string;
+			/** A C4.4 resend of `admissionId` (RULING-125, docs/rpc.md "Admission retries"); ignored with the flag off. */
+			retry?: true;
 			/** `"all"` (default), routing/durable ids or paths, or the children of one durable session id. */
 			sessions?: "all" | { ids: string[] } | { childrenOf: string };
 			/** Include `kind: "worker"` sessions (default: true for `childrenOf`, false otherwise). */

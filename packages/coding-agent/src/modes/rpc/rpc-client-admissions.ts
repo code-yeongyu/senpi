@@ -29,6 +29,8 @@ type Send = (command: RpcCommand) => Promise<RpcResponse>;
 /** Pre-send admission routes and event-driven repair. No prompt, mutable-root fallback, timer or retry loop. */
 export class RpcClientAdmissions {
 	private readonly routes = new Map<string, Route>();
+	/** Admission IDs sent on this connection: a re-send is a C4.4 retry and carries `retry: true` (RULING-125). */
+	private readonly sent = new Set<string>();
 	private readonly send: Send;
 	private serial = 0;
 
@@ -38,6 +40,7 @@ export class RpcClientAdmissions {
 
 	clear(): void {
 		this.routes.clear();
+		this.sent.clear();
 	}
 
 	receive(input: unknown): void {
@@ -69,8 +72,12 @@ export class RpcClientAdmissions {
 		const existing = this.routes.has(options.admissionId);
 		if (!existing)
 			this.routes.set(options.admissionId, { repair: new RecoveryRepairController(), generation: 0, notBefore: 0 });
+		const retry = this.sent.has(options.admissionId);
+		this.sent.add(options.admissionId);
 		try {
-			const opened = this.accept(await this.send({ ...options, type: "open_session" }));
+			const opened = this.accept(
+				await this.send({ ...options, type: "open_session", ...(retry ? { retry: true as const } : {}) }),
+			);
 			// open returns routing identity, not page content. page retains wait/backoff state;
 			// a catalog restart replaces that identity before the caller can use it.
 			const manifest = await this.page(options.admissionId, "manifest");

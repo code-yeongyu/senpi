@@ -1,5 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { ADMISSION_LIMITS, CompactAdmissionError, CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts";
+import {
+	ADMISSION_LIMITS,
+	CompactAdmissionError,
+	CompactAdmissions,
+} from "../../../src/modes/rpc/compact-admissions.ts";
 import { admissionClient } from "./4272-rpc-client-admission-support.ts";
 
 afterEach(() => {
