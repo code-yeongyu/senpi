@@ -2,6 +2,7 @@
  * The restore handlers a session's terminal persistence runs, one per durability class: each adopts the
  * restored watch into the session's manifest and re-binds its stable `mon_` id to the fresh runtime id.
  */
+import { readKillGuardSetting } from "../../../kill-guard/host.ts";
 import { createRestartableCommandHandler } from "./durable-command.ts";
 import { createCheckpointedFileRestoreHandler } from "./durable-file.ts";
 import { createCheckpointedRpcRestoreHandler } from "./durable-rpc.ts";
@@ -43,6 +44,10 @@ export function restoreHandlers(
 				ctx: toolCtx,
 				registry,
 				...(graceMs !== undefined ? { graceMs } : {}),
+				killGuardOn: () => {
+					const session = toolCtx.getSessionContext?.();
+					return session === undefined || readKillGuardSetting(session.cwd, session.agentDir) === "on";
+				},
 			}),
 		),
 		"checkpointed-file": adopting(async (monitor, context) => {
