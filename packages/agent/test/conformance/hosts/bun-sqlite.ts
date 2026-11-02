@@ -2,7 +2,8 @@
 // KILL-STORE-* cases on a fresh medium of packages/session-backends/sqlite-bun through the exported
 // StoreConformanceAdapter; the WAKE, KILL-WAKE and MULTI-HOST cases on the Bun timer host (manual clock) whose alarm
 // persists in that SQLite store; the TRANSPORT, MULTI-LANE/FAIR and FAULT-TRANSPORT cases on the reference reliable
-// transport. Bun-only: it imports bun:sqlite.
+// transport; the KILL-HAND, MULTI-HAND/KILL and FAULT-HAND cases run the in-process remote executor on that SQLite
+// store and the reference transport. Bun-only: it imports bun:sqlite.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,7 +59,7 @@ export function createBunSqliteHost(): ConformanceHost<BunSqliteHostAdapters> {
 	const media = createBunSqliteMedia(mkdtempSync(join(tmpdir(), "conf-bun-sqlite-")));
 	return {
 		name: "bun-sqlite",
-		provides: ["store", "wake", "transport"],
+		provides: ["store", "wake", "transport", "executor"],
 		adapters: { store: media, wake: bunTimerWake(), transport: referenceTransport, platform: process.platform },
 	};
 }
