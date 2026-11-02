@@ -4024,6 +4024,21 @@
 				}
 			],
 			"reason": "senpi#5052: Windows Python kernel startup restore added isolated Win32 lexical-joining parity cases and a packaged-assets check for the isolated Windows startup host; the old combined parity title is removed. Reviewed and merged without reviewed-addition records; no prompt cell moves."
+		},
+		"senpi#5552": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/value-images.js",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) JavaScript kernel Given a cell that returns a tool result when it settles then the image is an image frame, not text",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) JavaScript kernel Given a cell that prints a tool result when it settles then the image is an image frame, not text",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) JavaScript kernel Given a cell that logs a tool result when it settles then the image is an image frame, not text",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) JavaScript kernel Given a cell that displays a wrapper of a tool result when it settles then the image is an image frame, not text",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) JavaScript kernel Given a returned tool result when it settles then its other fields stay in the value text",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) JavaScript kernel Given a returned value with no image when it settles then the value text is unchanged",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) Python kernel Given a cell that returns a tool result when it settles then the image is an image frame, not text",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) Python kernel Given a cell that prints a tool result when it settles then the image is an image frame, not text",
+				"legacyContracts/test/eval-value-image-projection.test.ts/eval cell values carrying images (omo#12185) Python kernel Given a cell that displays a wrapper of a tool result when it settles then the image is an image frame, not text"
+			],
+			"reason": "senpi#5552 (omo#12185): images inside values an eval cell returns, prints or displays as JSON are attached as image frames instead of serialized as base64; the new value-images.js module is eagerly imported by the JS worker, and the new contract file pins the behaviour for the js and py kernels. No prompt cell moves."
 		}
 	}
 }

@@ -10,6 +10,7 @@ import { createHeapProbe } from "./worker-heap.js";
 import { createRejectionReports } from "./rejection-reports.js";
 import { createWorkerMemory } from "./worker-memory.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
+import { projectValueImages } from "./value-images.js";
 import { installKernelWebView } from "./worker-webview.js";
 
 // Mirrors INTERRUPT_ACK_OP, CHILD_LIFECYCLE_OP, and MEMORY_COLLECTED_OP in src/bridge/reserved.ts (this worker file cannot import TypeScript).
@@ -90,7 +91,9 @@ export function createWorkerCore(transport, options) {
 			const run = options.runAuthority ? options.runAuthority(message.authority, execute, message.code) : execute();
 			const value = await Promise.race([run, release.promise]);
 			rejections.finishCell(cell);
-			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
+			const shown = projectValueImages(value);
+			for (const image of shown.frames) emit({ type: "display", ...image });
+			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(shown.value), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} catch (error) {
 			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs), ...memoryReport() });
