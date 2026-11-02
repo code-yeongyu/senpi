@@ -1,27 +1,3 @@
-# changes
-
-## 2026-08-30 - Render optional assistant message arrival timestamps
-
-### What changed
-
-- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: stamps the first rendered content line with a dim local `HH:MM:SS` prefix when enabled, falls back to unprefixed rendering when a narrow viewport cannot fit the prefix plus content padding, preserves the first `updateContent()` arrival time across streaming updates, rerenders, and width changes, and toggles the prefix without rebuilding memoized content children.
-- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: exposes the default-off message timestamp toggle in `/settings`.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: wires persisted state into new, restored, and streaming assistant messages; coordinates tool-separated render segments so one logical message receives exactly one prefix with a shared arrival time; keeps that ownership through an initially empty smooth-stream frame; applies toggles immediately; and refreshes the setting before transcript reconstruction on reload.
-
-### Why
-
-- Long-running interactive sessions need an unobtrusive way to distinguish when assistant output first arrived without changing existing output unless the operator opts in.
-
-### Why an extension could not handle it
-
-- Assistant component construction, streaming updates, transcript reconstruction, and the built-in settings selector are private interactive-mode rendering boundaries without an extension hook that can add a stable prefix to every applicable component.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: outer render-cache invalidation, narrow-width fallback, and message update lifecycle.
-- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: settings list construction and callbacks.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: assistant component construction, tool-separated timestamp eligibility, runtime settings, `/settings` callbacks, and reload transcript reconstruction.
-
 ## 2026-10-31 - The extra-usage warning no longer sniffs sk-ant-oat API keys (senpi#5131)
 
 ### What changed
