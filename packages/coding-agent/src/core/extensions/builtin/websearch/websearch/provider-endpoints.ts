@@ -28,6 +28,7 @@ const DEFAULT_PROVIDER_URLS: Record<Exclude<SearchProvider, "searxng" | "public"
 	parallel: "https://search.parallel.ai/mcp",
 	firecrawl: "https://api.firecrawl.dev/v2/search",
 	openrouter: "https://openrouter.ai/api/v1",
+	jina: "https://s.jina.ai",
 };
 
 /** SearXNG is self-hosted, so it has no default endpoint; config validation requires its `baseUrl`. */

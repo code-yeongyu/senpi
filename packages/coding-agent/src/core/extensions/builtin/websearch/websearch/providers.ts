@@ -11,6 +11,7 @@ import { firecrawlProvider } from "./providers/firecrawl.ts";
 import { googleProvider } from "./providers/google.ts";
 import { googleCseProvider } from "./providers/google-cse.ts";
 import { googleHtmlProvider } from "./providers/google-html.ts";
+import { jinaProvider } from "./providers/jina.ts";
 import { kagiProvider } from "./providers/kagi.ts";
 import { keenableProvider } from "./providers/keenable.ts";
 import { kimiProvider } from "./providers/kimi.ts";
@@ -68,6 +69,7 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	firecrawl: firecrawlProvider,
 	openrouter: openRouterProvider,
 	public: publicProvider,
+	jina: jinaProvider,
 };
 
 /** A count chosen for one call outranks a provider entry's own value, which outranks the caller's default. */

@@ -27,7 +27,8 @@ export type SearchProvider =
 	| "parallel"
 	| "firecrawl"
 	| "openrouter"
-	| "public";
+	| "public"
+	| "jina";
 
 /** Why a keyless engine refused a search; each reason puts the engine on a cooldown. */
 export type SearchBlockReason = "challenge" | "rate_limited" | "forbidden" | "network";
