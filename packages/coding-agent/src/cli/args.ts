@@ -31,6 +31,8 @@ export interface Args {
 	mode?: Mode;
 	name?: string;
 	noSession?: boolean;
+	/** The launcher watches this process's exit and records its death; skip the lifetime crash marker. */
+	supervised?: boolean;
 	session?: string;
 	attach?: string;
 	sessionId?: string;
@@ -198,6 +200,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			}
 		} else if (arg === "--no-session") {
 			result.noSession = true;
+		} else if (arg === "--supervised") {
+			result.supervised = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
 			result.session = args[++i];
 		} else if (arg === "--session-id" && i + 1 < args.length) {
@@ -450,6 +454,8 @@ ${chalk.bold("Options:")}
   --rebind <path|id>             Move a session from a moved or re-cloned repository into this directory and continue it
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
+  --supervised                   The launching process watches this one's exit and records its death
+                                 (no lifetime crash marker is written)
   --name, -n <name>              Set session display name
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
