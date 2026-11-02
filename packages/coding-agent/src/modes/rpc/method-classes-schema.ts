@@ -17,6 +17,7 @@ import { Check, Errors } from "typebox/value";
 import { MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import type { RpcInboundRecordOf, RpcMethodType } from "./method-classes.ts";
 import { HOST_RECORD_SCHEMAS } from "./method-classes-schema-host.ts";
+import { RECOVERY_RECORD_SCHEMAS } from "./method-classes-schema-recovery.ts";
 import { SESSION_RECORD_SCHEMAS } from "./method-classes-schema-session.ts";
 import {
 	rpcCommandPayloadError,
@@ -59,7 +60,11 @@ function agreeingSchemas<const Schemas extends RpcInboundSchemaTable>(
 	return schemas;
 }
 
-export const RPC_INBOUND_SCHEMAS = agreeingSchemas({ ...HOST_RECORD_SCHEMAS, ...SESSION_RECORD_SCHEMAS });
+export const RPC_INBOUND_SCHEMAS = agreeingSchemas({
+	...HOST_RECORD_SCHEMAS,
+	...SESSION_RECORD_SCHEMAS,
+	...RECOVERY_RECORD_SCHEMAS,
+});
 
 export type RpcInboundValidation = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 

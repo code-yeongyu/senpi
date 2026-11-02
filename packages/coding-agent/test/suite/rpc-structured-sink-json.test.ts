@@ -205,9 +205,12 @@ it("snapshots getters once before later getters can mutate earlier properties", 
 // throws the engine's RangeError) it refuses with the typed LegacyRecordDepthError. The boundary is searched with the
 // same input shape and call chain the samples use, but where (and whether) nested arrays hit a limit depends on the
 // engine: some serialize arrays without recursion and have no array limit at all. So no array sample assumes which
-// side it lands on; each is held to the invariant. The one sample that must refuse is an endless toJSON chain of
-// fresh objects: every engine serializes toJSON results by recursion, so its round trip throws RangeError everywhere.
-it("normalizes deeply nested arrays like the JSON round trip", async () => {
+// side it lands on; each is held to the invariant. The bisection stops at its cap (200,000): on an engine with no array
+// limit (Node 26) `low` is that cap, not an engine limit, and each result says which it is. The deciding sample is the
+// toJSON object chain, which must refuse: V8 14.x and Bun 1.4 serialize toJSON results by recursion (measured, not
+// guaranteed), so its round trip throws RangeError there. The chain is capped at a depth far past any stack, so an
+// engine that serializes it without recursion ends the chain and fails that assertion instead of running to OOM.
+it("normalizes deep nesting like the JSON round trip: nested arrays to the bisection cap and a toJSON object chain past every engine limit", async () => {
 	const source = new URL("../../src/modes/rpc/json-normal-value.ts", import.meta.url).href;
 	const script = `
 		const { normalizeJsonValue } = await import(${JSON.stringify(source)});
@@ -215,35 +218,53 @@ it("normalizes deeply nested arrays like the JSON round trip", async () => {
 		const record = (depth) => ({ type: "tool_execution_end", result: { content: [], details: deep(depth) } });
 		const outcome = (run) => { try { return JSON.stringify(run()); } catch (error) { return error.name; } };
 		const roundTrip = (input) => outcome(() => JSON.parse(JSON.stringify(input)));
+		const cap = 200000;
 		let low = 1;
-		let high = 200000;
+		let high = cap;
 		while (low < high) {
 			const middle = Math.ceil((low + high) / 2);
 			if (roundTrip(record(middle)) === "RangeError") high = middle - 1;
 			else low = middle;
 		}
-		const level = () => ({ toJSON: () => ({ inner: level() }) });
-		const endless = { type: "tool_execution_end", result: { content: [], details: level() } };
+		const level = (left) => (left === 0 ? {} : { toJSON: () => ({ inner: level(left - 1) }) });
+		const endless = { type: "tool_execution_end", result: { content: [], details: level(1000000) } };
+		const bound = low === cap ? "bisection cap" : "engine limit";
 		const results = [low - 16, low, low + 1, 20000, -1].map((depth) => {
 			const input = depth < 0 ? endless : record(depth);
 			const reference = roundTrip(input);
 			const normalized = outcome(() => normalizeJsonValue(input).value);
-			return { depth, low, same: normalized === reference, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
+			return { depth, low, bound, same: normalized === reference, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
 		});
 		process.stdout.write(JSON.stringify(results));`;
 	const args = process.versions.bun ? ["-e", script] : ["--input-type=module", "-e", script];
 	const { stdout } = await promisify(execFile)(process.execPath, args, { timeout: 60_000 });
-	const results: { depth: number; low: number; same: boolean; reference: string; normalized: string }[] =
-		JSON.parse(stdout);
+	const results: {
+		depth: number;
+		low: number;
+		bound: string;
+		same: boolean;
+		reference: string;
+		normalized: string;
+	}[] = JSON.parse(stdout);
 	expect(results).toHaveLength(5);
 	const underLimit = results[0];
 	const endlessChain = results[4];
 	expect(underLimit?.reference, "the record under the engine limit serializes").not.toBe("RangeError");
-	expect(endlessChain?.reference, "an endless toJSON chain overflows every engine").toBe("RangeError");
-	for (const { depth, low, same, reference, normalized } of results) {
+	expect(
+		endlessChain?.reference,
+		"a 1,000,000-level toJSON chain overflows the engine (recursive toJSON serialization: measured on V8 14.x and Bun 1.4); an engine that serializes it without recursion fails here",
+	).toBe("RangeError");
+	for (const { depth, low, bound, same, reference, normalized } of results) {
 		if (reference === "RangeError")
-			expect({ depth, low, normalized }).toEqual({ depth, low, normalized: "LegacyRecordDepthError" });
-		else expect({ depth, low, same, normalized }).toEqual({ depth, low, same: true, normalized: reference });
+			expect({ depth, low, bound, normalized }).toEqual({ depth, low, bound, normalized: "LegacyRecordDepthError" });
+		else
+			expect({ depth, low, bound, same, normalized }).toEqual({
+				depth,
+				low,
+				bound,
+				same: true,
+				normalized: reference,
+			});
 	}
 }, 90_000);
 
