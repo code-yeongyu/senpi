@@ -233,14 +233,20 @@ function appendContent(contents: Content[], content: Content): void {
 	contents.push(content);
 }
 
-// The current turn starts after the last user message that carries content. An image-only
-// user message (a pasted screenshot with no caption) starts a new turn exactly like a text
-// prompt does: assistant steps after it are current-turn steps. Empty user messages carry
-// no content and never act as the boundary.
+// The current turn starts after the last user message that lands on the wire as its own user
+// turn. An image-only user message (a pasted screenshot with no caption) starts a new turn
+// exactly like a text prompt does: assistant steps after it are current-turn steps. Empty user
+// messages carry no content and never act as the boundary. A user message that directly follows
+// a toolResult (a steering note, a detached-tool <system-reminder>, a screenshot pasted mid-loop)
+// is folded by appendContent into the function-response user turn, so it never starts a new turn
+// either: skipping it keeps the boundary at the last real prompt, keeping every unsigned step of
+// the trailing tool loop inside the current turn (senpi#3633 review: an earlier unsigned step in
+// that folded shape was never measured as accepted, so it must replay as text too).
 function findLastUserContentMessageIndex(messages: Message[]): number {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role !== "user") continue;
+		if (messages[i - 1]?.role === "toolResult") continue;
 		if (typeof msg.content === "string") {
 			if (msg.content.trim().length > 0) return i;
 		} else if (msg.content.some((item) => (item.type === "text" ? item.text.trim().length > 0 : true))) {
@@ -253,9 +259,11 @@ function findLastUserContentMessageIndex(messages: Message[]): number {
 // The final model turn is the run of consecutive assistant steps immediately before the trailing
 // user/tool-result run: the last Content with role "model" the request will carry. Gemini 3+
 // strict signature validation applies to it even when a later user message (a steering note, a
-// detached-tool <system-reminder>) follows the tool results, so unsigned calls there must replay
-// as text too (senpi#3633: an unsigned functionCall in the final model turn 400s even when a user
-// message ends the request; the same part in an earlier model turn is accepted).
+// detached-tool <system-reminder>) follows the tool results without folding into them (when it
+// does fold, findLastUserContentMessageIndex already keeps those steps in the current turn), so
+// unsigned calls there must replay as text too (senpi#3633: an unsigned functionCall in the final
+// model turn 400s even when a user message ends the request; the same part in an earlier model
+// turn is accepted).
 function findFinalModelTurnStart(messages: Message[]): number {
 	let i = messages.length - 1;
 	while (i >= 0 && messages[i].role !== "assistant") i--;
@@ -323,8 +331,9 @@ export function convertMessages<T extends GoogleApiType>(
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
 
 			// Strict validation (requiring a thoughtSignature on the first functionCall part) applies
-			// to the current turn — assistant steps after the last user message carrying content — and
-			// to the request's final model turn, which Gemini 3+ validates even when a user message
+			// to the current turn — assistant steps after the last user message that lands as its own
+			// user turn, so a note folded after tool results does not move the boundary — and to the
+			// request's final model turn, which Gemini 3+ validates even when a user message
 			// (steering note, detached-tool notification) follows the tool results (senpi#3633).
 			// Earlier turns preserve structured function calls. In a replayed step, the whole step
 			// becomes text, because the documented skip_thought_signature_validator sentinel is
@@ -484,7 +493,9 @@ export function convertMessages<T extends GoogleApiType>(
 	// after tool results (a follow-up prompt, a detached-tool <system-reminder>) is the shape Vertex
 	// rejects as "Requests ending with a model turn are not supported" (omo#9747, senpi#3633).
 	// Parts are reordered only inside one user turn this converter built; each part keeps its own
-	// thoughtSignature.
+	// thoughtSignature. The reorder rewrites a user turn that earlier requests of the same session
+	// already sent in the folded order, so from the first moved part on it costs a prefix-cache
+	// hit; correctness beats the cache, so the reordering stands.
 	if (requiresFunctionResponseTrailingOrder(model.id)) {
 		for (const content of contents) {
 			if (content.role !== "user" || content.parts === undefined) continue;
