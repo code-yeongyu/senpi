@@ -35,6 +35,14 @@ const hosts: { name: string; env: NodeJS.ProcessEnv; stripKeeps: boolean }[] = [
 	},
 	{ name: "direct (neither set)", env: {}, stripKeeps: false },
 	{ name: "empty BASE_URL", env: { ANTHROPIC_BASE_URL: "" }, stripKeeps: false },
+	{ name: "BASE_URL=Anthropic origin", env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" }, stripKeeps: false },
+	{ name: "BASE_URL=Anthropic origin/", env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com/" }, stripKeeps: false },
+	{
+		name: "BASE_URL=Anthropic origin/v1",
+		env: { ANTHROPIC_BASE_URL: "https://API.anthropic.com/v1" },
+		stripKeeps: false,
+	},
+	{ name: "unparsable BASE_URL", env: { ANTHROPIC_BASE_URL: "not a url" }, stripKeeps: true },
 ];
 
 const rows: Row[] = hosts.flatMap((host) => [
@@ -68,7 +76,7 @@ async function probeEnvironment(row: Row): Promise<NodeJS.ProcessEnv> {
 	return seen[0] ?? {};
 }
 
-async function turnEnvironment(row: Row): Promise<NodeJS.ProcessEnv> {
+async function turnEnvironment(row: Row, buildOptions: () => Options = () => ({})): Promise<NodeJS.ProcessEnv> {
 	const captured: Options[] = [];
 	const query: SdkQuery = (input) => {
 		if (input.options) captured.push(input.options);
@@ -86,7 +94,7 @@ async function turnEnvironment(row: Row): Promise<NodeJS.ProcessEnv> {
 	for await (const message of queryWithAuthLane({
 		prompt: "hi",
 		query,
-		buildOptions: () => ({}),
+		buildOptions,
 		providerSettings: { ambientApiKey: row.policy },
 	}))
 		messages.push(message);
@@ -117,6 +125,25 @@ describe("ambient lane host ANTHROPIC_API_KEY (senpi#1195)", () => {
 		expect(environment.ANTHROPIC_API_KEY).toBe(expected.ANTHROPIC_API_KEY);
 		expect(environment).not.toHaveProperty("SENPI_SEED");
 		expect(environment).toMatchObject(expected);
+	});
+
+	it("layers a models.json ANTHROPIC_BASE_URL after the strip, which looks at the host environment only (#4765)", async () => {
+		const row: Row = { name: "models.json baseUrl", env: {}, policy: "strip", keeps: false };
+		const environment = await turnEnvironment(row, () => ({ env: { ANTHROPIC_BASE_URL: GATEWAY } }));
+
+		expect(environment).not.toHaveProperty("ANTHROPIC_API_KEY");
+		expect(environment.ANTHROPIC_BASE_URL).toBe(GATEWAY);
+	});
+
+	it("keeps a settings ambientApiKey when the env override is invalid", () => {
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () => JSON.stringify({ anthropicSubscriptionProvider: { ambientApiKey: "inherit" } }));
+		const manager = SettingsManager.fromStorage(storage);
+
+		expect(
+			loadAnthropicSubscriptionProviderSettings(manager, { SENPI_CLAUDE_SDK_OAUTH_AMBIENT_API_KEY: "bogus" })
+				.ambientApiKey,
+		).toBe("inherit");
 	});
 
 	it("reads ambientApiKey from settings and lets SENPI_CLAUDE_SDK_OAUTH_AMBIENT_API_KEY override it", () => {

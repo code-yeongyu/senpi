@@ -32,7 +32,23 @@ export function mergeRequestAuthEnvironment(
  */
 export function keepsAmbientApiKey(parent: NodeJS.ProcessEnv, policy: AnthropicSubscriptionAmbientApiKey): boolean {
 	if (policy === "inherit") return true;
-	return Boolean(parent.ANTHROPIC_BASE_URL) && !parent.ANTHROPIC_AUTH_TOKEN;
+	return isGatewayBaseUrl(parent.ANTHROPIC_BASE_URL) && !parent.ANTHROPIC_AUTH_TOKEN;
+}
+
+const DEFAULT_ANTHROPIC_ORIGIN = "https://api.anthropic.com";
+
+/**
+ * A base URL on Anthropic's own origin (any path or trailing slash) is not a gateway: the key there would bill the
+ * console org exactly as in senpi#1195, and the claude.ai bearer goes where it always goes. A value that does not
+ * parse as a URL is kept as a gateway, because it cannot be shown to be Anthropic's origin.
+ */
+function isGatewayBaseUrl(value: string | undefined): boolean {
+	if (!value) return false;
+	try {
+		return new URL(value).origin !== DEFAULT_ANTHROPIC_ORIGIN;
+	} catch {
+		return true;
+	}
 }
 
 /** The host key the ambient lane drops, named for the diagnostic when the probe then finds no login. */
