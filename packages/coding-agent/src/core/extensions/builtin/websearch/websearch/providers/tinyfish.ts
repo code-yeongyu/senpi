@@ -48,8 +48,8 @@ export const tinyfishProvider: ProviderModule = {
 		);
 	},
 	nextPage({ config, request, maxResults, allowedDomains, blockedDomains }, _page, payload, pageIndex) {
-		if (pageIndex + 1 >= MAX_PAGES) return undefined;
 		const count = resultCount(maxResults);
+		if (pageIndex + 1 >= MAX_PAGES) return undefined;
 		if (getArray(getObject(payload)?.results).length < Math.min(count, MAX_PAGE_RESULTS)) return undefined;
 		return tinyfishRequest(config, request.query, count, allowedDomains, blockedDomains, pageIndex + 1);
 	},
