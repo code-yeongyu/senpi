@@ -58,6 +58,7 @@ describe("GPT-6 Astra series catalog context window", () => {
 			"bai.json",
 			"chatgpt-subscription.json",
 			"cloudflare-ai-gateway.json",
+			"commandcode.json",
 			"github-copilot.json",
 			"openai.json",
 			"opencode.json",

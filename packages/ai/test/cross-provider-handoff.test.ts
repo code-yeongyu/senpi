@@ -185,6 +185,9 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 		model: "glm-5.2",
 		label: "qwen-token-plan-individual-glm-5.2",
 	},
+	// Command Code (Claude over the Anthropic wire, the rest over Chat Completions)
+	{ provider: "commandcode", model: "claude-sonnet-5-5", label: "commandcode-claude-sonnet-5-5" },
+	{ provider: "commandcode", model: "deepseek/deepseek-v4-pro", label: "commandcode-deepseek-v4-pro" },
 ];
 
 // Cached context structure
