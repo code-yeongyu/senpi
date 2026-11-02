@@ -9,6 +9,7 @@ import type { ClientMessageIdentity } from "../../core/client-message-identity.t
 import type { SessionEntry } from "../../core/session-manager.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
+import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
 
 // ============================================================================
@@ -287,6 +288,7 @@ export type RpcSessionCommand =
 			maxBytes?: number;
 	  }
 	| { id?: string; type: "get_tree" }
+	| RpcRecoveryCommand
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */

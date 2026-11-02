@@ -99,7 +99,8 @@ it("T1 C2.1-C2.4 in-process cuts preserve pending and failed payloads; new_sessi
 
 it("C2.2 Q3 idle custom append already owns its message before start and end", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-	await using host = await statusHost();
+	// Below this test's 60 s budget: a hung wait fails naming its predicate before the test times out.
+	await using host = await statusHost({ deadlineMs: 45_000 });
 	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
 	const client = host.client("custom");
 	dataOf(await client.request({ type: "open_session", cwd: host.cwd }));

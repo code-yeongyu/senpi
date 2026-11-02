@@ -12,6 +12,30 @@
 
 ### Removed
 
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.31-2] - 2026-10-31
 
 ### Breaking Changes
