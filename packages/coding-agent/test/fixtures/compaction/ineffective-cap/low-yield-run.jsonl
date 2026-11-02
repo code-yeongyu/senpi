@@ -1,5 +1,0 @@
-{"type":"session","id":"test-ineffective-cap-001","timestamp":"2025-01-15T21:00:00.000Z","cwd":"/test/project","provider":"anthropic","modelId":"claude-sonnet-4-5","thinkingLevel":"off"}
-{"type":"message","timestamp":"2025-01-15T21:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Run a batch of low-yield compactions"}],"timestamp":1705352401000}}
-{"type":"compaction","timestamp":"2025-01-15T21:00:02.000Z","summary":"Accepted low-yield compaction one.","firstKeptEntryId":"entry-002","tokensBefore":9000,"details":{"structuralYield":{"savedTokens":512,"savingsRatio":0.05688888888888889}}}
-{"type":"compaction","timestamp":"2025-01-15T21:00:03.000Z","summary":"Accepted low-yield compaction two.","firstKeptEntryId":"entry-003","tokensBefore":8800,"details":{"structuralYield":{"savedTokens":768,"savingsRatio":0.08727272727272727}}}
-{"type":"compaction","timestamp":"2025-01-15T21:00:04.000Z","summary":"Accepted low-yield compaction three.","firstKeptEntryId":"entry-004","tokensBefore":8600,"details":{"structuralYield":{"savedTokens":1023,"savingsRatio":0.11906976744186046}}}

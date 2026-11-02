@@ -1,8 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: senpi repository
-    url: https://github.com/code-yeongyu/senpi
-    about: Check the current fork, issues, and pull requests.
-  - name: Upstream pi-mono community
-    url: https://discord.com/invite/3cU7Bz4UPx
-    about: Ask upstream pi-mono questions on Discord.

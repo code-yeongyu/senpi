@@ -1,3 +1,0 @@
-{"type":"message","message":{"role":"user","content":[{"type":"text","text":"large prior turn that pushed context near the threshold"}],"timestamp":1753868400000}}
-{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"response that completes the turn"}],"stopReason":"stop","timestamp":1753868401000}}
-{"type":"message","message":{"role":"user","content":[{"type":"text","text":"queued next turn awaiting idle compaction"}],"timestamp":1753868402000}}
