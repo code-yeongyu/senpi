@@ -560,7 +560,7 @@ export function createRpcConnectionHandler(
 	const pendingExtensionRequests = new SessionExtensionUiRequests(uiRequestChanged);
 	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output, uiRequestChanged);
+	const questions = new ConnectionQuestionBridge(output, uiRequestChanged, () => options.clientInfo?.connectionId());
 	let secretHandshake = false;
 	const secretOwners = new Map<string, { connection: string | undefined; cancel?: () => void }>();
 	const secretCapable = (connection: string | undefined): boolean =>
