@@ -16,6 +16,7 @@ import {
 	type JsonlSessionMetadata,
 	type JsonlSessionRepoOptions,
 	type JsonlStorageHeader,
+	type JsonlStorageOptions,
 } from "./types.ts";
 
 function metadataFromHeader(header: JsonlStorageHeader, path: string, modifiedAt: number): JsonlSessionMetadata {
@@ -49,6 +50,7 @@ export class JsonlSessionRepo
 	private readonly fileSystem: FileSystem;
 	private readonly sessionsRootInput: string;
 	private readonly now: () => number;
+	private readonly onRecovery: JsonlSessionRepoOptions["onRecovery"];
 	private readonly openSessions = new Map<string, JsonlStorage>();
 	private readonly pendingCreates = new Set<string>();
 	private closed = false;
@@ -58,6 +60,11 @@ export class JsonlSessionRepo
 		this.fileSystem = options.fileSystem;
 		this.sessionsRootInput = options.sessionsRoot;
 		this.now = options.now ?? Date.now;
+		this.onRecovery = options.onRecovery;
+	}
+
+	private storageOptions(path: string): JsonlStorageOptions {
+		return { fileSystem: this.fileSystem, path, now: this.now, onRecovery: this.onRecovery };
 	}
 
 	async create(options: JsonlSessionCreateOptions, context: Context): Promise<Session<JsonlSessionMetadata>> {
@@ -80,7 +87,7 @@ export class JsonlSessionRepo
 				cwd,
 				...(options.parentSessionId === undefined ? {} : { parentSessionId: options.parentSessionId }),
 			};
-			storage = await JsonlStorage.create({ fileSystem: this.fileSystem, path, now: this.now }, header, [], context);
+			storage = await JsonlStorage.create(this.storageOptions(path), header, [], context);
 			const info = fileValue(await this.fileSystem.fileInfo(path, context), `Failed to read session ${path}`);
 			return this.publishOpenSession(metadataFromHeader(header, path, info.mtimeMs), storage, key);
 		} catch (error) {
@@ -183,7 +190,7 @@ export class JsonlSessionRepo
 				},
 				context,
 			);
-			storage = await JsonlStorage.open({ fileSystem: this.fileSystem, path, now: this.now }, context);
+			storage = await JsonlStorage.open(this.storageOptions(path), context);
 			const info = fileValue(await this.fileSystem.fileInfo(path, context), `Failed to read session ${path}`);
 			return this.publishOpenSession(metadataFromHeader(header, path, info.mtimeMs), storage, destinationKey);
 		} catch (error) {
@@ -355,14 +362,7 @@ export class JsonlSessionRepo
 		) {
 			throw new Error(`Session file does not exist: ${metadata.path}`);
 		}
-		const storage = await JsonlStorage.open(
-			{
-				fileSystem: this.fileSystem,
-				path: metadata.path,
-				now: this.now,
-			},
-			context,
-		);
+		const storage = await JsonlStorage.open(this.storageOptions(metadata.path), context);
 		try {
 			if (storage.header.id !== metadata.id || storage.header.cwd !== metadata.cwd) {
 				throw new Error(`Session identity does not match header: ${metadata.id}`);

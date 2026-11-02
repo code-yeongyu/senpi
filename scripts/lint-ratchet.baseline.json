@@ -118,9 +118,6 @@
   "packages/agent/src/harness/session/jsonl/legacy-v3.ts": {
     "typescript/no-non-null-assertion": 2
   },
-  "packages/agent/src/harness/session/jsonl/storage.ts": {
-    "typescript/no-non-null-assertion": 1
-  },
   "packages/agent/src/harness/session/testing/benchmark/session-repo.ts": {
     "typescript/no-non-null-assertion": 2
   },

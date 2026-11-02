@@ -70,6 +70,11 @@ export function parseJsonlTransaction(line: string): CommittedWrite[] {
 	} catch (error) {
 		throw new Error("Invalid JSONL transaction: not valid JSON", { cause: error });
 	}
+	return parseJsonlTransactionValue(value);
+}
+
+/** Frame an already-parsed JSONL line; throws for a write kind or shape this version does not know. */
+export function parseJsonlTransactionValue(value: unknown): CommittedWrite[] {
 	return (Array.isArray(value) ? value : [value]).map(parseCommittedWrite);
 }
 
