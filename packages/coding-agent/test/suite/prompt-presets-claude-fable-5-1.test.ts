@@ -60,13 +60,26 @@ describe("Claude Fable 5.1 prompt preset", () => {
 		},
 	);
 
-	it("routes user questions through ask_user_question when it is available", () => {
+	it("names ask_user_question only through the tool list, so a session without it never sees it", () => {
+		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
 		const model = createModel("claude-fable-5-1", "anthropic");
+		const context = (selectedTools: string[]) => ({
+			cwd: "/repo",
+			selectedTools,
+			toolSnippets: Object.fromEntries(selectedTools.map((name) => [name, `${name} snippet`])),
+			promptGuidelines: [],
+			contextFiles: [],
+			skills: [],
+		});
 
-		const preset = resolvePreset(model, settings);
+		// when
+		const withTool = resolvePreset(model, settings, context(["read", "ask_user_question"]));
+		const withoutTool = resolvePreset(model, settings, context(["read"]));
 
-		expect(preset?.prompt).toContain("ask_user_question");
+		// then
+		expect(withTool?.prompt).toContain("ask_user_question");
+		expect(withoutTool?.prompt).not.toContain("ask_user_question");
 	});
 
 	it("allows settings.json to force claude-fable-5-1 regardless of model id", () => {
