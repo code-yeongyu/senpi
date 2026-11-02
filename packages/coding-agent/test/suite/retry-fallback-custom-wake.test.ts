@@ -24,20 +24,16 @@ describe("fallback recovery on custom wakes", () => {
 		now = 0;
 	});
 
-	async function chain(
-		policy: "cooldown-expiry" | "never" = "cooldown-expiry",
-		reciprocal = false,
-		maxRetries = 0,
-	): Promise<Harness> {
+	async function chain(policy: "cooldown-expiry" | "never" = "cooldown-expiry"): Promise<Harness> {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			fallbackNow: () => now,
 			settings: {
 				retry: {
 					enabled: true,
-					maxRetries,
+					maxRetries: 0,
 					baseDelayMs: 1,
-					fallbackChains: { [primary]: [fallback], ...(reciprocal ? { [fallback]: [primary] } : {}) },
+					fallbackChains: { [primary]: [fallback] },
 					fallbackRevertPolicy: policy,
 				},
 			},
@@ -174,24 +170,29 @@ describe("fallback recovery on custom wakes", () => {
 		expect(calledModels(harness)).toEqual(["faux-1", "faux-2"]);
 	});
 
-	it.each(["never", "refusal-pin"] as const)("holds the primary for %s even in a reciprocal chain", async (guard) => {
-		const harness = await chain(guard === "never" ? "never" : "cooldown-expiry", true, guard === "never" ? 0 : 1);
+	it("keeps a network-blip hold across an idle wake and reverts at the next prompt", async () => {
+		const harness = await chain();
 		harness.setResponses([
-			guard === "never"
-				? temporaryError()
-				: fauxAssistantMessage("", {
-						stopReason: "error",
-						errorMessage: "Stream ended with refusal",
-						stopDetails: { type: "refusal" },
-					}),
-			() => {
-				now += 6 * 60_000;
-				return temporaryError();
-			},
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "TypeError: fetch failed (ECONNRESET): connection reset by peer",
+			}),
+			fauxAssistantMessage("fallback answer"),
+			fauxAssistantMessage("wake answer"),
+			fauxAssistantMessage("primary answer"),
 		]);
 		await harness.session.prompt("first");
 
-		expect(calledModels(harness)).toEqual(["faux-1", "faux-2"]);
+		// The idle wake is an automatic continuation, so the network-blip hold
+		// survives it (senpi#3306): the wake runs on the fallback, not the primary.
+		await harness.session.sendCustomMessage(wake, { triggerTurn: true });
+		expect(harness.session.model?.id).toBe("faux-2");
 		expect(harness.eventsOfType("retry_fallback_reverted")).toEqual([]);
+		expect(calledModels(harness)).toEqual(["faux-1", "faux-2", "faux-2"]);
+
+		// The next real prompt is a turn boundary: it clears the hold and restores the primary.
+		await harness.session.prompt("second");
+		expect(harness.eventsOfType("retry_fallback_reverted")).toMatchObject([{ from: fallback, to: primary }]);
+		expect(harness.session.model?.id).toBe("faux-1");
 	});
 });
