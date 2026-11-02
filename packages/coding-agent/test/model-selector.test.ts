@@ -161,8 +161,8 @@ describe("model selector", () => {
 		vi.spyOn(harness.session.modelRuntime, "refresh").mockResolvedValue({
 			aborted: false,
 			errors: new Map([
-				["openai", new Error("unavailable")],
-				["anthropic", new Error("unavailable")],
+				["openai", new Error("openai unavailable")],
+				["anthropic", new Error("anthropic unavailable")],
 			]),
 		});
 
@@ -178,7 +178,8 @@ describe("model selector", () => {
 
 		await vi.waitFor(() => {
 			const rendered = stripAnsi(selector.render(120).join("\n"));
-			expect(rendered).toContain("Could not refresh 2 model catalogs (openai, anthropic); showing cached models.");
+			expect(rendered).toContain("openai: openai unavailable");
+			expect(rendered).toContain("anthropic: anthropic unavailable");
 		});
 	});
 });
