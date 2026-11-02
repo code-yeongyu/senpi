@@ -31,12 +31,17 @@ export function setOAuthPageBrand(brand: OAuthPageBrand | undefined): void {
 	brandSlot.current = logo ? { name, logo } : { name };
 }
 
+/** The brand name the host set with `setOAuthPageBrand`, or undefined when it set none. */
+export function configuredOAuthBrandName(): string | undefined {
+	return brandSlot.current?.name;
+}
+
 /**
  * The product name a sign-in shows outside our own pages: the ChatGPT authorize hint and an MCP client registration,
  * both displayed on the provider's consent screen. Falls back to `senpi` when the host set no brand.
  */
 export function oauthBrandName(): string {
-	return brandSlot.current?.name ?? "senpi";
+	return configuredOAuthBrandName() ?? "senpi";
 }
 
 function escapeHtml(value: string): string {
