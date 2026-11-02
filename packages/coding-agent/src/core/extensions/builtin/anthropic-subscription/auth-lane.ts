@@ -34,7 +34,11 @@ import { classifyForRequest, retryAtStandardWindowOnce, sdkFailure, visibleSdkMe
 import { refreshFailure } from "./refresh-failure.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
-import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
+import {
+	type AnthropicSubscriptionProviderSettings,
+	type AnthropicSubscriptionTokenInjection,
+	resolveAmbientApiKey,
+} from "./settings.ts";
 import { ClaudeSignInRequiredError, signInRequiredNames } from "./sign-in-again.ts";
 
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
@@ -212,7 +216,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 	const pool = await managedPool(input.providerSettings, input.env);
 	if (!pool) {
 		const parentEnvironment = mergeRequestAuthEnvironment(activeBoundary.env(), input.env);
-		const ambientEnvironment = stripAmbientApiKey(parentEnvironment);
+		const ambientEnvironment = stripAmbientApiKey(parentEnvironment, resolveAmbientApiKey(input.providerSettings));
 		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
 		let askedLegacyLongContext = false;
 		const ambientAttempt = async () => {

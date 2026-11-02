@@ -7,6 +7,7 @@ import {
 	type ExecutableResolution,
 	resolveClaudeCodeExecutable,
 } from "./executable.ts";
+import { type AnthropicSubscriptionAmbientApiKey, resolveAmbientApiKey } from "./settings.ts";
 
 export type ClaudeLaneDiagnostics = ExecutableResolution & {
 	/** The JavaScript runtime spawning the binary; Bun and Node spell and stat Windows paths differently (#1541). */
@@ -91,6 +92,7 @@ export type AmbientProbeOptions = {
 	timeoutMs?: number;
 	spawnProbe?: (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => ProbeChildProcess;
 	env?: NodeJS.ProcessEnv;
+	ambientApiKey?: AnthropicSubscriptionAmbientApiKey;
 };
 
 export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions = {}): Promise<boolean> {
@@ -98,7 +100,7 @@ export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions 
 	const spawnProbe =
 		options.spawnProbe ??
 		((command, args, env) => spawn(command, [...args], { env, stdio: "ignore", windowsHide: true }));
-	const probeEnvironment = stripAmbientApiKey(options.env ?? process.env);
+	const probeEnvironment = stripAmbientApiKey(options.env ?? process.env, resolveAmbientApiKey(options));
 	let executable: string;
 	try {
 		executable = resolveClaudeCodeExecutable(defaultExecutableDeps());
@@ -125,4 +127,15 @@ export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions 
 	});
 }
 
-export const readAmbientClaudeAuthStatus = createAmbientAuthStatusReader(probeAmbientClaudeAuthStatus);
+/** One memo per `ambientApiKey` policy, so changing the setting never reuses the other policy's answer. */
+const ambientStatusReaders = {
+	strip: createAmbientAuthStatusReader(() => probeAmbientClaudeAuthStatus({ ambientApiKey: "strip" })),
+	inherit: createAmbientAuthStatusReader(() => probeAmbientClaudeAuthStatus({ ambientApiKey: "inherit" })),
+};
+
+export function readAmbientClaudeAuthStatus(
+	signal: AbortSignal | undefined,
+	policy: AnthropicSubscriptionAmbientApiKey,
+): Promise<boolean> {
+	return ambientStatusReaders[policy](signal);
+}

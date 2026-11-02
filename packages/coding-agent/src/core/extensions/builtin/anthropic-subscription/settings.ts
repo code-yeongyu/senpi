@@ -9,6 +9,15 @@ export type AnthropicSubscriptionResumeMode = "auto" | "off";
 export type AnthropicSubscriptionTokenInjection = "oauth-slots" | "config-dir" | "ambient";
 /** Who compacts a resident lane: senpi's compaction stack (default) or the Claude Agent SDK's native auto-compact. */
 export type AnthropicSubscriptionCompactionOwner = "senpi" | "sdk";
+/** Whether the ambient lane drops a host ANTHROPIC_API_KEY (default) or hands it to Claude Code (senpi#1195). */
+export type AnthropicSubscriptionAmbientApiKey = "strip" | "inherit";
+
+/** The one place the default lives: the ambient lane strips the host API key unless `ambientApiKey: "inherit"`. */
+export function resolveAmbientApiKey(
+	settings: Pick<AnthropicSubscriptionProviderSettings, "ambientApiKey">,
+): AnthropicSubscriptionAmbientApiKey {
+	return settings.ambientApiKey ?? "strip";
+}
 
 /** The one place the default lives: senpi owns compaction unless `compactionOwner: "sdk"` opts out. */
 export function resolveCompactionOwner(
@@ -37,6 +46,7 @@ export interface AnthropicSubscriptionProviderSettings {
 	readonly accountFallback?: boolean;
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
 	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
+	readonly ambientApiKey?: AnthropicSubscriptionAmbientApiKey;
 }
 
 export type ResolvedSystemPromptMode = {
@@ -99,6 +109,10 @@ function parseCompactionOwner(value: unknown): AnthropicSubscriptionCompactionOw
 	return value === "senpi" || value === "sdk" ? value : undefined;
 }
 
+function parseAmbientApiKey(value: unknown): AnthropicSubscriptionAmbientApiKey | undefined {
+	return value === "strip" || value === "inherit" ? value : undefined;
+}
+
 function parseEnvironmentBoolean(value: string | undefined): boolean | undefined {
 	if (value === undefined) return undefined;
 	switch (value.toLowerCase()) {
@@ -130,6 +144,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 	const accountFallback = typeof value.accountFallback === "boolean" ? value.accountFallback : undefined;
 	const tokenInjection = parseTokenInjection(value.tokenInjection);
 	const compactionOwner = parseCompactionOwner(value.compactionOwner);
+	const ambientApiKey = parseAmbientApiKey(value.ambientApiKey);
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
 		...(appendSystemPrompt !== undefined ? { appendSystemPrompt } : {}),
@@ -142,6 +157,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 		...(accountFallback !== undefined ? { accountFallback } : {}),
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
 		...(compactionOwner !== undefined ? { compactionOwner } : {}),
+		...(ambientApiKey !== undefined ? { ambientApiKey } : {}),
 	};
 }
 
@@ -155,6 +171,7 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 	const pinnedAccount = parseNonEmptyString(environment.SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT);
 	const accountFallback = parseEnvironmentBoolean(environment.SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK);
 	const compactionOwner = parseCompactionOwner(environment.SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER);
+	const ambientApiKey = parseAmbientApiKey(environment.SENPI_CLAUDE_SDK_OAUTH_AMBIENT_API_KEY);
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
 		...(systemPromptMode !== undefined ? { systemPromptMode } : {}),
@@ -165,6 +182,7 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
 		...(accountFallback !== undefined ? { accountFallback } : {}),
 		...(compactionOwner !== undefined ? { compactionOwner } : {}),
+		...(ambientApiKey !== undefined ? { ambientApiKey } : {}),
 	};
 }
 

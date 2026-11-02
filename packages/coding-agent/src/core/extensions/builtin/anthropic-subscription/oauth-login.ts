@@ -21,6 +21,7 @@ import {
 	SENTINEL_OAUTH_FIELDS,
 } from "./accounts.ts";
 import { activeBoundary } from "./auth-lane-boundary.ts";
+import { ignoredAmbientApiKey } from "./auth-environment.ts";
 import { readAmbientClaudeAuthStatus } from "./availability.ts";
 import {
 	accountDirFor,
@@ -47,7 +48,13 @@ import { recordClaudeCliLoginOutcome } from "./claude-cli-login-outcome.ts";
 import type { ClaudeCliRun } from "./claude-cli-process.ts";
 import { signedInSlot, storedSubscription, withCheck, withoutThisLogin, withSlot } from "./claude-cli-login-slots.ts";
 import { defaultExecutableDeps, resolveClaudeCodeExecutable } from "./executable.ts";
-import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
+import { type AmbientApiKeyIgnoredDiagnostic, ambientApiKeyIgnoredDiagnostic } from "./guidance.ts";
+import { logContinuityEvent } from "./session-observability.ts";
+import {
+	type AnthropicSubscriptionAmbientApiKey,
+	type AnthropicSubscriptionProviderSettings,
+	resolveAmbientApiKey,
+} from "./settings.ts";
 
 export type OAuthLoginCallbacks = {
 	signal?: AbortSignal;
@@ -248,11 +255,24 @@ async function signInThroughCli(
 
 export function createOAuthConfig(deps: {
 	readCurrent: CurrentCredentialReader;
-	readAmbientAuthStatus?: (signal?: AbortSignal) => Promise<boolean>;
-	readSettings?: () => { tokenInjection?: "oauth-slots" | "config-dir" | "ambient"; enabled?: boolean } | undefined;
+	readAmbientAuthStatus?: (signal?: AbortSignal, policy?: AnthropicSubscriptionAmbientApiKey) => Promise<boolean>;
+	readSettings?: () =>
+		| {
+				tokenInjection?: "oauth-slots" | "config-dir" | "ambient";
+				enabled?: boolean;
+				ambientApiKey?: AnthropicSubscriptionAmbientApiKey;
+		  }
+		| undefined;
 	claudeCli?: ClaudeCliLoginDeps;
+	/** Where the ignored-key diagnostic goes; the session log by default. */
+	onDiagnostic?: (diagnostic: AmbientApiKeyIgnoredDiagnostic) => void;
 }): OAuthConfigShape {
 	const cli = deps.claudeCli ?? {};
+	const onDiagnostic =
+		deps.onDiagnostic ??
+		((diagnostic: AmbientApiKeyIgnoredDiagnostic) =>
+			logContinuityEvent("claude_sdk_oauth_ambient_api_key_ignored", diagnostic));
+	let ignoredKeyReported = false;
 	const agentDir = () => (cli.agentDir ?? activeBoundary.getAgentDir)();
 	const hostEnv = () => (cli.env ?? activeBoundary.env)();
 	const store = () => (cli.store ?? activeBoundary.createStore)();
@@ -291,7 +311,15 @@ export function createOAuthConfig(deps: {
 			// user's Claude subscription requires an explicit opt-in. Stored
 			// accounts and env tokens above are opt-ins in themselves.
 			if (settings?.enabled !== true) return false;
-			return (deps.readAmbientAuthStatus ?? readAmbientClaudeAuthStatus)(signal);
+			const policy = resolveAmbientApiKey(settings);
+			const available = await (deps.readAmbientAuthStatus ?? readAmbientClaudeAuthStatus)(signal, policy);
+			// Without a login the lane is unusable; when it dropped a host key, say so once instead of a bare "not configured".
+			const ignoredKey = available ? undefined : ignoredAmbientApiKey(hostEnv(), policy);
+			if (ignoredKey !== undefined && !ignoredKeyReported) {
+				ignoredKeyReported = true;
+				onDiagnostic(ambientApiKeyIgnoredDiagnostic(ignoredKey));
+			}
+			return available;
 		}
 		return accountCount > 0;
 	};
