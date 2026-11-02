@@ -3,13 +3,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { CatalogEntry } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import type { CatalogRead } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
-import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
+import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest-shape.ts";
 import type { RecoveryRoute } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import type { RecoveryOutcome } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
+import { componentText } from "./4272-frozen-bytes-support.ts";
 import { cutStructuredBytes, recoveryRig, streaming } from "./4272-recovery-support.ts";
 
 // Part of #4272 (S09, R4.B1, X03/X04/T5): the manifest names a frozen checkpoint and its catalog root with bounded
@@ -84,7 +85,7 @@ it("T1 X03 X04 the manifest names the cut and its catalog root with bounded ids;
 	expect(manifest.session.length).toBe(Buffer.byteLength(huge, "utf16le"));
 	expect(manifest.session.digest).toBe(specDigest("leaf", Buffer.from(huge, "utf16le")));
 	const text = component(unwrap(await rig.checkpoints.readCatalog(token, caller, manifest.session.ref)));
-	expect(text.text).toBe(huge);
+	expect(await componentText(text)).toBe(huge);
 	expect(text.entry).toMatchObject({ kind: "manifest", id: "session" });
 	const root = node(unwrap(await rig.checkpoints.readCatalog(token, caller, manifest.catalogRoot)));
 	expect(root.entries.map((entry) => [entry.kind, entry.id])).toEqual([
@@ -106,12 +107,13 @@ it("T1 X03 X04 the manifest names the cut and its catalog root with bounded ids;
 	expect(manifest.catalogRootLength).toBe(root.length);
 	expect(root.digest).toBe(manifest.checkpointDigest);
 	const active = component(unwrap(await rig.checkpoints.readCatalog(token, caller, `${manifest.catalogRoot}:007`)));
-	expect(active.entry.length).toBe(Buffer.byteLength(active.text, "utf16le"));
-	expect(JSON.parse(active.text), "the live message as canonical JSON, no storage id inside").toMatchObject({
+	const activeText = await componentText(active);
+	expect(active.entry.length).toBe(Buffer.byteLength(activeText, "utf16le"));
+	expect(JSON.parse(activeText), "the live message as canonical JSON, no storage id inside").toMatchObject({
 		messageId: "message-1",
 		blocks: [{ contentIndex: 0, kind: "text" }],
 	});
-	expect(active.text).not.toMatch(/"owner"/);
+	expect(activeText).not.toMatch(/"owner"/);
 	expect(unwrap(await rig.checkpoints.catalog(token, caller)), "built once per token").toBe(manifest);
 	rig.checkpoints.release(token);
 	expect(rig.lane.liveRoots).toBe(0);
@@ -192,9 +194,11 @@ it("T5 X04 a token superseded while its first catalog read is held publishes not
 		await held.entered;
 		const second = unwrap(checkpoints.freeze(route("s", "socket-1"), lane)).token;
 		held.release();
+		// RULING-99: all peers draw from one session counter, so the survivor's token sits between these two.
+		expect(second.admission.generation).toBeGreaterThan(first.admission.generation);
 		expect(await building).toEqual({
 			ok: false,
-			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 2 },
+			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: second.admission.generation },
 		});
 		expect(await live(), "the superseded build left no node or pointer leaf in the cut's store").toBe(before);
 		const manifest = unwrap(await checkpoints.catalog(survivor, caller("socket-2")));
@@ -210,11 +214,12 @@ it("T5 X04 a token superseded while its first catalog read is held publishes not
 			manifest.checkpointDigest,
 		);
 		const third = unwrap(checkpoints.freeze(route("s", "socket-1"), lane)).token;
+		expect(third.admission.generation).toBeGreaterThan(second.admission.generation);
 		const later = unwrap(await checkpoints.catalog(third, caller("socket-1")));
 		expect(later.checkpointDigest, "a cut after the deltas names other bytes").not.toBe(manifest.checkpointDigest);
 		expect(await checkpoints.catalog(second, caller("socket-1"))).toEqual({
 			ok: false,
-			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 3 },
+			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: third.admission.generation },
 		});
 		checkpoints.release(survivor);
 		checkpoints.release(third);

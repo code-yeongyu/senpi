@@ -12,6 +12,24 @@
 
 ### Removed
 
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- An eval call that leaves out `language` now runs when the kernel is unambiguous (only one language enabled, or clear js/py code markers) and its result says the language was inferred ([#5157](https://github.com/code-yeongyu/senpi/pull/5157))
+
+### Fixed
+
+- Python Windows startup supports native builtin path helpers without losing captured permission identity isolation, and the isolated compiled-host check includes all Python runtime assets ([#5052](https://github.com/code-yeongyu/senpi/pull/5052)).
+- A Ruby or Julia kernel whose interpreter cannot be spawned (for example `julia` missing from `PATH`) now fails its cells with the spawn error (`Kernel startup failed: spawn julia ENOENT`) and closes at once, instead of waiting two seconds for an exit that never comes and reporting `Kernel process did not exit after SIGKILL` (#3500) ([#5181](https://github.com/code-yeongyu/senpi/pull/5181))
+- A stopped JavaScript cell no longer runs code from an `fs` callback operation that was already in flight when it was stopped: the callback is dropped (a late `fs.open` descriptor is closed), the same way the stopped cell's timers never fire, so a stopped polling loop cannot tick once more after the stop ([#5179](https://github.com/code-yeongyu/senpi/issues/5179))
+
+### Removed
+
 ## [2026.10.31-2] - 2026-10-31
 
 ### Breaking Changes
