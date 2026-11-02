@@ -32,48 +32,64 @@ interface ProducedEvent {
 	readonly parentToolCallId?: unknown;
 }
 
-function streamedIds(content: unknown): readonly string[] {
+/** The toolCall blocks of a message's content, as (content index, id) pairs. */
+function toolCallBlocks(content: unknown): readonly (readonly [number, string])[] {
 	if (!Array.isArray(content)) return [];
-	return content.flatMap((part: unknown) => {
+	return content.flatMap((part: unknown, index) => {
 		const id = typeof part === "object" && part !== null ? Reflect.get(part, "id") : undefined;
-		return Reflect.get(Object(part), "type") === "toolCall" && typeof id === "string" ? [id] : [];
+		return Reflect.get(Object(part), "type") === "toolCall" && typeof id === "string" ? [[index, id] as const] : [];
 	});
 }
 
 /**
- * The bridge-started calls of the open assistant message (RULING-127 (b)): a top-level `tool_execution_start` whose id
- * no block of that message has streamed yet mints its call's key with the start. The message persists that key on the
- * block that later joins the call, so persisted == live in either order of block and start.
+ * The bridge-started calls of the open assistant message (RULING-127 (b)), matched to blocks the way the host's calls
+ * table joins them: a top-level `tool_execution_start` first joins the oldest block of its id still waiting for a start;
+ * with none, it is bridge-started and mints its call's key with the start. A block then joins the oldest bridge-started
+ * call of its id, whether it streams or appears only in the terminal, and the message persists that key on the block,
+ * so persisted == live in either order of block and start, and for an id the message reuses.
  */
 export class BridgedCallKeys {
 	private open = false;
-	private streamed = new Set<string>();
-	private pending = new Map<string, string>();
+	private seen = new Set<number>();
+	private waiting = new Map<string, number>();
+	private bridged = new Map<string, string[]>();
+	private keyed = new Map<number, string>();
 
 	observe(event: ProducedEvent): void {
 		const assistant = event.message?.role === "assistant";
 		if (event.type === "message_start" && assistant) {
 			this.open = true;
-			this.streamed = new Set();
-			this.pending = new Map();
-		} else if (event.type === "message_update" && assistant) {
-			for (const id of streamedIds(event.message?.content)) this.streamed.add(id);
-		} else if (event.type === "message_end" && assistant) {
-			this.open = false;
+			this.seen = new Set();
+			this.waiting = new Map();
+			this.bridged = new Map();
+			this.keyed = new Map();
+		} else if ((event.type === "message_update" || event.type === "message_end") && assistant) {
+			for (const [index, id] of toolCallBlocks(event.message?.content)) this.block(index, id);
+			if (event.type === "message_end") this.open = false;
 		} else if (event.type === "tool_execution_start" && this.open) {
 			const id = event.toolCallId;
 			if (typeof id !== "string" || event.parentToolCallId !== undefined) return;
-			if (this.streamed.has(id) || this.pending.has(id)) return;
+			const waiting = this.waiting.get(id) ?? 0;
+			if (waiting > 0) return void this.waiting.set(id, waiting - 1);
 			const key = `exe:${randomUUID()}`;
-			this.pending.set(id, key);
+			this.bridged.set(id, [...(this.bridged.get(id) ?? []), key]);
 			executionKeys.set(event, key);
 		}
 	}
 
-	/** The ended message's bridge-started calls, toolCallId to key; each message takes them once, at its persistence. */
-	take(): ReadonlyMap<string, string> {
-		const taken = this.pending;
-		this.pending = new Map();
+	/** The ended message's bridge-started calls, content index to key; each message takes them once, at its persistence. */
+	take(): ReadonlyMap<number, string> {
+		const taken = this.keyed;
+		this.keyed = new Map();
 		return taken;
+	}
+
+	private block(index: number, id: string): void {
+		if (this.seen.has(index) || id === "") return;
+		this.seen.add(index);
+		const [key, ...rest] = this.bridged.get(id) ?? [];
+		if (key === undefined) return void this.waiting.set(id, (this.waiting.get(id) ?? 0) + 1);
+		this.bridged.set(id, rest);
+		this.keyed.set(index, key);
 	}
 }

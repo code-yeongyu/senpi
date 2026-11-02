@@ -71,7 +71,7 @@ export class CompactSessionCalls {
 		const turnId = step.scope.turnId;
 		if (turnId === null) return;
 		const id = block.id || null;
-		const existing = this.table.byTurnId(turnId, id);
+		const bridge = this.table.bridgeStarted(turnId, id);
 		const raw: CallRaw = { kind: "active", messageId: block.messageId, contentIndex: block.contentIndex };
 		const fields = {
 			owningMessageId: block.messageId,
@@ -80,11 +80,11 @@ export class CompactSessionCalls {
 			raw,
 			...(block.correlation ? { correlation: block.correlation } : {}),
 		};
-		if (existing && existing.owningMessageId === null && existing.parentKey === null) {
-			this.update(step, existing, { ...fields, requestedName: existing.requestedName ?? block.name });
+		if (bridge) {
+			this.update(step, bridge, { ...fields, requestedName: bridge.requestedName ?? block.name });
 			return;
 		}
-		if (existing) this.table.counters.collisions++;
+		if (this.table.byTurnId(turnId, id)) this.table.counters.collisions++;
 		this.create(step, blockCallKey(block.messageId, block.contentIndex), {
 			turnId,
 			toolCallId: id,
@@ -102,8 +102,12 @@ export class CompactSessionCalls {
 
 	/** `toolcall_end` and each terminal block: the announcement's final id, name and input; the call owns the raw. */
 	announce(step: CallStep, block: AnnouncedBlock, raw: CallRaw | null): void {
-		const call = this.table.byOwner(block.messageId, block.contentIndex);
 		const turnId = step.scope.turnId;
+		const owned = this.table.byOwner(block.messageId, block.contentIndex);
+		const bridge = owned ? undefined : this.table.bridgeStarted(turnId, block.id || null);
+		const call =
+			owned ??
+			(bridge && this.update(step, bridge, { owningMessageId: block.messageId, contentIndex: block.contentIndex }));
 		if (!call) {
 			if (turnId === null) return;
 			this.create(step, blockCallKey(block.messageId, block.contentIndex), {

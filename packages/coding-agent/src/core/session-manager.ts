@@ -1553,8 +1553,10 @@ export class SessionManager {
 	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
 
+		// Ingested entries load like a file's: their persisted call keys go to the side table (RULING-127 (c)).
 		if (header) {
 			this.fileEntries = entries;
+			this.callKeys.adopt(entries);
 			this.sessionId = header.id;
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
@@ -1562,6 +1564,7 @@ export class SessionManager {
 			}
 		} else {
 			this.newSession(options);
+			this.callKeys.adopt(entries);
 			this.fileEntries = this.fileEntries.concat(entries);
 		}
 
@@ -2089,17 +2092,11 @@ export class SessionManager {
 		options?: {
 			readonly inputSource?: InputSource | undefined;
 			readonly recoveryOwner?: RecoveryCarrier;
-			/** The message's bridge-started calls, toolCallId to the key minted with their start (RULING-127 (b)). */
-			readonly bridgedCalls?: ReadonlyMap<string, string>;
+			/** The message's bridge-started calls, content index to the key minted with their start (RULING-127 (b)). */
+			readonly bridgedCalls?: ReadonlyMap<number, string>;
 		},
 	): string {
 		return this._appendMessage(message, true, options?.inputSource, options?.recoveryOwner, options?.bridgedCalls);
-	}
-
-	/** The call key of entry `entryId`'s toolCall part at `contentIndex` (RULING-126/127): persisted, or load-time. */
-	getToolCallKey(entryId: string, contentIndex: number): string | undefined {
-		const entry = this.getEntry(entryId);
-		return entry && this.callKeys.keyOf(entry, contentIndex);
 	}
 
 	/** `entry` as the session file holds it: its persisted call keys back in place (RULING-127 (c)). */
@@ -2112,7 +2109,7 @@ export class SessionManager {
 		owned: boolean,
 		inputSource?: InputSource,
 		recoveryOwner?: RecoveryCarrier,
-		bridgedCalls?: ReadonlyMap<string, string>,
+		bridgedCalls?: ReadonlyMap<number, string>,
 	): string {
 		const entry: SessionMessageEntry = {
 			type: "message",

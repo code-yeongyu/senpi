@@ -74,7 +74,7 @@ export function persistedPartKeys(session: SessionManager, entryId: string): (st
 	const entry = session.getEntry(entryId);
 	if (entry?.type !== "message" || entry.message.role !== "assistant") return [];
 	const persisted = session.persistedEntry(entry);
-	const content =
-		persisted.type === "message" ? (persisted.message.content as { type?: string; runtimeItemKey?: string }[]) : [];
+	const content: { type?: string; runtimeItemKey?: string }[] =
+		persisted.type === "message" ? Reflect.get(persisted.message, "content") : [];
 	return content.filter((part) => part.type === "toolCall").map((part) => part.runtimeItemKey);
 }

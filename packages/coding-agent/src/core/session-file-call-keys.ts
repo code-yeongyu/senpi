@@ -35,8 +35,8 @@ function takeKeys(entry: FileEntry): EntryCallKeys | undefined {
 	if (role !== "toolResult") return undefined;
 	const key = Reflect.get(entry, "runtimeItemKey");
 	const unknown = Reflect.get(entry, "callUnknown") === true;
-	Reflect.deleteProperty(entry, "runtimeItemKey");
-	Reflect.deleteProperty(entry, "callUnknown");
+	if (key !== undefined) Reflect.deleteProperty(entry, "runtimeItemKey");
+	if (unknown) Reflect.deleteProperty(entry, "callUnknown");
 	if (unknown) return { result: { callUnknown: true } };
 	return typeof key === "string" ? { result: { runtimeItemKey: key } } : undefined;
 }
@@ -45,16 +45,14 @@ function takeKeys(entry: FileEntry): EntryCallKeys | undefined {
  * The out-of-band call keys of one session file (RULING-126/127, senpi#5374). The file holds `runtimeItemKey` on each
  * toolCall part and `runtimeItemKey` or `callUnknown: true` on a toolResult entry; memory never does, so every legacy
  * and flag-off reader keeps its bytes. Loading strips them into this table, keyed by entry id, and every write of an
- * entry (append, rewrite, migration, branch) puts them back. An old session's parts get load-time keys instead, minted
- * on first read and never written: stable for this load only.
+ * entry (append, rewrite, migration, branch, export) puts them back. An old session's parts have no key, and nothing
+ * mints one at load: no reader rebuilds a call from a loaded part, so a key that is not persisted would have no reader.
  */
 export class SessionFileCallKeys {
 	private readonly byEntry = new Map<string, EntryCallKeys>();
-	private readonly loadTime = new Map<string, string>();
 
 	clear(): void {
 		this.byEntry.clear();
-		this.loadTime.clear();
 	}
 
 	adopt(entries: readonly FileEntry[]): void {
@@ -70,23 +68,23 @@ export class SessionFileCallKeys {
 		return entry;
 	}
 
-	/** A new assistant entry: each toolCall part keyed by its block (`owner` is the message's recovery id) or its bridge. */
-	recordAssistant(entry: MessageEntry, owner: string | undefined, bridged: ReadonlyMap<string, string> = new Map()) {
+	/**
+	 * A new assistant entry: each toolCall part keyed by its block (`owner` is the message's recovery id), or by the
+	 * key its bridge-started call carried (`bridged`, by content index).
+	 */
+	recordAssistant(entry: MessageEntry, owner: string | undefined, bridged: ReadonlyMap<number, string> = new Map()) {
 		const prefix = owner ?? randomUUID();
-		const taken = new Set<string>();
-		const parts = partsOf(entry).map((part, index) => {
-			if (part.type !== "toolCall") return undefined;
-			const bridge = typeof part.id === "string" && !taken.has(part.id) ? bridged.get(part.id) : undefined;
-			if (bridge !== undefined && typeof part.id === "string") taken.add(part.id);
-			return bridge ?? blockCallKey(prefix, index);
-		});
+		const parts = partsOf(entry).map((part, index) =>
+			part.type === "toolCall" ? (bridged.get(index) ?? blockCallKey(prefix, index)) : undefined,
+		);
 		if (parts.some((key) => key !== undefined)) this.byEntry.set(entry.id, { parts });
 	}
 
 	/**
 	 * A new toolResult entry (RULING-126 (2)) appended under `leafId`: keyed only when its id names exactly one toolCall
-	 * part of the latest assistant entry on the branch that no result after it closed, and whose key is persisted. A
-	 * same-message reused id is `callUnknown`, never an order-picked key; a load-time key is never written onto a result.
+	 * part of the latest assistant entry on the branch that no result after it closed, and whose key is persisted. Every
+	 * other result (a same-message reused id, a closed call, a call with no keyed part) is `callUnknown`: the entry says
+	 * it cannot vouch for a call, never names an order-picked one, and never carries neither field.
 	 */
 	recordResult(entry: MessageEntry, leafId: string | null, entryOf: (id: string) => SessionEntry | undefined): void {
 		const id = entry.message.role === "toolResult" ? entry.message.toolCallId : undefined;
@@ -100,27 +98,12 @@ export class SessionFileCallKeys {
 			if (roleOf(at) === "assistant") assistant = at;
 			else if (at.type === "message" && at.message.role === "toolResult") closed.add(at.message.toolCallId);
 		}
-		if (!assistant || id === undefined) return;
-		const matches = partsOf(assistant).flatMap((part, index) =>
-			part.type === "toolCall" && part.id === id ? [index] : [],
-		);
-		if (matches.length > 1) return void this.byEntry.set(entry.id, { result: { callUnknown: true } });
-		const key =
-			matches.length === 1 && !closed.has(id)
-				? this.byEntry.get(assistant.id)?.parts?.[matches[0] ?? -1]
-				: undefined;
-		if (key !== undefined) this.byEntry.set(entry.id, { result: { runtimeItemKey: key } });
-	}
-
-	/** The key of `entry`'s toolCall part at `index`: persisted when the file holds one, else this load's load-time key. */
-	keyOf(entry: SessionEntry, index: number): string | undefined {
-		if (partsOf(entry)[index]?.type !== "toolCall") return undefined;
-		const persisted = this.byEntry.get(entry.id)?.parts?.[index];
-		if (persisted !== undefined) return persisted;
-		const slot = `${entry.id}:${index}`;
-		const minted = this.loadTime.get(slot) ?? blockCallKey(randomUUID(), index);
-		this.loadTime.set(slot, minted);
-		return minted;
+		const matches = assistant
+			? partsOf(assistant).flatMap((part, index) => (part.type === "toolCall" && part.id === id ? [index] : []))
+			: [];
+		const open = id !== undefined && matches.length === 1 && !closed.has(id);
+		const key = assistant && open ? this.byEntry.get(assistant.id)?.parts?.[matches[0] ?? -1] : undefined;
+		this.byEntry.set(entry.id, { result: key === undefined ? { callUnknown: true } : { runtimeItemKey: key } });
 	}
 
 	/** The entry as the file holds it: its persisted keys back in place, after every other field. */

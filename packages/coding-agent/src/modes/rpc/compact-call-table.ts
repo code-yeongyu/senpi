@@ -84,6 +84,17 @@ export class CompactCallTable {
 	}
 
 	/**
+	 * The oldest call of `turnId` started under `id` before any block joined it (a bridge-started call, RULING-127 (b)):
+	 * a block joins it and keeps its first key; oldest first, the order the producer assigns their keys to blocks.
+	 */
+	bridgeStarted(turnId: string | null, id: string | null): OutstandingCall | undefined {
+		if (turnId === null || id === null) return undefined;
+		const unowned = (call: OutstandingCall) =>
+			call.turnId === turnId && call.owningMessageId === null && call.parentKey === null;
+		return this.oldestById(id, turnId, unowned);
+	}
+
+	/**
 	 * RULING-123, C3.4: whether another call of `call`'s own message took the same toolCallId. An execution or hook
 	 * record names only the toolCallId, so it cannot say which of those calls it is about. The mark lasts while any call
 	 * of that message and id is live, so a later record is not attributed by elimination either.

@@ -927,8 +927,8 @@ block (a nested call, reported with `parentToolCallId`). The three forms are dis
 opaque: compare keys only for equality. A transcript entry a recovering compact peer reads carries the persisted keys as
 the session file holds them (`runtimeItemKey` on a toolCall part, `runtimeItemKey` or `callUnknown: true` on a
 toolResult entry), reused after a reload and never re-minted. `get_messages`, `get_entries`, attach replays and every
-legacy or flag-off record never carry them. A session written before senpi#5374 has no persisted keys; its parts get
-load-time keys, stable only for that load.
+legacy or flag-off record never carry them. A session written before senpi#5374 has no persisted keys, and nothing mints
+one for its parts when it loads: no host state is rebuilt from a loaded part, so such a key would have no reader.
 
 #### release_recovery
 
