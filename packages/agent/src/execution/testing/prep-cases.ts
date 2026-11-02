@@ -34,6 +34,8 @@ export interface PrepFixture {
 	release(id: string): Promise<ReleaseOutcome>;
 	/** `effect` when effect_possible became durable, then `activate`, `shim`, each handler step and `body(<value>)`. */
 	trace(): readonly string[];
+	/** Replace the executor with a fresh instance over the same store, after the ledger's restart recovery. */
+	restart(): Promise<void>;
 	/** The execution row read through a ledger reopened on the same store. */
 	row(id: string): Promise<ExecutionEntry | undefined>;
 }
@@ -131,9 +133,31 @@ const frozenCall: PrepCase = async ({ executor }) => {
 	);
 };
 
+const storedReplies: PrepCase = async ({ executor }) => {
+	for (const [options, args] of [
+		[{}, LEGACY],
+		[{ block: "held by policy" }, LEGACY],
+		[{}, { value: "bad" }],
+	] as const) {
+		const fixture = await executor.open(options);
+		const first = await fixture.prepare("prep-05", args);
+		const steps = fixture.trace();
+		await fixture.restart();
+		expectEqual(await fixture.prepare("prep-05", args), first, `re-sent ${first.kind} reply after restart`);
+		expectEqual(fixture.trace(), steps, "a re-sent prepare after restart reruns no preparation step");
+		const row = await fixture.row("prep-05");
+		expectEqual(
+			row?.progress.state === "preparing",
+			false,
+			`a ${first.kind} preparation leaves no row in preparing for restart recovery`,
+		);
+	}
+};
+
 export const PREP_CASES: ReadonlyMap<string, PrepCase> = new Map([
 	["PREP-01", shim],
 	["PREP-02", activationOrder],
 	["PREP-03", handlersOnce],
 	["PREP-04", frozenCall],
+	["PREP-05", storedReplies],
 ]);

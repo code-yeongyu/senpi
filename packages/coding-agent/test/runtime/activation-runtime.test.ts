@@ -65,6 +65,7 @@ async function openQaExecutor(options: PrepFixtureOptions = {}): Promise<PrepFix
 			return effectAt === undefined ? trace : [...trace.slice(0, effectAt), "effect", ...trace.slice(effectAt)];
 		},
 		row: executor.row,
+		restart: executor.restart,
 	};
 }
 
@@ -87,7 +88,35 @@ describe("F03 / G1: lazy activation and order once on the prepared executor", ()
 	});
 });
 
-describe("PREP-01..04 on the session's preparation pipeline", () => {
+describe("a batch_abort preparation survives an executor restart", () => {
+	it("returns the stored batch_abort reply to a prepare re-sent after restart", async () => {
+		// Given: a tool_call handler that aborts the batch during preflight
+		const abort = new AbortController();
+		const fixture = createQaToolFixture();
+		const aborting: ExtensionFactory = (pi) => {
+			pi.on("tool_call", () => abort.abort());
+		};
+		const harness = await createHarness({ extensionFactories: [...fixture.extensionFactories, aborting] });
+		cleanups.push(() => {
+			harness.cleanup();
+			fixture.cleanup();
+		});
+		fixture.trustPreToolUseHook(harness.tempDir);
+		const executor = await sessionExecutor(harness.session);
+		const first = await executor.prepare("abort", "qa", { legacy: "42" }, abort.signal);
+
+		// When
+		await executor.restart();
+		const resent = await executor.prepare("abort", "qa", { legacy: "42" });
+
+		// Then
+		expect(first.kind).toBe("batch_abort");
+		expect(resent).toEqual(first);
+		expect(fixture.readTrace()).toEqual(["activate", "shim", "hook1", "pre", "hook2"]);
+	});
+});
+
+describe("PREP-01..05 on the session's preparation pipeline", () => {
 	const adapters: PrepCaseAdapters = { executor: { open: openQaExecutor } };
 	for (const [id, run] of PREP_CASES) {
 		it(id, async () => {

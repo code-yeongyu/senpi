@@ -13,9 +13,11 @@ const ISSUER = "brain";
 const ADMITTED_AT = Date.now();
 
 export interface SessionExecutor {
-	prepare(id: string, name: string, args: JsonObject): Promise<PrepareReply>;
+	prepare(id: string, name: string, args: JsonObject, signal?: AbortSignal): Promise<PrepareReply>;
 	release(id: string): Promise<ReleaseReply>;
 	row(id: string): Promise<ExecutionEntry | undefined>;
+	/** A new executor process: fresh memory over the same store, after the ledger's restart recovery. */
+	restart(): Promise<void>;
 }
 
 /** A prepared executor over a fresh in-memory ledger, driving `session`'s own preparation pipeline in process. */
@@ -27,22 +29,22 @@ export async function sessionExecutor(
 	await openMemoryStore(medium).claim(0, 1);
 	const open = (): ExecutionLedger =>
 		createExecutionLedger({ store: openMemoryStore(medium), epoch: 1, admission: createAdmissionLine() });
-	const ledger = open();
-	const observed: ExecutionLedger = {
-		...ledger,
-		apply: async (command) => {
-			const reply = await ledger.apply(command);
-			if (command.event.kind === "effect" && reply.status === "applied") onEffect();
-			return reply;
-		},
-	};
-	const executor = createPreparedExecutor({
-		ledger: observed,
-		executor: "hand",
-		pipeline: agentPreparationPipeline(session.agent),
-	});
+	const build = (ledger: ExecutionLedger) =>
+		createPreparedExecutor({
+			ledger: {
+				...ledger,
+				apply: async (command) => {
+					const reply = await ledger.apply(command);
+					if (command.event.kind === "effect" && reply.status === "applied") onEffect();
+					return reply;
+				},
+			},
+			executor: "hand",
+			pipeline: agentPreparationPipeline(session.agent),
+		});
+	let executor = build(open());
 	return {
-		prepare: (id, name, args) => {
+		prepare: (id, name, args, signal) => {
 			const call: AgentToolCall = { type: "toolCall", id, name, arguments: args };
 			return executor.prepare({
 				issuer: ISSUER,
@@ -54,11 +56,17 @@ export async function sessionExecutor(
 				context: { messages: session.agent.state.messages, tools: session.agent.state.tools },
 				admittedAt: ADMITTED_AT,
 				leaseUntil: ADMITTED_AT + 3_600_000,
+				...(signal === undefined ? {} : { signal }),
 			});
 		},
 		release: (id) =>
 			executor.release({ key: { issuer: ISSUER, commandId: id }, generation: 1, actor: { id: ISSUER } }),
 		row: (id) => open().read({ issuer: ISSUER, commandId: id }),
+		restart: async () => {
+			const recovered = open();
+			await recovered.recover(Date.now());
+			executor = build(recovered);
+		},
 	};
 }
 
