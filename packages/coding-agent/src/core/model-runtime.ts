@@ -1360,7 +1360,12 @@ export class ModelRuntime implements Models {
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			const store = this.credentials.backingStore;
 			const before = await store.read(providerId, { signal });
-			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
+			const credential = await this.models.login(
+				providerId,
+				type,
+				{ ...interaction, signal },
+				{ ...options, appName: APP_NAME },
+			);
 			if (this.poolStatePath !== undefined) {
 				const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
 				await retireLoginSlotHealth(this.poolStatePath, providerId, before, await store.read(providerId, { signal }));
