@@ -69,10 +69,11 @@ const shim: PrepCase = async ({ executor }) => {
 	expectEqual((await invalid.prepare("prep-01-invalid", { value: "bad" })).kind, "blocked", "validation blocks");
 	expectEqual(invalid.trace(), ["effect", "activate", "shim"], "no handler runs after a failed validation");
 	const row = await invalid.row("prep-01-invalid");
+	const outcome = row?.progress.state === "settled" ? row.progress.outcome.reason : row?.progress.state;
 	expectEqual(
-		{ state: row?.progress.state, effectPossible: row?.effectPossible },
-		{ state: "preparing", effectPossible: true },
-		"nothing is frozen for an invalid call",
+		{ outcome, effectPossible: row?.effectPossible },
+		{ outcome: "blocked", effectPossible: true },
+		"an invalid call settles blocked, with nothing frozen",
 	);
 };
 

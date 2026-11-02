@@ -6,7 +6,15 @@ import type {
 	LedgerReply,
 } from "@earendil-works/pi-agent-core/conformance";
 import { errorResult, finalizeBody, type PreparedBody, runBody } from "./executor-body.ts";
-import { digestOf, freezeCall, resultValue, toStoreValue } from "./executor-freeze.ts";
+import {
+	digestOf,
+	freezeCall,
+	resultValue,
+	type StoppedReply,
+	stoppedReply,
+	stoppedValue,
+	toStoreValue,
+} from "./executor-freeze.ts";
 import type {
 	PreparedExecutor,
 	PreparedExecutorOptions,
@@ -33,9 +41,11 @@ function incompleteMessage(name: string, errorMessage: string | undefined): stri
 /** A durable row that already passed admission: answer from it and never run preparation again. */
 function fromRow(entry: ExecutionEntry): PrepareReply {
 	const progress = entry.progress;
-	return "call" in progress
-		? { kind: "prepared", call: progress.call }
-		: { kind: "refused", reason: progress.state === "settled" ? "terminal" : progress.state };
+	if ("call" in progress) return { kind: "prepared", call: progress.call };
+	if (progress.state !== "settled") return { kind: "refused", reason: progress.state };
+	const outcome = progress.outcome;
+	if (outcome.reason !== "blocked") return { kind: "refused", reason: "terminal" };
+	return stoppedReply(outcome.value) ?? { kind: "refused", reason: "corrupt_blocked_outcome" };
 }
 
 /**
@@ -52,6 +62,14 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 
 	const step = (key: ExecutionKey, generation: number, event: ExecutionEvent): Promise<LedgerReply> =>
 		ledger.apply({ key, generation, actor: { id: executor }, now: clock(), event });
+
+	// A preparation that ends without a frozen call is terminal and durable, so a re-sent prepare (also from a new
+	// executor process after restart) gets this reply back instead of a restart-recovered `hand_restarted`.
+	async function stop(key: ExecutionKey, generation: number, reply: StoppedReply): Promise<PrepareReply> {
+		const recorded = await step(key, generation, { kind: "block", value: stoppedValue(reply) });
+		if (recorded.status === "applied") return reply;
+		return recorded.status === "replayed" ? fromRow(recorded.entry) : refusal(recorded);
+	}
 
 	async function prepareOnce(request: PrepareRequest, requestDigest: string): Promise<PrepareReply> {
 		const { call, generation, signal } = request;
@@ -72,7 +90,10 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		const preparing = await step(key, generation, { kind: "prepare" });
 		if (preparing.status !== "applied") return refusal(preparing);
 		if (call.incomplete === true) {
-			return { kind: "blocked", result: errorResult(incompleteMessage(call.name, call.errorMessage)) };
+			return stop(key, generation, {
+				kind: "blocked",
+				result: errorResult(incompleteMessage(call.name, call.errorMessage)),
+			});
 		}
 		const effect = await step(key, generation, { kind: "effect" });
 		if (effect.status !== "applied") return refusal(effect);
@@ -81,7 +102,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		if (!tool) {
 			const hint = pipeline.removedToolHint(call.name);
 			const text = hint === undefined ? `Tool ${call.name} not found` : `Tool ${call.name} not found. ${hint}`;
-			return { kind: "blocked", result: errorResult(text) };
+			return stop(key, generation, { kind: "blocked", result: errorResult(text) });
 		}
 		const requestedName = tool.name === call.name ? undefined : call.name;
 		const named = requestedName === undefined ? {} : { requestedName };
@@ -96,11 +117,12 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 				},
 				signal,
 			);
-			if (signal?.aborted) return { kind: "batch_abort", result: errorResult("Operation aborted") };
+			if (signal?.aborted)
+				return stop(key, generation, { kind: "batch_abort", result: errorResult("Operation aborted") });
 			if (before?.block) {
 				const result = errorResult(before.reason || "Tool execution was blocked");
 				if (before.terminate === true) result.terminate = true;
-				return { kind: "blocked", result, ...named };
+				return stop(key, generation, { kind: "blocked", result, ...named });
 			}
 			const frozen = freezeCall(tool.name, prepared.args);
 			const freeze = await step(key, generation, { kind: "freeze", call: frozen, awaitingConsent: false });
@@ -115,7 +137,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 			return { kind: "prepared", call: frozen, ...named };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			return { kind: "blocked", result: errorResult(message), ...named };
+			return stop(key, generation, { kind: "blocked", result: errorResult(message), ...named });
 		}
 	}
 
@@ -146,8 +168,12 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 
 	async function settledRow(key: ExecutionKey): Promise<ReleaseReply> {
 		const entry = await ledger.read(key);
-		const state = entry?.progress.state;
-		return entry !== undefined && (state === "settled" || state === "acked")
+		const progress = entry?.progress;
+		if (entry === undefined || progress === undefined) return { kind: "refused", reason: "not_prepared" };
+		// Release on a terminal is refused; a blocked call never had a body to replay.
+		if (progress.state === "settled" && progress.outcome.reason === "blocked")
+			return { kind: "refused", reason: "blocked" };
+		return progress.state === "settled" || progress.state === "acked"
 			? { kind: "replayed", entry }
 			: { kind: "refused", reason: "not_prepared" };
 	}

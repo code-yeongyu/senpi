@@ -130,7 +130,7 @@ describe("R23.a: tool hooks run on the executor", () => {
 
 		// Then
 		expect(prepared.kind === "blocked" && resultText(prepared.result)).toContain("denied on the hand");
-		expect(released).toEqual({ kind: "refused", reason: "not_prepared" });
+		expect(released).toEqual({ kind: "refused", reason: "blocked" });
 		expect(trace()).toEqual(["PreToolUse"]);
 	}, 30_000);
 });
