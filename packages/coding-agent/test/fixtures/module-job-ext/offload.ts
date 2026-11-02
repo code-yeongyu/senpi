@@ -147,6 +147,22 @@ export async function appendWhenGated(
 	});
 }
 
+/**
+ * `appendWhenGated` with a gate that cannot be missed (senpi#3836): `gate` is a FIFO, and the blocking read returns
+ * the moment the test writes it. A directory-watch event can arrive seconds late, or never, on a busy macOS host.
+ */
+export async function appendWhenFifoOpens(
+	args: { readonly file: string; readonly line: string; readonly held: string; readonly gate: string },
+	host: LockingHost,
+): Promise<string> {
+	return host.withFileLock(args.file, async () => {
+		writeMarker(args.held, "");
+		readText(args.gate);
+		appendLine(args.file, `${args.line}\n`);
+		return readText(args.file, "utf8");
+	});
+}
+
 /** Appends its line under the file's lock and returns the file as it then reads. */
 export async function appendLocked(
 	args: { readonly file: string; readonly line: string },
