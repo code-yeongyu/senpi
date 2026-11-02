@@ -1,7 +1,11 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { isHumanInputMonitorNotification, type WakeSourceStateItem } from "../monitor-state-event.ts";
+import {
+	isHumanInputMonitorNotification,
+	isMonitorNotification,
+	type WakeSourceStateItem,
+} from "../monitor-state-event.ts";
 import {
 	createGoalCacheWarmScheduleData,
 	estimateCacheWarmMetrics,
@@ -90,6 +94,9 @@ export class MonitorAwareGoalContinuation {
 	#recentNormalizedOutputHashes: string[] = [];
 	#toollessContinuationStreak = 0;
 	#recentToolEffects: string[] = [];
+	#idleReplyStreak = 0;
+	/** The next turn answers an admitted monitor-delayed continuation (a backstop or drain fire). */
+	#awaitingMonitorWakeReply = false;
 	#toollessStreakGoalId: string | null = null;
 	#endedTurnWasUserInitiated = false;
 	#lastTurnUsage: TokenUsageSnapshot | undefined;
@@ -134,6 +141,9 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	async afterAgentEnd(options: AgentEndOptions): Promise<Goal | null> {
+		const answeredMonitorWake =
+			this.#awaitingMonitorWakeReply || options.messages.some((message) => isMonitorNotification(message));
+		this.#awaitingMonitorWakeReply = false;
 		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
 		this.#providerRetryAttempts = 0;
 		this.#ctx = options.ctx;
@@ -152,8 +162,9 @@ export class MonitorAwareGoalContinuation {
 		}
 		this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
 		const immediateInput = this.#buildVerdictInput(options.ctx, options.goal, "immediate", options.messages);
-		const madeProgress =
-			this.#recordToolEffect(options.messages) || humanInput || hasGoalTodoProgress(immediateInput);
+		const toolEffect = this.#recordToolEffect(options.messages);
+		const otherProgress = humanInput || hasGoalTodoProgress(immediateInput);
+		const madeProgress = toolEffect.progress || otherProgress;
 		const goal =
 			!this.#endedTurnWasUserInitiated && (madeProgress || hasGoalContinuationProgress(immediateInput))
 				? ((await resetContinuationStreak(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd), {
@@ -162,6 +173,11 @@ export class MonitorAwareGoalContinuation {
 					})) ?? options.goal)
 				: options.goal;
 		this.#goal = goal;
+		this.#recordIdleReply(options.messages, {
+			turnUsedTools,
+			progressed: toolEffect.newEffect || otherProgress,
+			answeredMonitorWake,
+		});
 		const immediateVerdict = evaluateGoalContinuation({
 			goal,
 			...this.#buildVerdictInput(options.ctx, goal, "immediate", options.messages),
@@ -170,7 +186,7 @@ export class MonitorAwareGoalContinuation {
 			this.#endedTurnWasUserInitiated = false;
 			this.#cancelTimer();
 			if (immediateVerdict.kind === "continue") {
-				this.#schedule(goal, "userGrace");
+				this.#schedule(goal, this.#activeWakeSourceCount() > 0 ? "monitor" : "userGrace");
 				return goal;
 			}
 			switch (immediateVerdict.reason) {
@@ -178,6 +194,7 @@ export class MonitorAwareGoalContinuation {
 				case "single-flight":
 					return goal;
 				case "stale":
+				case "idle":
 				case "context-overflow":
 				case "cap":
 				case "repetition":
@@ -281,11 +298,20 @@ export class MonitorAwareGoalContinuation {
 
 	syncGoal(goal: Goal | null): void {
 		if (goal?.id !== this.#goal?.id) this.#resetContinuationState();
+		// Only a resume (`/goal resume`, an accepted message) clears a stop, so the resumed goal starts a fresh idle count.
+		if (this.#goal?.continuationStoppedAt !== undefined && goal?.continuationStoppedAt === undefined) {
+			this.#idleReplyStreak = 0;
+		}
 		this.#goal = goal;
 		if (goal?.status !== "active") {
 			this.#cancelTimer();
 			this.#resetContinuationState();
 		}
+	}
+
+	/** Unattended replies in a row that made no progress, the count the idle guard reads (#5160). */
+	idleReplyStreak(): number {
+		return this.#idleReplyStreak;
 	}
 
 	/** The continuation timer armed right now, if any (monitor backstop, user grace, provider retry). */
@@ -531,12 +557,18 @@ export class MonitorAwareGoalContinuation {
 		if (ctx === undefined || goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
 		if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined) return;
 		if (kind === "monitor" && this.#activeWakeSourceCount() === 0 && !drainFire) return;
+		// A wake source armed during the grace owns the resumption; park on it instead of re-prompting (#5160).
+		if (kind === "userGrace" && this.#activeWakeSourceCount() > 0) {
+			this.#schedule(goal, "monitor");
+			return;
+		}
 		const admission = await this.#admitAndQueue(
 			ctx,
 			goal,
 			kind === "monitor" ? "monitorDelayed" : kind === "providerRetry" ? "providerRecovery" : "userGrace",
 			this.#lastAgentEndMessages,
 		);
+		if (kind === "monitor" && admission.admitted) this.#awaitingMonitorWakeReply = true;
 		if (kind !== "monitor" || !admission.admitted || iteration === undefined) return;
 		const wakeSources = this.#wakeSourceSnapshot();
 		this.#publish(GOAL_CONTINUATION_RESUMED_EVENT, {
@@ -618,6 +650,7 @@ export class MonitorAwareGoalContinuation {
 			consecutiveLengthRecoveries: this.#consecutiveLengthRecoveries.get(goal.id) ?? 0,
 			recentNormalizedOutputHashes: this.#recentNormalizedOutputHashes,
 			toollessContinuationStreak: this.#toollessContinuationStreak,
+			idleReplyStreak: this.#idleReplyStreak,
 			continuationPending: this.#isContinuationPending(),
 			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(ctx, lastAssistant),
 		};
@@ -661,14 +694,34 @@ export class MonitorAwareGoalContinuation {
 
 	/**
 	 * A tool turn is progress only when its calls and outcomes differ from every recent tool turn. With no history
-	 * (first turn, or after a reload or input reset) there is nothing to prove change against, so it only seeds.
+	 * (first turn, or after a reload or input reset) there is nothing to prove change against, so it only seeds the
+	 * no-progress guard; `newEffect` still reports it, because for the idle-reply streak a first real action is new.
 	 */
-	#recordToolEffect(messages: readonly AgentMessage[]): boolean {
+	#recordToolEffect(messages: readonly AgentMessage[]): { progress: boolean; newEffect: boolean } {
 		const fingerprint = toolEffectFingerprint(messages);
-		if (fingerprint === undefined) return false;
-		const repeated = this.#recentToolEffects.length === 0 || this.#recentToolEffects.includes(fingerprint);
+		if (fingerprint === undefined) return { progress: false, newEffect: false };
+		const seen = this.#recentToolEffects.includes(fingerprint);
+		const seeding = this.#recentToolEffects.length === 0;
 		this.#recentToolEffects = [...this.#recentToolEffects, fingerprint].slice(-GOAL_TOOL_EFFECT_WINDOW);
-		return !repeated;
+		return { progress: !seen && !seeding, newEffect: !seen };
+	}
+
+	/**
+	 * Counts unattended replies that made no progress (#5160): a tool-less reply adds one; a new tool effect (the
+	 * first one included), human input or todo progress resets; a tool turn repeating a recent effect, a truncated
+	 * reply, or a reply to a monitor wake (backstop, drain fire, or monitor event) holds the count.
+	 */
+	#recordIdleReply(
+		messages: readonly AgentMessage[],
+		turn: { turnUsedTools: boolean; progressed: boolean; answeredMonitorWake: boolean },
+	): void {
+		if (this.#endedTurnWasUserInitiated || turn.progressed) {
+			this.#idleReplyStreak = 0;
+			return;
+		}
+		if (turn.turnUsedTools || turn.answeredMonitorWake) return;
+		if (lastAssistantMessage(messages)?.stopReason === "length") return;
+		this.#idleReplyStreak += 1;
 	}
 
 	#recordToollessContinuationTurn(goal: Goal, turnUsedTools: boolean): void {
@@ -764,6 +817,7 @@ export class MonitorAwareGoalContinuation {
 			if (this.#scheduledContinuationKind === "monitor") this.#armDrainFire();
 			else this.#resetCacheWarmIteration();
 			this.#resetToollessContinuationStreak();
+			this.#idleReplyStreak = 0;
 			return;
 		}
 		if (this.#scheduledContinuationKind === "monitor") {
@@ -818,6 +872,8 @@ export class MonitorAwareGoalContinuation {
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
 		this.#recentToolEffects = [];
+		this.#idleReplyStreak = 0;
+		this.#awaitingMonitorWakeReply = false;
 		this.#resetToollessContinuationStreak();
 		this.#resetCacheWarmIteration();
 	}
