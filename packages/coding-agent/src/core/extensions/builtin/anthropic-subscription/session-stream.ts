@@ -33,7 +33,7 @@ import {
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
-import { createSessionTurnAttempt } from "./session-turn-attempt.ts";
+import { createSessionTurnAttempt, waitForActiveTurn } from "./session-turn-attempt.ts";
 import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
 
 export type ResidentSessionStreamInput = {
@@ -92,6 +92,9 @@ async function createResidentAttempt(
 	const sessionId = input.streamOptions.sessionId!;
 	const messages = sentMessages(input.context);
 	const hashes = sentMessageHashes(messages);
+	// Continuity and the delta are read from the settled previous turn, never from one still in flight.
+	const pending = getSession(sessionId);
+	if (pending) await waitForActiveTurn(pending, input.streamOptions.signal);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;

@@ -32,6 +32,13 @@ import { SessionTurnAttributionError } from "./session-turn-types.ts";
 export const DEFAULT_PRE_REPLAY_MAX_MESSAGES = 64;
 export const DEFAULT_PRE_REPLAY_MAX_BYTES = 256 * 1024;
 export const SESSION_TURN_ABORT_GRACE_MS = 1_000;
+/**
+ * How long a turn submitted while the previous turn of the same session is still active waits for that turn to
+ * settle before the submission is refused. The common case settles within the abort grace above: the agent loop
+ * starts the next turn (a steer, a follow-up, a monitor notification) right after it interrupted or finished
+ * consuming the previous one, while the pump still waits for the SDK's terminal result of that turn.
+ */
+export const SESSION_TURN_ADMISSION_WAIT_MS = 10_000;
 
 export interface SessionTurnRequest {
 	message: SDKUserMessage["message"];
@@ -202,6 +209,69 @@ async function runPump(
 	}
 }
 
+/**
+ * Waits for `settled`, bounded by SESSION_TURN_ADMISSION_WAIT_MS: "admitted" once it settles, "aborted" when
+ * `signal` aborts first, and a ConcurrentSessionTurnAdmissionError when the bound passes, so a stuck pump cannot
+ * hold the session's callers forever.
+ */
+export function waitForTurnAdmission(
+	sessionId: string,
+	settled: Promise<unknown>,
+	signal: AbortSignal | undefined,
+	schedule: (callback: () => void, delayMs: number) => () => void = scheduleAbort,
+): Promise<"admitted" | "aborted"> {
+	return new Promise((resolve, reject) => {
+		let done = false;
+		let cancelTimer: (() => void) | undefined;
+		const finish = (run: () => void): void => {
+			if (done) return;
+			done = true;
+			cancelTimer?.();
+			signal?.removeEventListener("abort", onAbort);
+			run();
+		};
+		const onAbort = (): void => finish(() => resolve("aborted"));
+		if (signal?.aborted) {
+			onAbort();
+			return;
+		}
+		// The scheduler may fire synchronously (tests inject one); `done` then stops every later step.
+		cancelTimer = schedule(
+			() => finish(() => reject(new ConcurrentSessionTurnAdmissionError(sessionId))),
+			SESSION_TURN_ADMISSION_WAIT_MS,
+		);
+		if (done) return;
+		signal?.addEventListener("abort", onAbort, { once: true });
+		const admitted = (): void => finish(() => resolve("admitted"));
+		void settled.then(admitted, admitted);
+	});
+}
+
+/**
+ * A turn submitted while the session's previous turn is still active waits for that turn to settle, bounded by
+ * SESSION_TURN_ADMISSION_WAIT_MS, then submits. One SDK session runs one turn at a time, so the second request is
+ * logically after the first; refusing it (the behavior before this guard) surfaced as a provider failure and moved
+ * the session to a fallback model for no reason of the provider's. An abort of the waiting request resolves it as
+ * an aborted turn; a previous turn that does not settle in time keeps the refusal.
+ */
+async function admitAfter(
+	registry: AnthropicSubscriptionSessionRegistry,
+	entry: AnthropicSubscriptionSessionEntry,
+	active: ActiveTurn,
+	settled: Promise<void>,
+	request: SessionTurnRequest,
+	limits: PreReplayBufferLimits,
+): Promise<SessionTurnResult> {
+	const generation = entry.generation;
+	const outcome = await waitForTurnAdmission(entry.senpiSessionId, settled, request.signal, request.scheduleAbort);
+	if (outcome === "aborted") return { uuid: createSessionUuid(), messages: [], aborted: true };
+	if (!registry.isCurrentGeneration(entry.senpiSessionId, generation)) {
+		throw new Error("Anthropic Subscription session closed while a turn waited for admission");
+	}
+	if (currentTurn(entry) === active) entry.activeTurn = null;
+	return submitSessionTurn(registry, entry, request, limits);
+}
+
 export function submitSessionTurn(
 	registry: AnthropicSubscriptionSessionRegistry,
 	entry: AnthropicSubscriptionSessionEntry,
@@ -211,7 +281,11 @@ export function submitSessionTurn(
 		maxBytes: DEFAULT_PRE_REPLAY_MAX_BYTES,
 	},
 ): Promise<SessionTurnResult> {
-	if (currentTurn(entry)) throw new ConcurrentSessionTurnAdmissionError(entry.senpiSessionId);
+	const active = currentTurn(entry);
+	if (active) {
+		if (!active.settled) throw new ConcurrentSessionTurnAdmissionError(entry.senpiSessionId);
+		return admitAfter(registry, entry, active, active.settled, request, limits);
+	}
 	if (entry.state === "STARTING") transitionToIdleSynced(entry);
 	transitionToTurnWaiting(entry);
 	const uuid = createSessionUuid();
@@ -253,6 +327,10 @@ export function submitSessionTurn(
 			limits,
 		};
 	});
+	turn.settled = promise.then(
+		() => undefined,
+		() => undefined,
+	);
 	entry.activeTurn = turn;
 	if (!entry.pumpTask) entry.pumpTask = runPump(registry, entry);
 	entry.inputController.push({
