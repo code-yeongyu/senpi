@@ -41,7 +41,7 @@ import { type InternalLoopConfig, internalProgressSink } from "./internal-events
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiveness } from "./stream-keepalive.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
-import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
+import { resolveCallTool, unknownToolErrorText, withToolNameCorrection } from "./tool-name-alias.ts";
 import type { ToolHost } from "./execution/tool-host.ts";
 import type {
 	AgentContext,
@@ -1480,6 +1480,8 @@ async function prepareToolCall(
 	tool: AgentTool | undefined,
 	config: ToolPreparationConfig,
 	signal: AbortSignal | undefined,
+	/** The names the call resolved against; unknown-tool suggestions never step outside this pool. */
+	suggestionToolNames?: Iterable<string>,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
 	if (toolCall.incomplete === true) {
 		return {
@@ -1496,7 +1498,12 @@ async function prepareToolCall(
 			kind: "immediate",
 			toolCall,
 			result: createErrorToolResult(
-				hint === undefined ? `Tool ${toolCall.name} not found` : `Tool ${toolCall.name} not found. ${hint}`,
+				hint === undefined
+					? unknownToolErrorText(
+							toolCall.name,
+							suggestionToolNames ?? (currentContext.tools ?? []).map((candidate) => candidate.name),
+						)
+					: `Tool ${toolCall.name} not found. ${hint}`,
 			),
 			isError: true,
 		};
@@ -1633,7 +1640,15 @@ export interface RunToolCallOptions extends ToolCallHooks {
 export async function runToolCall(toolCall: AgentToolCall, options: RunToolCallOptions): Promise<AgentToolCallOutcome> {
 	const { assistantMessage, context, signal } = options;
 	const tool = options.tools.find((candidate) => candidate.name === toolCall.name);
-	const preparation = await prepareToolCall(context, assistantMessage, toolCall, tool, options, signal);
+	const preparation = await prepareToolCall(
+		context,
+		assistantMessage,
+		toolCall,
+		tool,
+		options,
+		signal,
+		options.tools.map((candidate) => candidate.name),
+	);
 	if (preparation.kind === "immediate") {
 		return { toolCall, result: preparation.result, isError: preparation.isError };
 	}

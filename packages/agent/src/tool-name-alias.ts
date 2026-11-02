@@ -1,4 +1,4 @@
-import { resolveToolNameMatch } from "@earendil-works/pi-ai/utils/tool-name-match";
+import { foldToolName, resolveToolNameMatch, toolNameForms } from "@earendil-works/pi-ai/utils/tool-name-match";
 import type { AgentContext, AgentLoopConfig, AgentTool, AgentToolCall, AgentToolResult } from "./types.ts";
 
 /**
@@ -13,6 +13,82 @@ export function resolveToolNameAlias(requested: string, available: Iterable<stri
 
 export function toolNameCorrectionNotice(requested: string, resolved: string): string {
 	return `[auto-corrected] no tool is named "${requested}"; ran "${resolved}". Call tools by their exact listed name.`;
+}
+
+/**
+ * Registered tools whose names are closest to `requested`, nearest first.
+ *
+ * Folds through the same shapes the alias matcher accepts (case and separator
+ * folds, gateway and server namespaces, registered names that carry a prefix
+ * the call dropped), so a typo, recasing, singular/plural drift, or prefix
+ * drift still lands next to the right tool. The edit budget is a third of the
+ * folded candidate's length: at least one edit, at most three, so an unrelated
+ * name suggests nothing — a wrong suggestion costs more than the bare error.
+ */
+export function suggestToolNames(requested: string, available: Iterable<string>, limit = 3): string[] {
+	const forms = toolNameForms(requested).map((form) => foldToolName(form));
+	const scored: { name: string; distance: number }[] = [];
+	for (const name of new Set(available)) {
+		const folded = foldToolName(name);
+		const budget = Math.max(1, Math.min(3, Math.floor(folded.length / 3)));
+		const distance = closestFoldDistance(
+			forms,
+			toolNameForms(name).map((form) => foldToolName(form)),
+		);
+		if (distance > budget) continue;
+		scored.push({ name, distance });
+	}
+	return scored
+		.sort((left, right) => left.distance - right.distance || (left.name < right.name ? -1 : 1))
+		.slice(0, limit)
+		.map((entry) => entry.name);
+}
+
+/**
+ * The `Did you mean ...?` clause for a call to a name no tool carries, or
+ * `undefined` when no registered name is close enough.
+ */
+export function unknownToolSuggestion(requested: string, available: Iterable<string>): string | undefined {
+	const suggestions = suggestToolNames(requested, available);
+	if (suggestions.length === 0) return undefined;
+	return `Did you mean ${suggestions.join(", ")}?`;
+}
+
+/**
+ * The error text for a call no tool carries: bare when nothing is close, with
+ * the nearest registered names otherwise, so one turn repairs a typo instead
+ * of the model re-listing tools.
+ */
+export function unknownToolErrorText(requested: string, available: Iterable<string>): string {
+	const suggestion = unknownToolSuggestion(requested, available);
+	return suggestion === undefined ? `Tool ${requested} not found` : `Tool ${requested} not found. ${suggestion}`;
+}
+
+function closestFoldDistance(forms: string[], registeredForms: string[]): number {
+	let closest = Number.POSITIVE_INFINITY;
+	for (const form of forms) {
+		for (const registered of registeredForms) {
+			closest = Math.min(closest, editDistance(form, registered));
+			if (closest === 0) return 0;
+		}
+	}
+	return closest;
+}
+
+/** Levenshtein distance over folded names; the caller's budget gates how far a suggestion may reach. */
+function editDistance(left: string, right: string): number {
+	let previous = new Uint16Array(right.length + 1);
+	for (let column = 0; column <= right.length; column += 1) previous[column] = column;
+	for (let row = 1; row <= left.length; row += 1) {
+		const current = new Uint16Array(right.length + 1);
+		current[0] = row;
+		for (let column = 1; column <= right.length; column += 1) {
+			const substitution = previous[column - 1] + (left[row - 1] === right[column - 1] ? 0 : 1);
+			current[column] = Math.min(current[column - 1] + 1, previous[column] + 1, substitution);
+		}
+		previous = current;
+	}
+	return previous[right.length];
 }
 
 /**
