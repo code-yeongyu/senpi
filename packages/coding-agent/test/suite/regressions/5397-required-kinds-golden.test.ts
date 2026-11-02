@@ -8,7 +8,7 @@ import { manifestCut, refuseOneCorrelation, sortedFamilies } from "./5397-manife
 // Fixes #5397 (RULING-128 (5)): the shared golden of a manifest whose cut has one partial family, produced by the real
 // manifest path and never edited by hand; the desktop opens exactly `requiredKinds`, read verbatim.
 // The normalizer aliases every digest, so a golden cannot show that checkpointDigest covers requiredKinds; the unit test
-// "the list is in the digested registry component" (5397-manifest-required-kinds.test.ts:59-79) proves it.
+// "the list is in the digested registry component" in 5397-manifest-required-kinds.test.ts proves it.
 
 const DIRECTORY = "docs/engine-socket/fixtures/recovery-manifest";
 const REGENERATE =
