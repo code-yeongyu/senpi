@@ -106,11 +106,11 @@ import {
 	runAbort,
 	runGetEffectStatus,
 	runQueuedInputChange,
-	runSetModel,
 	runSetThinkingLevel,
 } from "./effect-commands.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
+import { handleModelCommand } from "./handlers-model.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { answeredUiRequestId, refusedExtensionUiResponse, settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { SecretInputRequests, type SecretInputRoute } from "./secret-input-requests.ts";
@@ -155,7 +155,7 @@ import {
 	USER_ACTIVITY_CAPABILITY,
 } from "./rpc-types.ts";
 import { runPauseForRun, runResumeForRun } from "./run-hold-commands.ts";
-import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
+import { interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 import { subscribeStructuredSessionRecords } from "./structured-session-records.ts";
@@ -1568,28 +1568,11 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_model":
-				return runSetModel(effectContext(), command);
-
 			case "set_favorite_models":
-				session.setFavoriteModels(command.models);
-				return success(id, "set_favorite_models");
-
 			case "set_scoped_models":
-				session.setScopedModels(command.models);
-				return success(id, "set_scoped_models");
-
-			case "cycle_model": {
-				const result = await session.cycleModel(command.direction, {
-					origin: { source: "rpc", actor: "cycle_model" },
-				});
-				if (!result) {
-					return success(id, "cycle_model", null);
-				}
-				return success(id, "cycle_model", result);
-			}
-
+			case "cycle_model":
 			case "get_available_models":
-				return success(id, "get_available_models", await availableModelsData(session));
+				return handleModelCommand(effectContext(), command);
 
 			// =================================================================
 			// Thinking

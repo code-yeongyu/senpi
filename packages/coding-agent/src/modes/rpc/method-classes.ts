@@ -120,6 +120,11 @@ function thinkingLevelClass(record: object): RpcMethodClass {
 	return Reflect.get(record, "scope") === "turn" ? "drive" : "device_admin";
 }
 
+/** `scope: "session"` switches only this session's model; any other scope persists the device's default model. */
+function setModelClass(record: object): RpcMethodClass {
+	return Reflect.get(record, "scope") === "session" ? "drive" : "device_admin";
+}
+
 /** An effect looked up by session id is a read; one looked up in a named session file opens a host path. */
 function effectStatusClass(record: object): RpcMethodClass {
 	return namesAny(record, ["sessionPath"]) ? "device_admin" : "observe";
@@ -208,6 +213,8 @@ export const RPC_METHOD_CLASS = {
 	set_session_name: "drive",
 	// drive only for this turn's level; otherwise it remembers the model's level in the device-wide settings
 	set_thinking_level: { classify: thinkingLevelClass, version: 1 },
+	// drive only for this session's model; otherwise it persists the default model in the device-wide settings
+	set_model: { classify: setModelClass, version: 1 },
 	// a session override; set_steering_mode, set_follow_up_mode and set_auto_retry write global settings (device_admin)
 	set_auto_compaction: "drive",
 	set_retry_fallback: "drive",
@@ -256,9 +263,8 @@ export const RPC_METHOD_CLASS = {
 	test_provider_account: "device_admin",
 	set_favorite_models: "device_admin",
 	set_scoped_models: "device_admin",
-	// each writes the device-wide settings file, not a session override (set_model and cycle_model persist the default
-	// model, set_fast_mode the service tier)
-	set_model: "device_admin",
+	// each writes the device-wide settings file, not a session override (cycle_model persists the default model,
+	// set_fast_mode the service tier)
 	cycle_model: "device_admin",
 	cycle_thinking_level: "device_admin",
 	set_fast_mode: "device_admin",
