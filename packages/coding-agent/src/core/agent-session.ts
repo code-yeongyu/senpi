@@ -269,7 +269,6 @@ import {
 	type TreePreparation,
 	type TurnStartEvent,
 } from "./extensions/index.ts";
-import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
@@ -438,6 +437,7 @@ import {
 	type ToolDefinitionEntry,
 } from "./runtime/bootstrap.ts";
 import type { SourceInfo } from "./source-info.ts";
+import { toolInfoOf } from "./tool-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
@@ -5188,19 +5188,7 @@ export class AgentSession {
 	 * Get all configured tools with normalized exposure metadata and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolDefinitions.values()).map(({ definition, sourceInfo }) => ({
-			name: definition.name,
-			label: definition.label,
-			description: definition.description,
-			parameters: definition.parameters,
-			promptGuidelines: definition.promptGuidelines,
-			kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
-			permissionParser: definition.permissionParser,
-			...(definition.namespace ? { namespace: definition.namespace } : {}),
-			...(definition.annotations ? { annotations: { ...definition.annotations } } : {}),
-			sourceInfo,
-			...normalizeToolExposure(definition),
-		}));
+		return Array.from(this._toolDefinitions.values(), toolInfoOf);
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
