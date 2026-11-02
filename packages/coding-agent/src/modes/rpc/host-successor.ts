@@ -17,6 +17,7 @@
  * generation's next restart ever sees the successor that did not happen.
  */
 import { type ChildProcess, spawn } from "node:child_process";
+import { spawnWithPrivateFds } from "../../private-fd-spawn.ts";
 import { randomUUID } from "node:crypto";
 import { open, rm, writeFile } from "node:fs/promises";
 import { waitForStartTime } from "../../utils/process-identity.ts";
@@ -114,11 +115,15 @@ export async function startSuccessor(context: {
 			`${replaced.dev}:${replaced.ino}`,
 			...(inheritOwnerPipe ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
 			...(options.presenterBootstrap ? ["--mcp-presenter-fd", "4"] : []),
+			// Preserve the running host's policy even when an older caller omits the deployment option.
+			...(options.mcpPresenterEnforcement || host.capabilities.includes("mcp_form_presenter_v1")
+				? ["--mcp-presenter-enforcement"]
+				: []),
 			...(options.hostArgs ?? []),
 		];
 		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);
 		const stderr = await open(paths.stderrLog, "a", 0o600);
-		const spawned = spawn(launch.command, [...launch.args], {
+		const spawned = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
 			env: successorHostEnvironment({
@@ -136,7 +141,10 @@ export async function startSuccessor(context: {
 					: ["ignore", "ignore", stderr.fd],
 		});
 		const presenterEnrollment = options.presenterBootstrap
-			? relayPresenterBootstrap(options.presenterBootstrap, spawned)
+			? relayPresenterBootstrap(options.presenterBootstrap, spawned, {
+					kind: "replacement",
+					predecessorHostInstance: host.instanceId,
+				})
 			: undefined;
 		child = spawned;
 		exited = new Promise<void>((resolve) => spawned.once("exit", () => resolve()));

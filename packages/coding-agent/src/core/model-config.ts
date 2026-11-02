@@ -16,6 +16,7 @@ import {
 } from "./model-config-schema.ts";
 import { rememberModelReferenceOrigins } from "./model-reference-origins.ts";
 import { migrateModelsJsonProviderIds } from "./models-json-migration.ts";
+import { fixedAddressBaseUrlNotices } from "./provider-base-url-notice.ts";
 
 export type ModelsJsonModel = SchemaModelsJsonModel & { samplingParams?: Record<string, unknown> };
 export type ModelsJsonModelOverride = SchemaModelsJsonModelOverride & { samplingParams?: Record<string, unknown> };
@@ -574,7 +575,7 @@ export class ModelConfig {
 			providers.set(canonical, deepFreeze(retained));
 		}
 		const disabled = new Set((config.disabledProviders ?? []).map((id) => normalizeProviderId(id)));
-		return new ModelConfig(providers, disabled);
+		return new ModelConfig(providers, disabled, undefined, fixedAddressBaseUrlNotices(providers));
 	}
 
 	/** The error models.json `content` would load with, or undefined when it is valid (senpi#2196). */
@@ -588,6 +589,7 @@ export class ModelConfig {
 		const migration = migrateModelsJsonProviderIds(path, content);
 		if (migration.kind !== "failed") return config;
 		return new ModelConfig(config.providers, config.disabledProviders, undefined, [
+			...config.warnings,
 			`models.json uses renamed provider ids (${migration.renamed.join(", ")}) and could not be updated automatically: ${migration.reason}. They still work, but update the file to the new ids.`,
 		]);
 	}

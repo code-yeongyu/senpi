@@ -363,7 +363,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 	context: TranscriptContext,
 	options?: PiMessagesOptions,
 ): AssistantMessageEventStream => {
-	const eventStream = new AssistantMessageEventStream();
+	const eventStream = new AssistantMessageEventStream({ captureBlocks: true });
 	const convertEvent = createEventConverter(model);
 
 	void (async () => {

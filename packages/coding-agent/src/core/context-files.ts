@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import chalk from "chalk";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
@@ -9,6 +10,11 @@ import { findGitPaths } from "./footer-data-provider.ts";
 export interface ContextFile {
 	path: string;
 	content: string;
+	/**
+	 * "user" for the user's own standing instructions (the agent-dir file and the home-directory file);
+	 * absent means a project file. The prompt ranks user instructions above its default working style.
+	 */
+	scope?: "user";
 }
 
 /** Preserve the public array API while returning diagnostics to the owning mode. */
@@ -149,25 +155,31 @@ function applyContextFileLimits(files: ContextFile[], limits: ContextFileLimits)
 			path: file.path,
 			message: `Context file is ${kib(size)}; only the first ${kib(loaded)} was loaded (${limitText}).`,
 		});
-		kept.unshift({
-			path: file.path,
-			content,
-		});
+		kept.unshift({ ...file, content });
 		remaining -= Buffer.byteLength(content);
 	}
 	return Object.assign(kept, { diagnostics });
 }
 
-export function loadProjectContextFiles(options: { cwd: string; agentDir: string } & ContextFileLimits): ContextFiles {
+/** Compares directories by their real path, ignoring case where the filesystem does (Windows). */
+function directoryKey(dir: string): string {
+	const real = canonicalizePath(resolvePath(dir));
+	return process.platform === "win32" ? real.toLowerCase() : real;
+}
+
+export function loadProjectContextFiles(
+	options: { cwd: string; agentDir: string; homeDir?: string } & ContextFileLimits,
+): ContextFiles {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
+	const homeKey = directoryKey(options.homeDir ?? homedir());
 
 	const contextFiles: ContextFile[] = [];
 	const seenPaths = new Set<string>();
 
 	const globalContext = loadContextFileFromDir(resolvedAgentDir);
 	if (globalContext) {
-		contextFiles.push(globalContext);
+		contextFiles.push({ ...globalContext, scope: "user" });
 		seenPaths.add(globalContext.path);
 	}
 
@@ -181,7 +193,9 @@ export function loadProjectContextFiles(options: { cwd: string; agentDir: string
 		const isShadowed =
 			shadowedContextFile !== undefined && canonicalizePath(contextFile?.path ?? "") === shadowedContextFile;
 		if (contextFile && !isShadowed && !seenPaths.has(contextFile.path)) {
-			ancestorContextFiles.unshift(contextFile);
+			ancestorContextFiles.unshift(
+				directoryKey(currentDir) === homeKey ? { ...contextFile, scope: "user" } : contextFile,
+			);
 			seenPaths.add(contextFile.path);
 		}
 

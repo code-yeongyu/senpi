@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { hermeticProviderEnv } from "../helpers/rpc-hermetic.ts";
-import { killAndWait, reapProcessesUnder } from "../helpers/spawned-host-reaper.ts";
+import { reapSpawnedHosts } from "../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 export type Wire = Record<string, unknown>;
 export type LaunchPath = "bare" | "direct" | "ensured";
@@ -20,12 +21,18 @@ export async function sandbox() {
 	return { root, agentDir, socket: join(root, "s") };
 }
 
-/** Well below the per-test timeout of the files that start hosts, so a slow start fails with the host's own output. */
-export const HOST_STARTUP_BUDGET_MS = 20_000;
-/** For files that start hosts: comfortably above the startup budget, so a start never runs into the test timeout. */
+/**
+ * For files that start hosts: above the product's own bounds on a start (ensure's readiness budget, the
+ * supervisor's 30 s hold on its child's listen in `host-lifecycle.ts`), which end a slow start with an exit.
+ */
 export const HOST_TEST_TIMEOUT_MS = 60_000;
 
-/** Waits for the host's own ready line (bare `senpi rpc listening on`, supervisor `senpi rpc host ready`, ensure's JSON). */
+/**
+ * Settles on the host's own verdict, never on a wall clock (#5280): bare and supervisor hosts are ready at
+ * their ready line (`senpi rpc listening on` / `senpi rpc host ready`) and failed when they exit first.
+ * `host ensure` prints one JSON line for EVERY outcome, a start it gave up on included, and classifies it by
+ * its exit code (`host-command.ts`), so an ensured host is ready only when ensure exits 0.
+ */
 export async function launchHost(
 	qa: Awaited<ReturnType<typeof sandbox>>,
 	path: LaunchPath,
@@ -42,7 +49,7 @@ export async function launchHost(
 	const child = spawn(process.execPath, [cli, ...args], {
 		cwd: qa.root,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			SENPI_RUNTIME: "node",
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
@@ -64,50 +71,61 @@ export async function launchHost(
 	});
 	const failure = (reason: string) =>
 		new Error(
-			`host ${reason} after ${Math.round(performance.now() - startedAt)} ms waiting for its ready line\nstderr:\n${stderr}\nstdout:\n${stdout}`,
+			`host ${reason} after ${Math.round(performance.now() - startedAt)} ms waiting for it to be ready\nstderr:\n${stderr}\nstdout:\n${stdout}`,
 		);
+	if (path === "ensured") {
+		// `close`, not `exit`: the one line is read in full before the verdict is quoted.
+		const [code] = await once(child, "close");
+		if (code !== 0) throw failure(`ensure exited with code ${String(code)}`);
+		return { child, stderr: () => stderr };
+	}
+	const readyLine = path === "bare" ? "senpi rpc listening on" : "senpi rpc host ready";
 	await new Promise<void>((resolve, reject) => {
-		const timeout = setTimeout(() => finish(failure("did not start")), HOST_STARTUP_BUDGET_MS);
 		const onData = () => {
-			if (
-				stderr.includes(path === "bare" ? "senpi rpc listening on" : "senpi rpc host ready") ||
-				(path === "ensured" && stdout.includes('"action"'))
-			)
-				finish();
+			if (stderr.includes(readyLine)) finish();
 		};
 		const onExit = () => finish(failure("exited"));
 		const finish = (error?: Error) => {
-			clearTimeout(timeout);
 			child.stderr?.off("data", onData);
-			child.stdout?.off("data", onData);
 			child.off("exit", onExit);
 			if (error) reject(error);
 			else resolve();
 		};
 		child.stderr?.on("data", onData);
-		child.stdout?.on("data", onData);
 		child.once("exit", onExit);
 	});
 	return { child, stderr: () => stderr };
 }
 
+export interface PeerOptions {
+	/** Backstop for one wait; a closed connection fails a wait at once regardless. */
+	readonly deadlineMs?: number;
+}
+
 export class Peer {
 	readonly records: Wire[] = [];
 	private readonly notifications = new Set<() => void>();
+	private ended = false;
 	readonly closed: Promise<unknown>;
 	readonly socket: Socket;
-	constructor(socket: Socket) {
+	readonly deadlineMs: number;
+	constructor(socket: Socket, options: PeerOptions = {}) {
 		this.socket = socket;
+		this.deadlineMs = options.deadlineMs ?? 5000;
 		this.closed = new Promise((resolve) => socket.once("close", resolve));
+		socket.once("close", () => {
+			this.ended = true;
+			for (const notify of this.notifications) notify();
+		});
 		socket.on("error", () => {});
 		attachJsonlLineReader(socket, (line) => {
 			this.records.push(JSON.parse(line));
 			for (const notify of this.notifications) notify();
 		});
 	}
-	static async connect(path: string) {
+	static async connect(path: string, options: PeerOptions = {}) {
 		const socket = createConnection(path);
-		const peer = new Peer(socket);
+		const peer = new Peer(socket, options);
 		await once(socket, "connect");
 		return peer;
 	}
@@ -118,16 +136,17 @@ export class Peer {
 	}
 	waitFor(predicate: (value: Wire) => boolean): Promise<Wire> {
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => finish(undefined), 5000);
+			const timer = setTimeout(() => finish(undefined, "missing response"), this.deadlineMs);
 			const notify = () => {
 				const found = this.records.find(predicate);
-				if (found) finish(found);
+				if (found) finish(found, "");
+				else if (this.ended) finish(undefined, "connection closed before the expected record");
 			};
-			const finish = (found: Wire | undefined) => {
+			const finish = (found: Wire | undefined, failure: string) => {
 				clearTimeout(timer);
 				this.notifications.delete(notify);
 				if (found) resolve(found);
-				else reject(new Error(`missing response: ${JSON.stringify(this.records)}`));
+				else reject(new Error(`${failure}: ${JSON.stringify(this.records)}`));
 			};
 			this.notifications.add(notify);
 			notify();
@@ -168,7 +187,6 @@ export async function authenticate(peer: Peer, agentDir: string) {
 }
 
 export async function teardown(root: string, child?: ChildProcess) {
-	if (child) await killAndWait(child);
-	await reapProcessesUnder(root);
+	await reapSpawnedHosts({ roots: [root], children: child ? [child] : [] });
 	await rm(root, { recursive: true, force: true });
 }

@@ -12,6 +12,8 @@ import { isRecord } from "../../src/core/extensions/builtin/mcp/modern/form-sche
 import { McpPresenterControl } from "../../src/modes/rpc/mcp-presenter-control.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { bootstrapRelayProbe } from "./fixtures/presenter-bootstrap-relay.ts";
+import { enrollmentRequest } from "./fixtures/presenter-enrollment.ts";
+import { createHash } from "node:crypto";
 
 it("an invalid bootstrap descriptor neither rejects nor crashes the supervisor", async () => {
 	const descriptor = openSync(process.platform === "win32" ? "NUL" : "/dev/null", "r");
@@ -97,8 +99,11 @@ it("only protected enrollment and a scope-bound signature can acquire; replay ca
 	let management: Socket | undefined;
 	try {
 		b.send({
-			type: "enroll",
+			...enrollmentRequest(),
 			publicKey: publicKey.export({ type: "spki", format: "pem" }),
+			installationKeyId: createHash("sha256")
+				.update(publicKey.export({ type: "spki", format: "der" }))
+				.digest("hex"),
 			backendGeneration: "backend",
 		});
 		const challenge = await b.next();

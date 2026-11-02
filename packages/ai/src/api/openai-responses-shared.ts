@@ -40,6 +40,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { enableAssistantCapture, pushAssistantProgress } from "../utils/assistant-capture.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
@@ -139,6 +140,8 @@ function convertToolResultOutput<TApi extends Api>(
 }
 
 export interface OpenAIResponsesStreamOptions {
+	/** SIWC succeeds only on response.completed, never on a finished tool alone. */
+	siwc?: boolean;
 	onProviderStreamEvent?: StreamOptions["onProviderStreamEvent"];
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
@@ -821,6 +824,7 @@ export async function processResponsesStream<TApi extends Api>(
 	model: Model<TApi>,
 	options?: OpenAIResponsesStreamOptions,
 ): Promise<void> {
+	enableAssistantCapture(stream);
 	let sawTerminalResponseEvent = false;
 	let nativeImageBase64Chars = 0;
 	const outputSlots = new Map<number, ResponsesOutputSlot>();
@@ -889,7 +893,10 @@ export async function processResponsesStream<TApi extends Api>(
 				contentIndex: output.content.length - 1,
 			} satisfies ResponsesOutputSlot;
 			outputSlots.set(outputIndex, slot);
-			stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
+			stream.push(
+				{ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output },
+				{ rawArgumentPrefix: block.partialJson },
+			);
 			return slot;
 		}
 		if (isResponseCustomToolCallItem(item)) {
@@ -930,6 +937,12 @@ export async function processResponsesStream<TApi extends Api>(
 		if (imageItem) reconcileNativeImageSlot(outputIndex, slot, imageItem);
 		output.content.push(block);
 		outputSlots.set(outputIndex, slot);
+		pushAssistantProgress(stream, {
+			type: "message_block_state",
+			contentIndex: slot.contentIndex,
+			phase: "insert",
+			block,
+		});
 		return slot;
 	};
 	const getOrCreateSlot = (
@@ -977,8 +990,15 @@ export async function processResponsesStream<TApi extends Api>(
 			const imageItem = readNativeImageGenerationCall(outputItem);
 			if (!imageItem) continue;
 			const existingSlot = getSlot(outputIndex, "providerNative");
+			const slot = existingSlot ?? createSlot(outputIndex, outputItem);
 			if (existingSlot) reconcileNativeImageSlot(outputIndex, existingSlot, imageItem);
-			else createSlot(outputIndex, outputItem);
+			if (slot)
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 			outputSlots.delete(outputIndex);
 		}
 	};
@@ -1126,6 +1146,13 @@ export async function processResponsesStream<TApi extends Api>(
 			if (event.arguments.startsWith(previousPartialJson)) {
 				const delta = event.arguments.slice(previousPartialJson.length);
 				if (delta.length > 0) pushToolCallDelta(slot, delta);
+			} else {
+				pushAssistantProgress(stream, {
+					type: "message_tool_arguments_reset",
+					contentIndex: slot.contentIndex,
+					rawArgumentPrefix: event.arguments,
+					parsedThrough: event.arguments.length,
+				});
 			}
 		} else if (event.type === "response.custom_tool_call_input.delta") {
 			const slot = getSlot(event.output_index, "toolCall");
@@ -1146,6 +1173,12 @@ export async function processResponsesStream<TApi extends Api>(
 
 			if (imageItem && slot?.type === "providerNative") {
 				reconcileNativeImageSlot(event.output_index, slot, imageItem);
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 				finalizedNativeImageOutputIndexes.add(event.output_index);
 				outputSlots.delete(event.output_index);
 			} else if (item.type === "reasoning" && slot?.type === "thinking") {
@@ -1216,18 +1249,34 @@ export async function processResponsesStream<TApi extends Api>(
 			} else if (slot?.type === "providerNative") {
 				slot.block.subtype = item.type;
 				slot.block.raw = item;
+				pushAssistantProgress(stream, {
+					type: "message_block_state",
+					contentIndex: slot.contentIndex,
+					phase: "end",
+					block: slot.block,
+				});
 				outputSlots.delete(event.output_index);
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			finalizeResponse(event.response);
+			if (options?.siwc && event.type === "response.incomplete") {
+				throw new Error(`Response incomplete: ${event.response.incomplete_details?.reason ?? "unknown reason"}`);
+			}
 		} else if (event.type === "error") {
 			const errorEvent = event as typeof event & {
-				error?: { code?: string | null; message?: string };
+				error?: { code?: string | null; message?: string; param?: string };
 				status?: number;
 			};
 			const code = errorEvent.error?.code ?? errorEvent.code ?? errorEvent.status;
 			const message = errorEvent.error?.message || errorEvent.message || "Unknown error";
-			throw new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			const failure = new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: typeof code === "string" ? code : undefined,
+						status: errorEvent.status,
+						param: errorEvent.error?.param ?? errorEvent.param,
+					})
+				: failure;
 		} else if (event.type === "response.failed") {
 			sawTerminalResponseEvent = true;
 			output.rawStopReason = event.response?.status;
@@ -1238,11 +1287,17 @@ export async function processResponsesStream<TApi extends Api>(
 				: details?.reason
 					? `incomplete: ${details.reason}`
 					: "Unknown error (no error details in response)";
-			throw new Error(msg);
+			const failure = new Error(msg);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: error?.code,
+						param: error && "param" in error ? error.param : undefined,
+					})
+				: failure;
 		}
 	}
 	const hasFinalizedToolCall = output.content.some((block) => block.type === "toolCall" && !("partialJson" in block));
-	if (!sawTerminalResponseEvent && !hasFinalizedToolCall) {
+	if (!sawTerminalResponseEvent && (options?.siwc || !hasFinalizedToolCall)) {
 		throw new Error("OpenAI Responses stream ended before a terminal response event");
 	}
 	// The agent runs every tool call in the final message. Refuse to hand over calls whose

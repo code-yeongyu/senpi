@@ -51,6 +51,7 @@ export async function idleHandoverOutcome(
 	target: { readonly socket: string; readonly agentDir: string },
 	spec: ResolvedHostLaunchSpec,
 	terms: IdleHandoverTerms,
+	mcpPresenterEnforcement?: boolean,
 ): Promise<HostOutcome> {
 	const { socket } = target;
 	if (process.platform === "win32") {
@@ -78,7 +79,11 @@ export async function idleHandoverOutcome(
 		});
 	}
 	if (!before.capabilities.includes(RUNTIME_IDENTITY_HANDOVER_CAPABILITY)) return refuse("handover_unsupported");
-	const reply = await requestOnSocket(socket, beginHandoverCommand(target, spec, terms), BEGIN_HANDOVER_TIMEOUT_MS);
+	const reply = await requestOnSocket(
+		socket,
+		beginHandoverCommand(target, spec, terms, mcpPresenterEnforcement),
+		BEGIN_HANDOVER_TIMEOUT_MS,
+	);
 	if (!isRecord(reply)) return reconcileLostReply(target, terms, before);
 	if (typeof reply.refused === "string") {
 		return refuse(reply.refused, typeof reply.detail === "string" ? { detail: reply.detail } : {});
@@ -96,6 +101,7 @@ function beginHandoverCommand(
 	target: { readonly agentDir: string },
 	spec: ResolvedHostLaunchSpec,
 	terms: IdleHandoverTerms,
+	mcpPresenterEnforcement?: boolean,
 ): Record<string, unknown> {
 	const env: Record<string, string> = {};
 	for (const [name, value] of Object.entries(
@@ -114,6 +120,7 @@ function beginHandoverCommand(
 		launch: { command: launch.command, args: launch.args },
 		host_args: spec.hostArgs,
 		env,
+		...(mcpPresenterEnforcement === true && { mcp_presenter_enforcement: true }),
 		...(spec.policy !== undefined && { policy: spec.policy }),
 	};
 }

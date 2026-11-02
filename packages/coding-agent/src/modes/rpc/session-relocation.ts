@@ -70,11 +70,16 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 			// A run the user stopped takes its scheduled move with it: the user chose to stay here.
 			if (event.type === "agent_end" && deps.session.currentAbortSource === "user" && this.scheduled !== undefined)
 				this.scheduled = { ...this.scheduled, dropReason: "aborted" };
-			if (event.type === "agent_settled" && this.scheduled !== undefined) {
-				// agent_end still streams: wait until settlement so the correction is appended, not parked.
-				if (this.scheduled.dropReason !== undefined) this.dropScheduled(this.scheduled.dropReason);
-				else void this.announceWhenReleasable();
-			}
+			// agent_end still streams: wait until settlement so the correction is appended, not parked.
+			if (event.type === "agent_settled" && this.scheduled?.dropReason !== undefined)
+				this.dropScheduled(this.scheduled.dropReason);
+			// The move itself waits for agent_idle: settle-time extension handlers may still be writing (omo#11419).
+			else if (
+				event.type === "agent_idle" &&
+				this.scheduled !== undefined &&
+				this.scheduled.dropReason === undefined
+			)
+				void this.announceWhenReleasable();
 		});
 	}
 

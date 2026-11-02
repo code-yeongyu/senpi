@@ -99,6 +99,8 @@ export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted
 		extensionPath: string;
 		registrationCwd: string;
 	}[];
+	/** Whether a loaded extension handles `mcp_servers_change` and connects the registered servers instead. */
+	extensionConnectsMcpServers?: () => boolean;
 };
 
 export interface McpSessionOptions {

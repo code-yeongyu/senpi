@@ -1,7 +1,7 @@
 // senpi#3566 todo 7: the reverse bridge against a real tool child - a module job calls the server through `host.call`,
 // and both sides hold the shared capacity (8 running, 256 queued, the next one refused with a correlated error).
 import { createHash } from "node:crypto";
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -39,13 +39,14 @@ async function startChild(onHostCall: HostCallHandler, onDir: (dir: string) => v
 }
 
 /** Holds calls and releases them 8 at a time (or the remainder); records the most ever running at once. */
-function batchingHandler(total: number) {
+function batchingHandler(total: number, ready: Promise<void> = Promise.resolve()) {
 	const held: Array<() => void> = [];
 	let received = 0;
 	let running = 0;
 	let maxRunning = 0;
-	const handler: HostCallHandler = () =>
-		new Promise((resolveCall) => {
+	const handler: HostCallHandler = async () => {
+		await ready;
+		return new Promise((resolveCall) => {
 			received += 1;
 			running += 1;
 			maxRunning = Math.max(maxRunning, running);
@@ -55,6 +56,7 @@ function batchingHandler(total: number) {
 			});
 			if (held.length === 8 || received === total) for (const release of held.splice(0)) release();
 		});
+	};
 	return { handler, stats: () => ({ received, maxRunning }) };
 }
 
@@ -116,11 +118,29 @@ describe("reverse bridge", () => {
 	}, 60_000);
 
 	it("refuses exactly the 265th call with a correlated host_call_capacity and loses none of the rest", async () => {
-		const batching = batchingHandler(264);
+		let refused!: () => void;
+		const capacityRefused = new Promise<void>((resolveRefused) => {
+			refused = resolveRefused;
+		});
+		// Do not free a slot until the worker observes the refusal: worker messages can arrive across turns.
+		const batching = batchingHandler(264, capacityRefused);
 		const instance = await startChild(batching.handler);
-		expect(await instance.run("module", { modulePath, export: "fanOut", args: { n: 265 } })).toEqual({
+		const marker = join(instance.dir, "capacity-refused");
+		const watcher = watch(instance.dir, () => {
+			if (!existsSync(marker)) return;
+			watcher.close();
+			refused();
+		});
+		cleanups.push(async () => watcher.close());
+		expect(
+			await instance.run("module", {
+				modulePath: join(extensionDir, "capacity-fanout.ts"),
+				export: "fanOut",
+				args: { marker },
+			}),
+		).toEqual({
 			ok: 264,
-			failed: ["host_call_capacity"],
+			failed: [{ index: 264, code: "host_call_capacity", message: expect.stringContaining("h265 refused") }],
 		});
 		expect(batching.stats()).toEqual({ received: 264, maxRunning: 8 });
 	}, 60_000);

@@ -337,6 +337,17 @@ describe("Claude SDK OAuth continuity observations", () => {
 
 		expect(sink.logged).toEqual([
 			{
+				event: "claude_sdk_oauth_session_auth",
+				data: {
+					sessionId,
+					agentDir: expect.stringMatching(/^dir:[0-9a-f]{8}$/),
+					agentDirSource: expect.any(String),
+					agentDirRule: "environment",
+					seat: expect.stringMatching(/^[0-9a-f]{8}$/),
+					accountSource: "ambient",
+				},
+			},
+			{
 				event: "claude_sdk_oauth_session_continuity",
 				data: {
 					kind: "bootstrap",

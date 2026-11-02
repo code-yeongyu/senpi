@@ -65,7 +65,6 @@ import {
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
-import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
 import {
 	assertChatModel,
 	assertClassifierModel,
@@ -77,11 +76,14 @@ import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
+import { signOutClaudeCliSlotsForLogout } from "./credential-accounts-logout.lazy.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
+import type { StoredProviderEnvReader } from "./provider-api-key-auth.ts";
 import {
 	type AuthStatus,
 	type CompatibilityRequestConfig,
@@ -94,8 +96,10 @@ import {
 	validateExtensionProvider,
 } from "./provider-composer.ts";
 import { createProviderSemaphores } from "./provider-concurrency.ts";
+import { type ProviderOrigin, providerOriginOf } from "./provider-origin.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
+import { ServedCredentials } from "./served-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
@@ -138,17 +142,10 @@ interface ModelRuntimeSnapshot {
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
 }
 
-/**
- * The Claude Code version the Anthropic OAuth fingerprint advertises is cached beside
- * models.json, so every runtime on this agent directory shares one background lookup per
- * six hours. An in-memory runtime (`modelsPath: null`) keeps pi-ai's bundled floor.
- */
-function installClaudeCodeVersionCache(modelsPath: string | undefined): void {
-	if (modelsPath === undefined) return;
-	installClaudeCodeVersionFileStore({
-		path: join(dirname(modelsPath), "claude-code-version.json"),
-		offline: envValue("OFFLINE") !== undefined,
-	});
+export interface ProviderRegistrationOptions {
+	refresh?: boolean;
+	/** The registering extension, reported as the provider's origin (senpi#4328). */
+	extensionPath?: string | undefined;
 }
 
 export interface CreateModelRuntimeOptions {
@@ -281,6 +278,8 @@ export class ModelRuntime implements Models {
 	private readonly builtins = new Map<string, Provider>();
 	private readonly nativeExtensionProviders = new Map<string, Provider>();
 	private readonly extensionProviders = new Map<string, ProviderConfigInput>();
+	/** The extension behind each registration that named one (senpi#4328). */
+	private readonly providerExtensionPaths = new Map<string, string>();
 	/** Virtual models by provider id, then model id. */
 	private readonly virtualModels = new Map<string, Map<string, RegisteredVirtualModel>>();
 	private readonly compositionErrors = new Map<string, string>();
@@ -303,6 +302,7 @@ export class ModelRuntime implements Models {
 	private busyAvailabilityRetryTimer: ReturnType<typeof setTimeout> | undefined;
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	private readonly servedCredentials = new ServedCredentials();
 	/**
 	 * The credential pool is loaded lazily and only for a provider that actually
 	 * has more than one slot. Importing it eagerly would pull the pool's schema
@@ -354,7 +354,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -409,7 +408,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = ModelConfig.loadSync(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -481,7 +479,12 @@ export class ModelRuntime implements Models {
 			return base;
 		}
 		try {
-			const provider = composeModelProvider(providerId, base, this.config, extension);
+			// The reader runs only inside ambient auth resolution; composition itself stays credential-free.
+			const storedProviderEnv: StoredProviderEnvReader = async (sourceId) => {
+				const credential = await this.credentials.read(sourceId);
+				return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
+			};
+			const provider = composeModelProvider(providerId, base, this.config, extension, { storedProviderEnv });
 			this.compositionErrors.delete(providerId);
 			return provider;
 		} catch (error) {
@@ -747,6 +750,21 @@ export class ModelRuntime implements Models {
 
 	getRegisteredNativeProvider(providerId: string): Provider | undefined {
 		return this.nativeExtensionProviders.get(providerId);
+	}
+
+	getProviderOrigin(providerId: string): ProviderOrigin | undefined {
+		return providerOriginOf({
+			builtin: this.builtins.has(providerId),
+			nativeExtension: this.nativeExtensionProviders.has(providerId),
+			extension: this.extensionProviders.has(providerId) || this.virtualModels.has(providerId),
+			extensionPath: this.providerExtensionPaths.get(providerId),
+			modelsJsonPath: this.config.getProvider(providerId) === undefined ? undefined : this.modelsPath,
+		});
+	}
+
+	private noteExtensionPath(providerId: string, extensionPath: string | undefined): void {
+		if (extensionPath === undefined) this.providerExtensionPaths.delete(providerId);
+		else this.providerExtensionPaths.set(providerId, extensionPath);
 	}
 
 	/** @internal Compatibility fallback for ModelRegistry when provider auth is unconfigured. */
@@ -1157,8 +1175,14 @@ export class ModelRuntime implements Models {
 			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
 				send(capturing),
 			);
+			const stream = wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages));
+			this.servedCredentials.observe(stream.result(), {
+				provider: prepared.model.provider,
+				baseUrl: prepared.model.baseUrl,
+				apiKey: prepared.options.apiKey,
+			});
 			return {
-				stream: wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages)),
+				stream,
 				...(prepared.rejectableAccess === undefined ? {} : { rejectableAccess: prepared.rejectableAccess }),
 				...(prepared.rejectedTokenStatuses === undefined
 					? {}
@@ -1334,17 +1358,40 @@ export class ModelRuntime implements Models {
 	): Promise<Credential> {
 		const signal = operationSignal(interaction.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
+			const store = this.credentials.backingStore;
+			const before = await store.read(providerId, { signal });
 			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
+			if (this.poolStatePath !== undefined) {
+				const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+				await retireLoginSlotHealth(this.poolStatePath, providerId, before, await store.read(providerId, { signal }));
+			}
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
+			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
+			emitProviderAccountsChanged(providerId, "login");
 			return credential;
 		});
 	}
 
-	logout(providerId: string, options: AuthOperationOptions = {}): Promise<void> {
+	async logout(providerId: string, options: AuthOperationOptions = {}): Promise<void> {
+		await this.logoutProvider(providerId, options);
+	}
+
+	/**
+	 * {@link logout}, answering what the user should know: an Anthropic Subscription `claude-cli` account is signed out
+	 * of the Claude CLI's own store before the credential is deleted (senpi#4436), and `notices` names any account that
+	 * could not be signed out cleanly.
+	 */
+	logoutProvider(
+		providerId: string,
+		options: AuthOperationOptions = {},
+	): Promise<{ readonly notices: readonly string[] }> {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
+			const storage = this.authStorage;
+			const notices = storage === undefined ? [] : await signOutClaudeCliSlotsForLogout(storage, providerId, process.env, signal);
 			await this.models.logout(providerId, { signal });
 			await this.synchronizeCredentialState(providerId, "logout", undefined, signal);
+			return { notices };
 		});
 	}
 
@@ -1420,11 +1467,12 @@ export class ModelRuntime implements Models {
 		}).finally(() => clearTimeout(timeout));
 	}
 
-	registerNativeProvider(provider: Provider, options?: { refresh?: boolean }): Promise<ModelsRefreshResult> {
+	registerNativeProvider(provider: Provider, options?: ProviderRegistrationOptions): Promise<ModelsRefreshResult> {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
 		const alreadyFresh = this.shouldSkipRegistrationRefresh(provider.id);
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
+		this.noteExtensionPath(provider.id, options?.extensionPath);
 		this.recomposeProvider(provider.id);
 		const composedOAuth = this.models.getProvider(provider.id)?.auth.oauth;
 		if (composedOAuth) this.credentials.registerOAuthProvider(provider.id, composedOAuth);
@@ -1467,7 +1515,7 @@ export class ModelRuntime implements Models {
 	registerProvider(
 		providerId: string,
 		config: ProviderConfigInput,
-		options?: { refresh?: boolean },
+		options?: ProviderRegistrationOptions,
 	): Promise<ModelsRefreshResult> {
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
@@ -1482,6 +1530,7 @@ export class ModelRuntime implements Models {
 			if (value !== undefined) (effective as Record<string, unknown>)[key] = value;
 		}
 		this.extensionProviders.set(providerId, effective);
+		this.noteExtensionPath(providerId, options?.extensionPath);
 		this.recomposeProvider(providerId);
 		const composedOAuth = this.models.getProvider(providerId)?.auth.oauth;
 		if (composedOAuth) this.credentials.registerOAuthProvider(providerId, composedOAuth);
@@ -1501,6 +1550,7 @@ export class ModelRuntime implements Models {
 	unregisterProvider(providerId: string): void {
 		this.extensionProviders.delete(providerId);
 		this.nativeExtensionProviders.delete(providerId);
+		this.providerExtensionPaths.delete(providerId);
 		this.recomposeProvider(providerId);
 		this.credentials.unregisterOAuthProvider(providerId);
 		this.updateModelSnapshot();

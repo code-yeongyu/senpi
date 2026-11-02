@@ -73,6 +73,7 @@ function createContext(registration: Registration): SpeculativeCompactionContext
 	});
 
 	return {
+		cwd: process.cwd(),
 		model,
 		modelRegistry,
 		sessionManager,

@@ -5,8 +5,12 @@
 
 import {
 	type AssistantMessage,
-	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
+	type AssistantProgress,
+	type AssistantRecord,
+	assistantRecords,
+	carryAssistantCapture,
+	getAssistantCapture,
 	type Context,
 	type CursorExecResolvedCarrier,
 	createInitialSystemMessage,
@@ -14,6 +18,7 @@ import {
 	getCurrentTools,
 	getToolStateChanges,
 	isCursorExecResolved,
+	isAssistantProgress,
 	normalizeContext,
 	type SystemMessage,
 	supportsAllowedToolChoice,
@@ -32,9 +37,12 @@ import {
 	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
 import { createResponseTimingRecorder } from "./response-timing.ts";
+import { type InternalLoopConfig, internalProgressSink } from "./internal-events.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
+import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiveness } from "./stream-keepalive.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
 import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
+import type { ToolHost } from "./execution/tool-host.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -209,7 +217,10 @@ async function runLoop(
 	streamFunction: StreamFn,
 ): Promise<void> {
 	let currentContext = initialContext;
-	let config = initialConfig;
+	let config: AgentLoopConfig = {
+		...initialConfig,
+		executionScope: initialConfig.executionScope ?? { id: crypto.randomUUID(), root: "" },
+	};
 	let firstTurn = true;
 	let firstProviderRequest = true;
 	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
@@ -588,6 +599,9 @@ export async function buildProviderContext(
 	const { tools, activeToolNames } = providerTools(context, config.model);
 	return normalizeContext({
 		systemPrompt: context.systemPrompt,
+		...(context.systemPromptStablePrefix === undefined
+			? {}
+			: { systemPromptStablePrefix: context.systemPromptStablePrefix }),
 		messages: await config.convertToLlm(messages),
 		...(tools === undefined ? {} : { tools: tools.map(toProviderToolDeclaration) }),
 		...(activeToolNames === undefined ? {} : { activeToolNames }),
@@ -600,7 +614,7 @@ export async function buildProviderContext(
  */
 async function streamAssistantResponse(
 	context: AgentContext,
-	config: AgentLoopConfig,
+	config: InternalLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
@@ -634,6 +648,7 @@ async function streamAssistantResponse(
 	// Dedicated controller for the provider request so the loop can tear the
 	// request down itself (idle timeout), not only when the caller aborts.
 	const requestAbortController = new AbortController();
+	const liveness = createTransportLiveness(normalizeTimeoutMs(config.streamKeepAliveTimeoutMs));
 	let detachCallerAbort: (() => void) | undefined;
 	if (signal !== undefined) {
 		if (signal.aborted) {
@@ -667,6 +682,10 @@ async function streamAssistantResponse(
 				streamKind: "main",
 				apiKey: resolvedApiKey,
 				signal: requestAbortController.signal,
+				onTransportActivity: () => {
+					liveness.noteActivity();
+					config.onTransportActivity?.();
+				},
 				// Cursor exec bridging (ignored by every other provider): handlers
 				// execute mid-stream; their paired results buffer here.
 				...(config.cursorExecHandlers
@@ -691,7 +710,10 @@ async function streamAssistantResponse(
 		// Record the requested level, whichever stream function answered.
 		const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });
 
-		const iterator = response[Symbol.asyncIterator]();
+		// Without an internal listener the loop reads the public stream exactly as before: no records, no carriers.
+		const sink = config[internalProgressSink];
+		const records: AsyncIterable<AssistantRecord> = sink ? assistantRecords(response) : response;
+		const iterator = records[Symbol.asyncIterator]();
 		const eventReader = createAssistantEventReader(
 			iterator,
 			streamIdleTimeoutMs,
@@ -700,22 +722,30 @@ async function streamAssistantResponse(
 			preStream.remainingStartMs(),
 			response,
 			normalizeTimeoutMs(config.streamStartTimeoutMs),
+			liveness,
 		);
 		try {
 			while (true) {
 				const next = await eventReader.next();
 				if (next.done) break;
 				const event = next.value;
+				if (isAssistantProgress(event)) {
+					await sink?.(event);
+					continue;
+				}
 				switch (event.type) {
 					case "start":
 						responseTiming.started();
 						partialMessage = event.partial;
 						context.messages.push(partialMessage);
 						addedPartial = true;
-						await emit({
-							type: "message_start",
-							message: { ...partialMessage },
-						});
+						await emit(
+							carryAssistantCapture(event, {
+								type: "message_start",
+								message: { ...partialMessage },
+								streaming: true,
+							}),
+						);
 						break;
 
 					case "text_start":
@@ -730,6 +760,7 @@ async function streamAssistantResponse(
 						if (partialMessage) {
 							partialMessage = event.partial;
 							responseTiming.observe(event);
+							let timingProgress: AssistantProgress | undefined;
 							if (
 								event.type === "thinking_start" ||
 								event.type === "thinking_delta" ||
@@ -745,14 +776,24 @@ async function streamAssistantResponse(
 								if (block?.type === "thinking" && timing !== undefined) {
 									block.startedAt = timing.startedAt;
 									if (timing.endedAt !== undefined) block.endedAt = timing.endedAt;
+									// Stamped after provider capture: it amends this event's seed or end block, so it follows it.
+									if (getAssistantCapture(event) && event.type !== "thinking_delta")
+										timingProgress = Object.freeze({
+											type: "message_block_metadata",
+											contentIndex: event.contentIndex,
+											...timing,
+										});
 								}
 							}
 							context.messages[context.messages.length - 1] = partialMessage;
-							await emit({
-								type: "message_update",
-								assistantMessageEvent: event,
-								message: { ...partialMessage },
-							});
+							await emit(
+								carryAssistantCapture(event, {
+									type: "message_update",
+									assistantMessageEvent: event,
+									message: { ...partialMessage },
+								}),
+							);
+							if (timingProgress) await sink?.(timingProgress);
 						}
 						break;
 
@@ -766,12 +807,20 @@ async function streamAssistantResponse(
 							context.messages.push(finalMessage);
 						}
 						if (!addedPartial) {
-							await emit({
-								type: "message_start",
-								message: { ...finalMessage },
-							});
+							await emit(
+								carryAssistantCapture(
+									event,
+									{
+										type: "message_start",
+										message: { ...finalMessage },
+									},
+									finalMessage,
+								),
+							);
 						}
-						await emit({ type: "message_end", message: finalMessage });
+						await emit(
+							carryAssistantCapture(event, { type: "message_end", message: finalMessage }, finalMessage),
+						);
 						return { message: finalMessage, providerToolResults };
 					}
 				}
@@ -828,7 +877,10 @@ async function streamAssistantResponse(
 		// through the same shaping and cap (#3510).
 		const callerAbortedPastBound =
 			signal?.aborted === true &&
-			(error instanceof StreamStartTimeoutError || isStreamIdleTimeoutError(error) || error === signal.reason);
+			(error instanceof StreamStartTimeoutError ||
+				error instanceof StreamKeepAliveTimeoutError ||
+				isStreamIdleTimeoutError(error) ||
+				error === signal.reason);
 		const finalMessage = createTerminalFailureAssistantMessage(
 			config.model,
 			signal?.aborted ? "aborted" : "error",
@@ -853,7 +905,7 @@ async function streamAssistantResponse(
 const ABORTED = Symbol("aborted");
 
 type AssistantEventReader = {
-	next(): Promise<IteratorResult<AssistantMessageEvent>>;
+	next(): Promise<IteratorResult<AssistantRecord>>;
 	dispose(): void;
 };
 
@@ -880,7 +932,7 @@ function abortReasonText(reason: unknown): string | undefined {
 	return text !== undefined && text.trim() !== "" ? text : undefined;
 }
 
-function closeAssistantIterator(iterator: AsyncIterator<AssistantMessageEvent>): void {
+function closeAssistantIterator(iterator: AsyncIterator<AssistantRecord>): void {
 	void Promise.resolve(iterator.return?.()).catch(() => undefined);
 }
 
@@ -954,7 +1006,7 @@ function normalizeTimeoutMs(timeoutMs: number | undefined): number | undefined {
 }
 
 function createAssistantEventReader(
-	iterator: AsyncIterator<AssistantMessageEvent>,
+	iterator: AsyncIterator<AssistantRecord>,
 	timeoutMs: number | undefined,
 	signal: AbortSignal | undefined,
 	onIdleTimeout?: (error: Error) => void,
@@ -963,11 +1015,14 @@ function createAssistantEventReader(
 	// The bound the error names, when the timer only gets what is left of it (the steps before the stream used
 	// the rest); the error must name the configured bound, which users raise.
 	configuredStartTimeoutMs?: number,
+	liveness?: TransportLiveness,
 ): AssistantEventReader {
 	const idleTimeoutMs = normalizeTimeoutMs(timeoutMs);
 	const startTimeoutMs = normalizeTimeoutMs(streamStartTimeoutMs);
 	const reportedStartTimeoutMs = configuredStartTimeoutMs ?? startTimeoutMs;
 	let sawFirstEvent = false;
+	// Provider silence since the last public event: internal progress records re-arm neither bound.
+	let silentMs = 0;
 	let removeAbortListener: (() => void) | undefined;
 	let abortPromise: Promise<typeof ABORTED> | undefined;
 
@@ -995,17 +1050,28 @@ function createAssistantEventReader(
 			const readTimeoutMs = useStartBound ? startTimeoutMs : idleTimeoutMs;
 			const makeTimeoutError = useStartBound
 				? (ms: number) => new StreamStartTimeoutError(reportedStartTimeoutMs ?? ms)
-				: (ms: number) => new StreamIdleTimeoutError(ms);
+				: (ms: number) => new StreamIdleTimeoutError(idleTimeoutMs ?? ms);
+			const readStartedAt = Date.now();
+			// Keep-alives are judged against the whole configured bound, not the share of it left for this read.
+			const windowMs = useStartBound ? (reportedStartTimeoutMs ?? startTimeoutMs) : idleTimeoutMs;
 			const result = await readNextAssistantEvent(
 				iterator,
-				readTimeoutMs,
+				readTimeoutMs === undefined ? undefined : Math.max(1, readTimeoutMs - silentMs),
 				makeTimeoutError,
 				abortPromise,
 				onIdleTimeout,
 				stream,
 				signal,
+				liveness && windowMs !== undefined ? { liveness, windowMs } : undefined,
 			);
-			if (!result.done) sawFirstEvent = true;
+			if (!result.done && isAssistantProgress(result.value)) silentMs += Date.now() - readStartedAt;
+			else {
+				silentMs = 0;
+				if (!result.done) {
+					sawFirstEvent = true;
+					liveness?.contentArrived();
+				}
+			}
 			return result;
 		},
 		dispose: () => removeAbortListener?.(),
@@ -1013,14 +1079,15 @@ function createAssistantEventReader(
 }
 
 async function readNextAssistantEvent(
-	iterator: AsyncIterator<AssistantMessageEvent>,
+	iterator: AsyncIterator<AssistantRecord>,
 	idleTimeoutMs: number | undefined,
 	makeTimeoutError: (timeoutMs: number) => Error,
 	abortPromise: Promise<typeof ABORTED> | undefined,
 	onIdleTimeout?: (error: Error) => void,
 	stream?: Pick<AssistantMessageEventStream, "hasPendingLocalWork">,
 	signal?: AbortSignal,
-): Promise<IteratorResult<AssistantMessageEvent>> {
+	keepAlive?: { liveness: TransportLiveness; windowMs: number },
+): Promise<IteratorResult<AssistantRecord>> {
 	if (idleTimeoutMs === undefined && abortPromise === undefined) {
 		return iterator.next();
 	}
@@ -1028,7 +1095,7 @@ async function readNextAssistantEvent(
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	let settled = false;
 
-	return new Promise<IteratorResult<AssistantMessageEvent>>((resolve, reject) => {
+	return new Promise<IteratorResult<AssistantRecord>>((resolve, reject) => {
 		const settle = (complete: () => void): void => {
 			if (settled) return;
 			settled = true;
@@ -1048,7 +1115,13 @@ async function readNextAssistantEvent(
 					timeout = setTimeout(onIdleDeadline, idleTimeoutMs);
 					return;
 				}
-				const error = makeTimeoutError(idleTimeoutMs);
+				// A provider that accepted the request and is still sending keep-alive bytes is working, not dead.
+				const verdict = keepAlive?.liveness.onSilenceDeadline(keepAlive.windowMs);
+				if (verdict?.kind === "extend") {
+					timeout = setTimeout(onIdleDeadline, verdict.delayMs);
+					return;
+				}
+				const error = verdict?.kind === "keep-alive-exhausted" ? verdict.error : makeTimeoutError(idleTimeoutMs);
 				closeAssistantIterator(iterator);
 				settle(() => reject(error));
 				// Abort after settling so the failure surfaces as an idle timeout,
@@ -1129,10 +1202,44 @@ async function executeToolCalls(
 	const toolCalls = assistantMessage.content.filter(
 		(c): c is AgentToolCall => c.type === "toolCall" && !isCursorExecResolved(c as CursorExecResolvedCarrier),
 	);
-	if (config.toolExecution === "sequential") {
-		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
-	}
-	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+	const host: ToolHost = config.toolHost ?? {
+		execute: async (call, options) => {
+			// Only yield when a witness sink is configured and returns a promise: an unconditional `await` adds a
+			// microtask per call and reorders lifecycle vs message events against today's fused path (EQ E03).
+			const recordWitness = options.recordWitness;
+			if (recordWitness) {
+				for (const raw of call.calls) {
+					const pending = recordWitness({ pipeline: "legacy", toolCallId: raw.id });
+					if (pending) await pending;
+				}
+			}
+			return call.mode === "sequential"
+				? executeToolCallsSequential(
+						currentContext,
+						assistantMessage,
+						toolCalls,
+						config,
+						options.signal,
+						options.emit,
+					)
+				: executeToolCallsParallel(
+						currentContext,
+						assistantMessage,
+						toolCalls,
+						config,
+						options.signal,
+						options.emit,
+					);
+		},
+	};
+	return host.execute(
+		{
+			scope: config.executionScope ?? { id: crypto.randomUUID(), root: "" },
+			calls: toolCalls,
+			mode: config.toolExecution ?? "parallel",
+		},
+		{ signal, emit, recordWitness: config.onExecutionPipeline },
+	);
 }
 
 type ExecutedToolCallBatch = {

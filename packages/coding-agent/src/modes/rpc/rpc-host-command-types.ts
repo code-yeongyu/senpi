@@ -15,7 +15,7 @@ import type { RpcSessionCommand } from "./rpc-session-command-types.ts";
 import type { RpcMoveSessionCommand } from "./session-move-wire.ts";
 
 /** Every established command accepts an additive routing envelope. */
-export type RpcCommand =
+type RpcCommandBody =
 	| RpcAttachmentCommand
 	| (RpcSessionCommand & { sessionId?: string })
 	| {
@@ -29,6 +29,7 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			admissionId?: string;
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
 			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
@@ -114,6 +115,16 @@ export type RpcCommand =
 			 * when the open creates the session; an attach keeps the session's existing policy.
 			 */
 			retryFallback?: SessionRetryFallbackProfile;
+			/**
+			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
+			 * one session after the daemon's own allowlist, never merged into the host process or carried to
+			 * a successor generation, never seen by another session. Names must be on the host's
+			 * caller-passable set (`OMOCAT_LANE` by default, plus `SENPI_RPC_CALLER_ENV_NAMES`); anything
+			 * else is refused with `invalid_session_env`. A task child (`spawnedBy`) inherits its parent's
+			 * entries unless it names them here. Applied when the open creates the session; an attach keeps
+			 * the session's existing env. Requires the host capability `session_env`.
+			 */
+			env?: Record<string, string>;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| RpcMoveSessionCommand
@@ -187,6 +198,7 @@ export type RpcCommand =
 			 * capability `session_status`.
 			 */
 			type: "subscribe_sessions";
+			admissionId?: string;
 			/** `"all"` (default), routing/durable ids or paths, or the children of one durable session id. */
 			sessions?: "all" | { ids: string[] } | { childrenOf: string };
 			/** Include `kind: "worker"` sessions (default: true for `childrenOf`, false otherwise). */
@@ -198,6 +210,8 @@ export type RpcCommand =
 			 * caused the transition (default: true for `childrenOf`, false otherwise).
 			 */
 			effects?: boolean;
+			/** Observe dialog registration and settlement without receiving command replies. */
+			dialogs?: boolean;
 			/** Also deliver these content record types of matched sessions (default `"none"`); opt-in, never an attachment. */
 			mirror?: "none" | "all" | string[];
 			/** Mark the request activity-neutral for the supervisor's idle exit, as on `list_sessions`. */
@@ -228,6 +242,9 @@ export type RpcCommand =
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  };
+
+/** Compact callers may identify their own admission on any correlated session request. */
+export type RpcCommand = RpcCommandBody & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
 export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;

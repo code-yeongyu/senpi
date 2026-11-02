@@ -16,7 +16,7 @@ type EventListener = (data: unknown) => void;
 interface ToolResultLike {
 	content: Array<{ type: string; text?: string }>;
 	isError?: boolean;
-	details?: { bash_id?: string };
+	details?: { bash_id?: string; monitor_id?: string };
 }
 
 interface ToolLike {
@@ -190,7 +190,8 @@ describe("terminal wake source state", () => {
 			command: "cat",
 			persistent: true,
 		});
-		const bashId = extractBashId(started);
+		const monitorId = started?.details?.monitor_id;
+		expect(monitorId).toMatch(/^mon_/);
 
 		const legacy = runner.legacyMonitorStates.at(-1);
 		const channel = runner.channelStates.filter((state) => state.source === "terminal-monitors").at(-1);
@@ -198,7 +199,7 @@ describe("terminal wake source state", () => {
 		expect(channel).toEqual({
 			source: "terminal-monitors",
 			activeCount: legacy?.activeCount,
-			monitors: [{ id: bashId, description: "dual emit monitor", startedAtMs: expect.any(Number) }],
+			monitors: [{ id: monitorId, description: "dual emit monitor", startedAtMs: expect.any(Number) }],
 		});
 	});
 

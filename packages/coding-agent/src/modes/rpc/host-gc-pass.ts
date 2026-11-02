@@ -31,7 +31,14 @@ import {
 	readHostGcPassMarker,
 	writeHostGcPassMarker,
 } from "./host-gc-pass-marker.ts";
+import {
+	opportunisticHostGcRunning,
+	settledOpportunisticHostGc,
+	trackOpportunisticHostGc,
+} from "./host-gc-pass-registry.ts";
 import { gcRpcPublicKeys } from "./rpc-public-key.ts";
+
+export { settledOpportunisticHostGc };
 
 export const OPPORTUNISTIC_GC_BUDGET = { budgetMs: 1_500, maxEndpoints: 32, minIntervalMs: 300_000 } as const;
 
@@ -102,11 +109,9 @@ export async function gcHostEndpointsOpportunistically(
 	return { ran: true, marker };
 }
 
-const passesRunning = new Map<string, Promise<void>>();
-
 /** Starts a pass off the caller's path; at most one at a time per agent directory in this process. */
 export function scheduleOpportunisticHostGc(options: OpportunisticGcOptions): void {
-	if (passesRunning.has(options.agentDir)) return;
+	if (opportunisticHostGcRunning(options.agentDir)) return;
 	const pass = new Promise<void>((resolve) => {
 		setImmediate(() => {
 			gcHostEndpointsOpportunistically(options)
@@ -114,18 +119,10 @@ export function scheduleOpportunisticHostGc(options: OpportunisticGcOptions): vo
 					() => undefined,
 					(error: unknown) => recordPassFailure(options.agentDir, error),
 				)
-				.finally(() => {
-					passesRunning.delete(options.agentDir);
-					resolve();
-				});
+				.finally(resolve);
 		}).unref();
 	});
-	passesRunning.set(options.agentDir, pass);
-}
-
-/** Resolves once the pass this process scheduled for `agentDir` (if any) has finished; it never rejects. */
-export function settledOpportunisticHostGc(agentDir: string): Promise<void> {
-	return passesRunning.get(agentDir) ?? Promise.resolve();
+	trackOpportunisticHostGc(options.agentDir, pass);
 }
 
 async function gcCandidates(options: OpportunisticGcOptions): Promise<readonly NamedEndpoint[]> {

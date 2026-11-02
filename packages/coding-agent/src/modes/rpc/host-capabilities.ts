@@ -1,3 +1,4 @@
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import {
 	isHostOwnedToolRuntimeCapability,
 	type ToolRuntimeKind,
@@ -24,11 +25,13 @@ import {
 	OBSERVE_READS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
+	PROVIDER_ACCOUNT_TEST_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RESUME_SESSION_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
+	SESSION_ENV_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 	SESSION_RELOCATION_CAPABILITY,
@@ -63,6 +66,10 @@ export function multiSessionHostCapabilities(options: {
 	return [
 		...new Set([
 			"multi_session",
+			"snapshot_cursor",
+			"ui_answer_ledger",
+			"secret_input_v1",
+			"dialog_observer",
 			...(options.mcpPresenters ? ["mcp_form_presenter_v1"] : []),
 			"session_lifecycle",
 			"expected_host_instance",
@@ -80,6 +87,7 @@ export function multiSessionHostCapabilities(options: {
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
+			PROVIDER_ACCOUNT_TEST_CAPABILITY,
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
 			TOOL_BARRIER_CAPABILITY,
 			USER_ACTIVITY_CAPABILITY,
@@ -119,6 +127,8 @@ export function multiSessionHostCapabilities(options: {
 			PROMPT_SURFACE_CHAT_CAPABILITY,
 			// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
 			BROWSER_ENGINE_CAPABILITY,
+			// Each session's caller env lives on its own launch profile; the host process never holds it (senpi#4381).
+			SESSION_ENV_CAPABILITY,
 			// Each session's fallback chain is its own in-memory settings override, never the host's file.
 			RETRY_FALLBACK_PROFILE_CAPABILITY,
 			ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
@@ -128,7 +138,12 @@ export function multiSessionHostCapabilities(options: {
 			...toolRuntimeCapabilities(options.toolRuntime),
 			// The host alone says where tool work runs; a negotiated copy would make two answers.
 			...options.negotiated.filter(
-				(capability) => capability !== "mcp_form_presenter_v1" && !isHostOwnedToolRuntimeCapability(capability),
+				(capability) =>
+					capability !== "mcp_form_presenter_v1" &&
+					// RULING-111 (LEAK-E): only the compact negotiation owns these names; flag off echoes them as main does.
+					(!compactUpdatesEnabled() ||
+						(capability !== "compact_message_updates_v1" && capability !== "compact_events")) &&
+					!isHostOwnedToolRuntimeCapability(capability),
 			),
 		]),
 	];

@@ -527,7 +527,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 	context: TranscriptContext,
 	options?: OpenAICompletionsOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	(async () => {
@@ -852,17 +852,25 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				for (const block of blocks) {
 					const contentIndex = getContentIndex(block);
 					if (block.type === "text") {
-						stream.push({ type: "text_start", contentIndex, partial: output });
+						stream.push({ type: "text_start", contentIndex, partial: output }, { offset: 0 });
 						for (const delta of deferredTextDeltas) {
 							stream.push({ type: "text_delta", contentIndex, delta, partial: output });
 						}
 					} else if (block.type === "thinking") {
-						stream.push({ type: "thinking_start", contentIndex, partial: output });
+						stream.push({ type: "thinking_start", contentIndex, partial: output }, { offset: 0 });
 						for (const delta of deferredThinkingDeltas) {
 							stream.push({ type: "thinking_delta", contentIndex, delta, partial: output });
 						}
 					} else {
-						stream.push({ type: "toolcall_start", contentIndex, partial: output });
+						const rawArgumentPrefix = (deferredToolCallDeltas.get(block) ?? []).join("");
+						stream.push(
+							{ type: "toolcall_start", contentIndex, partial: output },
+							{
+								rawArgumentPrefix,
+								parsedThrough: rawArgumentPrefix.length,
+								offset: 0,
+							},
+						);
 						for (const delta of deferredToolCallDeltas.get(block) ?? []) {
 							stream.push({ type: "toolcall_delta", contentIndex, delta, partial: output });
 						}
@@ -1933,7 +1941,34 @@ function convertTools(
 	tools: Tool[],
 	compat: ResolvedOpenAICompletionsCompat,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
-	return tools.map((tool) => {
+	const strictByTool = tools.map((tool) =>
+		tool.freeform || resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools)
+			? undefined
+			: resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false),
+	);
+	if (compat.mixedStrictTools === false) {
+		const nonStrictTool = tools.find(
+			(tool, index) =>
+				!tool.freeform &&
+				!resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools) &&
+				strictByTool[index] !== true,
+		);
+		if (nonStrictTool) {
+			const requiredTool = tools.find(
+				(tool) =>
+					tool.constrainedSampling &&
+					tool.constrainedSampling.type === "json_schema" &&
+					tool.constrainedSampling.strict === "require",
+			);
+			if (requiredTool) {
+				throw new Error(
+					`Tool "${requiredTool.name}" requires JSON-schema constrained sampling, but tool "${nonStrictTool.name}" cannot be strict and this provider rejects mixed strict and non-strict tools.`,
+				);
+			}
+			strictByTool.fill(undefined);
+		}
+	}
+	return tools.map((tool, index) => {
 		const grammar = resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -1955,7 +1990,7 @@ function convertTools(
 			throw new Error("Freeform tools cannot be sent to OpenAI Chat Completions; use Responses API");
 		}
 
-		const strict = resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false);
+		const strict = strictByTool[index];
 		const schemaParameters = getJsonSchemaToolParameters(tool, strict) as Record<string, unknown>;
 		const normalizedParameters =
 			compat.toolSchemaFlavor === "moonshot-mfjs"
