@@ -99,6 +99,61 @@ fn pty_session_with_clear_env_gives_the_child_exactly_the_given_environment() {
     );
 }
 
+// senpi#5519 on Windows: clearing the environment also drops portable-pty's registry merge, so the child must still
+// get a complete environment from the caller (the TS layer passes the engine's whole process.env) and the default
+// shell (ComSpec) must still run.
+#[cfg(windows)]
+fn has_var(output: &str, name: &str) -> bool {
+    let upper = output.to_ascii_uppercase();
+    let needle = format!("{name}=");
+    upper.match_indices(&needle).any(|(index, _)| {
+        index == 0 || {
+            let before = upper.as_bytes()[index - 1];
+            !before.is_ascii_alphanumeric() && before != b'_'
+        }
+    })
+}
+
+#[cfg(windows)]
+#[test]
+fn pty_session_with_clear_env_keeps_the_windows_environment_complete() {
+    let probe = "CARGO_MANIFEST_DIR";
+    assert!(
+        std::env::var_os(probe).is_some(),
+        "{probe} must be in the test environment"
+    );
+    let shell = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
+    let mut options = PtySessionOptions::new(shell)
+        .arg("/d")
+        .arg("/s")
+        .arg("/c")
+        .arg("set")
+        .clear_env()
+        .timeout(Duration::from_secs(120));
+    for (key, value) in std::env::vars() {
+        if !key.eq_ignore_ascii_case(probe) {
+            options = options.env(key, value);
+        }
+    }
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&output);
+    let mut session = PtySession::start(options, move |chunk| {
+        seen.lock().unwrap().extend_from_slice(chunk)
+    })
+    .unwrap();
+    let exit = session.wait().unwrap();
+    let text = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
+
+    assert_eq!(exit.exit_code, Some(0), "default shell failed: {text}");
+    for name in ["PATH", "SYSTEMROOT", "COMSPEC", "USERPROFILE", "TEMP"] {
+        assert!(
+            has_var(&text, name),
+            "{name} missing from the child environment: {text}"
+        );
+    }
+    assert!(!has_var(&text, probe), "cleared env leaked {probe}: {text}");
+}
+
 #[test]
 fn background_wait_does_not_complete_before_reader_drain() {
     let output = Arc::new(Mutex::new(Vec::new()));

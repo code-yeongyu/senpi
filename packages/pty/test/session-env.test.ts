@@ -82,3 +82,49 @@ describe.skipIf(process.platform === "win32")("TerminalSession child environment
 		});
 	});
 });
+
+describe.runIf(process.platform === "win32")("TerminalSession child environment on Windows", () => {
+	afterEach(() => {
+		delete process.env[NAME];
+	});
+
+	const windowsBackends: [string, TerminalSessionDependencies, boolean][] = [
+		["native", { env: {} }, loadNativePty().native !== null],
+		["pipe-fallback", { env: { SENPI_PTY_FORCE_PIPE: "1" } }, true],
+	];
+	it.each(windowsBackends)(
+		"runs the default shell with a complete environment and drops a deleted variable on the %s backend",
+		async (_name, dependencies, available) => {
+			if (!available) return;
+			// Given: the variable is in this process's environment.
+			process.env[NAME] = "/closure/empty.pem";
+			// When: the default shell (no command: ComSpec) lists its environment with the variable deleted.
+			const session = new TerminalSession(
+				{ args: ["/d", "/s", "/c", "set"], env: { [NAME]: undefined } },
+				dependencies,
+			);
+			const chunks: Buffer[] = [];
+			session.onData((chunk) => chunks.push(chunk));
+			session.start();
+			const exit = await session.waitExit();
+			const names = new Set(
+				Buffer.concat(chunks)
+					.toString("utf8")
+					.split(/\r?\n/)
+					.map((line) =>
+						line
+							.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
+							.split("=")[0]
+							?.trim()
+							.toUpperCase(),
+					),
+			);
+			// Then: the shell ran, the platform variables survived the cleared native environment, the deletion holds.
+			expect(exit.exitCode).toBe(0);
+			for (const required of ["PATH", "SYSTEMROOT", "COMSPEC", "USERPROFILE", "TEMP"]) {
+				expect(names, required).toContain(required);
+			}
+			expect(names).not.toContain(NAME);
+		},
+	);
+});
