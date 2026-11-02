@@ -96,6 +96,12 @@ export function openAICompatibleProviderDiagnosticFromError(error: unknown): Pro
 	}
 }
 
+/** SIWC transport boundary, including direct-admission {"detail": ...} bodies. */
+export function siwcProviderDiagnosticFromError(error: unknown): ProviderDiagnostic | undefined {
+	const diagnostic = openAICompatibleProviderDiagnosticFromError(error);
+	return diagnostic === undefined ? undefined : { ...diagnostic, route: "siwc" };
+}
+
 /**
  * A connection failure carries no HTTP status; it proves only that the request got
  * no provider answer. Reads the error's own `code`, then `cause.code` (fetch

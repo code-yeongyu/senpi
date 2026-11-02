@@ -65,6 +65,7 @@ export type AuthenticatedQueryInput = {
 	/** Identifies the turn across its retries: with `preferredAccount`, the turn may try one other account (oh-my-openagent#10304). */
 	turnKey?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
+	onAttemptStart?: () => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
 	) => RetainableAttempt<SDKMessage> | Promise<RetainableAttempt<SDKMessage>>;
