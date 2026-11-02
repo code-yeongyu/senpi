@@ -25,6 +25,7 @@ const DEFAULT_PROVIDER_URLS: Record<Exclude<SearchProvider, "searxng">, string> 
 	"google-html": "https://www.google.com/search",
 	"exa-mcp": "https://mcp.exa.ai/mcp",
 	keenable: "https://api.keenable.ai/v1/search",
+	ollama: "https://ollama.com/api/web_search",
 };
 
 /** SearXNG is self-hosted, so it has no default endpoint; config validation requires its `baseUrl`. */
