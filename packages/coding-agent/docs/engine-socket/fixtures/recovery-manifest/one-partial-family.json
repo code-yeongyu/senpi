@@ -1,0 +1,118 @@
+{
+	"caseId": "one-partial-family",
+	"kind": "manifest",
+	"contractIds": [
+		"R4.B1",
+		"RULING-61",
+		"RULING-67",
+		"RULING-128"
+	],
+	"description": "A cut whose identity family is partial (one client correlation refused at the protocol depth limit): requiredKinds lists the nine complete families in code-unit order and leaves identity out; the cut's families/families registry carries the same list.",
+	"expected": {
+		"manifest": {
+			"format": "senpi-recovery-manifest",
+			"version": 1,
+			"socketEpoch": {
+				"id": "socket-1"
+			},
+			"admissionId": {
+				"id": "attach-1"
+			},
+			"routeKind": "ordinary",
+			"session": {
+				"id": "s"
+			},
+			"sessionEpoch": {
+				"id": "00000000-0000-4000-8000-000000000001"
+			},
+			"generation": 1,
+			"sequence": 3,
+			"historyVersion": 0,
+			"token": {
+				"id": "socket-1:1"
+			},
+			"leaf": null,
+			"activeMessage": {
+				"id": "message-1"
+			},
+			"turn": {
+				"id": "00000000-0000-4000-8000-000000000002"
+			},
+			"checkpointDigest": "1bbcad29320f20847a515cc854063cda0ddaea20cdcff45eb6b5e0e9ee15fbd4",
+			"catalogRoot": "c-0000000000000001",
+			"catalogRootLength": 2830,
+			"requiredKinds": [
+				"active",
+				"calls",
+				"dialogs",
+				"lifecycle",
+				"opaque",
+				"run",
+				"settled",
+				"source",
+				"transcript"
+			]
+		},
+		"families": {
+			"format": "senpi-recovery-families",
+			"version": 1,
+			"families": [
+				{
+					"family": "transcript",
+					"producer": "complete"
+				},
+				{
+					"family": "run",
+					"producer": "complete"
+				},
+				{
+					"family": "lifecycle",
+					"producer": "complete"
+				},
+				{
+					"family": "dialogs",
+					"producer": "complete"
+				},
+				{
+					"family": "opaque",
+					"producer": "complete"
+				},
+				{
+					"family": "active",
+					"producer": "complete"
+				},
+				{
+					"family": "calls",
+					"producer": "complete"
+				},
+				{
+					"family": "settled",
+					"producer": "complete"
+				},
+				{
+					"family": "identity",
+					"producer": "partial"
+				},
+				{
+					"family": "source",
+					"producer": "complete"
+				}
+			],
+			"requiredKinds": [
+				"active",
+				"calls",
+				"dialogs",
+				"lifecycle",
+				"opaque",
+				"run",
+				"settled",
+				"source",
+				"transcript"
+			],
+			"assembly": "incomplete",
+			"incomplete": [
+				"identity"
+			]
+		}
+	}
+}
