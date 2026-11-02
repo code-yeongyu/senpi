@@ -49,7 +49,7 @@ armHostWatchdog({ lifetimeFd: bootstrap.lifetimeFd }, () => {
 	process.exit(0);
 });
 const stdinNull = fstatSync(0).isCharacterDevice() && fstatSync(0).rdev === statSync("/dev/null").rdev;
-const cat = spawn("cat", [], { stdio: ["inherit", "ignore", "inherit"] });
+const cat = spawn("cat", [], { stdio: ["inherit", "ignore", "ignore"] });
 cat.once("exit", (code) =>
 	process.send?.({
 		type: "ready",

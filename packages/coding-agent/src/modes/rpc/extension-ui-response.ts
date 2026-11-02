@@ -2,6 +2,20 @@ import type { QuestionRequest, QuestionResponse } from "../../core/extensions/ty
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import type { UiAnswerLedger } from "./ui-answer-ledger.ts";
 
+/** Only a named grant-selection request takes the worker's grant-dialog routing path. */
+export function isGrantSelectRequest(record: object): record is object & { id: string } {
+	return (
+		"type" in record &&
+		record.type === "extension_ui_request" &&
+		"method" in record &&
+		record.method === "select" &&
+		"grantSelect" in record &&
+		record.grantSelect === true &&
+		"id" in record &&
+		typeof record.id === "string"
+	);
+}
+
 /**
  * An `extension_ui_response` carries two ids: `id`, the frame's own correlation id that its reply
  * echoes, and `uiRequestId`, the extension UI request it answers. The short form every older client
