@@ -1,5 +1,14 @@
 import type { AuthInfoLink, OAuthDeviceCodeInfo } from "@earendil-works/pi-ai";
-import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	type Focusable,
+	getKeybindings,
+	Input,
+	Spacer,
+	Text,
+	type TUI,
+} from "@earendil-works/pi-tui";
 import { openBrowser } from "../../../utils/open-browser.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
@@ -16,6 +25,8 @@ export class LoginDialogComponent extends Container implements Focusable {
 	private inputResolver?: (value: string) => void;
 	private inputRejecter?: (error: Error) => void;
 	private liveHint?: Text;
+	/** The rows the prompt still waiting for input showed above its input (its spacer, message and placeholder). */
+	private openPromptRows?: readonly Component[];
 	private onComplete: (success: boolean, message?: string) => void;
 
 	// Focusable implementation - propagate to input for IME cursor positioning
@@ -61,6 +72,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 				this.inputResolver(value);
 				this.inputResolver = undefined;
 				this.inputRejecter = undefined;
+				this.openPromptRows = undefined;
 			}
 		};
 		this.input.onEscape = () => {
@@ -79,6 +91,12 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.contentContainer.children = this.contentContainer.children.map((child) =>
 			child === this.input ? new Text(`> ${value}`, 0, 0) : child,
 		);
+	}
+
+	/** Adds a prompt's rows above its input and remembers them while the prompt waits, for `replaceContent`. */
+	private addOpenPromptRows(rows: readonly Component[]): void {
+		for (const row of rows) this.contentContainer.addChild(row);
+		this.openPromptRows = rows;
 	}
 
 	/** The Input widget is a single instance; mounting it twice paints two live `>` rows. */
@@ -108,12 +126,30 @@ export class LoginDialogComponent extends Container implements Focusable {
 		this.liveHint = undefined;
 	}
 
+	/**
+	 * Starts a new step: clears the dialog, adds the step's rows, then puts back a prompt that is still waiting for
+	 * input below them, with its input and live hint. A step can land while a prompt is open: the Claude CLI prints
+	 * its paste-code fallback (a prompt opens) before its `$BROWSER` helper reports the browser URL (`showAuth`).
+	 * Clearing that prompt would leave the user no visible place to paste the code.
+	 */
+	private replaceContent(addStepRows: () => void): void {
+		const openRows = this.inputResolver ? this.openPromptRows : undefined;
+		const hint = this.liveHint;
+		this.resetContent();
+		addStepRows();
+		if (openRows === undefined) return;
+		for (const row of openRows) this.contentContainer.addChild(row);
+		this.contentContainer.addChild(this.input);
+		if (hint !== undefined) this.setLiveHint(hint);
+	}
+
 	private cancel(): void {
 		this.abortController.abort();
 		if (this.inputRejecter) {
 			this.inputRejecter(new Error("Login cancelled"));
 			this.inputResolver = undefined;
 			this.inputRejecter = undefined;
+			this.openPromptRows = undefined;
 		}
 		this.onComplete(false, "Login cancelled");
 	}
@@ -122,19 +158,20 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Called by onAuth callback - show URL and optional instructions
 	 */
 	showAuth(url: string, instructions?: string): void {
-		this.resetContent();
-		this.contentContainer.addChild(new Spacer(1));
-		const linkedUrl = `\x1b]8;;${url}\x07${url}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
-
-		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
-		const hyperlink = `\x1b]8;;${url}\x07${clickHint}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("dim", hyperlink), 1, 0));
-
-		if (instructions) {
+		this.replaceContent(() => {
 			this.contentContainer.addChild(new Spacer(1));
-			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
-		}
+			const linkedUrl = `\x1b]8;;${url}\x07${url}\x1b]8;;\x07`;
+			this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
+
+			const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
+			const hyperlink = `\x1b]8;;${url}\x07${clickHint}\x1b]8;;\x07`;
+			this.contentContainer.addChild(new Text(theme.fg("dim", hyperlink), 1, 0));
+
+			if (instructions) {
+				this.contentContainer.addChild(new Spacer(1));
+				this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
+			}
+		});
 
 		openBrowser(url);
 		this.tui.requestRender();
@@ -144,16 +181,17 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Called by onDeviceCode callback - show URL and user code.
 	 */
 	showDeviceCode(info: OAuthDeviceCodeInfo): void {
-		this.resetContent();
-		this.contentContainer.addChild(new Spacer(1));
-		const linkedUrl = `\x1b]8;;${info.verificationUri}\x07${info.verificationUri}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
+		this.replaceContent(() => {
+			this.contentContainer.addChild(new Spacer(1));
+			const linkedUrl = `\x1b]8;;${info.verificationUri}\x07${info.verificationUri}\x1b]8;;\x07`;
+			this.contentContainer.addChild(new Text(theme.fg("accent", linkedUrl), 1, 0));
 
-		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
-		const hyperlink = `\x1b]8;;${info.verificationUri}\x07${clickHint}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(theme.fg("dim", hyperlink), 1, 0));
-		this.contentContainer.addChild(new Spacer(1));
-		this.contentContainer.addChild(new Text(theme.fg("warning", `Enter code: ${info.userCode}`), 1, 0));
+			const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
+			const hyperlink = `\x1b]8;;${info.verificationUri}\x07${clickHint}\x1b]8;;\x07`;
+			this.contentContainer.addChild(new Text(theme.fg("dim", hyperlink), 1, 0));
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(new Text(theme.fg("warning", `Enter code: ${info.userCode}`), 1, 0));
+		});
 
 		this.tui.requestRender();
 	}
@@ -163,8 +201,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 */
 	showManualInput(prompt: string): Promise<string> {
 		this.input.setValue("");
-		this.contentContainer.addChild(new Spacer(1));
-		this.contentContainer.addChild(new Text(theme.fg("dim", prompt), 1, 0));
+		this.addOpenPromptRows([new Spacer(1), new Text(theme.fg("dim", prompt), 1, 0)]);
 		this.remountInput(new Text(`(${keyHint("tui.select.cancel", "to cancel")})`, 1, 0));
 		this.tui.requestRender();
 
@@ -179,11 +216,9 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Note: Does NOT clear content, appends to existing (preserves URL from showAuth)
 	 */
 	showPrompt(message: string, placeholder?: string): Promise<string> {
-		this.contentContainer.addChild(new Spacer(1));
-		this.contentContainer.addChild(new Text(theme.fg("text", message), 1, 0));
-		if (placeholder) {
-			this.contentContainer.addChild(new Text(theme.fg("dim", `e.g., ${placeholder}`), 1, 0));
-		}
+		const rows: Component[] = [new Spacer(1), new Text(theme.fg("text", message), 1, 0)];
+		if (placeholder) rows.push(new Text(theme.fg("dim", `e.g., ${placeholder}`), 1, 0));
+		this.addOpenPromptRows(rows);
 		this.remountInput(
 			new Text(
 				`(${keyHint("tui.select.cancel", "to cancel,")} ${keyHint("tui.select.confirm", "to submit")})`,
@@ -203,11 +238,12 @@ export class LoginDialogComponent extends Container implements Focusable {
 
 	/** Show informational text before another login step. */
 	showDetails(lines: string[]): void {
-		this.resetContent();
-		this.contentContainer.addChild(new Spacer(1));
-		for (const line of lines) {
-			this.contentContainer.addChild(new Text(line, 1, 0));
-		}
+		this.replaceContent(() => {
+			this.contentContainer.addChild(new Spacer(1));
+			for (const line of lines) {
+				this.contentContainer.addChild(new Text(line, 1, 0));
+			}
+		});
 		this.tui.requestRender();
 	}
 
