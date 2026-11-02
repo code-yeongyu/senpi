@@ -1,9 +1,15 @@
 /** Where a socket host listens and how it binds: the `--listen` address forms and the owned bind (moved out of multi-session-host.ts). */
 import { randomBytes } from "node:crypto";
-import { chmod, link, lstat, mkdir, rm } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import type { Server } from "node:net";
-import { dirname, join } from "node:path";
-import { MAX_SOCKET_PATH_BYTES, type SocketFileIdentity } from "./socket-ownership.ts";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+	BIND_SCRATCH_INFIX,
+	BIND_SCRATCH_SOCKET,
+	MAX_SOCKET_PATH_BYTES,
+	type SocketFileIdentity,
+} from "./socket-ownership.ts";
 import { resolveSocketTransportAddress } from "./socket-transport.ts";
 
 export function resolveSocketPath(value: string, agentDir: string): string {
@@ -31,19 +37,18 @@ function bindAt(server: Server, address: string): Promise<void> {
 	});
 }
 
-const BOUND_NAME = "s";
 const BIND_DIR_ATTEMPTS = 8;
+const ALIAS_PREFIX = "senpi-bind-";
+const ALIAS_LINK = "d";
+const SHORT_TEMP_ROOT = "/tmp";
 
 /**
- * A fresh 0700 directory beside the endpoint: the same filesystem, so `link(2)` can publish from it, and named
- * short enough that the bind path stays within MAX_SOCKET_PATH_BYTES whenever the endpoint does.
+ * `<socketPath>.bind-<hex>`: a fresh 0700 directory beside the endpoint, so on its filesystem (`link(2)` can publish
+ * from it) and named after it (`host gc` reclaims one a crash left, see `host-gc.ts`).
  */
-async function makeBindDir(dir: string): Promise<string> {
-	const room = MAX_SOCKET_PATH_BYTES - Buffer.byteLength(join(dir, ".", BOUND_NAME));
-	if (room < 1)
-		throw new Error(`${dir}: no room for a bind directory within the ${MAX_SOCKET_PATH_BYTES}-byte limit.`);
+async function makeBindDir(socketPath: string): Promise<string> {
 	for (let attempt = 1; ; attempt++) {
-		const candidate = join(dir, `.${randomBytes(6).toString("hex").slice(0, Math.min(12, room))}`);
+		const candidate = `${socketPath}${BIND_SCRATCH_INFIX}${randomBytes(6).toString("hex")}`;
 		try {
 			await mkdir(candidate, { mode: 0o700 });
 			return candidate;
@@ -52,6 +57,28 @@ async function makeBindDir(dir: string): Promise<string> {
 			if (!taken || attempt === BIND_DIR_ATTEMPTS) throw cause;
 		}
 	}
+}
+
+/**
+ * The address to bind so the socket lands at `<bindDir>/s`. That path itself whenever it fits sun_path; otherwise
+ * (any endpoint near MAX_SOCKET_PATH_BYTES) a short alias: a fresh 0700 temp directory holding this process's own
+ * link to `bindDir`. Only that intermediate component is a link, created by us in a directory no other user can
+ * write; the final name, the one `bind(2)` creates, is resolved inside the private `bindDir`. The alias costs at
+ * most `/tmp/senpi-bind-XXXXXX/d/s`, so every endpoint `prepareSocketPath` accepts can bind.
+ */
+async function bindAddress(bindDir: string): Promise<{ readonly address: string; readonly alias?: string }> {
+	const direct = join(bindDir, BIND_SCRATCH_SOCKET);
+	if (Buffer.byteLength(direct) <= MAX_SOCKET_PATH_BYTES) return { address: direct };
+	const fits = (root: string): boolean =>
+		Buffer.byteLength(join(root, `${ALIAS_PREFIX}XXXXXX`, ALIAS_LINK, BIND_SCRATCH_SOCKET)) <= MAX_SOCKET_PATH_BYTES;
+	const alias = await mkdtemp(join(fits(tmpdir()) ? tmpdir() : SHORT_TEMP_ROOT, ALIAS_PREFIX));
+	try {
+		await symlink(bindDir, join(alias, ALIAS_LINK));
+	} catch (cause) {
+		await rm(alias, { recursive: true, force: true });
+		throw cause;
+	}
+	return { address: join(alias, ALIAS_LINK, BIND_SCRATCH_SOCKET), alias };
 }
 
 /**
@@ -71,10 +98,13 @@ export async function listen(
 		await bindAt(server, resolveSocketTransportAddress(socketPath, process.platform, secret));
 		return undefined;
 	}
-	const bindDir = await makeBindDir(dirname(socketPath));
-	const bound = join(bindDir, BOUND_NAME);
+	const bindDir = await makeBindDir(socketPath);
+	const bound = join(bindDir, BIND_SCRATCH_SOCKET);
+	let alias: string | undefined;
 	try {
-		await bindAt(server, bound);
+		const target = await bindAddress(bindDir);
+		alias = target.alias;
+		await bindAt(server, target.address);
 		await chmod(bound, 0o600);
 		const entry = await lstat(bound);
 		await link(bound, socketPath);
@@ -89,5 +119,6 @@ export async function listen(
 		throw cause;
 	} finally {
 		await rm(bindDir, { recursive: true, force: true });
+		if (alias !== undefined) await rm(alias, { recursive: true, force: true });
 	}
 }

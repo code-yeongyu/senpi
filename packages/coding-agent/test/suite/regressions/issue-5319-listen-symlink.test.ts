@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readdir, readlink, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readlink, rm, symlink } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { listen as listenProxy, prepareSocketPath } from "../../../src/modes/rpc
 import { listen as listenOwned } from "../../../src/modes/rpc/host-socket-bind.ts";
 import {
 	classifyEndpointOwnership,
+	MAX_SOCKET_PATH_BYTES,
 	statSocketIdentity,
 	unlinkOwnedSocket,
 } from "../../../src/modes/rpc/socket-ownership.ts";
@@ -27,6 +28,19 @@ async function endpoint(): Promise<{ root: string; socket: string }> {
 	const root = await mkdtemp(join(tmpdir(), "e5319-"));
 	roots.push(root);
 	return { root, socket: join(root, "rpc.sock") };
+}
+
+/** An endpoint whose full path is exactly `total` bytes, named `name`, in a fresh 0700 directory. */
+async function endpointOfLength(total: number, name: string): Promise<{ dir: string; socket: string }> {
+	const root = await mkdtemp(join(tmpdir(), "e5319-"));
+	roots.push(root);
+	const pad = total - Buffer.byteLength(root) - Buffer.byteLength(name) - 2;
+	if (pad < 1) throw new Error(`temp root ${root} is too long to build a ${total}-byte endpoint`);
+	const dir = join(root, "d".repeat(pad));
+	await mkdir(dir, { mode: 0o700 });
+	const socket = join(dir, name);
+	expect(Buffer.byteLength(socket)).toBe(total);
+	return { dir, socket };
 }
 
 function server(): Server {
@@ -101,6 +115,28 @@ describe.skipIf(process.platform === "win32")(
 				expect(await accepts(socket)).toBe(true);
 				expect((await readdir(root)).sort()).toEqual(["rpc.sock"]);
 			});
+		}
+
+		// Review of #5404: a bind directory beside the endpoint pushed the bind path past the limit for endpoints
+		// prepareSocketPath accepts. Every endpoint up to MAX_SOCKET_PATH_BYTES must still bind and publish.
+		for (const total of [99, MAX_SOCKET_PATH_BYTES]) {
+			for (const name of ["s", "rpc.sock"]) {
+				for (const [binder, bind] of binders) {
+					it(`${binder}: binds a ${total}-byte endpoint named ${name} and leaves no bind scratch behind`, async () => {
+						const { dir, socket } = await endpointOfLength(total, name);
+						await prepareSocketPath(socket);
+						const host = server();
+
+						await bind(host, socket);
+
+						const entry = await lstat(socket);
+						expect(entry.isSocket()).toBe(true);
+						expect(entry.mode & 0o777).toBe(0o600);
+						expect(await accepts(socket)).toBe(true);
+						expect(await readdir(dir)).toEqual([name]);
+					});
+				}
+			}
 		}
 
 		it("statSocketIdentity reads a symlink at a socket path as its own entry, never as the socket it names", async () => {

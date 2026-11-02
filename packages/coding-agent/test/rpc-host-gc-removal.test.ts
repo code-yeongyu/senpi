@@ -42,6 +42,34 @@ describe.skipIf(process.platform === "win32")("gc removal of a dead endpoint", (
 		await expect(readFile(join(foreign, "keep.json"), "utf8")).resolves.toBe("{}\n");
 	});
 
+	it("reclaims a bind directory a crashed bind left beside the socket, and keeps one holding anything else", async () => {
+		const qa = endpointScratch("gcb");
+		const paths = await deadEndpoint(qa.legacy, qa.agentDir);
+		await refusingSocket(qa.legacy);
+		const leftover = siblingPath(qa.legacy, ".bind-0a1b2c3d4e5f");
+		await refusingSocket(join(leftover, "s"));
+		const empty = siblingPath(qa.legacy, ".bind-ffffffffffff");
+		await mkdir(empty, { mode: 0o700 });
+		const foreign = siblingPath(qa.legacy, ".bind-777777777777");
+		await writeJson(join(foreign, "keep.json"), {});
+
+		expect(await gcHostEndpoints(qa.agentDir)).toEqual({
+			removed: [
+				{
+					socket: qa.legacy,
+					dir: paths.dir,
+					reason: "socket_refused",
+					skipped: [{ path: foreign, type: "directory" }],
+				},
+			],
+			kept: [],
+		});
+		for (const path of [paths.dir, qa.legacy, leftover, empty]) {
+			await expect(stat(path)).rejects.toEqual(gone);
+		}
+		await expect(readFile(join(foreign, "keep.json"), "utf8")).resolves.toBe("{}\n");
+	});
+
 	it.skipIf(process.getuid?.() === 0)(
 		"keeps an endpoint whose removal fails, with its directory whole, and still removes the others",
 		async () => {

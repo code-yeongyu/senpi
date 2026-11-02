@@ -20,6 +20,7 @@ import { generationPaths, type HostDaemonDirectory } from "./host-daemon-paths.t
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
+import { BIND_SCRATCH_INFIX } from "./socket-ownership.ts";
 import { readSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
 
 export type EndpointInUse = "live_generation" | "live_claim" | "reachable";
@@ -53,11 +54,19 @@ export async function endpointInUse(
 	return { inUse: undefined, silence };
 }
 
-/** Every entry beside `socket` that belongs to it: `<name>.next-*` successor binds and `<name>.shield-*`. */
+/**
+ * Every entry beside `socket` that belongs to it: `<name>.next-*` successor binds, `<name>.shield-*`, and the
+ * `<name>.bind-*` directory a bind crashed out of (`host-socket-bind.ts`).
+ */
 export async function socketSiblings(socket: string): Promise<readonly string[]> {
 	const name = basename(socket);
 	const entries = await readdir(dirname(socket)).catch(() => [] as string[]);
-	return entries.filter((entry) => entry.startsWith(`${name}.next-`) || entry.startsWith(`${name}.shield-`));
+	return entries.filter(
+		(entry) =>
+			entry.startsWith(`${name}.next-`) ||
+			entry.startsWith(`${name}.shield-`) ||
+			entry.startsWith(`${name}${BIND_SCRATCH_INFIX}`),
+	);
 }
 
 /**

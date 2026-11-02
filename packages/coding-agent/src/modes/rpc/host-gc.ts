@@ -22,7 +22,8 @@
  * A removal goes siblings first, the socket next and the endpoint directory LAST: until the directory
  * is gone the endpoint is still listed, so a removal that fails part-way is finished by a later gc
  * instead of leaving a socket nothing names. A sibling that is a directory is not a socket's leftover
- * and not gc's to delete; it stays, and is reported under `skipped`. One endpoint's failure is recorded
+ * and not gc's to delete; it stays, and is reported under `skipped` - except a `<socket>.bind-*`
+ * directory a crashed bind left, removed while it holds nothing but that bind's own socket. One endpoint's failure is recorded
  * and the run goes on to the next.
  *
  * `kinds` narrows a run to endpoints of those `endpoint_kind`s - a TUI reaping dead `tui` endpoints at
@@ -36,8 +37,8 @@
  * is collected by a later run, once the three-part evidence holds. Without the option nothing running
  * is ever judged, and a judged host that is not stale is kept with the `stale_*` reason that saved it.
  */
-import { lstat, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, readdir, rm, rmdir, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type EndpointKind, HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
@@ -47,6 +48,7 @@ import { type EndpointInUse, endpointInUse, type SocketSilence, socketSiblings }
 import { judgeStaleEngine, type StaleEngineKeep, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { stopHost } from "./host-stop.ts";
 import { gcRpcPublicKeys } from "./rpc-public-key.ts";
+import { BIND_SCRATCH_INFIX, BIND_SCRATCH_SOCKET } from "./socket-ownership.ts";
 
 export type HostGcKeptReason =
 	| EndpointInUse
@@ -186,12 +188,27 @@ async function removeEndpoint(socket: string, dir: string): Promise<readonly Hos
 			if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
 			throw error;
 		});
-		if (entry?.isDirectory()) skipped.push({ path, type: "directory" });
-		else if (entry !== undefined) await rm(path, { force: true });
+		if (entry?.isDirectory()) {
+			const bindDir = sibling.startsWith(`${basename(socket)}${BIND_SCRATCH_INFIX}`);
+			if (!bindDir || !(await reclaimBindDir(path))) skipped.push({ path, type: "directory" });
+		} else if (entry !== undefined) await rm(path, { force: true });
 	}
 	await rm(socket, { force: true });
 	await rm(dir, { recursive: true, force: true });
 	return skipped;
+}
+
+/** A bind directory a crashed `listen` left: removed only while it holds nothing but that bind's socket. */
+async function reclaimBindDir(path: string): Promise<boolean> {
+	const inside = await readdir(path);
+	if (inside.some((name) => name !== BIND_SCRATCH_SOCKET)) return false;
+	const bound = join(path, BIND_SCRATCH_SOCKET);
+	if (inside.length > 0) {
+		if (!(await lstat(bound)).isSocket()) return false;
+		await unlink(bound);
+	}
+	await rmdir(path);
+	return true;
 }
 
 /** The ensure lock of `socket`, taken exactly as `ensureHost` takes it; `undefined` when not free in time. */

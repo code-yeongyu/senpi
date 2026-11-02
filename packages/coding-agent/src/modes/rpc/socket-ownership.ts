@@ -45,6 +45,13 @@ export const SOCKET_IDENTITY_WAIT_MS = 30_000;
 export const MAX_SOCKET_PATH_BYTES = 103;
 
 /**
+ * `<socket>.bind-<hex>`: the private 0700 directory a host binds its socket in (as `BIND_SCRATCH_SOCKET`) before
+ * publishing it at `<socket>` with `link(2)` (#5319). Named after the socket so `host gc` can reclaim one a crash left.
+ */
+export const BIND_SCRATCH_INFIX = ".bind-";
+export const BIND_SCRATCH_SOCKET = "s";
+
+/**
  * Where a successor generation binds before it owns the public name. It never binds the live
  * public path: that path belongs to the running host until the successor is proven to work.
  */
