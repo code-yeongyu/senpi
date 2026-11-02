@@ -131,6 +131,20 @@ export function normalizeWarpWslShiftEnterInput(
 	return data === "\n" && isWarpWslSession(env, platform, socketExists) ? NATIVE_SHIFT_ENTER_SEQUENCE : data;
 }
 
+/**
+ * Terminal.app sends CR for Return and LF only for Ctrl+J, so locally a lone LF is the documented
+ * Ctrl+J newline rather than an Enter from a terminal that sends LF for Return.
+ */
+export function normalizeAppleTerminalLineFeedInput(
+	data: string,
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	if (data !== "\n" || platform !== "darwin" || env.TERM_PROGRAM !== "Apple_Terminal") return data;
+	if (env.SSH_CONNECTION?.trim() || env.SSH_CLIENT?.trim() || env.SSH_TTY?.trim()) return data;
+	return NATIVE_SHIFT_ENTER_SEQUENCE;
+}
+
 export function keyboardEnhancementEnabled(): boolean {
 	const value = process.env.PI_TUI_KEYBOARD_PROTOCOL;
 	if (value === undefined) return true;
