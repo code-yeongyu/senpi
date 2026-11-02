@@ -43,6 +43,16 @@ interface EventLine {
 	readonly atomic?: boolean;
 }
 
+/**
+ * A record's compact copy: the record itself, or its stamped form when the lane names an identity for it (RULING-120,
+ * RULING-123). Built once per delivery and shared by every compact peer, so an oversized copy keys one staged text
+ * (the lease owner shares staging by record object), never one per peer (S13 X07).
+ */
+interface CompactCopy {
+	readonly stamped: RpcRecord;
+	readonly line: RecordLine;
+}
+
 /** Per-destination delivery of one session record, moved verbatim out of `session-event-writer.ts` (S13w0, #4272). */
 export abstract class SessionEventWriterDestinations extends SessionEventWriterRecovery {
 	/** Puts the record on every target's FIFO in target order, or on the stdio lane for the `undefined` target. */
@@ -69,13 +79,20 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		const placeholder = new RecordLine(redacted, placeholderLine);
 		if (!isTargeted && !this.fanout.acceptance.has(sessionId))
 			this.fanout.rememberSnapshot(sessionId, tagged, line.text, placeholderLine);
+		const copies = new Map<RpcRecord, CompactCopy>();
 		for (const target of targets) {
 			if (target !== undefined && !this.fanout.get(target)) continue;
 			const registered = target === undefined ? undefined : this.fanout.get(target);
 			const wants =
 				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
 			if (registered && target !== undefined) {
-				const out = this.eventLine(target, sessionId, wants ? redacted : tagged, wants ? placeholder : line);
+				const out = this.eventLine(
+					target,
+					sessionId,
+					wants ? redacted : tagged,
+					wants ? placeholder : line,
+					copies,
+				);
 				const keyed = !out.atomic && compactDelta(tagged) !== undefined && tagged.message !== null;
 				registered.actor.enqueue(
 					out.line,
@@ -97,9 +114,16 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 	 * holds this lane-owned session, becomes an `eventLease` envelope at the record's accepted sequence, its content
 	 * staged from the line another destination built or else streamed from the record (never one legacy line); every
 	 * other destination gets the legacy line. Past the peer's lease bound, or when the record cannot be staged, the peer
-	 * gets a typed refusal and its connection closes (fail closed, like a plain peer's overflow).
+	 * gets a typed refusal and its connection closes (fail closed, like a plain peer's overflow). A stamped copy is
+	 * built once per delivery (`copies`), so every compact peer leases the same staged text.
 	 */
-	private eventLine(target: string, sessionId: string, record: RpcRecord, line: RecordLine): EventLine {
+	private eventLine(
+		target: string,
+		sessionId: string,
+		record: RpcRecord,
+		line: RecordLine,
+		copies: Map<RpcRecord, CompactCopy>,
+	): EventLine {
 		const reply = declarationReply(record, this.compactSelection(target));
 		if (reply !== undefined && reply !== record) return { line: serializeJsonLine(reply) };
 		const events = this.fanout.events;
@@ -120,9 +144,15 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		if (!this.fanout.connectionHas(target, COMPACT_EVENTS_CAPABILITY)) return { line: line.text };
 		// RULING-120 (#5331): only this compact peer's copy carries the ids the settled overlay pages for its message;
 		// RULING-123 (#5346): and a live call record's snapshot key, or `callUnknown` when the lane vouched for none.
-		const identity = lane.identities.of(record.type, lane.acceptedSequence) ?? unvouchedCall(record);
-		const stamped = identity ? { ...record, ...identity } : record;
-		const stampedLine = identity ? new RecordLine(stamped) : line;
+		let copy = copies.get(record);
+		if (!copy) {
+			const identity = lane.identities.of(record.type, lane.acceptedSequence) ?? unvouchedCall(record);
+			const stamped = identity ? { ...record, ...identity } : record;
+			copy = { stamped, line: identity ? new RecordLine(stamped) : line };
+			copies.set(record, copy);
+		}
+		const { stamped, line: stampedLine } = copy;
+		const identity = stamped !== record;
 		const materializer = materializerLine(this.fanout, this.required, target, sessionId, stamped);
 		if (materializer) return materializer;
 		const built = stampedLine.built;
