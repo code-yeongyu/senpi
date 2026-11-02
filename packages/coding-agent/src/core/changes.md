@@ -1,3 +1,250 @@
+## 2026-10-31 - Restoring a session settles consumed custody of ended runs (part of senpi#4848)
+
+### What changed
+
+- `packages/coding-agent/src/core/work-obligations.ts`: new `SessionWorkObligations.settleEndedRuns(currentRunId)` writes a `settled` custody record for every active `consumed` record whose `runId` is not `currentRunId`, and nothing when the restored ledger records no run (nothing then proves the consuming run ended, so crash recovery keeps it). `open`, `queued`, `passive`, `held`, `settled` and `cancelled` records and the current run's `consumed` records are not touched.
+- `packages/coding-agent/src/core/session-lifecycle.ts`: the `SessionLifecycleController` constructor calls `settleEndedRuns` with the restored ledger's `runId` once custody and child reports are restored, before `LifecycleSessionBinding` scans consumed custody for crash recovery.
+
+### Why
+
+- `packages/coding-agent/src/core/work-obligations.ts`, `packages/coding-agent/src/core/session-lifecycle.ts`: a run that ended without settling what it consumed left that custody `consumed` for good. `settleRun` only settles the run the ledger names, so every later restore reported `waiting_background` (#5254: 345 such entries) and, because the binding reads any consumed delivery as an interrupted run, re-held the session as interrupted. The ended run's messages are already in the conversation, so settling them is what `idle()` would have done. The settles are ordinary custody writes, so the repair is durable and a second restore writes nothing.
+
+### Why an extension could not handle it
+
+- Work custody and the lifecycle ledger are restored inside the core lifecycle controller; no extension sees them before crash recovery reads them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/work-obligations.ts`: the new method right above `install`.
+- `packages/coding-agent/src/core/session-lifecycle.ts`: the end of the `SessionLifecycleController` constructor.
+
+## 2026-10-31 - Explicit invocation steering and abort (senpi#5242)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` exports `InvocationSteering` and `bindInvocationSignals()`, which bind a tool call's `steeringSignal` and its abort-driven disposal; `_createToolContext` calls it with a source backed by the session's `queue_update` events and steering queue, and its existing disposer set. The binding moved verbatim.
+
+### Why
+
+- A tool host without a session (brain/hand split, senpi#4360) has no local steering queue, but its tools still need the invocation's steering and cancellation signals.
+
+### Why an extension could not handle it
+
+- The tool context is built by the session for every tool call before the tool runs.
+
+### Expected merge conflict zones
+
+- LOW: `_createToolContext` and the module-level helpers above `estimateMessagesTokens` in `packages/coding-agent/src/core/agent-session.ts`.
+
+## 2026-10-31 - Nested tool call provenance (senpi#5240)
+
+### What changed
+
+- `packages/coding-agent/src/core/nested-tool-calls.ts` adds `rootToolCallId()` and an optional `NestedToolCallHost.issuerOf()`, and passes the root call's issuing message to `runToolCall` as `issuedBy`.
+- `packages/coding-agent/src/core/agent-session.ts` records the issuing assistant message of each model-issued call from `beforeToolCall` until the call ends, serves it through `issuerOf`, and uses it for nested calls, falling back to the last assistant message when none is recorded.
+
+### Why
+
+- A tool host without a transcript (brain/hand split, senpi#4360) has to run nested calls, which today need the transcript's last assistant message.
+
+### Why an extension could not handle it
+
+- The nested-call pipeline is built by the session; extensions only call `ctx.executeTool()`.
+
+### Expected merge conflict zones
+
+- LOW: `_installAgentToolHooks` and `_executeNestedToolCall` in `packages/coding-agent/src/core/agent-session.ts`; `NestedToolCallHost` and `execute` in `packages/coding-agent/src/core/nested-tool-calls.ts`.
+
+## 2026-10-31 - Tool-child runtime without a session (senpi#5235)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` builds its tool dispatcher, tool child and host-call handler through `tool-dispatch/tool-child-runtime.ts`'s `createToolChildRuntime()` with its session ID as the scope. The moved code is unchanged.
+- `packages/coding-agent/src/core/tool-dispatch/tool-child-runtime.ts` is new; `packages/coding-agent/src/core/tool-dispatch/testing/kill-child.ts` holds the KILL-CHILD cases (plan 3.5).
+
+### Why
+
+- A tool host without an agent loop or a session (brain/hand split, senpi#4360) has to place tools on its own tool child.
+
+### Why an extension could not handle it
+
+- The tool-child runtime is created in the session constructor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the tool-runtime block in `AgentSession`'s constructor and the import block of `packages/coding-agent/src/core/agent-session.ts`.
+
+## 2026-10-31 - Session-less runtime bootstrap for the tool registry (senpi#5222)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` builds its built-in tool definitions, filesystem policy and extension runner through `runtime/bootstrap.ts`'s `bootstrapRuntime()`, and its merged, filtered and wrapped tool registry through `buildToolRegistry()`. The moved code is unchanged; the session-specific steps stay in `_buildRuntime` and `_refreshToolRegistry` in the same order.
+- `packages/coding-agent/src/core/sdk.ts` exports `bootstrapRuntime`, `buildToolRegistry` and their option and result types.
+
+### Why
+
+- A tool host without an agent loop or a session (brain/hand split, senpi#4360) has to build the same registry the session builds.
+
+### Why an extension could not handle it
+
+- The registry is built inside `AgentSession` before any extension can observe it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_buildRuntime` and `_refreshToolRegistry` in `packages/coding-agent/src/core/agent-session.ts`; the re-export block in `packages/coding-agent/src/core/sdk.ts`.
+
+## 2026-10-31 - linkedWorktreeMainCheckoutDir is module-private (senpi#5204, fixes #5201)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: `linkedWorktreeMainCheckoutDir` is no longer exported. Its only caller is `getSavedProjectTrust` in the same file, and behavior is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/trust-manager.ts`: the export had no user outside the module, so knip's unused-export check failed on `main` (#5201) and on every PR that merged it.
+
+### Why an extension could not handle it
+
+- An unused export is dead code in the module itself; only the module can stop exporting it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/trust-manager.ts`: the one `function linkedWorktreeMainCheckoutDir` declaration line.
+
+## 2026-10-30 - Bare fallback selectors expand only to first-party providers (senpi#5050)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: `FIRST_PARTY_PROVIDERS` maps each model vendor's id prefix to its own providers and replaces `BARE_EXPANSION_DENYLIST`. `rankFamilyModels` keeps only in-scope providers: a mapped vendor's first-party providers, or for an unmapped vendor the optional `sessionProvider`.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: `canonicalizeFallbackChains` passes each chain key's provider as `sessionProvider` when it expands bare entries.
+
+### Why
+
+- A bare rung such as the shipped `claude-opus-5-5 -> claude-opus-5:max` could land on a reseller, cloud re-host or user-added provider the user never named (code-yeongyu/oh-my-openagent#10791). A bare id is now a vendor policy; other providers need an explicit `provider/id` selector.
+
+### Why an extension could not handle it
+
+- Chain canonicalization runs inside the retry-fallback core before any extension sees a candidate.
+
+### Expected merge conflict zones
+
+- LOW: the head of `expansion.ts` (the former denylist) and `expandEntries` in `chains.ts`.
+
+## 2026-10-31 - Every login starts the slots it creates or replaces with clean pool health (senpi#4093)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `login()` reads the provider's credential before the OAuth flow and, after storing the login, passes both to `retireLoginSlotHealth` (loaded on demand) with the `credential-pool-state.json` next to `auth.json`.
+- `packages/coding-agent/src/core/model-runtime.ts`: `login()` does the same around `Models.login`, with the runtime's pool state path, so the TUI `/login` and account commands follow the same rule. A busy state file skips the write and logs it, as every pool health write does.
+
+### Why
+
+- Pool health is keyed to the account so a token refresh keeps a block (senpi#4093). An opaque token's account key is its slot name, so after a sign-out a different account signing in under the same name inherited the old block (`account_disabled` has no expiry). A login is the user's own step to repair or replace an account: every slot it creates, and every slot whose material it replaces, starts clean. Before, only `AuthStorage.login` cleared slots, and only ones that existed before the login.
+
+### Why an extension could not handle it
+
+- Both login paths persist the credential before any extension sees it, and the health sidecar is internal to the credential pool.
+
+### Expected merge conflict zones
+
+- LOW: the end of `AuthStorage.login` and the start of `ModelRuntime.login`; both import the helper dynamically, so no import lines change.
+
+## 2026-10-30 - Execution scope and pipeline receipt binding (senpi#5030)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` binds an opaque scope from `execution/pipeline-witness.ts` while installing its existing tool hooks. Receipt persistence is opt-in through the existing `Agent.onExecutionPipeline` sink; the binding neither installs a default writer nor replaces an explicitly configured sink.
+
+### Why
+
+- The seam needs an execution root and per-session opaque identity. QA can explicitly configure a pipeline witness sink, but default sessions must retain their conversation entry order and parent links without witness writes.
+
+### Why an extension could not handle it
+
+- The session owns scope identity and the receipt sink before extension tool preparation.
+
+### Expected merge conflict zones
+
+- LOW: the import and `_installAgentToolHooks` wiring in `packages/coding-agent/src/core/agent-session.ts`.
+
+## 2026-10-28 - A loaded transcript base is anchored by a content fingerprint taken at load (S11c, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-file-identity.ts`: `BASE_CONTENT_DOMAIN` (`senpi-recovery-base/1/sha256`, the one constant of the new domain), `BaseContentHash` (SHA-256 over the tag, NUL, then each counted entry line and LF, fed one line at a time) and `loadedContentFingerprints` (keyed by the entries array like `loadedFileIdentities`).
+- `packages/coding-agent/src/core/session-entry-file.ts`: a capturing load (`captureIdentity`, on only with the compact flag) feeds every line it counts as an entry to `BaseContentHash` in the read loop it already runs, sync and async, and records the digest; a load without the capture does no hashing.
+- `packages/coding-agent/src/core/session-manager.ts`: `_serializedFileEntries` fingerprints the lines a rewrite writes the same way, so a base a rewrite replaced carries one too.
+- `packages/coding-agent/src/core/session-transcript-journal.ts`: `PersistedBase.contentFingerprint`.
+- `packages/coding-agent/src/core/session-transcript-file.ts`: the captured base carries it; entries no capturing read produced cannot be a base (`transcript_file_identity_unavailable`).
+
+### Why
+
+- RULING-72 = A (review LOW1 of #4598): `idFingerprint` covers ids and kinds only, so an in-place, same-inode edit of a non-id field before the recovery stream's first open was served. Anchoring the base on its content as read makes any change since the load a typed refusal, with no extra I/O: the hash rides the read pass that already exists.
+
+### Why an extension could not handle it
+
+- The session loader, its read loop and the base the transcript journal captures are core persistence; no extension event sees the lines a load reads or the base identity.
+
+### Expected merge conflict zones
+
+- LOW: `session-entry-file.ts` (the two read loops), `session-manager.ts` (`_serializedFileEntries`, the `session-file-identity.ts` import), `session-transcript-file.ts` (`capture`).
+
+## 2026-10-28 - Transcript journal appends carry the entry's kind and parent link (S10a, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_appendEntry` records `type` and `parentId` on the `append` transcript transition it journals, beside the entry's serialized text.
+- `packages/coding-agent/src/core/session-transcript-journal.ts` (fork-only): the `append` transition requires `type` and `parentId`; `snapshotTranscript` fills them from each unpersisted entry (`entryParent`: the session header has none); new `TranscriptUnavailableReason` `transcript_ancestry_over_byte_limit`.
+
+### Why
+
+- RULING-61 (senpi#4272): the RPC acceptance lane retains each accepted entry's kind and parent link for the epoch so a recovery catalog names every entry's family exactly after persistence released its text, without the recovery owner ever reading the session file.
+
+### Why an extension could not handle it
+
+- The transcript journal is written inside `SessionManager`'s persistence path; no extension event sees the committed entry together with its journal transition.
+
+### Expected merge conflict zones
+
+- LOW: `session-manager.ts` `_appendEntry` (two fields in the journaled record).
+
+## 2026-10-30 - Keep private recovery identity independent of socket rollout (S17, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: Construct the private recovery identity unconditionally, like internal capture and worker transport.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: The OFF worker lost canonical carriers because ownership remained gated upstream of the now-unconditional structured subscription.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: AgentSession owns the private identity that pairs SDK block controls with accepted session records.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: The private recovery identity field and its engine-socket flag import.
+
+## 2026-10-31 - Report structured lane availability (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `hasStructuredLane` reports whether `subscribeStructured` can attach.
+- `packages/coding-agent/src/core/structured-session-lane.ts`: `available` backs that getter, and `StructuredLaneUnavailableError` names both fixes: build the session through the session layer, or turn the compact-updates flag off (RULING-106).
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: RPC binds a flag-off session without the lane legacy-only instead of failing its open.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: The lane is private AgentSession state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: The getter after `subscribeStructured`.
+
 ## 2026-10-31 - Every invoked skill loads; no per-prompt skill cap (senpi#5151)
 
 ### What changed
