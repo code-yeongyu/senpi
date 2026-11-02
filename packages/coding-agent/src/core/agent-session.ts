@@ -385,6 +385,7 @@ import {
 	describeUsageLimitMessage,
 	usageLimitScope,
 } from "./retry-fallback/usage-limit.ts";
+import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
@@ -765,7 +766,16 @@ export type AgentSessionEvent =
 			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
 			cause?: "fallback-unusable";
 	  }
-	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
+	| {
+			type: "retry_fallback_exhausted";
+			chainKey: string;
+			/** The failure of the rung that ran last; kept for older clients. */
+			lastError: string;
+			/** The failure that started the fallback walk: the turn's first failed rung (senpi#4084). */
+			primaryError?: FallbackRungFailure;
+			/** Every rung that failed this turn, in the order it ran, the primary first. */
+			failures?: FallbackRungFailure[];
+	  }
 	| ModelConfigErrorEvent
 	| {
 			type: "server_fallback_aborted";
@@ -1748,6 +1758,8 @@ export class AgentSession {
 	private readonly _fallbackValidationWarnings: readonly string[];
 	private _providerRequiredNoticed = false;
 	private readonly _retryFallback: RetryFallbackController;
+	// Every rung that failed this turn, in order: the exhaustion event leads with the first (senpi#4084).
+	private _fallbackTurnFailures: FallbackRungFailure[] = [];
 	private readonly _modelConfigErrors: ModelConfigErrorReporter;
 	private readonly _selectorCooldowns: SelectorCooldowns;
 	private readonly _fallbackCircuits: FallbackCircuitAccess;
@@ -2961,6 +2973,17 @@ export class AgentSession {
 		this._emitEntryAppended(entry.id);
 	}
 
+	private _emitFallbackExhausted(chainKey: string, lastError: string): void {
+		const failures = [...this._fallbackTurnFailures];
+		const primaryError = failures[0];
+		this._emit({
+			type: "retry_fallback_exhausted",
+			chainKey,
+			lastError,
+			...(primaryError === undefined ? {} : { primaryError, failures }),
+		});
+	}
+
 	private _emit(event: AgentSessionEvent, captureSource: object = event): void {
 		this._recoveryIdentity?.observe(event);
 		const produced = event;
@@ -2975,11 +2998,8 @@ export class AgentSession {
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
 		}
-		if (event.type === "retry_fallback_exhausted" && usageLimitScope(event.lastError) === "account") {
-			event = {
-				...event,
-				lastError: new AccountUsageLimitError(this.model?.provider ?? "", event.lastError).message,
-			};
+		if (event.type === "retry_fallback_exhausted") {
+			event = describeExhaustedFailures(event, this.model?.provider ?? "");
 		}
 		if (event.type === "agent_end") {
 			event = {
@@ -3968,6 +3988,7 @@ export class AgentSession {
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryRungs = 0;
 			this._retryFallback.resetTurn();
+			this._fallbackTurnFailures = [];
 			const messageText = userMessageText(event.message.content);
 			// Image-only input has no text to match: find it by the message the queue handed to the agent (#3592).
 			const imageOnlyQueued = messageText
@@ -6102,6 +6123,7 @@ export class AgentSession {
 					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
 				) {
 					this._retryFallback.resetTurn();
+					this._fallbackTurnFailures = [];
 					const errorMessage = this._retryFallback.accountError(model.provider);
 					// Routing around a remembered failure did not observe another provider failure.
 					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
@@ -12856,11 +12878,7 @@ export class AgentSession {
 		const finishRetryAttempt = (attempt: number, finalError: string | undefined) => {
 			const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 			if (exhaustedChainKey) {
-				this._emit({
-					type: "retry_fallback_exhausted",
-					chainKey: exhaustedChainKey,
-					lastError: errorMessage,
-				});
+				this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 			}
 			this._emit({
 				type: "auto_retry_end",
@@ -12942,6 +12960,11 @@ export class AgentSession {
 			reason: Parameters<typeof this._retryFallback.tryFallback>[0],
 			failure: Parameters<typeof this._retryFallback.tryFallback>[1],
 		) => {
+			recordRungFailure(this._fallbackTurnFailures, {
+				model: `${message.provider}/${message.model}`,
+				reason,
+				error: errorMessage,
+			});
 			try {
 				return await this._retryFallback.tryFallback(reason, failure);
 			} catch (error) {
@@ -12959,7 +12982,7 @@ export class AgentSession {
 			});
 			if (!switchedFallback) {
 				const chainKey = this._retryFallback.exhaustedChainKey;
-				if (chainKey) this._emit({ type: "retry_fallback_exhausted", chainKey, lastError: errorMessage });
+				if (chainKey) this._emitFallbackExhausted(chainKey, errorMessage);
 				if (this._retryAttempt > 0) {
 					this._emit({
 						type: "auto_retry_end",
@@ -13013,11 +13036,7 @@ export class AgentSession {
 				if (!switchedFallback) {
 					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 					if (exhaustedChainKey) {
-						this._emit({
-							type: "retry_fallback_exhausted",
-							chainKey: exhaustedChainKey,
-							lastError: errorMessage,
-						});
+						this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 					}
 					this._resolveRetry();
 					return "not-handled";
@@ -13046,11 +13065,7 @@ export class AgentSession {
 			if (!switchedFallback) {
 				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 				if (exhaustedChainKey) {
-					this._emit({
-						type: "retry_fallback_exhausted",
-						chainKey: exhaustedChainKey,
-						lastError: errorMessage,
-					});
+					this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 				}
 				if (this._retryAttempt > 0) {
 					this._emit({
@@ -13111,11 +13126,7 @@ export class AgentSession {
 					} else {
 						const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 						if (exhaustedChainKey) {
-							this._emit({
-								type: "retry_fallback_exhausted",
-								chainKey: exhaustedChainKey,
-								lastError: errorMessage,
-							});
+							this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 						}
 						this._emit({
 							type: "auto_retry_end",
@@ -13158,11 +13169,7 @@ export class AgentSession {
 						} else {
 							const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 							if (exhaustedChainKey) {
-								this._emit({
-									type: "retry_fallback_exhausted",
-									chainKey: exhaustedChainKey,
-									lastError: errorMessage,
-								});
+								this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 							}
 							this._emit({
 								type: "auto_retry_end",
@@ -13203,11 +13210,7 @@ export class AgentSession {
 							} else {
 								const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 								if (exhaustedChainKey) {
-									this._emit({
-										type: "retry_fallback_exhausted",
-										chainKey: exhaustedChainKey,
-										lastError: errorMessage,
-									});
+									this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 								}
 								this._emit({
 									type: "auto_retry_end",
@@ -13258,11 +13261,7 @@ export class AgentSession {
 				} else {
 					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 					if (exhaustedChainKey) {
-						this._emit({
-							type: "retry_fallback_exhausted",
-							chainKey: exhaustedChainKey,
-							lastError: errorMessage,
-						});
+						this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 					}
 					this._emit({
 						type: "auto_retry_end",
@@ -14388,4 +14387,22 @@ function messageFingerprint(message: AgentMessage | undefined): string {
 	const usage = (message as { usage?: Usage }).usage;
 	const requestContext = usage?.contextUsage;
 	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}:${requestContext?.input}:${requestContext?.output}:${requestContext === null}`;
+}
+
+type FallbackExhaustedEvent = Extract<AgentSessionEvent, { type: "retry_fallback_exhausted" }>;
+
+// Clients see each rung's provider text through the same account-limit description as `lastError`.
+function describeExhaustedFailures(event: FallbackExhaustedEvent, currentProvider: string): FallbackExhaustedEvent {
+	const describe = (error: string, provider: string) =>
+		usageLimitScope(error) === "account" ? new AccountUsageLimitError(provider, error).message : error;
+	const failures = event.failures?.map((failure) => ({
+		...failure,
+		error: describe(failure.error, failure.model.slice(0, Math.max(0, failure.model.indexOf("/")))),
+	}));
+	const primaryError = failures?.[0];
+	return {
+		...event,
+		lastError: describe(event.lastError, currentProvider),
+		...(failures === undefined || primaryError === undefined ? {} : { failures, primaryError }),
+	};
 }
