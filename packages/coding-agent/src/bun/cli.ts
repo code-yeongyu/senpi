@@ -7,7 +7,11 @@ import "./sandbox-env-setup.ts";
 import "../private-fds.ts";
 import "../modes/rpc/internal-bootstrap.ts";
 import { dispatchAgentDirectoryCommand } from "../cli/agent-dir-command.ts";
+import { dispatchKillGuardCommand } from "../cli/kill-guard-command.ts";
 
+// The compiled binary is the only executable its kill-guard shims can call (senpi#5349): it judges before any
+// agent-dir work, provider registration or engine import.
+await dispatchKillGuardCommand(process.argv.slice(2));
 await dispatchAgentDirectoryCommand(process.argv.slice(2));
 
 // Documented lazy boundary: metadata queries must not register every provider just to choose a store.
