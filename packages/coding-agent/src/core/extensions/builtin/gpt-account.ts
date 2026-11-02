@@ -2,6 +2,7 @@ import type { AccountLoginReceipt } from "@earendil-works/pi-ai";
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import { describeCredentialAccount } from "../../../core/credential-account-status.ts";
 import { unblockPooledAccount } from "../../../core/credential-account-unblock.ts";
+import { accountLimitsFor, describeAccountLimits } from "../../subscription-limits/limit-summary.ts";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
@@ -34,6 +35,7 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID);
 	const lines = ["ChatGPT Subscription OAuth accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
+	const now = Date.now();
 	for (const account of accounts) {
 		// SIWC states that replace the health column; otherwise main's row (block reason, per-model limits, pin).
 		const override = account.signedOut
@@ -48,6 +50,8 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 		if (account.route) states.push(account.route === "siwc" ? "SIWC" : "legacy");
 		if (!account.signedOut && account.planUsageEnabled === true) states.push("Using ChatGPT plan");
 		lines.push(`  ${states.join(" | ")}`);
+		const limits = accountLimitsFor(CHATGPT_SUBSCRIPTION_PROVIDER_ID, account.name);
+		lines.push(`    ${describeAccountLimits(limits, now)}`);
 	}
 	lines.push("Manage usage: https://chatgpt.com/settings/usage (ChatGPT Settings > Usage)");
 	ctx.ui.notify(lines.join("\n"), "info");
