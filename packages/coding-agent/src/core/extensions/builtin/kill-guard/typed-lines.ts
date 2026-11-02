@@ -1,4 +1,16 @@
-import { encodeKeys } from "../terminal/shared.ts";
+import {
+	ABANDON,
+	CONTROL_KEYS,
+	ESCAPE_KEYS,
+	escapeLength,
+	type InputBytes,
+	isSubmit,
+	KILL_KEYS,
+	type Key,
+	UNKNOWN_KEY,
+	YANK,
+	YANK_POP,
+} from "./input-keys.ts";
 import { type EditorState, FRESH_EDITOR, type LineDraft, LineEditor } from "./line-editor.ts";
 import {
 	couldExpandHistoryReordered,
@@ -34,15 +46,10 @@ interface PendingLine {
 	readonly recalledHistory: boolean;
 	/** A key the guard does not model reached the line, so its bytes may sit in another order than the editor text. */
 	readonly unordered: boolean;
+	/** A key the guard does not model, other than meta-y, reached the line (tab is not one: it keeps its own rule). */
+	readonly unmodelled: boolean;
 	/** Lines that ended with an unescaped backslash, joined, waiting for the line that completes them. */
 	readonly continued: SubmittedLine | undefined;
-}
-
-/** The bytes a `bash_input` call writes and which of them a named key wrote. */
-export interface InputBytes {
-	readonly stream: string;
-	/** Offsets in `stream` written by a named key other than enter/return. */
-	readonly keyed: ReadonlySet<number>;
 }
 
 /** A line a `bash_input` call submits. */
@@ -55,6 +62,8 @@ export interface SubmittedLine {
 	readonly unfollowable: boolean;
 	/** bash runs a history entry for this line, not the typed text (see `shell-history.ts`). */
 	readonly history?: UnjudgedHistory;
+	/** A key the guard does not model reached the line, so bash may run a line the guard never saw (refused unjudged). */
+	readonly unmodelledKey?: boolean;
 }
 
 export interface TypedLines {
@@ -69,6 +78,7 @@ const FRESH_PENDING: PendingLine = {
 	yanked: false,
 	recalledHistory: false,
 	unordered: false,
+	unmodelled: false,
 	continued: undefined,
 };
 
@@ -76,87 +86,6 @@ export const FRESH_SESSION: TypedSession = { editor: FRESH_EDITOR, pending: FRES
 
 const HISTORY_SIZE = 200;
 const KILL_FAMILY = ["kill", "pkill", "killall"];
-
-type Key = (editor: LineEditor) => void;
-
-const CONTROL_KEYS: Record<string, Key> = {
-	"\x01": (editor) => editor.moveTo(0),
-	"\x02": (editor) => editor.moveBy(-1),
-	"\x03": (editor) => editor.discard(),
-	"\x04": (editor) => editor.deleteForward(),
-	"\x05": (editor) => editor.moveTo(Number.MAX_SAFE_INTEGER),
-	"\x06": (editor) => editor.moveBy(1),
-	"\x08": (editor) => editor.backspace(),
-	"\t": (editor) => editor.unfollowed(false, "\t"),
-	"\x0b": (editor) => editor.killToEnd(),
-	"\x0c": (editor) => editor.ignore(),
-	"\x15": (editor) => editor.killToStart(),
-	"\x17": (editor) => editor.killWordBackward(),
-	"\x19": (editor) => editor.yank(),
-	"\x7f": (editor) => editor.backspace(),
-};
-
-// ctrl+k, ctrl+u, ctrl+w: the modelled keys that kill text into the ring.
-const KILL_KEYS = new Set(["\x0b", "\x15", "\x17"]);
-const YANK = "\x19";
-const YANK_POP = new Set(["\x1by", "\x1bY"]);
-// ctrl+c: readline drops the line (and a pending continuation); the kill ring is untouched.
-const ABANDON = "\x03";
-
-const ESCAPE_KEYS: Record<string, Key> = {
-	"\x1b[H": (editor) => editor.moveTo(0),
-	"\x1b[1~": (editor) => editor.moveTo(0),
-	"\x1b[7~": (editor) => editor.moveTo(0),
-	"\x1bOH": (editor) => editor.moveTo(0),
-	"\x1b[F": (editor) => editor.moveTo(Number.MAX_SAFE_INTEGER),
-	"\x1b[4~": (editor) => editor.moveTo(Number.MAX_SAFE_INTEGER),
-	"\x1b[8~": (editor) => editor.moveTo(Number.MAX_SAFE_INTEGER),
-	"\x1bOF": (editor) => editor.moveTo(Number.MAX_SAFE_INTEGER),
-	"\x1b[D": (editor) => editor.moveBy(-1),
-	"\x1bOD": (editor) => editor.moveBy(-1),
-	"\x1b[C": (editor) => editor.moveBy(1),
-	"\x1bOC": (editor) => editor.moveBy(1),
-	"\x1b[3~": (editor) => editor.deleteForward(),
-};
-
-// History keys, meta keys, vi-mode commands and any other sequence: the line is no longer known and may be an
-// earlier one.
-const UNKNOWN_KEY: Key = (editor) => editor.unfollowed(true);
-
-const isSubmit = (char: string) => char === "\r" || char === "\n";
-
-/**
- * Bytes in the escape sequence at `start`: CSI (`ESC [` params, final byte 0x40-0x7e), SS3 (`ESC O x`), or `ESC x`.
- * A carriage return or line feed is never taken into a sequence: readline drops an unbound prefix and may run the line
- * on that byte, so the guard judges the line there.
- */
-function escapeLength(stream: string, start: number): number {
-	const kind = stream.charAt(start + 1);
-	if (kind === "" || isSubmit(kind)) return 1;
-	if (kind === "O") return isSubmit(stream.charAt(start + 2)) ? 2 : Math.min(3, stream.length - start);
-	if (kind !== "[") return 2;
-	let end = start + 2;
-	while (end < stream.length && stream.charCodeAt(end) < 0x40 && !isSubmit(stream.charAt(end))) end += 1;
-	if (isSubmit(stream.charAt(end))) return end - start;
-	return Math.min(end + 1, stream.length) - start;
-}
-
-/** The bytes a `bash_input` call writes, in the tool's order: the text, Enter when submitted, then the named keys. */
-export function bashInputBytes(input: Record<string, unknown>): InputBytes {
-	const text = typeof input.input === "string" ? input.input : undefined;
-	const submit = typeof input.submit === "boolean" ? input.submit : (text?.length ?? 0) > 0;
-	const keys = Array.isArray(input.keys) ? input.keys.filter((key): key is string => typeof key === "string") : [];
-	let stream = text === undefined ? "" : submit ? `${text}\r` : text;
-	const keyed = new Set<number>();
-	for (const key of keys) {
-		const data = encodeKeys([key]).data;
-		const name = key.trim().toLowerCase();
-		if (name !== "enter" && name !== "return")
-			for (let at = 0; at < data.length; at += 1) keyed.add(stream.length + at);
-		stream += data;
-	}
-	return { stream, keyed };
-}
 
 /** A word tab completion could finish as a kill-family name, or one that already is one (`k`, `pki`, `/bin/kill`). */
 function hasKillFamilyWord(text: string): boolean {
@@ -250,9 +179,11 @@ export function typeInto(session: TypedSession, { stream, keyed }: InputBytes): 
 	const history = [...session.history];
 	const lines: SubmittedLine[] = [];
 	let killed = session.killed;
-	let { printable, plain, tabbedKillPrefix, yanked, recalledHistory, unordered, continued } = session.pending;
+	let { printable, plain, tabbedKillPrefix, yanked, recalledHistory, unordered, unmodelled, continued } =
+		session.pending;
 	const reset = () => {
-		({ printable, plain, tabbedKillPrefix, yanked, recalledHistory, unordered, continued } = FRESH_PENDING);
+		({ printable, plain, tabbedKillPrefix, yanked, recalledHistory, unordered, unmodelled, continued } =
+			FRESH_PENDING);
 	};
 	// A kill takes text from the line, and the line's raw printable stream holds every byte typed on it; a key the guard
 	// does not model may already have put text there it never saw (a completion, a recalled line), which counts as able
@@ -268,6 +199,7 @@ export function typeInto(session: TypedSession, { stream, keyed }: InputBytes): 
 		kill(UNKNOWN_KEY);
 		unordered = true;
 		if (YANK_POP.has(sequence)) yanked = true;
+		else unmodelled = true;
 		if (isHistoryKey(sequence)) recalledHistory = true;
 	};
 	// The raw record of bytes `from`..`to`, independent of how the editor reads them.
@@ -291,8 +223,17 @@ export function typeInto(session: TypedSession, { stream, keyed }: InputBytes): 
 			else {
 				const letters = yanked ? printable + killed : printable;
 				const unfollowable = line.unfollowable || (!plain && couldSpellKill(letters, tabbedKillPrefix));
-				const pending = { printable, plain, tabbedKillPrefix, yanked, recalledHistory, unordered, continued };
-				lines.push({ ...line, unfollowable, history: unjudgedHistory(line, pending) });
+				const pending = {
+					printable,
+					plain,
+					tabbedKillPrefix,
+					yanked,
+					recalledHistory,
+					unordered,
+					unmodelled,
+					continued,
+				};
+				lines.push({ ...line, unfollowable, history: unjudgedHistory(line, pending), unmodelledKey: unmodelled });
 				history.push(line.text);
 				reset();
 			}
@@ -324,7 +265,7 @@ export function typeInto(session: TypedSession, { stream, keyed }: InputBytes): 
 		lines,
 		session: {
 			editor: editor.state,
-			pending: { printable, plain, tabbedKillPrefix, yanked, recalledHistory, unordered, continued },
+			pending: { printable, plain, tabbedKillPrefix, yanked, recalledHistory, unordered, unmodelled, continued },
 			history: history.slice(-HISTORY_SIZE),
 			killed,
 		},
