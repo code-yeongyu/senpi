@@ -7,7 +7,7 @@ import { STOP_WAIT_BUDGET_MS } from "../../src/modes/rpc/host-ensure-stop.ts";
 import { processExitEvent } from "./process-exit-event.ts";
 import { processAlive } from "./spawned-host-reaper.ts";
 
-const EXIT_BOUND_MS = 10_000;
+export const EXIT_BOUND_MS = 10_000;
 
 export class RpcOwnerProcesses {
 	private readonly owners: ChildProcess[] = [];
@@ -79,7 +79,17 @@ export class RpcOwnerProcesses {
 			expect(processAlive(pid), `pid ${pid} (${command}) still alive after owner exit`).toBe(false);
 	}
 
-	async cleanup(): Promise<void> {
+	async cleanup(primaryFailure?: { message?: string }): Promise<void> {
+		try {
+			await this.stopProcesses();
+		} catch (error) {
+			if (primaryFailure)
+				throw new AggregateError([primaryFailure, error], primaryFailure.message, { cause: primaryFailure });
+			throw error;
+		}
+	}
+
+	private async stopProcesses(): Promise<void> {
 		try {
 			for (const child of this.owners) {
 				if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) continue;

@@ -121,7 +121,8 @@ import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts"
 import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
-import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
+import type { PreparableRuntimeFactory } from "./modes/rpc/host-warm.ts";
+import { completeCompactFactory } from "./modes/rpc/compact-runtime-factory.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { readPipedStdin } from "./utils/piped-stdin.ts";
@@ -1114,10 +1115,8 @@ export function createCliRuntimeFactory(
 		};
 	};
 	// A host open creates its session with no start event, so a warm prepares exactly that open.
-	return Object.assign(createRuntime, {
-		prepare: async (options: PrepareRuntimeOptions): Promise<void> => {
-			await createServices({ ...options, isInitialRuntime: true });
-		},
+	return completeCompactFactory(createRuntime, async (options) => {
+		await createServices({ ...options, isInitialRuntime: true });
 	});
 }
 

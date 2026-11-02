@@ -94,10 +94,20 @@ export const QuestionAnswers = Type.Record(
 	{ maxProperties: RPC_QUESTION_ANSWER_LIMITS.answers },
 );
 
-/** A host-level record: `id` plus its own fields. */
+/**
+ * A host-level record: `id`, the compact caller's `admissionId` routing envelope (S15a-1, senpi#4272) and its own
+ * fields. A record whose own fields require `admissionId` (`cancel_attempt`, `reset_stream`) overrides the envelope.
+ */
 export const command = <const T extends string, const P extends TProperties>(type: T, properties: P) =>
-	Type.Object({ id: OptId, type: Type.Literal(type), ...properties });
+	Type.Object({ id: OptId, admissionId: OptId, type: Type.Literal(type), ...properties });
 
 /** A session record: every one accepts the routing envelope's `sessionId`. */
 export const session = <const T extends string, const P extends TProperties>(type: T, properties: P) =>
 	command(type, { sessionId: OptId, ...properties });
+
+/**
+ * A session record whose own fields require `admissionId` (the recovery and admission commands, senpi#4272): the
+ * optional envelope `command` adds would widen that field, so these are built without it.
+ */
+export const admissionSession = <const T extends string, const P extends TProperties>(type: T, properties: P) =>
+	Type.Object({ id: OptId, type: Type.Literal(type), sessionId: OptId, ...properties });
