@@ -55,7 +55,11 @@ export const FAMILY_PRODUCERS: FamilyProducers = {
  * correlation refused at the protocol depth limit never became the lane's standing one, so `identity` is then
  * `partial` too: its member reports the count (RULING-67 (4)).
  */
-export function familyProducers(transcript: TranscriptRoot, refusedCorrelations: number): FamilyProducers {
+export function familyProducers(root: {
+	readonly transcript: TranscriptRoot;
+	readonly refusedCorrelations: number;
+}): FamilyProducers {
+	const { transcript, refusedCorrelations } = root;
 	const exact = transcript.unavailable === null;
 	const entries: Partial<Record<CatalogFamily, "partial">> = exact
 		? {}
@@ -105,6 +109,11 @@ interface RegistryBase {
 	readonly format: "senpi-recovery-families";
 	readonly version: 1;
 	readonly families: readonly FamilyRow[];
+	/**
+	 * The families a root built from these producers requires (RULING-128): every `complete` one, in code-unit order,
+	 * each once. The manifest carries this exact list, and this component's digest is inside `checkpointDigest`.
+	 */
+	readonly requiredKinds: readonly CatalogFamily[];
 }
 /**
  * Set only by `familyRegistry`, which `readFamilyRegistry` decodes through and `completeAssembly` narrows to, so no other
@@ -127,7 +136,11 @@ export type FamilyRegistry = CompleteFamilyRegistry | IncompleteFamilyRegistry;
 export function familyRegistry(producers: FamilyProducers): FamilyRegistry {
 	const families = CATALOG_FAMILIES.map((family): FamilyRow => ({ family, producer: producers[family] }));
 	const incomplete = families.filter(({ producer }) => producer !== "complete").map(({ family }) => family);
-	const base = { format: "senpi-recovery-families", version: 1, families } as const;
+	const requiredKinds = families
+		.filter(({ producer }) => producer === "complete")
+		.map(({ family }) => family)
+		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+	const base = { format: "senpi-recovery-families", version: 1, families, requiredKinds } as const;
 	return incomplete.length === 0
 		? { ...base, assembly: "complete", [COMPLETE]: true }
 		: { ...base, assembly: "incomplete", incomplete };
@@ -177,5 +190,7 @@ export function readFamilyRegistry(text: string): FamilyRegistry {
 	const producers = Object.fromEntries(rows.map(({ family, producer }) => [family, producer]));
 	const registry = familyRegistry({ ...FAMILY_PRODUCERS, ...producers });
 	if (field(value, "assembly") !== registry.assembly) throw new RangeError("family registry assembly mismatch");
+	if (JSON.stringify(field(value, "requiredKinds")) !== JSON.stringify(registry.requiredKinds))
+		throw new RangeError("family registry requiredKinds mismatch");
 	return registry;
 }

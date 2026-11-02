@@ -1,3 +1,4 @@
+import type { CatalogFamily } from "./compact-catalog-registry.ts";
 import type { BoundedId, ContentDigest, ContentRef } from "./compact-recovery-ids.ts";
 import type { RecoveryRouteKind } from "./compact-recovery-types.ts";
 
@@ -29,6 +30,12 @@ export interface RecoveryManifest {
 	readonly checkpointDigest: ContentDigest;
 	readonly catalogRoot: ContentRef;
 	readonly catalogRootLength: number;
+	/**
+	 * The catalog families this cut's root requires (RULING-128): its complete families only, sorted, each once. It is
+	 * the `requiredKinds` of the cut's `families/families` registry, so `checkpointDigest` covers it; a client opens
+	 * exactly these and never falls back to a built-in family list.
+	 */
+	readonly requiredKinds: readonly CatalogFamily[];
 }
 
 export const TEXT_FIELDS = [
