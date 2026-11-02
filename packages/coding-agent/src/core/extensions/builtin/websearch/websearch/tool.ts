@@ -30,9 +30,24 @@ const Params = Type.Object(
 		blocked_domains: Type.Optional(
 			Type.Array(Type.String(), { description: "Never include search results from these domains" }),
 		),
+		max_results: Type.Optional(
+			Type.Integer({
+				description:
+					"Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped.",
+			}),
+		),
 	},
 	{ additionalProperties: false },
 );
+
+const DEFAULT_MAX_RESULTS = 10;
+const MIN_MAX_RESULTS = 1;
+const MAX_MAX_RESULTS = 50;
+
+/** The count a single call asked for, clamped to the supported range. */
+function perCallMaxResults(value: number): number {
+	return Math.min(MAX_MAX_RESULTS, Math.max(MIN_MAX_RESULTS, Math.trunc(value)));
+}
 
 export type ConfigProvider = () => ConfigLoadResult;
 type WebSearchTool = ReturnType<typeof defineTool<typeof Params, SearchRenderDetails>>;
@@ -95,7 +110,9 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 				return { content: [{ type: "text", text: loaded.message }], details };
 			}
 
-			const maxResults = loaded.config.providers[0]?.maxResults ?? 10;
+			const configuredMaxResults = loaded.config.providers[0]?.maxResults ?? DEFAULT_MAX_RESULTS;
+			const callMaxResults = params.max_results === undefined ? undefined : perCallMaxResults(params.max_results);
+			const maxResults = callMaxResults ?? configuredMaxResults;
 			const listed = await resolveSessionLoginEntries(loaded.config, ctx, signal);
 			const config = await configWithNativeRoute(listed, ctx, signal);
 			if (config.providers.length === 0 && loaded.config.providers.length > 0) {
@@ -129,6 +146,7 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 			const request = {
 				query: params.query,
 				maxResults,
+				...(callMaxResults === undefined ? {} : { maxResultsFromCall: true }),
 				...(params.allowed_domains === undefined ? {} : { allowedDomains: params.allowed_domains }),
 				...(params.blocked_domains === undefined ? {} : { blockedDomains: params.blocked_domains }),
 			};
