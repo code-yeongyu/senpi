@@ -1,4 +1,5 @@
 import { KEYLESS_PROVIDERS } from "./config.ts";
+import { searchPublicWeb } from "./providers/public.ts";
 import type { FetchedPage } from "./providers/shared.ts";
 import {
 	detectSearchChallenge,
@@ -243,6 +244,7 @@ async function performProviderSearch(
 	request: SearchRequest,
 	signal?: AbortSignal,
 ): Promise<SearchDetails> {
+	if (config.provider === "public") return searchPublicWeb(config, request, signal, performProviderSearch);
 	const startedAt = Date.now();
 	const failure = (error: string, extra: Partial<SearchDetails> = {}): SearchDetails => {
 		const details: SearchDetails = {

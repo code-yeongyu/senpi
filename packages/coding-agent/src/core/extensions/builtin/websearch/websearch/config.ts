@@ -45,6 +45,7 @@ const PROVIDERS: readonly SearchProvider[] = [
 	"exa-mcp",
 	"searxng",
 	"keenable",
+	"public",
 ];
 /** Engines that need no key or account; a block on any of them puts it on a per-session cooldown. */
 export const KEYLESS_PROVIDERS: ReadonlySet<SearchProvider> = new Set<SearchProvider>([
@@ -56,6 +57,7 @@ export const KEYLESS_PROVIDERS: ReadonlySet<SearchProvider> = new Set<SearchProv
 	"exa-mcp",
 	"searxng",
 	"keenable",
+	"public",
 ]);
 // These entries may omit apiKey: the search then uses the matching senpi login.
 const SESSION_LOGIN_PROVIDERS: readonly SearchProvider[] = ["chatgpt-subscription", "google"];
@@ -228,6 +230,14 @@ export function validateProviderConfig(config: SearchProviderEntry): ProviderVal
 
 	if (config.timeoutMs !== undefined && config.timeoutMs <= 0) {
 		return { ok: false, reason: "invalid_config", message: "Provider timeoutMs must be greater than 0." };
+	}
+
+	if (config.provider === "public" && config.baseUrl) {
+		return {
+			ok: false,
+			reason: "invalid_config",
+			message: "Provider public searches the built-in engines and takes no baseUrl.",
+		};
 	}
 
 	if (config.provider === "searxng") {

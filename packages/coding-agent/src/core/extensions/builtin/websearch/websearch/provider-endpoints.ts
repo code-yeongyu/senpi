@@ -1,6 +1,6 @@
 import type { SearchProvider, SearchProviderConfig } from "./types.ts";
 
-const DEFAULT_PROVIDER_URLS: Record<Exclude<SearchProvider, "searxng">, string> = {
+const DEFAULT_PROVIDER_URLS: Record<Exclude<SearchProvider, "searxng" | "public">, string> = {
 	exa: "https://api.exa.ai/search",
 	tavily: "https://api.tavily.com/search",
 	serpdive: "https://api.serpdive.com/v1/search",
@@ -30,6 +30,7 @@ const DEFAULT_PROVIDER_URLS: Record<Exclude<SearchProvider, "searxng">, string> 
 /** SearXNG is self-hosted, so it has no default endpoint; config validation requires its `baseUrl`. */
 export function defaultProviderUrl(provider: SearchProvider): string {
 	if (provider === "searxng") throw new Error("Provider searxng requires baseUrl.");
+	if (provider === "public") throw new Error("Provider public has no endpoint of its own.");
 	return DEFAULT_PROVIDER_URLS[provider];
 }
 
