@@ -908,8 +908,9 @@ move a call (its `phase`, `startSequence`, `startedAtMs`, `input.started`, `inpu
 `result`, `outcome`, its nested calls, and the toolResult carrier joined to it) to those calls oldest-first, so it cannot
 vouch that they belong to this call rather than the other. Never present those fields of a marked row as that call's
 state. The mark lasts as long as the live-record mark: from the moment a second call takes the id until the last of
-those calls leaves the table. The field is appended after the row's own fields; every other row, and every row with the
-flag off, carries no `callUnknown`.
+those calls leaves the table. Where the field sits: a `calls` member carries it as its last field, a `settled` row
+directly after `runtimeItemKey` (before `entryId`), and the call projection directly before `nestedCalls`. Every other
+row, and every row with the flag off, carries no `callUnknown`.
 
 The host appends the field after the record's own, like the message ids above (`{"type": "tool_execution_end", ...,
 "sessionId": "rpc-1", "runtimeItemKey": "..."}`); legacy connections and every connection with the flag off receive

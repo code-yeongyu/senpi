@@ -1,5 +1,6 @@
 import { dirname } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, expect, it, vi } from "vitest";
 import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
@@ -12,7 +13,8 @@ import { toolUse } from "./5346-stamp-host-support.ts";
 // message are reduced oldest-open-first, so which execution state, hook, result and carrier belongs to which of them is
 // an order join. Their live execution records already say `callUnknown` (#5346); the snapshot rows a reconnecting
 // compact peer pages, the outstanding `calls` members and the `settled` toolResult rows they retire into, must say so
-// too, so a consumer never shows the two calls' states swapped as fact.
+// too, so a consumer never shows the two calls' states swapped as fact. The second case shows the swap itself: an end
+// that arrives out of block order closes the other call's row.
 
 const DUP = "dup";
 type Host = Awaited<ReturnType<typeof statusHost>>;
@@ -32,8 +34,9 @@ const terminalOf = (row: Record<string, unknown>) =>
 
 /**
  * Golden k, the desktop decoder's pin for the marker shape: every `calls` member of the held cut and every `settled`
- * member after the run, as paged, in member order (settled rows page in the order of their random message ids). Keys
- * are pinned as their rank and `hookRunId` (a host-wide hook counter) is masked, like golden j.
+ * member after the run, sorted by member id. Both families' ids are sequence-derived, so that order, and the uuid
+ * aliases the normalizer assigns in it, are stable; the catalog pages settled rows in another order (by message id).
+ * Keys are pinned as their rank and `hookRunId` (a host-wide hook counter) is masked, like golden j.
  */
 function golden(...cuts: ReadonlyMap<string, Record<string, unknown>>[]): unknown {
 	const keys: unknown[] = [];
@@ -51,7 +54,8 @@ function golden(...cuts: ReadonlyMap<string, Record<string, unknown>>[]): unknow
 	return { snapshot: Object.fromEntries(members.map(([member, row]) => [member, pin(row)])) };
 }
 
-it("RULING-123 C3.4 #5348 snapshot calls and settled rows of a toolCallId reused within one message are marked callUnknown", async () => {
+/** One flag-on host: a legacy opener drives prompts, a `compact_events` peer is attached, the session is in process. */
+async function openSession() {
 	vi.stubEnv(FLAG, "1");
 	vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-01T00:00:00.000Z") });
 	// A fixed chunk size: the faux provider otherwise draws one per delta, which moves every lane sequence.
@@ -69,12 +73,17 @@ it("RULING-123 C3.4 #5348 snapshot calls and settled rows of a toolCallId reused
 	run.writer.setConnectionCapabilities("compact", ["compact_events"]);
 	run.writer.attachConnectionToSession("compact", routing);
 	const lane = { host: run, routing, lane: entry?.acceptance };
+	const api = run.extensionApis.get(session.sessionManager.getSessionId()) ?? expect.unreachable("no extension api");
+	const idle = (record: WireRecord) => record.type === "agent_idle" && record.sessionId === routing;
+	return { run, legacy, routing, session, lane, api, done: () => legacy.waitFor(idle, EVENT_SAFETY_MS) };
+}
 
+it("RULING-123 C3.4 #5348 snapshot calls and settled rows of a toolCallId reused within one message are marked callUnknown", async () => {
+	const { run, legacy, routing, session, lane, api, done: idle } = await openSession();
 	// The first PreToolUse hook holds while a reconnected peer freezes a cut: both calls are outstanding `calls` rows.
 	const reached = Promise.withResolvers<void>();
 	const released = Promise.withResolvers<void>();
 	let first = true;
-	const api = run.extensionApis.get(session.sessionManager.getSessionId()) ?? expect.unreachable("no extension api");
 	api.on("tool_call", async () => {
 		if (!first) return undefined;
 		first = false;
@@ -96,8 +105,7 @@ it("RULING-123 C3.4 #5348 snapshot calls and settled rows of a toolCallId reused
 		),
 		fauxAssistantMessage("done", { timestamp: 1 }),
 	]);
-	const idle = (record: WireRecord) => record.type === "agent_idle" && record.sessionId === routing;
-	const done = legacy.waitFor(idle, EVENT_SAFETY_MS);
+	const done = idle();
 	dataOf(await legacy.request({ type: "prompt", sessionId: routing, message: "go" }));
 	await Promise.race([reached.promise, done.then(() => expect.unreachable("the hook was never reached"))]);
 	await run.writer.flush();
@@ -128,4 +136,51 @@ it("RULING-123 C3.4 #5348 snapshot calls and settled rows of a toolCallId reused
 	);
 	expect(unmarked).toEqual([]);
 	await compareAdmissionGoldens({ "k-same-message-reused-id.json": golden(held, settled) }, dirname(run.cwd));
+}, 600_000);
+
+it("RULING-123 C3.4 #5348 an end out of block order closes the other call's row, so an unmarked snapshot would show the two states swapped", async () => {
+	const { run, legacy, routing, lane, api, done: idle } = await openSession();
+	const gate = Promise.withResolvers<void>();
+	api.registerTool({
+		name: "gate",
+		label: "Gate",
+		description: "Finish at once, or once the test opens the gate",
+		parameters: Type.Object({ step: Type.String() }),
+		execute: async (_id, params) => {
+			if (params.step === "slow") await gate.promise;
+			return { content: [{ type: "text", text: params.step }], details: {} };
+		},
+	});
+	run.faux.setResponses([
+		toolUse(fauxToolCall("gate", { step: "slow" }, { id: DUP }), fauxToolCall("gate", { step: "fast" }, { id: DUP })),
+		fauxAssistantMessage("done", { timestamp: 1 }),
+	]);
+	const done = idle();
+	const ended = legacy.waitFor((record) => record.type === "tool_execution_end", EVENT_SAFETY_MS);
+	dataOf(await legacy.request({ type: "prompt", sessionId: routing, message: "go" }));
+	await Promise.race([ended, done.then(() => expect.unreachable("no tool_execution_end before the run ended"))]);
+	await run.writer.flush();
+	await reconnect(lane, "compact", "compact-again");
+	const held = await recoveredRows(lane, "compact-again", ["calls"]);
+	gate.resolve();
+	await done;
+
+	const byBlock = new Map(
+		rows(held, "calls")
+			.filter((row) => row.toolCallId === DUP)
+			.map((row) => [row.contentIndex, row] as const),
+	);
+	const { callUnknown: slowMark, ...slow } = byBlock.get(0) ?? expect.unreachable("no row for block 0");
+	const { callUnknown: fastMark, ...fast } = byBlock.get(1) ?? expect.unreachable("no row for block 1");
+	expect(slow, "block 0, still gated, wears block 1's end as its own").toMatchObject({
+		input: { announced: { step: "slow" } },
+		phase: "completed-awaiting-entry",
+		result: { content: [{ type: "text", text: "fast" }] },
+	});
+	expect(fast, "block 1, already ended, still reads as executing").toMatchObject({
+		input: { announced: { step: "fast" } },
+		phase: "executing",
+		result: null,
+	});
+	expect([slowMark, fastMark], "only the mark keeps those states from being read as fact").toEqual([true, true]);
 }, 600_000);
