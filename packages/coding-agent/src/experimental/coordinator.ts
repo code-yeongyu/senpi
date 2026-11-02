@@ -316,10 +316,12 @@ async function main(): Promise<void> {
 	await removeStaleSocket(controlPath);
 	await removeStaleSocket(publicPath);
 	try {
-		await listen(controlServer, controlPath);
-		await restrictSocket(controlPath);
+		// ensureCoordinator() reads an accepting control socket as "ready", so it is published last:
+		// once a server can register, its public socket path already accepts clients.
 		await listen(publicServer, publicPath);
 		await restrictSocket(publicPath);
+		await listen(controlServer, controlPath);
+		await restrictSocket(controlPath);
 	} catch (error) {
 		await Promise.all([cleanupSocket(controlPath), cleanupSocket(publicPath)]);
 		throw error;
