@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { dotReporters } from "../../../scripts/vitest-dot-reporters.mjs";
 
 const telemetryIndex = fileURLToPath(new URL("../../telemetry/src/index.ts", import.meta.url));
 const aiIndex = fileURLToPath(new URL("../../ai/src/index.ts", import.meta.url));
@@ -13,7 +14,7 @@ export default defineConfig({
 	test: {
 		globals: true,
 		environment: "node",
-		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
+		reporters: dotReporters(),
 		coverage: {
 			provider: "v8",
 			all: true,
