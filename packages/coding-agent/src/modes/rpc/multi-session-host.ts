@@ -78,6 +78,14 @@ export interface MultiSessionHostOptions {
 	toolRuntime?: ToolRuntimeKind;
 	/** Test seam: defaults to the real shared-session binding. */
 	createBinding?: RpcBindingFactory;
+	/**
+	 * Who owns the sessions this host serves. Absent or `"client"` is today's host: a session ends when its
+	 * last client leaves unless that client opened it with `retain_on_disconnect`, and an empty host exits
+	 * after its empty-exit window. `"machine"` (the headless engine, `modes/headless`) keeps every session
+	 * it opens through a client disconnect (an `open_session` with no `retain_on_disconnect` is retained;
+	 * an explicit `false` is honored) and never exits for being empty.
+	 */
+	sessionOwner?: "client" | "machine";
 }
 
 export {
@@ -137,7 +145,11 @@ export function createHostCore(
 	hooks: HostCoreHooks = {},
 ) {
 	if (options.mcpPresenterEnforcement === true) writer.enableMcpPresenters();
-	const policy = resolveHostIdlePolicy(process.env, idle);
+	const machineOwned = options.sessionOwner === "machine";
+	const policy = resolveHostIdlePolicy(
+		process.env,
+		machineOwned ? { ...idle, emptyExitMs: Number.POSITIVE_INFINITY } : idle,
+	);
 	const endpointSocket = publicEndpointSocket(options);
 	const pathReservations = createEndpointReservations({
 		agentDir: options.agentDir,
@@ -226,7 +238,12 @@ export function createHostCore(
 			await writer.enqueueControl(parseError(shapeError));
 			return;
 		}
-		const response = await gate.dispatch(parsed as RpcCommand);
+		const command = parsed as RpcCommand;
+		const response = await gate.dispatch(
+			machineOwned && command.type === "open_session" && command.retain_on_disconnect === undefined
+				? { ...command, retain_on_disconnect: true }
+				: command,
+		);
 		if (response) await writer.enqueueControl(response);
 	};
 	return { router, handle, handover: gate.handover, handoverAnswered: () => gate.answered() };
