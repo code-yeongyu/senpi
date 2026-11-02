@@ -110,6 +110,9 @@ function metadata(generation: string, filename: string) {
 		url: pathToFileURL(filename).href,
 		path: filename,
 		dir: dirname(filename),
+		// Node (>= 20.11) and Bun both expose these; dependencies read them to find bundled assets (#4766).
+		filename,
+		dirname: dirname(filename),
 		require,
 		commonJs: (body: CommonJsBody) => graphFor(generation).evaluateCommonJs(filename, body),
 		import: async (specifier: string, options?: ImportCallOptions) =>

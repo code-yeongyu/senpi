@@ -29,8 +29,8 @@ independent server-tool error contract; its model errors remain with core
 retry rather than receiving unsupported function-tool definitions.
 Standalone summaries, session titles and default projections exclude only server-search tools, not client function declarations. Tool-less requests do not gain empty tool arrays. Cache-friendly compaction and keepalive retain the exact main-turn payload transform, tools and include fields.
 
-Anthropic Messages supports `web_search_20250305`. The direct Anthropic API and
-Claude OAuth retain main's default-on behavior. Anthropic-compatible gateways
+Anthropic Messages supports `web_search_20250305`. The direct Anthropic API
+retains main's default-on behavior. Anthropic-compatible gateways
 must explicitly declare search and replay support. For example, merge this override into your existing provider entry,
 keeping its current credential configuration:
 
@@ -55,7 +55,7 @@ the assistant blocks and their `encrypted_content` to be replayed unchanged.
 
 | Route | In-turn tool / API | Capability and replay contract |
 | --- | --- | --- |
-| Direct Anthropic API / Claude OAuth | `web_search_20250305`, Messages | Default-on (unchanged from main); `compat.supportsWebSearch: false` opts out. No new direct-endpoint probe is claimed here. |
+| Direct Anthropic API | `web_search_20250305`, Messages | Default-on (unchanged from main); `compat.supportsWebSearch: false` opts out. No new direct-endpoint probe is claimed here. |
 | Anthropic-compatible gateways, including ccapi | `web_search_20250305`, Messages | Opt-in `compat.supportsWebSearch: true`. ccapi search and encrypted-result replay verified live. |
 | OpenAI API / Azure | `web_search_preview`, Responses | Default-on (unchanged from main). Custom Responses endpoints remain opt-in `compat.supportsWebSearchPreview: true`. The current `web_search` name is also supported. |
 | ChatGPT/Codex subscription | `web_search`, Codex Responses | First-party subscription default, except Spark; custom endpoints require opt-in. Real search and output-item replay verified. |
@@ -125,18 +125,17 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.js
 
 Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
 
-- Run `/login anthropic` to open the browser flow. The login listens on loopback port 53692 when it is free and on an ephemeral port otherwise, so a second session on the same machine (another TUI, an RPC host, an abandoned login) can log in at the same time; the auth URL always names the port that is actually listening.
-- If the browser lands on a page saying the login belongs to a different session or an earlier attempt, that page's address was sent to another login's listener: paste the full address from the address bar into the session whose prompt is still waiting, or run the login again from that session.
-- A login that receives neither the browser callback nor a pasted redirect URL for 10 minutes fails with a timeout and releases its port; run `/login anthropic` again.
+- Sign in with `/login anthropic-subscription` (see [Anthropic Subscription](#anthropic-subscription)). senpi has no Claude sign-in of its own: the bundled Claude Code CLI runs `claude auth login` and keeps the login in its own credential store.
+- The plain `anthropic` provider takes Anthropic API keys only. A Claude OAuth token (`sk-ant-oat...`) given to it as a key, through `/login anthropic`, `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN` or a `models.json` `apiKey`, is refused before any request is sent, with an error that points at `/login anthropic-subscription`. senpi does not send Claude subscription tokens to the Anthropic API directly and does not present itself as Claude Code.
 
 ### Anthropic Subscription
 
 The `anthropic-subscription` provider routes LLM calls through the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) - it spawns the real Claude Code engine - while senpi executes every tool itself. Subscription usage flows through Anthropic's official Claude Code surface.
 
-- Run `/login anthropic-subscription` to sign in with your Claude Pro/Max subscription (PKCE, same OAuth client as the Claude Code CLI). An existing Anthropic OAuth credential is offered as an import.
+- Run `/login anthropic-subscription` to sign in with your Claude Pro/Max subscription. The bundled Claude Code CLI runs `claude auth login --claudeai` for the account in its own account dir: choose the browser login, or the copy-code login and paste the code Anthropic shows. The CLI keeps the login and renews its token; senpi stores no Claude token and refreshes none. Accounts signed in through senpi's older built-in login are signed out and ask to sign in again.
 - Multiple accounts: each `/login anthropic-subscription` adds another named account. `CLAUDE_CODE_OAUTH_TOKEN` (and `_2`..`_N`) are honored as read-only env accounts. `/claude-account` lists, adds, removes, and pins accounts; `--claude-account <name>` pins one for the session; `anthropicSubscriptionProvider.pinnedAccount` pins one in settings.
 - Session affinity: one senpi session sticks to one account (rendezvous hashing), which keeps Anthropic's prompt cache warm - accounts never rotate mid-session except on automatic failover. Rate limits and auth errors block the account (with cooldown) and retry on the next account, before any visible output; once output has started, the error surfaces instead of replaying.
-- To stop instead of spending another account's allowance, set `anthropicSubscriptionProvider.accountFallback: false`. On managed lanes (`oauth-slots` and `config-dir`), only the explicitly pinned account, otherwise the resident session's account, otherwise the deterministic affinity winner may serve the request. A blocked selected account is not skipped on later requests. Same-account transient retries and credential refresh still work; an explicit account pin can select a different account. The default is `true`. This is independent of `retry.modelFallback` / `--no-model-fallback`; disable model fallback too if you do not want a different model or provider to serve the failed turn. The ambient lane has no managed-account fallback.
+- To stop instead of spending another account's allowance, set `anthropicSubscriptionProvider.accountFallback: false`. On managed lanes (`oauth-slots` and `config-dir`), only the explicitly pinned account, otherwise the resident session's account, otherwise the deterministic affinity winner may serve the request. A blocked selected account is not skipped on later requests. Same-account transient retries still work; an explicit account pin can select a different account. The default is `true`. This is independent of `retry.modelFallback` / `--no-model-fallback`; disable model fallback too if you do not want a different model or provider to serve the failed turn. The ambient lane has no managed-account fallback.
 - Default lane: **ambient** - with no `tokenInjection` setting the provider inherits the environment like the upstream extension (Claude Code CLI login or `ANTHROPIC_API_KEY`). Managed lanes (`oauth-slots`, `config-dir`) are opt-in via one settings line until the live subscription spike proves a managed default.
 - Ambient lane is explicit opt-in: a Claude Code CLI login on the host is not consent to spend that subscription, so the ambient lane is gated by `anthropicSubscriptionProvider.enabled` (default `false`, env override `SENPI_CLAUDE_SDK_OAUTH_ENABLED`). Before this gate existed, a logged-in Claude Code CLI made the provider available with no senpi-side action. An explicit senpi-side login is itself an opt-in: stored OAuth accounts in `auth.json` and `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts keep the provider available with the flag unset. Only the host-CLI-derived ambient lane requires the flag.
 - Settings (`anthropicSubscriptionProvider`):

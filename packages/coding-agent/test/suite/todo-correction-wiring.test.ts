@@ -285,3 +285,51 @@ describe("todo correction wiring", () => {
 		expect(rendered).toContain("[•] Continue");
 	});
 });
+
+describe("todo unwraps a list wrapped one level too deep (#5148)", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	const canonical = [
+		{ phase: "Foundation", items: ["Survey code"] },
+		{ phase: "Verification", items: ["Run checks"] },
+	];
+	const expectedPhases = [
+		{ name: "Foundation", tasks: [{ content: "Survey code", status: "in_progress" }] },
+		{ name: "Verification", tasks: [{ content: "Run checks", status: "pending" }] },
+	];
+
+	async function runInit(list: unknown) {
+		const harness = await createHarnessWithTodoExtension();
+		harnesses.push(harness);
+		harness.setResponses(responsesForTodo({ op: "init", list }));
+		await harness.session.prompt("initialize");
+		return getLatestTodoResult(harness);
+	}
+
+	it.each([
+		["canonical list (unchanged)", canonical],
+		["one nested array", [canonical]],
+		["one inner array per phase", canonical.map((phase) => [phase])],
+		["object wrapper", { list: canonical }],
+		["object wrapper around a nested array", { list: [canonical] }],
+	])("initializes the same phases from the %s", async (_shape, list) => {
+		const result = await runInit(list);
+
+		expect(result.isError).not.toBe(true);
+		expect((result.details as TodoToolDetails).phases).toEqual(expectedPhases);
+	});
+
+	it.each([
+		["a mixed array of phases and arrays", [canonical[0], [canonical[1]]]],
+		["a wrapper with extra keys", { list: canonical, extra: true }],
+		["a wrapper around an empty list", [[]]],
+	])("still rejects %s", async (_shape, list) => {
+		const result = await runInit(list);
+
+		expect(result.isError).toBe(true);
+	});
+});

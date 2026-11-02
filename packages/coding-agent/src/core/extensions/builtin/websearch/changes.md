@@ -1,3 +1,21 @@
+## 2026-10-26 - Google grounding default leaves retired gemini-2.5-flash (senpi#4340)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/google.ts`: the Google grounding `DEFAULT_MODEL` is now the catalog GA alias `gemini-flash-latest` (exported for the contract test); entry-level `model` overrides unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/google.ts`: `gemini-2.5-flash` is retired for new accounts (404 NOT_FOUND); every unconfigured websearch google entry inherited it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/google.ts`: the default is the builtin provider module's own constant.
+
+### Expected merge conflict zones
+
+- LOW: `DEFAULT_MODEL` in the websearch google provider.
+
 ## 2026-10-11 - Preserve intentional empty main-turn tool arrays (senpi#3125 delta)
 
 ### What changed

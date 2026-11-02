@@ -33,7 +33,13 @@ import {
 import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
-import { composeApiKeyAuth, configuredHeaders, withConfiguredAuth } from "./provider-api-key-auth.ts";
+import { applyUserBaseUrl } from "./provider-base-url-override.ts";
+import {
+	composeApiKeyAuth,
+	configuredHeaders,
+	type StoredProviderEnvReader,
+	withConfiguredAuth,
+} from "./provider-api-key-auth.ts";
 import type { HeaderAuthStatusSource } from "./provider-header-auth.ts";
 import { clearConfigValueCache, resolveHeadersOrThrow } from "./resolve-config-value.ts";
 
@@ -156,7 +162,12 @@ export interface ProviderAmbientAuth {
 	 * supplies no credential, so the provider stays unavailable. A returned
 	 * result should carry `ambient: true`.
 	 */
-	resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+	resolve(input: {
+		ctx: AuthContext;
+		signal: AbortSignal;
+		/** Read-only env of another provider's stored credential; routing metadata only, never keys. */
+		storedProviderEnv?(providerId: string): Promise<Record<string, string> | undefined>;
+	}): Promise<AuthResult | undefined>;
 }
 
 export type AuthStatus = {
@@ -449,15 +460,7 @@ function applyModelsJson(
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);
 	}
-	const whitelist = config.whitelist ? new Set(config.whitelist) : undefined;
-	const blacklist = config.blacklist ? new Set(config.blacklist) : undefined;
-	const hideFree = config.hideFreeModels === true;
-	return models.filter(
-		(model) =>
-			(whitelist === undefined || whitelist.has(model.id)) &&
-			(blacklist === undefined || !blacklist.has(model.id)) &&
-			!(hideFree && !model.cost.unknown && model.cost.input === 0 && model.cost.output === 0),
-	);
+	return models;
 }
 
 function applyExtension(
@@ -570,13 +573,15 @@ export function composeModelProvider(
 	base: Provider | undefined,
 	modelConfig: ModelConfig,
 	extension: ProviderConfigInput | undefined,
+	/** Deferred ambient reads; the reader runs during auth resolution, never at composition. */
+	options?: { storedProviderEnv?: StoredProviderEnvReader },
 ): Provider {
 	const config = modelConfig.getProvider(providerId);
 	let extensionOAuthCredential: OAuthCredentials | undefined;
 	let refreshedExtensionModels: ProviderConfigInput["models"];
 	const currentExtension = (): ProviderConfigInput | undefined =>
 		extension && refreshedExtensionModels ? { ...extension, models: refreshedExtensionModels } : extension;
-	// models.json modelOverrides are the topmost user-config layer: they apply once,
+	// models.json overrides and visibility are the topmost user-config layer: they apply once,
 	// after custom-model upserts, extension model replacement, and legacy OAuth projection.
 	const getAllModels = (): AnyModel[] => {
 		let models = applyExtension(
@@ -595,6 +600,17 @@ export function composeModelProvider(
 				...models.filter((model) => !isModelType(model, "chat")),
 			];
 		}
+		const whitelist = config?.whitelist ? new Set(config.whitelist) : undefined;
+		const blacklist = config?.blacklist ? new Set(config.blacklist) : undefined;
+		const hideFree = config?.hideFreeModels === true;
+		models = models.filter(
+			(model) =>
+				(whitelist === undefined || whitelist.has(model.id)) &&
+				(blacklist === undefined || !blacklist.has(model.id)) &&
+				!(hideFree && !model.cost.unknown && model.cost.input === 0 && model.cost.output === 0),
+		);
+		// The user's models.json baseUrl is applied after every extension rewrite, modifyModels included.
+		models = applyUserBaseUrl(models, config);
 		return models.map((model) => {
 			const override = config?.modelOverrides?.[model.id];
 			return override && isModelType(model, "chat") ? applyModelOverride(model, override) : model;
@@ -602,7 +618,9 @@ export function composeModelProvider(
 	};
 	// Validate eagerly so registration/reload reports structural errors immediately.
 	getAllModels();
-	const apiKey = composeApiKeyAuth(providerId, base, config, extension);
+	const apiKey = composeApiKeyAuth(providerId, base, config, extension, {
+		storedProviderEnv: options?.storedProviderEnv,
+	});
 	const oauth = composeOAuthAuth(providerId, base, config, extension);
 	if (!apiKey && !oauth) throw new Error(`Provider ${providerId}: no authentication method configured.`);
 	// The documented local `ollama` models.json catalog must not invoke the Cloud builtin's refresh with its
@@ -647,7 +665,7 @@ export function composeModelProvider(
 	const provider: Provider = {
 		id: providerId,
 		name: extension?.name ?? config?.name ?? base?.name ?? extension?.oauth?.name ?? providerId,
-		baseUrl: extension?.baseUrl ?? config?.baseUrl ?? base?.baseUrl,
+		baseUrl: config?.baseUrl ?? extension?.baseUrl ?? base?.baseUrl,
 		headers: base?.headers,
 		// Composed providers must not silently drop provider-declared retry profiles.
 		retryPolicy: extension?.retryPolicy ?? base?.retryPolicy,

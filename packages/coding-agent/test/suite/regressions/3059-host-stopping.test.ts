@@ -9,6 +9,7 @@ import { writeHostRegistration } from "../../../src/modes/rpc/host-daemon-regist
 import { writeHostSettings } from "../../../src/modes/rpc/host-daemon-state.ts";
 import * as hostEnsure from "../../../src/modes/rpc/host-ensure.ts";
 import { settledOpportunisticHostGc } from "../../../src/modes/rpc/host-gc-pass.ts";
+import * as hostProbe from "../../../src/modes/rpc/host-probe.ts";
 import { observeProtocolInfo } from "../../../src/modes/rpc/host-probe.ts";
 import { runHostSessionRequest } from "../../../src/modes/rpc/host-session-runner.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
@@ -16,6 +17,7 @@ import * as ownershipLock from "../../../src/modes/rpc/ownership-safe-lock.ts";
 import { RpcClient, RpcCommandError } from "../../../src/modes/rpc/rpc-client.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { generationEnv, generationScratch, JsonlPeer } from "../../helpers/rpc-generation-support.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-stopping-supervisor.ts");
 const cleanups: Array<() => Promise<void>> = [];
@@ -33,7 +35,7 @@ async function rig() {
 	});
 	const supervisor = spawn(process.execPath, [fixture, "controlled", qa.socket, qa.agentDir], {
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...generationEnv(qa),
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_RPC_HOST_INSTANCE_ID: "stopping-generation",
@@ -77,6 +79,7 @@ async function rig() {
 		for (const peer of peers) peer.destroy();
 		for (const client of clients) await client.stop();
 		if (supervisor.exitCode === null && supervisor.signalCode === null) {
+			supervisor.send("release-close");
 			supervisor.kill("SIGTERM");
 			supervisor.send("exit");
 		}
@@ -192,6 +195,9 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 
 	it("retries a launch-owning open into a fresh host after a typed refusal", async () => {
 		const r = await rig();
+		// senpi#5085: hold the teardown's live-but-terminal listener open.
+		r.supervisor.send("hold-close");
+		await r.wait("close-armed");
 		const ensure = hostEnsure.ensureHost;
 		vi.spyOn(hostEnsure, "ensureHost").mockImplementation((options) =>
 			ensure({ ...options, _test: { spawn: r.launch } }),
@@ -199,6 +205,20 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 		const open = RpcClient.prototype.openSession;
 		let first = true;
 		let refusal: unknown;
+		let observedStopping = false;
+		const hold = hostProbe.holdProtocolInfo;
+		vi.spyOn(hostProbe, "holdProtocolInfo").mockImplementation(async (...args) => {
+			const result = await hold(...args);
+			if (refusal && result?.info.lifecycle === "stopping") {
+				observedStopping = true;
+				// Let the retry capture stopping before the listener becomes terminal.
+				r.supervisor.send("exit");
+				await r.wait("close-held");
+				expect(r.successors).toHaveLength(0);
+				r.supervisor.send("release-close");
+			}
+			return result;
+		});
 		vi.spyOn(RpcClient.prototype, "openSession").mockImplementation(async function (this: RpcClient, options) {
 			if (first) {
 				first = false;
@@ -207,7 +227,6 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 					return await open.call(this, options);
 				} catch (error) {
 					refusal = error;
-					r.supervisor.send("exit");
 					throw error;
 				}
 			}
@@ -221,7 +240,8 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 		});
 		expect(refusal).toBeInstanceOf(RpcCommandError);
 		expect(refusal).toMatchObject({ errorCode: "host_stopping" });
-		expect(outcome.exitCode).toBe(0);
+		expect(observedStopping).toBe(true);
+		expect(outcome.exitCode, JSON.stringify(outcome.payload)).toBe(0);
 		expect(outcome.payload).toMatchObject({ action: "open", reused: false });
 		expect(outcome.payload.sessionId).not.toBe("stopping-generation");
 		expect(r.successors.map(({ child }) => child.pid)).toEqual([outcome.payload.pid]);

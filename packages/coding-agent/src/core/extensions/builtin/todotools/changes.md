@@ -1,5 +1,24 @@
 # todotools Fork Tracker
 
+## 2026-10-31 - todo unwraps a list wrapped one level too deep (senpi#5148)
+
+### What changed
+
+- `normalize.ts`: new `prepareTodoArguments` unwraps `list` when it arrives as a nested array (`[[{phase, items}]]`, or one inner array per phase) or as a lone `{list: [...]}` wrapper. Anything else, and any wrapper around an empty list, is passed through unchanged and fails validation as before.
+- `tools/todo.ts`: the todo tool registers it as `prepareArguments`, so the unwrap runs before schema validation on the loop's detached copy.
+
+### Why
+
+- A weaker tool-calling model sometimes sends the phased list wrapped one level too deep; the call failed validation (`list/0 must be object`) and the model often retried the same shape.
+
+### Why an extension could not handle it
+
+- `prepareArguments` belongs to the tool definition this builtin registers; no extension hook sits between the provider stream and another tool's validation.
+
+### Expected merge conflict zones
+
+- LOW: the `registerTodoTool` definition in `tools/todo.ts` and the helper block in `normalize.ts`.
+
 ## 2026-10-15 - A one-task list reaches no handoff moment (senpi#3323)
 
 ### What changed

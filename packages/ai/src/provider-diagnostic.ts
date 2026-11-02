@@ -39,13 +39,18 @@ export interface ProviderDiagnostic {
 	/** Provider token from the closed allowlist, never raw provider text. */
 	code?: string;
 	evidence: ProviderDiagnosticEvidence;
+	/** Adapter-selected SIWC route; keeps direct-admission policy separate from API-key routes. */
+	route?: "siwc";
 	/** When a `quota` or `rate_limit` failure resets (epoch ms), when the provider named it. */
 	resetsAt?: number;
 }
 
 export { PROVIDER_DIAGNOSTIC_MAX_BYTES };
 
-function readField(value: object, key: "category" | "evidence" | "httpStatus" | "code" | "resetsAt"): unknown {
+function readField(
+	value: object,
+	key: "category" | "evidence" | "httpStatus" | "code" | "resetsAt" | "route",
+): unknown {
 	return Reflect.get(value, key);
 }
 
@@ -62,6 +67,9 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 		const httpStatus = readField(value, "httpStatus");
 		const code = readField(value, "code");
 		const resetsAt = readField(value, "resetsAt");
+		const route = readField(value, "route");
+		if (route !== undefined && route !== "siwc") return undefined;
+		const routed = route === "siwc" ? ({ route } as const) : {};
 		if (!isProviderDiagnosticCategory(category)) return undefined;
 		if (httpStatus !== undefined && !isProviderDiagnosticStatus(httpStatus)) return undefined;
 		if (resetsAt !== undefined && !isProviderDiagnosticResetsAt(resetsAt)) return undefined;
@@ -69,7 +77,7 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 		if (evidence === "structured_status") {
 			if (code !== undefined || !isProviderDiagnosticStatus(httpStatus)) return undefined;
 			if (category !== categoryForProviderStatus(httpStatus)) return undefined;
-			return buildProviderDiagnostic({ category, httpStatus, evidence, ...reset });
+			return buildProviderDiagnostic({ category, httpStatus, evidence, ...reset, ...routed });
 		}
 		if (evidence === "structured_transport") {
 			if (httpStatus !== undefined || typeof code !== "string") return undefined;
@@ -89,6 +97,7 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 			code,
 			evidence,
 			...reset,
+			...routed,
 		});
 	} catch {
 		return undefined;

@@ -8,6 +8,8 @@ import {
 } from "../config/settings.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
+import { registerEvalArgumentValidator } from "./eval-argument-validator.ts";
+import { evalLanguageInferredNote } from "./eval-language-inference.ts";
 import { executeEvalControl } from "./detached-eval-result.ts";
 import {
 	EvalIsolateInvalidError,
@@ -37,6 +39,7 @@ export type { EnabledEvalLanguages, EvalKernel, EvalKernelManager } from "./type
 type EvalExecuteArgs<Request extends EvalToolRequest> = Parameters<
 	ToolDefinition<TUnsafe<Request | Partial<EvalToolInput>>, EvalToolDetails>["execute"]
 >;
+type RunArgs = EvalExecuteArgs<EvalToolInput>;
 
 export function createEvalTool(options: CreateEvalToolOptions) {
 	const foregroundWindowSeconds = options.foregroundWindowSeconds ?? DEFAULT_FOREGROUND_WINDOW_SECONDS;
@@ -66,6 +69,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		...(options.promptKernelPreludes === undefined ? {} : { kernelPreludes: options.promptKernelPreludes }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
+	registerEvalArgumentValidator(parameters, languages);
 	const cellManager =
 		options.cellManager ??
 		new EvalDetachedCellManager({
@@ -85,6 +89,19 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 	): Promise<AgentToolResult<EvalResultDetails>> {
 		const request = parseEvalRequest(params, languages, { sandbox });
 		if (isEvalControlRequest(request)) return await executeEvalControl(cellManager, request);
+		const output = await executeRun(request, toolCallId, signal, onUpdate, ctx);
+		if (request.language_inferred === undefined) return output;
+		// The model sees that its omitted language was filled, and how, so it passes language next time (senpi#5154).
+		const note = evalLanguageInferredNote(request.language, request.language_inferred);
+		return { ...output, content: [{ type: "text", text: note }, ...output.content] };
+	}
+	async function executeRun(
+		request: EvalToolInput,
+		toolCallId: RunArgs[0],
+		signal: RunArgs[2],
+		onUpdate: RunArgs[3],
+		ctx: RunArgs[4],
+	): Promise<AgentToolResult<EvalResultDetails>> {
 		if (options.proxyExecutor) {
 			// A proxy runs cells elsewhere and knows nothing of sandbox cells: an isolated cell must never run unisolated.
 			if ("isolate" in request && request.isolate === true)

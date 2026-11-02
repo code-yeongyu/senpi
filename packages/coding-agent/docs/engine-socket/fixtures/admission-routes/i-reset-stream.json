@@ -1,0 +1,150 @@
+{
+	"before": {
+		"baseline": {
+			"type": "recovery_manifest",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-i",
+			"generation": 1,
+			"token": "socket-1:1",
+			"componentRef": "manifest"
+		},
+		"frames": [
+			{
+				"type": "agent_idle",
+				"sessionId": "rpc-1",
+				"admissionId": "golden-i",
+				"generation": 1
+			}
+		]
+	},
+	"request": {
+		"type": "reset_stream",
+		"sessionId": "rpc-1",
+		"admissionId": "golden-i",
+		"id": "peer-2"
+	},
+	"reset": {
+		"id": "peer-2",
+		"type": "response",
+		"command": "reset_stream",
+		"success": true,
+		"sessionId": "rpc-1",
+		"admissionId": "golden-i",
+		"generation": 2,
+		"data": {
+			"recovery": {
+				"token": "socket-1:2",
+				"componentRef": "manifest"
+			}
+		}
+	},
+	"after": [
+		{
+			"id": "peer-2",
+			"type": "response",
+			"command": "reset_stream",
+			"success": true,
+			"sessionId": "rpc-1",
+			"admissionId": "golden-i",
+			"generation": 2,
+			"data": {
+				"recovery": {
+					"token": "socket-1:2",
+					"componentRef": "manifest"
+				}
+			}
+		},
+		{
+			"type": "recovery_manifest",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-i",
+			"generation": 2,
+			"token": "socket-1:2",
+			"componentRef": "manifest"
+		},
+		{
+			"type": "agent_idle",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-i",
+			"generation": 2
+		}
+	],
+	"page": {
+		"id": "peer-3",
+		"type": "response",
+		"command": "get_recovery_page",
+		"success": true,
+		"sessionId": "rpc-1",
+		"admissionId": "golden-i",
+		"generation": 2,
+		"data": {
+			"requestId": "golden-i-page",
+			"token": "socket-1:2",
+			"generation": 2,
+			"componentRef": "manifest",
+			"ordinal": 1,
+			"offset": 0,
+			"cursor": null,
+			"complete": true,
+			"repair": {
+				"state": "ok",
+				"healthRevision": "0",
+				"source": {
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 14
+				},
+				"hint": "restart_from_catalog",
+				"retryAfterMs": 0
+			},
+			"length": 1002,
+			"digest": "da9d59636ee8bfe743c733edef30b3a6f92c420a3c2b77f89807124ec5f50f6e",
+			"bytes": "ewAiAGYAbwByAG0AYQB0ACIAOgAiAHMAZQBuAHAAaQAtAHIAZQBjAG8AdgBlAHIAeQAtAG0AYQBuAGkAZgBlAHMAdAAiACwAIgB2AGUAcgBzAGkAbwBuACIAOgAxACwAIgBzAG8AYwBrAGUAdABFAHAAbwBjAGgAIgA6AHsAIgBpAGQAIgA6ACIAcwBvAGMAawBlAHQALQAxACIAfQAsACIAYQBkAG0AaQBzAHMAaQBvAG4ASQBkACIAOgB7ACIAaQBkACIAOgAiAGcAbwBsAGQAZQBuAC0AaQAiAH0ALAAiAHIAbwB1AHQAZQBLAGkAbgBkACIAOgAiAG8AcgBkAGkAbgBhAHIAeQAiACwAIgBzAGUAcwBzAGkAbwBuACIAOgB7ACIAaQBkACIAOgAiAHIAcABjAC0AMQAiAH0ALAAiAHMAZQBzAHMAaQBvAG4ARQBwAG8AYwBoACIAOgB7ACIAaQBkACIAOgAiADAAMAAwADAAMAAwADAAMAAtADAAMAAwADAALQA0ADAAMAAwAC0AOAAwADAAMAAtADAAMAAwADAAMAAwADAAMAAwADAAMAAxACIAfQAsACIAZwBlAG4AZQByAGEAdABpAG8AbgAiADoAMgAsACIAcwBlAHEAdQBlAG4AYwBlACIAOgAxADQALAAiAGgAaQBzAHQAbwByAHkAVgBlAHIAcwBpAG8AbgAiADoANgAsACIAdABvAGsAZQBuACIAOgB7ACIAaQBkACIAOgAiAHMAbwBjAGsAZQB0AC0AMQA6ADIAIgB9ACwAIgBsAGUAYQBmACIAOgB7ACIAaQBkACIAOgAiADAAMAAwADAAMAAwADAAMQAiAH0ALAAiAGEAYwB0AGkAdgBlAE0AZQBzAHMAYQBnAGUAIgA6AG4AdQBsAGwALAAiAHQAdQByAG4AIgA6AG4AdQBsAGwALAAiAGMAaABlAGMAawBwAG8AaQBuAHQARABpAGcAZQBzAHQAIgA6ACIAMQBiAGIAYwBhAGQAMgA5ADMAMgAwAGYAMgAwADgANAA3AGEANQAxADUAYwBjADgANQA0ADAANgAzAGMAZABhADAAZABkAGEAZQBhADIAMABjAGQAYwBmAGYANAA1AGUAYgA2AGIANQBlADAAZQA5AGUAZQAxADUAZgBiAGQANAAiACwAIgBjAGEAdABhAGwAbwBnAFIAbwBvAHQAIgA6ACIAYwAtADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADEAIgAsACIAYwBhAHQAYQBsAG8AZwBSAG8AbwB0AEwAZQBuAGcAdABoACIAOgA0ADUAMAAyAH0A"
+		}
+	},
+	"refusals": {
+		"unheld": {
+			"request": {
+				"type": "reset_stream",
+				"sessionId": "rpc-1",
+				"admissionId": "golden-i-unheld",
+				"id": "peer-5"
+			},
+			"answer": {
+				"id": "peer-5",
+				"type": "response",
+				"command": "reset_stream",
+				"success": false,
+				"error": "unknown_admission",
+				"errorCode": "unknown_admission",
+				"errorData": {
+					"code": "unknown_admission",
+					"admissionId": "golden-i-unheld"
+				},
+				"code": "unknown_admission",
+				"admissionId": "golden-i-unheld"
+			}
+		},
+		"foreign": {
+			"request": {
+				"type": "reset_stream",
+				"sessionId": "rpc-1",
+				"admissionId": "golden-i-foreign",
+				"id": "peer-6"
+			},
+			"answer": {
+				"id": "peer-6",
+				"type": "response",
+				"command": "reset_stream",
+				"success": false,
+				"error": "unknown_admission",
+				"errorCode": "unknown_admission",
+				"errorData": {
+					"code": "unknown_admission",
+					"admissionId": "golden-i-foreign"
+				},
+				"code": "unknown_admission",
+				"admissionId": "golden-i-foreign"
+			}
+		}
+	}
+}

@@ -1,3 +1,21 @@
+## 2026-10-27 - /btw side queries split the system prompt like the turn (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`, `packages/coding-agent/src/core/extensions/builtin/btw/side-query.ts`: the side query passes `ctx.getSystemPromptStablePrefix()` as `systemPromptStablePrefix`; the side-query instruction stays behind it.
+
+### Why
+
+- The side query reuses the turn's cached prefix only when its system blocks and breakpoint match the turn's.
+
+### Why an extension could not handle it
+
+- This is the btw builtin's own request builder.
+
+### Expected merge conflict zones
+
+- LOW: `buildSideQueryContext` in `side-query.ts` and the call in `index.ts`.
+
 ## 2026-10-05 - /btw renders its answer as Markdown
 
 ### What changed

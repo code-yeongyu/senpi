@@ -171,3 +171,46 @@ describe("bashTimeoutExtension factory wiring", () => {
 		}
 	});
 });
+
+describe("bashTimeoutExtension renders the policy for the tools the session holds (#5140)", () => {
+	function apiWithTools(names: readonly string[]): ApiMock {
+		const mock = makeApiMock();
+		return {
+			handlers: mock.handlers,
+			api: Object.assign(mock.api, { getAllTools: () => names.map((name) => ({ name })) }),
+		};
+	}
+
+	async function render(names: readonly string[]): Promise<string> {
+		const { api, handlers } = apiWithTools(names);
+		bashTimeoutExtension(api as never);
+		const result = (await handlers.before_agent_start[0]({ systemPrompt: "BASE" })) as
+			| { systemPrompt: string }
+			| undefined;
+		return result?.systemPrompt ?? "BASE";
+	}
+
+	it("names the tool.bash call shape from an eval cell when the session routes through eval", async () => {
+		const prompt = await render(["eval", "bash", "read"]);
+
+		expect(prompt).toContain("Bash Tool Timeout Policy");
+		expect(prompt).toContain("tool.bash({ command, timeout })");
+		expect(prompt).not.toContain("The `bash` tool's");
+		expect(prompt).not.toMatch(/(^|[^.\w])bash\(\{/);
+	});
+
+	it("keeps the direct bash wording when no eval tool is registered", async () => {
+		const prompt = await render(["bash", "read"]);
+
+		expect(prompt).toContain("The `bash` tool's `timeout` parameter is the process kill deadline");
+		expect(prompt).not.toContain("tool.bash(");
+	});
+
+	it("omits the policy when the session has no bash tool to time out", async () => {
+		for (const names of [["read"], ["eval", "read"]]) {
+			const prompt = await render(names);
+
+			expect(prompt, names.join(",")).toBe("BASE");
+		}
+	});
+});

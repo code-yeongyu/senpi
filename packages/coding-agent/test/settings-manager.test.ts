@@ -508,6 +508,28 @@ describe("SettingsManager", () => {
 			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(300_000);
 		});
 
+		it("should default the keep-alive-only cap to 15 minutes", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamKeepAliveTimeoutMs()).toBe(900_000);
+		});
+
+		it.each([
+			[120_000, 120_000],
+			[0, undefined],
+		])("should read retry.provider.keepAliveTimeoutMs %s as a cap of %s", (configured, expected) => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ retry: { provider: { keepAliveTimeoutMs: configured } } }),
+			);
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamKeepAliveTimeoutMs()).toBe(expected);
+		});
+
 		it("should prefer retry.provider.streamStartTimeoutMs for the agent stream start timeout", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { provider: { streamStartTimeoutMs: 30_000 } } }));

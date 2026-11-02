@@ -3,6 +3,25 @@
 Injects the default `timeout` into every `bash` call and appends the "Bash Tool Timeout Policy"
 section to the system prompt.
 
+## 2026-10-31 - The timeout policy names the reachable bash call shape (senpi#5140)
+
+### What changed
+
+- `timeout.ts`: `BashTimeoutPromptOptions` gets back the `evalOnly` field its doc comment still described; under `evalOnly` the policy says shell commands run from an eval cell as `tool.bash({ command, timeout })` instead of naming a direct `bash` tool. Without it the text is byte-identical to before.
+- `index.ts`: `before_agent_start` passes `evalOnly: isEvalOnlyRouting(pi)` and appends nothing when the session registers no `bash` tool. A host without `getAllTools` keeps today's policy. The unused `BashTimeoutPromptOptions` type re-export is dropped.
+
+### Why
+
+- Eval-only routing withholds `bash` from the model's direct tool list, so the policy described a call the model cannot make, and a weaker tool-calling model emitted it anyway. The terminal section already renders `tool.bash(` under eval-only routing; this section lost that branch in 36b60e110.
+
+### Why an extension could not handle it
+
+- The policy text is rendered by this builtin extension itself; another extension cannot rewrite its prompt contribution.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` handler in `bash-timeout/index.ts` and `buildBashTimeoutPrompt` in `timeout.ts`.
+
 ## 2026-09-24 - Pin pi-bash-timeout 0.1.2, no port needed (senpi#2079)
 
 pi-bash-timeout 0.1.2 is a toolchain refresh with no `src/` change since 0.1.1; senpi's copy keeps its own defaults and prompt (entries below). Only `external-versions.json` changes.

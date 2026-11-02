@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../src/core/extensions/builtin/anthropic-subscription/index.ts";
+import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
+import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
+import { createHarness } from "./harness.ts";
+import { cliSlot } from "../support/claude-cli-test-slots.ts";
 import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
 describe("RPC auth and connection handler contracts", () => {
@@ -135,6 +139,73 @@ describe("RPC auth and connection handler contracts", () => {
 		await handler.dispose();
 	});
 
+	// senpi#4328 (omo-desktop-app#4711): a provider defined outside the app cannot be deleted in it,
+	// so each row says where it is defined.
+	it("tells where each listed provider is defined", async () => {
+		const customProvider = () => ({
+			baseUrl: "http://127.0.0.1:9/v1",
+			api: "openai-completions",
+			apiKey: "not-needed",
+			models: [
+				{
+					id: "custom-model",
+					name: "custom-model",
+					reasoning: false,
+					input: ["text" as const],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 32000,
+					maxTokens: 4000,
+				},
+			],
+		});
+		const harness = await createHarness({
+			modelsJson: { providers: { "file-box": customProvider() } },
+			extensionFactories: [
+				{
+					path: "/extensions/proxy-provider.ts",
+					factory: (pi) => pi.registerProvider("proxy-box", customProvider()),
+				},
+				...["anthropic-subscription", "cursor-cli-oauth", "vertex-model-garden"].map((id) => ({
+					path: `<builtin:${id}>`,
+					factory: (pi: ExtensionAPI) => pi.registerProvider(id, customProvider()),
+				})),
+				(pi) => pi.registerProvider("inline-box", customProvider()),
+				{
+					path: "<unknown>",
+					factory: (pi) => pi.registerProvider("unknown-box", customProvider()),
+				},
+			],
+		});
+		cleanup = harness.cleanup;
+		const collected = makeSink();
+		const handler = createRpcConnectionHandler(
+			{
+				session: harness.session,
+				setRebindSession: vi.fn(),
+				dispose: vi.fn(async () => {}),
+			} as unknown as AgentSessionRuntime,
+			collected.sink,
+		);
+
+		await handler.handleInputLine(JSON.stringify({ id: "origins", type: "get_auth_providers" }));
+		const response = await collected.waitFor((message) => message.id === "origins");
+		const rows = (response.data as { providers: Array<{ id: string; authType: string; origin?: unknown }> })
+			.providers;
+		const originOf = (id: string) => rows.find((row) => row.id === id && row.authType === "api_key")?.origin;
+		expect(originOf("anthropic")).toEqual({ kind: "builtin" });
+		expect(originOf("file-box")).toEqual({
+			kind: "models_json",
+			modelsJsonPath: join(harness.tempDir, "models.json"),
+		});
+		expect(originOf("proxy-box")).toEqual({ kind: "extension", extensionPath: "/extensions/proxy-provider.ts" });
+		for (const id of ["anthropic-subscription", "cursor-cli-oauth", "vertex-model-garden"]) {
+			expect(originOf(id)).toEqual({ kind: "builtin" });
+		}
+		expect(originOf("inline-box")).toEqual({ kind: "extension" });
+		expect(originOf("unknown-box")).toEqual({ kind: "extension" });
+		await handler.dispose();
+	});
+
 	// #2384 (omo-desktop-app#1315, DESKTOP-30): the OAuth and API-key rows of one provider shared one
 	// per-provider status, so a stored Claude login also read as a connected API key.
 	it("gives each auth method row of a provider its own status", async () => {
@@ -198,18 +269,11 @@ describe("RPC auth and connection handler contracts", () => {
 					access: "claude-sdk-oauth-managed",
 					refresh: "claude-sdk-oauth-managed",
 					expires: 4_102_444_800_000,
-					accounts: [
-						{
-							name: "default",
-							source: "login",
-							access: "sk-ant-scripted-access",
-							refresh: "scripted-refresh",
-							expires: 4_102_444_800_000,
-							// senpi#1495 review finding 7: the wire projection must carry
-							// displayName for named accounts, with `)`/`:` in the label.
-							displayName: "Work: main (client)",
-						},
-					],
+					// A Claude sign-in stores a Claude CLI account (senpi#4436); a token slot would only be listed
+					// after the load-time sign-out rewrote it, which a busy store skips.
+					// senpi#1495 review finding 7: the wire projection must carry
+					// displayName for named accounts, with `)`/`:` in the label.
+					accounts: [cliSlot("default", { displayName: "Work: main (client)" })],
 				};
 			},
 			async refresh(credentials) {

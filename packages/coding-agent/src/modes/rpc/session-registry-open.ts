@@ -7,6 +7,9 @@ import { EffectLedger } from "./effect-ledger.ts";
 import { assertRequestedModelResolved } from "./open-session-model.ts";
 
 import { canonicalSessionPath } from "./session-path-key.ts";
+import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import { structuredLaneEnabled } from "./structured-session-records.ts";
+import { setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import {
 	type PendingClaims,
@@ -167,6 +170,14 @@ export async function openRegistrySession(
 		EffectLedger.sealOnReplace(entry.runtime);
 		entry.durableSessionId = manager.getSessionId();
 		entry.sessionPath ??= manager.getSessionFile();
+		// The accepted baseline precedes the open, so router admission and its reply come after it (R3.C1.1).
+		// Gated like a worker incarnation's lane: with the flag off no session owns one (RULING-112).
+		if (host.options.workerIsolate !== true && structuredLaneEnabled()) {
+			entry.acceptance = new SessionAcceptanceLane(undefined, undefined, host.options.agentDir);
+			await entry.acceptance.generations.bind(entry.durableSessionId);
+			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });
+			setSessionRecoveryEpoch(entry.runtime.session, entry.acceptance.recoveryEpoch);
+		}
 		entry.state = "open";
 		settleOpen.resolve();
 		return { sessionId: handle, durableSessionId: entry.durableSessionId, sessionPath: entry.sessionPath };

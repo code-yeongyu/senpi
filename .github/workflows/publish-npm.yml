@@ -120,6 +120,14 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
+      # senpi#5406: 2026.11.02-1 shipped while its own update checker could not parse it. In publish-only this checks
+      # the tag's tree; a release run's auto-computed version is checked inside scripts/release.mjs.
+      - name: Refuse a version the shipped update checker cannot order
+        if: inputs.version != ''
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: node scripts/release-version-guard.mjs "$EXPECTED_VERSION"
+
       - name: Download native prebuilds
         if: inputs.publish-only == true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

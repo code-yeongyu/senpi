@@ -125,6 +125,8 @@ it("keeps a run's late todo cap off the run the core drained before that end was
 
 	// And no record of B carries a stop while B runs, and A never gets one from its late end.
 	const runIds = [...new Set(lifecycleRecords(h).map((record) => record.runId))];
+	// senpi#4925: queued agent_start delivery must retain its own run, not sample the later current run.
+	expect(h.events.filter((event) => event.type === "agent_start").map((event) => event.runId)).toEqual(runIds);
 	const [runA, runB] = runIds.slice(-2);
 	expect(runIds).toHaveLength(4);
 	const runningB = lifecycleRecords(h)

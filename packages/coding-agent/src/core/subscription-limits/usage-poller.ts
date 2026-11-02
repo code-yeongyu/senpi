@@ -9,7 +9,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { AuthStorage } from "../auth-storage.ts";
-import { authLaneRefresher } from "../extensions/builtin/anthropic-subscription/auth-lane.ts";
 import { type SubscriptionLimitStore, subscriptionLimits } from "./limit-store.ts";
 import { listPollAccounts, type PollAccount, SIGN_IN_NEEDED } from "./usage-accounts.ts";
 import {
@@ -165,7 +164,6 @@ export function startSubscriptionUsagePolling(options: {
 			listPollAccounts({
 				store: storage,
 				env: (name) => process.env[name],
-				refresher: authLaneRefresher(),
 				now: Date.now,
 			}),
 		fetch: fetchUsageJson,

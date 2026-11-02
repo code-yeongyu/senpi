@@ -4,10 +4,12 @@ import { attempt, createLoopGuardHarness, isRecord } from "./loop-guard-test-har
 
 describe("loop-guard hard escalation", () => {
 	it("runs before hooks and permission policy so its block wins first", () => {
-		// moved-path-guard (senpi#2898) sits between them: it only refuses paths the OmO desktop moved, never a loop.
-		expect(builtinExtensions.slice(0, 4).map(({ id }) => id)).toEqual([
+		// moved-path-guard (senpi#2898) and kill-guard (senpi#5349) sit between them: they only refuse paths the OmO
+		// desktop moved and broad or protected signals, never a loop.
+		expect(builtinExtensions.slice(0, 5).map(({ id }) => id)).toEqual([
 			"loop-guard",
 			"moved-path-guard",
+			"kill-guard",
 			"hooks",
 			"permission-system",
 		]);

@@ -52,6 +52,39 @@ function list(value: unknown): TodoOpEntry["list"] | undefined {
 	return parsed;
 }
 
+/**
+ * A weaker tool-calling model sometimes wraps the phased list one level too deep: as a nested
+ * array (`[[{phase, items}]]`, or one inner array per phase) or as an object wrapper
+ * (`{list: [...]}`). Both carry the canonical list unambiguously, so unwrap them before schema
+ * validation. Anything that is not a pure wrapper, or that unwraps to an empty list (which would turn a
+ * malformed call into a list clear), is returned as-is and fails validation as before.
+ */
+function unwrapTodoList(value: unknown): unknown {
+	let current = value;
+	for (let depth = 0; depth < 3; depth++) {
+		if (Array.isArray(current) && current.length > 0 && current.every((entry) => Array.isArray(entry))) {
+			current = current.flat();
+		} else if (
+			isRecord(current) &&
+			!Array.isArray(current) &&
+			Object.keys(current).length === 1 &&
+			"list" in current
+		) {
+			current = current.list;
+		} else {
+			break;
+		}
+	}
+	return Array.isArray(current) && current.length > 0 ? current : value;
+}
+
+/** The todo tool's `prepareArguments`: returns the arguments with `list` unwrapped to its canonical shape. */
+export function prepareTodoArguments(args: unknown): unknown {
+	if (!isRecord(args) || Array.isArray(args) || !("list" in args)) return args;
+	const unwrapped = unwrapTodoList(args.list);
+	return unwrapped === args.list ? args : { ...args, list: unwrapped };
+}
+
 function nonBlank(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }

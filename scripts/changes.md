@@ -1,3 +1,114 @@
+## 2026-10-29 - Static check that every bundle and binary entry has a source file (senpi#4892)
+
+### What changed
+
+- `scripts/bundle-entry-points.mjs` (new): owns the bundle's required-inputs list (`bundleRequiredInputs`) and `lazyEntryPoints`, both moved unchanged out of `scripts/build-coding-agent-bundle.mjs`.
+- `scripts/build-coding-agent-bundle.mjs`: `buildBundle()` reads its required inputs from `bundleRequiredInputs()` and its lazy entries from `lazyEntryPoints()` in the new module. Build output is unchanged.
+- `scripts/bundle-entry-paths.test.mjs` (new): maps every required input, lazy entry, `packages/*/dist/*.js` output lookup in the bundle script, and every `bun build --compile` entrypoint in `scripts/build-binaries.sh` and the `build:binary` script back to its source file, and names each one that has none.
+
+### Why
+
+- A PR that deleted or renamed a listed module passed its focused tests and review, and only the full build failed (`Bundle input is missing: ...`). The static check fails at the PR's own script tests in milliseconds.
+
+### Why an extension could not handle it
+
+- The bundle and binary builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs loop in `buildBundle()`; new lazy entries now go in `scripts/bundle-entry-points.mjs`.
+
+## 2026-10-29 - Ratchet client response dispatch after removing its unchecked assertion (S15a-2, part of #4272)
+
+### What changed
+
+- `scripts/lint-ratchet.baseline.json`: Lower rpc-client.ts's non-null-assertion count from 2 to 1 after extracting checked response dispatch.
+
+### Why
+
+- `scripts/lint-ratchet.baseline.json`: The removed pending-request assertion must not be reintroduced.
+
+### Why an extension could not handle it
+
+- `scripts/lint-ratchet.baseline.json`: This is the repository's static lint budget.
+
+### Expected merge conflict zones
+
+- `scripts/lint-ratchet.baseline.json`: Preserve the lower rpc-client.ts assertion count when merging client changes.
+
+## 2026-10-30 - The coding-agent bundle no longer requires the removed Anthropic OAuth flow (senpi#4436, S7)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `packages/ai/dist/auth/oauth/anthropic.js` is gone from the required bundle inputs and from `lazyEntryPoints`.
+
+### Why
+
+- senpi#4436 (R7) deleted `packages/ai/src/auth/oauth/anthropic.ts`, so `npm run build` failed with `Bundle input is missing: packages/ai/dist/auth/oauth/anthropic.js` and emitted no `dist/bundle`. `load.ts` no longer lazily imports `./anthropic.ts`, so the load.ts cross-check needs no lazy entry for it.
+
+### Why an extension could not handle it
+
+- The release bundle's input list is build tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs list in `buildBundle` and the `lazyEntryPoints` map; an upstream re-add of an `anthropic` lazy entry lands on deleted source and must stay removed.
+
+## 2026-10-28 - Ship the path identity worker in the bundle, the binaries and the source archive (senpi#4391)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` emits `path-identity-worker` as a lazy entry beside the permission host's chunk, checks that the two share a directory (as it does for the image-resize worker), and lists the built worker in its input check.
+- `scripts/build-binaries.sh` (both platform branches) and `scripts/create-source-archive.sh` pass `src/core/extensions/builtin/permission-system/path-identity-worker.ts` as an explicit compile entry, mirroring `image-resize-worker`.
+
+### Why
+
+- The permission system resolves path identity in a worker started from a file beside its host module; without these entries the npm bundle and the compiled binaries would not contain the worker.
+
+### Why an extension could not handle it
+
+- The bundle, binary and source-archive builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyEntryPoints` list and the compile entry lists next to `image-resize-worker`.
+
+## 2026-10-27 - Account for the capture responsibility split (part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` accounts for the two browser-safe capture leaves: `./models` reaches 33 files and `./utils/event-stream` reaches 8.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs` measures module count; the mandatory 250-code-line split moves existing capture construction to one leaf and shares the frontier contract in another. No new external dependency, barrel reachability, wildcard budget increase, or forbid-rule change.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs` is repository validation tooling.
+
+### Expected merge conflict zones
+
+- The two named budgets in `scripts/check-entry-graphs.mjs`.
+
+## 2026-10-26 - pi-ai models entry budget covers the provider-error boundary (senpi#4282)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 31 files: `utils/provider-error.ts`, which `event-stream.ts` now imports to redact every provider error at the stream boundary, and the token-wise redactor it runs, split by responsibility into `utils/secret-redaction.ts`, `utils/secret-classifier.ts` and `utils/secret-lexer.ts`, alongside main's `utils/assistant-capture.ts`. A wildcard budget may name one expanded export in `overrides`: `./utils/event-stream` reaches 6 files and `./utils/provider-error` 4, while every other `./utils/*` entry stays at 3.
+
+### Why
+
+- The lightweight models entry runs provider streams, so it carries the redaction those streams apply.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` and `./utils/*` budget blocks, and the two lines that read a budget's `maxFiles`.
+
 ## 2026-10-25 - The ./models entry budget admits the capture leaf (senpi#4277, part of #4272)
 
 ### What changed

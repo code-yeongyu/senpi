@@ -26,7 +26,9 @@ export function createBashResizeTool(ctx: TerminalToolContext) {
 		label: "bash_resize",
 		description:
 			"Resize a live background bash session's PTY (cols x rows) so full-screen TUIs reflow. No-ops with a note under the pipe fallback.",
-		promptSnippet: "Resize a background bash session's PTY so TUIs reflow",
+		exposure: "search" as const,
+		allowLazyActivation: true,
+		searchKeywords: ["resize", "pty size", "cols", "rows", "terminal size"],
 		parameters: bashResizeSchema,
 		async execute(_toolCallId: string, input: BashResizeInput, _signal?: AbortSignal): Promise<TerminalToolResult> {
 			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);

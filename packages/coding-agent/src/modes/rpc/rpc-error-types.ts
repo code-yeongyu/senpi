@@ -39,6 +39,9 @@ export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
 
+/** `open_session.env` is malformed or names a variable that is not caller-passable on this host (senpi#4381). */
+export const RPC_ERROR_INVALID_SESSION_ENV = "invalid_session_env";
+
 /** `subscribe_sessions` named a malformed selector, mirror or flag; `errorData { reason, action }` says what to send. */
 export const RPC_ERROR_INVALID_SUBSCRIPTION = "invalid_subscription";
 
@@ -96,6 +99,12 @@ export const RPC_ERROR_TRANSCRIPT_UNREADABLE = "transcript_unreadable";
 
 /** `set_model { effectId }` was refused because the model's provider cannot serve it now. */
 export const RPC_ERROR_PROVIDER_UNAVAILABLE = "provider_unavailable";
+
+// `prompt` refusals before a turn starts (mirror ModelNotReadyError.code); the two provider codes carry
+// `errorData { provider }`.
+export const RPC_ERROR_PROVIDER_CREDENTIALS_MISSING = "provider_credentials_missing";
+export const RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED = "provider_credentials_expired";
+export const RPC_ERROR_NO_MODEL_SELECTED = "no_model_selected";
 
 /** `set_model { effectId }` was refused because the target cannot hold the session context. */
 export const RPC_ERROR_CONTEXT_BUDGET = "context_budget";
@@ -184,6 +193,9 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_EFFECT_ID_CONFLICT
 	| typeof RPC_ERROR_TRANSCRIPT_UNREADABLE
 	| typeof RPC_ERROR_PROVIDER_UNAVAILABLE
+	| typeof RPC_ERROR_PROVIDER_CREDENTIALS_MISSING
+	| typeof RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED
+	| typeof RPC_ERROR_NO_MODEL_SELECTED
 	| typeof RPC_ERROR_CONTEXT_BUDGET
 	| typeof RPC_ERROR_EVAL_CELL_NOT_FOUND
 	| typeof RPC_ERROR_INVALID_EVAL_CELL_REQUEST

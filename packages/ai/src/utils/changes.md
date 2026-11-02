@@ -1,3 +1,242 @@
+## 2026-10-30 - Share exact SIWC recovery decisions (part of #5003)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` owns the shared exact-code recovery table and direct-admission status policy; `packages/ai/src/utils/siwc-errors.ts` re-exports them.
+- `packages/ai/src/utils/empty-response-errors.ts` re-exports the forwarded-empty terminal texts from their classifier in `packages/ai/src/utils/retry.ts`.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` recognizes the SIWC code/status pairs.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts` marks diagnostics from the SIWC adapter.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` use structured SIWC recovery before retry headers or prose.
+
+### Why
+
+- `packages/ai/src/utils/siwc-errors.ts` keeps HTTP, assistant, and pool recovery on one classification path.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` keeps recovery in the existing transport leaf; `packages/ai/src/utils/empty-response-errors.ts` preserves the shared texts without adding files to retry's graph.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` must preserve exact provider codes rather than guessing from prose.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts` distinguishes code-less SIWC admission failures from generic provider statuses.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` must not replay usage limits, eligibility restrictions, or invalid requests.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/siwc-errors.ts`, `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`, and `packages/ai/src/utils/provider-diagnostic-sources.ts` are shared transport and classification contracts.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` and `packages/ai/src/utils/empty-response-errors.ts` define the shared runtime leaves that determine entry-point import costs.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` decide retries before extension recovery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/siwc-errors.ts`: new file.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts`: shared SIWC recovery mapping.
+- `packages/ai/src/utils/empty-response-errors.ts`: forwarded-empty exports.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: code/status mappings.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: diagnostic adapters.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts`: retry classification.
+
+## 2026-10-31 - Token endpoint errors carry their OAuth code and refusal decision (senpi#5010)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-refresh-error.ts`: `OAuthTokenEndpointError` takes an optional third argument and exposes `oauthError` (the body's OAuth `error` code) and `credentialRefused` (default `false`).
+
+### Why
+
+- The credential pool must tell a refused credential from a client fault or an unreadable page without reading adapter prose; an adapter that already decided the refusal had no way to say so.
+
+### Why an extension could not handle it
+
+- The error type is constructed inside the bundled OAuth adapters; an extension cannot attach facts to an error it does not throw.
+
+### Expected merge conflict zones
+
+- LOW: the `OAuthTokenEndpointError` class in `oauth-refresh-error.ts`.
+
+## 2026-10-31 - Merged root unions keep branch-only required fields as a hint (senpi#5138)
+
+### What changed
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: `mergeRootObjectUnion` appends one `REQUIRED for <branch>: <fields>.` sentence per anyOf/oneOf branch to the merged root's `description`, listing that branch's required names that the merged `required` (branch-common names only) dropped. A branch is named by its first literal-valued property (`action=run`, `action=peek|stop`), else `option <n>`. allOf merges are unchanged, since they already require every branch's names.
+
+### Why
+
+- senpi#5138: object-only OpenAI-compatible routes saw the eval tool with no required fields at all, so a weaker tool-calling model had no wire signal that a run needs `language`, `code` and `summary`.
+
+### Why an extension could not handle it
+
+- The root-union merge is the shared provider wire adaptation every OpenAI-compatible, Moonshot and Bedrock request goes through.
+
+### Expected merge conflict zones
+
+- LOW: the return block of `mergeRootObjectUnion` and the two helpers added after it.
+
+## 2026-10-31 - Tool argument validation reports only the addressed branch of a discriminated union (senpi#5141)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: when a tool's parameters are an `anyOf`/`oneOf` of object branches that all carry a const-valued property with disjoint values (a discriminator such as `action`), a failed validation picks the branch by that property (the argument's value; when omitted, the property's `default` or the single branch where it is optional) and reports that branch's errors plus root property errors as one line, e.g. `for action "run" (default when action is omitted): language: must have required properties language`. An unknown discriminator value yields one line naming the allowed values and the received one. Unions without such a property keep the full error list; validators registered through `registerToolArgumentValidator` still run first.
+
+### Why
+
+- The validator listed every branch's mismatch (`action: must be equal to constant`, `cell_id: must have required properties cell_id`, `root: must match a schema in anyOf`) next to the one line that mattered, so a model could not tell which field to fix and repeated the failing call.
+
+### Why an extension could not handle it
+
+- Argument validation runs inside `pi-ai` before any tool or extension code sees the call.
+
+### Expected merge conflict zones
+
+- LOW: the `JsonSchemaObject` interface, the new helpers above `validateToolCall`, and the `errors` expression at the end of `validateToolArguments` in `validation.ts`.
+
+## 2026-10-31 - The Claude Code version fingerprint resolver is removed (senpi#5131)
+
+### What changed
+
+- `packages/ai/src/utils/claude-code-version.ts`, `packages/ai/src/utils/claude-code-version-cache.ts`: deleted (`getClaudeCodeVersion`, `recoverClaudeCodeVersion`, `createClaudeCodeVersionResolver`, `fetchLatestClaudeCodeVersion`, `installClaudeCodeVersionStore`, `installClaudeCodeVersionFileStore`, `PI_CLAUDE_CODE_VERSION`, the six-hour release lookup and the `<agent dir>/claude-code-version.json` cache).
+
+### Why
+
+- senpi#5131: the resolver existed only to keep the `claude-cli/<version>` fingerprint of the removed impersonation path current.
+
+### Why an extension could not handle it
+
+- These were pi-ai's own utility modules and its `./utils/*` public subpath.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; an upstream change that lands on them stays deleted.
+
+## 2026-10-30 - extractChatGptSubscriptionIdentity (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/utils/chatgpt-subscription-auth.ts`: `extractChatGptSubscriptionIdentity(token)` returns the per-member `chatgpt_account_user_id`, or `chatgpt_user_id`/`user_id` scoped to `chatgpt_account_id`; `chatgpt_account_id` alone is never an identity (Team members share it). `extractChatGptSubscriptionAccountId` shares the same claim reader. The claim reading follows senpi#2048.
+
+### Why
+
+- oh-my-openagent#9633: tell one saved ChatGPT account from another, including slots stored by older builds.
+
+### Why an extension could not handle it
+
+- Shared, browser-safe token helper used by the provider definition.
+
+### Expected merge conflict zones
+
+- LOW: the body of `extractChatGptSubscriptionAccountId`.
+
+## 2026-10-30 - The retry-hint extractor reads a zoned wall-clock reset (senpi#1771)
+
+### What changed
+
+- `packages/ai/src/utils/retry-hint.ts`: exports `clockResetMs(text, nowMs)`, the wall-clock reset reader moved from the credential pool ("resets 12am (Asia/Seoul)", "resets Oct 2, 9am", "try again at 12:00 AM"; a time with no zone reads in the host's zone). Body prose tries it last, after the markers, relative prose and ISO timestamps; the 429 / rate-limit eligibility gate is unchanged.
+
+### Why
+
+- Claude Code writes its reset as a zoned wall clock, so `extract429RetryAfterMs` returned no hint and every caller treated the limit as having no reset.
+
+### Why an extension could not handle it
+
+- The extractor is shared by provider retry, the session retry delay and the failure profiles inside `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the end of `fromBodyProse` and the new wall-clock section at the end of `retry-hint.ts`.
+
+## 2026-10-27 - The leading system message records the stable prefix length (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/utils/transcript.ts`: `createInitialSystemMessage` takes the stable prefix and sets `stablePrefix` when the prompt starts with it; `normalizeContext` passes `Context.systemPromptStablePrefix`; `getCurrentSystemMessage` keeps the leading message's `stablePrefix`.
+
+### Why
+
+- The provider adapters read the boundary from the leading system message; the rendered text is unchanged.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/transcript.ts` builds the transcript every provider consumes.
+
+### Expected merge conflict zones
+
+- LOW: `createInitialSystemMessage`, `normalizeContext` and `getCurrentSystemMessage` in `packages/ai/src/utils/transcript.ts`.
+
+## 2026-10-30 - Keep-alive timeout is a provider stream stall (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `PROVIDER_STREAM_STALL_ERROR_PATTERN` and `PROVIDER_STALL_PHASES` recognize `Provider stream sent only keep-alives and timed out after <n>ms (...)`; users read "kept the connection alive but sent no response", with `retry.provider.keepAliveTimeoutMs` as the setting to raise.
+
+### Why
+
+- The new bound must take the same same-model retry and fallback path as the other stream bounds, and explain itself in plain words.
+
+### Why an extension could not handle it
+
+- The stall classifier is the shared retry gate.
+
+### Expected merge conflict zones
+
+- LOW: the stall pattern alternation and the phase table.
+
+## 2026-10-27 - Explicit producer-time seed frontier (part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts` carries `nextOffset` on block starts; frozen-value construction moves to `packages/ai/src/utils/assistant-capture-record.ts`.
+- `packages/ai/src/utils/assistant-seed-frontier.ts` accepts only zero or full UTF-16 seed length and supplies typed missing/invalid frontier errors.
+
+### Why
+
+- Identical nonempty seeds previously hid whether subsequent deltas replayed from zero or continued at the seed length.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/assistant-capture.ts`, `packages/ai/src/utils/assistant-capture-record.ts`, and `packages/ai/src/utils/assistant-seed-frontier.ts` own producer-time capture and its internal consumer contract, before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/assistant-capture.ts`, `packages/ai/src/utils/assistant-capture-record.ts`, and `packages/ai/src/utils/assistant-seed-frontier.ts`.
+
+## 2026-10-26 - Provider error bodies are classified raw and kept redacted at the stream boundary (senpi#4282)
+
+### What changed
+
+- `provider-error.ts` (new): `isModelConfigError` (every quantifier bounded) and `sanitizeProviderErrorMessage`, which classifies the raw `errorMessage` of an error message (`stopReason: "error"`) first, sets `errorCause: { type: "model_config", model }` when it names a model the route does not serve, then keeps only the redacted text of every provider error.
+- `secret-redaction.ts` (new): `redactSecrets` and `redactCredentialShapes`, the one-pass state machine. One left-to-right pass reads the text as alternating tokens and delimiters; each token is classified from its own characters and the delimiters beside it, with index arithmetic only and no regular expression. The whole value of a strict name (password, secret, authorization, bearer) is read forward to its closing quote (at the opening quote's escaping depth) or, when bare, to whitespace, `,`, `;`, `&`, a quote or `<`, and the scan resumes after it.
+- `secret-lexer.ts` (new): character classes, percent escapes and HTML entities read as what they encode, the token and delimiter units, and the forward scans that find where a quoted or bare value ends. The shared logical-unit reader collapses canonical percent layers in one forward walk, then repeatedly percent-decodes a 64-character window to a fixpoint, retaining source offsets. Independently encoded percent signs and hex digits, mixed depths and either hex case use the same semantics; an unresolved window returns a typed refusal and the scanner redacts the remaining suffix conservatively. Work is linear: canonical prefixes are consumed once and every remaining window has constant work and storage. Both exported redactors use the same scanner and shape classifier; shapes mode deliberately interprets neither credential names nor URL passwords. JWT segment dots and URL authority slashes use logical units too. Scaling tests count scanner character reads through both exports instead of load-sensitive wall time.
+- `secret-classifier.ts` (new): credential words (a name is normalized: lowercase, camelCase split, trailing digits and `value`/`val`/`id` qualifiers stripped), known key prefixes and JWTs. A prefix or JWT is recognized wherever a word starts inside a token (after `/`, `+`, `~`, `-`, `.`, `%`, including percent-encoded token punctuation), never inside a word; each prefix check is bounded work, and a failed JWT candidate skips to its first `.`, so every segment is walked at most three times.
+- `event-stream.ts`: `AssistantMessageEventStream.push` and `end` run `sanitizeProviderErrorMessage` on every partial, error and final message, so no consumer of any provider stream sees a raw provider error body.
+- `retry.ts`: `isRetryableAssistantError` returns false for a `model_config` cause.
+- `secret-lexer.ts`: a percent-window refusal requires an unresolved percent/hex run contiguous to the window edge; a space or non-hex literal ends that dependency, so printf and SQL percent text stays readable. Windows without a percent followed by a hex digit skip fixpoint-buffer allocation and decoding passes.
+- `secret-classifier.ts` and `secret-redaction.ts`: a single known key's redacted span ends at its credential alphabet boundary, preserving a following path separator or filename suffix. If another credential starts anywhere after the first start, even inside its alphabet or behind a word character, the whole remaining token is conservatively redacted. Hook diagnostics retain the source filename around a single PAT. The suffix matrix covers every prefix alias and JWT, slash, dot, colon, query/form separators, underscore, hyphen, end of string, a word character and three joined credential families in EN/KO prose, paths, URLs and userinfo through both public redactors.
+
+### Why
+
+- A redaction applied at `message_end` left the raw body in `message_start`/`message_update` events published before it; every provider builds its error through this stream, so it is the one place where the body enters our objects.
+- Regex redaction was quadratic on shaped input twice in review (a keyword repeated over one name run, then the JWT rule on `eyJ-` runs: 1 MB took about 52 s), synchronously inside `push`; it also mangled names that only contain a credential word, missed numbered or qualified names, and missed cookie pairs after a short first value. A token-wise pass is linear by construction.
+
+### Why an extension could not handle it
+
+- The provider stream class and the retry classifier are core pi-ai code that every provider and the agent loop share.
+
+### Expected merge conflict zones
+
+- LOW: the `AssistantMessageEventStream` class body in `event-stream.ts`; the top of `isRetryableAssistantError`.
+
+## 2026-10-26 - Relay hints and consistent replaced terminals (senpi#4307, part of #4272)
+
+### What changed
+
+- `assistant-capture.ts` (fork-only): `CaptureHint.carried` makes a push relay a source capture's block facts, with
+  usage and metadata from the relaying stream; `null` records nothing. A start whose block is not appended yet records
+  nothing. `carryAssistantCapture` with a replaced terminal takes the new terminal's usage and message and adds every
+  scalar that differs from the source terminal to its metadata. `AssistantCapture.rewrittenFrom` (set through
+  `CaptureHint.rewrittenFrom` on a terminal and kept when the terminal is re-carried) names the first index from which
+  earlier block records no longer name the terminal's blocks (block index/identity only). The terminal message always
+  wins for content: readers replace each block's content from the terminal (or the block's end event), never
+  append-only from live records.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
 ## 2026-10-26 - Capture vocabulary for replaced signatures, redaction and late names (senpi#4285, part of #4272)
 
 ### What changed

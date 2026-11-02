@@ -33,26 +33,30 @@ describe.skipIf(process.platform !== "win32")("senpi host on named pipes", () =>
 	it("reuses the daemon a first ensure started on the pipe", async () => {
 		const qa = await hostCliSandbox("pipe");
 		completed.push(qa);
-		const first = onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+		const firstResult = await runHostCli(qa, ["ensure", "--json"]);
+		expect(firstResult.exitCode, `${firstResult.stdout}${firstResult.stderr}`).toBe(0);
+		const first = onlyJsonLine(firstResult);
 		expect(first).toMatchObject({ action: "start", reused: false });
 		expect([...qa.ownedPids]).toContain(first.pid);
 
 		const second = await runHostCli(qa, ["ensure", "--json"]);
 
-		expect(second.exitCode).toBe(0);
+		expect(second.exitCode, `${second.stdout}${second.stderr}`).toBe(0);
 		expect(onlyJsonLine(second)).toMatchObject({ action: "reuse", reused: true, instanceId: first.instanceId });
 	}, 180_000);
 
 	it("refuses a generation handoff, because a pipe can be neither renamed nor drained", async () => {
 		const qa = await hostCliSandbox("handoff");
 		completed.push(qa);
-		const started = onlyJsonLine(await runHostCli(qa, ["ensure", "--json"]));
+		const result = await runHostCli(qa, ["ensure", "--json"]);
+		expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
+		const started = onlyJsonLine(result);
 		expect(started).toMatchObject({ action: "start" });
 		expect([...qa.ownedPids]).toContain(started.pid);
 
-		const result = await runHostCli(qa, ["handoff", "--json"]);
+		const handoff = await runHostCli(qa, ["handoff", "--json"]);
 
-		expect(result.exitCode).toBe(3);
-		expect(onlyJsonLine(result)).toMatchObject({ action: "refuse", reason: "upgrade_unsupported" });
+		expect(handoff.exitCode).toBe(3);
+		expect(onlyJsonLine(handoff)).toMatchObject({ action: "refuse", reason: "upgrade_unsupported" });
 	}, 180_000);
 });

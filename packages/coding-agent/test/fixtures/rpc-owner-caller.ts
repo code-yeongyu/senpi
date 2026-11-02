@@ -10,18 +10,19 @@ import { MOCK_MODEL, MOCK_PROVIDER } from "../helpers/rpc-hermetic.ts";
 const [socket, agentDir, ownership = "caller", extension, idleExitMs = "60000"] = process.argv.slice(2);
 if (!socket || !agentDir) throw new Error("socket and agentDir required");
 const spawn = childProcess.spawn;
-mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: SpawnOptions) => {
-	if (!args[0]?.endsWith("host-lifecycle.ts")) return spawn(command, args, options);
-	const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
-	stdio[1] = "pipe";
-	const child = spawn(command, args, { ...options, stdio });
-	const pipe = child.stdout;
-	if (!(pipe instanceof Socket)) throw new Error("supervisor exit pipe missing");
-	// Transfer the read end to the test BEFORE reporting ready. Kernel EOF observes the supervisor's
-	// exit even after this owner is SIGKILLed, without pid polling or process-table child guesses.
-	process.send?.({ type: "supervisor", pid: child.pid }, pipe);
-	return child;
-});
+if (!process.versions.bun)
+	mock.method(childProcess, "spawn", (command: string, args: readonly string[], options: SpawnOptions) => {
+		if (!args[0]?.endsWith("host-lifecycle.ts")) return spawn(command, args, options);
+		const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
+		stdio[1] = "pipe";
+		const child = spawn(command, args, { ...options, stdio });
+		const pipe = child.stdout;
+		if (!(pipe instanceof Socket)) throw new Error("supervisor exit pipe missing");
+		// Transfer the read end to the test BEFORE reporting ready. Kernel EOF observes the supervisor's
+		// exit even after this owner is SIGKILLed, without pid polling or process-table child guesses.
+		process.send?.({ type: "supervisor", pid: child.pid }, pipe);
+		return child;
+	});
 syncBuiltinESMExports();
 const options = {
 	socket,
@@ -43,6 +44,8 @@ const options = {
 try {
 	const ensured = await ensureHost(options);
 	ensured.release();
+	// Bun cannot transfer socket handles over IPC; the parent arms a native exit waiter from the PID.
+	if (process.versions.bun) process.send?.({ type: "supervisor", pid: ensured.pid });
 	process.send?.({ type: "ready", pid: ensured.pid, reused: ensured.reused });
 	process.on("message", (message) => {
 		if (message === "exit") process.disconnect?.();

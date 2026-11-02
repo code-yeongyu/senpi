@@ -1,5 +1,24 @@
 # Herdr builtin reporter changes
 
+## 2026-10-21 - Restore the branded launcher after Herdr restart (senpi#3849)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` sends `resume_argv` with the existing `APP_COMMAND` brand command and the exact reported session path, falling back to the reported session ID when no path exists.
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` waits for the initial state report before sending the session report: Herdr rejects resume commands from reporters that do not yet hold the pane.
+
+### Why
+
+- Without an explicit command Herdr restores every `pi`-kind pane through the ambiguous `pi` executable. OmO already supplies its `omo` command in the brand profile; standalone Senpi resolves to `senpi`. The protocol agent remains `pi` so detection, lifecycle reporting, and managed integration compatibility stay intact.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` is the builtin reporter that owns the session report.
+
+### Expected merge conflict zones
+
+- LOW: the `pane.report_agent_session` payload and one config import.
+
 ## 2026-09-24 - Every wake source keeps the pane working (senpi#2077)
 
 ### What changed

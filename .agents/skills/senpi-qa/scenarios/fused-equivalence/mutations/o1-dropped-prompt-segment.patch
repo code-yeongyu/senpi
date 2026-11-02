@@ -1,0 +1,12 @@
+diff --git a/packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts b/packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts
+index 3e0a779935..5ddede3d71 100644
+--- a/packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts
++++ b/packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts
+@@ -33,7 +33,6 @@ ${(config.surface ?? "terminal") === "terminal" ? terminalRouting(config.routing
+ ${buildKeyTriggers(config.tools)}
+ Route by true intent, not surface form:
+ - Information asks (explain, look into, investigate): read the code, report the answer or findings - no edits, no fixes yet.
+-- Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
+ - Change asks (implement, add, fix this error): build, or diagnose and fix minimally, at exactly the asked scope - the smallest path that fully satisfies an open-ended goal; name an ambiguity and resolve it from context when possible.
+ 
+ Deliver the task at the scope asked - never quietly narrow, widen, or swap it. Make routine judgment calls yourself; ask only when different readings of the request would lead to materially different work.

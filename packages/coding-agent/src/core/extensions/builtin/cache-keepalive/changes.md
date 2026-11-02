@@ -1,5 +1,23 @@
 # Cache Keep-Alive Extension Changes
 
+## 2026-10-27 - The keep-alive ping splits the system prompt like the real request (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`: the warm request carries the session's `ctx.getSystemPromptStablePrefix()` when the current prompt starts with it.
+
+### Why
+
+- A ping whose system blocks differ from the real request would write its own cache entry instead of keeping the real one warm (senpi#2389).
+
+### Why an extension could not handle it
+
+- This is the keep-alive builtin's own request assembly.
+
+### Expected merge conflict zones
+
+- LOW: the `warm(...)` call in `packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts`.
+
 ## 2026-10-18 - Do not arm provider work for size inspection (senpi#3483)
 
 ### What changed

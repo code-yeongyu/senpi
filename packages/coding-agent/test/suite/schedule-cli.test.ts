@@ -15,6 +15,7 @@ import {
 	scheduleDir,
 } from "../../src/core/extensions/builtin/schedule/store.ts";
 import { assertWorkspaceBuildPrerequisite } from "../support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 // The spawned source CLI resolves workspace packages through their built dist (see the helper).
 assertWorkspaceBuildPrerequisite(import.meta.url);
@@ -48,7 +49,7 @@ function spawnCli(agentDir: string, args: string[]): ChildProcess {
 	const child = spawn(process.execPath, [cliEntry, "schedule", ...args], {
 		// SENPI_RUNTIME=bun (set in every omo session) would re-exec the CLI under Bun behind a wrapper
 		// process, so `child.pid` would not be the runner these tests signal and look up.
-		env: { ...process.env, SENPI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", SENPI_RUNTIME: "node" },
+		env: { ...hostSpawnEnv(), SENPI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", SENPI_RUNTIME: "node" },
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	children.push(child);

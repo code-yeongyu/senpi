@@ -11,7 +11,7 @@ import {
 } from "../../bridge/reserved.ts";
 import { type KernelPreludePlan, KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import type { JavaScriptKernelOptions as BaseJavaScriptKernelOptions } from "./kernel-contract.ts";
-import { rewriteImports } from "./rewrite-imports.ts";
+import { hasDynamicCodeCapability, rewriteImports } from "./rewrite-imports.ts";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
 
@@ -77,8 +77,10 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		"globalThis.__senpi_import__ = async (source, options) => {",
 		"  const context = globalThis.__senpi_module_context__;",
 		"  const specifier = String(source);",
+		"  const permissionImport = globalThis[Symbol.for('senpi.kernel.permissionImport')];",
+		"  permissionImport?.(specifier, new URL('__cell__.js', context.cwdUrl).href);",
 		"  const kernelBun = globalThis[Symbol.for('senpi.kernel.bun')];",
-		"  if (specifier === 'bun' && kernelBun) return { ...(await import('bun')), WebView: kernelBun.WebView, default: kernelBun };",
+		"  if (specifier === 'bun' && kernelBun) return { ...kernelBun, default: kernelBun };",
 		// Under Bun a cell's named import (`import { spawn } from 'node:child_process'`) binds the builtin's original
 		// export even after the worker patched the module object (worker-cwd.js), so the session cwd and the cell
 		// children's own process group (senpi#2995) were skipped. The patched module objects are served instead.
@@ -106,7 +108,10 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		"    const urlModule = await import('node:url');",
 		"    target = urlModule.pathToFileURL(specifier).href;",
 		"  }",
-		"  const load = (resolved) => (options === undefined ? import(resolved) : import(resolved, options));",
+		// The import and everything it loads (resolution hooks, module bodies) run under the cell's loading window.
+		"  const permissionLoad = globalThis[Symbol.for('senpi.kernel.permissionLoad')];",
+		"  const run = (resolved) => (options === undefined ? import(resolved) : import(resolved, options));",
+		"  const load = (resolved) => (permissionLoad ? permissionLoad(() => run(resolved)) : run(resolved));",
 		"  const resolvePackage = globalThis[Symbol.for('senpi.kernel.resolvePackage')];",
 		"  if (target === specifier && typeof resolvePackage === 'function') {",
 		"    const resolved = resolvePackage(specifier, [context.cwdUrl, context.packageRootUrl]);",
@@ -147,6 +152,6 @@ export class LocalModuleLoader {
 		const cwdUrl = sourceFile === undefined ? this.#cwdUrl : directoryUrl(dirname(sourceFile));
 		const base = `\nglobalThis.__senpi_module_context__ = { ...globalThis.__senpi_module_context__, cwdUrl: ${JSON.stringify(cwdUrl)}, packageRootUrl: ${JSON.stringify(packageRoot === undefined ? null : directoryUrl(packageRoot))} };`;
 		const prelude = `${this.#prelude}${base}\n${contributionPrelude(this.#contributions.plan(contributions))}`;
-		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: rewriteImports(code), ...(sourceFile === undefined ? {} : { sourceFile }) })}`;
+		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: rewriteImports(code), dynamicCodeCapability: hasDynamicCodeCapability(code), ...(sourceFile === undefined ? {} : { sourceFile }) })}`;
 	}
 }

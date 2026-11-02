@@ -1,3 +1,4 @@
+import type { PathIdentityResolverStatus } from "./path-identity-status.ts";
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
@@ -61,4 +62,6 @@ export interface RpcProtocolInfo extends RpcProtocolIdentity {
 	 * `SENPI_RPC_HOST_RSS_WARN_MB` (the state `host_memory_pressure` records announce). Observability only.
 	 */
 	readonly memory_pressure?: boolean;
+	/** Multi-session hosts only: whether the permission system's path identity worker started, and why not. */
+	readonly path_identity_resolver?: PathIdentityResolverStatus;
 }

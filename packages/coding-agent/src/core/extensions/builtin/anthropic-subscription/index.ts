@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { readByProviderId } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../../../../config.ts";
-import { FileAuthStorageBackend } from "../../../auth-storage.ts";
 import type { ExtensionAPI, ProviderConfig } from "../../types.ts";
 import { toBuiltinProviderContext } from "../provider-context.ts";
 import { registerClaudeAccountCommand } from "./account-command.ts";
@@ -11,6 +10,7 @@ import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import type { AnthropicSubscriptionCredential } from "./accounts.ts";
 import { CLAUDE_SDK_OAUTH_API_ID } from "./api-id.ts";
 import { plannedContextWindow } from "./context-window.ts";
+import { claudeCliDefaultModel } from "./claude-cli-account-test.ts";
 import { longContextAvailable, onLongContextAvailabilityChange } from "./long-context.ts";
 import { createOAuthConfig } from "./oauth-login.ts";
 import { registerSessionRegistry } from "./session-registry-wiring.ts";
@@ -109,23 +109,11 @@ export function registerAnthropicSubscriptionExtension(
 					return undefined;
 				}
 			},
-			readAnthropicCredential: async () => {
-				const credential = readStoredCredential("anthropic");
-				return credential && typeof credential.access === "string"
-					? { access: credential.access, refresh: credential.refresh, expires: credential.expires }
-					: undefined;
-			},
-			removeAnthropicCredential: async () => {
-				// The import is a move, not a copy: one single-use grant must never
-				// live in two stores that refresh it independently (omo#7084).
-				const backend = new FileAuthStorageBackend();
-				await backend.withLockAsync(async (current) => {
-					if (current === undefined) return { result: undefined };
-					const data = JSON.parse(current) as Record<string, unknown>;
-					if (!("anthropic" in data)) return { result: undefined };
-					delete data.anthropic;
-					return { result: undefined, next: JSON.stringify(data, null, 2) };
-				});
+			claudeCli: {
+				cwd: () => cwd,
+				providerSettings: () =>
+					deps.readSettings ? deps.readSettings() : loadAnthropicSubscriptionProviderSettingsFromDisk(cwd),
+				defaultModel: () => claudeCliDefaultModel(cwd),
 			},
 		}),
 	});

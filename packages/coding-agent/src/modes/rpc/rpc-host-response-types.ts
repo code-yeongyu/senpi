@@ -8,6 +8,13 @@ export type RpcHostCommandResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "cancel_attempt";
+			success: true;
+			data: { outcome: "cancelled" | "already_complete" | "unknown" };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "get_protocol_info";
 			success: true;
 			data: RpcProtocolInfo;
@@ -87,6 +94,8 @@ export type RpcHostCommandResponse =
 					status: "opening" | "open" | "closing" | "closed";
 					/** Live client attachments; `0` is a retained session with no client attached. */
 					attachments: number;
+					/** The session outlives its last attachment; absent from hosts older than this field. */
+					retain_on_disconnect?: boolean;
 					/** Milliseconds since the session's idle window was last refreshed. */
 					idleMs?: number;
 					/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */

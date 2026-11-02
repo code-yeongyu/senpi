@@ -196,6 +196,7 @@ function createContext(serverUrl: string): SpeculativeCompactionContext {
 	});
 
 	return {
+		cwd: process.cwd(),
 		model,
 		modelRegistry,
 		sessionManager,

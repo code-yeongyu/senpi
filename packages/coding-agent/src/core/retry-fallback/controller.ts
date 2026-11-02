@@ -11,6 +11,7 @@ import {
 	resolveChainKey,
 	rungSelector,
 } from "./chains.ts";
+import { subscribeProviderAccountEvents } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import { CircuitProbes } from "./circuit-probes.ts";
 import type {
 	ActiveFallbackState,
@@ -37,6 +38,9 @@ export class RetryFallbackController {
 	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
 	// may move the session off its model at a turn boundary (senpi#3467).
 	private readonly ownFailures = new Set<string>();
+	// Conservatively skip the refused provider for this turn: this synchronous scan cannot resolve
+	// asynchronously prepared request credentials, including per-model endpoints or keys (senpi#2491).
+	private readonly refusedProviders = new Set<string>();
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -72,6 +76,7 @@ export class RetryFallbackController {
 
 	resetTurn(): void {
 		this.triedSelectors.clear();
+		this.refusedProviders.clear();
 		this.lastExhaustedChainKey = undefined;
 	}
 
@@ -91,8 +96,9 @@ export class RetryFallbackController {
 		return canonical;
 	}
 
-	canTryFallback(): boolean {
-		return this.nextCandidate(false) !== undefined;
+	/** `refusedProvider`: the provider whose request-level refusal is being decided, before the walk records it. */
+	canTryFallback(refusedProvider?: string): boolean {
+		return this.nextCandidate(false, false, refusedProvider) !== undefined;
 	}
 
 	/**
@@ -114,7 +120,9 @@ export class RetryFallbackController {
 	 * suppressed and is still usable; pinned state and the "never" policy hold the
 	 * fallback model. One exception outranks both the cooldown and the policy: a
 	 * fallback that is itself known unusable (billing or an account limit) while the
-	 * original is not is never where the session rests (senpi#2376).
+	 * original is not is never where the session rests (senpi#2376). An original that is
+	 * itself still held (an account usage limit with the reset it named, which can outlast
+	 * the circuit's 30-minute ceiling) is not restored before that hold ends (senpi#3347).
 	 */
 	async maybeRestorePrimary(
 		revertPolicy: "cooldown-expiry" | "never",
@@ -130,7 +138,11 @@ export class RetryFallbackController {
 		const model = this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
-		if (!stranded && (heldForNetworkBlip || !this.originalRecovered(state, revertPolicy))) return false;
+		if (
+			!stranded &&
+			(heldForNetworkBlip || this.unusable.isUnusable(model) || !this.originalRecovered(state, revertPolicy))
+		)
+			return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -213,6 +225,14 @@ export class RetryFallbackController {
 		this.deps.circuits?.close(formatSelector(model));
 	}
 
+	/**
+	 * A login or an explicit block reset on `provider` makes the account and
+	 * model holds it earned stale, so the restore guard stops waiting out a reset that may no longer apply.
+	 */
+	noteProviderAccountsChanged(provider: string): void {
+		this.unusable.clearProvider(provider, this.deps.registry.getAll());
+	}
+
 	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
 	noteServed(selector: string): void {
 		this.ownFailures.delete(selector);
@@ -259,9 +279,10 @@ export class RetryFallbackController {
 
 	async tryFallback(
 		reason: FallbackReason,
-		failure: { errorMessage?: string; retryAfterMs?: number },
+		failure: { errorMessage?: string; retryAfterMs?: number; refusedProvider?: string },
 		failureObserved = true,
 	): Promise<boolean> {
+		if (failure.refusedProvider !== undefined) this.refusedProviders.add(failure.refusedProvider);
 		const current = this.deps.getCurrentSelector();
 		const blip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
 		this.blipModel = blip && current ? formatSelector(current.model) : undefined;
@@ -367,7 +388,11 @@ export class RetryFallbackController {
 		return chainKey && chains[chainKey] ? chainKey : undefined;
 	}
 
-	private nextCandidate(reserve = true, logDecision = reserve): ({ chainKey: string } & UsableCandidate) | undefined {
+	private nextCandidate(
+		reserve = true,
+		logDecision = reserve,
+		refusedProvider?: string,
+	): ({ chainKey: string } & UsableCandidate) | undefined {
 		const current = this.deps.getCurrentSelector();
 		if (!this.deps.getSettings().modelFallback || !current) return undefined;
 		// Models without an explicitly configured chain do not enter an implicit fallback lane.
@@ -384,6 +409,7 @@ export class RetryFallbackController {
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
+			isProviderRefused: (provider) => provider === refusedProvider || this.refusedProviders.has(provider),
 			isModelSkipped: (base) => base === this.blipModel,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
@@ -424,4 +450,14 @@ export class RetryFallbackController {
 	private skip(candidate: string, skipReason: string): void {
 		this.deps.logger.debug("candidate_skipped", { candidate, skipReason });
 	}
+}
+
+/** Only explicit account remedies invalidate holds; health and listing notices do not. */
+export function followProviderAccountChanges(
+	controller: Pick<RetryFallbackController, "noteProviderAccountsChanged">,
+): () => void {
+	return subscribeProviderAccountEvents((event) => {
+		if (event.type === "accounts_changed" && event.remedy !== undefined)
+			controller.noteProviderAccountsChanged(event.provider);
+	});
 }

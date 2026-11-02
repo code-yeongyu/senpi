@@ -102,7 +102,7 @@ jobs:
         run: bun ../prebuild-install/bin.js -r napi
       - name: Check and build source
         run: |
-          bunx --bun --no-install tsc --noEmit
+          bun check --no-script --all -p tsconfig.json
           bun run build:bun
           bun scripts/prepare-bun-compile-assets.mjs
       - name: Compile the read surface

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { applyAccountOrder } from "@earendil-works/pi-ai/auth/pool/select";
+import { applyAccountOrder, isSlotBlocked } from "@earendil-works/pi-ai/auth/pool/select";
 
 export const DEFAULT_CURSOR_AFFINITY_KEY = "cursor-cli-oauth-default";
 
@@ -48,10 +48,6 @@ export function rendezvousOrder<T extends CursorAffinityAccountSlot>(key: string
 		.map(({ account }) => account);
 }
 
-function isBlocked(account: CursorAffinityAccountSlot, now: number): boolean {
-	return account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now);
-}
-
 /** Clears elapsed temporary blocks while retaining auth failures until the account logs in again. */
 export function clearExpiredBlocks<T extends CursorAffinityAccountSlot>(accounts: readonly T[], now = Date.now()): T[] {
 	return accounts.map((account) => {
@@ -72,9 +68,9 @@ function selectUnblocked<T extends CursorAffinityAccountSlot>(
 		options.pinnedAccount === undefined
 			? undefined
 			: accounts.find((account) => account.name === options.pinnedAccount);
-	if (pinned && !isBlocked(pinned, now)) return pinned;
+	if (pinned && !isSlotBlocked(pinned, now)) return pinned;
 	return applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts)).find(
-		(account) => !isBlocked(account, now),
+		(account) => !isSlotBlocked(account, now),
 	);
 }
 

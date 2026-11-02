@@ -119,6 +119,7 @@ type SessionEnvSource = {
 	cwd?: string;
 	goalStoreFile?: string;
 	browserEngine?: string;
+	sessionEnv?: Readonly<Record<string, string>>;
 };
 
 function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
@@ -137,7 +138,7 @@ function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
 export function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
 	const session = execCtx ?? ctx.getSessionContext?.();
 	if (!session?.sessionManager) return {};
-	const env: Record<string, string> = {};
+	const env: Record<string, string> = { ...session.sessionEnv };
 	env.PI_SESSION_ID = session.sessionManager.getSessionId();
 	if (session.cwd) env.PI_SESSION_CWD = session.cwd;
 	if (session.goalStoreFile) env.PI_GOAL_STORE_FILE = session.goalStoreFile;
@@ -330,7 +331,7 @@ async function runForeground(
 
 	if (outcome === "detached") {
 		scheduleDetachedSweep(ctx, id, runtime, timeoutMs, startedAt);
-		ctx.onBackgroundStart?.(id, input.description ?? input.command, startedAt);
+		ctx.onBackgroundStart?.(id, input.description ?? input.command, startedAt, input.command);
 		if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 		const delta = runtime.readDelta();
 		const partialOutput = formatTerminalToolOutput(delta.text).text || "(no output yet)";
@@ -402,7 +403,7 @@ async function runBackground(
 		cwd,
 		envOverrides: sessionEnvOverrides(ctx, execCtx),
 	});
-	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now());
+	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now(), input.command);
 	if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 
 	// Capture any output the command emits within a short grace window (or its exit).
