@@ -39,7 +39,15 @@ function uniq(values: readonly string[]): string[] {
 /** Core service for managing permission requests and rule evaluation */
 export class PermissionService {
 	private readonly pendingRequests: PendingRequests;
+	/** The approved rules every session shares: the persisted store and the rules this service was seeded with. */
 	private approved: Ruleset;
+	/**
+	 * The "Always" answers given to this service, keyed by the session (the request's `sessionID`) that
+	 * answered, so one service serving several sessions never lets one session's answer approve another's call.
+	 */
+	private readonly answers = new Map<string, Rule[]>();
+	/** The session whose reply is being applied; the pending-request callbacks below run inside `reply`. */
+	private replyScope: string | undefined;
 	private staticRuleset: Ruleset;
 	private emitter: PermissionEventEmitter;
 	private idCounter = 0;
@@ -63,12 +71,9 @@ export class PermissionService {
 		this.ruleIdentities.fillAll();
 		this.pendingRequests = new PendingRequests({
 			emitter,
-			approve: (rule) => this.approved.push(rule),
-			decide: (permission, pattern, options) => this.decide(permission, pattern, options),
+			approve: (rule) => this.remember(this.replyScope ?? "", rule),
+			decide: (permission, pattern, options) => this.decide(permission, pattern, options, this.replyScope ?? ""),
 		});
-		// The approved rules this service was seeded with are the persisted prefix; anything after
-		// is this session's own (unsaved or just-saved) answers and survives a re-read.
-		this.persistedApprovedCount = approved.length;
 		this.projectDir = projectDir;
 		this.agentDir = agentDir;
 		this.protectedStorePath =
@@ -86,7 +91,6 @@ export class PermissionService {
 	private readonly projectDir?: string;
 	private readonly agentDir?: string;
 	private readonly protectedStorePath?: string;
-	private persistedApprovedCount: number;
 	private approvedVersion: string | undefined;
 	private readonly resolver?: PathIdentityResolver;
 	private readonly mountRewrite: (value: string) => string;
@@ -99,11 +103,23 @@ export class PermissionService {
 	}
 
 	identityWanted(permission: string, kernel?: KernelCanonical): boolean {
-		return identityWanted(this.resolver, [...this.staticRuleset, ...this.approved], permission, kernel);
+		return identityWanted(this.resolver, [...this.staticRuleset, ...this.approvedFor()], permission, kernel);
 	}
 
 	private pathRules(): Rule[] {
-		return pathRulesOf([...this.staticRuleset, ...this.approved]);
+		return pathRulesOf([...this.staticRuleset, ...this.approvedFor()]);
+	}
+
+	private remember(scope: string, rule: Rule): void {
+		const answers = this.answers.get(scope);
+		if (answers) answers.push(rule);
+		else this.answers.set(scope, [rule]);
+	}
+
+	/** The shared approved rules, then the given session's answers; with no session, every session's answers. */
+	private approvedFor(scope?: string): Rule[] {
+		const answers = scope === undefined ? [...this.answers.values()].flat() : (this.answers.get(scope) ?? []);
+		return [...this.approved, ...answers];
 	}
 
 	ruleIdentityState(pattern: string): RuleIdentityEntry {
@@ -155,15 +171,13 @@ export class PermissionService {
 	/**
 	 * An "Always" answer another open session just persisted is honored on this session's very next
 	 * decision (senpi#2465): the approved store is re-read only when its mtime+size changed, and the
-	 * re-read replaces the persisted prefix while keeping this session's own answers.
+	 * re-read replaces the shared rules while keeping every session's own answers.
 	 */
 	private refreshApproved(): void {
 		if (this.projectDir === undefined || this.agentDir === undefined) return;
 		const version = approvedFileVersion(this.agentDir, this.projectDir);
 		if (version === this.approvedVersion) return;
-		const fresh = loadApproved(this.agentDir, this.projectDir);
-		this.approved = [...fresh, ...this.approved.slice(this.persistedApprovedCount)];
-		this.persistedApprovedCount = fresh.length;
+		this.approved = loadApproved(this.agentDir, this.projectDir);
 		this.approvedVersion = version;
 	}
 
@@ -180,22 +194,39 @@ export class PermissionService {
 	 * only an "Always" answer given in this or an earlier session (`permissions-approved.jsonl`,
 	 * explicit consent for that pattern) can then turn a remaining ask into allow.
 	 */
-	private decide(permission: string, target: string | readonly string[], options: DecisionOptions): Rule["action"] {
-		return this.dispatchDecision(permission, target, options).action;
+	private decide(
+		permission: string,
+		target: string | readonly string[],
+		options: DecisionOptions,
+		scope: string,
+	): Rule["action"] {
+		return this.dispatchDecision(permission, target, options, scope).action;
 	}
 
-	/** Share the decision and its relevant rules with the final dispatch fence. */
-	dispatchDecision(permission: string, target: string | readonly string[], options: DecisionOptions = {}): Decision {
+	/**
+	 * Share the decision and its relevant rules with the final dispatch fence. `scope` is the session
+	 * the call belongs to (its requests' `sessionID`): only that session's answers can approve it.
+	 * Without one, every session's answers count, which is one session's answers on a service that
+	 * serves a single session; a caller deciding for one session of a shared service passes it.
+	 */
+	dispatchDecision(
+		permission: string,
+		target: string | readonly string[],
+		options: DecisionOptions = {},
+		scope?: string,
+	): Decision {
 		this.refreshApproved();
+		const approved = this.approvedFor(scope);
 		if (permission === "external_directory") {
 			return decideExternalPaths(target, options.ruleAliases ?? [], (spelling, resolved, canonicalCase) =>
-				this.decideTarget(permission, spelling, options, resolved, spelling !== resolved, canonicalCase),
+				this.decideTarget(approved, permission, spelling, options, resolved, spelling !== resolved, canonicalCase),
 			);
 		}
-		return this.decideTarget(permission, options.ruleAliases ?? target, options);
+		return this.decideTarget(approved, permission, options.ruleAliases ?? target, options);
 	}
 
 	private decideTarget(
+		approved: Ruleset,
 		permission: string,
 		target: string | readonly string[],
 		options: DecisionOptions,
@@ -205,7 +236,7 @@ export class PermissionService {
 	): Decision {
 		const context = {
 			staticRuleset: this.staticRuleset,
-			approved: this.approved,
+			approved,
 			preset: this.preset,
 			protectedStorePath: this.protectedStorePath,
 			identityMatcher: (candidate: string, identity: IdentityInput | undefined) =>
@@ -266,7 +297,7 @@ export class PermissionService {
 		for (const pattern of info.patterns) {
 			const aliases =
 				executed && executed.length > 0 ? uniq([...(ruleAliases ?? [pattern]), ...executed]) : ruleAliases;
-			const action = this.decide(info.permission, pattern, { ...options, ruleAliases: aliases });
+			const action = this.decide(info.permission, pattern, { ...options, ruleAliases: aliases }, info.sessionID);
 			if (action === "deny") {
 				deniedPatterns.push(pattern);
 				continue;
@@ -301,9 +332,14 @@ export class PermissionService {
 		await pendingPromise;
 	}
 
-	/** Reply to a pending permission request */
+	/** Reply to a pending permission request; an "Always" answer is remembered for the request's session only. */
 	reply(input: ReplyInput): void {
-		this.pendingRequests.reply(input);
+		this.replyScope = this.pendingRequests.list().find((request) => request.id === input.requestID)?.sessionID;
+		try {
+			this.pendingRequests.reply(input);
+		} finally {
+			this.replyScope = undefined;
+		}
 	}
 
 	/** List all pending permission requests */
@@ -311,17 +347,17 @@ export class PermissionService {
 		return this.pendingRequests.list();
 	}
 
-	/** Get the current approved ruleset */
+	/** Get the current approved ruleset: the shared rules, then every session's answers. */
 	getApproved(): Ruleset {
-		return this.approved.map((rule) => ({ ...rule }));
+		return this.approvedFor().map((rule) => ({ ...rule }));
 	}
 
 	/**
-	 * This session's own approved rules (its answers), identified by permission+pattern+action, not
-	 * by index: a refresh that grows or shrinks the persisted prefix never duplicates or drops them.
+	 * The answers given to this service (every session's), kept apart from the shared rules: a refresh
+	 * that grows or shrinks the persisted store never duplicates or drops them.
 	 */
 	getSessionApproved(): Ruleset {
-		return this.approved.slice(this.persistedApprovedCount).map((rule) => ({ ...rule }));
+		return [...this.answers.values()].flat().map((rule) => ({ ...rule }));
 	}
 
 	private nextRequestID(): string {
