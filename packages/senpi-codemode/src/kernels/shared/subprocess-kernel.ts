@@ -231,7 +231,10 @@ export class SubprocessKernel {
 			onStderr: (source, data) => this.handleMessage(source, { type: "text", stream: "stderr", data }),
 			onExit: (source, code, signal) => this.handleExit(source, code, signal),
 			onError: (source, error) => {
-				if (this.accepts(source)) this.failClosed(new KernelProcessError(error.message));
+				if (!this.accepts(source)) return;
+				this.failClosed(
+					source.neverStarted ? new KernelStartupError(error.message) : new KernelProcessError(error.message),
+				);
 			},
 		});
 		this.process = process;

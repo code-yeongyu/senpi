@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { CatalogEntry } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import type { CatalogRead } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
-import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
+import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest-shape.ts";
 import type { RecoveryRoute } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import type { RecoveryOutcome } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
@@ -194,9 +194,11 @@ it("T5 X04 a token superseded while its first catalog read is held publishes not
 		await held.entered;
 		const second = unwrap(checkpoints.freeze(route("s", "socket-1"), lane)).token;
 		held.release();
+		// RULING-99: all peers draw from one session counter, so the survivor's token sits between these two.
+		expect(second.admission.generation).toBeGreaterThan(first.admission.generation);
 		expect(await building).toEqual({
 			ok: false,
-			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 2 },
+			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: second.admission.generation },
 		});
 		expect(await live(), "the superseded build left no node or pointer leaf in the cut's store").toBe(before);
 		const manifest = unwrap(await checkpoints.catalog(survivor, caller("socket-2")));
@@ -212,11 +214,12 @@ it("T5 X04 a token superseded while its first catalog read is held publishes not
 			manifest.checkpointDigest,
 		);
 		const third = unwrap(checkpoints.freeze(route("s", "socket-1"), lane)).token;
+		expect(third.admission.generation).toBeGreaterThan(second.admission.generation);
 		const later = unwrap(await checkpoints.catalog(third, caller("socket-1")));
 		expect(later.checkpointDigest, "a cut after the deltas names other bytes").not.toBe(manifest.checkpointDigest);
 		expect(await checkpoints.catalog(second, caller("socket-1"))).toEqual({
 			ok: false,
-			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 3 },
+			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: third.admission.generation },
 		});
 		checkpoints.release(survivor);
 		checkpoints.release(third);
