@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
-import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
+import { type CandidateFilters, firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
 	canonicalizeFallbackChains,
@@ -143,6 +143,16 @@ export class RetryFallbackController {
 			(heldForNetworkBlip || this.unusable.isUnusable(model) || !this.originalRecovered(state, revertPolicy))
 		)
 			return false;
+		await this.restorePrimary(state, current, model);
+		return true;
+	}
+
+	private async restorePrimary(
+		state: ActiveFallbackState,
+		current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
+		model: Model<Api>,
+	): Promise<void> {
+		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -157,7 +167,6 @@ export class RetryFallbackController {
 		const trigger = stranded ? { trigger: "fallback-unusable" } : {};
 		this.deps.logger.info("fallback_reverted", { from, to: state.originalSelector, ...trigger });
 		this.deps.emit({ type: "retry_fallback_reverted", from, to: state.originalSelector, ...cause });
-		return true;
 	}
 
 	private originalRecovered(state: ActiveFallbackState, revertPolicy: "cooldown-expiry" | "never"): boolean {
@@ -362,13 +371,26 @@ export class RetryFallbackController {
 		reason: FallbackReason,
 		limit?: UsageLimitScope,
 	): Promise<void> {
+		const prior = this.state;
+		const holdPrimary = prior?.pinned === true || this.deps.getSettings().revertPolicy === "never";
+		if (
+			prior &&
+			!holdPrimary &&
+			baseSelector(candidate.selector) === prior.originalSelector &&
+			(candidate.selector.thinkingLevel === undefined ||
+				candidate.selector.thinkingLevel === prior.originalThinkingLevel)
+		) {
+			this.probes.admit(baseSelector(candidate.selector));
+			await this.restorePrimary(prior, current, candidate.model);
+			this.triedSelectors.add(rungSelector(candidate.selector));
+			return;
+		}
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		this.probes.admit(baseSelector(candidate.selector));
 		await this.switchOrRelease(candidate.model, thinking, "fallback");
 		this.triedSelectors.add(rungSelector(candidate.selector));
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
-		const prior = this.state;
 		this.state = {
 			chainKey: candidate.chainKey,
 			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
@@ -402,7 +424,11 @@ export class RetryFallbackController {
 			if (logDecision) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
 			return undefined;
 		}
-		const candidate = firstUsableCandidate(entries, current, {
+		const state = this.state;
+		const holdPrimary = state?.pinned === true || this.deps.getSettings().revertPolicy === "never";
+		const original = state && parseFallbackSelector(state.originalSelector, this.deps.registry);
+		const originalRung = original && rungSelector({ ...original, thinkingLevel: state?.originalThinkingLevel });
+		const filters: CandidateFilters = {
 			registry: this.deps.registry,
 			tried: this.triedSelectors,
 			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
@@ -412,7 +438,26 @@ export class RetryFallbackController {
 			isProviderRefused: (provider) => provider === refusedProvider || this.refusedProviders.has(provider),
 			isModelSkipped: (base) => base === this.blipModel,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
-		});
+		};
+		let candidate = firstUsableCandidate(entries, current, filters);
+		// Only the original head may wrap, once per turn, and only once it has
+		// actually recovered: its circuit closed (or free for this session to
+		// claim as the half-open probe) and no session cooldown still holding it
+		// (Retry-After, a usage-limit reset window). A circuit still open does not
+		// wrap and never becomes an all-open probe; pins, deliberate "never"
+		// selections and spent heads never wrap (senpi#3302 review).
+		if (!candidate && state && !holdPrimary) {
+			const model = original && this.deps.registry.find(original.provider, original.id);
+			if (model && !this.unusable.isUnusable(model)) {
+				candidate = firstUsableCandidate([originalRung ?? state.originalSelector], current, {
+					...filters,
+					// An open circuit suppresses instead of probing: the breaker's own
+					// probe schedule, not this wrap, re-opens the road to that head.
+					isSuppressed: (base) => filters.isSuppressed(base) || this.probes.isOpen(base),
+					isCircuitOpen: () => false,
+				});
+			}
+		}
 		if (candidate) {
 			if (reserve) this.triedSelectors.add(rungSelector(candidate.selector));
 			return { chainKey, ...candidate };

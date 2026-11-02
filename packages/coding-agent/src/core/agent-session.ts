@@ -7487,6 +7487,22 @@ export class AgentSession {
 				try {
 					if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
 						await this._lifecycleBinding.restore();
+					const wakeModel = this.model;
+					if (
+						this._retryFallback.activeState !== undefined ||
+						(wakeModel !== undefined &&
+							!this._pendingModelSwitch &&
+							this._retryFallback.isProviderSpent(wakeModel.provider))
+					) {
+						// Idle-wake fallback preparation runs only when there is fallback
+						// state to act on, so wakes without it keep the exact admission
+						// ordering (no extra awaits before the model checks below).
+						await this._prepareFallbackForWake();
+						if (userAbortGeneration !== this._userAbortGeneration) {
+							queueTriggerForLater();
+							return;
+						}
+					}
 					await this._assertModelReadyForTurn();
 					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 					this._refreshToolDeclarationsForModel();
@@ -9181,6 +9197,29 @@ export class AgentSession {
 			invalidateCompaction: true,
 			origin,
 		});
+	}
+
+	/**
+	 * Turn-boundary fallback preparation for an admitted idle custom wake (a monitor
+	 * notification, a goal continuation, a chat-bridge wake): restore the primary
+	 * when it recovered, then reroute off a provider this session knows is spent,
+	 * refusing the wake before provider admission when no candidate remains. The
+	 * "continuation" boundary keeps a network-blip hold for the wake, matching the
+	 * retry and post-compaction continuations; the next real prompt boundary clears
+	 * it. The prompt path keeps its own inline copy of this preparation so the
+	 * common prompt and wake orderings gain no shared awaits (senpi#3302 review).
+	 */
+	private async _prepareFallbackForWake(): Promise<void> {
+		await this._maybeRestoreFallbackPrimary("continuation");
+		const model = this.model;
+		if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+			this._retryFallback.resetTurn();
+			const errorMessage = this._retryFallback.accountError(model.provider);
+			// Routing around a remembered failure did not observe another provider failure.
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
+				throw new AccountUsageLimitError(model.provider, errorMessage);
+			}
+		}
 	}
 
 	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {
