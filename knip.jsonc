@@ -1041,8 +1041,6 @@
       "packages/coding-agent/src/core/webview/webview-wire.ts": ["WEBVIEW_METHODS"],
       // pre-existing at origin main aceb1cc1d9: unused exports WAKE_SOURCE_KEY_PREFIX
       "packages/coding-agent/src/core/work-obligations.ts": ["WAKE_SOURCE_KEY_PREFIX"],
-      // pre-existing at origin main aceb1cc1d9: unused exports runCoordinatorProcess
-      "packages/coding-agent/src/experimental/coordinator.ts": ["runCoordinatorProcess"],
       // pre-existing at origin main aceb1cc1d9: unused exports defineService, Worker
       "packages/coding-agent/src/experimental/mini/shared/protocol.ts": ["Worker", "defineService"],
       // pre-existing at origin main aceb1cc1d9: unused exports jsonConnection, parentConnection
