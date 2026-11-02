@@ -21,7 +21,7 @@ export function serializeSessionBranch(
 	const entries: object[] = [header];
 	let parentId: string | null = null;
 	for (const entry of sessionManager.getFullBranch()) {
-		entries.push({ ...sessionManager.persistedEntry(entry), parentId });
+		entries.push({ ...entry, parentId });
 		parentId = entry.id;
 	}
 	entries.push(...(createTrailingEntries?.(parentId, timestamp) ?? []));
