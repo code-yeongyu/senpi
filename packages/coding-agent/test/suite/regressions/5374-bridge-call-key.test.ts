@@ -135,3 +135,33 @@ it("RULING-127 (b) #5374 two bridge-started calls reusing one id join their bloc
 		expect(persisted(message, owner.messageId, producer)).toEqual([first, second]);
 		rig.lane.release(view.root);
 	}));
+
+it("RULING-127 (b) #5374 a bridged start never joins a block an earlier turn left unstarted", () =>
+	withRig(async (rig) => {
+		const stale = rig.start();
+		rig.toolStart(stale, 0, call, "bash");
+		rig.toolEnd(stale, 0, call, "bash");
+		rig.end(stale, [call]);
+		rig.record({ type: "turn_start" });
+		const owner = rig.start();
+		const producer = new BridgedCallKeys();
+		const message = assistant([call]);
+		producer.observe({ type: "message_start", message: { ...message, content: [] } });
+		const carried = started(producer);
+		producer.observe({ type: "message_update", message });
+		producer.observe({ type: "message_end", message });
+		expect(carried).toMatch(/^exe:/);
+		rig.lane.accept(start, undefined, undefined, false, carried);
+		rig.toolStart(owner, 0, call, "bash");
+		rig.end(owner, [call]);
+		const view = await rig.calls();
+		const of = (messageId: string) => view.calls.find((each) => each.owningMessageId === messageId);
+		expect(of(owner.messageId)?.runtimeItemKey).toBe(carried);
+		expect(of(stale.messageId)).toMatchObject({
+			runtimeItemKey: blockCallKey(stale.messageId, 0),
+			startSequence: null,
+			phase: "awaiting-execution",
+		});
+		expect(persisted(message, owner.messageId, producer)).toEqual([carried]);
+		rig.lane.release(view.root);
+	}));
