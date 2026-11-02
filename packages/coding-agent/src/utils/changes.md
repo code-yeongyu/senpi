@@ -1,5 +1,23 @@
 # changes
 
+## 2026-10-31 - Adopt Windows pipes by mode bits (#5137, PR #5142)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: exports `isFifoMode` and adopts an inherited descriptor when its file-type mode bits are FIFO, instead of `Stats.isFIFO()`, so adoption accepts every pair the parser accepts.
+
+### Why
+
+- On Windows source runtimes `Stats.isFIFO()` is false for real pipes, so a parsed pair was never adopted and the private channel silently stayed down.
+
+### Why an extension could not handle it
+
+- Private channel adoption runs during bootstrap, before extensions load.
+
+### Expected merge conflict zones
+
+- Inherited descriptor type checks.
+
 ## 2026-10-29 - Compose and protect inherited pipe pairs (#4859)
 
 ### What changed

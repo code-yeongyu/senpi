@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Added an unprepared, scoped ToolHost batch boundary with the existing in-process scheduler as its default ([#5030](https://github.com/code-yeongyu/senpi/pull/5030)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.31-2] - 2026-10-31
 
 ### Breaking Changes

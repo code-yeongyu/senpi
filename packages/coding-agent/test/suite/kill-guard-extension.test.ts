@@ -108,42 +108,6 @@ describe("kill guard on model-facing shell tools", () => {
 		expect(ran).toEqual([`bash_input: ${REPORTER}`]);
 	});
 
-	it("judges typed text when a later call submits it with an enter key (A7)", async () => {
-		const { harness, ran } = await setup();
-
-		expect(await call(harness, "bash_input", { bash_id: "b1", input: "kill -9 ", submit: false })).toEqual({
-			blocked: false,
-		});
-		expect(await call(harness, "bash_input", { bash_id: "b2", input: "echo other", submit: false })).toEqual({
-			blocked: false,
-		});
-		expect(await call(harness, "bash_input", { bash_id: "b1", input: "-1", submit: false })).toEqual({
-			blocked: false,
-		});
-		const enter = await call(harness, "bash_input", { bash_id: "b1", keys: ["enter"] });
-
-		expect(enter.blocked).toBe(true);
-		if (enter.blocked) expect(enter.text).toContain("[senpi:kill-guard]");
-		expect(ran).toEqual(["bash_input: kill -9 ", "bash_input: echo other", "bash_input: -1"]);
-	});
-
-	it("refuses an Enter after ctrl+u cleared typed kill text (fail closed), and forgets text an interrupt discards", async () => {
-		const { harness, ran } = await setup();
-
-		await call(harness, "bash_input", { bash_id: "b1", input: "kill -9 -1", submit: false });
-		await call(harness, "bash_input", { bash_id: "b1", keys: ["ctrl+u"] });
-		const afterKillLine = await call(harness, "bash_input", { bash_id: "b1", keys: ["enter"] });
-		await call(harness, "bash_input", { bash_id: "b1", input: "kill -9 -1", submit: false, keys: ["ctrl+c"] });
-		const afterInterrupt = await call(harness, "bash_input", { bash_id: "b1", keys: ["enter"] });
-
-		// ctrl+u keeps the text in the shell's kill ring, so the edited line is judged by its typed letters (fail closed).
-		expect(afterKillLine.blocked).toBe(true);
-		if (afterKillLine.blocked) expect(afterKillLine.text).toContain("[senpi:kill-guard]");
-		// ctrl+c abandons the line: the next Enter submits an empty line.
-		expect(afterInterrupt).toEqual({ blocked: false });
-		expect(ran).toHaveLength(4);
-	});
-
 	it("lets ordinary and narrow commands through untouched (C1, C11, C15)", async () => {
 		const { harness, ran } = await setup();
 

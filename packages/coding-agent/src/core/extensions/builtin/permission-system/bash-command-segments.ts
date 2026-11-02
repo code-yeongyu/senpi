@@ -53,11 +53,7 @@ export interface BashCommandSegment {
 
 export type BashCommandWordsAnalysis =
 	| { readonly kind: "parsed"; readonly segments: readonly BashCommandSegment[] }
-	| {
-			readonly kind: "unparsed";
-			/** Lexing stopped at a command word built by an expansion (`$cmd`, `$'fc'`): which command it names is unknown. */
-			readonly dynamicName: boolean;
-	  };
+	| { readonly kind: "unparsed" };
 
 interface Word {
 	text: string;
@@ -93,8 +89,6 @@ class SegmentSink {
 }
 
 class Unparsed extends Error {}
-/** The command word itself comes from an expansion or ANSI-C quoting, so the command it names is unknown. */
-class DynamicCommandName extends Unparsed {}
 
 const MAX_DEPTH = 12;
 /** Longer commands are not lexed at all: they are `unparsed`, so only a `*` rule can decide them. */
@@ -818,8 +812,7 @@ const expandSimpleCommand: Expand = (input, out, place) => {
 		if (words.length === 1 || words.length === 2 || words[2]?.text === "in") return;
 		fail();
 	}
-	if (first.dynamic) throw new DynamicCommandName();
-	if (first.text === "") fail();
+	if (first.dynamic || first.text === "") fail();
 	const name = pathBasename(first.text);
 	if (name === "") fail();
 	const rest = words.slice(1);
@@ -979,19 +972,19 @@ function publicWord(word: Word): BashCommandWord {
 	};
 }
 
-/** Every entry `command` would run, or why some part of it is outside what this lexer understands. */
-function analyze(command: string): Entry[] | Unparsed {
+/** Every entry `command` would run, or `undefined` when any part of it is outside what this lexer understands. */
+function analyze(command: string): Entry[] | undefined {
 	steps = 0;
-	if (command.length > MAX_COMMAND_LENGTH) return new Unparsed();
+	if (command.length > MAX_COMMAND_LENGTH) return undefined;
 	try {
 		const out: Entry[] = [];
 		for (const segment of lexSegments(command))
 			expandSimpleCommand(segment.words, out, { wrappers: [], pipeline: segment.pipeline });
 		return out;
-	} catch (error) {
+	} catch {
 		// Fail closed: a parse failure, the depth or step budget, or a runtime error (a deep stack)
 		// all mean `unparsed`, which no command-specific rule can allow.
-		return error instanceof Unparsed ? error : new Unparsed();
+		return undefined;
 	}
 }
 
@@ -1001,7 +994,7 @@ function analyze(command: string): Entry[] | Unparsed {
  */
 export function analyzeBashCommand(command: string): BashCommandAnalysis {
 	const entries = analyze(command);
-	return entries instanceof Unparsed
+	return entries === undefined
 		? { kind: "unparsed" }
 		: { kind: "parsed", segments: entries.map((entry) => entry.line) };
 }
@@ -1013,7 +1006,7 @@ export function analyzeBashCommand(command: string): BashCommandAnalysis {
  */
 export function analyzeBashCommandWords(command: string): BashCommandWordsAnalysis {
 	const entries = analyze(command);
-	if (entries instanceof Unparsed) return { kind: "unparsed", dynamicName: entries instanceof DynamicCommandName };
+	if (entries === undefined) return { kind: "unparsed" };
 	return {
 		kind: "parsed",
 		segments: entries.map((entry) => ({

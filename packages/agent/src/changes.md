@@ -1,3 +1,23 @@
+## 2026-10-30 - Unprepared scoped ToolHost seam (senpi#5030)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts` passes raw batches and scope through the optional ToolHost before resolution, preparation and hooks; its default adapter calls the existing legacy scheduler.
+- `packages/agent/src/agent.ts` carries the host, scope and receipt callback into each loop configuration.
+- `packages/agent/src/types.ts` exposes the contract and configuration, with definitions in `packages/agent/src/execution/tool-host.ts`.
+
+### Why
+
+- The execution boundary must precede effectful preparation so a later executor can own the complete tool pipeline.
+
+### Why an extension could not handle it
+
+- Extensions receive callbacks after the loop has already resolved and prepared a call.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` batch dispatch and loop initialization; `packages/agent/src/agent.ts` options and loop configuration; `packages/agent/src/types.ts` execution configuration.
+
 ## 2026-10-30 - Durable execution endpoint ledger (senpi#5004)
 
 ### What changed

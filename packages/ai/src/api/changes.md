@@ -1,3 +1,25 @@
+## 2026-10-30 - Preserve SIWC admission and stream failures (part of #5003)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts` preserves direct-admission detail bodies, attaches SIWC diagnostics before HTTP retries, and names unsupported parameters.
+- `packages/ai/src/api/openai-responses-shared.ts` preserves structured stream error codes and parameters and requires `response.completed` on SIWC routes.
+
+### Why
+
+- `packages/ai/src/api/openai-responses.ts` previously lost direct-admission bodies and retried terminal account restrictions.
+- `packages/ai/src/api/openai-responses-shared.ts` previously collapsed structured failures into prose and accepted incomplete SIWC responses.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-responses.ts` owns the SDK request and retry boundary before extension delivery.
+- `packages/ai/src/api/openai-responses-shared.ts` owns the Responses event decoder before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-responses.ts`: client construction, request retries, and error formatting.
+- `packages/ai/src/api/openai-responses-shared.ts`: terminal and error event branches.
+
 ## 2026-10-31 - The Claude Code OAuth impersonation request path is removed; sk-ant-oat tokens are refused (senpi#5131)
 
 ### What changed
