@@ -147,23 +147,22 @@ export class CompactSessionCalls {
 		});
 	}
 
-	executionStart(step: CallStep, start: ExecutionStart): void {
+	/** Each per-id execution record returns the call it changed (RULING-123), undefined when it changed none. */
+	executionStart(step: CallStep, start: ExecutionStart): OutstandingCall | undefined {
 		const turnId = step.scope.turnId;
-		if (turnId === null) return;
+		if (turnId === null) return undefined;
 		const started = {
 			startSequence: step.sequence,
 			startedAtMs: Date.now(),
 			resolvedName: start.toolName,
 		};
 		const announced = this.table.oldestById(start.toolCallId, turnId, awaitingStart);
-		if (announced) {
-			this.update(step, announced, {
+		if (announced)
+			return this.update(step, announced, {
 				...started,
 				phase: "executing",
 				input: { ...announced.input, started: start.args },
 			});
-			return;
-		}
 		const existing = this.table.byTurnId(turnId, start.toolCallId);
 		if (existing) this.table.counters.reused++;
 		const parent = start.parentToolCallId ? this.lookup(turnId, start.parentToolCallId) : undefined;
@@ -176,9 +175,10 @@ export class CompactSessionCalls {
 			...started,
 		});
 		if (existing) this.table.repoint(turnId, start.toolCallId, created.runtimeItemKey);
+		return created;
 	}
 
-	executionUpdate(step: CallStep, toolCallId: string, args: unknown, partialResult: unknown): void {
+	executionUpdate(step: CallStep, toolCallId: string, args: unknown, partialResult: unknown) {
 		const call = this.resolve(step, toolCallId, executing);
 		if (!call) return this.ignore("unknown");
 		if (call.phase !== "executing") return this.ignore("late");
@@ -186,23 +186,25 @@ export class CompactSessionCalls {
 		this.table.counters.progressReplacements++;
 		if (call.input.prepared === null) this.update(step, progressed, { input: { ...call.input, prepared: args } });
 		this.sequence = step.sequence;
+		return progressed;
 	}
 
-	hook(step: CallStep, toolCallId: string, record: unknown): void {
+	hook(step: CallStep, toolCallId: string, record: unknown) {
 		const call = this.resolve(step, toolCallId, stillOpen);
 		if (!call) return this.ignore("unknown");
 		if (terminal(call)) return this.ignore("late");
-		this.table.replaceSlot(call, "hook", record);
+		const hooked = this.table.replaceSlot(call, "hook", record);
 		this.sequence = step.sequence;
+		return hooked;
 	}
 
 	/** An end closes the oldest call still open under its id (senpi#4278); with none open it may replace an abandoned one. */
-	executionEnd(step: CallStep, toolCallId: string, result: unknown, isError: boolean): void {
+	executionEnd(step: CallStep, toolCallId: string, result: unknown, isError: boolean) {
 		const call = this.resolve(step, toolCallId, stillOpen);
 		if (!call) return this.ignore("unknown");
 		if (terminal(call) && call.outcome?.kind !== "abandoned") return this.ignore("late");
 		const ended = this.table.replaceSlot(call, "result", result);
-		this.update(step, ended, {
+		return this.update(step, ended, {
 			phase: TERMINAL_PHASE,
 			outcome: { kind: "result", isError, source: "execution_end" },
 			join: orphaned(this.table, call) || call.join === "carrierless" ? "carrierless" : "pending",
@@ -259,8 +261,9 @@ export class CompactSessionCalls {
 		return this.table.byTurnId(turnId, toolCallId) ?? this.table.newestById(toolCallId);
 	}
 
-	private ignore(kind: "unknown" | "late"): void {
+	private ignore(kind: "unknown" | "late"): undefined {
 		this.table.counters[kind]++;
+		return undefined;
 	}
 
 	private create(step: CallStep, fields: Partial<OutstandingCall> & Pick<OutstandingCall, "turnId" | "phase">) {
@@ -279,8 +282,10 @@ export class CompactSessionCalls {
 		return call;
 	}
 
-	private update(step: CallStep, call: OutstandingCall, patch: Partial<OutstandingCall>): void {
-		this.table.put({ ...call, ...patch }, creationOf(call));
+	private update(step: CallStep, call: OutstandingCall, patch: Partial<OutstandingCall>): OutstandingCall {
+		const next = { ...call, ...patch };
+		this.table.put(next, creationOf(call));
 		this.sequence = step.sequence;
+		return next;
 	}
 }

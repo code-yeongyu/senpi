@@ -876,6 +876,33 @@ the record's accepted sequence in its `sessionEpoch`. A record with no settled r
 no message owns) carries none of them; an entry whose ownership the host cannot vouch for carries `ownerUnknown: true`
 instead.
 
+**Live call identity (senpi#5346, RULING-123).** The same compact copy of a live call record names the call it
+belongs to, so a client can join it to that call's snapshot entry after a reconnect or a recovery cut. This covers
+`message_update` records whose `assistantMessageEvent` is `toolcall_start`, `toolcall_delta` or `toolcall_end`, and
+`tool_execution_start`, `tool_execution_update`, `tool_execution_end` and `tool_hook_status`:
+
+- `runtimeItemKey`: the key of the outstanding call the host changed with this record, the same key the call's
+  `calls` member and, once it settles, its terminal row and call projection carry. A `toolcall_*` update names the call
+  that owns the streamed block. The key is opaque, fixed for the call's lifetime (live and after recovery), and never
+  reused in the session, so it tells apart calls that share a `toolCallId` (providers reuse them across turns). It is
+  unique on its own; no `turnId` is needed beside it.
+- `callUnknown: true`: the host changed no call with this record, so it cannot vouch for one. Every `tool_hook_status`
+  names a `toolCallId` (there are no session-level hook records), but a hook can run for a call the session never
+  announced, such as a nested call inside another tool; that record, a record for a call that already ended, a record
+  refused at the protocol depth limit, and a record arriving while the epoch's compact state is unavailable all carry
+  `callUnknown: true`. So does an execution or hook record (`tool_execution_*`, `tool_hook_status`) whose
+  `toolCallId` more than one call inside one assistant message took: those records name only the `toolCallId`, so the
+  host cannot tell which of those calls a record is about, and it never picks one by order. The mark lasts while any
+  call of that message and id is live. A `toolcall_*` update names its block by `contentIndex`, so it keeps the exact
+  key of its own call even then.
+
+A compact live call record carries exactly one of the two fields, `runtimeItemKey` or `callUnknown: true`, never both
+and never neither; that holds for its delta-only form too, when a newer `toolcall_delta` supersedes a queued one.
+
+The host appends the field after the record's own, like the message ids above (`{"type": "tool_execution_end", ...,
+"sessionId": "rpc-1", "runtimeItemKey": "..."}`); legacy connections and every connection with the flag off receive
+the same bytes as before.
+
 #### release_recovery
 
 Behind the same flag, the consumer's receipt for an event lease (senpi#4272, S13). Send it only once the leased

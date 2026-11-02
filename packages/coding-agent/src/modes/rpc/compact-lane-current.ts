@@ -82,6 +82,11 @@ export class CompactLaneCurrent {
 		}
 	}
 
+	/** The call whose block a `toolcall_*` update streams (RULING-123); undefined once the state is unavailable. */
+	callOwning(messageId: string, contentIndex: number) {
+		return this.state?.callOwning(messageId, contentIndex);
+	}
+
 	/**
 	 * The cold work of one accepted transcript transition: an owned append makes its message appended, and the flow a
 	 * real producer committed (edit, context-edit removal, compaction, branch) maps through this epoch's settled joins.

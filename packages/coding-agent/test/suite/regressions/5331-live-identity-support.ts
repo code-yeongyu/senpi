@@ -52,14 +52,18 @@ export async function liveRun(flag: "1" | "0") {
 	return { host, legacy, compact, routing, lane: entry?.acceptance, prompt };
 }
 
-/** The exact lines `client` received for the three live record types of this session, in order, with their records. */
-export function liveLines(client: RawClient, sessionId: string): { line: string; record: WireRecord }[] {
+/** The exact lines `client` received for this session's records `keep` selects (the three live types by default). */
+export function liveLines(
+	client: RawClient,
+	sessionId: string,
+	keep: (record: WireRecord) => boolean = (record) => LIVE_TYPES.includes(String(record.type)),
+): { line: string; record: WireRecord }[] {
 	return client.received
 		.join("")
 		.split("\n")
 		.filter((line) => line !== "")
 		.map((line) => ({ line, record: JSON.parse(line) as WireRecord }))
-		.filter(({ record }) => LIVE_TYPES.includes(String(record.type)) && record.sessionId === sessionId);
+		.filter(({ record }) => keep(record) && record.sessionId === sessionId);
 }
 
 export const liveRecords = (client: RawClient, sessionId: string): WireRecord[] =>
@@ -84,7 +88,11 @@ function unwrap<T>(outcome: RecoveryOutcome<T>): T {
 }
 
 /** A peer that reconnects after `dropped`: a new transport with `compact_events`, attached to the same session. */
-export async function reconnect(run: LiveRun, dropped: string, name: string): Promise<RawClient> {
+export async function reconnect(
+	run: Pick<LiveRun, "host" | "routing">,
+	dropped: string,
+	name: string,
+): Promise<RawClient> {
 	await run.host.drop(dropped);
 	const again = run.host.client(name);
 	run.host.writer.setConnectionCapabilities(name, ["compact_events"]);
@@ -92,8 +100,12 @@ export async function reconnect(run: LiveRun, dropped: string, name: string): Pr
 	return again;
 }
 
-/** The settled and identity rows of a recovery cut `peer` freezes now, keyed `settled/<member>` and `identity/<member>`. */
-export async function recoveredRows(run: LiveRun, peer: string): Promise<Map<string, Record<string, unknown>>> {
+/** The rows of `kinds` (settled and identity by default) in a recovery cut `peer` freezes now, keyed `<kind>/<member>`. */
+export async function recoveredRows(
+	run: Pick<LiveRun, "host" | "routing" | "lane">,
+	peer: string,
+	kinds: readonly string[] = ["settled", "identity"],
+): Promise<Map<string, Record<string, unknown>>> {
 	const { host, routing } = run;
 	const lane = run.lane ?? expect.unreachable("no acceptance lane with the flag on");
 	const socketEpoch = host.writer.socketEpochOf(peer) ?? expect.unreachable();
@@ -113,7 +125,7 @@ export async function recoveredRows(run: LiveRun, peer: string): Promise<Map<str
 		if (root.kind !== "node") throw new Error("the catalog root is a node");
 		const rows = new Map<string, Record<string, unknown>>();
 		for (const [index, entry] of root.entries.entries()) {
-			if (entry.kind !== "settled" && entry.kind !== "identity") continue;
+			if (!kinds.includes(entry.kind)) continue;
 			const ref = `${manifest.catalogRoot}:${String(index).padStart(3, "0")}`;
 			const text = await componentText(
 				component(unwrap(await host.writer.recoveryCheckpoints.readCatalog(token, caller, ref))),

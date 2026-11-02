@@ -13,6 +13,7 @@ interface Entry {
 }
 const turnKey = (turnId: string, toolCallId: string) => `${turnId}\u0000${toolCallId}`;
 const messageKey = (messageId: string, contentIndex: number) => `${messageId}#${contentIndex}`;
+const sharedKey = (messageId: string, toolCallId: string) => `${messageId}\u0000${toolCallId}`;
 
 /**
  * The resident side of the calls component (S06 design section 2): the live entries, four indexes, the owned slot
@@ -28,6 +29,7 @@ export class CompactCallTable {
 	private readonly byMessage = new Map<string, string>();
 	private readonly byId = new Map<string, string[]>();
 	private readonly children = new Map<string, Set<string>>();
+	private readonly shared = new Set<string>();
 	private slotBytes = 0;
 	private headerBytes = 0;
 	readonly counters = { replacements: 0, progressReplacements: 0, unknown: 0, late: 0, collisions: 0, reused: 0 };
@@ -79,6 +81,16 @@ export class CompactCallTable {
 			if (entry && open(entry.call) && (!oldest || rank(entry) < rank(oldest))) oldest = entry;
 		}
 		return oldest?.call;
+	}
+
+	/**
+	 * RULING-123, C3.4: whether another call of `call`'s own message took the same toolCallId. An execution or hook
+	 * record names only the toolCallId, so it cannot say which of those calls it is about. The mark lasts while any call
+	 * of that message and id is live, so a later record is not attributed by elimination either.
+	 */
+	sharesIdInMessage(call: OutstandingCall): boolean {
+		const { owningMessageId, toolCallId } = call;
+		return owningMessageId !== null && toolCallId !== null && this.shared.has(sharedKey(owningMessageId, toolCallId));
 	}
 
 	*ofTurn(turnId: string): Iterable<OutstandingCall> {
@@ -140,6 +152,9 @@ export class CompactCallTable {
 			}
 		this.headerBytes -= headerBytes(entry.call);
 		this.entries.delete(key);
+		const { owningMessageId, toolCallId } = entry.call;
+		if (owningMessageId !== null && toolCallId && !this.inMessage(owningMessageId, toolCallId).length)
+			this.shared.delete(sharedKey(owningMessageId, toolCallId));
 		this.root = this.roots.set(this.root, entry.order, undefined);
 		this.counters.replacements++;
 	}
@@ -190,6 +205,8 @@ export class CompactCallTable {
 				this.byTurn.set(slot, call.runtimeItemKey);
 			const keys = this.byId.get(call.toolCallId) ?? [];
 			if (!keys.includes(call.runtimeItemKey)) this.byId.set(call.toolCallId, [...keys, call.runtimeItemKey]);
+			if (call.owningMessageId !== null && this.inMessage(call.owningMessageId, call.toolCallId).length > 1)
+				this.shared.add(sharedKey(call.owningMessageId, call.toolCallId));
 		}
 		if (call.owningMessageId !== null && call.contentIndex !== null)
 			this.byMessage.set(messageKey(call.owningMessageId, call.contentIndex), call.runtimeItemKey);
@@ -198,6 +215,11 @@ export class CompactCallTable {
 			siblings.add(call.runtimeItemKey);
 			this.children.set(call.parentKey, siblings);
 		}
+	}
+
+	/** The live calls of one message under one toolCallId. */
+	private inMessage(messageId: string, toolCallId: string): readonly string[] {
+		return (this.byId.get(toolCallId) ?? []).filter((key) => this.get(key)?.owningMessageId === messageId);
 	}
 
 	private unindex(call: OutstandingCall): void {

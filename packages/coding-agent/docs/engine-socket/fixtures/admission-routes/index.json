@@ -11,6 +11,7 @@
 		"g-cancelled.json",
 		"h-legacy.json",
 		"i-live-identity.json",
-		"i-reset-stream.json"
+		"i-reset-stream.json",
+		"j-live-call-identity.json"
 	]
 }

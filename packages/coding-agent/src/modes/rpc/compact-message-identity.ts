@@ -1,4 +1,5 @@
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
+import type { CallIdentity } from "./compact-call-model.ts";
 
 /**
  * An accepted end's settled ids: the message's `messageId` and the end's accepted sequence. A pending or failed terminal
@@ -13,13 +14,14 @@ export interface TerminalIdentity {
 /**
  * RULING-120 (#5331): the ids the settled store records for one message, which a compact peer's own copy of the live
  * record carries too: an accepted end's terminal ids, a failed write's `messageId`, an entry join's `owningMessageId`
- * (the `messageId` of its `join-<n>` member).
+ * (the `messageId` of its `join-<n>` member). RULING-123 (#5346): a live call record's call, by its snapshot key.
  */
 export type LiveIdentity =
 	| TerminalIdentity
 	| { readonly messageId: string }
 	| { readonly owningMessageId: string }
-	| { readonly ownerUnknown: true };
+	| { readonly ownerUnknown: true }
+	| CallIdentity;
 
 /** An end the settled store accepted: whether it joined the message to its durable entry, and the ids it recorded. */
 export interface SettledEnd {

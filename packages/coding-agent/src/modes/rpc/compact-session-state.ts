@@ -126,6 +126,11 @@ export class CompactSessionState extends CompactActiveMessages {
 		return fold;
 	}
 
+	/** The outstanding call whose block this is: the call a `toolcall_*` update streams (RULING-123), by the table's index. */
+	callOwning(messageId: string, contentIndex: number) {
+		return this.calls.table.byOwner(messageId, contentIndex);
+	}
+
 	applyCold(t: CompactColdOperation) {
 		return this.cold.run(t, this.sequence);
 	}

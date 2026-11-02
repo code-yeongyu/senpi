@@ -38,6 +38,8 @@ export async function statusHost(
 		 * EVENT_SAFETY_MS passes one below that budget, so a hang fails by naming its predicate, not as a test timeout.
 		 */
 		deadlineMs?: number;
+		/** The faux stream's chunk size in tokens (default 3-5): a large one streams a call's arguments in few deltas. */
+		tokenSize?: { readonly min: number; readonly max: number };
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-status-"));
@@ -45,7 +47,10 @@ export async function statusHost(
 	const agentDir = join(scratch, "agent");
 	await mkdir(cwd);
 	await mkdir(agentDir);
-	const faux = fauxProvider({ models: [{ id: "faux-a" }, { id: "faux-b" }] });
+	const faux = fauxProvider({
+		models: [{ id: "faux-a" }, { id: "faux-b" }],
+		...(options.tokenSize ? { tokenSize: options.tokenSize } : {}),
+	});
 	const model = faux.getModel();
 	// Provider discovery belongs to fixture setup, not a protocol response deadline.
 	const modelRuntime = await ModelRuntime.create({
