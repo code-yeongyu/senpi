@@ -99,8 +99,6 @@
       ".agents/skills/senpi-qa/scripts/scenarios/goal-policy-rejection-fixture.ts": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused export generateTelemetryDocs (run-by-path entry, newly export-checked)
       "packages/agent/scripts/generate-telemetry-docs.ts": ["generateTelemetryDocs"],
-      // pre-existing at origin main aceb1cc1d9: unused exports generateSummaryWithRequest
-      "packages/agent/src/harness/compaction/compaction.ts": ["generateSummaryWithRequest"],
       // pre-existing at origin main aceb1cc1d9: unused exports WINDOWS_PROCESS_TREE_ROWS
       "packages/agent/src/harness/env/windows-process-tree.ts": ["WINDOWS_PROCESS_TREE_ROWS"],
       // pre-existing at origin main aceb1cc1d9: unused exports invalid, DEFAULT_BOUNDS
