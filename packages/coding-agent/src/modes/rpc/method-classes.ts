@@ -292,6 +292,12 @@ export const RPC_METHOD_CLASS = {
 	move_session: "connection_local",
 	// pages a recovery token this connection holds; every answer is scoped to the asking connection's peer incarnation
 	get_recovery_page: "connection_local",
+	// the receipt for an event lease this connection holds; it releases only that connection's lease
+	release_recovery: "connection_local",
+	// cancels an admission attempt of the asking connection's own socket epoch
+	cancel_attempt: "connection_local",
+	// resets the asking connection's own stream under an admission it completed
+	reset_stream: "connection_local",
 } as const satisfies RpcMethodClassTable;
 
 /**

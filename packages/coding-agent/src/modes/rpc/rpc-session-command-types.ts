@@ -9,6 +9,7 @@ import type { ClientMessageIdentity } from "../../core/client-message-identity.t
 import type { SessionEntry } from "../../core/session-manager.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
+import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
 
 // ============================================================================
@@ -287,21 +288,7 @@ export type RpcSessionCommand =
 			maxBytes?: number;
 	  }
 	| { id?: string; type: "get_tree" }
-	/**
-	 * One bounded page of a frozen checkpoint component through the recovery-token owner (R4.B3, senpi#4272); answered
-	 * only behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES`. `token`, `admissionId` and `componentRef` come from the
-	 * manifest and catalog of a token this connection holds; `cursor` continues a component from the previous page's
-	 * answer; `requestId` is the client's own id, so an exact retry answers the same page.
-	 */
-	| {
-			id?: string;
-			type: "get_recovery_page";
-			token: string;
-			admissionId: string;
-			componentRef: string;
-			requestId: string;
-			cursor?: string;
-	  }
+	| RpcRecoveryCommand
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */

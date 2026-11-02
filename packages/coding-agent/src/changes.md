@@ -1,3 +1,57 @@
+## 2026-10-31 - Detect Windows private pipes by mode bits (senpi#5142)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: classify FIFOs using the file-type mode mask instead of `Stats.isFIFO()`, preserving the existing pair proof, descriptor, alias and inheritance checks. Uses the shared `isFifoMode` predicate from `utils/inherited-duplex.ts`.
+
+### Why
+
+- Windows source runtimes can report FIFO mode bits while `Stats.isFIFO()` returns false, causing valid inherited private pipe pairs to be refused (#5137, part of #4859).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/private-fds.ts` validates inherited descriptors during startup, before extensions can receive a private channel.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/private-fds.ts` pipe classification; the release proof enablement remains separate.
+
+## 2026-10-31 - Record the Windows private pipe-pair proof for Bun 1.4.4 (#4898, PR #5125)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: `WINDOWS_PRIVATE_FD_PAIR_PROVEN` now records `{ bun: "1.4.4" }`, so win32 accepts a version-proven pipe pair under exactly that Bun and still refuses it under any other Bun or platform.
+
+### Why
+
+- The compiled-runtime pair proof and the old-parser compatibility control passed on windows-latest under Bun 1.4.4, the Bun the desktop app binds.
+
+### Why an extension could not handle it
+
+- The proof gate is part of bootstrap descriptor capture, which runs before extensions load.
+
+### Expected merge conflict zones
+
+- The proof constant in private descriptor parsing.
+
+## 2026-10-30 - Atomic socket compact negotiation (S17, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+
 ## 2026-10-30 - First-class private secret input (senpi#5108)
 
 ### What changed
