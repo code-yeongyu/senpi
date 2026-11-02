@@ -10,7 +10,7 @@ import { emitSessionShutdownEvent } from "../../src/core/extensions/runner.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { activateKillGuardRuntime, releaseKillGuardRuntime } from "../../src/core/kill-guard/runtime.ts";
 import { type BashOperations, createBashTool } from "../../src/core/tools/bash.ts";
-import { getShellEnv } from "../../src/utils/shell.ts";
+import { getShellEnv, getUserShellEnv } from "../../src/utils/shell.ts";
 import { createHarness, createTestUiContext, type Harness } from "./harness.ts";
 
 const posix = process.platform !== "win32";
@@ -107,10 +107,13 @@ describe.runIf(posix)("kill guard runtime layer delivery", () => {
 		await createBashTool(harness.tempDir, { operations }).execute("kill-guard-agent-bash", { command: "true" });
 		const [user, agent] = envs;
 
-		expect(user).toBeDefined();
-		expect(user?.PATH?.includes(shimRoot(agentDir))).toBe(false);
-		expect(user?.BASH_ENV).toBe(process.env.BASH_ENV);
-		expect(user?.SENPI_KILL_GUARD_EXEC).toBe(process.env.SENPI_KILL_GUARD_EXEC);
+		// Operations an extension returns from `user_bash` keep the contract they had before the guard: no env.
+		expect(user).toBeUndefined();
+		// The default operations get the user's shell env, which carries no runtime layer.
+		const userEnv = getUserShellEnv();
+		expect(userEnv.PATH?.includes(shimRoot(agentDir))).toBe(false);
+		expect(userEnv.BASH_ENV).toBe(process.env.BASH_ENV);
+		expect(userEnv.SENPI_KILL_GUARD_EXEC).toBe(process.env.SENPI_KILL_GUARD_EXEC);
 
 		expect(firstPathEntry(agent).startsWith(shimRoot(agentDir))).toBe(true);
 		expect(agent?.BASH_ENV).toBe(join(firstPathEntry(agent), "bash_env.sh"));

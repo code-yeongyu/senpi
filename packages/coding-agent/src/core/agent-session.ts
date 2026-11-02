@@ -13542,7 +13542,8 @@ export class AgentSession {
 					signal: abortController.signal,
 					redactSecretsInOutput: this.settingsManager.getBashRedactSecretsInOutput(),
 					// The user's own command: no kill guard runtime layer, which judges only agent commands (senpi#5349).
-					env: getUserShellEnv(),
+					// Operations an extension returns from `user_bash` keep receiving no env, as before this guard existed.
+					...(options?.operations === undefined ? { env: getUserShellEnv() } : {}),
 				},
 			);
 
