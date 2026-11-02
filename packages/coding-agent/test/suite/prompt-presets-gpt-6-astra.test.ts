@@ -113,6 +113,7 @@ const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {
 	"atomic-commits": "commit-discipline",
 	"no-external-messaging": "external-side-effects",
 	"codex-writing-style": "writing-style",
+	"no-reflexive-apology": "writing-style",
 	"handoff-report": "reporting",
 	"final-message-shape": "reporting",
 	"stop-checks": "verification",
@@ -144,6 +145,7 @@ const EXPECTED_SECTION: Record<Gpt6AstraRuleId, string> = {
 	"atomic-commits": "Hard Limits",
 	"no-external-messaging": "Hard Limits",
 	"codex-writing-style": "Writing",
+	"no-reflexive-apology": "Reporting",
 	"handoff-report": "Reporting",
 	"final-message-shape": "Reporting",
 	"stop-checks": "Stop Goal",
@@ -351,18 +353,29 @@ describe("GPT-6 Astra behavior contract", () => {
 		for (const rule of GPT6_ASTRA_RULES) {
 			const required: readonly string[] | undefined = "requiresTool" in rule ? rule.requiresTool : undefined;
 			const expected = required === undefined ? 1 : 0;
-			if (rule.id === "monitor-conditions") continue;
+			if (rule.id === "monitor-conditions" || rule.id === "async-default") continue;
 			expect(occurrences(prompt, rule.directive), rule.id).toBe(expected);
 		}
 	});
 
-	it("names the ask tool the session has", () => {
+	it("names the ask tool and its wait parameter the way the session's schema spells them", () => {
 		// given
 		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra", ["read", "ask_user_question"]);
 
 		// then
 		expect(prompt).toContain("ask_user_question");
+		expect(prompt).toContain("waitForAnswer");
 		expect(prompt).not.toContain("request_user_input");
+		expect(prompt).not.toContain("wait_for_answer");
+	});
+
+	it("names no eval-cell form in a session without eval", () => {
+		// given
+		const prompt = buildPrompt("gpt-6-astra", "gpt-6-astra", ["read", "bash", "monitor"]);
+
+		// then
+		expect(prompt).not.toContain("tool.monitor");
+		expect(prompt).not.toMatch(/eval cell/i);
 	});
 
 	it("keeps tool guidelines and drops the Verification and file-operations blocks", () => {

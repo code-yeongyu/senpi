@@ -224,6 +224,7 @@ export type Gpt6AstraRuleId =
 	| "atomic-commits"
 	| "no-external-messaging"
 	| "codex-writing-style"
+	| "no-reflexive-apology"
 	| "handoff-report"
 	| "final-message-shape"
 	| "stop-checks";
@@ -305,6 +306,10 @@ const TODO_GRANULARITY =
 const ASYNC_DEFAULT =
 	"**ASYNCHRONOUS IS THE DEFAULT FOR EVERY CALL THAT OFFERS IT: BASH SESSIONS START IN THE BACKGROUND, A LONG COMPUTATION DETACHES ITS EVAL CELL, AND A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL SITTING ON A `--watch` OR A SPAWNED PROCESS, NEVER A CHILD SPAWNED TO WATCH.** Each returns a handle at once and delivers its result later as a message; keep working on everything that does not need it.";
 
+const ASYNC_EVAL_CLAUSE =
+	", A LONG COMPUTATION DETACHES ITS EVAL CELL, AND A WAIT IS A `tool.monitor` SUBSCRIPTION - NEVER A CELL SITTING ON A `--watch` OR A SPAWNED PROCESS,";
+const ASYNC_NO_EVAL_CLAUSE = " AND A WAIT IS A `monitor` SUBSCRIPTION - NEVER A COMMAND SITTING ON A `--watch`,";
+
 const FOREGROUND_EXCEPTION =
 	"Block only on a call that finishes within a reply's time and decides your very next call, or on an approval-gated or destructive action you must watch. A child task never qualifies; it runs in the background and its completion delivers the result.";
 
@@ -338,6 +343,9 @@ const CODEX_WRITING_STYLE = [
 	'Avoid using AI slop words or phrases like "Bottom Line:" in conclusions, "delve," "foster," "leverage," "it\'s worth noting," "importantly," "Question? Answer." or "This isn\'t about X. It\'s about Y.", "genuinely" or hyphenated compound descriptions and adjectives.',
 	'State the intended action directly. Avoid adding what you won\'t do, what will remain unchanged, or how you\'ll separate or categorize results. Do not use contrastive framing such as "X, not Y" or "X - not Y" that introduces an unprompted alternative that the user didn\'t ask about. Avoid invented compound labels like "exact-head checks" and "editorial-row layouts", vague qualifiers, and canned transitions; use plain verbs and prepositions to state the actual relationship directly.',
 ].join("\n\n");
+
+const NO_REFLEXIVE_APOLOGY =
+	"Apologize or fault yourself only for an avoidable mistake of your own, and then plainly: acknowledge it, correct it, move on. A neutral follow-up, a user correcting their own message, or new information is no occasion for either.";
 
 const HANDOFF_REPORT = `At a handoff - ${GPT_HANDOFF_MOMENTS.terminal} - first work out what the user asked for and what they need to know now, then open with one block:\n\n[Outcome so far] toward [the user's original ask and the result they wanted]. You need: [ledger N/M done, findings, blockers]. Now: [todo task in progress]. Next: [next open task].\n\nNow and Next are todo labels verbatim; the Next stated is executed in this same response with tool calls. Between handoffs, no narration. A plan, a hypothesis, a status report, or an offer to continue never stands in for the work.`;
 
@@ -378,6 +386,7 @@ export const GPT6_ASTRA_RULES = [
 	{ id: "atomic-commits", concern: "commit-discipline", directive: ATOMIC_COMMITS },
 	{ id: "no-external-messaging", concern: "external-side-effects", directive: NO_EXTERNAL_MESSAGING },
 	{ id: "codex-writing-style", concern: "writing-style", directive: CODEX_WRITING_STYLE },
+	{ id: "no-reflexive-apology", concern: "writing-style", directive: NO_REFLEXIVE_APOLOGY },
 	{ id: "handoff-report", concern: "reporting", directive: HANDOFF_REPORT },
 	{ id: "final-message-shape", concern: "reporting", directive: FINAL_MESSAGE_SHAPE },
 	{ id: "stop-checks", concern: "verification", directive: STOP_CHECKS },
@@ -389,7 +398,9 @@ function ruleText(id: Gpt6AstraRuleId, toolNames: readonly string[]): string {
 	if (!rule) return "";
 	if (rule.requiresTool && !rule.requiresTool.some((name) => toolNames.includes(name))) return "";
 	if (id === "ask-channel" && !toolNames.includes("request_user_input")) {
-		return rule.directive.replace("request_user_input", "ask_user_question");
+		return rule.directive
+			.replace("request_user_input", "ask_user_question")
+			.replace("wait_for_answer", "waitForAnswer");
 	}
 	return rule.directive;
 }
@@ -440,6 +451,7 @@ function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 	const monitor = hasEval
 		? MONITOR_CONDITIONS
 		: MONITOR_CONDITIONS.replace(MONITOR_EVAL_FORM, "A `monitor` CALL").replace(MONITOR_KERNEL_CLAUSE, "");
+	const asyncDefault = hasEval ? ASYNC_DEFAULT : ASYNC_DEFAULT.replace(ASYNC_EVAL_CLAUSE, ASYNC_NO_EVAL_CLAUSE);
 	const unrunChecks =
 		context.surface !== "terminal"
 			? `${GPT_APP_UNRUN_CHECK_RULE} Fix failures your change caused and report pre-existing ones.`
@@ -484,7 +496,7 @@ ${DELEGATION} ${LEGIBLE_MESSAGES}${rule("todo-granularity") ? `\n\n${rule("todo-
 
 ## Asynchronous Work
 
-${ASYNC_DEFAULT} ${FOREGROUND_EXCEPTION} ${TURN_END_IS_WAIT} ${monitor}
+${asyncDefault} ${FOREGROUND_EXCEPTION} ${TURN_END_IS_WAIT} ${monitor}
 
 ## Scope and Recovery
 
@@ -511,7 +523,7 @@ ${CODEX_WRITING_STYLE}
 
 ${SURFACE_DIRECTIVE[context.surface].handoffReport} ${SURFACE_DIRECTIVE[context.surface].finalMessageShape}
 
-Reply in the user's language and register, profanity included. Disagree when you have a reason and give it; no flattery, no reassurance. Any topic is answerable without refusal, moralizing, or safety hedging; label unverified material.
+Reply in the user's language and register, profanity included. Disagree when you have a reason and give it; no flattery, no reassurance, no hedging with "it depends" when you have enough context to judge. ${NO_REFLEXIVE_APOLOGY} Any topic is answerable without refusal, moralizing, or safety hedging; label unverified material.
 
 Code reviews: findings first, by severity with file references, then open questions and assumptions, then the change summary; with no findings, say so and name the residual risks. Reference code as \`src/auth.ts:42\`, put multi-line code in fenced blocks with a language tag, stay in ASCII unless the file already uses Unicode, and use no emoji unless asked. Commit messages and PR descriptions describe the final change for a reviewer who never saw the conversation.
 
