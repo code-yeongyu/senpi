@@ -277,6 +277,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -944,6 +948,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -1557,6 +1565,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -2154,6 +2166,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -3225,10 +3241,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:5>",
       "phase": "start",
-      "statusMessage": "running hooks"
+      "statusMessage": "running kill-guard"
      },
      {
       "type": "tool_hook_status",
@@ -3236,10 +3252,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:6>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": "running kill-guard",
       "completedAt": "<ts:events.completedAt:3>",
       "status": "completed"
      },
@@ -3249,10 +3265,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:7>",
       "phase": "start",
-      "statusMessage": "matching project rules"
+      "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
@@ -3260,10 +3276,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:8>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:4>",
       "status": "completed"
      },
@@ -3273,10 +3289,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:9>",
       "phase": "start",
-      "statusMessage": "applying bash timeout"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -3284,10 +3300,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:10>",
       "phase": "end",
-      "statusMessage": "applying bash timeout",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:5>",
       "status": "completed"
      },
@@ -3297,10 +3313,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:11>",
       "phase": "start",
-      "statusMessage": "running terminal"
+      "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
@@ -3308,10 +3324,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:12>",
       "phase": "end",
-      "statusMessage": "running terminal",
+      "statusMessage": "applying bash timeout",
       "completedAt": "<ts:events.completedAt:6>",
       "status": "completed"
      },
@@ -3321,10 +3337,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:13>",
       "phase": "start",
-      "statusMessage": "checking compaction state"
+      "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
@@ -3332,10 +3348,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:14>",
       "phase": "end",
-      "statusMessage": "checking compaction state",
+      "statusMessage": "running terminal",
       "completedAt": "<ts:events.completedAt:7>",
       "status": "completed"
      },
@@ -3345,10 +3361,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:15>",
       "phase": "start",
-      "statusMessage": "running mcp"
+      "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
@@ -3356,11 +3372,35 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:16>",
       "phase": "end",
-      "statusMessage": "running mcp",
+      "statusMessage": "checking compaction state",
       "completedAt": "<ts:events.completedAt:8>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call_steered:PreToolUse:8",
+      "hookName": "PreToolUse",
+      "toolName": "eq_write",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:mcp>",
+      "startedAt": "<ts:events.startedAt:17>",
+      "phase": "start",
+      "statusMessage": "running mcp"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call_steered:PreToolUse:8",
+      "hookName": "PreToolUse",
+      "toolName": "eq_write",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:mcp>",
+      "startedAt": "<ts:events.startedAt:18>",
+      "phase": "end",
+      "statusMessage": "running mcp",
+      "completedAt": "<ts:events.completedAt:9>",
       "status": "completed"
      },
      {
@@ -3477,49 +3517,25 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "call_steered:PostToolUse:8",
+      "hookRunId": "call_steered:PostToolUse:9",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:events.startedAt:17>",
+      "startedAt": "<ts:events.startedAt:19>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "call_steered:PostToolUse:8",
+      "hookRunId": "call_steered:PostToolUse:9",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:events.startedAt:18>",
-      "phase": "end",
-      "statusMessage": "running hooks",
-      "completedAt": "<ts:events.completedAt:9>",
-      "status": "completed"
-     },
-     {
-      "type": "tool_hook_status",
-      "hookRunId": "call_steered:PostToolUse:9",
-      "hookName": "PostToolUse",
-      "toolName": "eq_write",
-      "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:events.startedAt:19>",
-      "phase": "start",
-      "statusMessage": "matching project rules"
-     },
-     {
-      "type": "tool_hook_status",
-      "hookRunId": "call_steered:PostToolUse:9",
-      "hookName": "PostToolUse",
-      "toolName": "eq_write",
-      "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:20>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:10>",
       "status": "completed"
      },
@@ -3529,10 +3545,10 @@
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:gpt-apply-patch>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:21>",
       "phase": "start",
-      "statusMessage": "running gpt-apply-patch"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -3540,10 +3556,10 @@
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:gpt-apply-patch>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:22>",
       "phase": "end",
-      "statusMessage": "running gpt-apply-patch",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:11>",
       "status": "completed"
      },
@@ -3553,10 +3569,10 @@
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:nested-agents-md>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
       "startedAt": "<ts:events.startedAt:23>",
       "phase": "start",
-      "statusMessage": "running nested-agents-md"
+      "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
@@ -3564,10 +3580,10 @@
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:nested-agents-md>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
       "startedAt": "<ts:events.startedAt:24>",
       "phase": "end",
-      "statusMessage": "running nested-agents-md",
+      "statusMessage": "running gpt-apply-patch",
       "completedAt": "<ts:events.completedAt:12>",
       "status": "completed"
      },
@@ -3577,10 +3593,10 @@
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:rules>",
+      "extensionPath": "<builtin:nested-agents-md>",
       "startedAt": "<ts:events.startedAt:25>",
       "phase": "start",
-      "statusMessage": "running rules"
+      "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
@@ -3588,10 +3604,10 @@
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:rules>",
+      "extensionPath": "<builtin:nested-agents-md>",
       "startedAt": "<ts:events.startedAt:26>",
       "phase": "end",
-      "statusMessage": "running rules",
+      "statusMessage": "running nested-agents-md",
       "completedAt": "<ts:events.completedAt:13>",
       "status": "completed"
      },
@@ -3601,10 +3617,10 @@
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:goal>",
+      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:27>",
       "phase": "start",
-      "statusMessage": "running goal"
+      "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
@@ -3612,11 +3628,35 @@
       "hookName": "PostToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:goal>",
+      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:28>",
       "phase": "end",
-      "statusMessage": "running goal",
+      "statusMessage": "running rules",
       "completedAt": "<ts:events.completedAt:14>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call_steered:PostToolUse:14",
+      "hookName": "PostToolUse",
+      "toolName": "eq_write",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:goal>",
+      "startedAt": "<ts:events.startedAt:29>",
+      "phase": "start",
+      "statusMessage": "running goal"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call_steered:PostToolUse:14",
+      "hookName": "PostToolUse",
+      "toolName": "eq_write",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:goal>",
+      "startedAt": "<ts:events.startedAt:30>",
+      "phase": "end",
+      "statusMessage": "running goal",
+      "completedAt": "<ts:events.completedAt:15>",
       "status": "completed"
      },
      {

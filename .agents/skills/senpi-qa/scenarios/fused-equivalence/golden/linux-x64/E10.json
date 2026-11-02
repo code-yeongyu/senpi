@@ -277,6 +277,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -875,6 +879,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -1480,6 +1488,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -2104,6 +2116,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -2667,6 +2683,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -3204,6 +3224,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -3741,6 +3765,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -4278,6 +4306,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -5300,10 +5332,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:5>",
       "phase": "start",
-      "statusMessage": "running hooks"
+      "statusMessage": "running kill-guard"
      },
      {
       "type": "tool_hook_status",
@@ -5311,10 +5343,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:6>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": "running kill-guard",
       "completedAt": "<ts:events.completedAt:3>",
       "status": "completed"
      },
@@ -5324,10 +5356,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:7>",
       "phase": "start",
-      "statusMessage": "matching project rules"
+      "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
@@ -5335,10 +5367,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:8>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:4>",
       "status": "completed"
      },
@@ -5348,10 +5380,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:9>",
       "phase": "start",
-      "statusMessage": "applying bash timeout"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -5359,10 +5391,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:10>",
       "phase": "end",
-      "statusMessage": "applying bash timeout",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:5>",
       "status": "completed"
      },
@@ -5372,10 +5404,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:11>",
       "phase": "start",
-      "statusMessage": "running terminal"
+      "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
@@ -5383,10 +5415,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:12>",
       "phase": "end",
-      "statusMessage": "running terminal",
+      "statusMessage": "applying bash timeout",
       "completedAt": "<ts:events.completedAt:6>",
       "status": "completed"
      },
@@ -5396,10 +5428,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:13>",
       "phase": "start",
-      "statusMessage": "checking compaction state"
+      "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
@@ -5407,10 +5439,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:14>",
       "phase": "end",
-      "statusMessage": "checking compaction state",
+      "statusMessage": "running terminal",
       "completedAt": "<ts:events.completedAt:7>",
       "status": "completed"
      },
@@ -5420,10 +5452,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:15>",
       "phase": "start",
-      "statusMessage": "running mcp"
+      "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
@@ -5431,10 +5463,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:16>",
       "phase": "end",
-      "statusMessage": "running mcp",
+      "statusMessage": "checking compaction state",
       "completedAt": "<ts:events.completedAt:8>",
       "status": "completed"
      },
@@ -5444,10 +5476,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "extensionPath": "<builtin:mcp>",
       "startedAt": "<ts:events.startedAt:17>",
       "phase": "start",
-      "statusMessage": "running index"
+      "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
@@ -5455,34 +5487,34 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "extensionPath": "<builtin:mcp>",
       "startedAt": "<ts:events.startedAt:18>",
       "phase": "end",
-      "statusMessage": "running index",
+      "statusMessage": "running mcp",
       "completedAt": "<ts:events.completedAt:9>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:9",
-      "hookName": "PostToolUse",
+      "hookRunId": "<id:6>:PreToolUse:9",
+      "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
       "startedAt": "<ts:events.startedAt:19>",
       "phase": "start",
-      "statusMessage": "running hooks"
+      "statusMessage": "running index"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:9",
-      "hookName": "PostToolUse",
+      "hookRunId": "<id:6>:PreToolUse:9",
+      "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
       "startedAt": "<ts:events.startedAt:20>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": "running index",
       "completedAt": "<ts:events.completedAt:10>",
       "status": "completed"
      },
@@ -5492,10 +5524,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:21>",
       "phase": "start",
-      "statusMessage": "matching project rules"
+      "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
@@ -5503,10 +5535,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:22>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:11>",
       "status": "completed"
      },
@@ -5516,10 +5548,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:gpt-apply-patch>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:23>",
       "phase": "start",
-      "statusMessage": "running gpt-apply-patch"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -5527,10 +5559,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:gpt-apply-patch>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:24>",
       "phase": "end",
-      "statusMessage": "running gpt-apply-patch",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:12>",
       "status": "completed"
      },
@@ -5540,10 +5572,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:nested-agents-md>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
       "startedAt": "<ts:events.startedAt:25>",
       "phase": "start",
-      "statusMessage": "running nested-agents-md"
+      "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
@@ -5551,10 +5583,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:nested-agents-md>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
       "startedAt": "<ts:events.startedAt:26>",
       "phase": "end",
-      "statusMessage": "running nested-agents-md",
+      "statusMessage": "running gpt-apply-patch",
       "completedAt": "<ts:events.completedAt:13>",
       "status": "completed"
      },
@@ -5564,10 +5596,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:rules>",
+      "extensionPath": "<builtin:nested-agents-md>",
       "startedAt": "<ts:events.startedAt:27>",
       "phase": "start",
-      "statusMessage": "running rules"
+      "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
@@ -5575,10 +5607,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:rules>",
+      "extensionPath": "<builtin:nested-agents-md>",
       "startedAt": "<ts:events.startedAt:28>",
       "phase": "end",
-      "statusMessage": "running rules",
+      "statusMessage": "running nested-agents-md",
       "completedAt": "<ts:events.completedAt:14>",
       "status": "completed"
      },
@@ -5588,10 +5620,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:goal>",
+      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:29>",
       "phase": "start",
-      "statusMessage": "running goal"
+      "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
@@ -5599,10 +5631,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:goal>",
+      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:30>",
       "phase": "end",
-      "statusMessage": "running goal",
+      "statusMessage": "running rules",
       "completedAt": "<ts:events.completedAt:15>",
       "status": "completed"
      },
@@ -5612,10 +5644,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "extensionPath": "<builtin:goal>",
       "startedAt": "<ts:events.startedAt:31>",
       "phase": "start",
-      "statusMessage": "running index"
+      "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
@@ -5623,11 +5655,35 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:6>",
-      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "extensionPath": "<builtin:goal>",
       "startedAt": "<ts:events.startedAt:32>",
       "phase": "end",
-      "statusMessage": "running index",
+      "statusMessage": "running goal",
       "completedAt": "<ts:events.completedAt:16>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:6>:PostToolUse:16",
+      "hookName": "PostToolUse",
+      "toolName": "parse_duration",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "startedAt": "<ts:events.startedAt:33>",
+      "phase": "start",
+      "statusMessage": "running index"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:6>:PostToolUse:16",
+      "hookName": "PostToolUse",
+      "toolName": "parse_duration",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "startedAt": "<ts:events.startedAt:34>",
+      "phase": "end",
+      "statusMessage": "running index",
+      "completedAt": "<ts:events.completedAt:17>",
       "status": "completed"
      },
      {
@@ -6753,49 +6809,25 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:16>:PreToolUse:16",
+      "hookRunId": "<id:16>:PreToolUse:17",
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:events.startedAt:33>",
+      "startedAt": "<ts:events.startedAt:35>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:16>:PreToolUse:16",
+      "hookRunId": "<id:16>:PreToolUse:17",
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:events.startedAt:34>",
-      "phase": "end",
-      "statusMessage": "running loop-guard",
-      "completedAt": "<ts:events.completedAt:17>",
-      "status": "completed"
-     },
-     {
-      "type": "tool_hook_status",
-      "hookRunId": "<id:16>:PreToolUse:17",
-      "hookName": "PreToolUse",
-      "toolName": "parse_duration",
-      "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:events.startedAt:35>",
-      "phase": "start",
-      "statusMessage": "running moved-path-guard"
-     },
-     {
-      "type": "tool_hook_status",
-      "hookRunId": "<id:16>:PreToolUse:17",
-      "hookName": "PreToolUse",
-      "toolName": "parse_duration",
-      "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:moved-path-guard>",
       "startedAt": "<ts:events.startedAt:36>",
       "phase": "end",
-      "statusMessage": "running moved-path-guard",
+      "statusMessage": "running loop-guard",
       "completedAt": "<ts:events.completedAt:18>",
       "status": "completed"
      },
@@ -6805,10 +6837,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:moved-path-guard>",
       "startedAt": "<ts:events.startedAt:37>",
       "phase": "start",
-      "statusMessage": "running hooks"
+      "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
@@ -6816,10 +6848,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:moved-path-guard>",
       "startedAt": "<ts:events.startedAt:38>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": "running moved-path-guard",
       "completedAt": "<ts:events.completedAt:19>",
       "status": "completed"
      },
@@ -6829,10 +6861,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:39>",
       "phase": "start",
-      "statusMessage": "matching project rules"
+      "statusMessage": "running kill-guard"
      },
      {
       "type": "tool_hook_status",
@@ -6840,10 +6872,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:40>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running kill-guard",
       "completedAt": "<ts:events.completedAt:20>",
       "status": "completed"
      },
@@ -6853,10 +6885,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:41>",
       "phase": "start",
-      "statusMessage": "applying bash timeout"
+      "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
@@ -6864,10 +6896,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:42>",
       "phase": "end",
-      "statusMessage": "applying bash timeout",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:21>",
       "status": "completed"
      },
@@ -6877,10 +6909,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:43>",
       "phase": "start",
-      "statusMessage": "running terminal"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -6888,10 +6920,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:44>",
       "phase": "end",
-      "statusMessage": "running terminal",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:22>",
       "status": "completed"
      },
@@ -6901,10 +6933,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:45>",
       "phase": "start",
-      "statusMessage": "checking compaction state"
+      "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
@@ -6912,10 +6944,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:46>",
       "phase": "end",
-      "statusMessage": "checking compaction state",
+      "statusMessage": "applying bash timeout",
       "completedAt": "<ts:events.completedAt:23>",
       "status": "completed"
      },
@@ -6925,10 +6957,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:47>",
       "phase": "start",
-      "statusMessage": "running mcp"
+      "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
@@ -6936,10 +6968,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:48>",
       "phase": "end",
-      "statusMessage": "running mcp",
+      "statusMessage": "running terminal",
       "completedAt": "<ts:events.completedAt:24>",
       "status": "completed"
      },
@@ -6949,10 +6981,10 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:49>",
       "phase": "start",
-      "statusMessage": "running index"
+      "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
@@ -6960,58 +6992,58 @@
       "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:50>",
       "phase": "end",
-      "statusMessage": "running index",
+      "statusMessage": "checking compaction state",
       "completedAt": "<ts:events.completedAt:25>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:16>:PostToolUse:25",
-      "hookName": "PostToolUse",
+      "hookRunId": "<id:16>:PreToolUse:25",
+      "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:mcp>",
       "startedAt": "<ts:events.startedAt:51>",
       "phase": "start",
-      "statusMessage": "running hooks"
+      "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:16>:PostToolUse:25",
-      "hookName": "PostToolUse",
+      "hookRunId": "<id:16>:PreToolUse:25",
+      "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:mcp>",
       "startedAt": "<ts:events.startedAt:52>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": "running mcp",
       "completedAt": "<ts:events.completedAt:26>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:16>:PostToolUse:26",
-      "hookName": "PostToolUse",
+      "hookRunId": "<id:16>:PreToolUse:26",
+      "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
       "startedAt": "<ts:events.startedAt:53>",
       "phase": "start",
-      "statusMessage": "matching project rules"
+      "statusMessage": "running index"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:16>:PostToolUse:26",
-      "hookName": "PostToolUse",
+      "hookRunId": "<id:16>:PreToolUse:26",
+      "hookName": "PreToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
       "startedAt": "<ts:events.startedAt:54>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running index",
       "completedAt": "<ts:events.completedAt:27>",
       "status": "completed"
      },
@@ -7021,10 +7053,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:gpt-apply-patch>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:55>",
       "phase": "start",
-      "statusMessage": "running gpt-apply-patch"
+      "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
@@ -7032,10 +7064,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:gpt-apply-patch>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:56>",
       "phase": "end",
-      "statusMessage": "running gpt-apply-patch",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:28>",
       "status": "completed"
      },
@@ -7045,10 +7077,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:nested-agents-md>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:57>",
       "phase": "start",
-      "statusMessage": "running nested-agents-md"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -7056,10 +7088,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:nested-agents-md>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:58>",
       "phase": "end",
-      "statusMessage": "running nested-agents-md",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:29>",
       "status": "completed"
      },
@@ -7069,10 +7101,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:rules>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
       "startedAt": "<ts:events.startedAt:59>",
       "phase": "start",
-      "statusMessage": "running rules"
+      "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
@@ -7080,10 +7112,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:rules>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
       "startedAt": "<ts:events.startedAt:60>",
       "phase": "end",
-      "statusMessage": "running rules",
+      "statusMessage": "running gpt-apply-patch",
       "completedAt": "<ts:events.completedAt:30>",
       "status": "completed"
      },
@@ -7093,10 +7125,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:goal>",
+      "extensionPath": "<builtin:nested-agents-md>",
       "startedAt": "<ts:events.startedAt:61>",
       "phase": "start",
-      "statusMessage": "running goal"
+      "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
@@ -7104,10 +7136,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<builtin:goal>",
+      "extensionPath": "<builtin:nested-agents-md>",
       "startedAt": "<ts:events.startedAt:62>",
       "phase": "end",
-      "statusMessage": "running goal",
+      "statusMessage": "running nested-agents-md",
       "completedAt": "<ts:events.completedAt:31>",
       "status": "completed"
      },
@@ -7117,10 +7149,10 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:63>",
       "phase": "start",
-      "statusMessage": "running index"
+      "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
@@ -7128,11 +7160,59 @@
       "hookName": "PostToolUse",
       "toolName": "parse_duration",
       "toolCallId": "<id:16>",
-      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:64>",
       "phase": "end",
-      "statusMessage": "running index",
+      "statusMessage": "running rules",
       "completedAt": "<ts:events.completedAt:32>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:16>:PostToolUse:32",
+      "hookName": "PostToolUse",
+      "toolName": "parse_duration",
+      "toolCallId": "<id:16>",
+      "extensionPath": "<builtin:goal>",
+      "startedAt": "<ts:events.startedAt:65>",
+      "phase": "start",
+      "statusMessage": "running goal"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:16>:PostToolUse:32",
+      "hookName": "PostToolUse",
+      "toolName": "parse_duration",
+      "toolCallId": "<id:16>",
+      "extensionPath": "<builtin:goal>",
+      "startedAt": "<ts:events.startedAt:66>",
+      "phase": "end",
+      "statusMessage": "running goal",
+      "completedAt": "<ts:events.completedAt:33>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:16>:PostToolUse:33",
+      "hookName": "PostToolUse",
+      "toolName": "parse_duration",
+      "toolCallId": "<id:16>",
+      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "startedAt": "<ts:events.startedAt:67>",
+      "phase": "start",
+      "statusMessage": "running index"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:16>:PostToolUse:33",
+      "hookName": "PostToolUse",
+      "toolName": "parse_duration",
+      "toolCallId": "<id:16>",
+      "extensionPath": "<repo>/packages/coding-agent/test/fixtures/closure-ext/index.ts",
+      "startedAt": "<ts:events.startedAt:68>",
+      "phase": "end",
+      "statusMessage": "running index",
+      "completedAt": "<ts:events.completedAt:34>",
       "status": "completed"
      },
      {
