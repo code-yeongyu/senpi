@@ -38,8 +38,8 @@ export const CONVERSATION_HISTORY_CLOSER = "\n</conversation_history>";
  * The current turn's tool images go after the history closer, past the cache breakpoint, so the history bytes stay the
  * same when the turn ends and these images are no longer sent (senpi#5275).
  */
-export const CURRENT_TURN_IMAGES_OPENER = "\n<current_turn_tool_images>\n";
-export const CURRENT_TURN_IMAGES_CLOSER = "\n</current_turn_tool_images>";
+const CURRENT_TURN_IMAGES_OPENER = "\n<current_turn_tool_images>\n";
+const CURRENT_TURN_IMAGES_CLOSER = "\n</current_turn_tool_images>";
 
 export const RESPOND_TO_USER_INSTRUCTION =
 	'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
