@@ -54,6 +54,12 @@ export function jobState(state: JobWidgetState, id: string): string | undefined 
 	return state.jobs.find((job) => job.id === id)?.state;
 }
 
+/**
+ * The harness's faux model, designated as the widget author through `jobWidgets.model`: the author
+ * only runs on a designated model and never falls back to the session's own model (#5338).
+ */
+export const JOB_WIDGET_AUTHOR_MODEL = "faux/faux-1";
+
 export async function createJobWidgetHarness(
 	jobWidgets: Record<string, unknown>,
 	bindings: ExtensionBindings = {},
@@ -67,7 +73,7 @@ export async function createJobWidgetHarness(
 	let bus: EventBus | undefined;
 	const harness = await createHarness({
 		fileSettings: true,
-		settings: { jobWidgets },
+		settings: { jobWidgets: { model: JOB_WIDGET_AUTHOR_MODEL, ...jobWidgets } },
 		initialActiveToolNames: ["bash", "bash_output", "bash_input", "kill_bash"],
 		extensionFactories: [
 			registerTerminalExtension,
