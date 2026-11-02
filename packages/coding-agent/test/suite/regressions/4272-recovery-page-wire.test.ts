@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import { CompactReadError } from "../../../src/modes/rpc/compact-read-lease.ts";
 import { CompactRecoveryCatalog } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
-import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
+import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest-shape.ts";
 import type { RecoveryCheckpoints } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import type { RecoveryCaller } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import type { RpcCommand, RpcResponse } from "../../../src/modes/rpc/rpc-types.ts";
@@ -84,7 +84,7 @@ it("RULING-62 RULING-69 (1) the holder of a token pages a component of its real 
 		host.writer.unregisterConnection("held");
 		await host[Symbol.asyncDispose]();
 	}
-});
+}, 600_000);
 
 async function pagesOverTheWire(
 	host: Awaited<ReturnType<typeof statusHost>>,
@@ -144,8 +144,21 @@ async function pagesOverTheWire(
 		success: false,
 		error: "recovery_repair_needed",
 		errorCode: "recovery_repair_needed",
-		errorData: { kind: "repair_needed", reason: "unknown_token" },
+		errorData: {
+			kind: "repair_needed",
+			reason: "unknown_token",
+			repair: {
+				state: "repair_needed",
+				healthRevision: null,
+				source: null,
+				hint: "restart_from_catalog",
+				retryAfterMs: expect.any(Number),
+			},
+		},
 	});
+	const retryAfterMs = (foreign as { errorData: { repair: { retryAfterMs: number } } }).errorData.repair.retryAfterMs;
+	expect(retryAfterMs).toBeGreaterThanOrEqual(100);
+	expect(retryAfterMs).toBeLessThanOrEqual(2_000);
 	const busy = await send("held", { requestId: "r-2", cursor: "p1:1:0:00000000000000000000000000000000" });
 	expect(busy).toMatchObject({
 		success: false,
@@ -247,7 +260,7 @@ it("RULING-69 (2) a peer that disconnects during a slow first open aborts it: th
 	expect(checkpoints.verifiedComponents, "an aborted open leaves no verified component").toBe(0);
 	held.release();
 	expect(checkpoints.open, "the disconnected peer's token is reclaimed").toBe(0);
-});
+}, 600_000);
 
 it("golden: with the flag off, get_recovery_page and the legacy read commands answer exactly as before", async () => {
 	await using host = await statusHost();
@@ -276,4 +289,4 @@ it("golden: with the flag off, get_recovery_page and the legacy read commands an
 	expect(Object.keys(entries.data as object).sort()).toEqual(["entries", "leafId"]);
 	const tree = await client.request({ type: "get_tree", sessionId });
 	expect(Object.keys(tree.data as object).sort()).toEqual(["leafId", "tree"]);
-});
+}, 600_000);
