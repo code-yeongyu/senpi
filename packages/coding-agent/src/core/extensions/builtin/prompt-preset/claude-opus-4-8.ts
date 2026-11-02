@@ -8,7 +8,9 @@ Prefer tool calls over reasoning when a tool can resolve the question directly; 
 
 Spawn the subagents for a fan-out across items or files in the same turn, not one at a time.
 
-For frontend design with no specified visual direction, derive one from the project's context or propose distinct options before building; do not fall back to your default cream/serif/terracotta house style or generic AI aesthetics.`;
+For frontend design with no specified visual direction, derive one from the project's context or propose distinct options before building; do not fall back to your default cream/serif/terracotta house style or generic AI aesthetics.
+
+Write in the user's language (the one their instructions name, else the one they write in): every reply, note between tool calls, and todo label, and keep it after reading tool output, files, or skills written in another language.`;
 }
 
 export function buildClaudeOpus48Prompt(options: BuildDynamicSystemPromptOptions): string {
