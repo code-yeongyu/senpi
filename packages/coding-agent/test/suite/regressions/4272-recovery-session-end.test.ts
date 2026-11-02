@@ -193,8 +193,8 @@ it("RULING-56 (2) a session's end frees its records on every peer, not its token
 		ok: false,
 		failure: { kind: "repair_needed", reason: "lane_retired" },
 	});
-	checkpoints.retireRoute(caller, route.admissionId);
-	checkpoints.retireRoute(caller, route.admissionId);
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
 	expect(checkpoints.status(), "the retired route's token is reclaimed once; the other peer's is not").toMatchObject({
 		open: 2,
 		reclaimed: 1,

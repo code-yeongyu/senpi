@@ -374,7 +374,7 @@ jobs:
         run: |
           # tui-smoke.test.mjs drives the real tmux driver (senpi#4986 regression); make sure tmux exists.
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
-          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs
+          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs
 
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
