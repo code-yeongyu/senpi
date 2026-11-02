@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { COMPACT_LEAF_CODE_UNITS as LEAF } from "../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState } from "../../src/modes/rpc/compact-session-state.ts";
 import { createSpoolDir } from "../../src/modes/rpc/compact-spool-dir.ts";
-import { controlledIo, spoolRoot } from "./compact-storage-support.ts";
+import { controlledIo, spoolRoot, startIdentity } from "./compact-storage-support.ts";
 
 const fsFault = vi.hoisted(() => ({
 	markerWrite: undefined as undefined | ((path: string) => Promise<void>),
@@ -14,7 +14,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 		...actual,
 		writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
 			const [path] = args;
-			if (fsFault.markerWrite && String(path).endsWith(".compact-spool-owner"))
+			if (fsFault.markerWrite && String(path).includes(".compact-spool-owner"))
 				return fsFault.markerWrite(String(path));
 			return actual.writeFile(...args);
 		},
@@ -45,6 +45,7 @@ async function spill(state: CompactSessionState, char: string): Promise<void> {
 	const messageId = `m-${char}`;
 	state.accept({
 		type: "block_start",
+		...startIdentity(),
 		messageId,
 		contentIndex: 0,
 		kind: "text",

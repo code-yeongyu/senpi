@@ -35,6 +35,8 @@ export interface SupervisorState {
 	shutdownReason: string | undefined;
 	/** Settles once the child's end is on record; replaced the moment the child exits. */
 	childExitRecorded: Promise<void>;
+	/** Startup may still publish ownership files after the public listener became reachable. */
+	startupComplete: PromiseLike<void>;
 	publicSocketOwned: boolean;
 	publicSocketIdentity: SocketFileIdentity | undefined;
 	/** Another generation's entry replaced the public socket this one bound: its registration is the replacer's now. */
@@ -74,13 +76,15 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
 	let childStopStarted = false;
 	let hardExit: ReturnType<typeof setTimeout> | undefined;
 	try {
-		context.stopWatchers();
 		context.drain.stop();
 		writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
 		// No fallible socket/metadata cleanup may bypass the child's observed exit.
 		childStopStarted = true;
 		await stopChild(context, reason);
 		await state.childExitRecorded;
+		// The startup caller reports its failure; this join only waits until its writes have stopped.
+		await state.startupComplete.then(undefined, () => {});
+		context.stopWatchers();
 		await context.admission.flush();
 		context.activity.clients.destroyAll();
 		if (process.platform === "win32")

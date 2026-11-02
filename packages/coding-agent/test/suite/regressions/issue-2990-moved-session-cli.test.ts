@@ -12,6 +12,7 @@ import { type FakeModelServer, MOCK_MODEL, MOCK_PROVIDER, startFakeModelServer }
 import { hermeticProviderEnv, writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
 import { createMovedLayout, type MovedLayout, writeSessionHeader } from "../moved-path-guard-fixtures.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -68,7 +69,7 @@ async function movedSession(headerCwd?: (layout: MovedLayout) => string) {
 async function runCli(args: string[], cwd: string, env: Record<string, string>) {
 	const child = spawn(process.execPath, [cliPath, ...args], {
 		cwd,
-		env: { ...process.env, ...env },
+		env: { ...hostSpawnEnv(), ...env },
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	children.add(child);
@@ -100,7 +101,7 @@ function gitRepo(dir: string): void {
 		["init", "-q"],
 		["commit", "-q", "--allow-empty", "-m", "init"],
 	])
-		execFileSync("git", args, { cwd: dir, env: { ...process.env, ...identity } });
+		execFileSync("git", args, { cwd: dir, env: { ...hostSpawnEnv(), ...identity } });
 }
 
 function transcriptRoles(sessionFile: string): string[] {

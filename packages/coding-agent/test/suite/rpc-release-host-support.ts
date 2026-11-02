@@ -4,6 +4,7 @@
  * queues), so an extension's drain, the agent-level queue and the teardown window all run the code
  * the daemon runs. Sessions are opened retained and then detached, as `omo daemon adopt` finds them.
  */
+import type { RouterContext } from "../../src/modes/rpc/session-router-context.ts";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -148,10 +149,14 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 			const sessionId = data?.sessionId;
 			const session = sessionId === undefined ? undefined : registry.peek(sessionId)?.runtime?.session;
 			if (sessionId === undefined || session === undefined) throw new Error(`open failed: ${JSON.stringify(reply)}`);
-			// `agent_settled` ends every run (after its extension handlers); `agent_idle` may be skipped.
+			// `agent_settled` ends every run, but reaches subscribers before its extension handlers finish (omo#11419),
+			// so the seed prompt call can still be open then: wait for it to return, as a release would count it busy.
 			const settled = nextEvent(session, "agent_settled");
 			await send({ type: "prompt", id: `seed-${serial}`, sessionId, message: "seed the transcript" });
 			await settled;
+			const bindings = (Reflect.get(router, "context") as RouterContext).bindings;
+			const pending = () => bindings.get(sessionId)?.pendingPrompts?.() ?? [];
+			for (let calls = pending(); calls.length > 0; calls = pending()) await Promise.allSettled(calls);
 			writer.unregisterConnection(connection);
 			await router.releaseConnection(connection);
 			return { sessionId, sessionPath: data?.state?.sessionFile ?? sessionPath, session };

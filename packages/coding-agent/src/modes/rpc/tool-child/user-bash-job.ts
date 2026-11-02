@@ -6,6 +6,7 @@
  */
 import { access } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
+import { SecretOutputRedactor } from "../../../core/tools/secret-output-redactor.ts";
 import { getShellConfig } from "../../../utils/shell.ts";
 import type { ToolChildJobContext, ToolChildJobHandler } from "./entry.ts";
 import { ToolChildJobError } from "./entry-error.ts";
@@ -19,11 +20,13 @@ export interface UserBashJobArgs {
 	readonly env: Readonly<Record<string, string>>;
 	readonly shellPath?: string;
 	readonly timeoutSeconds?: number;
+	readonly redactSecretsInOutput?: boolean;
 }
 
 /** One streamed chunk of output; base64 so binary output survives the JSON channel. */
 export interface UserBashUpdate {
 	readonly data: string;
+	readonly stream?: "stdout" | "stderr";
 }
 
 export function parseUserBashArgs(value: unknown): UserBashJobArgs {
@@ -39,6 +42,7 @@ export function parseUserBashArgs(value: unknown): UserBashJobArgs {
 	return {
 		command,
 		cwd,
+		redactSecretsInOutput: field("redactSecretsInOutput") === true,
 		env: Object.fromEntries(
 			Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
 		),
@@ -91,15 +95,27 @@ async function runUserBash(args: UserBashJobArgs, job: ToolChildJobContext): Pro
 	// Every chunk is sent in order and observed; the result settles only after the last one was sent.
 	let sent = Promise.resolve();
 	let updateFailure: unknown;
-	const forward = (chunk: Buffer) => {
+	const redactors = args.redactSecretsInOutput
+		? {
+				stdout: { redactor: new SecretOutputRedactor(), decoder: new TextDecoder() },
+				stderr: { redactor: new SecretOutputRedactor(), decoder: new TextDecoder() },
+			}
+		: undefined;
+	const send = (chunk: Buffer, stream: "stdout" | "stderr") => {
 		sent = sent
-			.then(() => job.update({ data: chunk.toString("base64") } satisfies UserBashUpdate))
+			.then(() => job.update({ data: chunk.toString("base64"), stream } satisfies UserBashUpdate))
 			.catch((error: unknown) => {
 				updateFailure ??= error;
 			});
 	};
-	child.stdout?.on("data", forward);
-	child.stderr?.on("data", forward);
+	const forward = (chunk: Buffer, stream: "stdout" | "stderr") => {
+		const state = redactors?.[stream];
+		if (!state) return send(chunk, stream);
+		const text = state.redactor.push(state.decoder.decode(chunk, { stream: true }));
+		if (text) send(Buffer.from(text), stream);
+	};
+	child.stdout?.on("data", (chunk: Buffer) => forward(chunk, "stdout"));
+	child.stderr?.on("data", (chunk: Buffer) => forward(chunk, "stderr"));
 	const drained = Promise.all([streamClosed(child.stdout), streamClosed(child.stderr)]);
 	const pid = child.pid;
 	const stop = () => {
@@ -110,6 +126,13 @@ async function runUserBash(args: UserBashJobArgs, job: ToolChildJobContext): Pro
 	try {
 		const { exitCode, signal } = await launched.exited;
 		await drained;
+		if (redactors) {
+			for (const stream of ["stdout", "stderr"] as const) {
+				const { redactor, decoder } = redactors[stream];
+				const text = redactor.push(decoder.decode()) + redactor.finish();
+				if (text) send(Buffer.from(text), stream);
+			}
+		}
 		await sent;
 		if (job.signal.aborted) throw new ToolChildJobError("user_bash_aborted", "aborted");
 		if (updateFailure !== undefined)

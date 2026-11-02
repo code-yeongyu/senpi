@@ -1,7 +1,11 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { open, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { recoveryAgentDir, RecoveryStorageHealth } from "./compact-storage-health.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { createSpoolDir, removeSpoolDir } from "./compact-spool-dir.ts";
 import {
+	type CompactFileRange,
 	type CompactStorageFailure,
 	type CompactStorageIo,
 	type CompactStorageOperation,
@@ -18,9 +22,23 @@ import {
 export const RECLAIM_WORK_ALLOWANCE_BYTES = 1024 * 1024;
 const RECLAIM_RETRY_DELAYS_MS = [100, 400, 1_600, 6_400, 25_600];
 const FAILURE_HISTORY = 32;
+/** Spool file name prefixes by the write that creates them; any other write is a page. */
+const FILE_PREFIX: Partial<Record<CompactStorageOperation, string>> = {
+	spill_write: "leaf",
+	value_write: "value",
+	node_write: "node",
+};
+/** A failed write of accepted content halts spilling: its bytes stay resident instead of on disk. */
+const HALTING: ReadonlySet<CompactStorageOperation> = new Set([
+	"spill_write",
+	"value_write",
+	"node_write",
+	"spool_create",
+]);
 
 export abstract class CompactSpoolStorage {
 	readonly dir: string;
+	readonly health: RecoveryStorageHealth;
 	private readonly io: CompactStorageIo;
 	protected readonly failures: CompactStorageFailure[] = [];
 	private nextFile = 1;
@@ -56,9 +74,33 @@ export abstract class CompactSpoolStorage {
 		};
 	}
 
-	constructor(dir: string, io: CompactStorageIo) {
+	constructor(dir: string, io: CompactStorageIo, health = new RecoveryStorageHealth(recoveryAgentDir)) {
 		this.dir = dir;
 		this.io = io;
+		this.health = health;
+	}
+
+	/** Explicit availability repair: a real fsynced probe, then retry retained writes without changing accepted state. */
+	async repair(): Promise<string> {
+		const revision = await this.health.recover(async () => {
+			const path = join(dirname(this.dir), `.senpi-repair-${randomUUID()}`);
+			try {
+				const file = await open(path, "wx", 0o600);
+				try {
+					await file.writeFile("repair");
+					await file.sync();
+				} finally {
+					await file.close();
+				}
+			} finally {
+				await rm(path, { force: true });
+			}
+		});
+		this.halted = false;
+		if (this.spoolToken === undefined) this.dirReady = undefined;
+		this.scheduleSpill();
+		await this.idle();
+		return revision;
 	}
 
 	/** Resolves once every queued storage job, including the ones they queued, has completed. */
@@ -75,15 +117,28 @@ export abstract class CompactSpoolStorage {
 		await this.reading?.promise;
 		await this.idle();
 		const token = this.spoolToken;
-		this.spoolToken = undefined;
-		if (token !== undefined) await removeSpoolDir(this.dir, token);
+		if (token !== undefined) {
+			try {
+				await removeSpoolDir(this.dir, token);
+			} catch (cause) {
+				this.fail("reclaim", this.dir, cause, 0);
+				throw cause;
+			}
+			this.spoolToken = undefined;
+			this.reclaimDebtBytes = 0;
+		}
 	}
 
-	/** Reads a committed file and rejects a missing, unreadable or short one. */
-	async readFile(path: string, bytes: number, operation: CompactStorageOperation): Promise<Buffer> {
+	/** Reads a committed file, or the `range` of it, and rejects a missing, unreadable or short one. */
+	async readFile(
+		path: string,
+		bytes: number,
+		operation: CompactStorageOperation,
+		range?: CompactFileRange,
+	): Promise<Buffer> {
 		const done = this.beginRead();
 		try {
-			const result = await this.readCommittedFile(path, bytes, operation);
+			const result = await this.readCommittedFile(path, bytes, operation, range);
 			this.assertReadable();
 			return result;
 		} finally {
@@ -91,10 +146,15 @@ export abstract class CompactSpoolStorage {
 		}
 	}
 
-	private async readCommittedFile(path: string, bytes: number, operation: CompactStorageOperation): Promise<Buffer> {
+	private async readCommittedFile(
+		path: string,
+		bytes: number,
+		operation: CompactStorageOperation,
+		range: CompactFileRange | undefined,
+	): Promise<Buffer> {
 		let data: Buffer;
 		try {
-			data = await this.io.readFile(path);
+			data = await this.io.readFile(path, range);
 		} catch (cause) {
 			throw this.readFailure(operation, path, cause);
 		}
@@ -112,10 +172,11 @@ export abstract class CompactSpoolStorage {
 	): Promise<string | undefined> {
 		const path = await this.ensureDir(retainedInMemoryBytes);
 		if (path === undefined) return undefined;
-		const file = join(path, `${operation === "spill_write" ? "leaf" : "page"}-${this.nextFile++}.bin`);
+		const file = join(path, `${FILE_PREFIX[operation] ?? "page"}-${this.nextFile++}.bin`);
 		this.pendingIoCopyBytes += data.byteLength;
 		try {
-			await this.io.writeFile(file, data);
+			if (this.health.needsRecovery) await this.health.recover(() => this.io.writeFile(file, data));
+			else await this.io.writeFile(file, data);
 			this.spillBytesWritten += data.byteLength;
 			return file;
 		} catch (cause) {
@@ -150,8 +211,7 @@ export abstract class CompactSpoolStorage {
 				const delay = RECLAIM_RETRY_DELAYS_MS[attempt];
 				if (delay !== undefined) {
 					setTimeout(() => {
-						if (this.retired) this.reclaimDebtBytes -= bytes;
-						else this.enqueue("reclaim", () => this.reclaim(path, bytes, attempt + 1));
+						if (!this.retired) this.enqueue("reclaim", () => this.reclaim(path, bytes, attempt + 1));
 					}, delay).unref?.();
 				}
 				return;
@@ -176,6 +236,7 @@ export abstract class CompactSpoolStorage {
 			.then(job)
 			.catch((cause: unknown) => {
 				if (operation === "spill_write") this.spillQueued = false;
+				if (this.retired && cause instanceof CompactReadError && cause.reason === "retired") return;
 				this.fail(operation, this.dir, cause, 0);
 			})
 			.finally(() => {
@@ -206,7 +267,8 @@ export abstract class CompactSpoolStorage {
 	}
 
 	private fail(operation: CompactStorageOperation, path: string, cause: unknown, retained: number): void {
-		if (operation === "spill_write" || operation === "spool_create") this.halted = true;
+		if (HALTING.has(operation) || operation === "page_write") this.health.unavailable();
+		if (HALTING.has(operation)) this.halted = true;
 		this.record({ operation, path, cause: describeCause(cause), retainedInMemoryBytes: retained });
 	}
 

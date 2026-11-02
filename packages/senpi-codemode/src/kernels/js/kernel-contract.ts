@@ -2,7 +2,31 @@ import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
+import type { InvocationPermissions } from "../shared/invocation-authority.ts";
 import type { JavaScriptInterruptBounds } from "./interrupt-bounds.ts";
+import type { CellDecision, CellOperation, CellRule } from "./permission-slots.mjs";
+
+export interface CellAuthorityToken {
+	readonly id: string;
+	readonly sessionId: string;
+	readonly cwd: string;
+	readonly authority: SharedArrayBuffer;
+	readonly rules: readonly CellRule[];
+	readonly signal?: AbortSignal;
+}
+
+export type CellDecider = (token: CellAuthorityToken, call: CellOperation) => CellDecision | Promise<CellDecision>;
+
+export interface CellPermissionState {
+	readonly epoch: number;
+	readonly active: boolean;
+	readonly rules: readonly CellRule[];
+}
+
+export interface RevocationFailedEvent {
+	readonly sessionId: string;
+	readonly kernelId: string;
+}
 
 export type ResultMessage = Extract<KernelToHostMessage, { type: "result" }>;
 export type ToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;
@@ -20,6 +44,13 @@ export function resolveKernelToolNameSource(names?: KernelToolNameSource): strin
 export interface JavaScriptKernelOptions {
 	readonly sessionId: string;
 	readonly cwd: string;
+	readonly permissions?: InvocationPermissions & {
+		readonly decide: CellDecider;
+		/** Slot wait deadline in ms; production keeps the 2s default. Integration suites raise it above host load. */
+		readonly checkDeadlineMs?: number;
+	};
+	/** Integration marks direct tool admission DEAD too; the kernel host fences cells itself. */
+	readonly onRevocationFailed?: (event: RevocationFailedEvent) => void;
 	/**
 	 * Collects the exit status of a retired worker's children once they are killed (#1962): no thread is left to
 	 * wait on them. Absent, they stay zombies until the host's child reaper or process exit collects them.
@@ -47,6 +78,8 @@ export interface JavaScriptKernelOptions {
 	readonly hostToolNames?: KernelToolNameSource;
 	/** `kernelTools.enabled`; false makes `tool(fn)` refuse with `tools_unavailable`. Unset keeps them on. */
 	readonly kernelToolsEnabled?: boolean;
+	/** The kill guard (senpi#5349): where the worker imports the judge from, and the agent host's pid. Absent = guard off. */
+	readonly killGuard?: { readonly moduleUrl: string | URL; readonly agentPid: number };
 	/** Tool names registered in another kernel language, denied as JS kernel-tool identifiers. */
 	readonly foreignLanguageNames?: KernelToolNameSource;
 	/** Post-cell collection, notice, and ceiling thresholds; absent leaves the worker's memory unmanaged. */

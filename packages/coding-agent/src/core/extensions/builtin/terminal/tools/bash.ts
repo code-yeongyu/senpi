@@ -119,6 +119,7 @@ type SessionEnvSource = {
 	cwd?: string;
 	goalStoreFile?: string;
 	browserEngine?: string;
+	sessionEnv?: Readonly<Record<string, string>>;
 };
 
 function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
@@ -137,7 +138,7 @@ function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
 export function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
 	const session = execCtx ?? ctx.getSessionContext?.();
 	if (!session?.sessionManager) return {};
-	const env: Record<string, string> = {};
+	const env: Record<string, string> = { ...session.sessionEnv };
 	env.PI_SESSION_ID = session.sessionManager.getSessionId();
 	if (session.cwd) env.PI_SESSION_CWD = session.cwd;
 	if (session.goalStoreFile) env.PI_GOAL_STORE_FILE = session.goalStoreFile;
@@ -330,7 +331,7 @@ async function runForeground(
 
 	if (outcome === "detached") {
 		scheduleDetachedSweep(ctx, id, runtime, timeoutMs, startedAt);
-		ctx.onBackgroundStart?.(id, input.description ?? input.command, startedAt);
+		ctx.onBackgroundStart?.(id, input.description ?? input.command, startedAt, input.command);
 		if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 		const delta = runtime.readDelta();
 		const partialOutput = formatTerminalToolOutput(delta.text).text || "(no output yet)";
@@ -402,7 +403,7 @@ async function runBackground(
 		cwd,
 		envOverrides: sessionEnvOverrides(ctx, execCtx),
 	});
-	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now());
+	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now(), input.command);
 	if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 
 	// Capture any output the command emits within a short grace window (or its exit).
@@ -426,7 +427,7 @@ export function createPtyBashTool(ctx: TerminalToolContext) {
 		description:
 			"Execute a shell command in a persistent PTY-backed session. Set run_in_background:true for long-lived or interactive sessions; steer them with bash_input, snapshot with bash_output, tear down with kill_bash. To wait on observable state (a build finishing, a server coming up, a log line), never run sleep or poll loops: subscribe with the monitor tool instead. Foreground blocking stops at the ~60s window and a still-running command auto-detaches to a live background session; `timeout` is the process kill deadline in seconds.",
 		promptSnippet: "Run shell commands; run_in_background:true for long-lived/interactive PTY sessions",
-		promptGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
+		promptGuidelines: ["PI_* env vars = current model + session details."],
 		parameters: ptyBashSchema,
 		async execute(
 			_toolCallId: string,

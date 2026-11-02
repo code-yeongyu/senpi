@@ -45,7 +45,14 @@ type HostSessionRuntime = "in-process" | "worker" | "cli-default";
 
 export async function startWorkerHost(
 	extensionSource?: string,
-	options: { socket?: boolean; node?: boolean; preload?: string; sessionRuntime?: HostSessionRuntime } = {},
+	options: {
+		socket?: boolean;
+		node?: boolean;
+		preload?: string;
+		sessionRuntime?: HostSessionRuntime;
+		/** Extra host environment, e.g. a rollout flag the host reads at startup. */
+		env?: Readonly<Record<string, string>>;
+	} = {},
 ) {
 	// Worker by default: every rpc-worker-* suite asserts worker-isolate behavior, and a
 	// socket host otherwise defaults to the in-process runtime.
@@ -54,7 +61,9 @@ export async function startWorkerHost(
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
 	await mkdir(cwd);
-	await mkdir(agentDir);
+	// The host refuses a key root writable by group or others (rpc-public-key.ts), so the fixture owns its mode
+	// instead of inheriting the machine's umask: under umask 002 a plain mkdir yields 0775 and no host listens.
+	await mkdir(agentDir, { mode: 0o700 });
 	const extension = join(scratch, "gates.mjs");
 	if (extensionSource) await writeFile(extension, extensionSource);
 	const preload = join(scratch, "observe-transport.mjs");
@@ -95,6 +104,7 @@ export async function startWorkerHost(
 				SENPI_OFFLINE: "1",
 				SENPI_RPC_CLOSE_GRACE_MS: "100",
 				...(useNode ? { SENPI_RUNTIME: "node" } : {}),
+				...options.env,
 			},
 			stdio: ["pipe", "pipe", "pipe"],
 		},
@@ -178,6 +188,6 @@ export async function startWorkerHost(
  * `--listen` host selects: every session runs IN the host process (no worker isolate,
  * no worker cap). Pass `sessionRuntime` to `startWorkerHost` to pin one explicitly.
  */
-export function startInProcessHost(extensionSource?: string) {
-	return startWorkerHost(extensionSource, { socket: true, sessionRuntime: "cli-default" });
+export function startInProcessHost(extensionSource?: string, env?: Readonly<Record<string, string>>) {
+	return startWorkerHost(extensionSource, { socket: true, sessionRuntime: "cli-default", ...(env && { env }) });
 }

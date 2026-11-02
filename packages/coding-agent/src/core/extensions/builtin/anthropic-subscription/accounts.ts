@@ -1,30 +1,75 @@
-import { createHash } from "node:crypto";
-import type { Credential, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
+import type { OAuthCredential } from "@earendil-works/pi-ai";
 import { withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 import type { ModelBlocks } from "../../../credential-pool/model-scope.ts";
 
-export type AccountSlot = {
-	/** Immutable operational identity, including SDK session bindings. */
-	name: string;
-	displayName?: string;
-	refresh: string;
-	access: string;
-	expires: number;
-	source: "login" | "import" | "env";
+type SlotBlockState = {
 	blockedUntil?: number;
 	blockReason?: string;
 	/** When the current block was stored, so a turn that started earlier never clears it (senpi#3462). */
 	blockedAt?: number;
 	/** Rate limits that bind one model family on this account, not the account (senpi#2555). */
 	modelBlocks?: ModelBlocks;
-	/**
-	 * Digest of the grant an auth-block recovery must not redeem again: the grant the token endpoint
-	 * rejected, or the grant a recovery produced, so one auth block gets at most one recovery (senpi#2926).
-	 */
-	authRecoveryGrant?: string;
-	/** Digest of the `anthropic` OAuth grant this account was copied from (senpi#3259), so the copy runs once. */
-	importedFrom?: string;
 };
+
+/**
+ * A `CLAUDE_CODE_OAUTH_TOKEN[_N]` account. It is never stored: the token is read from the environment for each
+ * turn, and the token fields are empty placeholders.
+ */
+export type EnvAccountSlot = SlotBlockState & {
+	/** Immutable operational identity, including SDK session bindings. */
+	name: string;
+	displayName?: string;
+	store?: undefined;
+	dirId?: never;
+	refresh: string;
+	access: string;
+	expires: number;
+	source: "env";
+};
+
+/** The local-only profile `claude auth status` reported; never logged or sent to telemetry. */
+export type ClaudeCliAccountProfile = {
+	email?: string;
+	orgName?: string;
+	subscriptionType?: string;
+	checkedAt: number;
+};
+
+/** The sign-in connection test's last result. */
+export type ClaudeCliAccountCheck = {
+	model: string;
+	outcome: "ok" | "failed";
+	reason?: string;
+	at: number;
+};
+
+/**
+ * An account signed in through the bundled `claude` CLI (senpi#4436). It holds no token: the CLI keeps the
+ * login in its own credential store, keyed on the account dir `accountDirFor(agentDir, dirId)`.
+ */
+export type ClaudeCliAccountSlot = SlotBlockState & {
+	name: string;
+	displayName?: string;
+	source: "login";
+	store: "claude-cli";
+	/** 32 hex chars, fixed at creation. */
+	dirId: string;
+	signedInAt?: number;
+	profile?: ClaudeCliAccountProfile;
+	check?: ClaudeCliAccountCheck;
+	signInRequired?: "legacy_sign_in_retired";
+	/** A CLI slot never holds token material; declared so reads on an `AccountSlot` see `undefined`, not a missing field. */
+	access?: never;
+	refresh?: never;
+	expires?: never;
+};
+
+export type AccountSlot = EnvAccountSlot | ClaudeCliAccountSlot;
+
+/** Narrows a slot to an env token account; a claude CLI slot's login lives in the CLI's own store. */
+export function isEnvSlot(slot: AccountSlot): slot is EnvAccountSlot {
+	return slot.store === undefined;
+}
 
 export type SlotState = Record<
 	string,
@@ -53,25 +98,22 @@ function storedSlots(credential: AnthropicSubscriptionCredential): AccountSlot[]
 }
 
 /**
- * A stored account whose material is the managed sentinel holds no token at
- * all: it was written by a build that stored this credential's own flat
- * projection as a generated `login-N` slot. Selecting it fails the provider's
- * auth check and dead-ends the request, so it is never listed as an account.
+ * Whether a stored slot is listed: only a claude CLI account is. A stored account that still holds tokens (one the
+ * retired senpi-owned login wrote, which the load-time sign-out could not rewrite, or a sentinel projection) is never
+ * listed, so no turn or usage poll serves or refreshes its token (senpi#4436). Every listing of stored Claude
+ * accounts (this lane's, the generic one RPC uses, and the configured check) applies this one rule, so none of them
+ * shows or counts an account the others hide. Takes `object`: the generic listing passes raw pool slots.
  */
-export function isSentinelSlot(slot: Pick<AccountSlot, "access" | "refresh">): boolean {
-	return slot.access === SENTINEL_OAUTH_FIELDS.access && slot.refresh === SENTINEL_OAUTH_FIELDS.refresh;
+export function isListedStoredSlot(slot: object): boolean {
+	return "store" in slot && slot.store === "claude-cli";
 }
 
-/** A stable, non-reversible name for a refresh token, safe to persist next to it. */
-export function authGrantDigest(refresh: string): string {
-	return createHash("sha256").update(refresh).digest("hex").slice(0, 32);
-}
-
+/** The listed accounts: every stored claude CLI account (`isListedStoredSlot`), then the env token accounts. */
 export function listAccounts(
 	credential: AnthropicSubscriptionCredential,
 	env?: (name: string) => string | undefined,
 ): AccountSlot[] {
-	const slots = storedSlots(credential).filter((slot) => !isSentinelSlot(slot));
+	const slots: AccountSlot[] = storedSlots(credential).filter(isListedStoredSlot);
 	if (env) {
 		const state = credential.slotState ?? {};
 		for (const slot of envSlots(env)) {
@@ -103,39 +145,6 @@ export function addAccount(
 	return { ...credential, accounts: [...storedSlots(credential), slot] };
 }
 
-/**
- * Re-login recovery (omo#7084): a same-name slot is replaced in place — fresh
- * token material and source, block stamps cleared, displayName preserved — so
- * a successful login lifts the slot's `auth_error` lock. Unknown names append.
- */
-export function upsertAccount(
-	credential: AnthropicSubscriptionCredential,
-	slot: AccountSlot,
-): AnthropicSubscriptionCredential {
-	assertValidAccountName(slot.name);
-	const existing = storedSlots(credential).find((candidate) => candidate.name === slot.name);
-	if (!existing) return { ...credential, accounts: [...storedSlots(credential), slot] };
-	const {
-		blockedUntil: _blockedUntil,
-		blockReason: _blockReason,
-		blockedAt: _blockedAt,
-		modelBlocks: _modelBlocks,
-		authRecoveryGrant: _authRecoveryGrant,
-		...identity
-	} = existing;
-	const refreshed: AccountSlot = {
-		...identity,
-		access: slot.access,
-		refresh: slot.refresh,
-		expires: slot.expires,
-		source: slot.source,
-	};
-	return {
-		...credential,
-		accounts: storedSlots(credential).map((candidate) => (candidate.name === slot.name ? refreshed : candidate)),
-	};
-}
-
 export function removeAccount(
 	credential: AnthropicSubscriptionCredential,
 	name: string,
@@ -160,8 +169,8 @@ export function assertSentinelInvariant(credential: AnthropicSubscriptionCredent
 	}
 }
 
-export function envSlots(env: (name: string) => string | undefined): AccountSlot[] {
-	const slots: AccountSlot[] = [];
+export function envSlots(env: (name: string) => string | undefined): EnvAccountSlot[] {
+	const slots: EnvAccountSlot[] = [];
 	const read = (suffix: string | undefined) =>
 		env(suffix === undefined ? "CLAUDE_CODE_OAUTH_TOKEN" : `CLAUDE_CODE_OAUTH_TOKEN_${suffix}`);
 	const names: Array<{ suffix?: string; slot: string }> = [{ slot: "env" }];
@@ -180,34 +189,4 @@ export function envSlotToken(env: (name: string) => string | undefined, slotName
 	if (!match) return undefined;
 	const suffix = match[1];
 	return env(suffix === undefined ? "CLAUDE_CODE_OAUTH_TOKEN" : `CLAUDE_CODE_OAUTH_TOKEN_${suffix}`);
-}
-
-export type SlotRefresher = (
-	refreshToken: string,
-	signal: AbortSignal,
-) => Promise<{ refresh: string; access: string; expires: number }>;
-export type SlotExpirationCheck = (expires: number) => boolean;
-
-export async function refreshSlot(
-	store: CredentialStore,
-	providerId: string,
-	slotName: string,
-	refresher: SlotRefresher,
-	signal: AbortSignal,
-	isExpiring: SlotExpirationCheck = (expires) => Date.now() >= expires,
-): Promise<Credential | undefined> {
-	return store.modify(providerId, async (current) => {
-		if (current?.type !== "oauth") return undefined;
-		const credential = current as AnthropicSubscriptionCredential;
-		const slot = storedSlots(credential).find((candidate) => candidate.name === slotName);
-		if (!slot) return current;
-		if (!isExpiring(slot.expires)) return current;
-		const refreshed = await refresher(slot.refresh, signal);
-		const accounts = storedSlots(credential).map((candidate) =>
-			candidate.name === slotName
-				? { ...candidate, refresh: refreshed.refresh, access: refreshed.access, expires: refreshed.expires }
-				: candidate,
-		);
-		return { ...credential, accounts };
-	});
 }
