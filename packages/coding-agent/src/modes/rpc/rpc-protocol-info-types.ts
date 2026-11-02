@@ -41,6 +41,11 @@ export interface RpcProtocolIdentity {
 	readonly launch_profile: RpcLaunchProfile;
 	/** Absolute agent directory this host reads and writes; a handoff from another agent dir is refused. */
 	readonly agentDir: string;
+	/**
+	 * The inbound method-class table this engine runs (`method-classes.ts`): a remote forwarder classifies with its
+	 * own copy only while that copy's digest equals `digest`.
+	 */
+	readonly method_classes: { readonly version: number; readonly digest: string };
 }
 
 export interface RpcProtocolInfo extends RpcProtocolIdentity {
