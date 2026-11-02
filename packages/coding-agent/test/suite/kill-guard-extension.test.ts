@@ -127,7 +127,7 @@ describe("kill guard on model-facing shell tools", () => {
 		expect(ran).toEqual(["bash_input: kill -9 ", "bash_input: echo other", "bash_input: -1"]);
 	});
 
-	it("drops typed text the line editor discards before the enter key", async () => {
+	it("refuses an Enter after ctrl+u cleared typed kill text (fail closed), and forgets text an interrupt discards", async () => {
 		const { harness, ran } = await setup();
 
 		await call(harness, "bash_input", { bash_id: "b1", input: "kill -9 -1", submit: false });
@@ -136,9 +136,12 @@ describe("kill guard on model-facing shell tools", () => {
 		await call(harness, "bash_input", { bash_id: "b1", input: "kill -9 -1", submit: false, keys: ["ctrl+c"] });
 		const afterInterrupt = await call(harness, "bash_input", { bash_id: "b1", keys: ["enter"] });
 
-		expect(afterKillLine).toEqual({ blocked: false });
+		// ctrl+u keeps the text in the shell's kill ring, so the edited line is judged by its typed letters (fail closed).
+		expect(afterKillLine.blocked).toBe(true);
+		if (afterKillLine.blocked) expect(afterKillLine.text).toContain("[senpi:kill-guard]");
+		// ctrl+c abandons the line: the next Enter submits an empty line.
 		expect(afterInterrupt).toEqual({ blocked: false });
-		expect(ran).toHaveLength(5);
+		expect(ran).toHaveLength(4);
 	});
 
 	it("lets ordinary and narrow commands through untouched (C1, C11, C15)", async () => {

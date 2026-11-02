@@ -101,8 +101,11 @@ describe("kill guard on bash_input line editing", () => {
 		const last = outcomes.at(-1);
 		expect(last?.blocked).toBe(true);
 		if (last?.blocked) expect(last.text).toContain("[senpi:kill-guard]");
-		expect(outcomes.slice(0, -1)).toEqual(calls.slice(0, -1).map(() => ({ blocked: false })));
-		expect(ran).toHaveLength(calls.length - 1);
+		// Fail closed: an edited line may be refused at an earlier Enter than the one that would run the kill; once a
+		// call is refused nothing is written, so every later call that would submit the same line is refused too.
+		const firstRefused = outcomes.findIndex((outcome) => outcome.blocked);
+		expect(outcomes.slice(firstRefused).every((outcome) => outcome.blocked)).toBe(true);
+		expect(ran).toHaveLength(firstRefused);
 	});
 
 	it.each([
