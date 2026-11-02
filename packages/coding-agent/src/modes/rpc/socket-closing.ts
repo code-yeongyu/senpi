@@ -16,6 +16,10 @@ export const SOCKET_CLOSING_CODES = {
 	event_lease_refused: { retryable: true },
 	/** A compact mirror of a session this host serves only on the legacy wire. */
 	compact_endpoint_unsupported: { retryable: false },
+	/** The host is shutting down, after its sessions' `session_closed` records. */
+	host_shutdown: { retryable: true },
+	/** The host is draining for a newer generation, after its sessions' handoff park records. */
+	host_handoff: { retryable: true },
 } as const satisfies Readonly<Record<string, { readonly retryable: boolean }>>;
 
 export type SocketClosingCode = keyof typeof SOCKET_CLOSING_CODES;

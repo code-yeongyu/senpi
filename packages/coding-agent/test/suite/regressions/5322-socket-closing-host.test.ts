@@ -23,7 +23,12 @@ async function compactClient() {
 	expect(await wire.request({ type: "set_client_info", width: 100, capabilities: PAIR })).toMatchObject({
 		success: true,
 	});
-	return { host, wire, closed, dispose: () => (wire.dispose(), socket.destroy(), host.dispose()) };
+	const dispose = async () => {
+		wire.dispose();
+		socket.destroy();
+		await host.dispose();
+	};
+	return { host, wire, closed, dispose };
 }
 
 /** A compact client holding one retained session, so a drain parks it and then closes the socket. */

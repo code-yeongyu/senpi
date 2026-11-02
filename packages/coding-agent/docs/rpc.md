@@ -957,6 +957,8 @@ and the record may never arrive, so a client must not depend on it: a close with
 that may recover), so reconnect with backoff and recover through the recovery commands (`reset_stream`, a re-open).
 `false`: a new connection with the same selection gets the same answer, so reconnect without the compact selection, or
 stop.
+`host_shutdown` and `host_handoff` describe the socket, not a session: a client holding several sessions, or none, learns
+from them that the host itself went away (shutdown) or handed its endpoint to a newer generation (reconnect to it).
 
 | `code` | `retryable` | Sent when | `detail` |
 |---|---|---|---|
@@ -964,6 +966,8 @@ stop.
 | `event_queue_failed` | `true` | The socket's event queue failed; follows its `overflow` record when it has one | `overflow`, `stall` or `transport_error` |
 | `event_lease_refused` | `true` | An event cannot be leased; follows its `event_lease_refused` record | `lease_limit` or `storage_unavailable` |
 | `compact_endpoint_unsupported` | `false` | A compact mirror of a session served only on the legacy wire; follows its `compact_refused` record | none |
+| `host_shutdown` | `true` | The host is shutting down; follows its sessions' `session_closed` records (`reason: "host_shutdown"`) | none |
+| `host_handoff` | `true` | The host drains for a newer generation; follows its sessions' handoff park records | none |
 
 #### interactive_user
 
