@@ -159,7 +159,10 @@ describe("JS kernel shell output capture", () => {
 		expect(original.calls).toEqual(["nothrow", "throws:true", "env", "cwd"]);
 		expect(captured.braces("a{b,c}")).toEqual(["a{b,c}"]);
 		expect(captured.escape("x")).toBe("x");
-		expect(captured.Shell).toBe(original.Shell);
+		// The kill guard (senpi#5349) wraps `Shell` so a `new Bun.$.Shell()` instance is captured and judged like `$`
+		// (kill-guard-worker-capture.test.ts covers the judging); it is no longer the original constructor.
+		expect(captured.Shell).not.toBe(original.Shell);
+		expect(typeof captured.Shell).toBe("function");
 		expect(captured.ShellPromise).toBe(FakeShellPromise);
 		expect(captured.ShellError).toBe(FakeShellError);
 	});
