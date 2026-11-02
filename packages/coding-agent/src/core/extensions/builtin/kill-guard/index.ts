@@ -3,11 +3,22 @@ import { hostKillGuardContext, readKillGuardSetting } from "../../../kill-guard/
 import { refuse } from "../../../kill-guard/verdict.ts";
 import type { ExtensionAPI, ToolCallEventResult } from "../../types.ts";
 import { isWakeSourceStateEvent, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
+import type { UnjudgedHistory } from "./shell-history.ts";
 import { bashInputBytes, type SubmittedLine, typeInto } from "./typed-lines.ts";
 import { forgetAgentSession, keepTypedSession, noteRunningShells, typedSession } from "./typed-sessions.ts";
 
 const UNFOLLOWABLE =
 	"a bash_input line was sent with a control byte, an escape sequence, tab or a named key, and the bytes sent for it could spell a kill-family command once the shell's line editor rearranges them (the guard refuses these instead of modelling every readline key)";
+
+// bash runs a history entry for these lines, not the typed text, and the guard cannot see the shell's history (it may
+// hold lines loaded from the user's history file before the session), so they are refused unjudged (fail closed).
+const UNJUDGED_HISTORY: Record<UnjudgedHistory, string> = {
+	recall:
+		"history recall is not judged: bash runs the history entry a recall key put on the line, which the guard cannot see",
+	expansion:
+		"history expansion is not judged: bash runs the line a `!` event, a leading `^` or `fc` expands to, not the typed one",
+};
+const TYPE_IN_FULL = "Type the full command as plain text and submit it.";
 
 /** The command text of a `bash` or `monitor` call, or `undefined` for any other tool. */
 function commandOf(toolName: string, input: Record<string, unknown>): string | undefined {
@@ -36,6 +47,9 @@ export default function killGuardExtension(pi: ExtensionAPI): void {
 	// command (fail-closed; see typed-lines.ts). This judges only the agent's bash_input calls: a person typing in their
 	// own terminal never reaches this hook.
 	const judgeLines = (lines: readonly SubmittedLine[]): ToolCallEventResult | undefined => {
+		const unjudged = lines.find((line) => line.history !== undefined)?.history;
+		if (unjudged !== undefined)
+			return { block: true, reason: refuse("R5", UNJUDGED_HISTORY[unjudged], TYPE_IN_FULL).message };
 		const texts = lines.map((line) => line.text);
 		const variants = [
 			texts,
