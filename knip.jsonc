@@ -607,8 +607,8 @@
       "packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts": ["ASK_USER_CLOSED_EVENT"],
       // pre-existing at origin main aceb1cc1d9: unused exports ASK_USER_RESUMED_ENTRY
       "packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts": ["ASK_USER_RESUMED_ENTRY"],
-      // pre-existing at origin main aceb1cc1d9: unused exports applyBashTimeout, buildBashTimeoutPrompt, resolveBashTimeoutDefaults
-      "packages/coding-agent/src/core/extensions/builtin/bash-timeout/index.ts": ["applyBashTimeout", "buildBashTimeoutPrompt", "resolveBashTimeoutDefaults"],
+      // pre-existing at origin main aceb1cc1d9: unused exports applyBashTimeout, resolveBashTimeoutDefaults
+      "packages/coding-agent/src/core/extensions/builtin/bash-timeout/index.ts": ["applyBashTimeout", "resolveBashTimeoutDefaults"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_ESTABLISHMENT_TIMEOUT_MS
       "packages/coding-agent/src/core/extensions/builtin/btw/side-query.ts": ["DEFAULT_ESTABLISHMENT_TIMEOUT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports PROMPT_CACHE_PREWARM_TIMEOUT_MS
@@ -865,8 +865,6 @@
       "packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts": ["ptyBashSchema"],
       // pre-existing at origin main aceb1cc1d9: unused exports lostSessionResult
       "packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts": ["lostSessionResult"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_FOREGROUND_WINDOW_SECONDS
-      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/foreground-window.ts": ["DEFAULT_FOREGROUND_WINDOW_SECONDS"],
       // pre-existing at origin main aceb1cc1d9: unused exports killBashSchema
       "packages/coding-agent/src/core/extensions/builtin/terminal/tools/kill-bash.ts": ["killBashSchema"],
       // pre-existing at origin main aceb1cc1d9: unused exports MAX_PENDING_MONITOR_SPECS, pendingDurableSpecCount

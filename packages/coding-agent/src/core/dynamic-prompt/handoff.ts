@@ -25,14 +25,14 @@ export interface HandoffSectionOptions {
  * detector parses `Ask:` through `For you:` / `Now:` in model output; everything filled in follows the user.
  */
 export const HANDOFF_LANGUAGE_RULE =
-	"Keep the labels Ask, wanted, For you, Now, and Next exactly as written; write everything else - the routing line, slot contents, todo labels, and the reply itself - in the user's language (the one their instructions name, else the one they write in), with Now and Next repeating the todo labels verbatim.";
+	"Labels Ask, wanted, For you, Now, Next: exactly as written. Everything else (routing line, slot contents, todo labels, reply) in user's language (named in their instructions, else the one they write in); Now/Next repeat todo labels verbatim.";
 
-const APP_HANDOFF_LANGUAGE_RULE = HANDOFF_LANGUAGE_RULE.replace("the routing line, ", "");
+const APP_HANDOFF_LANGUAGE_RULE = HANDOFF_LANGUAGE_RULE.replace("routing line, ", "");
 
 const HANDOFF_MOMENTS: Record<TerminalOrApp, string> = {
 	terminal:
-		"A handoff is a multi-task todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the end of a turn that changed something; the routing line is not one, and an answer stays an answer, even after tool calls.",
-	app: "A handoff is a multi-task todo list's creation (in the message that creates it or the next one), each todo phase change, a blocker or plan change, and the end of a turn that changed something; an answer stays an answer, even after tool calls.",
+		"Handoff moments: multi-task todo list created (same message after routing line, or next one), each todo phase change, blocker or plan change, end of a turn that changed something. Routing line is not one; an answer stays an answer even after tool calls.",
+	app: "Handoff moments: multi-task todo list created (same message or next one), each todo phase change, blocker or plan change, end of a turn that changed something. An answer stays an answer even after tool calls.",
 };
 
 /**
@@ -51,15 +51,15 @@ export function buildHandoffSection(options: HandoffSectionOptions = {}): string
 	const surface = options.surface ?? "terminal";
 	if (surface === "chat") return CHAT_REPLIES_SECTION;
 	const nextRule = options.turnEndRuleStatedElsewhere
-		? "The Next you name is executed in this same response with tool calls."
-		: "The Next you name is executed in this same response with tool calls; a Next with nothing after it is a defect.";
+		? "The named Next is executed in this same response with tool calls."
+		: "The named Next is executed in this same response with tool calls; a Next with nothing after it is a defect.";
 	const betweenRule = options.briefUpdatesBetweenHandoffs
-		? "Between handoffs, after each tool wave that changes what you know, write one line of reply text: what you found, then `Now: [task]. Next: [task].`"
-		: "Between handoffs, work without narration.";
+		? "Between handoffs: after each tool wave that changes what you know, one line of reply text - what you found, then `Now: [task]. Next: [task].`"
+		: "Between handoffs: work without narration.";
 	const languageRule = surface === "app" ? APP_HANDOFF_LANGUAGE_RULE : HANDOFF_LANGUAGE_RULE;
 	return `## Handoff
 
-${HANDOFF_MOMENTS[surface]} Before writing one, weigh what the user originally asked for and what they would want to know right now; then state it in one short block:
+${HANDOFF_MOMENTS[surface]} First weigh original ask + what user needs now; then one short block:
 
 Ask: [the user's original request] - wanted: [the outcome they asked for]. For you: [what they need to know now - ledger N/M done, findings, blockers]. Now: [the todo task in progress]. Next: [the next open task].
 

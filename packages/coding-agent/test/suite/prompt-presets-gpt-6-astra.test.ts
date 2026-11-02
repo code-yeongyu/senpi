@@ -46,7 +46,7 @@ function buildPrompt(presetName: PromptPresetName, modelId: string, selectedTool
 	const preset = resolvePreset(createModel(modelId), settings, {
 		cwd: "/repo",
 		selectedTools,
-		toolSnippets: { eval: "Run one persistent code cell." },
+		toolSnippets: {},
 		promptGuidelines: ["GUIDELINE_SENTINEL"],
 		contextFiles: [],
 		skills: [],
@@ -365,7 +365,7 @@ describe("GPT-6 Astra behavior contract", () => {
 		expect(prompt).not.toContain("request_user_input");
 	});
 
-	it("keeps tool guidelines and drops the tool list and the file-operations block", () => {
+	it("keeps tool guidelines and drops the Verification and file-operations blocks", () => {
 		// given
 		const sections = sectionsOf(buildPrompt("gpt-6-astra", "gpt-6-astra"));
 

@@ -178,9 +178,8 @@
 // leave the prompt. `## Verification` (the run-once rule, the shared test decision and Test
 // Discipline) is replaced by `stop-checks` in `## Stop Goal`: the task names its checks up front,
 // runs exactly those once, never re-verifies what already passed, and puts the root cause first.
-// The `## Available Tools` list leaves (the provider request already carries every tool schema;
-// codex sends none in its instructions); `## Tool Guidelines` stays, since tools contribute rules
-// there. `## File operations` leaves; the read/apply_patch guidelines in Tool Guidelines carry it.
+// The tool list goes with senpi#5342's shared generator, which lists only tools whose schema the
+// model does not see described; `## Tool Guidelines` stays, since tools contribute rules there. `## File operations` leaves; the read/apply_patch guidelines in Tool Guidelines carry it.
 // `## Writing` is codex's gpt-6-astra "Writing style" section verbatim. Tool-bound directives no
 // longer open with "When `eval` is available": each rule names the tools it needs
 // (`requiresTool`) and renders only when the session has one of them. `## Scope and Recovery`
@@ -445,7 +444,7 @@ function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 		context.surface !== "terminal"
 			? `${GPT_APP_UNRUN_CHECK_RULE} Fix failures your change caused and report pre-existing ones.`
 			: "Say what you could not run and why; fix failures your change caused and report pre-existing ones.";
-	const toolGuidelines = context.toolGuidelines ? `\n\n${context.toolGuidelines}` : "";
+	const toolSection = context.toolSection ? `\n\n${context.toolSection}` : "";
 
 	return `You are ${context.appName ?? APP_NAME}, a coding agent. You and the user share one workspace; carry their intended goal to completion with work indistinguishable from a careful senior engineer's.
 
@@ -491,7 +490,7 @@ ${ROOT_CAUSE}
 
 The fix lands at the cause, in the smallest correct change: fewer new names, helpers, and layers; single-use logic inline; no error handling, fallbacks, retries, or shims for cases the current contracts exclude; validation at system boundaries only. Problems outside the goal, including ones you run into, go in the final message unexplored unless one blocks the goal. Match the codebase's style.
 
-${UNBOUNDED_RETRY}${toolGuidelines}
+${UNBOUNDED_RETRY}${toolSection}
 
 ## Hard Limits
 

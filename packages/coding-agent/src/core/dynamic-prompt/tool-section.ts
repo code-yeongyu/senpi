@@ -10,6 +10,11 @@ const CATEGORY_LABELS: Record<AvailableTool["category"], string> = {
 	command: "Commands",
 };
 
+/**
+ * Lists only tools that carry a snippet; callers pass snippets solely for tools whose schema the model
+ * does not see described, so a tool's own description is never restated here (senpi#5335). With no
+ * listed tool and no guideline the section renders empty.
+ */
 export function buildToolSection(options: {
 	tools: AvailableTool[];
 	toolSnippets: Record<string, string>;
@@ -28,8 +33,7 @@ export function buildToolSection(options: {
 		groupedTools.set(tool.category, existingTools);
 	}
 
-	const lines = ["## Available Tools", ""];
-	let hasVisibleTools = false;
+	const lines: string[] = [];
 
 	for (const category of CATEGORY_ORDER) {
 		const categoryTools = groupedTools.get(category);
@@ -37,7 +41,7 @@ export function buildToolSection(options: {
 			continue;
 		}
 
-		hasVisibleTools = true;
+		if (lines.length === 0) lines.push("## Available Tools", "");
 		lines.push(`### ${CATEGORY_LABELS[category]}`);
 		for (const tool of categoryTools) {
 			lines.push(`- ${tool.name}: ${tool.snippet}`);
@@ -45,22 +49,6 @@ export function buildToolSection(options: {
 		lines.push("");
 	}
 
-	if (!hasVisibleTools) {
-		lines.push("(none)", "");
-	}
-
-	const guidelines = buildToolGuidelinesSection(options);
-	if (guidelines) lines.push(guidelines, "");
-
-	return lines.join("\n").trimEnd();
-}
-
-/** The "## Tool Guidelines" block alone, or "" when no tool contributes a guideline. */
-export function buildToolGuidelinesSection(options: {
-	tools: AvailableTool[];
-	toolSnippets: Record<string, string>;
-	promptGuidelines?: string[];
-}): string {
 	const guidelines =
 		options.promptGuidelines?.map((guideline) => guideline.trim()).filter((guideline) => guideline) ?? [];
 	const evalOnlyGrepGuideline = getEvalOnlyGrepGuideline(
@@ -68,6 +56,13 @@ export function buildToolGuidelinesSection(options: {
 		options.toolSnippets,
 	);
 	if (evalOnlyGrepGuideline) guidelines.unshift(evalOnlyGrepGuideline);
-	if (guidelines.length === 0) return "";
-	return ["## Tool Guidelines", "", ...guidelines.map((guideline) => `- ${guideline}`)].join("\n");
+	if (guidelines.length > 0) {
+		lines.push("## Tool Guidelines", "");
+		for (const guideline of guidelines) {
+			lines.push(`- ${guideline}`);
+		}
+		lines.push("");
+	}
+
+	return lines.join("\n").trimEnd();
 }
