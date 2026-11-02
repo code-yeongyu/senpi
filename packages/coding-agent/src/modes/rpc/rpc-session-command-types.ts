@@ -10,6 +10,7 @@ import type { SessionEntry } from "../../core/session-manager.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
 import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
+import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
 
 // ============================================================================
@@ -331,7 +332,14 @@ export type RpcSessionCommand =
 	| { id?: string; type: "account_remove"; provider: string; name: string }
 	| { id?: string; type: "account_order"; provider: string; names: string[] | null }
 	| { id?: string; type: "test_provider_account"; provider: string; name: string }
-	| { id?: string; type: "set_client_info"; width: number; capabilities?: string[] };
+	| {
+			id?: string;
+			type: "set_client_info";
+			width: number;
+			capabilities?: string[];
+			/** Declared by a relay forwarder for the remote device this connection speaks for (senpi#5475). */
+			remoteOrigin?: RpcRemoteOrigin;
+	  };
 
 /** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */
 export type RpcWhenIdle = "queue" | "start";

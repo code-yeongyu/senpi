@@ -6,6 +6,7 @@ import type {
 } from "../../core/extensions/types.ts";
 import type { UiRequestChange } from "./snapshot-types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
+import { type RpcRemoteOrigin, remoteOriginField } from "./remote-origin.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
 type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
@@ -22,9 +23,18 @@ export class ConnectionQuestionBridge {
 	private readonly resolved = new Set<string>();
 	private readonly output: (record: object) => void;
 	private readonly changed: ((change?: UiRequestChange) => void) | undefined;
-	constructor(output: (record: object) => void, changed?: (change?: UiRequestChange) => void) {
+	private readonly raiser: () => string | undefined;
+	private readonly origin: () => RpcRemoteOrigin | undefined;
+	constructor(
+		output: (record: object) => void,
+		changed?: (change?: UiRequestChange) => void,
+		raiser: () => string | undefined = () => undefined,
+		origin: () => RpcRemoteOrigin | undefined = () => undefined,
+	) {
 		this.output = output;
 		this.changed = changed;
+		this.raiser = raiser;
+		this.origin = origin;
 	}
 	pendingQuestions(): RpcQuestionUiRequest[] {
 		return [...this.pending.values()].map(({ frame }) => ({
@@ -44,6 +54,8 @@ export class ConnectionQuestionBridge {
 			toolCallId: request.requestId,
 			waitForAnswer: request.waitForAnswer,
 			questions: request.questions,
+			raisedBy: this.raiser() ?? "agent",
+			...remoteOriginField(this.origin()),
 			timeout,
 			askedAtMs,
 			deadlineAtMs: askedAtMs + timeout,

@@ -12,6 +12,54 @@
 
 ### Removed
 
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fall back to ambient environment variables when stored Google Vertex location or project is an empty string ([#5135](https://github.com/code-yeongyu/senpi/pull/5135)).
+- A 503 whose error body merely mentions a billing lookup (e.g. "resolve Billing Scope: ... dial tcp: i/o timeout") is no longer classified as a spent account, so the turn retries instead of failing as an account usage limit ([#4632](https://github.com/code-yeongyu/senpi/issues/4632))
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- `OAuthTokenEndpointError` carries the response's OAuth error code (`oauthError`) and whether the adapter decided the endpoint refused the credential (`credentialRefused`); Kimi Code's refresh sets both, so its refusal is read from facts rather than from its message ([#5010](https://github.com/code-yeongyu/senpi/pull/5010))
+- Per-account model catalog for Sign in with ChatGPT accounts, read from the account's `/v1/models` list and refreshed when the active account changes.
+
+### Changed
+
+### Fixed
+
+- SIWC sign-out atomically clears local tokens, revokes renewable sessions with bounded retries, and retains registration metadata. In-flight refresh cannot restore a signed-out slot; discarded rotated tokens are revoked and logout waits for their cleanup. Overlapping logouts keep auth blocked until all finish, and unknown slots or unconfirmed remote revocation return a typed unconfirmed result ([#5025](https://github.com/code-yeongyu/senpi/pull/5025)).
+- Classify Sign in with ChatGPT admission and streaming errors using exact provider codes, preserve direct-admission details, and avoid retrying terminal restrictions or invalid requests.
+- A tool call whose name carries a stray word prefix (`trophy_eval`) runs the one registered tool its `_`-separated suffix names, with the usual `[auto-corrected]` notice; a prefix that is a destructive verb or another tool's name is refused ([#5316](https://github.com/code-yeongyu/senpi/pull/5316))
+
+### Removed
+
+- The unused duplicate credential-pool failover engine (`runSlotFailover`, `PoolFailoverError`, `classifyPoolFailure` in `auth/pool/failover` and `auth/pool/classify`); the coding agent's credential pool was always the engine in use. `DEFAULT_SLOT_BLOCK_MS`, `MAX_SLOT_BLOCK_MS` and the `TURN_RETRY_SUPPRESSION_PREFIX` re-export stay ([#5022](https://github.com/code-yeongyu/senpi/pull/5022), part of [#2304](https://github.com/code-yeongyu/senpi/issues/2304))
+
 ## [2026.10.31-2] - 2026-10-31
 
 ### Breaking Changes

@@ -38,6 +38,8 @@ export async function statusHost(
 		 * EVENT_SAFETY_MS passes one below that budget, so a hang fails by naming its predicate, not as a test timeout.
 		 */
 		deadlineMs?: number;
+		/** The faux stream's chunk size in tokens (default 3-5): a large one streams a call's arguments in few deltas. */
+		tokenSize?: { readonly min: number; readonly max: number };
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-status-"));
@@ -45,7 +47,10 @@ export async function statusHost(
 	const agentDir = join(scratch, "agent");
 	await mkdir(cwd);
 	await mkdir(agentDir);
-	const faux = fauxProvider({ models: [{ id: "faux-a" }, { id: "faux-b" }] });
+	const faux = fauxProvider({
+		models: [{ id: "faux-a" }, { id: "faux-b" }],
+		...(options.tokenSize ? { tokenSize: options.tokenSize } : {}),
+	});
 	const model = faux.getModel();
 	// Provider discovery belongs to fixture setup, not a protocol response deadline.
 	const modelRuntime = await ModelRuntime.create({
@@ -100,7 +105,11 @@ export async function statusHost(
 	const clients: RawClient[] = [];
 	let serial = 0;
 
-	const client = (name: string): RawClient => {
+	/** `transport` overrides the fixture socket's own teardown and drain wait (an engine-initiated close, a stalled peer). */
+	const client = (
+		name: string,
+		transport: { close?: () => void; waitForBackpressure?: () => Promise<void> } = {},
+	): RawClient => {
 		const inbox: WireRecord[] = [];
 		const sent: string[] = [];
 		const received: string[] = [];
@@ -114,7 +123,8 @@ export async function statusHost(
 					for (const listener of [...listeners]) listener(record);
 				}
 			},
-			waitForBackpressure: async () => {},
+			waitForBackpressure: transport.waitForBackpressure ?? (async () => {}),
+			...(transport.close && { close: transport.close }),
 		});
 		const waitFor = (
 			predicate: (record: WireRecord) => boolean,
@@ -208,4 +218,23 @@ export function dataOf(record: WireRecord): Record<string, unknown> {
 
 export function statusRecords(client: RawClient, subscriptionId: string): WireRecord[] {
 	return client.inbox.filter((record) => record.type === "session_status" && record.subscriptionId === subscriptionId);
+}
+
+/**
+ * Receipts every event lease `peer` was handed for `sessionId` since inbox index `from`, as a compact consumer does (S13).
+ * A peer that never receipts reaches its lease bound and is closed with `socket_closing` (RULING-124, #5322).
+ */
+export async function receiptLeases(peer: RawClient, sessionId: string, from: number): Promise<void> {
+	for (const frame of peer.inbox.slice(from)) {
+		const lease = frame.eventLease as { readonly id: string; readonly admissionId: string } | undefined;
+		if (lease === undefined || frame.sessionId !== sessionId) continue;
+		const receipt = { kind: "event", id: lease.id };
+		const released = await peer.request({
+			type: "release_recovery",
+			sessionId,
+			lease: receipt,
+			admissionId: lease.admissionId,
+		});
+		if (released.success !== true) throw new Error(`lease receipt refused: ${JSON.stringify(released)}`);
+	}
 }
