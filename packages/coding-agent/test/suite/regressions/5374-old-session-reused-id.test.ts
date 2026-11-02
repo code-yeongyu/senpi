@@ -9,7 +9,7 @@ import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 import { FLAG } from "./5331-live-identity-support.ts";
-import { sessionLines, writeSession } from "./5374-call-key-fixture-support.ts";
+import { writeSession } from "./5374-call-key-fixture-support.ts";
 
 // RULING-127 (#5394 conformance): an old session (keyless blocks) continued live, where a new keyed call reuses an old
 // block's toolCallId. A reader rebuilds the old block's row by toolCallId (it has no key) and the new call's row by its
@@ -57,7 +57,8 @@ it("RULING-127 #5374 an old keyless block and a new keyed call reusing its toolC
 	await using host = await statusHost();
 	await writeFile(join(host.cwd, "note.txt"), "note body\n");
 	const sessionPath = writeSession(host.cwd, false, "old.jsonl");
-	const oldLines = sessionLines(host.cwd, false).slice(1);
+	const oldBytes = readFileSync(sessionPath, "utf8").trim().split("\n").slice(1);
+	const isOld = (line: string) => OLD_IDS.includes(String((JSON.parse(line) as Entry).id));
 	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
 	const legacy = host.client("legacy");
 	const routing = String(dataOf(await legacy.request({ type: "open_session", cwd: host.cwd, sessionPath })).sessionId);
@@ -95,12 +96,9 @@ it("RULING-127 #5374 an old keyless block and a new keyed call reusing its toolC
 	expect(settled.map((row) => row.runtimeItemKey)).toEqual([live]);
 
 	const file = (entry?.runtime?.session.sessionManager.getSessionFile() ?? expect.unreachable("no file")) as string;
-	const persisted = readFileSync(file, "utf8")
-		.trim()
-		.split("\n")
-		.slice(1)
-		.map((line) => JSON.parse(line) as Entry);
-	expect(persisted.filter((line) => OLD_IDS.includes(String(line.id)))).toEqual(oldLines);
+	const lines = readFileSync(file, "utf8").trim().split("\n").slice(1);
+	expect(lines.filter(isOld), "the old entries' bytes in the file").toEqual(oldBytes);
+	const persisted = lines.map((line) => JSON.parse(line) as Entry);
 	const solo = toolCallParts(persisted).filter((part) => part.id === "solo");
 	expect(solo.map((part) => part.runtimeItemKey)).toEqual([undefined, live]);
 	const newResults = persisted.filter(
@@ -115,7 +113,8 @@ it("RULING-127 #5374 an old keyless block and a new keyed call reusing its toolC
 		const read = await readTranscriptRoot(root.transcript);
 		if (!read.ok) throw new Error(`transcript read failed: ${read.error}`);
 		const transcript = read.entries as readonly Entry[];
-		expect(transcript.filter((line) => OLD_IDS.includes(String(line.id)))).toEqual(oldLines);
+		const reserialized = transcript.map((line) => JSON.stringify(line)).filter(isOld);
+		expect(reserialized, "the old entries' bytes in the transcript").toEqual(oldBytes);
 		expect(
 			toolCallParts(transcript)
 				.filter((part) => part.id === "solo")
