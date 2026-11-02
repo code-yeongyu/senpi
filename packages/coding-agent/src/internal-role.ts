@@ -8,6 +8,11 @@ import { channelEnvPresent, TOOL_CHILD_ROLE_ENV } from "./modes/rpc/tool-child/c
 const role = process.env[TOOL_CHILD_ROLE_ENV];
 
 if (role !== undefined && role !== "") {
+	if (role === "managed-launch") {
+		// Session-owned, before-execution admission; independent of disposable tool-child generations.
+		const { runManagedLaunchRole } = await import("./modes/rpc/tool-child/managed-launch-role.ts");
+		await runManagedLaunchRole();
+	}
 	if (role === "launch-shim") {
 		// Windows only: starts one detached command outside the child's Job Object (senpi#3566).
 		const { runLaunchShimRole } = await import("./modes/rpc/tool-child/launch-shim-role.ts");
