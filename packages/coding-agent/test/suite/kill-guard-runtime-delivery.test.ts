@@ -73,8 +73,10 @@ describe.runIf(posix)("kill guard runtime layer delivery", () => {
 		const env = getShellEnv();
 		const dir = firstPathEntry(env);
 		expect(dir.startsWith(shimRoot(agentDir))).toBe(true);
-		for (const name of ["kill", "pkill", "killall", "bash_env.sh"]) expect(existsSync(join(dir, name))).toBe(true);
+		for (const name of ["kill", "pkill", "killall", "bash_env.sh", "bash_kill.sh"])
+			expect(existsSync(join(dir, name))).toBe(true);
 		expect(env.BASH_ENV).toBe(join(dir, "bash_env.sh"));
+		expect(env.PROMPT_COMMAND).toContain(join(dir, "bash_kill.sh"));
 		expect(env.SENPI_KILL_GUARD_EXEC).toBe(process.execPath);
 		expect(env.SENPI_KILL_GUARD_AGENT_PID).toBe(String(process.pid));
 		expect(env.SENPI_KILL_GUARD_PROTECTED?.split(",")).toEqual(expect.arrayContaining(["1", String(process.pid)]));
@@ -85,6 +87,7 @@ describe.runIf(posix)("kill guard runtime layer delivery", () => {
 		const env = getShellEnv();
 		expect(env.PATH?.includes(shimRoot(agentDir))).toBe(false);
 		expect(env.BASH_ENV).toBe(process.env.BASH_ENV);
+		expect(env.PROMPT_COMMAND).toBe(process.env.PROMPT_COMMAND);
 		expect(env.SENPI_KILL_GUARD_EXEC).toBe(process.env.SENPI_KILL_GUARD_EXEC);
 		expect(existsSync(join(agentDir, "kill-guard"))).toBe(false);
 	});

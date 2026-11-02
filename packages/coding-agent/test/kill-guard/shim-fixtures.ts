@@ -19,6 +19,13 @@ export const SYSTEM_PATH = "/usr/bin:/bin";
 /** One log line per run: the command's name, then each argument in brackets so argument boundaries stay visible. */
 const RECORD = `printf '%s' "\${0##*/}" >> "$LOG"; for a do printf ' [%s]' "$a" >> "$LOG"; done; printf '\\n' >> "$LOG"`;
 
+/**
+ * bash text that records, instead of running, the shell's own `kill` the guard's `kill` wrapper calls for an allowed argv
+ * (`command kill ...`, logged as `builtin [kill] ...`); every other `command` call, including the judge watchdog's,
+ * runs as usual.
+ */
+export const SHELL_KILL_RECORDER = `command() { if [ "\${1-}" = kill ] && [ "\${FUNCNAME[1]-}" = kill ]; then printf 'builtin' >> "$LOG"; for a do printf ' [%s]' "$a" >> "$LOG"; done; printf '\\n' >> "$LOG"; else builtin command "$@"; fi; }`;
+
 export function writeExecutable(path: string, content: string): void {
 	writeFileSync(path, content);
 	chmodSync(path, 0o755);
@@ -40,6 +47,8 @@ export interface ShimFixture {
 	runtime(overrides?: Partial<KillGuardRuntime>): KillGuardRuntime;
 	env(extra?: Record<string, string>, overrides?: Partial<KillGuardRuntime>, path?: string): NodeJS.ProcessEnv;
 	run(shell: string, script: string, env: NodeJS.ProcessEnv): Run;
+	/** An interactive bash (`args` include `-i`) reading `input` as typed lines, as a shell started in a terminal does. */
+	runInteractive(args: readonly string[], input: string, env: NodeJS.ProcessEnv): Run;
 	cleanup(): void;
 }
 
@@ -117,6 +126,23 @@ export function createShimFixture(version = "test-fast", deadlineSeconds = 1): S
 				env,
 				encoding: "utf8",
 				stdio: ["ignore", "pipe", "pipe"],
+				timeout: 30_000,
+			});
+			return {
+				status: result.status,
+				stdout: result.stdout,
+				stderr: result.stderr,
+				real: readLog(realLog),
+				judge: readLog(judgeLog),
+			};
+		},
+		runInteractive(args, input, env) {
+			rmSync(realLog, { force: true });
+			rmSync(judgeLog, { force: true });
+			const result = spawnSync("bash", args, {
+				env: { ...env, BASH_SILENCE_DEPRECATION_WARNING: "1" },
+				input,
+				encoding: "utf8",
 				timeout: 30_000,
 			});
 			return {

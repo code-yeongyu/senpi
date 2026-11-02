@@ -1,8 +1,9 @@
 /**
  * The POSIX sh text of the kill guard's runtime layer (senpi#5349, DESIGN-12096 §4' L2, amendment A8): `kill`,
- * `pkill` and `killall` shims that judge their real argv before the real binary runs, and the `bash_env.sh` that wraps
- * bash's builtin `kill`. Both share one sh library: the fast path for literal `kill` targets, the bounded judge call,
- * and the judge-missing fallback.
+ * `pkill` and `killall` shims that judge their real argv before the real binary runs, the `bash_env.sh` that wraps
+ * bash's builtin `kill` in non-interactive bash, and the `bash_kill.sh` that the PROMPT_COMMAND hook sources into
+ * interactive bash. All share one sh library: the fast path for literal `kill` targets, the bounded judge call, and the
+ * judge-missing fallback.
  */
 import { refuseAll } from "./kill.ts";
 import type { KillGuardVerdict } from "./types.ts";
@@ -11,12 +12,18 @@ import { KILL_GUARD_TAG, refuse } from "./verdict.ts";
 export const KILL_GUARD_SHIM_NAMES = ["kill", "pkill", "killall"] as const;
 export type KillGuardShimName = (typeof KILL_GUARD_SHIM_NAMES)[number];
 export const KILL_GUARD_BASH_ENV = "bash_env.sh";
+export const KILL_GUARD_BASH_KILL = "bash_kill.sh";
+/** Every PROMPT_COMMAND hook starts with this, so an inherited hook is recognised as the kill guard's own. */
+export const KILL_GUARD_PROMPT_HOOK_PREFIX = "__senpi_kg_q=$?;";
 /** A file every shim directory holds, so a shim looking for the real binary skips every kill-guard directory. */
 export const KILL_GUARD_SHIM_MARKER = ".senpi-kill-guard";
 /** The table read and the dry run are bounded at 2 s each; the rest covers the judge's own start. */
 export const KILL_GUARD_JUDGE_DEADLINE_SECONDS = 10;
 
-export type KillGuardShimFiles = Record<KillGuardShimName | typeof KILL_GUARD_BASH_ENV, string>;
+export type KillGuardShimFiles = Record<
+	KillGuardShimName | typeof KILL_GUARD_BASH_ENV | typeof KILL_GUARD_BASH_KILL,
+	string
+>;
 
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 const refusal = (verdict: KillGuardVerdict): string => (verdict.action === "refuse" ? verdict.message : "");
@@ -182,13 +189,43 @@ if [ -n "\${SENPI_KILL_GUARD_USER_BASH_ENV-}" ] && [ "$SENPI_KILL_GUARD_USER_BAS
 	[ -f "$SENPI_KILL_GUARD_USER_BASH_ENV" ]; then
 	. "$SENPI_KILL_GUARD_USER_BASH_ENV"
 fi
-${library(deadlineSeconds)}
-kill() {
+${killFunction(deadlineSeconds)}`;
+}
+
+// `function kill` rather than `kill()`: a user alias named kill would otherwise expand inside the definition. `command
+// kill` runs the builtin, or the PATH shim once `enable -n kill` disabled the builtin (`builtin kill` would then fail).
+function killFunction(deadlineSeconds: number): string {
+	return `${library(deadlineSeconds)}
+function kill {
 	local __senpi_kg_v __senpi_kg_f __senpi_kg_s __senpi_kg_p __senpi_kg_n __senpi_kg_a
 	__senpi_kg_decide "\${BASHPID:-$$}" kill "$@" || return
-	builtin kill "$@"
+	command kill "$@"
 }
 `;
+}
+
+function bashKill(deadlineSeconds: number): string {
+	return `# senpi kill guard (senpi#5349): sourced into interactive bash by the PROMPT_COMMAND hook before the first prompt,
+# after the user's startup files; judges bash's builtin \`kill\` on its real argv. Written by senpi.
+${killFunction(deadlineSeconds)}`;
+}
+
+/**
+ * The PROMPT_COMMAND that carries the `kill` wrapper into interactive bash, which reads no BASH_ENV. Before a prompt it
+ * sources `bash_kill.sh` once per shell (the marker is an unexported variable keyed on `$$`, so a child bash sources it
+ * again), then runs the user's own PROMPT_COMMAND with `$?` as the last command left it. A kill-guard hook inside the
+ * user's value is not re-entered.
+ */
+export function killGuardPromptCommand(dir: string): string {
+	const file = quote(`${dir}/${KILL_GUARD_BASH_KILL}`);
+	const user = '"$SENPI_KILL_GUARD_USER_PROMPT_COMMAND"';
+	return [
+		KILL_GUARD_PROMPT_HOOK_PREFIX,
+		`if [ "\${__senpi_kg_shell-}" != "$$" ]; then __senpi_kg_shell=$$; if [ -r ${file} ]; then . ${file}; fi; fi;`,
+		`if [ -n "\${SENPI_KILL_GUARD_USER_PROMPT_COMMAND-}" ] && [ "\${__senpi_kg_in-}" != "$$" ]; then __senpi_kg_in=$$;`,
+		`__senpi_kg_rc() { return "$1"; }; if __senpi_kg_rc "$__senpi_kg_q"; then eval ${user}; else eval ${user}; fi;`,
+		"__senpi_kg_in=; fi",
+	].join(" ");
 }
 
 /** Every file of one shim directory; `dir` is baked into the shims so a shim never resolves to itself. */
@@ -201,5 +238,6 @@ export function renderKillGuardShims(
 		pkill: shim(dir, "pkill", deadlineSeconds),
 		killall: shim(dir, "killall", deadlineSeconds),
 		[KILL_GUARD_BASH_ENV]: bashEnv(deadlineSeconds),
+		[KILL_GUARD_BASH_KILL]: bashKill(deadlineSeconds),
 	};
 }

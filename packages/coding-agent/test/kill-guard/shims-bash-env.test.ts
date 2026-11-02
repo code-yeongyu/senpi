@@ -1,18 +1,17 @@
 // senpi#5349 / code-yeongyu/oh-my-openagent#12096 (L2): bash's builtin `kill` is judged through the BASH_ENV wrapper.
-// The prelude below stops before any `kill` when the wrapper is missing and shadows `builtin` with a recorder, so no
-// test here sends a signal even if the wrapper is broken.
+// The prelude below stops before any `kill` when the wrapper is missing and records the shell's own `kill` that the
+// wrapper hands an allowed argv to, so no test here sends a signal even if the wrapper is broken.
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createShimFixture, PROTECTED, posix, type ShimFixture, TAG } from "./shim-fixtures.ts";
+import { createShimFixture, PROTECTED, posix, SHELL_KILL_RECORDER, type ShimFixture, TAG } from "./shim-fixtures.ts";
 
 const bashAvailable = posix && spawnSync("bash", ["-c", "true"]).status === 0;
-const PRELUDE = [
-	`builtin() { printf 'builtin' >> "$LOG"; for a do printf ' [%s]' "$a" >> "$LOG"; done; printf '\\n' >> "$LOG"; }`,
-	'if [ "$(type -t kill)" != function ]; then echo NOT-WRAPPED; exit 99; fi',
-].join("\n");
+const PRELUDE = [SHELL_KILL_RECORDER, 'if [ "$(type -t kill)" != function ]; then echo NOT-WRAPPED; exit 99; fi'].join(
+	"\n",
+);
 
 /** `bash -c script` with a piped stdin, as the bash tool's stdin transport spawns it: libuv makes that pipe a socket. */
 async function runWithPipedStdin(script: string, env: NodeJS.ProcessEnv): Promise<string> {

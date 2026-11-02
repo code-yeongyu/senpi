@@ -12,8 +12,10 @@ import { isBunBinary, VERSION } from "../../config.ts";
 import {
 	KILL_GUARD_BASH_ENV,
 	KILL_GUARD_JUDGE_DEADLINE_SECONDS,
+	KILL_GUARD_PROMPT_HOOK_PREFIX,
 	KILL_GUARD_SHIM_MARKER,
 	type KillGuardShimFiles,
+	killGuardPromptCommand,
 	renderKillGuardShims,
 } from "./shim-script.ts";
 
@@ -46,7 +48,7 @@ export function installKillGuardShims(
 	const staged = mkdtempSync(join(root, ".staging-"));
 	try {
 		for (const [name, content] of Object.entries(files)) {
-			writeFileSync(join(staged, name), content, { mode: name === KILL_GUARD_BASH_ENV ? 0o644 : 0o755 });
+			writeFileSync(join(staged, name), content, { mode: name.endsWith(".sh") ? 0o644 : 0o755 });
 		}
 		writeFileSync(join(staged, KILL_GUARD_SHIM_MARKER), "");
 		place(staged, dir, files);
@@ -106,17 +108,25 @@ function nestedShellLevel(level: string | undefined): boolean {
 /**
  * The variables that carry `runtime` into a process started with `base`: the shim directory first on PATH (once),
  * BASH_ENV on the wrapper with the user's own BASH_ENV kept in `SENPI_KILL_GUARD_USER_BASH_ENV` (also when `base`
- * already carries a kill-guard BASH_ENV from an outer agent), the judge exports, and `SHLVL=1` when `base` has no
- * usable level, so bash reads BASH_ENV whatever its stdin is.
+ * already carries a kill-guard BASH_ENV from an outer agent), PROMPT_COMMAND on the hook that carries the same `kill`
+ * wrapper into interactive bash with the user's own PROMPT_COMMAND kept the same way in
+ * `SENPI_KILL_GUARD_USER_PROMPT_COMMAND` (an outer agent's hook is never captured as the user's: it would eval itself
+ * forever), the judge exports, and `SHLVL=1` when `base` has no usable level, so bash reads BASH_ENV whatever its
+ * stdin is.
  */
 export function killGuardEnvironment(base: NodeJS.ProcessEnv, runtime: KillGuardRuntime): Record<string, string> {
 	const pathKey = Object.keys(base).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const rest = (base[pathKey] ?? "").split(delimiter).filter((entry) => entry !== "" && entry !== runtime.dir);
 	const userBashEnv = isKillGuardBashEnv(base.BASH_ENV) ? base.SENPI_KILL_GUARD_USER_BASH_ENV : base.BASH_ENV;
+	const userPromptCommand = base.PROMPT_COMMAND?.startsWith(KILL_GUARD_PROMPT_HOOK_PREFIX)
+		? base.SENPI_KILL_GUARD_USER_PROMPT_COMMAND
+		: base.PROMPT_COMMAND;
 	return {
 		[pathKey]: [runtime.dir, ...rest].join(delimiter),
 		BASH_ENV: runtime.bashEnv,
 		SENPI_KILL_GUARD_USER_BASH_ENV: userBashEnv ?? "",
+		PROMPT_COMMAND: killGuardPromptCommand(runtime.dir),
+		SENPI_KILL_GUARD_USER_PROMPT_COMMAND: userPromptCommand ?? "",
 		SENPI_KILL_GUARD_PROTECTED: runtime.protectedPids.join(","),
 		SENPI_KILL_GUARD_EXEC: runtime.exec,
 		SENPI_KILL_GUARD_EXEC_ENTRY: runtime.entry ?? "",

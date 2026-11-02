@@ -9,6 +9,7 @@ import {
 	killGuardEnvironment,
 	renderKillGuardShims,
 } from "../../src/core/kill-guard/runtime.ts";
+import { killGuardPromptCommand } from "../../src/core/kill-guard/shim-script.ts";
 import { createShimFixture, PROTECTED, posix, type ShimFixture } from "./shim-fixtures.ts";
 
 let f: ShimFixture;
@@ -26,6 +27,8 @@ describe("killGuardEnvironment", () => {
 			PATH: `${f.shims}:/usr/bin:/bin`,
 			BASH_ENV: join(f.shims, "bash_env.sh"),
 			SENPI_KILL_GUARD_USER_BASH_ENV: "",
+			PROMPT_COMMAND: killGuardPromptCommand(f.shims),
+			SENPI_KILL_GUARD_USER_PROMPT_COMMAND: "",
 			SENPI_KILL_GUARD_PROTECTED: `1,${PROTECTED}`,
 			SENPI_KILL_GUARD_EXEC: f.fakeJudge,
 			SENPI_KILL_GUARD_EXEC_ENTRY: "/opt/senpi/kill-guard-check.js",
@@ -58,6 +61,14 @@ describe("killGuardEnvironment", () => {
 		expect(nested.SENPI_KILL_GUARD_USER_BASH_ENV).toBe("/home/u/.bash_env");
 		expect(nested.BASH_ENV).toBe(join(f.shims, "bash_env.sh"));
 	});
+
+	it("keeps the user's PROMPT_COMMAND, also when the environment already carries a kill-guard hook (C1)", () => {
+		const user = killGuardEnvironment(base({ PROMPT_COMMAND: "history -a" }), f.runtime());
+		expect(user.SENPI_KILL_GUARD_USER_PROMPT_COMMAND).toBe("history -a");
+		const nested = killGuardEnvironment(base(user), f.runtime({ dir: join(f.root, "inner-agent") }));
+		expect(nested.SENPI_KILL_GUARD_USER_PROMPT_COMMAND).toBe("history -a");
+		expect(nested.PROMPT_COMMAND).toBe(killGuardPromptCommand(join(f.root, "inner-agent")));
+	});
 });
 
 describe.runIf(posix)("installKillGuardShims", () => {
@@ -66,7 +77,7 @@ describe.runIf(posix)("installKillGuardShims", () => {
 		const dir = installKillGuardShims(shimRoot, "2026.11.01-1");
 		expect(dir).toBe(join(shimRoot, "2026.11.01-1"));
 		expect(readdirSync(shimRoot)).toEqual(["2026.11.01-1"]);
-		const names = ["bash_env.sh", "kill", "killall", "pkill", KILL_GUARD_SHIM_MARKER];
+		const names = ["bash_env.sh", "bash_kill.sh", "kill", "killall", "pkill", KILL_GUARD_SHIM_MARKER];
 		expect(readdirSync(dir).sort()).toEqual(names.sort());
 		for (const name of ["kill", "pkill", "killall"]) expect(statSync(join(dir, name)).mode & 0o111).not.toBe(0);
 		const before = statSync(join(dir, "pkill"));
