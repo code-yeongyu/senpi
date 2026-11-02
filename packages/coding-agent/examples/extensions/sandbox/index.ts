@@ -44,12 +44,17 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { ExtensionAPI } from "@code-yeongyu/senpi";
 import { type BashOperations, CONFIG_DIR_NAME, createBashTool, getAgentDir } from "@code-yeongyu/senpi";
 
-interface SandboxConfig extends SandboxRuntimeConfig {
+// The subset of sandbox-runtime's config this extension reads and writes. sandbox-runtime's published SandboxRuntimeConfig
+// type is inferred from zod 3 schema declarations, and the root zod override (4.6.7, GHSA-mrhx-c7xc-m3w5) leaves that
+// inference empty; runtime validation is unchanged because SandboxManager.initialize still parses with its own schema.
+interface SandboxConfig {
 	enabled?: boolean;
+	network?: { allowedDomains: string[]; deniedDomains: string[] };
+	filesystem?: { denyRead: string[]; allowWrite: string[]; denyWrite: string[] };
 }
 
 const DEFAULT_CONFIG: SandboxConfig = {
