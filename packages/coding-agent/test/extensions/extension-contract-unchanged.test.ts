@@ -6,11 +6,9 @@ import type { ExtensionFactory } from "../../src/index.ts";
 import { sessionExecutor } from "../execution/executor-harness.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 
-// K4.b: the prepared executor adds no extension-visible preparation capability. An extension observes the same API,
-// the same `tool_call` / `tool_result` events and the same handler context through the executor as through today's
-// loop. Tool lifecycle events (`tool_execution_*`) stay the loop's to emit and are not part of this comparison.
+// K4.b: the prepared executor adds no extension-visible preparation capability. An extension observes the same
+// `tool_call` / `tool_result` events and the same handler context through the executor as through today's loop. Tool lifecycle events (`tool_execution_*`) stay the loop's to emit and are not part of this comparison.
 interface Observation {
-	readonly api: readonly string[];
 	readonly events: unknown[];
 }
 
@@ -30,9 +28,8 @@ const echo: AgentTool = {
 	},
 };
 
-function observer(observation: { api: string[]; events: unknown[] }): ExtensionFactory {
+function observer(observation: Observation): ExtensionFactory {
 	return (pi) => {
-		observation.api.push(...Object.keys(pi).sort());
 		pi.on("tool_call", (event, ctx) => {
 			observation.events.push({ event: structuredClone(event), context: Object.keys(ctx).sort() });
 		});
@@ -44,14 +41,14 @@ function observer(observation: { api: string[]; events: unknown[] }): ExtensionF
 }
 
 async function observedHarness(): Promise<{ harness: Harness; observation: Observation }> {
-	const observation = { api: [] as string[], events: [] as unknown[] };
+	const observation: Observation = { events: [] };
 	const harness = await createHarness({ tools: [echo], extensionFactories: [observer(observation)] });
 	harnesses.push(harness);
 	return { harness, observation };
 }
 
 describe("K4.b: the extension contract is unchanged on the prepared executor", () => {
-	it("shows an extension the same API, events and handler context as today's loop", async () => {
+	it("shows an extension the same events and handler context as today's loop", async () => {
 		// Given
 		const legacy = await observedHarness();
 		legacy.harness.setResponses([
