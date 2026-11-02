@@ -309,6 +309,7 @@ import {
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
 import { clearMcpGrantPresentations } from "./mcp-grant-presentations.ts";
+import { currentResumePreparation } from "./resume-preparation.ts";
 import { registerMemoryReportSession } from "./memory-report/memory-report-registry.ts";
 import {
 	type BashExecutionMessage,
@@ -1692,6 +1693,9 @@ export class AgentSession {
 	private _lastActivityOutcome: AgentActivityOutcome = "completed";
 	/** Set when dispose() starts; a turn still unwinding after it cannot resolve persisted entries (senpi#2995). */
 	private _disposed = false;
+	/** An unstarted resume candidate borrows its ID from a live session; it owns only local resources. */
+	private _ownsSessionResources: boolean;
+	private _releasePreparedResources?: () => void;
 	private _isBeforeSettle = false;
 	private _abortDuringBeforeSettle = false;
 
@@ -1815,6 +1819,7 @@ export class AgentSession {
 			(control) => this._recoveryIdentity?.own(control),
 		);
 		this.sessionManager = config.sessionManager;
+		this._ownsSessionResources = !config.sessionManager.isPrepared();
 		this._unsubscribeRecovery = this.sessionManager.onRecovery((recovery) => {
 			this._standingRecovery = { type: "session_recovered", ...recovery };
 			this._emit(this._standingRecovery);
@@ -2051,6 +2056,23 @@ export class AgentSession {
 		} catch (error) {
 			// dispose() is unreachable for a session whose constructor throws.
 			this._releaseToolSearchService("session construction failed");
+			this._disposed = true;
+			this._extensionRunner?.invalidate();
+			this._disconnectFromAgent();
+			this._unsubscribeSecurityNotices?.();
+			this._unsubscribeSettingsSource?.();
+			this._unsubscribeRecovery?.();
+			this._unsubscribeWakeSources?.();
+			this._unfollowProviderAccountChanges();
+			this.securityNotices.dispose();
+			this._lifecycleBinding.dispose();
+			this._structuredLane.dispose();
+			this._toolChildClosed = Promise.all([this._toolDispatcher.dispose(), this._toolChild?.close()])
+				.then(() => undefined)
+				.catch((failure: unknown) =>
+					this._sessionLogger.warn("candidate_construction_close_failed", { error: String(failure) }),
+				);
+			currentResumePreparation()?.ownSession(this);
 			throw error;
 		}
 		// A no-op unless SENPI_MEMORY_REPORT=1: the report reads these only when it is requested.
@@ -2330,7 +2352,7 @@ export class AgentSession {
 
 	/** Own the service the new extension load created and retire the previous generation's one. */
 	private _adoptToolSearchService(extensionLoad: object): void {
-		const next = adoptToolSearchServiceForSession(extensionLoad);
+		const next = adoptToolSearchServiceForSession(extensionLoad, this._ownsSessionResources);
 		if (this._toolSearchService !== next) this._toolSearchService?.dispose(this.sessionId, "replaced by a reload");
 		this._toolSearchService = next;
 	}
@@ -4788,11 +4810,12 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		if (this._disposed) return;
 		this._disposed = true;
 		this._unsubscribeSecurityNotices?.();
 		this._unfollowProviderAccountChanges();
 		this.securityNotices.dispose();
-		clearMcpGrantPresentations(this.sessionId);
+		if (this._ownsSessionResources) clearMcpGrantPresentations(this.sessionId);
 		this._engineTurnHold.invalidate();
 		this._deadlineTracker.disarm();
 		this._toolBarrier.clear();
@@ -4837,10 +4860,20 @@ export class AgentSession {
 		this._unsubscribeRecovery = undefined;
 		this._eventListeners = [];
 		this._structuredLane.dispose();
-		cleanupSessionResources(this.sessionId);
+		if (this._ownsSessionResources) cleanupSessionResources(this.sessionId);
 		// Nothing reads or writes this manager once its session is gone: it releases
 		// its writer grant and its disposable blob directory here.
 		this.sessionManager.dispose();
+		this._releasePreparedResources?.();
+		this._releasePreparedResources = undefined;
+	}
+
+	/** Transfer session-ID resources only after the admitted manager commits and the outgoing owner retires. */
+	activatePreparedResume(releaseResources: () => void): void {
+		this._releasePreparedResources = releaseResources;
+		this._ownsSessionResources = true;
+		this._toolSearchService?.activateForSession();
+		this.refreshContext();
 	}
 
 	/** Extension-published wake sources that currently report live work, by `source` name. */

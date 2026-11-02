@@ -63,6 +63,7 @@ import {
 } from "./tools/index.ts";
 import { serviceTierForProvider } from "./ultrafast-lanes.ts";
 import { getBranchSelection, isVirtualModel } from "./virtual-models.ts";
+import { currentResumePreparation } from "./resume-preparation.ts";
 
 // Preserve the pre-0.81 fallback for extensions that construct Agent instances
 // or invoke low-level agent loops without supplying streamFn. Agent core remains
@@ -277,11 +278,20 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const authPath = options.agentDir ? join(agentDir, "auth.json") : undefined;
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
 	const authStorage = options.authStorage ?? options.modelRegistry?.authStorage ?? AuthStorage.create(authPath);
-	const modelRuntime =
+	const providedModelRuntime =
 		options.modelRuntime ??
 		options.modelRegistry?.modelRuntime ??
 		(await ModelRuntime.create({ credentials: authStorage, modelsPath, agentDir }));
-	const modelRegistry = options.modelRegistry ?? new ModelRegistry(modelRuntime, authStorage);
+	const preparation = currentResumePreparation();
+	const modelRuntime = preparation
+		? options.modelRuntime || options.modelRegistry
+			? preparation.isolate(providedModelRuntime)
+			: preparation.ownModelRuntime(providedModelRuntime)
+		: providedModelRuntime;
+	const modelRegistry =
+		modelRuntime === providedModelRuntime
+			? (options.modelRegistry ?? new ModelRegistry(modelRuntime, authStorage))
+			: new ModelRegistry(modelRuntime, modelRuntime.authStorage ?? authStorage);
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	modelRuntime.setSettingsManager(settingsManager);
@@ -633,6 +643,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		initialThinkingLevelSource: thinkingLevelSource,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
+	currentResumePreparation()?.ownSession(session);
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
 		: 0;

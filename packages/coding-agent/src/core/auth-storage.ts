@@ -533,6 +533,14 @@ export class AuthStorage implements CredentialStore {
 		return new AuthStorage(storage);
 	}
 
+	/** Share credential persistence, never a candidate's mutable OAuth registry or runtime overrides. */
+	fork(): AuthStorage {
+		const fork = new AuthStorage(this.storage, this.authPath);
+		for (const [provider, key] of this.runtimeOverrides) fork.runtimeOverrides.set(provider, key);
+		for (const [provider, oauth] of this.extensionOAuthProviders) fork.extensionOAuthProviders.set(provider, oauth);
+		return fork;
+	}
+
 	static inMemory(data: AuthStorageData = {}): AuthStorage {
 		const storage = new InMemoryAuthStorageBackend();
 		storage.withLock(() => ({ result: undefined, next: JSON.stringify(data, null, 2) }));

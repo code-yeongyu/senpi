@@ -1,5 +1,5 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { basename, extname } from "node:path";
+import { activeProviderScope, type ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import { extensionLoadKey } from "../../extension-load-key.ts";
 import type { ExtensionAPI, ToolInfo } from "../../types.ts";
@@ -42,6 +42,7 @@ interface FeedState {
 
 /** Session-scoped owner of the live generalized tool-search catalog. */
 export class ToolSearchService {
+	readonly #providerScope = activeProviderScope();
 	#runtime: ToolSearchRuntime;
 	readonly #feeds = new Map<ToolSearchSource, FeedState>();
 	#extensionDocs: ToolSearchDocument[] = [];
@@ -70,6 +71,15 @@ export class ToolSearchService {
 	dispose(sessionId: string, reason: string): void {
 		this.#disposed ??= { sessionId, reason };
 		sessionServices.delete(this);
+		if (this.#providerScope && scopedServices.get(this.#providerScope) === this)
+			scopedServices.delete(this.#providerScope);
+	}
+
+	/** Publish only an admitted session; preparation must not displace the outgoing scope's catalog. */
+	activateForSession(): void {
+		this.#assertLive();
+		sessionServices.add(this);
+		if (this.#providerScope) scopedServices.set(this.#providerScope, this);
 	}
 
 	#assertLive(): void {
@@ -310,14 +320,15 @@ function isValidDocument(doc: ToolSearchDocument, source: ToolSearchSource): boo
 	return doc.source === source && doc.name.length > 0 && doc.registrationId.length > 0;
 }
 
-const scopedService = new AsyncLocalStorage<ToolSearchService>();
+const scopedServices = new WeakMap<ProviderScope, ToolSearchService>();
 let servicesByExtensionLoad = new WeakMap<object, ToolSearchService>();
 const sessionServices = new Set<ToolSearchService>();
 let sessionlessService: ToolSearchService | null = null;
 
 /** Make a session-owned service visible to later builtins loaded in the same provider scope. */
 export function installScopedToolSearchService(value: ToolSearchService): void {
-	scopedService.enterWith(value);
+	const scope = activeProviderScope();
+	if (scope) scopedServices.set(scope, value);
 }
 
 /** Own `value` as the tool-search service of the extension load that created `pi`. */
@@ -333,9 +344,9 @@ export function getToolSearchServiceForExtension(pi: object): ToolSearchService 
 }
 
 /** A session takes the service its extension load (keyed by that load's runtime) created. */
-export function adoptToolSearchServiceForSession(extensionLoad: object): ToolSearchService | undefined {
+export function adoptToolSearchServiceForSession(extensionLoad: object, active = true): ToolSearchService | undefined {
 	const value = servicesByExtensionLoad.get(extensionLoad);
-	if (value !== undefined) sessionServices.add(value);
+	if (active) value?.activateForSession();
 	return value;
 }
 
@@ -345,7 +356,8 @@ export function adoptToolSearchServiceForSession(extensionLoad: object): ToolSea
  * With none, a standalone service serves session-free callers.
  */
 export function getToolSearchService(runtime?: ToolSearchRuntime): ToolSearchService {
-	const scoped = scopedService.getStore();
+	const scope = activeProviderScope();
+	const scoped = scope === undefined ? undefined : scopedServices.get(scope);
 	if (scoped !== undefined) {
 		if (runtime !== undefined) scoped.bindRuntime(runtime);
 		return scoped;

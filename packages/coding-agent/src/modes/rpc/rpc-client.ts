@@ -16,6 +16,8 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
+import { SessionResumeConflictError, SessionResumeRejectedError } from "../../core/session-resume-conflict.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
@@ -1526,6 +1528,17 @@ export class RpcClient {
 				throw new MissingSessionCwdError(
 					errorResponse.errorData as ConstructorParameters<typeof MissingSessionCwdError>[0],
 				);
+			}
+			if (errorResponse.errorCode === "model_usability_budget" && errorResponse.errorData) {
+				throw new ModelUsabilityBudgetError(
+					errorResponse.errorData as ConstructorParameters<typeof ModelUsabilityBudgetError>[0],
+				);
+			}
+			if (errorResponse.errorCode === "session_resume_conflict" && errorResponse.errorData) {
+				throw new SessionResumeConflictError((errorResponse.errorData as { sessionFile: string }).sessionFile);
+			}
+			if (errorResponse.errorCode === "session_resume_rejected") {
+				throw new SessionResumeRejectedError(errorResponse.error);
 			}
 			throw new RpcCommandError(errorResponse.error, errorResponse.errorCode, errorResponse.errorData);
 		}

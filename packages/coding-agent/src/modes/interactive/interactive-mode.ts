@@ -150,6 +150,8 @@ import { failureAlreadyDescribed, headNoticeShownElsewhere } from "./provider-er
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
+import { SessionResumeConflictError, SessionResumeRejectedError } from "../../core/session-resume-conflict.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, QuietStartup, TuiMode } from "../../core/settings-manager.ts";
@@ -9036,11 +9038,24 @@ export class InteractiveMode {
 					this.showStatus("Resume cancelled");
 					return { cancelled: true };
 				}
-				const result = await this.runtimeHost.switchSession(sessionPath, {
-					cwdOverride: selectedCwd,
-					withSession: options?.withSession,
-					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
-				});
+				let result: { cancelled: boolean };
+				try {
+					result = await this.runtimeHost.switchSession(sessionPath, {
+						cwdOverride: selectedCwd,
+						withSession: options?.withSession,
+						projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
+					});
+				} catch (retryError) {
+					if (
+						retryError instanceof ModelUsabilityBudgetError ||
+						retryError instanceof SessionResumeConflictError ||
+						retryError instanceof SessionResumeRejectedError
+					) {
+						this.showError(`Failed to resume session: ${retryError.message}`);
+						return { cancelled: true };
+					}
+					throw retryError;
+				}
 				if (result.cancelled) {
 					return result;
 				}
@@ -9051,6 +9066,14 @@ export class InteractiveMode {
 				if (warning !== undefined) this.showWarning(warning);
 				this.showStatus("Resumed session in current cwd");
 				return result;
+			}
+			if (
+				error instanceof ModelUsabilityBudgetError ||
+				error instanceof SessionResumeConflictError ||
+				error instanceof SessionResumeRejectedError
+			) {
+				this.showError(`Failed to resume session: ${error.message}`);
+				return { cancelled: true };
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}

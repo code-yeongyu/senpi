@@ -40,6 +40,8 @@ import { listCredentialAccounts, orderCredentialAccounts } from "../../core/cred
 import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
+import { SessionResumeConflictError, SessionResumeRejectedError } from "../../core/session-resume-conflict.ts";
 import {
 	emitProviderAccountsChanged,
 	subscribeProviderAccountEvents,
@@ -2350,13 +2352,30 @@ export function createRpcConnectionHandler(
 		} catch (commandError: unknown) {
 			const missingCwd =
 				commandError instanceof Error && commandError.name === "MissingSessionCwdError" && "issue" in commandError;
+			const budget = commandError instanceof ModelUsabilityBudgetError;
+			const conflict = commandError instanceof SessionResumeConflictError;
+			const rejectedResume = commandError instanceof SessionResumeRejectedError;
 			output(
 				error(
 					command.id,
 					command.type,
 					commandError instanceof Error ? commandError.message : String(commandError),
-					missingCwd ? "missing_session_cwd" : undefined,
-					missingCwd ? commandError.issue : undefined,
+					missingCwd
+						? "missing_session_cwd"
+						: budget
+							? "model_usability_budget"
+							: conflict
+								? "session_resume_conflict"
+								: rejectedResume
+									? "session_resume_rejected"
+									: undefined,
+					missingCwd
+						? commandError.issue
+						: budget
+							? commandError.projection
+							: conflict
+								? { sessionFile: commandError.sessionFile }
+								: undefined,
 				),
 			);
 			await waitForRpcBackpressure();

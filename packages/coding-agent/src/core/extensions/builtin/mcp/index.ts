@@ -34,22 +34,29 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 	return (pi: ExtensionAPI): void => {
 		let attachPromise: Promise<void> | undefined;
 		let attachedSessionId: string | undefined;
+		let activated = false;
 		let controlInventoryDisposed = false;
-		const unsubscribeControlInventoryRequest = safeEventBusOn(
-			pi.events,
-			MCP_CONTROL_INVENTORY_REQUEST_EVENT,
-			(data) => {
+		let unsubscribeControlInventoryRequest = () => {};
+		let unsubscribeWireStatus = () => {};
+		const activate = (): void => {
+			if (activated) return;
+			activated = true;
+			installMcpNativeToolSearchGate(() => {
+				const setting = service.getNativeToolSearchSetting();
+				return setting === true || setting === "auto";
+			});
+			unsubscribeControlInventoryRequest = safeEventBusOn(pi.events, MCP_CONTROL_INVENTORY_REQUEST_EVENT, (data) => {
 				if (!isMcpControlInventoryRequest(data) || data.sessionId !== attachedSessionId) return;
 				data.respond(service.refreshWireStatusSnapshot(data.sessionId));
-			},
-		);
-		const unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot, startupSettled) => {
-			if (sessionId === undefined || sessionId !== attachedSessionId) return;
-			pi.events.emit(
-				MCP_CONTROL_INVENTORY_CHANGED_EVENT,
-				startupSettled ? { sessionId, snapshot, startupSettled: true } : { sessionId, snapshot },
-			);
-		});
+			});
+			unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot, startupSettled) => {
+				if (sessionId === undefined || sessionId !== attachedSessionId) return;
+				pi.events.emit(
+					MCP_CONTROL_INVENTORY_CHANGED_EVENT,
+					startupSettled ? { sessionId, snapshot, startupSettled: true } : { sessionId, snapshot },
+				);
+			});
+		};
 		const disposeControlInventory = (): void => {
 			if (controlInventoryDisposed) return;
 			controlInventoryDisposed = true;
@@ -66,10 +73,6 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 
 		registerMcpCommands(pi, service, () => attachPromise);
 
-		installMcpNativeToolSearchGate(() => {
-			const setting = service.getNativeToolSearchSetting();
-			return setting === true || setting === "auto";
-		});
 		// skills-carry-MCP (todo 37): skills declaring MCP servers (mcp.json
 		// sidecar or SKILL.md frontmatter) register lazily with tools hidden;
 		// loading a skill — /skill:<name> input or the model reading its SKILL.md —
@@ -115,6 +118,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		// and known catalog, without waiting for deferred remote discovery.
 		// session_start always starts a fresh attach (reloads must re-sync config).
 		const attach = (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+			activate();
 			attachedSessionId = ctx.sessionManager?.getSessionId?.();
 			attachPromise = (async () => {
 				await service.attachSession(event, ctx, pi);
@@ -199,6 +203,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			wrapAsync(
 				"mcp.session_shutdown",
 				async (event) => {
+					if (!activated) return;
 					if (sessionOwned) {
 						disposeControlInventory();
 						await service.handleSessionShutdown(event);
