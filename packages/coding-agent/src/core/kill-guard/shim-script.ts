@@ -225,7 +225,7 @@ export function killGuardPromptCommand(dir: string): string {
 		`if [ "\${__senpi_kg_shell-}" != "$$" ]; then __senpi_kg_shell=$$; if [ -r ${file} ]; then . ${file}; fi; fi;`,
 		`if [ -n "\${SENPI_KILL_GUARD_USER_PROMPT_COMMAND-}" ] && [ "\${__senpi_kg_in-}" != "$$" ]; then`,
 		'__senpi_kg_rc() { return "$1"; }; __senpi_kg_run() { local __senpi_kg_in=$$;',
-		`if __senpi_kg_rc "$__senpi_kg_q"; then eval ${user}; else eval ${user}; fi; }; __senpi_kg_run; fi`,
+		`if __senpi_kg_rc "$__senpi_kg_q"; then eval ${user}; else eval ${user}; fi; }; __senpi_kg_run \${1+"$@"}; fi`,
 	].join(" ");
 }
 
