@@ -26,6 +26,7 @@ import {
 	createExperimentalSessions,
 	readExperimentalSessionState,
 } from "./experimental-session-support.ts";
+import { HOLD_SERVER_DISCONNECT_ENV } from "./fixtures/faux-session-worker.ts";
 import { KeyedProbe } from "./fixtures/keyed-service.ts";
 
 const servers = new Set<RunningServer>();
@@ -861,28 +862,35 @@ describe("experimental durable server composition", () => {
 	});
 
 	test("retires an unclaimed idle worker after replacement demand expires", async ({ onTestFinished }) => {
-		const children = recordWorkerChildren(onTestFinished);
+		const children = recordWorkerChildren(onTestFinished, fauxWorkerEntryUrl);
 		const directory = await mkdtemp(join("/tmp", "pi-orphan-worker-"));
 		directories.add(directory);
 		vi.stubEnv("__PI_SESSION_WORKER_ORPHAN_DEMAND_GRACE_MS", "50");
+		// The coordinator tells the worker that `first` disconnected while `replacement` registers, so the
+		// 50 ms grace would start before the adoption below is observed. The worker holds that notice
+		// until SIGUSR2, and the grace starts only after the adoption assertion.
+		vi.stubEnv(HOLD_SERVER_DISCONNECT_ENV, "1");
 		const first = await startServer({ ...sessionWorkerModel, directory });
 		servers.add(first);
 		await attachClient(first, "demo-1");
 		const workerPid = first.workerPids.get("demo-1");
 		expect(workerPid).toEqual(expect.any(Number));
+		if (workerPid === undefined) throw new Error("The first server did not start a worker");
 
 		const replacement = await startServer({ ...sessionWorkerModel, directory });
 		servers.add(replacement);
 		await first.closed;
 		expect(replacement.workerPids.get("demo-1")).toBe(workerPid);
 
-		const processExited = whenChildExited(children.get(workerPid!));
-		await whenWorkerPids(replacement, (pids) => !pids.has("demo-1"));
+		const processExited = whenChildExited(children.get(workerPid));
+		const workerDropped = whenWorkerPids(replacement, (pids) => !pids.has("demo-1"));
+		process.kill(workerPid, "SIGUSR2");
+		await workerDropped;
 		await processExited;
 		// This worker is not the replacement's child: the server drops it from `workerPids` on the
 		// coordinator's disconnect notice, which can arrive before the OS has reaped the process.
-		await waitForProcessGone(workerPid!);
-		expect(processExists(workerPid!)).toBe(false);
+		await waitForProcessGone(workerPid);
+		expect(processExists(workerPid)).toBe(false);
 	});
 
 	test("restores tracked sessions that are outside the replacement catalog", async () => {
@@ -1011,10 +1019,17 @@ function whenWorkerPids(
  * pid from `workerPids` on `peer_disconnected` before the OS reaps the child, so a test that asserts
  * the process is gone awaits the child's own `exit` event as well.
  */
-function recordWorkerChildren(onTestFinished: (cleanup: () => void) => void): ReadonlyMap<number, ChildProcess> {
+function recordWorkerChildren(
+	onTestFinished: (cleanup: () => void) => void,
+	workerEntryUrl?: URL,
+): ReadonlyMap<number, ChildProcess> {
 	const children = new Map<number, ChildProcess>();
 	const spawn = vi.spyOn(processRuntime, "spawnInternalProcess").mockImplementation((role, args, options) => {
-		const child = realSpawnInternalProcess(role, args, options);
+		const child = realSpawnInternalProcess(
+			role,
+			args,
+			role === "session-worker" && workerEntryUrl !== undefined ? { ...options, entryUrl: workerEntryUrl } : options,
+		);
 		if (role === "session-worker" && child.pid !== undefined) children.set(child.pid, child);
 		return child;
 	});
