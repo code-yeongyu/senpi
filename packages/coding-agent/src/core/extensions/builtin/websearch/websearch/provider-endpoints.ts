@@ -27,6 +27,7 @@ const DEFAULT_PROVIDER_URLS: Record<Exclude<SearchProvider, "searxng">, string> 
 	keenable: "https://api.keenable.ai/v1/search",
 	parallel: "https://search.parallel.ai/mcp",
 	firecrawl: "https://api.firecrawl.dev/v2/search",
+	openrouter: "https://openrouter.ai/api/v1",
 };
 
 /** SearXNG is self-hosted, so it has no default endpoint; config validation requires its `baseUrl`. */

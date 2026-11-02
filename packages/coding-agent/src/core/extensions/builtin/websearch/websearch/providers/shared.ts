@@ -95,6 +95,17 @@ export function externalResultUrl(
 	return url.href;
 }
 
+/** Accepts only absolute http(s) URLs; control characters would let text merge into the URL on parse. */
+export function httpUrl(value: string | undefined): string | undefined {
+	if (!value || value.length > 2048 || /[\t\n\r]/.test(value)) return undefined;
+	try {
+		const url = new URL(value);
+		return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** Keeps the first result for each URL. */
 export function uniqueByUrl(items: SearchResultItem[]): SearchResultItem[] {
 	const seen = new Set<string>();

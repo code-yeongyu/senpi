@@ -213,6 +213,24 @@ The search calls `generateContent` with the `google_search` tool. Results are th
 
 A `google` entry without `apiKey` uses your senpi `google` login (Google API key) and a Google model from it; set `model` to choose one. Vertex AI logins are not used.
 
+## OpenRouter web grounding (opt-in)
+
+An `openrouter` entry posts to OpenRouter's chat-completions endpoint with the `web` plugin, so any chat model OpenRouter serves can search. It needs both an `apiKey` and a `model`:
+
+```json
+{
+  "providers": [
+    { "provider": "openrouter", "apiKey": "<your OpenRouter key>", "model": "anthropic/claude-sonnet-4.5" }
+  ]
+}
+```
+
+- `baseUrl` is the API root and defaults to `https://openrouter.ai/api/v1`; senpi appends `/chat/completions`.
+- Results are the answer's `url_citation` annotations, one per page, with the cited excerpt as the snippet. An answer that cites nothing counts as no results, and a link the model writes in its own text is never returned as a source.
+- `maxResults` becomes the plugin's `max_results` (1–50).
+- Search is billed by OpenRouter as an extra per-search charge on your credits, on top of the model tokens, so this provider is never part of the free default chain. OpenRouter marks the `web` plugin deprecated in favor of its `openrouter:web_search` server tool; this provider uses the plugin.
+- `allowedDomains` and `blockedDomains` are not sent to the plugin, because domain filtering depends on the search engine OpenRouter picks for the model.
+
 ## Listing login-based routes
 
 List a `google` entry in `websearch.json` to turn on Google Search grounding, or a `chatgpt-subscription` entry to use that login from a session running another provider. Without an `apiKey`, the entry uses the matching senpi login and always sends it to that login's own endpoint; a `baseUrl` on such an entry is ignored. If you have no matching login, senpi skips the entry.

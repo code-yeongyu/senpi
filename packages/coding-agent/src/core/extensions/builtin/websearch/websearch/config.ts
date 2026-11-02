@@ -47,6 +47,7 @@ const PROVIDERS: readonly SearchProvider[] = [
 	"keenable",
 	"parallel",
 	"firecrawl",
+	"openrouter",
 ];
 /** Engines that need no key or account; a block on any of them puts it on a per-session cooldown. */
 export const KEYLESS_PROVIDERS: ReadonlySet<SearchProvider> = new Set<SearchProvider>([
@@ -274,6 +275,15 @@ export function validateProviderConfig(config: SearchProviderEntry): ProviderVal
 		!hasApiKey(config)
 	) {
 		return { ok: false, reason: "missing_api_key", message: `Provider ${config.provider} requires apiKey.` };
+	}
+
+	// The web plugin runs on a chat model, so an entry without one would post an unusable request.
+	if (config.provider === "openrouter" && !config.model) {
+		return {
+			ok: false,
+			reason: "invalid_config",
+			message: "Provider openrouter requires model, the OpenRouter chat model the web plugin runs on.",
+		};
 	}
 
 	return { ok: true, config };
