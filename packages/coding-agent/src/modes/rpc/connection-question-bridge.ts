@@ -22,9 +22,15 @@ export class ConnectionQuestionBridge {
 	private readonly resolved = new Set<string>();
 	private readonly output: (record: object) => void;
 	private readonly changed: ((change?: UiRequestChange) => void) | undefined;
-	constructor(output: (record: object) => void, changed?: (change?: UiRequestChange) => void) {
+	private readonly raiser: () => string | undefined;
+	constructor(
+		output: (record: object) => void,
+		changed?: (change?: UiRequestChange) => void,
+		raiser: () => string | undefined = () => undefined,
+	) {
 		this.output = output;
 		this.changed = changed;
+		this.raiser = raiser;
 	}
 	pendingQuestions(): RpcQuestionUiRequest[] {
 		return [...this.pending.values()].map(({ frame }) => ({
@@ -44,6 +50,7 @@ export class ConnectionQuestionBridge {
 			toolCallId: request.requestId,
 			waitForAnswer: request.waitForAnswer,
 			questions: request.questions,
+			raisedBy: this.raiser() ?? "agent",
 			timeout,
 			askedAtMs,
 			deadlineAtMs: askedAtMs + timeout,

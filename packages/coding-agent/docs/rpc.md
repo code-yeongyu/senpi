@@ -6450,6 +6450,8 @@ Set the text in the input editor. Fire-and-forget.
 
 Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
 
+Every `question` frame carries `raisedBy`: the `connectionId` whose command raised it (the same connection a `select`, `confirm`, `input` or `editor` raised at that point is delivered to; for a model tool call, the connection whose prompt started the turn), or `"agent"` when no connection's command started the work (for example a goal continuation, or a classic stdio session). A client uses it to tell a question it raised from one another connection raised; the frame still reaches every attached connection, and any of them may answer. The field is optional and additive: a client that ignores it is unaffected, and frames from older hosts omit it. The replayed frames in `pendingQuestions` carry the same value.
+
 ```json
 {
   "type": "extension_ui_request",
@@ -6458,6 +6460,7 @@ Present one or more questions to the user. Requires the `question` client capabi
   "requestId": "ask-user-1",
   "toolCallId": "call_abc123",
   "waitForAnswer": true,
+  "raisedBy": "socket-1",
   "questions": [
     {
       "id": "q1",

@@ -30,6 +30,8 @@ export type RpcQuestionUiRequest = {
 	toolCallId: string;
 	waitForAnswer: boolean;
 	questions: RpcQuestionSpec[];
+	/** The connection whose command raised the question, or `"agent"` when no connection's command was dispatching. */
+	raisedBy?: string;
 	timeout: number;
 	askedAtMs: number;
 	deadlineAtMs: number;
