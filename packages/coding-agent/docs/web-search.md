@@ -2,6 +2,16 @@
 
 The `web_search` tool searches the web and returns source URLs the model can cite. It works without any setup. With a `websearch.json` you choose the search providers yourself, and, when `auto` is on, the hosted web search of the model your session is already using goes first.
 
+## Result count
+
+A search returns 10 results by default. The model can ask for another count by passing `max_results` with the query (1-50; a value outside the range is clamped):
+
+- `max_results` on the call outranks a `maxResults` set on a `websearch.json` entry;
+- a `websearch.json` entry's `maxResults` outranks the default of 10;
+- every returned snippet is capped at 500 characters, so a large count cannot flood the context.
+
+Engines that take no count parameter (DuckDuckGo, Startpage, Ecosia) are fetched as usual and sliced to the requested count locally.
+
 ## Where the config lives
 
 senpi reads the first `websearch.json` it finds, in this order:

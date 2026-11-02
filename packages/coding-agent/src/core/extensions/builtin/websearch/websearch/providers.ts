@@ -62,9 +62,15 @@ const PROVIDER_MODULES: Record<SearchProvider, ProviderModule> = {
 	keenable: keenableProvider,
 };
 
+/** A count chosen for one call outranks a provider entry's own value, which outranks the caller's default. */
+function maxResultsFor(config: SearchProviderConfig, request: SearchRequest): number {
+	if (request.maxResultsFromCall) return request.maxResults;
+	return config.maxResults ?? request.maxResults;
+}
+
 function buildContext(config: SearchProviderConfig, request: SearchRequest): BuildContext {
 	const { allowedDomains, blockedDomains } = resolveDomainFilters(config, request);
-	return { config, request, maxResults: config.maxResults ?? request.maxResults, allowedDomains, blockedDomains };
+	return { config, request, maxResults: maxResultsFor(config, request), allowedDomains, blockedDomains };
 }
 
 /** A provider's own body parser (for example a full server-sent event stream), or undefined to use its response format. */
