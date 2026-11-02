@@ -1,7 +1,9 @@
+import { dirname } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
+import { compareAdmissionGoldens } from "./4272-admission-golden-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 import { FLAG, reconnect, recoveredRows } from "./5331-live-identity-support.ts";
 import { toolUse } from "./5346-stamp-host-support.ts";
@@ -20,6 +22,7 @@ afterEach(async () => {
 	host = undefined;
 	vi.unstubAllEnvs();
 	vi.restoreAllMocks();
+	vi.useRealTimers();
 });
 
 const rows = (cut: ReadonlyMap<string, Record<string, unknown>>, kind: string) =>
@@ -27,9 +30,32 @@ const rows = (cut: ReadonlyMap<string, Record<string, unknown>>, kind: string) =
 const terminalOf = (row: Record<string, unknown>) =>
 	(row.payload as { terminal?: Record<string, unknown> } | undefined)?.terminal ?? {};
 
+/**
+ * Golden k, the desktop decoder's pin for the marker shape: every `calls` member of the held cut and every `settled`
+ * member after the run, as paged, in member order (settled rows page in the order of their random message ids). Keys
+ * are pinned as their rank and `hookRunId` (a host-wide hook counter) is masked, like golden j.
+ */
+function golden(...cuts: ReadonlyMap<string, Record<string, unknown>>[]): unknown {
+	const keys: unknown[] = [];
+	const pin = (value: unknown, key?: string): unknown => {
+		if (key === "hookRunId") return "<hook-run>";
+		if (key === "runtimeItemKey" && typeof value === "string") {
+			if (!keys.includes(value)) keys.push(value);
+			return `call-${keys.indexOf(value) + 1}`;
+		}
+		if (Array.isArray(value)) return value.map((item: unknown) => pin(item));
+		if (typeof value !== "object" || value === null) return value;
+		return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, pin(item, name)]));
+	};
+	const members = cuts.flatMap((cut) => [...cut]).sort(([a], [b]) => (a < b ? -1 : 1));
+	return { snapshot: Object.fromEntries(members.map(([member, row]) => [member, pin(row)])) };
+}
+
 it("RULING-123 C3.4 #5348 snapshot calls and settled rows of a toolCallId reused within one message are marked callUnknown", async () => {
 	vi.stubEnv(FLAG, "1");
-	host = await statusHost();
+	vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-01T00:00:00.000Z") });
+	// A fixed chunk size: the faux provider otherwise draws one per delta, which moves every lane sequence.
+	host = await statusHost({ tokenSize: { min: 64, max: 64 } });
 	const run = host;
 	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
 	const legacy = run.client("legacy");
@@ -101,4 +127,5 @@ it("RULING-123 C3.4 #5348 snapshot calls and settled rows of a toolCallId reused
 		(row) => row.callUnknown !== true,
 	);
 	expect(unmarked).toEqual([]);
+	await compareAdmissionGoldens({ "k-same-message-reused-id.json": golden(held, settled) }, dirname(run.cwd));
 }, 600_000);
