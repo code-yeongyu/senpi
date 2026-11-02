@@ -4,7 +4,7 @@ name: Release
   workflow_dispatch:
     inputs:
       version:
-        description: 'Explicit CalVer (e.g. 2026.05.13-2). Empty = auto-compute today.'
+        description: 'Explicit CalVer with no leading zeros (e.g. 2026.5.13-2, never 2026.05.13-2). Empty = auto-compute today.'
         required: false
         type: string
         default: ''
@@ -40,17 +40,47 @@ concurrency:
 
 jobs:
   require-version:
-    # Runs before everything else in publish-only, so an empty version fails here with a clear message instead of as a
-    # checkout of refs/tags/v in native-prebuilds (which would also skip the release job and any later guard).
-    if: ${{ inputs.publish-only == true }}
+    # Runs before everything else, so a bad version fails here with a clear message: in publish-only an empty one would
+    # otherwise fail as a checkout of refs/tags/v in native-prebuilds (which would also skip the release job and any
+    # later guard), and any explicit version must be canonical CalVer, because npm strips leading zeros and
+    # 2026.11.02-1 shipped as 2026.11.2-1 beside a v2026.11.02-1 tag (senpi#5406).
     runs-on: ubuntu-latest
     steps:
       - name: Require a version for publish-only
+        if: inputs.publish-only == true
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           test -n "$EXPECTED_VERSION" || {
             echo "::error::publish-only requires an explicit version" >&2
+            exit 1
+          }
+
+      # The dispatch ref's validator decides, never the tag's: an older tag's calver.mjs has no --check.
+      - name: Checkout the dispatch ref
+        if: inputs.version != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        if: inputs.version != ''
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install the version check's dependencies
+        if: inputs.version != ''
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Refuse a non-canonical CalVer version
+        if: inputs.version != ''
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          node scripts/calver.mjs --check "$EXPECTED_VERSION" || {
+            echo "::error::version $EXPECTED_VERSION is not canonical CalVer (see the line above)" >&2
             exit 1
           }
 
@@ -63,8 +93,8 @@ jobs:
       ref: refs/tags/v${{ inputs.version }}
 
   release:
-    needs: native-prebuilds
-    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.result == 'success') }}
+    needs: [require-version, native-prebuilds]
+    if: ${{ always() && needs.require-version.result == 'success' && (inputs.publish-only != true || needs.native-prebuilds.result == 'success') }}
     runs-on: ubuntu-latest
     # The release never re-runs the test suite (senpi#2943): its test evidence is the release
     # commit's green sharded CI run ("Check and test"). A regenerated catalog is pushed to main

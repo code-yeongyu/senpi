@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { computeNextVersion } from "./calver.mjs";
+import { assertCanonicalCalVer, CalVerInputError, computeNextVersion, computeToday } from "./calver.mjs";
 import { queryNpmRegistry } from "./npm-registry.mjs";
 
 let tempDir;
@@ -90,6 +90,52 @@ describe("computeNextVersion", () => {
 		});
 
 		assert.equal(version, "2026.8.12");
+	});
+});
+
+describe("assertCanonicalCalVer", () => {
+	it("refuses zero-padded months, days and suffixes with the canonical form npm would publish", () => {
+		for (const [input, canonical] of [
+			["2026.11.02-1", "2026.11.2-1"],
+			["2026.05.13", "2026.5.13"],
+			["2026.05.03-2", "2026.5.3-2"],
+			["2026.5.3-02", "2026.5.3-2"],
+		]) {
+			assert.throws(
+				() => assertCanonicalCalVer(input),
+				(err) =>
+					err instanceof CalVerInputError &&
+					err.code === "CALVER_ZERO_PADDED" &&
+					err.canonical === canonical &&
+					err.message.includes(`${input} -> use ${canonical}`),
+				input,
+			);
+		}
+	});
+
+	it("refuses other shapes the CalVer pattern or npm would not keep as given", () => {
+		for (const input of ["v2026.5.3", " 2026.5.3", "2026.13.1", "2026.1.32", "2026.5.3-0", "2026.5.3-rc1", "1.2.3", ""]) {
+			assert.throws(
+				() => assertCanonicalCalVer(input),
+				(err) => err instanceof CalVerInputError && err.code === "CALVER_NOT_CANONICAL",
+				JSON.stringify(input),
+			);
+		}
+	});
+
+	it("returns canonical versions unchanged", () => {
+		for (const input of ["2026.11.2-1", "2026.10.31-2", "2026.1.1", "2026.12.31-14"]) {
+			assert.equal(assertCanonicalCalVer(input), input);
+		}
+	});
+
+	it("auto-compute yields canonical, unpadded versions for a single-digit month and day", () => {
+		const today = computeToday(new Date(Date.UTC(2026, 0, 5, 23, 59)));
+		assert.equal(today, "2026.1.5");
+		installFakeVersionSources(["2026.1.5"]);
+		const next = computeNextVersion({ date: today, packages: ["@example/senpi"] });
+		assert.equal(next, "2026.1.5-2");
+		assert.equal(assertCanonicalCalVer(next), next);
 	});
 });
 

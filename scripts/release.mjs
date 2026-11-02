@@ -36,7 +36,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { computeNextVersion } from "./calver.mjs";
+import { assertCanonicalCalVer, computeNextVersion } from "./calver.mjs";
 import {
 	runClaudeCodeModelSupportReport,
 	runGenerateModels,
@@ -70,9 +70,9 @@ function printUsage() {
 		"Releases the senpi monorepo using CalVer (YYYY.M.D or YYYY.M.D-N).",
 		"",
 		"Options:",
-		"  --version <v>   Explicit CalVer version. Must match",
-		"                  /^\\d{4}\\.\\d{1,2}\\.\\d{1,2}(-\\d+)?$/ — for example 2026.5.13",
-		"                  or 2026.5.13-2.",
+		"  --version <v>   Explicit canonical CalVer version, no leading zeros (npm",
+		"                  strips them): 2026.5.13 or 2026.5.13-2, never 2026.05.13.",
+		"                  Checked before any other step.",
 		"  --dry-run       Preview every shell command and file write; modify nothing.",
 		"                  Read-only git/npm reads (status, branch, tag --list,",
 		"                  npm view) still execute so the plan is accurate.",
@@ -110,7 +110,12 @@ function parseArgs(argv) {
 				process.stderr.write("[release] error: --version requires an argument\n");
 				process.exit(1);
 			}
-			args.version = argv[i];
+			try {
+				args.version = assertCanonicalCalVer(argv[i]);
+			} catch (err) {
+				process.stderr.write(`[release] error: invalid --version: ${err.message}\n`);
+				process.exit(1);
+			}
 		} else {
 			process.stderr.write(`[release] error: unknown argument: ${arg}\n`);
 			process.exit(1);
@@ -174,12 +179,6 @@ function preflight(dryRun) {
 
 function resolveVersion(opts) {
 	if (opts.version !== null) {
-		if (!VERSION_RE.test(opts.version)) {
-			process.stderr.write(
-				`[release] error: invalid --version "${opts.version}" ` + "(expected YYYY.M.D or YYYY.M.D-N)\n",
-			);
-			process.exit(1);
-		}
 		log(`using explicit version: ${opts.version}`);
 		return opts.version;
 	}

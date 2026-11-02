@@ -31,10 +31,12 @@
  *   node scripts/calver.mjs            -> next version (default)
  *   node scripts/calver.mjs --print    -> same as default
  *   node scripts/calver.mjs --json     -> JSON { version, today, existing[] }
+ *   node scripts/calver.mjs --check <v> -> exit 1 unless <v> is canonical CalVer
  *   node scripts/calver.mjs --help     -> usage
  */
 
 import { execFileSync } from "node:child_process";
+import semver from "semver";
 
 import { queryNpmRegistry } from "./npm-registry.mjs";
 import { registryPackageNames } from "./registry-packages.mjs";
@@ -45,6 +47,49 @@ const DEFAULT_PACKAGES = [...registryPackageNames.values()];
 
 const REGISTRY_TIMEOUT_MS = 30000;
 const CALVER_RE = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d+))?$/;
+const CANONICAL_CALVER_RE = /^\d{4}\.([1-9]\d?)\.([1-9]\d?)(?:-[1-9]\d*)?$/;
+
+/** An explicit release version that npm would not publish byte for byte as given. */
+export class CalVerInputError extends Error {
+	/**
+	 * @param {"CALVER_ZERO_PADDED" | "CALVER_NOT_CANONICAL"} code
+	 * @param {unknown} input
+	 * @param {string | undefined} canonical The form npm would publish, when it is canonical CalVer.
+	 */
+	constructor(code, input, canonical) {
+		const hint = canonical ? `use ${canonical}` : "expected YYYY.M.D or YYYY.M.D-N with no leading zeros";
+		super(`${code}: ${String(input)} -> ${hint}`);
+		this.name = "CalVerInputError";
+		this.code = code;
+		this.input = input;
+		this.canonical = canonical;
+	}
+}
+
+function isCanonicalCalVer(version) {
+	const match = CANONICAL_CALVER_RE.exec(version);
+	// npm publishes semver's normalized form, so the tag and manifests match it only when that form is the input itself.
+	return match !== null && Number(match[1]) <= 12 && Number(match[2]) <= 31 && semver.valid(version) === version;
+}
+
+/**
+ * Return `version` when it is canonical CalVer (`YYYY.M.D` or `YYYY.M.D-N`, no leading zeros), else throw.
+ * npm strips leading zeros, so `2026.11.02-1` shipped as `2026.11.2-1` beside a `v2026.11.02-1` tag (senpi#5406).
+ *
+ * @param {unknown} version
+ * @returns {string}
+ * @throws {CalVerInputError} `CALVER_ZERO_PADDED` for a leading zero, `CALVER_NOT_CANONICAL` for any other shape.
+ */
+export function assertCanonicalCalVer(version) {
+	if (typeof version === "string" && isCanonicalCalVer(version)) {
+		return version;
+	}
+	const text = String(version);
+	const cleaned = semver.clean(text, { loose: true });
+	const canonical = cleaned !== null && isCanonicalCalVer(cleaned) ? cleaned : undefined;
+	const code = /(?:^|[.-])0\d/.test(text.trim()) ? "CALVER_ZERO_PADDED" : "CALVER_NOT_CANONICAL";
+	throw new CalVerInputError(code, version, canonical);
+}
 
 /**
  * Compute today's CalVer date stamp in `YYYY.M.D`.
@@ -52,7 +97,7 @@ const CALVER_RE = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d+))?$/;
  * @param {Date} [now] Defaults to `new Date()`. Pass for tests.
  * @returns {string} e.g. `"2026.5.13"`.
  */
-function computeToday(now = new Date()) {
+export function computeToday(now = new Date()) {
 	return `${now.getUTCFullYear()}.${now.getUTCMonth() + 1}.${now.getUTCDate()}`;
 }
 
@@ -212,13 +257,14 @@ function gatherReport(opts = {}) {
 
 function printHelp() {
 	const text = [
-		"Usage: node scripts/calver.mjs [--print | --json | --help]",
+		"Usage: node scripts/calver.mjs [--print | --json | --check <version> | --help]",
 		"",
 		"Computes the next CalVer version for the senpi monorepo.",
 		"",
 		"Options:",
 		"  --print   Print next version to stdout (default).",
 		"  --json    Print { version, today, existing[] } JSON.",
+		"  --check <version>  Exit 1 unless <version> is canonical CalVer (no leading zeros).",
 		"  --help    Show this help and exit.",
 		"",
 		"Version format:",
@@ -244,6 +290,17 @@ if (isMainModule()) {
 	if (args.includes("--help") || args.includes("-h")) {
 		printHelp();
 		process.exit(0);
+	}
+
+	const checkIndex = args.indexOf("--check");
+	if (checkIndex !== -1) {
+		try {
+			process.stdout.write(`${assertCanonicalCalVer(args[checkIndex + 1])}\n`);
+			process.exit(0);
+		} catch (err) {
+			process.stderr.write(`[calver] error: ${err instanceof Error ? err.message : String(err)}\n`);
+			process.exit(1);
+		}
 	}
 
 	if (args.includes("--json")) {
