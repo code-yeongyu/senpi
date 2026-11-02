@@ -1,3 +1,21 @@
+## 2026-11-01 - Kill guard judge embedded in the compiled binary (senpi#5349, PR #5354)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `build:binary` adds `./src/core/kill-guard/index.ts` as an explicit `bun build --compile` entry.
+
+### Why
+
+- Codemode workers import the kill guard's judge by URL; in the compiled binary that module has to be an embedded entry under its source path.
+
+### Why an extension could not handle it
+
+- The compile entry list is the package's own build script.
+
+### Expected merge conflict zones
+
+- LOW: the `bun build --compile` entry list in `build:binary`.
+
 ## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
 
 ### What changed
