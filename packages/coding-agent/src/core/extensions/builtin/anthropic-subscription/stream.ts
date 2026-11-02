@@ -7,12 +7,15 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { LONG_CONTEXT_FALLBACK_DIAGNOSTIC, LONG_CONTEXT_FALLBACK_NOTICE } from "../../../provider-notices.ts";
 import { getSessionClaudeAccountPin } from "./account-command.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
 import { markColdSeedOverflow } from "./cold-seed-budget.ts";
+import { CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
 import { buildCustomToolServers } from "./custom-tools.ts";
 import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
 import { type ClaudeCodeRun, defaultExecutableDeps, resolveClaudeCodeRun } from "./executable.ts";
+import { estimateLongContextFallbackTokens } from "./long-context-budget.ts";
 import { buildAnthropicSubscriptionQueryOptions } from "./options.ts";
 import { buildDeferredPromptStream, buildPromptBlocks } from "./prompt-bridge.ts";
 import { type PromptCacheTtl, pinOneShotPromptCacheTtl } from "./prompt-cache-ttl.ts";
@@ -136,8 +139,29 @@ export function streamAnthropicSubscription(
 					},
 				];
 			};
+			// The request keeps its model; only its window fell back, and the turn says so (senpi#4065).
+			const recordLongContextFallback = (): void => {
+				output.diagnostics = [
+					...(output.diagnostics ?? []),
+					{
+						type: LONG_CONTEXT_FALLBACK_DIAGNOSTIC,
+						timestamp: Date.now(),
+						details: {
+							contextWindow: CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW,
+							message: LONG_CONTEXT_FALLBACK_NOTICE,
+						},
+					},
+				];
+			};
 			const useResidentSession =
 				options?.streamKind === "main" && providerSettings.resumeMode !== "off" && options.sessionId !== undefined;
+			const contextTokens = () =>
+				estimateLongContextFallbackTokens(
+					context,
+					buildPromptBlocks(context, resolvedTools.customToolNameToSdk, toolWatchNote),
+					options?.sessionId,
+				);
+			const outputReserveTokens = options?.maxTokens;
 			if (options?.streamKind === "main" && !useResidentSession) {
 				// The reason must reflect the ACTUAL cause: resume mode "off"
 				// disables the lane by setting, while any other mode simply has no
@@ -165,6 +189,9 @@ export function streamAnthropicSubscription(
 						customToolNameToSdk: resolvedTools.customToolNameToSdk,
 						toolWatchNote,
 						onContinuityDecision: recordContinuity,
+						onLongContextFallback: recordLongContextFallback,
+						contextTokens,
+						outputReserveTokens,
 						onAttemptStart,
 						onDispatchShape: (coldSeed, estimatedTokens) => {
 							coldSeedAttempt = coldSeed;
@@ -202,6 +229,9 @@ export function streamAnthropicSubscription(
 							if (wasAborted) requestAbort();
 						},
 						buildOptions,
+						onLongContextFallback: recordLongContextFallback,
+						contextTokens,
+						outputReserveTokens,
 					});
 
 			for await (const message of messages) {

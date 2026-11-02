@@ -35,6 +35,10 @@ const SDK_ERROR_CLASSIFICATIONS: Partial<Record<SDKAssistantMessageError, SdkErr
 
 const OTHER_ERROR: SdkErrorClassification = { kind: "other", retryable: false };
 
+// Claude Code's own "You're out of extra usage" prefix (USAGE_LIMIT_ERROR_PREFIXES in the Agent SDK), matched on the raw
+// SDK text. It names no window, so only the request's own [1m] flag makes it a long-context refusal (senpi#4065).
+const EXTRA_USAGE_EXHAUSTED = /\byou(?:'|\u2019)re out of extra usage\b/;
+
 function record(value: unknown): Record<string, unknown> | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value)
 		? (value as Record<string, unknown>)
@@ -51,6 +55,10 @@ function errorText(error: unknown): string {
 	const code = value.error;
 	if (typeof code === "string") return code;
 	return String(error);
+}
+
+export function isExtraUsageExhausted(error: unknown): boolean {
+	return EXTRA_USAGE_EXHAUSTED.test(errorText(error).toLowerCase());
 }
 
 export type SdkResultUsage = Extract<SDKMessage, { type: "result" }>["usage"];
@@ -111,14 +119,14 @@ export function sdkAssistantFailure(message: Extract<SDKMessage, { type: "assist
 }
 
 /** Classifies Anthropic Subscription error codes and HTTP-shaped fallback text in one place. */
-export function classifySdkError(error: unknown): SdkErrorClassification {
-	const classification = classifyErrorKind(error);
+export function classifySdkError(error: unknown, askedLegacyLongContext = false): SdkErrorClassification {
+	const classification = classifyErrorKind(error, askedLegacyLongContext);
 	if (classification.kind !== "rate_limit") return classification;
 	const modelFamily = rateLimitModelFamily(errorText(error));
 	return modelFamily === undefined ? classification : { ...classification, modelFamily };
 }
 
-function classifyErrorKind(error: unknown): SdkErrorClassification {
+function classifyErrorKind(error: unknown, askedLegacyLongContext: boolean): SdkErrorClassification {
 	const text = errorText(error).toLowerCase();
 	// Claude Code reports an account without the 1M window under the rate_limit code. It is a window
 	// entitlement, not a limit: retry at the standard window instead of blocking the account (senpi#3408).
@@ -134,6 +142,9 @@ function classifyErrorKind(error: unknown): SdkErrorClassification {
 	}
 	for (const [code, classification] of Object.entries(SDK_ERROR_CLASSIFICATIONS)) {
 		if (new RegExp(`\\b${code}\\b`).test(text)) return classification ?? OTHER_ERROR;
+	}
+	if (askedLegacyLongContext && isExtraUsageExhausted(error)) {
+		return { kind: "long_context_unavailable", retryable: true };
 	}
 	if (/\b(?:http\s*)?429\b|too many requests|rate[ _-]?limit/.test(text)) {
 		return { kind: "rate_limit", retryable: true };
@@ -165,5 +176,7 @@ function classifyErrorKind(error: unknown): SdkErrorClassification {
 	if (/\brequires usage credits\b|\/usage-credits\b|\bcredits_required\b/.test(text)) {
 		return { kind: "entitlement", retryable: false };
 	}
+	// A standard-window request was refused by billing itself: no 200k retry, Claude's reason kept as written.
+	if (EXTRA_USAGE_EXHAUSTED.test(text)) return { kind: "billing", retryable: false };
 	return OTHER_ERROR;
 }
