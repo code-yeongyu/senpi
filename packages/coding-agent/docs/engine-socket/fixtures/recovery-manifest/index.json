@@ -11,7 +11,8 @@
 	"clientRules": [
 		"Read requiredKinds verbatim; never derive it from a built-in family list.",
 		"A manifest without requiredKinds (an older engine) is refused as manifest_missing_required_kinds, never opened from a built-in list.",
-		"A kind the client does not know is refused as manifest_unknown_required_kind, never ignored."
+		"A kind the client does not know is refused as manifest_unknown_required_kind, never ignored.",
+		"A list that differs from the complete families of the digest-verified families/families component is refused as manifest_required_kinds_mismatch."
 	],
 	"normalization": "Random epoch ids become 00000000-0000-4000-8000-<n> and every 64-hex digest a stable alias, in order of first appearance; every other byte is the engine's.",
 	"regenerate": "SENPI_WRITE_RECOVERY_GOLDENS=1 npx vitest run test/suite/regressions/5397-required-kinds-golden.test.ts (packages/coding-agent, senpi repository)",

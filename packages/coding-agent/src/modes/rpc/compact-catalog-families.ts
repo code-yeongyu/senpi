@@ -5,6 +5,7 @@ import {
 	CATALOG_FAMILIES,
 	type CatalogFamily,
 	familyId,
+	type FamilyRegistry,
 	familyProducers,
 	familyRegistry,
 	memberId,
@@ -43,9 +44,14 @@ interface CatalogCut {
  * the members it enumerated and never an explicit empty, so a reader can tell "no members" from "not enumerated"
  * (RULING-60 Q1, RULING-61 Q1). Members stream one at a time: a value goes through `walk` into bounded leaves, a
  * collection through `rows`, and each component's leaves are released once the catalog has placed it. The
- * completeness gate runs last: a complete producer that emitted nothing refuses the whole catalog (X03).
+ * completeness gate runs last: a complete producer that emitted nothing refuses the whole catalog (X03). Its return
+ * value is the registry it emitted as `families/families`, the one source the manifest copies `requiredKinds` from
+ * (RULING-128).
  */
-export async function* checkpointComponents(cut: CatalogCut, valid: () => void): AsyncGenerator<CatalogComponent> {
+export async function* checkpointComponents(
+	cut: CatalogCut,
+	valid: () => void,
+): AsyncGenerator<CatalogComponent, FamilyRegistry> {
 	const { store, values, root, settled } = cut;
 	const current = root.current;
 	if (!current) throw new CompactReadError("unavailable");
@@ -90,6 +96,7 @@ export async function* checkpointComponents(cut: CatalogCut, valid: () => void):
 			yield component;
 		}
 	assertCoverage(registry, emitted);
+	return registry;
 }
 
 async function* dialogComponents(reader: CatalogReader, ref: ValueRef | undefined): AsyncGenerator<CatalogComponent> {

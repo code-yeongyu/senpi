@@ -806,7 +806,12 @@ A client:
 - refuses a manifest without `requiredKinds` (an older engine) as `manifest_missing_required_kinds`, with no
   fallback to a built-in list;
 - refuses a manifest naming a kind it does not know as `manifest_unknown_required_kind`, never ignoring it, so a
-  family a newer engine adds cannot leave a root half opened.
+  family a newer engine adds cannot leave a root half opened;
+- refuses a manifest whose `requiredKinds` differs in any way (a kind added, dropped, repeated or reordered) from the
+  complete families of the cut's `families/families` registry component, read and verified against the root entry
+  `checkpointDigest` covers, as `manifest_required_kinds_mismatch`. The digest covers that component, not the
+  manifest field, so this comparison is what binds the list to the cut. senpi's reference reader is
+  `readRequiredKinds` (`compact-recovery-manifest-kinds.ts`).
 
 The golden `docs/engine-socket/fixtures/recovery-manifest/` is a manifest with one partial family excluded.
 

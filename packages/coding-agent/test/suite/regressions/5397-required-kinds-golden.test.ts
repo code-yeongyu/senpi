@@ -7,6 +7,8 @@ import { manifestCut, refuseOneCorrelation, sortedFamilies } from "./5397-manife
 
 // Fixes #5397 (RULING-128 (5)): the shared golden of a manifest whose cut has one partial family, produced by the real
 // manifest path and never edited by hand; the desktop opens exactly `requiredKinds`, read verbatim.
+// The normalizer aliases every digest, so a golden cannot show that checkpointDigest covers requiredKinds; the unit test
+// "the list is in the digested registry component" (5397-manifest-required-kinds.test.ts:59-79) proves it.
 
 const DIRECTORY = "docs/engine-socket/fixtures/recovery-manifest";
 const REGENERATE =
@@ -51,6 +53,7 @@ async function produce(): Promise<Map<string, string>> {
 			"Read requiredKinds verbatim; never derive it from a built-in family list.",
 			"A manifest without requiredKinds (an older engine) is refused as manifest_missing_required_kinds, never opened from a built-in list.",
 			"A kind the client does not know is refused as manifest_unknown_required_kind, never ignored.",
+			"A list that differs from the complete families of the digest-verified families/families component is refused as manifest_required_kinds_mismatch.",
 		],
 		normalization:
 			"Random epoch ids become 00000000-0000-4000-8000-<n> and every 64-hex digest a stable alias, in order of first appearance; every other byte is the engine's.",

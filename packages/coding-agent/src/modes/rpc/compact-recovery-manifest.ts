@@ -1,5 +1,5 @@
 import { checkpointComponents } from "./compact-catalog-families.ts";
-import { type CatalogFamily, familyProducers, familyRegistry } from "./compact-catalog-registry.ts";
+import type { CatalogFamily, FamilyRegistry } from "./compact-catalog-registry.ts";
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { baseStream, openBaseBytes } from "./compact-recovery-base.ts";
@@ -186,12 +186,18 @@ export class RecoveryManifests {
 					valid();
 				};
 				const cut = { store, values: new CompactValues(store), root, settled: lane.settledOf(root) };
+				const emitted: { registry?: FamilyRegistry } = {};
 				const components = async function* () {
 					yield* oversized.map(({ component }) => component);
-					yield* checkpointComponents(cut, check);
+					emitted.registry = yield* checkpointComponents(cut, check);
 				};
 				const built = await this.catalogs.build(store, ref, components(), check);
-				const { requiredKinds } = familyRegistry(familyProducers(root));
+				// The list is the cataloged registry's own (RULING-128): the bytes `checkpointDigest` covers, never a recompute.
+				const requiredKinds = emitted.registry?.requiredKinds;
+				if (!requiredKinds) {
+					this.catalogs.release(store, built);
+					throw new CompactReadError("ownership");
+				}
 				return await this.assemble(store, token, ref, built, oversized, texts, requiredKinds);
 			} finally {
 				for (const { component } of oversized) store.adjust(component.owner, -1, 0);
