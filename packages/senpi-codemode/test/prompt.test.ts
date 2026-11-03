@@ -42,10 +42,10 @@ describe("buildEvalPrompt", () => {
 		expect(prompt).toContain('`"js"` persistent JavaScript VM');
 		expect(prompt).not.toContain('`"rb"` persistent Ruby kernel');
 		expect(prompt).not.toContain('`"jl"` persistent Julia kernel');
-		// The parameter schema is the single home of the per-field semantics; the guideline keeps reset scope.
+		// The parameter schema is the single home of the per-field semantics; the guideline keeps the memory notice.
 		expect(prompt).not.toContain("- `timeout`");
 		expect(prompt).not.toContain("`on_timeout`");
-		expect(prompt).toContain("reset is scoped to the selected language");
+		expect(prompt).toContain("kernel memory notice");
 	});
 
 	it("omits disabled and missing languages from the prompt", () => {

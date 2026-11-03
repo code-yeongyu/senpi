@@ -1,4 +1,5 @@
 import { INTERACTIVE_USER_CAPABILITY, TASK_PARENT_CAPABILITY } from "./custom-capability.ts";
+import { type RpcRemoteOrigin, sameRemoteOrigin } from "./remote-origin.ts";
 
 /**
  * Connection roles (senpi#3811): the capabilities that say who a connection speaks for, which is what
@@ -25,6 +26,7 @@ export const CONNECTION_ROLE_FIXED =
 
 export class ConnectionRoles {
 	private readonly declared = new Map<string, readonly string[]>();
+	private readonly origins = new Map<string, RpcRemoteOrigin>();
 
 	/** Records the roles a `set_client_info` carries; false when this connection already declared other roles. */
 	declare(connectionId: string, capabilities: readonly string[]): boolean {
@@ -45,16 +47,34 @@ export class ConnectionRoles {
 		if (!this.declared.has(connectionId)) this.declared.set(connectionId, [...roles]);
 	}
 
+	/** Whether `origin` may be declared for this connection: none yet, or the same one again (senpi#5475). */
+	acceptsOrigin(connectionId: string, origin: RpcRemoteOrigin): boolean {
+		const prior = this.origins.get(connectionId);
+		return prior === undefined || sameRemoteOrigin(prior, origin);
+	}
+
+	/** Records the remote device a connection speaks for; call only after `acceptsOrigin` allowed it. */
+	declareOrigin(connectionId: string, origin: RpcRemoteOrigin): void {
+		if (this.acceptsOrigin(connectionId, origin)) this.origins.set(connectionId, origin);
+	}
+
+	/** The remote device this connection declared it speaks for, or undefined for a local connection. */
+	originOf(connectionId: string | undefined): RpcRemoteOrigin | undefined {
+		return this.origins.get(roleConnection(connectionId));
+	}
+
 	has(connectionId: string | undefined, role: string): boolean {
 		return this.declared.get(roleConnection(connectionId))?.includes(role) ?? false;
 	}
 
 	release(connectionId: string): void {
 		this.declared.delete(connectionId);
+		this.origins.delete(connectionId);
 	}
 
 	/** Forgets every connection, for a worker isolate whose session ends. */
 	clear(): void {
 		this.declared.clear();
+		this.origins.clear();
 	}
 }

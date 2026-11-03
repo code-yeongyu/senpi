@@ -1,8 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import type { SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import { emitProviderAccountsChanged } from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import {
+	emitProviderAccountFailover,
+	emitProviderAccountsChanged,
+} from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import type { SdkErrorKind } from "../extensions/builtin/anthropic-subscription/errors.ts";
 import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
@@ -12,16 +16,19 @@ import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.t
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { listRotationSlots, type RotationSlot, type RotationSources, releaseProbeLease } from "./rotation-slots.ts";
 import { roundRobinState } from "./round-robin-state.ts";
-import { orderAccounts, preferHeadroom } from "./selection-order.ts";
+import {
+	orderRotationSlots,
+	pickRotationSlot,
+	rememberedHeadroomAccount,
+	rememberHeadroomAccount,
+	type SlotPickPolicy,
+} from "./session-slot.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
 
 /** The exact hash the claude-sdk-oauth affinity oracle uses, so pools never remap. */
 export const sha256SlotHasher: SlotHasher = (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0);
-
-/** Only headroom-induced changes are remembered; ordinary HRW membership changes keep their existing behavior. */
-const headroomAffinities = new WeakMap<RotationSources["repository"], Map<string, string>>();
 
 /**
  * A limit naming one model family lands on that family only: the slot's own
@@ -86,6 +93,10 @@ function blockPatch(
 	return { ...base, blockReason: block.reason };
 }
 
+function failoverReason(block: CredentialBlock): SdkErrorKind {
+	return block.reason === "account_disabled" ? "billing" : block.reason;
+}
+
 export type CredentialRotationOptions = {
 	sources: RotationSources;
 	/** Stable session key keeps a session on its slot; absent, each request distributes. */
@@ -123,42 +134,56 @@ export function streamWithCredentialRotation(
 		sources.policy?.accountStrategy === "round-robin"
 			? roundRobinState.session(sources.providerId, options.affinityKey)
 			: undefined;
+	// The account a failover just left. The switch is announced once the next account's attempt starts,
+	// so RPC clients and the TUI hear "from -> to" only for a switch that actually happens (senpi#2304).
+	let leaving: { name: string; block: CredentialBlock } | undefined;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
 		select: (candidates) => {
-			const pinned = candidates.find((candidate) => candidate.pinned === true);
-			if (pinned) return pinned;
-			const ranked = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
-			const ordered = orderAccounts(
-				candidates,
-				ranked,
-				pooled?.order,
-				sources.policy?.accountStrategy,
-				roundRobin?.offset,
-			);
-
-			const sessionKey = `${sources.providerId}\0${affinityKey}`;
 			const remembered =
 				roundRobin?.account ??
-				(rememberAffinity ? headroomAffinities.get(sources.repository)?.get(sessionKey) : undefined);
-			const winner = preferHeadroom(
-				ordered,
-				sources.providerId,
-				subscriptionLimits.snapshot(),
-				now(),
-				remembered,
-			)[0];
+				(rememberAffinity
+					? rememberedHeadroomAccount(sources.repository, sources.providerId, affinityKey)
+					: undefined);
+			const policy: SlotPickPolicy = {
+				affinityKey,
+				useAffinity,
+				hasher,
+				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+				...(sources.policy?.accountStrategy === undefined ? {} : { strategy: sources.policy.accountStrategy }),
+				...(roundRobin === undefined ? {} : { roundRobinOffset: roundRobin.offset }),
+				headroom: {
+					providerId: sources.providerId,
+					limits: subscriptionLimits.snapshot(),
+					now: now(),
+					...(remembered === undefined ? {} : { remembered }),
+				},
+			};
+			const winner = pickRotationSlot(candidates, policy);
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
-			if (roundRobin !== undefined) roundRobin.account = winner.name;
-			if (roundRobin === undefined && rememberAffinity && (remembered !== undefined || winner !== ordered[0])) {
-				const sessions = headroomAffinities.get(sources.repository) ?? new Map<string, string>();
-				sessions.set(sessionKey, winner.name);
-				headroomAffinities.set(sources.repository, sessions);
+			// A pinned winner is the user's choice, not a headroom move or a round-robin turn, so it is never remembered.
+			if (roundRobin !== undefined) {
+				if (winner.pinned !== true) roundRobin.account = winner.name;
+			} else if (
+				rememberAffinity &&
+				winner.pinned !== true &&
+				(remembered !== undefined || winner !== orderRotationSlots(candidates, policy)[0])
+			) {
+				rememberHeadroomAccount(sources.repository, sources.providerId, affinityKey, winner.name);
 			}
 			return winner;
 		},
-		runAttempt,
+		runAttempt: (slot) => {
+			if (leaving !== undefined && leaving.name !== slot.name) {
+				emitProviderAccountFailover(sources.providerId, leaving.name, slot.name, failoverReason(leaving.block));
+			}
+			leaving = undefined;
+			return runAttempt(slot);
+		},
+		onRotate: ({ slot, block, committedOutput }) => {
+			leaving = committedOutput ? undefined : { name: slot.name, block };
+		},
 		isCommittedOutput: isCommittedRotationOutput,
 		isStreamStart: isRotationStreamStart,
 		errorFromEvent: rotationErrorFromEvent,

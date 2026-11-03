@@ -101,6 +101,7 @@ import {
 } from "../modes/rpc/tool-child/session-child.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
+import { getUserShellEnv } from "../utils/shell.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
@@ -147,6 +148,7 @@ import {
 	ContinueFromLeafError,
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
+import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
@@ -269,7 +271,6 @@ import {
 	type TreePreparation,
 	type TurnStartEvent,
 } from "./extensions/index.ts";
-import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
@@ -343,6 +344,7 @@ import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import { QueuedInputAges } from "./queued-input-age.ts";
 import { checkSessionReloadVeto } from "./reload-veto.ts";
+import { RequiredCompactionError } from "./required-compaction-error.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
@@ -383,6 +385,7 @@ import {
 	describeUsageLimitMessage,
 	usageLimitScope,
 } from "./retry-fallback/usage-limit.ts";
+import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
@@ -438,6 +441,7 @@ import {
 	type ToolDefinitionEntry,
 } from "./runtime/bootstrap.ts";
 import type { SourceInfo } from "./source-info.ts";
+import { toolInfoOf } from "./tool-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
@@ -763,7 +767,16 @@ export type AgentSessionEvent =
 			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
 			cause?: "fallback-unusable";
 	  }
-	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
+	| {
+			type: "retry_fallback_exhausted";
+			chainKey: string;
+			/** The failure of the rung that ran last; kept for older clients. */
+			lastError: string;
+			/** The failure that started the fallback walk: the turn's first failed rung (senpi#4084). */
+			primaryError?: FallbackRungFailure;
+			/** Every rung that failed this turn, in the order it ran, the primary first. */
+			failures?: FallbackRungFailure[];
+	  }
 	| ModelConfigErrorEvent
 	| {
 			type: "server_fallback_aborted";
@@ -1046,17 +1059,6 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 		error instanceof CompactionCancelledError ||
 		(error instanceof Error && error.name === "AbortError")
 	);
-}
-
-/** The error a turn ends with when a required compaction could not bring the context back under the window. */
-export const REQUIRED_COMPACTION_ERROR_MESSAGE =
-	"Context remains above the compaction threshold because compaction did not complete";
-
-class RequiredCompactionError extends Error {
-	constructor() {
-		super(REQUIRED_COMPACTION_ERROR_MESSAGE);
-		this.name = "RequiredCompactionError";
-	}
 }
 
 class MissingModelAccessError extends Error {
@@ -1645,6 +1647,8 @@ export class AgentSession {
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
+	/** The prompt text the running prompt's run titles the session with when it settles (senpi#5382). */
+	private _pendingSessionTitlePrompt: string | undefined = undefined;
 	private readonly _autoTitleSessions: boolean;
 
 	// Retry state
@@ -1757,6 +1761,8 @@ export class AgentSession {
 	private readonly _fallbackValidationWarnings: readonly string[];
 	private _providerRequiredNoticed = false;
 	private readonly _retryFallback: RetryFallbackController;
+	// Every rung that failed this turn, in order: the exhaustion event leads with the first (senpi#4084).
+	private _fallbackTurnFailures: FallbackRungFailure[] = [];
 	private readonly _modelConfigErrors: ModelConfigErrorReporter;
 	private readonly _selectorCooldowns: SelectorCooldowns;
 	private readonly _fallbackCircuits: FallbackCircuitAccess;
@@ -1984,6 +1990,7 @@ export class AgentSession {
 			emit: (event) => this._emit(event),
 			getCurrentSelector: () => (this.model ? { model: this.model, thinkingLevel: this.thinkingLevel } : undefined),
 			isAuthAvailable: (provider) => this._modelRuntime.hasConfiguredAuth(provider),
+			recoveryRevision: (provider) => credentialRecoveryRevision(this._modelRuntime.authStorage, provider),
 		});
 		this._unfollowProviderAccountChanges = followProviderAccountChanges(this._retryFallback);
 		this._probeBackScheduler = new ProbeBackScheduler({
@@ -2235,7 +2242,11 @@ export class AgentSession {
 					this._modelRuntime.hasConfiguredAuth(model.provider),
 			);
 		if (available) return available;
-		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.accountError(sessionModel.provider));
+		throw new AccountUsageLimitError(
+			sessionModel.provider,
+			this._retryFallback.accountError(sessionModel.provider),
+			this._retryFallback.accountResetAt(sessionModel.provider),
+		);
 	}
 
 	private _logCompactionModelFallback(
@@ -2966,6 +2977,17 @@ export class AgentSession {
 		this._emitEntryAppended(entry.id);
 	}
 
+	private _emitFallbackExhausted(chainKey: string, lastError: string): void {
+		const failures = [...this._fallbackTurnFailures];
+		const primaryError = failures[0];
+		this._emit({
+			type: "retry_fallback_exhausted",
+			chainKey,
+			lastError,
+			...(primaryError === undefined ? {} : { primaryError, failures }),
+		});
+	}
+
 	private _emit(event: AgentSessionEvent, captureSource: object = event): void {
 		this._recoveryIdentity?.observe(event);
 		const produced = event;
@@ -2980,11 +3002,8 @@ export class AgentSession {
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
 		}
-		if (event.type === "retry_fallback_exhausted" && usageLimitScope(event.lastError) === "account") {
-			event = {
-				...event,
-				lastError: new AccountUsageLimitError(this.model?.provider ?? "", event.lastError).message,
-			};
+		if (event.type === "retry_fallback_exhausted") {
+			event = describeExhaustedFailures(event, this.model?.provider ?? "");
 		}
 		if (event.type === "agent_end") {
 			event = {
@@ -3193,10 +3212,9 @@ export class AgentSession {
 	}
 
 	/**
-	 * Unconditional release for manual `/compact`, the user's explicit remedy. An
-	 * ordinary user prompt is deliberately not a release: it only adds context, so
-	 * it cannot make the rejected context admissible, and the pre-prompt gate
-	 * already owns its own fail-closed rejection for that route.
+	 * An explicit user retry releases the automatic-loop latch, not the context
+	 * admission requirement. The pre-prompt gate must still compact successfully
+	 * before sending an oversized request.
 	 */
 	private _releaseBlockedPostCompactionAdmission(): void {
 		this._blockedPostCompactionAssistant = undefined;
@@ -3922,6 +3940,15 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
+		// The retry handler answers an account limit only with the fallback walk, and that walk skips
+		// every rung on the spent provider. Announcing a retry it will not start leaves an RPC client
+		// waiting for a terminal agent_end until the account resets (omo#9711).
+		if (
+			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
+			usageLimitScope(lastAssistant.errorMessage) === "account"
+		) {
+			return this._retryFallback.canTryFallback(lastAssistant.provider);
+		}
 		if (isCursorZeroTokenResourceExhausted(lastAssistant)) {
 			return true;
 		}
@@ -3974,6 +4001,7 @@ export class AgentSession {
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryRungs = 0;
 			this._retryFallback.resetTurn();
+			this._fallbackTurnFailures = [];
 			const messageText = userMessageText(event.message.content);
 			// Image-only input has no text to match: find it by the message the queue handed to the agent (#3592).
 			const imageOnlyQueued = messageText
@@ -4180,7 +4208,11 @@ export class AgentSession {
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
-				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, { errorMessage: msg.errorMessage });
+				// Keep the provider's retry-after: without it this re-note replaced a stated reset with a guess (senpi#5568).
+				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, {
+					errorMessage: msg.errorMessage,
+					retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
+				});
 			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
@@ -4352,6 +4384,8 @@ export class AgentSession {
 
 		if (event.type === "agent_end") {
 			this._flushPendingBashMessages();
+			// Before the continuation decision, so input sent while the title is pending still continues this run.
+			await this._settleSessionTitle();
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
@@ -5188,19 +5222,7 @@ export class AgentSession {
 	 * Get all configured tools with normalized exposure metadata and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolDefinitions.values()).map(({ definition, sourceInfo }) => ({
-			name: definition.name,
-			label: definition.label,
-			description: definition.description,
-			parameters: definition.parameters,
-			promptGuidelines: definition.promptGuidelines,
-			kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
-			permissionParser: definition.permissionParser,
-			...(definition.namespace ? { namespace: definition.namespace } : {}),
-			...(definition.annotations ? { annotations: { ...definition.annotations } } : {}),
-			sourceInfo,
-			...normalizeToolExposure(definition),
-		}));
+		return Array.from(this._toolDefinitions.values(), toolInfoOf);
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
@@ -5690,7 +5712,11 @@ export class AgentSession {
 		const promptGuidelines: string[] = [];
 		for (const name of contributingToolNames) {
 			const snippet = this._toolPromptSnippets.get(name);
-			if (snippet) {
+			// A model-facing tool whose schema description the model already reads gets no snippet line;
+			// withheld eval-only tools keep theirs (senpi#5335).
+			const describedToModel =
+				validToolNames.includes(name) && (this._toolRegistry.get(name)?.description.trim() ?? "") !== "";
+			if (snippet && !describedToModel) {
 				toolSnippets[name] = snippet;
 			}
 
@@ -5716,50 +5742,46 @@ export class AgentSession {
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};
+		const evalOnlyArmed = this._isEvalOnlyPolicyArmed();
+		const armed = evalOnlyArmed ? (this._evalOnlyToolNames ?? new Set<string>()) : new Set<string>();
+		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
+		// The eval-only paragraph below states the grep rule for this render, so the grep snippet that
+		// renders the eval-only grep guideline stays out of it (senpi#5335).
+		const { grep: _grepSnippet, ...snippetsWithoutGrep } = toolSnippets;
 		const prompt = buildDynamicSystemPrompt({
 			...this._baseSystemPromptOptions,
+			...(registered.has("grep") ? { toolSnippets: snippetsWithoutGrep } : {}),
 			onParts: (parts) => {
 				this._baseSystemPromptParts = parts;
 			},
 		});
-		if (!this._isEvalOnlyPolicyArmed()) return prompt;
-		const armed = this._evalOnlyToolNames ?? new Set<string>();
-		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
-		const sentences: string[] = [];
+		if (!evalOnlyArmed) return prompt;
+		const helpers: string[] = [];
 		const shellHelpers = ["bash", "powershell"].filter((name) => registered.has(name)).map(evalHelperCall);
-		if (shellHelpers.length > 0) {
-			sentences.push(
-				`Shell commands run ONLY inside eval cells via ${shellHelpers.join(" or ")}; hooks and permissions still apply.`,
-			);
-		}
-		if (registered.has("workflow")) {
-			sentences.push(
-				`The workflow tool runs ONLY inside eval cells via ${evalHelperCall("workflow")}; hooks and permissions still apply.`,
-			);
-		}
+		if (shellHelpers.length > 0) helpers.push(`${shellHelpers.join(" / ")} shell`);
+		if (registered.has("workflow")) helpers.push(evalHelperCall("workflow"));
 		// Declared tools and SDK overrides outside the built-in groups still need eval guidance.
-		const otherHelpers = [...registered]
-			.filter(
-				(name) =>
-					name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep" && name !== "glob",
-			)
-			.map(evalHelperCall);
-		if (otherHelpers.length > 0) {
-			sentences.push(
-				`These tools run ONLY inside eval cells via ${otherHelpers.join(" or ")}; hooks and permissions still apply.`,
-			);
-		}
+		helpers.push(
+			...[...registered]
+				.filter(
+					(name) =>
+						name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep" && name !== "glob",
+				)
+				.map(evalHelperCall),
+		);
 		if (registered.has("glob")) {
-			sentences.push(
-				`File-name search runs ONLY inside eval cells via ${evalHelperCall("glob")}; it matches a glob such as **/*.ts, respects .gitignore, and applies hooks and permissions - prefer it over find/ls in tool.bash.`,
+			helpers.push(
+				`${evalHelperCall("glob")} file-name search (glob like **/*.ts, respects .gitignore; over find/ls)`,
 			);
 		}
 		if (registered.has("grep")) {
-			sentences.push(
-				`Text search runs ONLY inside eval cells via ${evalHelperCall("grep")}; it returns structured matches, respects .gitignore, and applies hooks and permissions - prefer it over rg/grep in tool.bash.`,
+			helpers.push(
+				`${evalHelperCall("grep")} text search (structured, respects .gitignore; over rg/grep; page full -> skip, narrow with glob/path)`,
 			);
 		}
-		return sentences.length > 0 ? `${prompt}\n\n${sentences.join("\n\n")}` : prompt;
+		return helpers.length > 0
+			? `${prompt}\n\nEval-only tools (hooks + permissions still apply): ${helpers.join("; ")}.`
+			: prompt;
 	}
 
 	/**
@@ -6095,12 +6117,24 @@ export class AgentSession {
 			try {
 				await this._maybeRestoreFallbackPrimary();
 				const model = this.model;
-				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
+				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+				if (
+					model &&
+					!this._pendingModelSwitch &&
+					this._retryFallback.isProviderSpent(model.provider) &&
+					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
+				) {
 					this._retryFallback.resetTurn();
+					this._fallbackTurnFailures = [];
 					const errorMessage = this._retryFallback.accountError(model.provider);
 					// Routing around a remembered failure did not observe another provider failure.
 					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
-						throw new AccountUsageLimitError(model.provider, errorMessage);
+						throw new AccountUsageLimitError(
+							model.provider,
+							errorMessage,
+							this._retryFallback.accountResetAt(model.provider),
+						);
 					}
 				}
 			} catch (error) {
@@ -6380,6 +6414,7 @@ export class AgentSession {
 			await this._assertModelReadyForTurn();
 
 			// The user's new prompt is sent below, so do not call agent.continue() here.
+			if (originOf(options) === "person") this._releaseBlockedPostCompactionAdmission();
 			await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 
 			// Build messages array (environment context if it changed, user message, then custom messages)
@@ -6479,12 +6514,14 @@ export class AgentSession {
 			if (options?.thinkingLevel !== undefined) {
 				this.setSessionThinkingLevel(options.thinkingLevel);
 			}
+			this._pendingSessionTitlePrompt = titlePrompt;
 			await this._promptAgent(messages, {
 				inputOrigin: originOf(options),
 				onQueuedInput: options?.onQueuedInput,
 				onTurnAdmitted: options?.onTurnAdmitted,
 			});
 		} catch (error) {
+			this._pendingSessionTitlePrompt = undefined;
 			// A turn the engine refused never ran, so it releases the barrier it armed (senpi#4106).
 			if (options?.toolBarrier && !this._isAgentRunActive) this._toolBarrier.release(options.toolBarrier.id);
 			throw error;
@@ -6502,9 +6539,8 @@ export class AgentSession {
 		} else {
 			await this.agent.waitForIdle();
 		}
-		if (titlePrompt !== undefined) {
-			this._startSessionTitleGeneration(titlePrompt);
-		}
+		// A run that settled without its agent_end (a cancelled retry) or was aborted is not titled; the next prompt is.
+		this._pendingSessionTitlePrompt = undefined;
 	}
 
 	/** Apply before_agent_start additions and reset any prior turn's system-prompt override. */
@@ -6858,6 +6894,20 @@ export class AgentSession {
 				this._sessionTitlePromise = undefined;
 			}
 		}
+	}
+
+	/**
+	 * The auto-title is part of the `agent_end` of the run that asked for it: requested after that run's last model
+	 * response and awaited before `agent_settled` and `agent_idle`. Its `session_info_changed` therefore has one place in
+	 * the stream (after `agent_end`, before the settle), ahead of anything a host or background job does once the session
+	 * is idle. Started at network-reply time it raced those inputs (senpi#5382). An abort drops it (`_abortWithProvenance`).
+	 */
+	private async _settleSessionTitle(): Promise<void> {
+		const firstPrompt = this._pendingSessionTitlePrompt;
+		this._pendingSessionTitlePrompt = undefined;
+		if (firstPrompt === undefined) return;
+		this._startSessionTitleGeneration(firstPrompt);
+		await this._sessionTitlePromise;
 	}
 
 	private abortSessionTitleGeneration(): void {
@@ -8705,6 +8755,8 @@ export class AgentSession {
 		const shouldEmitAbort =
 			!joinedAgentEndBoundary && !wasMidRun && (hadRetryBackoff || hadCompactionOrPending || hadClearedQueues);
 		this.abortCompaction();
+		this._pendingSessionTitlePrompt = undefined;
+		this.abortSessionTitleGeneration();
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		await this._abortActiveAgentAndRetry("user");
@@ -12846,11 +12898,7 @@ export class AgentSession {
 		const finishRetryAttempt = (attempt: number, finalError: string | undefined) => {
 			const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 			if (exhaustedChainKey) {
-				this._emit({
-					type: "retry_fallback_exhausted",
-					chainKey: exhaustedChainKey,
-					lastError: errorMessage,
-				});
+				this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 			}
 			this._emit({
 				type: "auto_retry_end",
@@ -12932,6 +12980,11 @@ export class AgentSession {
 			reason: Parameters<typeof this._retryFallback.tryFallback>[0],
 			failure: Parameters<typeof this._retryFallback.tryFallback>[1],
 		) => {
+			recordRungFailure(this._fallbackTurnFailures, {
+				model: `${message.provider}/${message.model}`,
+				reason,
+				error: errorMessage,
+			});
 			try {
 				return await this._retryFallback.tryFallback(reason, failure);
 			} catch (error) {
@@ -12949,7 +13002,7 @@ export class AgentSession {
 			});
 			if (!switchedFallback) {
 				const chainKey = this._retryFallback.exhaustedChainKey;
-				if (chainKey) this._emit({ type: "retry_fallback_exhausted", chainKey, lastError: errorMessage });
+				if (chainKey) this._emitFallbackExhausted(chainKey, errorMessage);
 				if (this._retryAttempt > 0) {
 					this._emit({
 						type: "auto_retry_end",
@@ -13003,11 +13056,7 @@ export class AgentSession {
 				if (!switchedFallback) {
 					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 					if (exhaustedChainKey) {
-						this._emit({
-							type: "retry_fallback_exhausted",
-							chainKey: exhaustedChainKey,
-							lastError: errorMessage,
-						});
+						this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 					}
 					this._resolveRetry();
 					return "not-handled";
@@ -13036,11 +13085,7 @@ export class AgentSession {
 			if (!switchedFallback) {
 				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 				if (exhaustedChainKey) {
-					this._emit({
-						type: "retry_fallback_exhausted",
-						chainKey: exhaustedChainKey,
-						lastError: errorMessage,
-					});
+					this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 				}
 				if (this._retryAttempt > 0) {
 					this._emit({
@@ -13101,11 +13146,7 @@ export class AgentSession {
 					} else {
 						const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 						if (exhaustedChainKey) {
-							this._emit({
-								type: "retry_fallback_exhausted",
-								chainKey: exhaustedChainKey,
-								lastError: errorMessage,
-							});
+							this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 						}
 						this._emit({
 							type: "auto_retry_end",
@@ -13148,11 +13189,7 @@ export class AgentSession {
 						} else {
 							const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 							if (exhaustedChainKey) {
-								this._emit({
-									type: "retry_fallback_exhausted",
-									chainKey: exhaustedChainKey,
-									lastError: errorMessage,
-								});
+								this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 							}
 							this._emit({
 								type: "auto_retry_end",
@@ -13193,11 +13230,7 @@ export class AgentSession {
 							} else {
 								const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 								if (exhaustedChainKey) {
-									this._emit({
-										type: "retry_fallback_exhausted",
-										chainKey: exhaustedChainKey,
-										lastError: errorMessage,
-									});
+									this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 								}
 								this._emit({
 									type: "auto_retry_end",
@@ -13248,11 +13281,7 @@ export class AgentSession {
 				} else {
 					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 					if (exhaustedChainKey) {
-						this._emit({
-							type: "retry_fallback_exhausted",
-							chainKey: exhaustedChainKey,
-							lastError: errorMessage,
-						});
+						this._emitFallbackExhausted(exhaustedChainKey, errorMessage);
 					}
 					this._emit({
 						type: "auto_retry_end",
@@ -13540,6 +13569,9 @@ export class AgentSession {
 					},
 					signal: abortController.signal,
 					redactSecretsInOutput: this.settingsManager.getBashRedactSecretsInOutput(),
+					// The user's own command: no kill guard runtime layer, which judges only agent commands (senpi#5349).
+					// Operations an extension returns from `user_bash` keep receiving no env, as before this guard existed.
+					...(options?.operations === undefined ? { env: getUserShellEnv() } : {}),
 				},
 			);
 
@@ -13576,8 +13608,8 @@ export class AgentSession {
 			// Add to agent state immediately
 			this.agent.state.messages.push(bashMessage);
 
-			// Save to session
-			this.sessionManager.appendMessage(bashMessage);
+			// Save to session; every RPC observer learns of it the way it learns of any persisted entry (senpi#5576).
+			this._emitEntryAppended(this.sessionManager.appendMessage(bashMessage));
 			this._incrementMessageRevision();
 		}
 	}
@@ -13618,7 +13650,7 @@ export class AgentSession {
 			this.agent.state.messages.push(bashMessage);
 
 			// Save to session
-			this.sessionManager.appendMessage(bashMessage);
+			this._emitEntryAppended(this.sessionManager.appendMessage(bashMessage));
 			this._incrementMessageRevision();
 		}
 
@@ -14375,4 +14407,22 @@ function messageFingerprint(message: AgentMessage | undefined): string {
 	const usage = (message as { usage?: Usage }).usage;
 	const requestContext = usage?.contextUsage;
 	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}:${requestContext?.input}:${requestContext?.output}:${requestContext === null}`;
+}
+
+type FallbackExhaustedEvent = Extract<AgentSessionEvent, { type: "retry_fallback_exhausted" }>;
+
+// Clients see each rung's provider text through the same account-limit description as `lastError`.
+function describeExhaustedFailures(event: FallbackExhaustedEvent, currentProvider: string): FallbackExhaustedEvent {
+	const describe = (error: string, provider: string) =>
+		usageLimitScope(error) === "account" ? new AccountUsageLimitError(provider, error).message : error;
+	const failures = event.failures?.map((failure) => ({
+		...failure,
+		error: describe(failure.error, failure.model.slice(0, Math.max(0, failure.model.indexOf("/")))),
+	}));
+	const primaryError = failures?.[0];
+	return {
+		...event,
+		lastError: describe(event.lastError, currentProvider),
+		...(failures === undefined || primaryError === undefined ? {} : { failures, primaryError }),
+	};
 }
