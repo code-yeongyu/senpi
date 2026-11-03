@@ -15,6 +15,12 @@
  * Hosts that predate the field ignore it (commands are parsed by `type`), so a marked read works
  * against every generation.
  *
+ * An observer may HOLD the host (senpi#5626): a remote-control daemon reads a host only through observing requests,
+ * yet while a remote viewer is attached the host must not idle out under it. An observing read carrying
+ * `hold_host: true` makes its connection a holder, which counts as occupancy until a later observing read carries
+ * `hold_host: false` or the connection closes (a lease on the connection). Only the literal booleans count; plain
+ * observing reads hold nothing, so looking at a host still never keeps it alive.
+ *
  * A request may also name the host generation its client runs INSIDE (`origin_host_instance`). A host's
  * sessions reach other sessions on the same endpoint through its public socket - an omo task tree keys
  * its `p` shard by the root session, so a child in that shard opens its own children on the very shard
@@ -28,6 +34,7 @@ import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 
 export const OBSERVE_REQUEST_FIELD = "observe";
 export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
+export const HOLD_HOST_FIELD = "hold_host";
 
 const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
 	"get_protocol_info",
@@ -53,6 +60,19 @@ export function isObservingRequest(line: string): boolean {
 	const record = request as Readonly<Record<string, unknown>>;
 	if (record.type === "warm" || record.type === "authenticate") return true;
 	return record[OBSERVE_REQUEST_FIELD] === true && OBSERVING_COMMANDS.has(record.type);
+}
+
+/** An observing read's hold change: true takes the hold, false releases it, undefined leaves it as it is. */
+export function observingHoldChange(line: string): boolean | undefined {
+	let request: unknown;
+	try {
+		request = JSON.parse(line);
+	} catch {
+		return undefined;
+	}
+	if (typeof request !== "object" || request === null || Array.isArray(request)) return undefined;
+	const hold: unknown = Reflect.get(request, HOLD_HOST_FIELD);
+	return typeof hold === "boolean" ? hold : undefined;
 }
 
 /** The host generation this process runs in, or undefined outside any host. */
