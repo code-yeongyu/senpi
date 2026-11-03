@@ -4,13 +4,14 @@
  *
  * A connection that proved the endpoint's launch key may declare, before any record other than `get_protocol_info`
  * or `authenticate`, that it acts for a principal with a set of granted classes (`declare_delegation`). A later
- * declaration may only narrow it. From then on every inbound record on that connection is validated
- * (`validateRpcInboundRecord`), classified (`classifyRpcMethod`) and checked against the grant here, synchronously at
- * line receipt and before anything else sees it: lines of one connection are not serialized, so a declaration and the
- * record written right behind it are decided in order. A permitted record then runs exactly as on a local connection.
+ * declaration may only narrow it. From then on every inbound record on that connection is classified
+ * (`classifyRpcMethod`) and checked against the grant here, synchronously at line receipt and before anything else
+ * sees it: lines of one connection are not serialized, so a declaration and the record written right behind it are
+ * decided in order. A permitted record then runs exactly as on a local connection, schema problems included: only what
+ * the local path also refuses before dispatch (not an object, no string `type`) is refused here as malformed, so a
+ * delegated connection accepts exactly what a local one accepts.
  *
- * `connection_local` records act on the asking connection itself and are permitted, except the host-wide ones
- * (`CONNECTION_LOCAL_REQUIREMENT`), which need `device_admin`. A connection that never declares is not affected: the
+ * `connection_local` records follow `CONNECTION_LOCAL_REQUIREMENT`. A connection that never declares is not affected: the
  * only records this module answers on it are the two methods it adds (`declare_delegation`, `classify_record`).
  *
  * Neither method is in `RPC_METHOD_CLASS`: adding them would change `RPC_METHOD_CLASSES_DIGEST`, and a forwarder that
@@ -25,7 +26,6 @@ import {
 	type RpcMethodClass,
 	type RpcMethodType,
 } from "./method-classes.ts";
-import { validateRpcInboundRecord } from "./method-classes-schema.ts";
 import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 
 export const DECLARE_DELEGATION_COMMAND = "declare_delegation";
@@ -62,15 +62,18 @@ type ConnectionLocalType = {
 }[RpcMethodType];
 
 /**
- * What a delegated connection needs for each `connection_local` method: `self` acts only on the asking connection;
- * `device_admin` reaches the host (hands a session over, loads a cwd's extensions, takes a session by host path,
- * moves session files). Exhaustive, so a new `connection_local` method fails the typecheck until it is placed.
+ * What a delegated connection needs for each `connection_local` method (DS2b section 2c): `self` acts only on the
+ * asking connection; `subscribe_sessions` reveals the same rows as `list_sessions` (`observe`); `record_user_activity`
+ * changes session-wide activity the agent's timing reads (`drive`); `device_admin` reaches the host (hands a session
+ * over, loads a cwd's extensions, takes a session by host path, moves session files). `set_client_info` stays `self`
+ * and unfiltered: a viewer's roles come from its own records. Exhaustive, so a new `connection_local` method fails the
+ * typecheck until it is placed.
  */
 const CONNECTION_LOCAL_REQUIREMENT = {
 	set_client_info: "self",
-	subscribe_sessions: "self",
+	subscribe_sessions: "observe",
 	unsubscribe_sessions: "self",
-	record_user_activity: "self",
+	record_user_activity: "drive",
 	detach_connection: "self",
 	release_session: "device_admin",
 	warm: "device_admin",
@@ -82,7 +85,7 @@ const CONNECTION_LOCAL_REQUIREMENT = {
 	release_recovery: "self",
 	cancel_attempt: "self",
 	reset_stream: "self",
-} as const satisfies Record<ConnectionLocalType, "self" | "device_admin">;
+} as const satisfies Record<ConnectionLocalType, "self" | Exclude<RpcMethodClass, "connection_local">>;
 
 const FORWARDABLE_CLASSES: ReadonlySet<string> = new Set<Exclude<RpcMethodClass, "connection_local">>([
 	"observe",
@@ -236,15 +239,9 @@ function refuseOnDelegation(record: unknown, granted: ReadonlySet<RpcMethodClass
 	const object = typeof record === "object" && record !== null && !Array.isArray(record) ? record : undefined;
 	const id = object === undefined ? undefined : requestId(object);
 	const type = object === undefined ? undefined : Reflect.get(object, "type");
-	const command = typeof type === "string" ? type : "parse";
-	const validation = validateRpcInboundRecord(record);
-	if (!validation.ok) {
-		// An unknown type is the classifier's verdict, not a shape error: the engine's default refuses it.
-		const unclassified = typeof type === "string" && !Object.hasOwn(RPC_METHOD_CLASS, type);
-		return unclassified
-			? refused(id, command, "delegation_unclassified", `the engine does not classify ${command}`)
-			: refused(id, command, "delegation_malformed", validation.reason);
-	}
+	if (typeof type !== "string")
+		return refused(id, "parse", "delegation_malformed", "a record is a JSON object with a string type");
+	const command = type;
 	const methodClass = classifyRpcMethod(record);
 	if (methodClass === undefined)
 		return refused(id, command, "delegation_unclassified", `the engine does not classify ${command}`);
@@ -260,7 +257,7 @@ function refuseOnDelegation(record: unknown, granted: ReadonlySet<RpcMethodClass
 		id,
 		command,
 		"delegation_local_only",
-		`${command} reaches beyond this connection and needs the ${required} grant`,
+		`${command} on a delegated connection needs the ${required} grant`,
 		{ class: required },
 	);
 }

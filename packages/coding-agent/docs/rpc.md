@@ -2466,14 +2466,16 @@ On a delegated connection every record is checked before dispatch:
 
 | Check | Refusal `errorCode` |
 |---|---|
-| Not JSON, not an object, or not matching its type's schema and bounds | `delegation_malformed` |
+| Not JSON, not an object, or without a string `type` | `delegation_malformed` |
 | A type the engine does not classify | `delegation_unclassified` |
 | Its class (for a record-dependent type, the class of this record) is not granted | `delegation_not_granted`, `errorData: { class }` |
-| A host-wide `connection_local` record without `device_admin` | `delegation_local_only`, `errorData: { class: "device_admin" }` |
+| A `connection_local` record without the grant it needs (below) | `delegation_local_only`, `errorData: { class }` |
 
-`connection_local` records act on the delegated connection itself and need no grant, except `release_session`,
-`warm`, `reclaim_session` and `move_session`, which reach the host and need `device_admin`. A permitted record runs
-exactly as on any other connection, with the same answer. A refusal is an ordinary error response
+`connection_local` records act on the delegated connection itself and need no grant, except `subscribe_sessions`
+(`observe`), `record_user_activity` (`drive`), and `release_session`, `warm`, `reclaim_session` and `move_session`,
+which reach the host (`device_admin`). `set_client_info` needs no grant and is not filtered: a viewer declares its own
+roles. A permitted record runs exactly as on any other connection, with the same answer: a record its type's schema
+would refuse is not refused by the delegation check, it gets the same response a local connection gets. A refusal is an ordinary error response
 (`success: false`, `error`, `errorCode`). Secret and grant-select dialogs stay answerable only from the connection
 that raised them, delegated or not.
 

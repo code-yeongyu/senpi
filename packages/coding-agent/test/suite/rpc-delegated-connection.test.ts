@@ -47,7 +47,15 @@ const FORWARDABLE = [
 	"device_admin",
 ] as const satisfies readonly RpcMethodClass[];
 /** The `connection_local` methods that reach beyond the asking connection: they need `device_admin`. */
-const HOST_WIDE: ReadonlySet<string> = new Set(["release_session", "warm", "reclaim_session", "move_session"]);
+/** DS2b section 2c: the `connection_local` records that need a grant on a delegated connection; the rest act on it alone. */
+const CONNECTION_LOCAL_NEEDS: Partial<Record<RpcMethodType, RpcMethodClass>> = {
+	subscribe_sessions: "observe",
+	record_user_activity: "drive",
+	release_session: "device_admin",
+	warm: "device_admin",
+	reclaim_session: "device_admin",
+	move_session: "device_admin",
+};
 const PRINCIPAL = { deviceId: "x5632-device" };
 const LEAN_ARGS = ["--mode", "rpc", "--multi-session", "--no-extensions", "--no-skills", "--no-context-files"];
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
@@ -244,7 +252,7 @@ function signature(record: WireRecord | undefined, method: string, scratch: stri
 
 /**
  * What a delegated connection needs for `record` and the refusal code without it (omo-relay-spec decision 0018):
- * its class, `device_admin` for a host-wide `connection_local` record, nothing for one acting on the asking connection.
+ * its class, or for a `connection_local` record its section 2c grant, nothing for one acting on the asking connection.
  */
 function requirement(
 	type: RpcMethodType,
@@ -254,20 +262,21 @@ function requirement(
 	const methodClass = typeof entry === "string" ? entry : classifyRpcMethod(record);
 	if (methodClass === undefined) throw new Error(`the engine does not classify the ${type} test record`);
 	if (methodClass !== "connection_local") return { needs: methodClass, refusal: "delegation_not_granted" };
-	return HOST_WIDE.has(type) ? { needs: "device_admin", refusal: "delegation_local_only" } : "self";
+	const needs = CONNECTION_LOCAL_NEEDS[type];
+	return needs === undefined ? "self" : { needs, refusal: "delegation_local_only" };
 }
 
 /**
- * X14's corpus sends these with no (or a partial) payload, which the inbound validator refuses; they get the fields their schema
- * requires so the comparison reaches dispatch on both connections.
+ * X14 corpus records the inbound schema validator refuses (no payload, or a partial one). A delegated connection must
+ * accept them exactly as a local one does (DS2b decision 2): they run through the enumeration unchanged.
  */
-const SCHEMA_PAYLOAD: Partial<Record<RpcMethodType, WireRecord>> = {
-	get_recovery_page: { token: NO_ID, admissionId: NO_ID, componentRef: NO_ID, requestId: NO_ID },
-	release_recovery: { lease: { kind: "event", id: NO_ID }, admissionId: NO_ID },
-	cancel_attempt: { admissionId: NO_ID },
-	reset_stream: { admissionId: NO_ID },
-	set_retry_fallback: { retryFallback: { modelFallback: false, fallbackChains: {} } },
-};
+const VALIDATOR_REFUSED: ReadonlySet<RpcMethodType> = new Set<RpcMethodType>([
+	"get_recovery_page",
+	"release_recovery",
+	"cancel_attempt",
+	"reset_stream",
+	"set_retry_fallback",
+]);
 
 let host: Awaited<ReturnType<typeof startHost>>;
 
@@ -278,15 +287,9 @@ let opener: Peer;
 
 async function recordFor(type: RpcMethodType): Promise<WireRecord> {
 	const opened = (await opener.send({ type: "open_session" })).data as Opened;
-	const record = Object.hasOwn(TODAY, type)
-		? {
-				...corpusRequest(type, TODAY[type as RpcCommand["type"]], opened, host.scratch).record,
-				...SCHEMA_PAYLOAD[type],
-			}
+	return Object.hasOwn(TODAY, type)
+		? corpusRequest(type, TODAY[type as RpcCommand["type"]], opened, host.scratch).record
 		: { type, ...NON_COMMAND[type as keyof typeof NON_COMMAND](opened.sessionId) };
-	const validation = validateRpcInboundRecord({ ...record, id: "x5632-precheck" });
-	if (!validation.ok) throw new Error(`the ${type} test record fails the inbound validator: ${validation.reason}`);
-	return record;
 }
 
 async function declare(peer: Peer, granted: readonly string[], principal: object = PRINCIPAL) {
@@ -325,6 +328,8 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		const mismatches: string[] = [];
 		const types = Object.keys(RPC_METHOD_CLASS) as RpcMethodType[];
 		expect(types.length).toBeGreaterThan(100);
+		for (const type of VALIDATOR_REFUSED)
+			expect(validateRpcInboundRecord({ ...(await recordFor(type)), id: "x" }).ok, type).toBe(false);
 		for (const type of types) {
 			const expected = signature(await sendFor(local, type, await recordFor(type)), type, host.scratch);
 			for (const { granted, peer } of delegated) {
@@ -351,7 +356,7 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		expect(mismatches).toEqual([]);
 	}, 400_000);
 
-	it("refuses an unclassified type and a malformed record with typed errors", async () => {
+	it("refuses an unclassified type and a record that is not an object with a string type", async () => {
 		const peer = await host.proven();
 		expect(await declare(peer, FORWARDABLE)).toMatchObject({ success: true });
 		expect(await peer.send({ type: "x5632_not_a_method" })).toMatchObject({
@@ -359,16 +364,48 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 			command: "x5632_not_a_method",
 			errorCode: "delegation_unclassified",
 		});
-		const session = (await opener.send({ type: "open_session" })).data as Opened;
-		expect(await peer.send({ type: "prompt", sessionId: session.sessionId })).toMatchObject({
-			success: false,
-			command: "prompt",
-			errorCode: "delegation_malformed",
+		expect(await peer.send({ type: 5 })).toMatchObject({ success: false, errorCode: "delegation_malformed" });
+		const refusals = (code: string) =>
+			peer.frame((record) => record.type === "response" && record.errorCode === code && record.id === undefined);
+		const notObject = refusals("delegation_malformed");
+		peer.socket.write("[1]\n");
+		expect(await notObject).toMatchObject({ success: false, command: "parse" });
+		const parse = peer.frame(
+			(record) =>
+				record.type === "response" &&
+				record.errorCode === "delegation_malformed" &&
+				record.error !== undefined &&
+				String(record.error).startsWith("Failed to parse"),
+		);
+		peer.socket.write(`{"type":\n`);
+		expect(await parse).toMatchObject({ success: false, command: "parse" });
+	});
+
+	it("runs a schema-invalid record of a granted class as a local connection does", async () => {
+		const local = await host.proven();
+		const peer = await host.proven();
+		expect(await declare(peer, FORWARDABLE)).toMatchObject({ success: true });
+		const record = async () => ({
+			type: "prompt",
+			sessionId: ((await opener.send({ type: "open_session" })).data as Opened).sessionId,
 		});
-		const id = peer.nextId();
-		const parse = peer.frame((record) => record.type === "response" && record.errorCode === "delegation_malformed");
-		peer.socket.write(`{"id":"${id}","type":\n`);
-		expect(await parse).toMatchObject({ success: false, errorCode: "delegation_malformed" });
+		const expected = signature(await local.send(await record()), "prompt", host.scratch);
+		expect(signature(await peer.send(await record()), "prompt", host.scratch)).toBe(expected);
+		expect(expected).not.toContain("delegation_");
+	});
+
+	it("lets a delegated connection declare its own roles with set_client_info, unfiltered", async () => {
+		const peer = await host.proven();
+		expect(await declare(peer, ["observe"])).toMatchObject({ success: true });
+		expect(
+			await peer.send({ type: "set_client_info", width: 80, capabilities: ["interactive_user", "secret_input_v1"] }),
+		).toMatchObject({ success: true });
+		expect(await peer.send({ type: "subscribe_sessions" })).toMatchObject({ success: true });
+		expect(await peer.send({ type: "record_user_activity", kind: "draft" })).toMatchObject({
+			success: false,
+			errorCode: "delegation_local_only",
+			errorData: { class: "drive" },
+		});
 	});
 
 	it("refuses a declaration from a connection that did not prove the launch key", async () => {
