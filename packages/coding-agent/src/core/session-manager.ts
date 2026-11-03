@@ -24,11 +24,11 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
+import { appendFile, type FileHandle, mkdir, open, readdir, rm } from "fs/promises";
 import { basename, join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
-import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, normalizePath, resolvePath } from "../utils/paths.ts";
 import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
@@ -47,6 +47,8 @@ import {
 import {
 	loadEntriesFromFile,
 	loadEntriesFromFileAsync,
+	loadedResumeFingerprints,
+	loadedResumeTails,
 	parseSessionEntryLine,
 	readForkSource,
 	terminateFinalSessionLine,
@@ -76,6 +78,14 @@ import { branchFlow, compactionFlow, contextEditFlow, ownedFlowMessage } from ".
 import { TranscriptFile } from "./session-transcript-file.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import { SessionResumeConflictError } from "./session-resume-conflict.ts";
+import {
+	appendResumeEntries,
+	backupResumeTail,
+	readResumeFingerprint,
+	replaceResumeFile,
+	resumeCanonicalPath,
+} from "./session-resume-file.ts";
 import { SessionWriteFence } from "./session-write-fence.ts";
 import {
 	discardFailedFirstFlush,
@@ -88,6 +98,7 @@ import {
 import {
 	hasOtherLiveSessionWriter,
 	registerSessionWriter,
+	reserveSessionPublication,
 	reserveSessionWrite,
 	unregisterSessionWriter,
 } from "./session-write-reservation.ts";
@@ -1216,6 +1227,8 @@ export class SessionManager {
 	private transcriptBytes = new WeakMap<FileEntry, string>();
 	private readonly capturesTranscriptBase = compactUpdatesEnabled();
 	private residentStore = new ResidentStringStore();
+	/** A resume candidate has no writer or disk-backed cache until its admission commits. */
+	private preparation?: { rewrite: boolean; entries: SessionEntry[]; committing: boolean };
 	private mirrorTrimmed = false;
 	// Set while a navigation to an entry outside the mirror reloads the whole file into it.
 	private loadingFullMirror = false;
@@ -1288,10 +1301,12 @@ export class SessionManager {
 		persist: boolean,
 		newSessionOptions?: NewSessionOptions,
 		preloadedFileEntries?: FileEntry[] | typeof DEFERRED_FILE_LOAD,
+		preparation?: { rewrite: boolean; entries: SessionEntry[]; committing: boolean },
 	) {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
+		this.preparation = preparation;
 		// A persisted manager owns its session file for as long as it lives; the shared
 		// RPC host reads this registry to release grants no writer holds anymore.
 		if (persist) registerSessionWriter(this);
@@ -1333,6 +1348,12 @@ export class SessionManager {
 		}
 		this._setSessionFile(this.sessionFile, fileEntries);
 		this._journalReplace();
+	}
+
+	/** Resume reconciliation must not adopt a fence belonging to a later host generation. */
+	reconcileResumePublication(): void {
+		if (this.sessionFile) this.writeFence.assertOwned(this.sessionFile);
+		this.reloadFromDisk();
 	}
 
 	/** Brings `id` back into the mirror by reloading the whole file when the mirror does not hold it. */
@@ -1629,6 +1650,11 @@ export class SessionManager {
 	}
 
 	private _rewriteFile(): void {
+		if (this.preparation) {
+			if (this.preparation.committing) throw new SessionResumeConflictError(this.sessionFile ?? "");
+			this.preparation.rewrite = true;
+			return;
+		}
 		if (!this.persist || !this.sessionFile) return;
 		this.writeGuard.assertRewritable(this.fileEntries, this.sessionFile);
 		this.writeFence.assertOwned(this.sessionFile);
@@ -1721,7 +1747,12 @@ export class SessionManager {
 	}
 
 	isPersisted(): boolean {
-		return this.persist;
+		return this.persist || this.preparation !== undefined;
+	}
+
+	/** Prepared sessions borrow their persisted identity, not its live resources. */
+	isPrepared(): boolean {
+		return this.preparation !== undefined;
 	}
 
 	getCwd(): string {
@@ -1769,6 +1800,11 @@ export class SessionManager {
 		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
 			this.headerWrite = undefined;
 		});
+		return this.headerWrite;
+	}
+
+	/** A publication waits for an already-started header write before excluding new writers. */
+	pendingSessionWrite(): Promise<void> | undefined {
 		return this.headerWrite;
 	}
 
@@ -1883,6 +1919,11 @@ export class SessionManager {
 	 * file did not take the entry, so the caller commits nothing and no later entry can chain onto it.
 	 */
 	_persist(entry: SessionEntry): string | undefined {
+		if (this.preparation) {
+			if (this.preparation.committing) throw new SessionResumeConflictError(this.sessionFile ?? "");
+			this.preparation.entries.push(entry);
+			return;
+		}
 		if (!this.persist || !this.sessionFile) return;
 		this.writeGuard.assertWritable(this.fileEntries, entry, this.sessionFile);
 		this.writeFence.assertOwned(this.sessionFile);
@@ -3199,6 +3240,127 @@ export class SessionManager {
 		const header = discovery.header ?? headerOf(preloadedFileEntries);
 		const { cwd, dir } = openLocation(resolvedPath, sessionDir, cwdOverride, header);
 		return new SessionManager(cwd, dir, resolvedPath, true, options, preloadedFileEntries);
+	}
+
+	/**
+	 * Load the actual destination without taking a writer grant, repairing its file, or sharing its
+	 * evictable blobs. The SDK may append thinking/compaction/lifecycle entries to this private view.
+	 * Commit retains the ordinary host grant across asynchronous I/O and excludes competing local
+	 * writes. Reconciliation runs synchronously on release, before the commit promise settles.
+	 */
+	static async prepareOpen(
+		path: string,
+		sessionDir?: string,
+		cwdOverride?: string,
+	): Promise<{
+		sessionManager: SessionManager;
+		commit: (options?: { validate: () => void; reconcile: () => void }) => Promise<void>;
+	}> {
+		const resolvedPath = resolvePath(path);
+		const canonicalPath = await resumeCanonicalPath(resolvedPath);
+		const slicer = new EventLoopSlicer();
+		const entries = await loadEntriesFromFileAsync(resolvedPath, slicer, compactUpdatesEnabled(), true);
+		const fingerprint = loadedResumeFingerprints.get(entries);
+		const tail = loadedResumeTails.get(entries);
+		const { cwd, dir } = openLocation(resolvedPath, sessionDir, cwdOverride, headerOf(entries));
+		const pending = { rewrite: false, entries: [] as SessionEntry[], committing: false };
+		const manager = new SessionManager(cwd, dir, resolvedPath, false, undefined, DEFERRED_FILE_LOAD, pending);
+		manager.writeFence.opened(resolvedPath);
+		const validate = (): void => {
+			if (
+				manager.sessionFile !== resolvedPath ||
+				canonicalizePath(resolvedPath) !== canonicalPath
+			)
+				throw new SessionResumeConflictError(resolvedPath);
+			manager.writeFence.assertOwned(resolvedPath);
+		};
+		const revalidate = async (): Promise<void> => {
+			if ((await readResumeFingerprint(resolvedPath)) !== fingerprint)
+				throw new SessionResumeConflictError(resolvedPath);
+			validate();
+		};
+		try {
+			await manager._setSessionFileAsync(resolvedPath, entries, undefined, slicer);
+			await revalidate();
+		} catch (error) {
+			manager.dispose();
+			throw error;
+		}
+		return {
+			sessionManager: manager,
+			commit: async (options) => {
+				if (pending.committing) throw new SessionResumeConflictError(resolvedPath);
+				pending.committing = true;
+				validate();
+				const release = await reserveSessionPublication(canonicalPath);
+				let published = false;
+				let recovery: SessionRecovery | undefined;
+				const publish = (): void => {
+					published = true;
+					manager.preparation = undefined;
+					manager.persist = true;
+					manager.flushed = true;
+					registerSessionWriter(manager);
+					if (recovery) manager._reportRecovery(recovery);
+				};
+				try {
+					await revalidate();
+					options?.validate();
+					manager.writeGuard.assertRewritable(manager.fileEntries, resolvedPath);
+					await mkdir(dir, { recursive: true });
+					if (tail && !tail.valid)
+						recovery = await backupResumeTail(canonicalPath, tail, revalidate, () => {
+							validate();
+							options?.validate();
+						});
+					if (pending.rewrite || fingerprint === undefined || pending.entries.length > 0 || tail) {
+						// An append sequence can partially fail and strand the source's leaf on self-resume.
+						// Publish all staged bytes at one rename; never use the in-place rewrite fallback.
+						function* appended(): Generator<string> {
+							for (const entry of pending.entries) yield `${manager._transcriptEntryBytes(entry)}\n`;
+						}
+						await replaceResumeFile(
+							canonicalPath,
+							pending.rewrite || fingerprint === undefined
+								? manager._serializedFileEntries()
+								: appendResumeEntries(canonicalPath, appended(), tail && !tail.valid ? tail.start : undefined),
+							{
+								captureContent: manager.capturesTranscriptBase,
+								revalidate,
+								validate: () => {
+									validate();
+									options?.validate();
+								},
+								published: (identity, contentFingerprint) => {
+									publish();
+									if (manager.capturesTranscriptBase) {
+										if (contentFingerprint !== undefined)
+											loadedContentFingerprints.set(manager.fileEntries, contentFingerprint);
+										manager._captureTranscriptBase(
+											identity.then((value) => value && { ...value, path: resolvedPath }),
+											manager.fileEntries,
+										);
+									}
+								},
+							},
+						);
+					} else {
+						await revalidate();
+						options?.validate();
+						publish();
+					}
+					validate();
+					options?.validate();
+					// Prepared history had no evictable backing. It is durable now, so release
+					// the potentially large resident strings without changing their identities.
+					manager.residentStore.spillResident();
+				} finally {
+					pending.entries.length = 0;
+					release();
+					if (published) options?.reconcile();
+				}
+			},
+		};
 	}
 
 	/**

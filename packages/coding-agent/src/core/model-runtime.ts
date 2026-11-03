@@ -276,6 +276,7 @@ export class ModelRuntime implements Models {
 	}
 
 	private readonly models: MutableModels;
+	private readonly modelsStore: ModelsStore;
 	private readonly credentials: RuntimeCredentials;
 	private readonly defaultBuiltins: ReadonlyMap<string, Provider>;
 	private readonly builtins = new Map<string, Provider>();
@@ -332,6 +333,7 @@ export class ModelRuntime implements Models {
 		poolStatePath?: string,
 	) {
 		this.credentials = credentials;
+		this.modelsStore = modelsStore;
 		this.poolStatePath = poolStatePath;
 		this.config = config;
 		this.modelsPath = modelsPath;
@@ -351,6 +353,47 @@ export class ModelRuntime implements Models {
 	get authStorage(): DefaultAuthStorage | undefined {
 		const store = this.credentials.backingStore;
 		return store instanceof DefaultAuthStorage ? store : undefined;
+	}
+
+	/**
+	 * Candidate construction owns settings listeners, concurrency controls and provider overlays.
+	 * Copy registrations into a private runtime; never restore a shared snapshot over concurrent work.
+	 */
+	fork(): ModelRuntime {
+		const backing = this.credentials.backingStore;
+		const store = this.authStorage?.fork() ?? {
+			read: backing.read.bind(backing),
+			list: backing.list.bind(backing),
+			modify: backing.modify.bind(backing),
+			delete: backing.delete.bind(backing),
+			...(backing.readSlot ? { readSlot: backing.readSlot.bind(backing) } : {}),
+		};
+		const fork = new ModelRuntime(
+			this.credentials.fork(store),
+			this.config,
+			this.modelsPath,
+			this.modelsStore,
+			[...this.builtins.values()],
+			this.modelNetworkEnabled,
+			this.modelRefreshTimeoutMs,
+			this.poolStatePath,
+		);
+		for (const [id, provider] of this.nativeExtensionProviders) fork.nativeExtensionProviders.set(id, provider);
+		for (const [id, config] of this.extensionProviders) fork.extensionProviders.set(id, { ...config });
+		for (const [id, path] of this.providerExtensionPaths) fork.providerExtensionPaths.set(id, path);
+		for (const [id, models] of this.virtualModels) fork.virtualModels.set(id, new Map(models));
+		fork.snapshot = this.snapshot;
+		fork.availabilityInitialized = this.availabilityInitialized;
+		fork.rebuildProviders();
+		return fork;
+	}
+
+	/** Release listeners and scheduled availability work owned by a private candidate runtime. */
+	dispose(): void {
+		this.unsubscribeProviderSettings?.();
+		this.unsubscribeProviderSettings = undefined;
+		clearTimeout(this.busyAvailabilityRetryTimer);
+		this.busyAvailabilityRetryTimer = undefined;
 	}
 
 	static async create(options: CreateModelRuntimeOptions = {}): Promise<ModelRuntime> {

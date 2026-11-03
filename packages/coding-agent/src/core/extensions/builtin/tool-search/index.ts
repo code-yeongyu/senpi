@@ -1,4 +1,3 @@
-import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
 import { AnthropicNativeToolSearchAdapter, isMcpNativeToolSearchEnabled } from "./native-search.ts";
@@ -23,12 +22,14 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 			const key = ctx.sessionManager ?? runtimeKey;
 			if (bootedContexts.has(key) || service.isDisposed || !canListTools(pi)) return;
 			bootedContexts.add(key);
+			installScopedToolSearchService(service);
 			service.getCatalog();
 		});
 
 		pi.on("session_start", async (_event, ctx) => {
 			dropFirstUseBoot();
 			bootedContexts.add(ctx.sessionManager ?? runtimeKey);
+			service.activateForSession();
 			service.beginSession();
 			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
 		});
@@ -89,15 +90,6 @@ function canListTools(pi: ExtensionAPI): boolean {
 	}
 }
 
-function hasProviderScope(): boolean {
-	try {
-		bindToProviderScope(() => undefined);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 export default function toolSearchExtension(pi: ExtensionAPI): void | Promise<void> {
 	const runtime = {
 		getAllTools: () => pi.getAllTools(),
@@ -105,7 +97,6 @@ export default function toolSearchExtension(pi: ExtensionAPI): void | Promise<vo
 		setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
 	};
 	const service = new ToolSearchService(runtime);
-	if (hasProviderScope()) installScopedToolSearchService(service);
 	registerToolSearchServiceForExtensionLoad(pi, service);
 	return createToolSearchExtension(service)(pi);
 }

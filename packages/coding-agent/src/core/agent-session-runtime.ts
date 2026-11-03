@@ -1,6 +1,6 @@
 import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, parse, resolve } from "node:path";
-import { resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
@@ -16,7 +16,10 @@ import type {
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
-import { assertSessionCwdExists } from "./session-cwd.ts";
+import { assertSessionCwdExists, MissingSessionCwdError } from "./session-cwd.ts";
+import { ModelUsabilityBudgetError } from "./extensions/builtin/compaction/model-usability-budget.ts";
+import { ResumePreparation } from "./resume-preparation.ts";
+import { SessionResumeConflictError, SessionResumeRejectedError } from "./session-resume-conflict.ts";
 import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
 import { holdSessionFile, type SessionHold } from "./session-holders.ts";
 import { SessionManager } from "./session-manager.ts";
@@ -141,9 +144,9 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 /**
  * Owns the current AgentSession plus its cwd-bound services.
  *
- * Session replacement methods tear down the current runtime first, then create
- * and apply the next runtime. If creation fails, the error is propagated to the
- * caller. The caller is responsible for user-facing error handling.
+ * Resume prepares and admits the actual destination before retiring the current
+ * runtime. Rejected candidates leave the outgoing session usable. Other replacement
+ * methods retain their teardown-first lifecycle.
  */
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
@@ -502,35 +505,113 @@ export class AgentSessionRuntime {
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		},
 	): Promise<{ cancelled: boolean }> {
+		const source = this.session;
+		try {
+			return await this.prepareAndSwitchSession(sessionPath, options);
+		} catch (error) {
+			if (this.session !== source || this._disposedSession === source) throw error;
+			if (
+				error instanceof MissingSessionCwdError ||
+				error instanceof ModelUsabilityBudgetError ||
+				error instanceof SessionResumeConflictError
+			)
+				throw error;
+			throw new SessionResumeRejectedError(error);
+		}
+	}
+
+	private async prepareAndSwitchSession(
+		sessionPath: string,
+		options?: Parameters<AgentSessionRuntime["switchSession"]>[1],
+	): Promise<{ cancelled: boolean }> {
 		resetTimings("switch");
+		const previousSessionFile = this.session.sessionFile;
+		const targetsSource = (): boolean =>
+			previousSessionFile !== undefined &&
+			canonicalizePath(resolvePath(sessionPath)) === canonicalizePath(resolvePath(previousSessionFile));
+		let isSelfResume = targetsSource();
+		if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
 		const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
 		if (beforeResult.cancelled) {
 			return beforeResult;
 		}
+		isSelfResume = targetsSource();
+		if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
 		time("beforeSwitch", "switch");
 
-		const previousSessionFile = this.session.sessionFile;
-		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
-		assertSessionCwdExists(sessionManager, this.cwd);
-		// Held before the current session is torn down: a session being moved fails the switch here.
-		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager), this._launchProfile?.holderEndpoint);
-		time("open", "switch");
+		const source = this.session;
+		const sourceFile = source.sessionFile;
+		const sourceCanonical = sourceFile === undefined ? undefined : canonicalizePath(sourceFile);
+		const launchProfile = this._launchProfile;
+		const trustChange = this._projectTrustChange;
+		const trustEpoch = source.settingsManager.getTrustEpoch();
+		const sourceSettings = JSON.stringify(source.settingsManager.getSettings());
+		const prepared = await SessionManager.prepareOpen(sessionPath, undefined, options?.cwdOverride);
+		const { sessionManager } = prepared;
+		isSelfResume = targetsSource();
+		const preparation = new ResumePreparation();
+		let hold: SessionHold | undefined;
+		let result: CreateAgentSessionRuntimeResult | undefined;
+		const validate = (): void => {
+			if (
+				this.session !== source ||
+				source.sessionFile !== sourceFile ||
+				(sourceFile !== undefined && canonicalizePath(sourceFile) !== sourceCanonical) ||
+				this._launchProfile !== launchProfile ||
+				this._projectTrustChange !== trustChange ||
+				source.settingsManager.getTrustEpoch() !== trustEpoch ||
+				JSON.stringify(source.settingsManager.getSettings()) !== sourceSettings
+			)
+				throw new SessionResumeRejectedError(
+					"Session configuration changed while preparing resume; retry the switch",
+				);
+			if (isSelfResume && source.isSessionBusy)
+				throw new SessionResumeRejectedError("The source session became busy while preparing resume");
+			preparation.validate();
+		};
+		const reconcile = (): void => {
+			if (isSelfResume && source.sessionFile === sourceFile) {
+				// Shutdown handlers must append after the accepted thinking/compaction entries, not
+				// branch from the outgoing manager's pre-preparation leaf. This also runs before
+				// a post-publication rejection releases control back to the surviving source.
+				source.sessionManager.reconcileResumePublication();
+				source.refreshContext();
+			}
+		};
 		try {
-			await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
-			await this.apply(
-				await this.createRuntime({
+			if (isSelfResume && source.isSessionBusy) return { cancelled: true };
+			validate();
+			assertSessionCwdExists(sessionManager, this.cwd);
+			hold = holdActiveSession(sessionManager, wasFlushed(sessionManager), this._launchProfile?.holderEndpoint);
+			time("open", "switch");
+			result = await preparation.run(() =>
+				this.createRuntime({
 					cwd: sessionManager.getCwd(),
 					agentDir: this.services.agentDir,
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
 					projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
-					launchProfile: this._launchProfile,
+					launchProfile,
 				}),
-				hold,
 			);
-		} catch (error) {
-			if (this._sessionHold !== hold) hold?.release();
-			throw error;
+			if (isSelfResume && this.session.isSessionBusy) return { cancelled: true };
+			validate();
+			// The publication reservation spans every await through source reconciliation.
+			await prepared.commit({ validate, reconcile });
+			// From this point shutdown hooks may retire live resources even if a later hook throws.
+			this._disposedSession = source;
+			await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
+			if (isSelfResume) sessionManager.reloadFromDisk();
+			result.session.activatePreparedResume(preparation.accept(result.session));
+			await this.apply(result, hold);
+		} finally {
+			if (result === undefined || this.session !== result.session) {
+				result?.session.dispose();
+				await result?.session.whenToolChildClosed();
+				sessionManager.dispose();
+				hold?.release();
+			}
+			await preparation.dispose();
 		}
 		time("apply", "switch");
 		await this.finishSessionReplacement(options?.withSession);

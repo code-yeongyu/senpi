@@ -30,7 +30,7 @@ export function sessionRecoveryCause(error: unknown): SessionRecoveryCause {
 	return "write_failed";
 }
 
-function recoveryNotice(cause: SessionRecoveryCause, backupPath: string): string {
+export function recoveryNotice(cause: SessionRecoveryCause, backupPath: string): string {
 	const shortened = shortenPath(backupPath);
 	const backup = shortened.startsWith("~/") || shortened.startsWith("~\\") ? shortened : "a session recovery backup";
 	if (cause === "disk_full") {

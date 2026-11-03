@@ -33,6 +33,13 @@ export class RuntimeCredentials implements CredentialStore {
 		return this.store;
 	}
 
+	/** A private runtime overlay, optionally backed by an independently owned OAuth registry. */
+	fork(store: CredentialStore): RuntimeCredentials {
+		const fork = new RuntimeCredentials(store);
+		for (const [provider, key] of this.overrides) fork.overrides.set(provider, key);
+		return fork;
+	}
+
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void {
 		asExtensionOAuthRegistry(this.store)?.registerOAuthProvider(providerId, oauth);
 	}

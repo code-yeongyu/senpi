@@ -2536,6 +2536,24 @@ Startup: `senpi --mode rpc --multi-session` → NO default session is constructe
 
 ### Session replacement
 
+A `switch_session` candidate is admitted before the outgoing session is retired.
+Cancellation runs before destination preparation and project-trust prompts. A
+budget refusal returns `errorCode: "model_usability_budget"` with the SDK budget
+projection in `errorData`; a destination changed during preparation returns
+`errorCode: "session_resume_conflict"` with `errorData: { sessionFile }`.
+Admission refusals before publication retain the outgoing session and leave
+destination bytes untouched by the attempt. Clients may continue prompting that session. Oversized histories still
+use the SDK's existing resume slicing or required-compaction admission; size
+alone is not a refusal. A busy same-file resume returns `{ cancelled: true }`.
+Other preparation failures return `session_resume_rejected` while the source
+remains usable. Staged writes publish asynchronously and atomically. A storage
+error or configuration change detected after the rename can report failure
+after publication; a same-file source reconciles its leaf before accepting
+further prompts, without adopting another host's write fence. Post-publication
+failure does not promise unchanged destination bytes. The existing RPC lifecycle
+mutex orders commands; direct SDK writers to the publishing destination receive
+`SessionResumeConflictError` until publication and reconciliation release it.
+
 A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. Outside an MCP startup window, `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier for the extension rebind; the one settle point it does carry is the end of the MCP startup window described under [loaded_surfaces_changed](#loaded_surfaces_changed).
 
 #### Replacement identity event

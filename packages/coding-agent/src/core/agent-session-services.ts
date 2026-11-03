@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model, ThinkingSelection } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
-import { resolvePath } from "../utils/paths.ts";
+import { getFileContentRevision, resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
@@ -18,8 +18,9 @@ import {
 } from "./resource-loader.ts";
 import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./sdk.ts";
 import type { SessionManager } from "./session-manager.ts";
-import { SettingsManager } from "./settings-manager.ts";
+import { getSettingsPath, SettingsManager } from "./settings-manager.ts";
 import { joinStartupBranches } from "./startup-branch-join.ts";
+import { currentResumePreparation } from "./resume-preparation.ts";
 
 /**
  * Non-fatal issues collected while creating services or sessions.
@@ -169,20 +170,56 @@ export async function createAgentSessionServices(
 ): Promise<AgentSessionServices> {
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
+	const preparation = currentResumePreparation();
+	const sharedRuntime = options.modelRuntime;
+	const isolatedRuntime = sharedRuntime && preparation ? preparation.isolate(sharedRuntime) : sharedRuntime;
 	// A shared runtime's providers register into its own store: read that one, as a session that
 	// builds its runtime does (senpi#3434).
-	const authStorage = options.modelRuntime?.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
-	const runtimePromise =
-		options.modelRuntime !== undefined
-			? Promise.resolve(options.modelRuntime)
+	const authStorage = isolatedRuntime?.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
+	const runtimePromise = (
+		isolatedRuntime !== undefined
+			? Promise.resolve(isolatedRuntime)
 			: ModelRuntime.create({
 					credentials: authStorage,
 					authPath: join(agentDir, "auth.json"),
 					agentDir,
 					modelsPath: join(agentDir, "models.json"),
 					signal: options.modelRuntimeSignal,
-				});
+				})
+	).then((runtime) => (sharedRuntime === undefined && preparation ? preparation.ownModelRuntime(runtime) : runtime));
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	if (preparation) {
+		const revision = () =>
+			JSON.stringify([
+				...(["global", "project"] as const).map((scope) => {
+					const path = getSettingsPath(cwd, agentDir, scope);
+					return [path, getFileContentRevision(path)];
+				}),
+				getFileContentRevision(join(agentDir, "models.json")),
+			]);
+		const expected = revision();
+		preparation.watch(() => revision() === expected);
+	}
+	const watchTrust = (): void => {
+		if (!preparation) return;
+		const trustPath = join(agentDir, "trust.json");
+		const expectedTrust = getFileContentRevision(trustPath);
+		preparation.watch(() => getFileContentRevision(trustPath) === expectedTrust);
+	};
+	const resolveProjectTrust = options.resourceLoaderReloadOptions?.resolveProjectTrust;
+	if (!resolveProjectTrust) watchTrust();
+	const reloadOptions: ResourceLoaderReloadOptions | undefined =
+		preparation && resolveProjectTrust
+			? {
+					...options.resourceLoaderReloadOptions,
+					resolveProjectTrust: async (context) => {
+						const trusted = await resolveProjectTrust(context);
+						// The resolver may save the user's decision; fence that decision before loading trusted resources.
+						watchTrust();
+						return trusted;
+					},
+				}
+			: options.resourceLoaderReloadOptions;
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
@@ -190,10 +227,8 @@ export async function createAgentSessionServices(
 		settingsManager,
 		mcpRegistry: options.mcpRegistry,
 	});
-	const { primary: modelRuntime } = await joinStartupBranches(
-		runtimePromise,
-		resourceLoader.reload(options.resourceLoaderReloadOptions),
-	);
+	preparation?.own(() => resourceLoader.getExtensions().runtime.invalidate());
+	const { primary: modelRuntime } = await joinStartupBranches(runtimePromise, resourceLoader.reload(reloadOptions));
 	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
 	modelRuntime.setSettingsManager(settingsManager);
 
@@ -248,7 +283,6 @@ export async function createAgentSessionServices(
 	}
 	extensionsResult.runtime.pendingVirtualModelRegistrations = [];
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
-
 	return {
 		cwd,
 		agentDir,

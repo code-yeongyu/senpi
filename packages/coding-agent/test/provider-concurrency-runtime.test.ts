@@ -113,6 +113,27 @@ function selectModel(runtime: ModelRuntime): Model<Api> {
 }
 
 describe("ModelRuntime provider concurrency", () => {
+	it("keeps source admission and its settings listener when a candidate fork is disposed", async () => {
+		// #1473: candidate preparation must not resize or unsubscribe a shared source runtime.
+		const settings = settingsManagerWith({ providers: { [PROVIDER_ID]: { maxConcurrency: 1 } } });
+		const { runtime, probe } = await runtimeWith(settings);
+		const candidate = runtime.fork();
+		candidate.setSettingsManager(settingsManagerWith({ providers: { [PROVIDER_ID]: { maxConcurrency: 8 } } }));
+		candidate.dispose();
+		const model = selectModel(runtime);
+		const first = runtime.stream(model, { messages: [] });
+		const second = runtime.stream(model, { messages: [] });
+		await flush();
+		expect(probe.calls).toBe(1);
+		settings.applyOverrides({ providers: { [PROVIDER_ID]: { maxConcurrency: 2 } } });
+		await flush();
+		expect(probe.calls).toBe(2);
+		probe.finish(0);
+		probe.finish(1);
+		await Promise.all([first.result(), second.result()]);
+		runtime.dispose();
+	});
+
 	it("serializes provider stream requests at the configured cap", async () => {
 		const settingsManager = settingsManagerWith({ providers: { [PROVIDER_ID]: { maxConcurrency: 1 } } });
 		const { runtime, probe } = await runtimeWith(settingsManager);
