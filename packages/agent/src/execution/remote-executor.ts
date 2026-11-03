@@ -1,5 +1,7 @@
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { AgentToolResult } from "../types.ts";
+import { FILE_CHANNEL } from "./device-files.ts";
+import { fileCall, fileRefusal, fileStopped } from "./remote-file-call.ts";
 import {
 	decodeRemoteMessage,
 	encodeRemoteMessage,
@@ -28,6 +30,11 @@ export interface HandScope {
 	run(call: HandCall): Promise<AgentToolResult<unknown>>;
 	/** A tool that must not overlap other calls of its scope (`executionMode: "sequential"`). */
 	isSequential(name: string): boolean;
+	/**
+	 * Runs one device file operation (S40) after its grant was checked: the scope's `tool_call` handlers, filesystem
+	 * policy and the operation itself, the outcome in `details.file`. Absent: the scope serves no file channel.
+	 */
+	file?(op: string, args: unknown, signal: AbortSignal): Promise<AgentToolResult<unknown>>;
 	dispose(): Promise<void>;
 }
 
@@ -51,6 +58,8 @@ export interface RemoteExecutorOptions {
 	readonly ledger?: HandLedger;
 	/** This hand process's identity in its `hello`; a fresh one per start by default. */
 	readonly instance?: string;
+	/** Announce the device file channel (S40) in `hello`; its scopes then serve `HandScope.file`. */
+	readonly fileChannel?: boolean;
 	/**
 	 * A call the hand could not record or answer (its durable record failed): the call gets no reply from this process,
 	 * as from a hand that died, and a restarted hand answers it from the record. A failed restart recovery is reported
@@ -112,7 +121,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		return state;
 	};
 
-	const invoke = async (lane: string, call: RemoteInvoke): Promise<void> => {
+	const invoke = async (lane: string, call: RemoteInvoke, file?: { readonly op: string }): Promise<void> => {
 		if (closed) return refuse(lane, call.executionId, "hand_closed");
 		if (lane !== call.scope.id) return refuse(lane, call.executionId, "scope_lane_mismatch");
 		const verdict = authorize(authority, call.scope.root);
@@ -137,7 +146,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		accepted.push(call.executionId);
 		const controller = new AbortController();
 		running.set(call.executionId, { controller, root: verdict.root });
-		const sequential = scope.isSequential(call.name);
+		const sequential = file !== undefined || scope.isSequential(call.name);
 		const dependencies = sequential
 			? [...(state.lastSequential ? [state.lastSequential] : []), ...state.wave]
 			: state.lastSequential
@@ -151,15 +160,31 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 				// durable admission, earlier calls of its scope) may have revoked it, and then the tool never runs.
 				if (controller.signal.aborted || !authorize(authority, call.scope.root).ok)
 					throw new Error("The call's grant was revoked before it ran");
-				result = await scope.run({
-					toolCallId: call.toolCallId,
-					name: call.name,
-					arguments: call.arguments,
-					signal: controller.signal,
-				});
+				result =
+					file === undefined
+						? await scope.run({
+								toolCallId: call.toolCallId,
+								name: call.name,
+								arguments: call.arguments,
+								signal: controller.signal,
+							})
+						: scope.file === undefined
+							? fileRefusal("unsupported", "this hand serves no file channel")
+							: await scope.file(file.op, call.arguments, controller.signal);
+				// A file operation that ended aborted ships no payload: a revoked grant is a refusal (R7), never data.
+				if (file !== undefined && controller.signal.aborted)
+					result = fileStopped(authorize(authority, call.scope.root).ok);
 			} catch (error) {
-				const text = error instanceof Error ? error.message : String(error);
-				result = { content: [{ type: "text", text }], details: {}, isError: true };
+				if (file !== undefined) {
+					const granted = authorize(authority, call.scope.root).ok;
+					result =
+						controller.signal.aborted || !granted
+							? fileStopped(granted)
+							: fileRefusal("io", error instanceof Error ? error.message : String(error));
+				} else {
+					const text = error instanceof Error ? error.message : String(error);
+					result = { content: [{ type: "text", text }], details: {}, isError: true };
+				}
 			} finally {
 				running.delete(call.executionId);
 			}
@@ -178,10 +203,16 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		} else state.wave.push(done);
 	};
 
+	// The connect hook: one `hello` per hand start, after recovery. The reliable transport re-delivers it across carrier
+	// re-attaches, so only a new hand process announces a new identity.
 	const ready = (async () => {
-		if (ledger === undefined) return;
-		for (const { lane, message } of await ledger.recover()) reply(lane, message);
-		reply(HAND_CONTROL_LANE, { kind: "hello", instance: options.instance ?? crypto.randomUUID() });
+		if (ledger !== undefined) for (const { lane, message } of await ledger.recover()) reply(lane, message);
+		reply(HAND_CONTROL_LANE, {
+			kind: "hello",
+			instance: options.instance ?? crypto.randomUUID(),
+			durable: ledger !== undefined,
+			ops: options.fileChannel === true ? [FILE_CHANNEL] : [],
+		});
 	})();
 	ready.catch((error: unknown) => options.onFault(error));
 
@@ -199,6 +230,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		}
 		try {
 			if (message.kind === "invoke") await invoke(frame.lane, message);
+			else if (message.kind === "file") await invoke(frame.lane, fileCall(message), { op: message.op });
 			else if (message.kind === "abort") running.get(message.executionId)?.controller.abort();
 			else if (message.kind === "ack") await ledger?.ack(message.executionId);
 		} catch (error) {

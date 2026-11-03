@@ -5,7 +5,8 @@
 // still produces the right bytes, and fails here because the hand never saw the operation.
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { type DeviceFiles, localDeviceFiles } from "@earendil-works/pi-agent-core";
+import type { DeviceFiles } from "@earendil-works/pi-agent-core";
+import { localDeviceFiles } from "@earendil-works/pi-agent-core/node";
 import { afterEach, describe, expect, it } from "vitest";
 import type { InlineExtension } from "../../src/core/extensions/types.ts";
 import { cleanupHands, handDirs, openLink, remoteHost, startHand } from "./remote-hand-fixture.ts";

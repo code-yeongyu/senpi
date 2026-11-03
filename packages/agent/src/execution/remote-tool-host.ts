@@ -1,15 +1,11 @@
 import { TOOL_RESULT_PLACEHOLDER, type ToolResultMessage } from "@earendil-works/pi-ai";
-import type { Transport, TransportFrame } from "../transport/transport.ts";
+import type { Transport } from "../transport/transport.ts";
 import type { AgentToolCall } from "../types.ts";
-import {
-	decodeRemoteMessage,
-	encodeRemoteMessage,
-	type RemoteHandMessage,
-	type RemoteInvoke,
-	type RemoteTerminal,
-	type RemoteToolResult,
-} from "./remote-protocol.ts";
-import type { ToolHost, ToolHostCall, ToolHostOptions, ToolHostResult } from "./tool-host.ts";
+import type { DeviceFiles } from "./device-files.ts";
+import { createRemoteDeviceFiles } from "./remote-device-files.ts";
+import { createHandLink, type HandReply } from "./remote-link.ts";
+import type { RemoteInvoke, RemoteTerminal, RemoteToolResult } from "./remote-protocol.ts";
+import type { ExecutionScope, ToolHost, ToolHostCall, ToolHostOptions, ToolHostResult } from "./tool-host.ts";
 
 /**
  * Where the hand runs relative to the session. It decides what a call that ended without a result (the hand restarted
@@ -26,11 +22,6 @@ export interface RemoteToolHostOptions {
 	/** What the session says about itself; the hand never acts on it (R16). */
 	readonly sessionRef?: string;
 	readonly mintId?: () => string;
-}
-
-interface Pending {
-	readonly invoke: RemoteInvoke;
-	readonly resolve: (result: RemoteToolResult) => void;
 }
 
 function errorResult(text: string): RemoteToolResult {
@@ -56,70 +47,36 @@ function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): Rem
  * validates, runs the extensions' `tool_call`/`tool_result` handlers (permission checks among them) and executes each
  * call; this host keeps the loop's side: tool events, the batch's ordering, a forwarded abort and the result messages in
  * source order. A call whose send is refused (the transport closed) becomes an error result, never a retry. The one
- * re-send is on a hand's `hello` (it restarted with its durable record): every call still waiting is sent again, and
- * the hand answers each one its record already holds instead of running it a second time.
+ * re-send is on a durable hand's `hello` (see `createHandLink`). `deviceFiles(scope)` reaches the hand's files (S40).
  */
-export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost & { close(): void } {
-	const { transport } = options;
+export function createRemoteToolHost(
+	options: RemoteToolHostOptions,
+): ToolHost & { deviceFiles(scope: ExecutionScope): DeviceFiles; close(): void } {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
-	const pending = new Map<string, Pending>();
+	const link = createHandLink(options.transport);
 
-	const settle = (executionId: string, result: RemoteToolResult): void => {
-		const waiter = pending.get(executionId);
-		if (waiter === undefined) return;
-		pending.delete(executionId);
-		waiter.resolve(result);
+	const resultOf = (reply: HandReply): RemoteToolResult => {
+		switch (reply.kind) {
+			case "settled":
+				return reply.result;
+			case "terminal":
+				return terminalResult(options.placement, reply.terminal);
+			case "refused":
+				return errorResult(`The hand refused this tool call: ${reply.reason}`);
+			case "aborted":
+				return errorResult(reply.sent ? "Tool execution aborted" : "Operation aborted");
+			case "unreachable":
+				return errorResult(`The hand is unreachable: ${reply.reason}`);
+			case "closed":
+				return errorResult("The hand link was closed before the call settled");
+		}
 	};
-
-	transport.onFrame((frame: TransportFrame) => {
-		let message: RemoteHandMessage;
-		try {
-			message = decodeRemoteMessage(frame.payload);
-		} catch {
-			return;
-		}
-		const ack = (executionId: string): void =>
-			void transport.send(frame.lane, encodeRemoteMessage({ kind: "ack", executionId })).catch(() => undefined);
-		if (message.kind === "hello") {
-			for (const { invoke } of pending.values())
-				void transport.send(invoke.scope.id, encodeRemoteMessage(invoke)).catch(() => undefined);
-			return;
-		}
-		if (message.kind === "settled") {
-			settle(message.executionId, message.result);
-			ack(message.executionId);
-		} else if (message.kind === "terminal") {
-			settle(message.executionId, terminalResult(options.placement, message));
-			ack(message.executionId);
-		} else if (message.kind === "refused")
-			settle(message.executionId, errorResult(`The hand refused this tool call: ${message.reason}`));
-	});
-
 	const dispatch = (
 		invoke: RemoteInvoke,
 		signal: AbortSignal | undefined,
-	): { readonly settled: Promise<RemoteToolResult> } => {
-		const settled = new Promise<RemoteToolResult>((resolve) => {
-			pending.set(invoke.executionId, { invoke, resolve });
-		});
-		if (signal?.aborted) settle(invoke.executionId, errorResult("Operation aborted"));
-		else {
-			const onAbort = (): void => {
-				if (!pending.has(invoke.executionId)) return;
-				void transport
-					.send(invoke.scope.id, encodeRemoteMessage({ kind: "abort", executionId: invoke.executionId }))
-					.catch(() => undefined);
-				settle(invoke.executionId, errorResult("Tool execution aborted"));
-			};
-			signal?.addEventListener("abort", onAbort, { once: true });
-			void settled.then(() => signal?.removeEventListener("abort", onAbort));
-			transport.send(invoke.scope.id, encodeRemoteMessage(invoke)).catch((error: unknown) => {
-				const reason = error instanceof Error ? error.message : String(error);
-				settle(invoke.executionId, errorResult(`The hand is unreachable: ${reason}`));
-			});
-		}
-		return { settled };
-	};
+	): { readonly settled: Promise<RemoteToolResult> } => ({
+		settled: link.dispatch(invoke, signal).then(resultOf),
+	});
 
 	return {
 		async execute(call: ToolHostCall, hostOptions: ToolHostOptions): Promise<ToolHostResult> {
@@ -180,10 +137,7 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 				terminate: results.length > 0 && results.every((result) => result.terminate === true),
 			};
 		},
-		close() {
-			for (const executionId of [...pending.keys()])
-				settle(executionId, errorResult("The hand link was closed before the call settled"));
-			transport.close();
-		},
+		deviceFiles: (scope) => createRemoteDeviceFiles(link, scope, mintId),
+		close: () => link.close(),
 	};
 }
