@@ -228,6 +228,9 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 			event: { kind: "consent" },
 		});
 		if (reply.status === "applied" && reply.entry.progress.state === "prepared") return { kind: "prepared" };
+		// The issuer's re-sent approval (the brain restarted before recording the first reply) finds the call prepared.
+		if (reply.status === "refused" && reply.reason === "invalid_transition" && entry.progress.state === "prepared")
+			return { kind: "prepared" };
 		if (reply.status === "applied" || reply.status === "replayed") return { kind: "replayed", entry: reply.entry };
 		if (reply.status === "refused" && reply.reason === "terminal") {
 			const terminal = await ledger.read(request.key);
