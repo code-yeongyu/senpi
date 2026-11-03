@@ -1,10 +1,13 @@
 // senpi#5635: eval kernels and every child they start inherit the host's environment WITHOUT the RPC host's
 // supervisor hand-off, and carry the origin attribution instead. The host's own process.env keeps the hand-off.
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { childEnvironmentOf } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BridgeConnectionConfig } from "../src/bridge/protocol.ts";
+import type { JavaScriptKernelMode } from "../src/kernels/js/context-manager.ts";
 import { spawnProcessWorker } from "../src/kernels/js/process-worker.ts";
 import { type KernelSpawnOptions, PythonKernel } from "../src/kernels/py/kernel.ts";
 import { inheritedEnvironmentDelta } from "../src/kernels/session-env.ts";
@@ -101,31 +104,42 @@ describe("issue #5635 kernel environments never carry the host's supervisor hand
 		expect(env.ISSUE_5635_KEEP).toBe("keep");
 	});
 
-	it("a worker-thread JS kernel's cells and their children see no hand-off while the host keeps it", async () => {
-		// Given: a host env holding its hand-off.
-		stubHost();
+	// "inline" is the fallback entry used when the worker entry cannot load; it is a worker thread too (senpi#5653).
+	it.each([
+		{ expectedMode: "worker", workerEntryUrl: undefined },
+		{ expectedMode: "inline", workerEntryUrl: pathToFileURL(join(process.cwd(), "missing-handoff-worker.js")) },
+	] satisfies readonly { readonly expectedMode: JavaScriptKernelMode; readonly workerEntryUrl: URL | undefined }[])(
+		"a $expectedMode JS kernel's cells and their children see no hand-off while the host keeps it",
+		async ({ expectedMode, workerEntryUrl }) => {
+			// Given: a host env holding its hand-off.
+			stubHost();
 
-		// When: a cell reads its env and a child process reads its own.
-		const seen = await withJavaScriptKernel(
-			async (kernel) => {
-				const run = await runJavaScriptCell(
-					kernel,
-					[
-						"const cp = process.getBuiltinModule('node:child_process');",
-						`const names = ${JSON.stringify([...HANDOFF, ORIGIN, "ISSUE_5635_KEEP"])};`,
-						"const child = cp.execFileSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(' + JSON.stringify(names) + '.map((n) => process.env[n] ?? null)))'], { encoding: 'utf8' });",
-						"return { cell: names.map((n) => process.env[n] ?? null), child: JSON.parse(child) };",
-					].join("\n"),
-				);
-				return { mode: kernel.mode, value: parseJavaScriptResult(run.result) };
-			},
-			{ sessionEnv: { PI_SESSION_ID: "js-5635" }, inheritedEnv },
-		);
+			// When: a cell reads its env and a child process reads its own.
+			const seen = await withJavaScriptKernel(
+				async (kernel) => {
+					const run = await runJavaScriptCell(
+						kernel,
+						[
+							"const cp = process.getBuiltinModule('node:child_process');",
+							`const names = ${JSON.stringify([...HANDOFF, ORIGIN, "ISSUE_5635_KEEP"])};`,
+							"const child = cp.execFileSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(' + JSON.stringify(names) + '.map((n) => process.env[n] ?? null)))'], { encoding: 'utf8' });",
+							"return { cell: names.map((n) => process.env[n] ?? null), child: JSON.parse(child) };",
+						].join("\n"),
+					);
+					return { mode: kernel.mode, value: parseJavaScriptResult(run.result) };
+				},
+				{
+					sessionEnv: { PI_SESSION_ID: "js-5635" },
+					inheritedEnv,
+					...(workerEntryUrl === undefined ? {} : { workerEntryUrl }),
+				},
+			);
 
-		// Then: neither the cell nor its child holds a hand-off name; the host still does.
-		const expected = [null, null, null, "synthetic-host", "keep"];
-		expect(seen.mode).toBe("worker");
-		expect(seen.value).toEqual({ cell: expected, child: expected });
-		expect(HANDOFF.filter((name) => process.env[name] === undefined)).toEqual([]);
-	});
+			// Then: neither the cell nor its child holds a hand-off name; the host still does.
+			const expected = [null, null, null, "synthetic-host", "keep"];
+			expect(seen.mode).toBe(expectedMode);
+			expect(seen.value).toEqual({ cell: expected, child: expected });
+			expect(HANDOFF.filter((name) => process.env[name] === undefined)).toEqual([]);
+		},
+	);
 });
