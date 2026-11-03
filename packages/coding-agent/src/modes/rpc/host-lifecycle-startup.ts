@@ -27,7 +27,8 @@ import {
 } from "./host-startup-wire.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 
-const UNCOORDINATED_LISTENER_TIMEOUT_MS = 30_000;
+/** How long the supervisor waits for an uncoordinated host child to start listening; it exits when the child misses this. */
+export const HOST_CHILD_LISTEN_MS = 30_000;
 const OBSERVER_RETRY_DELAY_MS = 250;
 
 /** Declared before the host child is spawned: a custom child command cannot report its own progress. */
@@ -67,7 +68,7 @@ export async function awaitInternalStartup(options: {
 	const deadline = performance.now() + (handOff?.budgetMs ?? 0);
 	await waitForListener(
 		options.internalSocket,
-		handOff?.budgetMs ?? UNCOORDINATED_LISTENER_TIMEOUT_MS,
+		handOff?.budgetMs ?? HOST_CHILD_LISTEN_MS,
 		options.internalSecret,
 		options.internalKey,
 		{ retrySilent: handOff !== undefined },

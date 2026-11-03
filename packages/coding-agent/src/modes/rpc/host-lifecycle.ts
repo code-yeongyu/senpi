@@ -79,6 +79,7 @@ export {
 	resolveHostPolicy,
 } from "./host-lifecycle-policy.ts";
 export { createInternalSocketPath } from "./host-lifecycle-scratch.ts";
+export { HOST_CHILD_LISTEN_MS } from "./host-lifecycle-startup.ts";
 
 export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: launch.socket, agentDir: launch.agentDir ?? getAgentDir() });
