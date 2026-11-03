@@ -12,6 +12,61 @@
 
 ### Removed
 
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Added an internal prepared tool executor that runs today's per-call preparation (activation, argument shim, validation, `tool_call` handlers) once under the execution ledger, then dispatches the frozen call at most once; nothing calls it yet, so session behavior is unchanged ([#5428](https://github.com/code-yeongyu/senpi/pull/5428)).
+- Added `createLooplessRuntimeFactory()` (`src/modes/rpc/runtime-factory-loopless.ts`): from the same launch configuration as the CLI runtime factory it builds a runtime with the built-in and extension tools and no agent loop, model binding or transcript, which runs one tool call at a time. Nothing selects it yet ([#5436](https://github.com/code-yeongyu/senpi/pull/5436)).
+
+### Changed
+
+### Fixed
+
+- Compaction, `/btw`, look-at and cache keepalive on a multi-account provider authenticate as the account the session uses, so compaction on a pooled ChatGPT subscription no longer fails with a 401 ([#4426](https://github.com/code-yeongyu/senpi/pull/4426); approach from [#2049](https://github.com/code-yeongyu/senpi/pull/2049) by [@youngminsw](https://github.com/youngminsw))
+- After a sign-in, a session pinned to a fallback by a billing failure tries the original model again on its next turn instead of staying on the fallback until restart. A token refresh of the same account no longer counts as a sign-in. Adding a Cursor CLI (OAuth) account with `/cursor-account import local|native`, or the first-run copy of the native Cursor login, counts as a sign-in too ([#4430](https://github.com/code-yeongyu/senpi/pull/4430))
+- An `auth.json` that exists but cannot be read (broken JSON, not a JSON object, or no read permission) is no longer treated as empty. `get_auth_providers` reports `storeError` (`kind`, a reason without the path), sign-ins are no longer silently shown as "Not connected", and a login cannot overwrite the file until it is repaired ([#4413](https://github.com/code-yeongyu/senpi/issues/4413))
+- Sign-in result pages show the running product's name, and its logo when `SENPI_BRAND` carries a `logo` data URI, instead of the pi logo ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- The page shown after an MCP server sign-in shows the running product's brand instead of a hard-coded "senpi", and an MCP server's consent screen shows that brand as the client name ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- Anthropic Subscription: when one account fails while the others are already blocked, the turn now reports that account's own failure instead of "all accounts are blocked", each account block is logged, and the blocked-pool message names the account that needs `/login` (#4674).
+- Anthropic Subscription: a turn the account pool refuses locally, or a classified Claude Code failure, now reports its category (`auth`, `rate_limit`, ...) and the soonest retry instead of an unclassified error with no code (#4676).
+- A session given its own fallback policy by its opener (`open_session.retryFallback`, `set_retry_fallback`) now uses only that policy; the built-in default chains are no longer merged back under it (#4678). The same holds for an SDK embedder that sets `retry.fallbackChains` through `SettingsManager.applyOverrides`: those chains replace the defaults too.
+- Anthropic Subscription sessions keep their running Claude Code process across a config hot-reload instead of restarting it on the next turn ([#5578](https://github.com/code-yeongyu/senpi/pull/5578))
+- A user `bash` run over RPC is now published to every observer connection as `entry_appended` for its `bashExecution` entry, so an observer subscribed with `mirror: "all"` sees the command and its output ([#5576](https://github.com/code-yeongyu/senpi/issues/5576), [#5579](https://github.com/code-yeongyu/senpi/pull/5579)).
+- Anthropic Subscription reports a thinking block bound to a different conversation as an invalid-request failure instead of an unknown one ([#5589](https://github.com/code-yeongyu/senpi/pull/5589))
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Under a degraded engine certificate import (fallback), a failed agent-shell command (`bash`, terminal foreground and background sessions) carries a `trust` status from the adopted record and, when its output looks like a certificate verification error, a heuristic hint with the matched pattern id ([#5248](https://github.com/code-yeongyu/senpi/pull/5248))
+- Under a fallback engine trust generation, a provider request that fails TLS chain verification reports `agent_end.failure.trust` with the fallback reason and its repair action id, and records it once per process and reason in the trust diagnostics file ([#5253](https://github.com/code-yeongyu/senpi/pull/5253))
+- RPC `get_protocol_info` answers carry `method_classes: { version, digest }`, the version and sha256 digest of the inbound method-class table the engine runs, so a client that classifies records with its own copy of the table can tell whether that copy is current ([#5476](https://github.com/code-yeongyu/senpi/pull/5476)).
+- RPC `set_client_info` accepts `remoteOrigin: { deviceId, deviceName? }`, declared once per connection by a relay forwarder for the remote device it speaks for. Every `select`, `confirm`, `input`, `editor` and `question` dialog that connection raises carries it as `remoteOrigin` (also inside the mirrored `ui_request_pending`), so a client can label dialogs raised by a remote device's turn; local connections' dialogs carry none ([#5479](https://github.com/code-yeongyu/senpi/pull/5479)).
+
+### Changed
+
+- The first-turn system prompt drops text the tool schemas already carry: no `## Available Tools` line for a tool whose description the model sees, fewer tool guidelines, one terminal section that also states the bash timeout facts, and no separate timeout policy or image generation section ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))
+- The shared prompt sections, tool guidelines, and terminal section use terser wording; tool names, call shapes, the routing line, and the Handoff template are unchanged ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))
+
+### Fixed
+
+- Reopening a closed session waits for an in-flight path-claim removal after the close grace deadline instead of refusing a session that has already ended ([#4484](https://github.com/code-yeongyu/senpi/issues/4484)).
+- OAuth registration receives the configured product display name, including branded distributions (part of [#5003](https://github.com/code-yeongyu/senpi/issues/5003)).
+- Anthropic Subscription: a turn started while the previous turn is still finishing now waits for it instead of failing and moving the session to a fallback model ([#3906](https://github.com/code-yeongyu/senpi/issues/3906))
+- A subscription account that hit a limit with no stated reset is checked again at least every 30 minutes instead of staying blocked for up to 48 hours ([#5034](https://github.com/code-yeongyu/senpi/pull/5034)).
+- When the fallback chain runs out, the error shown in the TUI and print mode now leads with the failure that started the fallback (for example a usage 400) instead of the last model's error, and `retry_fallback_exhausted` carries `primaryError` and every failed rung in `failures` ([#4084](https://github.com/code-yeongyu/senpi/issues/4084))
+- The todo tool now accepts near-canonical `init` calls (phases nested inside `items`, nameless or empty phases, a JSON-string `list`, stray strings in `list`, an `op` with stray leading or trailing punctuation or whitespace (never digits)), corrects them, and reports each correction instead of failing validation ([#5336](https://github.com/code-yeongyu/senpi/pull/5336))
+- With compact socket updates enabled, the recovery manifest names the catalog families its root requires (`requiredKinds`), so a client opens exactly those instead of copying the engine's family list ([#5397](https://github.com/code-yeongyu/senpi/issues/5397))
+
+### Removed
+
 ## [2026.11.2-3] - 2026-11-02
 
 ### Breaking Changes

@@ -3,6 +3,7 @@ import {
 	type ProviderDiagnosticCategory,
 	sanitizeProviderDiagnostic,
 } from "@earendil-works/pi-ai";
+import { isThinkingBindingMismatchText } from "@earendil-works/pi-ai/api/anthropic-thinking-binding";
 import { AllAccountsBlockedError } from "./affinity.ts";
 import { classifySdkError, type SdkErrorKind } from "./errors.ts";
 import { ClassifiedSdkError } from "./failover.ts";
@@ -12,6 +13,7 @@ const SDK_KIND_DIAGNOSTICS: Partial<
 	Record<SdkErrorKind, { readonly category: ProviderDiagnosticCategory; readonly code: string }>
 > = {
 	auth_error: { category: "auth", code: "authentication_error" },
+	login_unreadable: { category: "auth", code: "authentication_error" },
 	rate_limit: { category: "rate_limit", code: "rate_limit_error" },
 	overloaded: { category: "provider_unavailable", code: "overloaded_error" },
 	billing: { category: "unknown", code: "billing_error" },
@@ -55,6 +57,16 @@ export function anthropicSubscriptionDiagnostic(error: unknown): ProviderDiagnos
 			code: "account_pool_blocked",
 			evidence: "structured_code",
 			resetsAt: pool.rateLimitedUntil,
+		});
+	}
+	const original = error instanceof ClassifiedSdkError ? error.original : error;
+	if (original instanceof Error && isThinkingBindingMismatchText(original.message)) {
+		// senpi#5587: the API refused a replayed thinking block bound to a different conversation.
+		return sanitizeProviderDiagnostic({
+			category: "invalid_request",
+			httpStatus: 400,
+			code: "invalid_request_error",
+			evidence: "structured_code",
 		});
 	}
 	const kind = error instanceof ClassifiedSdkError ? error.classification.kind : classifySdkError(error).kind;

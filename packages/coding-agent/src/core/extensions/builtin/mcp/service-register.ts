@@ -14,13 +14,17 @@ import { connectAndRefreshMcpCatalog } from "./startup-race.ts";
 type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
 
 export interface McpServiceDirectToolRegistrationOptions {
-	readonly requestOrigin?: (entry: McpConnectionEntry) => McpRequestOrigin;
+	readonly requestOrigin?: (
+		entry: McpConnectionEntry,
+		caller?: { readonly sessionManager?: object },
+	) => McpRequestOrigin;
 	readonly bindPresentation?: (ui: ExtensionUIContext) => void;
 	readonly refreshActiveSetWhenEmpty?: boolean;
 	readonly onRegistered?: (entry: McpConnectionEntry, identity: string) => void;
 	readonly isCurrent?: (entry: McpConnectionEntry) => boolean;
 	readonly contextRequired?: boolean;
 	readonly sessionManager?: object;
+	readonly servesSession?: (sessionManager: object | undefined) => boolean;
 	readonly publishCurrent?: () => Promise<void>;
 }
 
@@ -44,6 +48,7 @@ export async function registerMcpServiceDirectTools(
 				configuration: entry.configHash,
 				contextRequired: options.contextRequired === true,
 				sessionManager: options.sessionManager,
+				servesSession: options.servesSession,
 				isCurrent: () => entry.isCurrent?.() !== false && options.isCurrent?.(entry) !== false,
 				ready: async () => {
 					await ensureMcpToolCallConnection(
@@ -79,7 +84,7 @@ export async function registerMcpServiceDirectTools(
 								entry.authPlan?.refresh?.ensureFresh().then(() => undefined) ?? Promise.resolve(),
 							outputGuard: config.settings.outputGuard,
 							invocation,
-							requestOrigin: () => options.requestOrigin?.(entry),
+							requestOrigin: (caller) => options.requestOrigin?.(entry, caller),
 						},
 					);
 					return computeMcpExposurePolicy(current, serverConfig, config.settings).filteredEntries.find(
@@ -99,7 +104,7 @@ export async function registerMcpServiceDirectTools(
 				startupCatalogPending,
 				localCatalogOnly: true,
 				invocation,
-				requestOrigin: () => options.requestOrigin?.(entry),
+				requestOrigin: (caller) => options.requestOrigin?.(entry, caller),
 				bindPresentation: options.bindPresentation,
 				onRegistered: (identity) => options.onRegistered?.(entry, identity),
 				connection: entry.connection,

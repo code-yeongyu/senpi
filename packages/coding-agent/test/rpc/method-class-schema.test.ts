@@ -213,7 +213,7 @@ describe("K8: every record local clients send today is accepted (X14 corpus)", (
 		}
 		const answerRecords = ["extension_ui_progress", "extension_ui_response", "host_response"];
 		expect([...Object.keys(TODAY), ...answerRecords].sort()).toEqual(Object.keys(RPC_METHOD_CLASS).sort());
-		expect(serial).toBe(112);
+		expect(serial).toBe(113);
 		// X14 probes set_retry_fallback with an empty profile only to reach the host's "single-session only" refusal;
 		// the one path that accepts the method refuses that profile with the same check (connection-handler.ts).
 		const emptyProfile = corpusRequest("set_retry_fallback", TODAY.set_retry_fallback, opened, tmp).record;
@@ -261,7 +261,7 @@ describe("K8: every record local clients send today is accepted (X14 corpus)", (
 				},
 			],
 		]);
-		expect(Object.keys(outcomes)).toHaveLength(113);
+		expect(Object.keys(outcomes)).toHaveLength(114);
 		const page = { type: "get_recovery_page", sessionId: NO_ID, token: "t", admissionId: "a", componentRef: "c" };
 		expect(validateRpcInboundRecord({ ...page, requestId: "r", cursor: "k" })).toEqual(ACCEPTED);
 		const wellFormed = { ...emptyProfile, retryFallback: { modelFallback: true, fallbackChains: { main: ["p/m"] } } };
