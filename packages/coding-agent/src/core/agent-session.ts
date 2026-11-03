@@ -148,6 +148,7 @@ import {
 	ContinueFromLeafError,
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
+import { getCredentialAccounts } from "./credential-accounts.ts";
 import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -382,6 +383,7 @@ import {
 } from "./retry-fallback/request-shape.ts";
 import {
 	AccountUsageLimitError,
+	formatResetTime,
 	describeUsageLimitEntry,
 	describeUsageLimitMessage,
 	usageLimitScope,
@@ -5840,6 +5842,32 @@ export class AgentSession {
 	 * @throws Error if streaming and no streamingBehavior specified
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
+	/**
+	 * A provider whose stored credential pools two or more accounts: whether any of them can serve the next request
+	 * (unblocked, or only cooling from a rate limit, which the pool's cooling probe retries), and the accounts with
+	 * why each is out. Undefined for a single-credential provider. Reads pool health only, never key material.
+	 */
+	private async _pooledAccountHealth(
+		provider: string,
+	): Promise<{ readonly usable: boolean; readonly accountsOut: string } | undefined> {
+		const storage = this._modelRuntime.authStorage;
+		if (storage === undefined) return undefined;
+		const accounts = (await getCredentialAccounts(storage, provider)).filter(
+			(account) => account.unused !== true,
+		);
+		if (accounts.length < 2) return undefined;
+		const usable = accounts.some((account) => !account.blocked || account.blockedReason === "rate_limit");
+		const accountsOut = accounts
+			.map((account) => {
+				const reason = account.blockedReason ?? "blocked";
+				return account.blockedUntil === undefined
+					? `${account.name} (${reason})`
+					: `${account.name} (${reason} until ${formatResetTime(account.blockedUntil)})`;
+			})
+			.join(", ");
+		return { usable, accountsOut };
+	}
+
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
 		this._standingRecovery = undefined;
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
@@ -6118,6 +6146,13 @@ export class AgentSession {
 				const model = this.model;
 				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
 				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+				// A pooled provider is out only when no account can serve: one account's billing or limit is that
+				// account's, and the pool's own block already routes around it (senpi#5590).
+				const pool =
+					model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
+						? await this._pooledAccountHealth(model.provider)
+						: undefined;
+				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
 				if (
 					model &&
 					!this._pendingModelSwitch &&
@@ -6133,6 +6168,7 @@ export class AgentSession {
 							model.provider,
 							errorMessage,
 							this._retryFallback.accountResetAt(model.provider),
+							pool?.accountsOut,
 						);
 					}
 				}

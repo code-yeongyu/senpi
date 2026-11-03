@@ -84,6 +84,10 @@ export class RetryFallbackController {
 		return this.unusable.releaseGuessedAccountHold(provider);
 	}
 
+	releaseAccountHold(provider: string): boolean {
+		return this.unusable.releaseAccountHold(provider);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.refusedProviders.clear();

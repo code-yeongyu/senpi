@@ -71,7 +71,13 @@ describe("#5590 one pooled account's failure does not hold the whole provider", 
 		harness.agent.streamFunction = (model) =>
 			lazyStream(model, async () =>
 				streamWithCredentialRotation({
-					sources: { providerId: provider, credential, env: () => undefined, repository, policy: { affinity: false } },
+					sources: {
+						providerId: provider,
+						credential,
+						env: () => undefined,
+						repository,
+						policy: { affinity: false },
+					},
 					modelId: model.id,
 					runAttempt: async (slot) => {
 						attempts.push(`${turn}:${slot.name}`);
@@ -110,9 +116,10 @@ describe("#5590 one pooled account's failure does not hold the whole provider", 
 	});
 
 	it("still holds the provider when no account is left usable, and names each one", async () => {
+		// The harness's in-memory auth storage shares one pool sidecar, so each case uses its own account names.
 		const { harness, attempts, nextTurn } = await pooledSession([
-			{ name: "org-a", turn1: "no-credits" },
-			{ name: "org-b", turn1: "no-credits" },
+			{ name: "spent-a", turn1: "no-credits" },
+			{ name: "spent-b", turn1: "no-credits" },
 		]);
 		await harness.session.prompt("first");
 
@@ -121,7 +128,7 @@ describe("#5590 one pooled account's failure does not hold the whole provider", 
 		const refusal = harness.session.prompt("goal continuation", { source: "extension" });
 
 		await expect(refusal).rejects.toMatchObject({ name: "AccountUsageLimitError" });
-		await expect(refusal).rejects.toThrow(/org-a.*org-b|org-b.*org-a/);
+		await expect(refusal).rejects.toThrow(/spent-a.*spent-b|spent-b.*spent-a/);
 		expect(attempts.filter((attempt) => attempt.startsWith("2:"))).toEqual([]);
 	});
 });

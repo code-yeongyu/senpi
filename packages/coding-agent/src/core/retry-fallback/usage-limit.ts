@@ -14,20 +14,20 @@ import { isBillingErrorMessage } from "./billing.ts";
 export type UsageLimitScope = "model" | "account";
 
 export class AccountUsageLimitError extends Error {
-	constructor(provider: string, raw = "usage limit reached", resetsAt?: number) {
-		super(
-			describeProviderFailureForUser(raw, {
-				model: provider,
-				usageLimit: "account",
-				...(resetsAt === undefined ? {} : { resetsAt: formatResetTime(resetsAt) }),
-			}),
-		);
+	/** `accountsOut`: a pooled provider's accounts, each with why it cannot serve (senpi#5590). */
+	constructor(provider: string, raw = "usage limit reached", resetsAt?: number, accountsOut?: string) {
+		const described = describeProviderFailureForUser(raw, {
+			model: provider,
+			usageLimit: "account",
+			...(resetsAt === undefined ? {} : { resetsAt: formatResetTime(resetsAt) }),
+		});
+		super(accountsOut === undefined ? described : `${described} No account can serve: ${accountsOut}.`);
 		this.name = "AccountUsageLimitError";
 	}
 }
 
 // The same reader-local time plus timezone the credential pool's blocked message uses.
-function formatResetTime(epochMs: number): string {
+export function formatResetTime(epochMs: number): string {
 	return new Date(epochMs).toLocaleString("en-US", {
 		month: "short",
 		day: "numeric",

@@ -48,7 +48,13 @@ export class UnusableEntries {
 	 * (senpi#5568). A hold with a reset the provider stated is kept. Returns whether a hold was dropped.
 	 */
 	releaseGuessedAccountHold(provider: string): boolean {
-		if (!this.isProviderSpent(provider) || this.accountResetAt(provider) !== undefined) return false;
+		if (this.accountResetAt(provider) !== undefined) return false;
+		return this.releaseAccountHold(provider);
+	}
+
+	/** Drops the provider's account hold, whatever its length; returns whether one was held (senpi#5590). */
+	releaseAccountHold(provider: string): boolean {
+		if (!this.isProviderSpent(provider)) return false;
 		this.cooldowns.clear(accountKey(provider));
 		this.accountErrors.delete(provider);
 		return true;
