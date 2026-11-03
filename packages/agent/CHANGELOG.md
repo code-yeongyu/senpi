@@ -1,14 +1,21 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.3-3] - 2026-11-03
 
 ### Breaking Changes
 
 ### Added
 
+- Added a batch coordinator that runs a tool batch as a durable two-step decision across executors (manifest, source-ordered prepare, one decision, release by dependencies) with brain-crash recovery, plus portable BATCH, REPLAY and KILL-BATCH conformance cases and a reference batch executor ([#5429](https://github.com/code-yeongyu/senpi/pull/5429)).
+- Added `createRemoteToolHost()` and `createRemoteExecutor()` (`src/execution/remote-tool-host.ts`, `src/execution/remote-executor.ts`): a `ToolHost` that runs a session's tool calls on a hand over the durable-core `Transport`, one lane per execution scope, and the hand's side that runs them, each execution ID at most once and each scope bound to its root. The reference transport (`createReliableTransport`, `createInProcessNetwork`, `localEndpoint`) and the `Transport` types are exported from the package root. Nothing selects the remote ToolHost yet ([#5483](https://github.com/code-yeongyu/senpi/pull/5483)).
+- Added `createHandLedger()` (`src/execution/remote-hand-ledger.ts`): a hand's durable record of its calls on the execution ledger, so a hand killed mid-call never runs the call again and the session always gets an outcome. `createRemoteToolHost()` takes a required `placement` (`"split-local"`: an interrupted call gets today's placeholder result; `"cross-machine"`: a `hand_restarted` outcome, uncertain once effects were possible). Adds the KILL-HAND, MULTI-HAND/MULTI-KILL and FAULT-HAND conformance cases, exported from `./conformance`. Nothing creates a hand yet ([#5513](https://github.com/code-yeongyu/senpi/pull/5513)).
+- A hand checks the sender's capability grant offline before running a call (`src/execution/grant-verify.ts`): `createGrantVerifier()` requires the exact 0009 row `(peer, this hand, workspace, execute)` from an installed snapshot of the verified roster, places the call's canonical root in a configured workspace by whole path components (default label `omo`), refuses an expired or missing snapshot, ignores a rolled-back one and re-checks running calls on replacement. `createRemoteExecutor()` takes a required `authority` (`{ kind: "self" }` or a peer with its verifier); a refused call is never recorded, opened or run ([#5659](https://github.com/code-yeongyu/senpi/pull/5659)).
+
 ### Changed
 
 ### Fixed
+
+- Fixed `NodeExecutionEnv.listDir` failing the whole listing when another process removed an entry after it was read, so listing sessions no longer fails with `ENOENT` while a Session worker releases its session lock ([#5615](https://github.com/code-yeongyu/senpi/pull/5615)).
 
 ### Removed
 

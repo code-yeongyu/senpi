@@ -1,14 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.3-3] - 2026-11-03
 
 ### Breaking Changes
 
 ### Added
 
+- `StreamOptions.sessionAffinityKey`: an opaque routing key that Anthropic Messages sends in the session-affinity header instead of `sessionId` ([#5086](https://github.com/code-yeongyu/senpi/pull/5086))
+
 ### Changed
 
 ### Fixed
+
+- Sign in with ChatGPT uses a free IPv4 loopback callback port when port 1455 is occupied, keeping the same redirect URI for authorization, code exchange and manual paste ([#5008](https://github.com/code-yeongyu/senpi/pull/5008)).
+- OAuth refresh can use an injected session lock to prevent rotating-token reuse across processes without blocking unrelated accounts.
+- A credential pool's all-blocked refusal reports a rate limit with the time the first account is due back instead of an unclassified error ([#5032](https://github.com/code-yeongyu/senpi/pull/5032))
 
 ### Removed
 

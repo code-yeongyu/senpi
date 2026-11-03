@@ -3,6 +3,25 @@
 Injects the default `timeout` into every `bash` call and appends the "Bash Tool Timeout Policy"
 section to the system prompt.
 
+## 2026-11-03 - Bash timeout policy for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/bash-timeout/timeout.ts`: `buildBashTimeoutPrompt` is back.
+- `packages/coding-agent/src/core/extensions/builtin/bash-timeout/index.ts`: the `## Bash Tool Timeout Policy` before_agent_start hook is back, and renders only when `activeSharedSections(ctx)` is `full`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the before_agent_start hook.
+
 ## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
 
 ### What changed
