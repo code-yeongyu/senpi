@@ -53,6 +53,7 @@ export type NestedRefusal =
 	| "expired"
 	| "not_in_nested_set"
 	| "budget_exhausted"
+	| "invalid_cost"
 	| "unknown_activity"
 	| "activity_ended"
 	| "conflicting_request";

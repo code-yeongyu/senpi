@@ -1,5 +1,6 @@
 import type { CaseImplementation } from "../../conformance/runner.ts";
 import { expectEqual } from "../../durable/testing/store-harness.ts";
+import { nestedChildId } from "../nested.ts";
 import type { NestedCancelTarget } from "../nested-types.ts";
 import type { BatchCaseAdapters } from "./batch-executor.ts";
 import { BrainKilledError, batchHarness, expectRejects } from "./batch-harness.ts";
@@ -17,7 +18,7 @@ async function killedAround(adapters: BatchCaseAdapters, label: string, at: "bef
 
 /** KILL-NEST-01: the brain dies before the admission is durable: nothing was debited, the retry admits it once. */
 const beforeAdmission: KillNestCase = async (adapters) => {
-	const { h, dying } = await killedAround(adapters, "admit:p/c1", "before");
+	const { h, dying } = await killedAround(adapters, `admit:${nestedChildId("p", "c1")}`, "before");
 	await expectRejects(dying.admit(nestRequest()), BrainKilledError, "the dying admission");
 	const restarted = await h.nested();
 	expectEqual(await debited(restarted), 0, "nothing durable");
@@ -27,7 +28,7 @@ const beforeAdmission: KillNestCase = async (adapters) => {
 
 /** KILL-NEST-02: the brain dies after the admission is durable, before replying: the retry gets the same child. */
 const afterAdmission: KillNestCase = async (adapters) => {
-	const { h, dying } = await killedAround(adapters, "admit:p/c1", "after");
+	const { h, dying } = await killedAround(adapters, `admit:${nestedChildId("p", "c1")}`, "after");
 	await expectRejects(dying.admit(nestRequest()), BrainKilledError, "the dying admission");
 	const restarted = await h.nested();
 	expectEqual(await restarted.admit(nestRequest()), admitted("c1", "model", true), "the same child");
@@ -49,13 +50,20 @@ const aroundCascade: KillNestCase = async (adapters) => {
 		BrainKilledError,
 		"dies after the cancel",
 	);
-	expectEqual((await (await h.nested()).read("p"))?.cancels, { "p/c1": "queued" }, "the cascade is durable");
+	expectEqual(
+		(await (await h.nested()).read("p"))?.cancels,
+		{ [nestedChildId("p", "c1")]: "queued" },
+		"the cascade is durable",
+	);
 	const sent: NestedCancelTarget[] = [];
 	const send = async (target: NestedCancelTarget): Promise<void> => {
 		sent.push(target);
 	};
 	await expectRejects(
-		(await h.nested({ label: "cancel_delivered:p/c1", at: "before" })).deliverCancels("p", send),
+		(await h.nested({ label: `cancel_delivered:${nestedChildId("p", "c1")}`, at: "before" })).deliverCancels(
+			"p",
+			send,
+		),
 		BrainKilledError,
 		"dies after sending, before recording",
 	);

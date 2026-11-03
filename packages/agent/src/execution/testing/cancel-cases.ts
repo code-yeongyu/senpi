@@ -1,5 +1,6 @@
 import type { CaseImplementation } from "../../conformance/runner.ts";
 import { expectEqual } from "../../durable/testing/store-harness.ts";
+import { nestedChildId } from "../nested.ts";
 import type { NestedCancelTarget } from "../nested-types.ts";
 import type { BatchCaseAdapters } from "./batch-executor.ts";
 import { admitted, nestParent, nestRequest, openedParent, refusedWith } from "./nest-cases.ts";
@@ -7,7 +8,7 @@ import { admitted, nestParent, nestRequest, openedParent, refusedWith } from "./
 type CancelCase = CaseImplementation<BatchCaseAdapters>;
 
 export const cancelTargetOf = (childRequestId: string, executor: string): NestedCancelTarget => ({
-	ref: { issuer: "brain", executionId: `p/${childRequestId}`, generation: 1 },
+	ref: { issuer: "brain", executionId: nestedChildId("p", childRequestId), generation: 1 },
 	executor,
 });
 
@@ -59,7 +60,11 @@ const admittedFirst: CancelCase = async (adapters) => {
 		"admitted before the cancel",
 	);
 	expectEqual(await nested.cancel("p"), [cancelTargetOf("c1", "e2")], "the cancel names the child");
-	expectEqual((await nested.read("p"))?.cancels, { "p/c1": "queued" }, "the cascade is durable before delivery");
+	expectEqual(
+		(await nested.read("p"))?.cancels,
+		{ [nestedChildId("p", "c1")]: "queued" },
+		"the cascade is durable before delivery",
+	);
 	const refused: NestedCancelTarget[] = [];
 	await nested
 		.deliverCancels("p", async (target) => {

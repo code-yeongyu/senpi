@@ -1,6 +1,6 @@
 import type { CaseImplementation } from "../../conformance/runner.ts";
 import { expectEqual } from "../../durable/testing/store-harness.ts";
-import type { NestedAdmissionControl } from "../nested.ts";
+import { type NestedAdmissionControl, nestedChildId } from "../nested.ts";
 import type { NestedAdmission, NestedParent, NestedRequest } from "../nested-types.ts";
 import { NESTED_LIFETIME_MS } from "../nested-types.ts";
 import type { BatchCaseAdapters } from "./batch-executor.ts";
@@ -36,7 +36,7 @@ export const nestRequest = (over: Partial<NestedRequest> = {}): NestedRequest =>
 
 export const admitted = (childRequestId: string, target: string, replayed: boolean): NestedAdmission => ({
 	kind: "admitted",
-	child: { issuer: "brain", executionId: `p/${childRequestId}`, generation: 1 },
+	child: { issuer: "brain", executionId: nestedChildId("p", childRequestId), generation: 1 },
 	target,
 	replayed,
 });
@@ -75,6 +75,12 @@ const replay: NestCase = async (adapters) => {
 		refusedWith("conflicting_request"),
 		"the same child request id for another call",
 	);
+	expectEqual(await restarted.open({ ...nestParent, executionId: "p/x" }), { kind: "opened" }, "a parent named p/x");
+	const nestedName = await restarted.admit(nestRequest({ parent: "p/x" }));
+	const slashedRequest = await restarted.admit(nestRequest({ childRequestId: "x/c1" }));
+	if (nestedName.kind !== "admitted" || slashedRequest.kind !== "admitted") throw new Error("NEST-02: not admitted");
+	if (nestedName.child.executionId === slashedRequest.child.executionId)
+		throw new Error(`NEST-02: two children share ${nestedName.child.executionId}`);
 };
 
 /** NEST-03: siblings together never exceed the parent's reservation; the refused one debits nothing. */
@@ -88,6 +94,14 @@ const siblingBudget: NestCase = async (adapters) => {
 	);
 	expectEqual(await debited(nested), 6, "the refused sibling debited nothing");
 	expectEqual((await nested.admit(nestRequest({ childRequestId: "c3", cost: 4 }))).kind, "admitted", "6 + 4 fits");
+	for (const cost of [-100, Number.NaN, Number.POSITIVE_INFINITY])
+		expectEqual(
+			await nested.admit(nestRequest({ childRequestId: `bad-${cost}`, cost })),
+			refusedWith("invalid_cost"),
+			`cost ${cost}`,
+		);
+	expectEqual(await debited(nested), 10, "an invalid cost never moves the reservation");
+	expectEqual((await nested.cancel("p")).length, 2, "the record still reads: the cancel names both children");
 };
 
 /** NEST-04: the parent's executor still has to name the parent's generation and scope. */
@@ -95,6 +109,12 @@ const generationAndScope: NestCase = async (adapters) => {
 	const { nested } = await openedParent(adapters);
 	expectEqual(await nested.admit(nestRequest({ parentGeneration: 2 })), refusedWith("stale_generation"), "generation");
 	expectEqual(await nested.admit(nestRequest({ scope: "other" })), refusedWith("scope_mismatch"), "scope");
+	expectEqual(await nested.open(nestParent), { kind: "opened" }, "opening the same parent again");
+	expectEqual(
+		await nested.open({ ...nestParent, generation: 2 }),
+		refusedWith("conflicting_parent"),
+		"opening it again with another generation",
+	);
 };
 
 /** NEST-05: during preflight only the preparation-phase set admits (a `tool_call` hook's cross-plane call). */
@@ -125,10 +145,15 @@ const releaseWidens: NestCase = async (adapters) => {
  * within the activity's subset, and refused once the activity ended. The activity never holds more than the parent.
  */
 const detachedActivity: NestCase = async (adapters) => {
-	const { nested } = await openedParent(adapters);
-	await nested.release("p");
+	const { h, nested } = await openedParent(adapters);
 	const expiresAt = nestParent.leaseUntil;
 	const activity = { activityId: "a1", parent: "p", executor: "e1", scope: "scope", budget: 3, expiresAt };
+	expectEqual(
+		await nested.registerActivity({ ...activity, activityId: "early", targets: ["e2"] }),
+		refusedWith("exceeds_parent"),
+		"a body-phase target before release",
+	);
+	await nested.release("p");
 	for (const [over, what] of [
 		[{ targets: ["model", "elsewhere"] }, "a target the parent does not hold"],
 		[{ targets: ["model"], expiresAt: expiresAt + 1 }, "an expiry past the parent's"],
@@ -159,6 +184,19 @@ const detachedActivity: NestCase = async (adapters) => {
 		await nested.admit(nestRequest({ activityId: "a1", childRequestId: "c3" })),
 		refusedWith("activity_ended"),
 		"after the cell ended",
+	);
+	expectEqual(
+		await nested.registerActivity({ ...activity, activityId: "late", targets: ["model"] }),
+		refusedWith("parent_terminal"),
+		"no activity revives an invocation that ended",
+	);
+	const fresh = await h.nested();
+	await fresh.open({ ...nestParent, executionId: "q" });
+	h.advance(LEASE_MS + 1);
+	expectEqual(
+		await fresh.registerActivity({ ...activity, parent: "q", activityId: "expired", targets: ["model"] }),
+		refusedWith("parent_terminal"),
+		"nor one whose parent's set expired",
 	);
 };
 

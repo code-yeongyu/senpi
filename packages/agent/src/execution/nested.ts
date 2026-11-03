@@ -32,7 +32,9 @@ export interface NestedAdmissionOptions {
  */
 export interface NestedAdmissionControl {
 	/** Writes the parent's nested set, scoped to preparation, before its prepare is sent. Idempotent. */
-	open(parent: NestedParent): Promise<void>;
+	open(
+		parent: NestedParent,
+	): Promise<{ readonly kind: "opened" } | { readonly kind: "refused"; readonly reason: "conflicting_parent" }>;
 	release(parent: string): Promise<void>;
 	/** The parent's invocation is terminal: only its live activities still admit. */
 	settle(parent: string): Promise<void>;
@@ -50,7 +52,11 @@ export interface NestedAdmissionControl {
 	read(parent: string): Promise<NestedRecord | undefined>;
 }
 
-const childId = (parent: string, childRequestId: string): string => `${parent}/${childRequestId}`;
+/** A child's execution id: encoded like the record keys, so no two (parent, childRequestId) pairs can collide. */
+export const nestedChildId = (parent: string, childRequestId: string): string =>
+	JSON.stringify([parent, childRequestId]);
+
+const validAmount = (value: number): boolean => Number.isFinite(value) && value >= 0;
 
 function refused(reason: NestedRefusal): NestedAdmission {
 	return { kind: "refused", reason };
@@ -87,7 +93,12 @@ export function createNestedAdmission(options: NestedAdmissionOptions): NestedAd
 		read,
 		open: (parent) =>
 			update(parent.executionId, async (record) => {
-				if (record !== undefined) return;
+				if (!validAmount(parent.budget))
+					throw new Error(`nested parent ${parent.executionId} has an invalid budget`);
+				if (record !== undefined)
+					return JSON.stringify(record.parent) === JSON.stringify(parent)
+						? ({ kind: "opened" } as const)
+						: ({ kind: "refused", reason: "conflicting_parent" } as const);
 				const expiresAt = Math.min(parent.leaseUntil, parent.admittedAt + NESTED_LIFETIME_MS);
 				const opened: NestedRecord = {
 					parent,
@@ -100,6 +111,7 @@ export function createNestedAdmission(options: NestedAdmissionOptions): NestedAd
 					cancels: {},
 				};
 				await write(opened, "open", null);
+				return { kind: "opened" } as const;
 			}),
 		release: (parent) =>
 			update(parent, async (record) => {
@@ -128,13 +140,15 @@ export function createNestedAdmission(options: NestedAdmissionOptions): NestedAd
 						JSON.stringify({ ...activity, debited: 0, ended: false })
 						? ({ kind: "registered" } as const)
 						: ({ kind: "refused", reason: "conflicting_activity" } as const);
-				if (record.cancelled) return { kind: "refused", reason: "parent_terminal" } as const;
-				const held = set({ ...record, phase: "body" });
+				if (!live(record) || clock() > record.expiresAt)
+					return { kind: "refused", reason: "parent_terminal" } as const;
+				const held = set(record);
 				const subset =
 					activity.executor === record.parent.executor &&
 					activity.scope === record.parent.scope &&
 					activity.targets.every((target) => held.includes(target)) &&
 					activity.expiresAt <= record.expiresAt &&
+					validAmount(activity.budget) &&
 					activity.budget <= record.parent.budget - record.debited;
 				if (!subset) return { kind: "refused", reason: "exceeds_parent" } as const;
 				const activities = {
@@ -161,7 +175,7 @@ export function createNestedAdmission(options: NestedAdmissionOptions): NestedAd
 				if (request.parentGeneration !== record.parent.generation) return refused("stale_generation");
 				if (request.scope !== owner.scope) return refused("scope_mismatch");
 
-				const id = childId(request.parent, request.childRequestId);
+				const id = nestedChildId(request.parent, request.childRequestId);
 				const ref = { issuer, executionId: id, generation: 1 };
 				const known = record.children[request.childRequestId];
 				if (known !== undefined)
@@ -171,6 +185,7 @@ export function createNestedAdmission(options: NestedAdmissionOptions): NestedAd
 						? { kind: "admitted", child: ref, target: known.target, replayed: true }
 						: refused("conflicting_request");
 
+				if (!validAmount(request.cost)) return refused("invalid_cost");
 				const now = clock();
 				if (activity !== undefined) {
 					if (activity.ended || record.cancelled || now > activity.expiresAt) return refused("activity_ended");
