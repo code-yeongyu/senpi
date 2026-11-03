@@ -1,6 +1,7 @@
-import type { DurableStore } from "../durable/store.ts";
+import type { DurableStore, StoreValue } from "../durable/store.ts";
 import type { AdmissionLine } from "../durable/store-admission.ts";
-import type { WakeEvent, WakeInboxRecord, WakeReceipt } from "./wake-types.ts";
+import { isStoreObject } from "./wake-outbox.ts";
+import { WAKE_RETENTION_MS, type WakeEvent, type WakeInboxRecord, type WakeReceipt } from "./wake-types.ts";
 
 export interface WakeInboxOptions {
 	readonly issuer: string;
@@ -24,12 +25,89 @@ export interface WakeInbox {
 	read(): Promise<WakeInboxRecord>;
 }
 
-export function createWakeInbox(_options: WakeInboxOptions): WakeInbox {
+const KIND = "execution.wake-inbox";
+const EMPTY: WakeInboxRecord = { seen: {}, pending: [], closed: {} };
+
+function decode(value: StoreValue | undefined): WakeInboxRecord {
+	if (value === undefined) return EMPTY;
+	if (isStoreObject(value) && isStoreObject(value.seen) && Array.isArray(value.pending) && isStoreObject(value.closed))
+		return value as WakeInboxRecord;
+	throw new Error("corrupt wake inbox record");
+}
+
+export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
+	const { issuer, store, epoch, admission, clock, owner } = options;
+	const key = `${KIND}:${JSON.stringify([issuer])}`;
+	const read = async (): Promise<WakeInboxRecord> => decode(await store.getDocument(key));
+	const write = async (record: WakeInboxRecord, step: string, eventId: string | null): Promise<void> => {
+		await store.commit(
+			epoch,
+			[
+				{ op: "append", id: store.mintId(), kind: KIND, data: { step, executionId: eventId } },
+				{ op: "put", key, data: record },
+			],
+			() => {},
+		);
+	};
+	const update = <T>(decide: (record: WakeInboxRecord) => Promise<T>): Promise<T> =>
+		admission.admit(async () => decide(await read()));
+
 	return {
-		receive: async (_sender, wake) => ({ kind: "ack", eventId: wake.eventId, duplicate: false }),
-		drain: async () => 0,
-		closeScope: async () => {},
-		sweep: async () => [],
-		read: async () => ({ seen: {}, pending: [], closed: {} }),
+		read,
+		receive: (sender, wake) =>
+			update(async (record) => {
+				const bound = owner(wake.scope);
+				if (bound === undefined) return { kind: "refused", eventId: wake.eventId, reason: "unknown_scope" };
+				if (bound !== sender) return { kind: "refused", eventId: wake.eventId, reason: "not_scope_hand" };
+				const seen = record.seen[wake.scope] ?? [];
+				if (seen.includes(wake.eventId)) return { kind: "ack", eventId: wake.eventId, duplicate: true };
+				await write(
+					{
+						...record,
+						seen: { ...record.seen, [wake.scope]: [...seen, wake.eventId] },
+						pending: [...record.pending, wake],
+					},
+					"commit",
+					wake.eventId,
+				);
+				return { kind: "ack", eventId: wake.eventId, duplicate: false };
+			}),
+		drain: async (consume) => {
+			let taken = 0;
+			for (const wake of (await read()).pending) {
+				await consume(wake);
+				await update(async (record) => {
+					if (!record.pending.some((entry) => entry.eventId === wake.eventId)) return;
+					const pending = record.pending.filter((entry) => entry.eventId !== wake.eventId);
+					await write({ ...record, pending }, "take", wake.eventId);
+				});
+				taken += 1;
+			}
+			return taken;
+		},
+		closeScope: (scope) =>
+			update(async (record) => {
+				if (record.closed[scope] !== undefined) return;
+				await write({ ...record, closed: { ...record.closed, [scope]: clock() } }, "close", null);
+			}),
+		sweep: () =>
+			update(async (record) => {
+				const now = clock();
+				const gone = Object.entries(record.closed)
+					.filter(([, closedAt]) => now > closedAt + WAKE_RETENTION_MS)
+					.map(([scope]) => scope);
+				if (gone.length === 0) return [];
+				const drop = new Set(gone);
+				await write(
+					{
+						seen: Object.fromEntries(Object.entries(record.seen).filter(([scope]) => !drop.has(scope))),
+						pending: record.pending,
+						closed: Object.fromEntries(Object.entries(record.closed).filter(([scope]) => !drop.has(scope))),
+					},
+					"sweep",
+					null,
+				);
+				return gone;
+			}),
 	};
 }

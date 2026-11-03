@@ -1,6 +1,6 @@
 import type { DurableStore, StoreValue } from "../durable/store.ts";
 import type { AdmissionLine } from "../durable/store-admission.ts";
-import type { WakeEvent, WakeReceipt } from "./wake-types.ts";
+import { WAKE_RETENTION_MS, type WakeEvent, type WakeOutboxRecord, type WakeReceipt } from "./wake-types.ts";
 
 export interface WakeOutboxOptions {
 	/** The hand this outbox belongs to; every event id it mints starts with it. */
@@ -26,16 +26,88 @@ export interface WakeOutbox {
 	pending(): Promise<readonly WakeEvent[]>;
 }
 
+const KIND = "execution.wake-outbox";
+const EMPTY: WakeOutboxRecord = { pending: [], closed: {} };
+
 export const isStoreObject = (value: StoreValue | undefined): value is { readonly [key: string]: StoreValue } =>
 	value !== null && typeof value === "object" && !Array.isArray(value);
 
-export function createWakeOutbox(_options: WakeOutboxOptions): WakeOutbox {
+function decode(value: StoreValue | undefined): WakeOutboxRecord {
+	if (value === undefined) return EMPTY;
+	if (isStoreObject(value) && Array.isArray(value.pending) && isStoreObject(value.closed))
+		return value as WakeOutboxRecord;
+	throw new Error("corrupt wake outbox record");
+}
+
+export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
+	const { hand, store, epoch, admission, clock } = options;
+	const key = `${KIND}:${JSON.stringify([hand])}`;
+	const read = async (): Promise<WakeOutboxRecord> => decode(await store.getDocument(key));
+	const write = async (record: WakeOutboxRecord, step: string, eventId: string | null, extra: StoreValue[] = []) => {
+		const data: StoreValue = { step, eventId };
+		await store.commit(
+			epoch,
+			[
+				{ op: "append", id: store.mintId(), kind: KIND, data },
+				...extra.map((data) => ({
+					op: "append" as const,
+					id: store.mintId(),
+					kind: "execution.wake-expired",
+					data,
+				})),
+				{ op: "put", key, data: record },
+			],
+			() => {},
+		);
+	};
+	const update = <T>(decide: (record: WakeOutboxRecord) => Promise<T>): Promise<T> =>
+		admission.admit(async () => decide(await read()));
+
+	const receipt = (answer: WakeReceipt): Promise<void> =>
+		update(async (record) => {
+			if (answer.kind !== "ack" || !record.pending.some((wake) => wake.eventId === answer.eventId)) return;
+			const pending = record.pending.filter((wake) => wake.eventId !== answer.eventId);
+			await write({ ...record, pending }, "ack", answer.eventId);
+		});
+
 	return {
-		offer: async (wake) => ({ ...wake, eventId: "stub" }),
-		reoffer: async () => 0,
-		receipt: async () => {},
-		closeScope: async () => {},
-		sweep: async () => [],
-		pending: async () => [],
+		offer: (wake) =>
+			update(async (record) => {
+				const event: WakeEvent = { ...wake, eventId: `${hand}:${store.mintId()}` };
+				await write({ ...record, pending: [...record.pending, event] }, "offer", event.eventId);
+				return event;
+			}),
+		reoffer: async (send) => {
+			let sent = 0;
+			for (const wake of (await read()).pending) {
+				await receipt(await send(wake));
+				sent += 1;
+			}
+			return sent;
+		},
+		receipt,
+		closeScope: (scope) =>
+			update(async (record) => {
+				if (record.closed[scope] !== undefined) return;
+				await write({ ...record, closed: { ...record.closed, [scope]: clock() } }, "close", null);
+			}),
+		sweep: () =>
+			update(async (record) => {
+				const now = clock();
+				const expired = record.pending.filter((wake) => {
+					const closedAt = record.closed[wake.scope];
+					return closedAt !== undefined && now > closedAt + WAKE_RETENTION_MS;
+				});
+				if (expired.length === 0) return [];
+				const gone = new Set(expired.map((wake) => wake.eventId));
+				await write(
+					{ ...record, pending: record.pending.filter((wake) => !gone.has(wake.eventId)) },
+					"sweep",
+					null,
+					expired.map((wake) => ({ reason: "wake_expired", eventId: wake.eventId, scope: wake.scope })),
+				);
+				return [...gone];
+			}),
+		pending: async () => (await read()).pending,
 	};
 }
