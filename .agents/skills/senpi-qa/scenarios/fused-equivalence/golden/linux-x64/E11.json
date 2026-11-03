@@ -7063,7 +7063,8 @@
         "name": "mcp_fxstdio_tool_1",
         "arguments": {
          "value": "from-stdio"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -7118,7 +7119,8 @@
       },
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -7134,7 +7136,8 @@
         "name": "mcp_fxhttp_tool_1",
         "arguments": {
          "value": "from-http"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:4>:0"
        }
       ],
       "api": "openai-completions",
@@ -7189,7 +7192,8 @@
       },
       "isError": false,
       "timestamp": "<ts:message.timestamp:5>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:4>:0"
     },
     {
      "type": "message",

@@ -11,6 +11,8 @@ import { KILL_WAKE_CASES } from "../../src/durable/testing/kill-wake.ts";
 import { MULTI_HOST_CASES } from "../../src/durable/testing/multi-host-cases.ts";
 import { STORE_CASES } from "../../src/durable/testing/store-cases.ts";
 import { WAKE_CASES } from "../../src/durable/testing/wake-cases.ts";
+import { FAULT_HAND_CASES } from "../../src/execution/testing/fault-hand-cases.ts";
+import { KILL_HAND_CASES } from "../../src/execution/testing/kill-hand.ts";
 import { BATCH_CASES } from "../../src/execution/testing/batch-cases.ts";
 import { KILL_BATCH_CASES } from "../../src/execution/testing/kill-batch.ts";
 import { MULTI_SEQ_CASES } from "../../src/execution/testing/multi-seq-cases.ts";
@@ -21,6 +23,7 @@ import { CANCEL_CASES } from "../../src/execution/testing/cancel-cases.ts";
 import { KILL_NEST_CASES } from "../../src/execution/testing/kill-nest.ts";
 import { KILL_LEDGER_CASES } from "../../src/execution/testing/kill-ledger.ts";
 import { LEDGER_CASES } from "../../src/execution/testing/ledger-cases.ts";
+import { MULTI_HAND_CASES } from "../../src/execution/testing/multi-hand-cases.ts";
 import { FAULT_TRANSPORT_CASES } from "../../src/transport/testing/fault-cases.ts";
 import { MULTI_CASES } from "../../src/transport/testing/multi-cases.ts";
 import { TRANSPORT_CASES } from "../../src/transport/testing/transport-cases.ts";
@@ -129,10 +132,13 @@ describe("the ./conformance export", () => {
 			"CONFORMANCE_REGISTRY",
 			"CONSENT_CASES",
 			"DurableStoreError",
+			"FAULT_HAND_CASES",
 			"FAULT_PROFILE_NAMES",
 			"FAULT_TRANSPORT_CASES",
 			"KILL_BATCH_CASES",
 			"KILL_BATCH_DECLARATIONS",
+			"KILL_HAND_CASES",
+			"KILL_HAND_DECLARATIONS",
 			"KILL_LEDGER_CASES",
 			"KILL_LEDGER_DECLARATIONS",
 			"KILL_NEST_CASES",
@@ -142,6 +148,7 @@ describe("the ./conformance export", () => {
 			"KILL_WAKE_DECLARATIONS",
 			"LEDGER_CASES",
 			"MULTI_CASES",
+			"MULTI_HAND_CASES",
 			"MULTI_HOST_CASES",
 			"MULTI_SEQ_CASES",
 			"NEST_CASES",
@@ -201,6 +208,9 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...TRANSPORT_CASES,
 	...MULTI_CASES,
 	...FAULT_TRANSPORT_CASES,
+	...KILL_HAND_CASES,
+	...MULTI_HAND_CASES,
+	...FAULT_HAND_CASES,
 ]);
 
 function resolveHost(name: string, hosts: Readonly<Record<string, HostFactory>>): HostFactory {
