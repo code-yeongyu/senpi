@@ -1,3 +1,79 @@
+## 2026-10-27 - pi-ai models entry budget covers the login-id leaf (senpi#4099)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 32 files: `auth/pool/login-id.ts`, the one-function leaf `models.ts` now imports so `Models.login` stamps a fresh `loginId` on the credential it commits.
+
+### Why
+
+- The lightweight models entry owns the login write path, so it carries the stamp a sign-in writes.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` budget comment and its `maxFiles` line.
+
+## 2026-11-01 - Kill guard judge entry shipped in the npm bundle (senpi#5349, PR #5358)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: a `kill-guard-check` lazy entry (in `scripts/bundle-entry-points.mjs`) emits `core/kill-guard/check-entry.js` as `kill-guard-check.js`. The build fails when `core/kill-guard/runtime.js` lands in a different directory, because that module resolves the entry by URL.
+
+### Why
+
+- On an npm install the runtime shims run the judge as the host's runtime plus this entry script.
+
+### Why an extension could not handle it
+
+- This is the release bundle build itself.
+
+### Expected merge conflict zones
+
+- LOW: `lazyEntryPoints` in `scripts/bundle-entry-points.mjs` next to the `kill-guard` entry, and the directory checks in `buildBundle`.
+
+## 2026-11-01 - Kill guard judge shipped as its own module in every layout (senpi#5349, PR #5354)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: the build fails when the judge (`kill-guard.js`, emitted by a new `kill-guard` lazy entry in `scripts/bundle-entry-points.mjs`) and the chunk `core/kill-guard/host.js` lands in are in different directories.
+- `scripts/build-binaries.sh`: both release `bun build --compile` commands embed `./src/core/kill-guard/index.ts`.
+- `scripts/create-source-archive.sh`: the source archive requires `packages/coding-agent/src/core/kill-guard/index.ts`.
+
+### Why
+
+- A codemode worker cannot resolve the `@code-yeongyu/senpi` peer specifier in every layout, so the host hands it a URL to the judge's own file, which must exist in the npm bundle, the compiled binary and the source archive.
+
+### Why an extension could not handle it
+
+- These are the release build scripts themselves.
+
+### Expected merge conflict zones
+
+- LOW: `lazyEntryPoints` in `scripts/bundle-entry-points.mjs`, the path-identity directory check in `buildBundle`, the two compile lines and the required-path list.
+
+## 2026-11-02 - Refuse a release version the shipped update checker cannot order (#5406, PR #5411)
+
+### What changed
+
+- `scripts/release-version-guard.mjs`: new guard. It imports `comparePackageVersions` from the tree's own `packages/coding-agent/src/utils/version-check.ts` and refuses a version unless that checker orders it equal to itself and never before the bare release of its date. `node scripts/release-version-guard.mjs <version>` exits 1 with the reason.
+- `scripts/release.mjs`: `main()` runs the guard as a subprocess right after the version is resolved, explicit or auto-computed, so a pinned `--sha` cut checks the pinned tree's checker.
+- `.github/workflows/publish-npm.yml`: the release job runs the guard on an explicit version after installing dependencies, before any release or publish step; in publish-only that is the tag's tree.
+
+### Why
+
+- `2026.11.02-1` was cut while its own update checker could not parse it, so installs of that release never saw a newer version. The cut now asks the checker it ships instead of trusting a separate pattern.
+
+### Why an extension could not handle it
+
+- The release script and workflow are repository tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the imports and `main()` of `scripts/release.mjs`; the release job's steps after `Install dependencies` in `publish-npm.yml`.
+
 ## 2026-10-29 - Static check that every bundle and binary entry has a source file (senpi#4892)
 
 ### What changed

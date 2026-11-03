@@ -38,6 +38,22 @@ export class UnusableEntries {
 		return this.isProviderSpent(provider) ? this.accountErrors.get(provider) : undefined;
 	}
 
+	/** Wall-clock time the provider said its account limit resets; undefined when the hold is a guessed default. */
+	accountResetAt(provider: string): number | undefined {
+		return this.cooldowns.statedResetAt(accountKey(provider));
+	}
+
+	/**
+	 * Drops an account hold whose length was a guessed default, so the next request asks the provider again
+	 * (senpi#5568). A hold with a reset the provider stated is kept. Returns whether a hold was dropped.
+	 */
+	releaseGuessedAccountHold(provider: string): boolean {
+		if (!this.isProviderSpent(provider) || this.accountResetAt(provider) !== undefined) return false;
+		this.cooldowns.clear(accountKey(provider));
+		this.accountErrors.delete(provider);
+		return true;
+	}
+
 	isUnusable(model: Model<Api>): boolean {
 		return this.isProviderSpent(model.provider) || this.cooldowns.isSuppressed(entryKey(model));
 	}

@@ -1,3 +1,4 @@
+import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { McpFormInput, McpFormOutcome } from "../../core/mcp-form-types.ts";
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
@@ -104,6 +105,8 @@ export type HostToSessionWorker =
 			command: object;
 			connection?: string;
 			roles?: readonly string[];
+			/** The remote device the connection declared on the host (senpi#5475); the isolate adopts it. */
+			origin?: RpcRemoteOrigin;
 			/** The gate the host captured at ingress, before its first await (#4728). */
 			owner?: ExtensionOwnerWire;
 	  }
