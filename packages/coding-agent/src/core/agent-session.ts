@@ -148,6 +148,7 @@ import {
 	ContinueFromLeafError,
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
+import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
@@ -1987,6 +1988,7 @@ export class AgentSession {
 			emit: (event) => this._emit(event),
 			getCurrentSelector: () => (this.model ? { model: this.model, thinkingLevel: this.thinkingLevel } : undefined),
 			isAuthAvailable: (provider) => this._modelRuntime.hasConfiguredAuth(provider),
+			recoveryRevision: (provider) => credentialRecoveryRevision(this._modelRuntime.authStorage, provider),
 		});
 		this._unfollowProviderAccountChanges = followProviderAccountChanges(this._retryFallback);
 		this._probeBackScheduler = new ProbeBackScheduler({
@@ -13569,8 +13571,8 @@ export class AgentSession {
 			// Add to agent state immediately
 			this.agent.state.messages.push(bashMessage);
 
-			// Save to session
-			this.sessionManager.appendMessage(bashMessage);
+			// Save to session; every RPC observer learns of it the way it learns of any persisted entry (senpi#5576).
+			this._emitEntryAppended(this.sessionManager.appendMessage(bashMessage));
 			this._incrementMessageRevision();
 		}
 	}
@@ -13611,7 +13613,7 @@ export class AgentSession {
 			this.agent.state.messages.push(bashMessage);
 
 			// Save to session
-			this.sessionManager.appendMessage(bashMessage);
+			this._emitEntryAppended(this.sessionManager.appendMessage(bashMessage));
 			this._incrementMessageRevision();
 		}
 
