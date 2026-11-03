@@ -142,13 +142,26 @@ describe("senpi#5707: image-generation availability is decided without running c
 			env: {},
 		},
 		{
+			name: "a built-in gateway with its env key plus a credential header",
+			providers: { openrouter: { headers: { "X-Api-Key": "hdr-value" } } },
+			processEnv: { OPENROUTER_API_KEY: "sk-or-test" },
+			env: {},
+		},
+		{
+			name: "an openai override keyed by a header plus OPENAI_API_KEY",
+			providers: { openai: { baseUrl: "https://proxy.example/v1", headers: { "X-Api-Key": "hdr-value" } } },
+			processEnv: { OPENAI_API_KEY: "sk-env-test" },
+			env: { OPENAI_API_KEY: "sk-env-test" },
+		},
+		{
 			name: "a runtime key over a stored placeholder",
 			providers: {},
 			stored: "SK-SENTINEL-DO-NOT-LOG-2",
 			runtime: "sk-runtime-test",
 			env: {},
 		},
-	])("names the source resolution would use: $name", async ({ providers, stored, runtime, env }) => {
+	])("names the source resolution would use: $name", async ({ providers, stored, runtime, env, processEnv }) => {
+		for (const [name, value] of Object.entries(processEnv ?? {})) vi.stubEnv(name, value);
 		const dir = mkdtempSync(join(tmpdir(), "senpi-5707-parity-"));
 		tempDirs.push(dir);
 		writeFileSync(join(dir, "models.json"), JSON.stringify({ providers }));
@@ -156,13 +169,16 @@ describe("senpi#5707: image-generation availability is decided without running c
 		if (stored !== undefined) await authStorage.modify("openai", async () => ({ type: "api_key", key: stored }));
 		const registry = ModelRegistry.create(authStorage, join(dir, "models.json"));
 		if (runtime !== undefined) await registry.modelRuntime.setRuntimeApiKey("openai", runtime);
+		// A session open builds its services with this offline availability pass first.
+		await registry.refresh({ allowNetwork: false });
 
 		const resolved = await resolveImageGenAuth({ modelRegistry: registry, env });
 		const available = await imageGenAvailability({ modelRegistry: registry, env });
 
 		expect(available.kind === "none").toBe(resolved.kind === "none");
 		if (available.kind !== "none" && resolved.kind !== "none") {
-			expect({ providerId: available.providerId, provenance: available.provenance }).toEqual({
+			expect({ kind: available.kind, providerId: available.providerId, provenance: available.provenance }).toEqual({
+				kind: resolved.kind,
 				providerId: resolved.providerId,
 				provenance: resolved.provenance,
 			});

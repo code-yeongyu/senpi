@@ -1,10 +1,17 @@
-import { type AnyModel, type Api, isModelType, type Model, type ProviderHeaders } from "@earendil-works/pi-ai";
+import {
+	type AnyModel,
+	type Api,
+	type AuthCheck,
+	isModelType,
+	type Model,
+	type ProviderHeaders,
+} from "@earendil-works/pi-ai";
 import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
 import { assertConfigReferenceAuthority } from "./config-reference-resolver.ts";
 import type { ModelsJsonProvider } from "./model-config.ts";
 import { configuredApiKey, configuredHeaders } from "./provider-api-key-auth.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
-import { configuredHeaderAuthStatus } from "./provider-header-auth.ts";
+import { configuredHeaderAuthStatus, headerAuthResolutionSource } from "./provider-header-auth.ts";
 import {
 	getConfigValueEnvVarNames,
 	isCommandConfigValue,
@@ -73,15 +80,21 @@ export async function resolveCompatibilityRequestHeaders(
 	return model.headers || configured ? { ...model.headers, ...configured } : undefined;
 }
 
-/** A models.json or extension provider that names credential headers and no API key (senpi#5707). */
+/**
+ * A provider whose only credential is a configured header: models.json or an extension names credential
+ * headers and no API key, and the provider's own auth `check` (from the last availability pass) fell back
+ * to those headers rather than reporting a key of its own, such as a built-in provider's env key
+ * (senpi#5707). Before any availability pass there is no check to read; the provider then does not read
+ * as header-only, so image generation stays offered and a missing key surfaces at use.
+ */
 export function configuredAuthIsHeaderOnly(
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderConfigInput | undefined,
+	check: Pick<AuthCheck, "source"> | undefined,
 ): boolean {
-	return (
-		configuredApiKey(config, extension) === undefined &&
-		configuredHeaderAuthStatus(config?.headers, extension?.headers)?.configured === true
-	);
+	if (configuredApiKey(config, extension) !== undefined) return false;
+	if (configuredHeaderAuthStatus(config?.headers, extension?.headers)?.configured !== true) return false;
+	return check !== undefined && check.source === headerAuthResolutionSource(config?.headers, extension?.headers);
 }
 
 export function configuredRequestAuthStatus(

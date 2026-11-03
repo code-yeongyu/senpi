@@ -134,7 +134,7 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			const configured = await imageGenAvailability({ modelRegistry });
 			if (configured.kind !== "none") {
 				return failure(
-					`Error: image generation is configured through ${configured.providerId ?? "OPENAI_API_KEY"}, but its credential could not be resolved (a key command failed or returned nothing). Fix that credential and retry.`,
+					`Error: image generation is configured through ${configured.providerId ?? "OPENAI_API_KEY"}, but its credential could not be resolved (a key command failed or returned nothing, or the key is a placeholder). Fix that credential and retry.`,
 					"credential_unavailable",
 					context,
 				);

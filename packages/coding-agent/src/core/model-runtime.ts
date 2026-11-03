@@ -962,9 +962,13 @@ export class ModelRuntime implements Models {
 		return this.resolveProviderAuth(providerId).status;
 	}
 
-	/** Whether the provider's configuration authenticates with credential headers only, naming no API key. */
+	/** Whether the provider's only credential is a configured header: no configured key, and no key of its own. */
 	providerAuthIsHeaderOnly(providerId: string): boolean {
-		return configuredAuthIsHeaderOnly(this.config.getProvider(providerId), this.extensionProviders.get(providerId));
+		return configuredAuthIsHeaderOnly(
+			this.config.getProvider(providerId),
+			this.extensionProviders.get(providerId),
+			this.snapshot.auth.get(providerId),
+		);
 	}
 
 	/**
