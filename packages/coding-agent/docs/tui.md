@@ -343,6 +343,19 @@ const clickable = new MouseRegion(content, (event) => {
 
 In fullscreen mode, unhandled wheel input scrolls the nearest `ScrollView`; unhandled primary-button drags retain transcript selection. OSC 8 links take precedence over parent click regions. `Input`, `Editor`, `SelectList`, and `SettingsList` include fullscreen mouse behavior.
 
+Fullscreen Markdown selection keeps the normal rendered appearance and copies the corresponding original Markdown. Selecting a complete formatted construct retains its syntax; selecting inside it copies only that source fragment. Original line breaks are preserved and visual wrapping adds no clipboard line breaks. `fullscreenCopyOnSelect` controls automatic copying; with it disabled, `Ctrl+X` copies the active selection.
+
+If a display transform cannot be mapped to the original source, or a wrapped-table selection skips source content, copying reports that the original source is unavailable and leaves the clipboard intact. Use application-owned fullscreen selection for original-Markdown copying; the terminal's selection-bypass gesture copies its screen text.
+
+Custom components that copy rendered arrays or add ASCII left padding can preserve selection metadata with `copyLineSources`. Preserve the visible text when carrying its metadata. Returned arrays are source snapshots: if provenance changes, publish a new array even when its text looks identical. Do not replace metadata on an array that a retained frame may still use:
+
+```typescript
+import { copyLineSources } from "@earendil-works/pi-tui";
+
+const original = markdown.render(width - 2);
+return copyLineSources(original, original.map((line) => `  ${line}`), 0, 2);
+```
+
 Regular mode supports scoped capture through `const release = tui.acquireMouseCapture("pending-question")`; the host releases it when the interactive surface closes and reapplies its intent to a replacement renderer after a mode switch. Only an acknowledged, unmodified left press followed by release in the same cell within 500 ms produces a click. Wheel, motion, other buttons, and modified reports are consumed without action. Native selection and scrollback remain unchanged outside the lease; while captured, use the terminal's selection bypass (usually Shift-drag, or Option-drag in iTerm2/Terminal.app). Unknown, stale, resized, or image-bearing frame placement disables click dispatch rather than guessing. Short frames use private cursor-position calibration; after external output the next render appends a fresh frame before recalibration, preserving diagnostics and scrollback. Keyboard paths remain available. This library foundation does not itself enable capture for every regular-mode component.
 
 The `terminal.mouse` setting defaults to `"whilePending"`: the host captures regular-mode input only while an async or blocking question is pending. `"off"` disables mouse capture in both modes; `"always"` keeps regular-mode capture active even without a question. Change it in `/settings` or settings JSON. The default `tuiMode` remains `"regular"`. While captured, wheel reports are consumed, not native scrollback; use the terminal's bypass modifier (Shift-drag on Ghostty/kitty/WezTerm/Alacritty/Windows Terminal, Option-drag on iTerm2/Terminal.app) or disable capture for native selection.

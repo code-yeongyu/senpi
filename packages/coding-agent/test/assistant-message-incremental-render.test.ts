@@ -1,7 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { type Component, Container, Markdown } from "@earendil-works/pi-tui";
+import { type Component, Container, Markdown, ScrollView, TuiAltScreen } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, test } from "vitest";
+import { FrameTerminal } from "../../tui/test/frame-terminal.ts";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import { ProgressiveTranscriptContainer } from "../src/modes/interactive/components/progressive-transcript-container.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 type RenderConfiguration = {
@@ -158,6 +160,39 @@ const renderParityCases: readonly RenderParityCase[] = [
 describe("AssistantMessageComponent incremental rendering", () => {
 	beforeEach(() => {
 		initTheme("dark");
+	});
+
+	test("copies source Markdown through assistant and progressive transcript cache hits", async () => {
+		const terminal = new FrameTerminal(60, 8);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		const component = createComponent(createAssistantMessage([{ type: "text", text: "A **bold** answer" }]));
+		const transcript = new ProgressiveTranscriptContainer({
+			tailBudget: 10,
+			warmChunkSize: 10,
+			requestRender: () => tui.requestRender(),
+		});
+		transcript.addChild(component);
+		component.render(60);
+		transcript.render(60);
+		tui.setLayoutRoot(new ScrollView(transcript));
+		try {
+			await terminal.frame(() => tui.start());
+			await terminal.frame(() => {
+				terminal.sendInput("\x1b[<0;2;2M");
+				terminal.sendInput("\x1b[<32;14;2M");
+				terminal.sendInput("\x1b[<0;14;2m");
+			});
+			expect(copied).toEqual(["A **bold** answer"]);
+		} finally {
+			tui.stop();
+			transcript.dispose();
+		}
 	});
 
 	for (const parityCase of renderParityCases) {

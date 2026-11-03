@@ -14,6 +14,7 @@ import {
 	parseKittyGraphicsProbeResponse,
 } from "./kitty-graphics-probe.ts";
 import { isMultiplexerSession, useLegacyMuxRender, viewportRenderEnabled } from "./mux.ts";
+import { copyLineSources } from "./selection-source.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	parseOscColorResponse,
@@ -938,12 +939,20 @@ const JOIN_BATCH = 1024;
  * which keeps a frame over a long transcript from paying a per-line iterator and push.
  */
 export function joinLineArrays(chunks: readonly (readonly string[])[]): string[] {
-	if (chunks.length <= JOIN_BATCH) return ([] as string[]).concat(...chunks);
+	if (chunks.length <= JOIN_BATCH) {
+		const result = ([] as string[]).concat(...chunks);
+		let offset = 0;
+		for (const chunk of chunks) {
+			copyLineSources(chunk, result, offset);
+			offset += chunk.length;
+		}
+		return result;
+	}
 	const batches: string[][] = [];
 	for (let start = 0; start < chunks.length; start += JOIN_BATCH) {
-		batches.push(([] as string[]).concat(...chunks.slice(start, start + JOIN_BATCH)));
+		batches.push(joinLineArrays(chunks.slice(start, start + JOIN_BATCH)));
 	}
-	return ([] as string[]).concat(...batches);
+	return joinLineArrays(batches);
 }
 
 /**

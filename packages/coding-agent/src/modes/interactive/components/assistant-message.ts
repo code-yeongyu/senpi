@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	type Component,
 	Container,
+	copyLineSources,
 	Markdown,
 	type MarkdownTheme,
 	nextRenderRevision,
@@ -145,7 +146,7 @@ export class AssistantMessageComponent extends Container {
 	override render(width: number): string[] {
 		const signature = this.lastMessageSignature ?? "";
 		if (this.renderCache?.width === width && this.renderCache.signature === signature) {
-			return [...this.renderCache.lines];
+			return copyLineSources(this.renderCache.lines, [...this.renderCache.lines]);
 		}
 
 		const lines = super.render(width);
@@ -300,7 +301,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	private cacheRender(width: number, signature: string, lines: string[]): void {
-		this.renderCache = { lines: [...lines], signature, width };
+		this.renderCache = { lines: copyLineSources(lines, [...lines]), signature, width };
 	}
 
 	private refreshContent(): void {
