@@ -38,6 +38,8 @@ export interface CreateCodemodeSessionManagerOptions {
 	readonly artifactsDir?: string;
 	/** Per-session PI_* values exposed to every kernel and the children it spawns. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The kill guard is on (`terminal.killGuard` in user settings): kernels judge signals before they leave a cell. */
+	readonly killGuard?: boolean;
 	readonly executeTool: ExecuteTool;
 	readonly listTools?: () => readonly EvalSchemaToolInfo[];
 	readonly complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
