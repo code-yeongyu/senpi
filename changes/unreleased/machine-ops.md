@@ -7,7 +7,7 @@
 - `packages/coding-agent/src/core/tools/find.ts`: the default fd search runs as `MachineOps.files.glob` (same fd arguments, `.gitignore` handling, limit notice and error text); custom `FindOperations.glob` is unchanged.
 - `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/powershell.ts`: `createLocalShellOperations` runs the shell through `MachineOps.process.exec` (own process group, scope token `OMO_MACHINE_SCOPE`, same abort/timeout/stream-callback handling, same detached-group tracking via `onSpawn`/`onExit`). `createLocalBashOperations` and `createLocalPowerShellOperations` take an optional machine.
 - `packages/coding-agent/src/core/tools/index.ts`: `ToolsOptions` gains `machineOps` and `machinePolicy`; `createAllToolDefinitions`, `createCodingTools` and `createReadOnlyTools` pass one `ToolMachine` to every tool. With a `machinePolicy.beforeOp`, each tool call runs it exactly once before any effect, and a denial throws its reason; without one the tools keep their exact timing (no added await).
-- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`, `packages/coding-agent/src/core/tools/filesystem-policy.ts`, `packages/coding-agent/src/core/tools/bounded-realpath.ts`: re-export the implementations that moved to `@code-yeongyu/senpi-machine-ops`.
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`, `packages/coding-agent/src/core/tools/filesystem-policy.ts`, `packages/coding-agent/src/core/tools/bounded-realpath.ts`: re-export the implementations that moved to `@code-yeongyu/senpi-machine-ops`. The package carries its own copies of the open-free realpath walker and `waitForChildProcess`; `src/utils/paths.ts` and `src/utils/child-process.ts` keep theirs because release scripts and worker bundles load them from source without a package build.
 - New `packages/coding-agent/src/core/tools/machine.ts`: the process-wide local `MachineOps` (state under the agent dir, in-process PTY holder, `killProcessTree`, fd via `ensureTool`) and `createToolMachine`.
 - `packages/coding-agent/src/core/tools/grep/index.ts`: the path probe uses `MachineOps.files.stat`; the search engine is unchanged.
 
@@ -22,27 +22,6 @@
 ### Expected merge conflict zones
 
 - MEDIUM: the default-operations blocks and the start of `execute` in `read.ts`, `write.ts`, `edit.ts`, `ls.ts`, `find.ts`; `createLocalShellOperations` in `bash.ts`; `createAllToolDefinitions` in `index.ts`.
-
-<!-- changes-log: packages/coding-agent/src/utils/changes.md -->
-## 2026-11-03 - Open-free realpath walker and child-process wait moved to machine-ops (senpi#5592)
-
-### What changed
-
-- `packages/coding-agent/src/utils/paths.ts`: `realpathWithoutOpen` and `realpathWithoutOpenStrict` re-export the implementation now in `@code-yeongyu/senpi-machine-ops`.
-- `packages/coding-agent/src/utils/child-process.ts`: `waitForChildProcess` and `WaitForChildProcessOptions` re-export the implementation now in `@code-yeongyu/senpi-machine-ops`.
-
-### Why
-
-- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
-- The moved filesystem policy, mutation queue and exec need these helpers, and the package may not import coding-agent.
-
-### Why an extension could not handle it
-
-- These are core utilities that core tools import; extensions cannot relocate them.
-
-### Expected merge conflict zones
-
-- LOW: the re-export lines that replace the moved functions in `paths.ts` and `child-process.ts`.
 
 <!-- changes-log: packages/coding-agent/src/changes.md -->
 ## 2026-11-03 - Source runtime resolves the machine-ops workspace package (senpi#5592)
