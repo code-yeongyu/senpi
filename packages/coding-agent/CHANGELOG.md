@@ -6,8 +6,6 @@
 
 ### Added
 
-- Added `hold_host` on observing RPC reads: an observer that sends `hold_host: true` keeps the host from idling out until it sends `hold_host: false` or disconnects, so a remote-control daemon can hold the host while a remote viewer is attached; plain observing reads still never count as activity ([#5626](https://github.com/code-yeongyu/senpi/issues/5626)).
-
 ### Changed
 
 ### Fixed

@@ -64,12 +64,13 @@ describe("an observer holding the host for a remote viewer (senpi#5626)", () => 
 		expect(h.watch()).toBe("exit");
 	});
 
-	it("a plain observe-only client still does not hold the host", () => {
+	it("a plain observe-only client (and a hold carried by a warm) still does not hold the host", () => {
 		const h = harness();
 		const viewer = new Socket();
 		h.occupancy.admit(viewer);
 		send(viewer, { type: "get_protocol_info", observe: true });
 		send(viewer, { type: "get_state", sessionId: "s1", observe: true, hold_host: "yes" });
+		send(viewer, { type: "warm", hold_host: true });
 		expect(h.occupancy.attachedCount).toBe(0);
 		expect(h.resets()).toBe(0);
 		expect(h.watch()).toBe("idle");

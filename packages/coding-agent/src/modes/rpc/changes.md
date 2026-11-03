@@ -10769,22 +10769,3 @@ The classic capability list in `connection-handler.ts`.
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/modes/rpc/session-relocation.ts`, cancellation branches and the `RpcSessionRelocationDeps.session` method set.
-
-## 2026-11-03 - An observer can hold the host for a remote viewer (senpi#5626)
-
-### What changed
-
-- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: an observing read may carry `hold_host: true` (take the hold) or `hold_host: false` (release it); `observingHoldChange` reads it. Only the literal booleans count.
-- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: an observer that takes the hold is HELD. It counts in `attachedCount` (occupancy) and taking the hold resets the idle window, until it releases, sends a non-observing line (then it is attached), or disconnects. Both the supervisor's idle exit and a socket host's empty-exit window read this view.
-
-### Why
-
-- A remote-control daemon reads a host only through observing requests, so the host idled out after `idleExitMs` while a remote viewer was attached (crash record `code 143, reason idle`). Plain observing reads still hold nothing, so looking at a host never keeps it alive.
-
-### Why an extension could not handle it
-
-- Idle exit is decided by the supervisor from its public-socket client classification, before any extension runs.
-
-### Expected merge conflict zones
-
-- LOW: `host-client-occupancy.ts` classifier and `release`; `host-observe-request.ts` field constants.
