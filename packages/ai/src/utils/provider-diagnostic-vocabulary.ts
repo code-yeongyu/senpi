@@ -19,11 +19,15 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 	const siwc = siwcErrorForCode(code);
 	if (siwc !== undefined) return siwc.category;
 	switch (code) {
+		// `account_pool_auth_blocked`: a subscription account pool that refused the request locally because every account needs a new login.
 		case "authentication_error":
 		case "invalid_api_key":
+		case "account_pool_auth_blocked":
 			return "auth";
+		// `account_pool_blocked`: a subscription account pool that refused the request locally until its soonest reset (senpi#4672).
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
+		case "account_pool_blocked":
 			return "rate_limit";
 		case "insufficient_quota":
 		case "exceeded_current_quota_error":
@@ -48,9 +52,28 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 }
 
 /**
- * Closed allowlist of transport failures: Node `errno` / undici `code` names, and the provider SDKs'
- * connection error class names (`APIConnectionError`, `APIConnectionTimeoutError`). Read only from the
- * error chain's `code` and `name` fields, never from message text.
+ * TLS chain-verification failures the runtime puts on a handshake error: the server's chain does not
+ * reach a trusted root, or ends in a self-signed certificate (senpi#5244). A hostname mismatch
+ * (`ERR_TLS_CERT_ALTNAME_INVALID`) and an expired certificate (`CERT_HAS_EXPIRED`) are other failures.
+ */
+const TLS_CHAIN_VERIFICATION_CODES: ReadonlySet<string> = new Set([
+	"UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+	"UNABLE_TO_GET_ISSUER_CERT",
+	"UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+	"SELF_SIGNED_CERT_IN_CHAIN",
+	"DEPTH_ZERO_SELF_SIGNED_CERT",
+	"CERT_UNTRUSTED",
+]);
+
+export function isTlsChainVerificationCode(code: string): boolean {
+	return TLS_CHAIN_VERIFICATION_CODES.has(code);
+}
+
+/**
+ * Closed allowlist of transport failures: Node `errno` / undici `code` names, TLS chain-verification
+ * codes, and the provider SDKs' connection error class names (`APIConnectionError`,
+ * `APIConnectionTimeoutError`). Read only from the error chain's `code` and `name` fields, never from
+ * message text.
  */
 export function categoryForTransportCode(code: string): ProviderDiagnosticCategory | undefined {
 	switch (code) {
@@ -69,7 +92,7 @@ export function categoryForTransportCode(code: string): ProviderDiagnosticCatego
 		case "APIConnectionTimeoutError":
 			return "network";
 		default:
-			return undefined;
+			return isTlsChainVerificationCode(code) ? "network" : undefined;
 	}
 }
 

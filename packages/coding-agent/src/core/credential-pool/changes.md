@@ -1,3 +1,21 @@
+## 2026-10-30 - The generic pool announces its account switches (senpi#2304, senpi#5017)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `onRotate` records the account a pre-output failover left, and the next account's attempt emits one `emitProviderAccountFailover(provider, from, to, reason)` (`account_disabled` maps to `billing`). Nothing is emitted after committed output or when no account is left.
+
+### Why
+
+- Only the Anthropic subscription lane emitted `account_failover`; the generic pool switched accounts with no signal to RPC clients or the TUI.
+
+### Why an extension could not handle it
+
+- The switch happens inside the core credential-pool engine that `ModelRuntime` drives; no extension hook observes it.
+
+### Expected merge conflict zones
+
+- LOW: the `runCredentialFailover({...})` options in `streamWithCredentialRotation`.
+
 ## 2026-11-01 - slotsStartedByLogin is module-private (senpi#5281)
 
 ### What changed

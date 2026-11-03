@@ -4,7 +4,7 @@
   "rules": { "types": "off", "nsTypes": "off" },
   // These executables are supplied by the OS, a language toolchain, or a test that expects a missing command.
   "ignoreBinaries": [
-    "cc", "hdiutil", "julia", "mkfifo", "mount", "ollama", "perl", "pgrep", "rg", "ruby", "script",
+    "cc", "hdiutil", "julia", "mkfifo", "mount", "ollama", "openssl", "perl", "pgrep", "rg", "ruby", "script",
     "senpi-deliberately-missing-probe-command", "taskkill.exe", "tasklist", "trash", "vmmap", "where", "xclip",
   ],
   // Findings marked "pre-existing at origin main aceb1cc1d9" were already present when this check was added. Each
@@ -99,8 +99,6 @@
       ".agents/skills/senpi-qa/scripts/scenarios/goal-policy-rejection-fixture.ts": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused export generateTelemetryDocs (run-by-path entry, newly export-checked)
       "packages/agent/scripts/generate-telemetry-docs.ts": ["generateTelemetryDocs"],
-      // pre-existing at origin main aceb1cc1d9: unused exports generateSummaryWithRequest
-      "packages/agent/src/harness/compaction/compaction.ts": ["generateSummaryWithRequest"],
       // pre-existing at origin main aceb1cc1d9: unused exports WINDOWS_PROCESS_TREE_ROWS
       "packages/agent/src/harness/env/windows-process-tree.ts": ["WINDOWS_PROCESS_TREE_ROWS"],
       // pre-existing at origin main aceb1cc1d9: unused exports invalid, DEFAULT_BOUNDS
@@ -194,8 +192,8 @@
       "packages/ai/src/auth/oauth/devin-token.ts": ["DEVIN_API_ENDPOINT", "DEVIN_FALLBACK_EXPIRY_MS", "DEVIN_TOKEN_URL", "devinCredential"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_KIMI_CODE_REGION, KIMI_CODE_REGION_PROFILES, isKimiCodeRegion
       "packages/ai/src/auth/oauth/kimi-region.ts": ["DEFAULT_KIMI_CODE_REGION", "KIMI_CODE_REGION_PROFILES", "isKimiCodeRegion"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS, managedSentinelMaterials
-      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName", "managedSentinelMaterials"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS
+      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName"],
       // pre-existing at origin main aceb1cc1d9: unused exports ALIBABA_TOKEN_PLAN_IMAGE_MODELS, ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS
       "packages/ai/src/providers/alibaba-token-plan.models.ts": ["ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS", "ALIBABA_TOKEN_PLAN_IMAGE_MODELS"],
       // pre-existing at origin main aceb1cc1d9: unused exports AMAZON_BEDROCK_IMAGE_MODELS, AMAZON_BEDROCK_CLASSIFIER_MODELS
@@ -607,8 +605,8 @@
       "packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts": ["ASK_USER_CLOSED_EVENT"],
       // pre-existing at origin main aceb1cc1d9: unused exports ASK_USER_RESUMED_ENTRY
       "packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts": ["ASK_USER_RESUMED_ENTRY"],
-      // pre-existing at origin main aceb1cc1d9: unused exports applyBashTimeout, buildBashTimeoutPrompt, resolveBashTimeoutDefaults
-      "packages/coding-agent/src/core/extensions/builtin/bash-timeout/index.ts": ["applyBashTimeout", "buildBashTimeoutPrompt", "resolveBashTimeoutDefaults"],
+      // pre-existing at origin main aceb1cc1d9: unused exports applyBashTimeout, resolveBashTimeoutDefaults
+      "packages/coding-agent/src/core/extensions/builtin/bash-timeout/index.ts": ["applyBashTimeout", "resolveBashTimeoutDefaults"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_ESTABLISHMENT_TIMEOUT_MS
       "packages/coding-agent/src/core/extensions/builtin/btw/side-query.ts": ["DEFAULT_ESTABLISHMENT_TIMEOUT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports PROMPT_CACHE_PREWARM_TIMEOUT_MS
@@ -865,8 +863,6 @@
       "packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts": ["ptyBashSchema"],
       // pre-existing at origin main aceb1cc1d9: unused exports lostSessionResult
       "packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts": ["lostSessionResult"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_FOREGROUND_WINDOW_SECONDS
-      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/foreground-window.ts": ["DEFAULT_FOREGROUND_WINDOW_SECONDS"],
       // pre-existing at origin main aceb1cc1d9: unused exports killBashSchema
       "packages/coding-agent/src/core/extensions/builtin/terminal/tools/kill-bash.ts": ["killBashSchema"],
       // pre-existing at origin main aceb1cc1d9: unused exports MAX_PENDING_MONITOR_SPECS, pendingDurableSpecCount
@@ -1041,8 +1037,6 @@
       "packages/coding-agent/src/core/webview/webview-wire.ts": ["WEBVIEW_METHODS"],
       // pre-existing at origin main aceb1cc1d9: unused exports WAKE_SOURCE_KEY_PREFIX
       "packages/coding-agent/src/core/work-obligations.ts": ["WAKE_SOURCE_KEY_PREFIX"],
-      // pre-existing at origin main aceb1cc1d9: unused exports runCoordinatorProcess
-      "packages/coding-agent/src/experimental/coordinator.ts": ["runCoordinatorProcess"],
       // pre-existing at origin main aceb1cc1d9: unused exports defineService, Worker
       "packages/coding-agent/src/experimental/mini/shared/protocol.ts": ["Worker", "defineService"],
       // pre-existing at origin main aceb1cc1d9: unused exports jsonConnection, parentConnection
@@ -1165,8 +1159,6 @@
       "packages/coding-agent/src/modes/rpc/runtime-build-id.ts": ["loadedRuntimeSource"],
       // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_PATCH_LIMITS, RESERVED_SESSION_CONTEXT_KEYS
       "packages/coding-agent/src/modes/rpc/session-context-patch.ts": ["RESERVED_SESSION_CONTEXT_KEYS", "SESSION_CONTEXT_PATCH_LIMITS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports beginPendingClaim
-      "packages/coding-agent/src/modes/rpc/session-registry-claims.ts": ["beginPendingClaim"],
       // pre-existing at origin main aceb1cc1d9: unused exports RELEASE_SETTLE_MS
       "packages/coding-agent/src/modes/rpc/session-release-interrupt.ts": ["RELEASE_SETTLE_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports HOST_ANSWER_TIMEOUT_MS

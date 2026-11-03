@@ -1,3 +1,123 @@
+## 2026-11-02 - Typed socket_closing before engine-initiated compact closes (RULING-124, senpi#5322, senpi#5395)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-closing.ts` (new): `SOCKET_CLOSING_CODES` (`checkpoint_unavailable`, `event_queue_failed`, `event_lease_refused`, `compact_endpoint_unsupported`, `host_shutdown`, `host_handoff`, each with a fixed `retryable`), the `RpcSocketClosingEvent` record type, and `closeSocket`, the one engine close of a peer: a legacy or flag-off peer closes synchronously with no new bytes; a peer that selected compact events has its record queue stopped, receives `socket_closing {code, retryable, detail?}` as its last record, and is closed once that record drains or after 1 s, or at once when the transport is already broken.
+- `packages/coding-agent/src/modes/rpc/session-event-connection.ts` (new): `SessionEventWriterConnection` and the registration type moved out of `session-event-fanout.ts`; a registration holds the transport's writes only (`transportOf`) and a `close(code, detail?)`.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: the event-queue failure closes through `closeSocket` with `event_queue_failed` and `overflow`/`stall`/`transport_error`; the registration's `close` is built here.
+- `packages/coding-agent/src/modes/rpc/compact-required-streams.ts`, `session-event-writer-recovery.ts`: a checkpoint that cannot be frozen closes with `checkpoint_unavailable` and the refusal reason.
+- `packages/coding-agent/src/modes/rpc/compact-materializer-line.ts`, `session-event-writer-destinations.ts`: an event lease refusal and a `compact_refused` record close the peer only after that record is written (`event_lease_refused`, `compact_endpoint_unsupported`), so the refusal precedes `socket_closing`.
+- `packages/coding-agent/src/modes/rpc/rpc-client-events.ts` (new), `rpc-client.ts`: the `RpcClientEvent` union moved to its own module and gained `RpcSocketClosingEvent`; `rpc-client.ts` re-exports it, and `collectEvents()` skips the connection-level record.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `session-event-writer-connections.ts`, `packages/coding-agent/src/modes/interactive/session-control-server.ts`: import `SessionEventWriterConnection` from its new module.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: `closeConnection(id, code, close)`, the host's own close of a connection through `closeSocket`, with the host's socket teardown as the close.
+- `packages/coding-agent/src/modes/rpc/host-shutdown-connections.ts` (new): the host's connection type and the shutdown's connection phase. Each connection drains its own queue (`flushConnection`) and is then announced (`host_shutdown`) and closed independently, so a peer that stopped reading delays only itself; every wait ends at one deadline, `HOST_SHUTDOWN_BUDGET_MS` after the shutdown starts (2 s: the supervisor's 5 s `CHILD_STOP_TIMEOUT_MS` minus a 3 s exit reserve), and a socket still open at it is destroyed with one stderr line naming the elapsed time, so the half-close grace is min(`SOCKET_CUT_GRACE_MS`, remaining budget). The deadline includes `router.dispose()`, which stays unbounded on POSIX (senpi#5398).
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a connection's `close` takes a code; a shutdown closes every connection with `host_shutdown` after `router.dispose()` and the writer flush, and a handoff closes a fully parked connection with `host_handoff` after its park records. An announced close half-closes through the connection's sink (`end()`, bounded by `SOCKET_CUT_GRACE_MS`), so the record is flushed before FIN instead of being discarded by `destroy()`; every other peer is still destroyed at once.
+
+### Why
+
+- With `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on, an engine-initiated close left the client a bare EOF, with no way to tell whether to reconnect, back off or give up (senpi#5322, blocks the flag defaulting on). RULING-124: the record is written and flushed before the close with a bounded wait, a broken transport closes anyway, clients must not depend on it, codes and `retryable` are documented in docs/rpc.md, and flag-off and legacy bytes are unchanged.
+- A SIGTERM'd socket host with a peer that stopped reading never exited on its own: the shutdown waited on that peer's queue drain until the supervisor's SIGKILL (measured: still running at 30 s, with the flag on or off). The connection phase is now bounded so the host exits inside the stop window (senpi#5395).
+- A host shutdown and a generation handoff are engine-initiated socket closes too: `session_closed` and `session_parked` describe sessions, so a client holding several sessions, or none, could not tell either from a failure.
+- A close site that skips the record no longer compiles: the registered transport has no `close`, and the registration's `close` takes a classified code.
+
+### Why an extension could not handle it
+
+- The close sites, the per-socket record queue and the RPC client union are host transport internals; no extension hook observes or owns a socket's teardown.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-client.ts` type re-exports and the `collectEvents()` filter; the moved `RpcClientEvent` union now lives in `rpc-client-events.ts`.
+- LOW: the `registerConnection` body and failure callback in `session-event-fanout.ts`.
+- LOW: `multi-session-host.ts`: the connection record, the handoff-parked hook and the shutdown's connection phase (now `closeHostConnections`).
+
+## 2026-10-26 - Reservation reads report typed store contention (senpi#4372)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/endpoint-reservation-store.ts`: reservation and role reads share the transaction busy-error mapper, preserving existing typed refusals.
+
+### Why
+
+- An exclusive writer blocks rollback-journal readers too. Raw `database is locked` errors escaped the reservation protocol under load (sisyphuslabs/omo-desktop-app#4199).
+
+### Why an extension could not handle it
+
+- Reservation reads run during host startup before extension loading.
+
+### Expected merge conflict zones
+
+- LOW: the reservation store's read and transaction helpers.
+
+## 2026-11-01 - A compact peer's live call records name their call by its snapshot key (RULING-123, senpi#5346)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-call-model.ts`: `CallIdentity`, `CALL_UNKNOWN` and `callIdentity(call)`, the one source of a live call record's identity: the `runtimeItemKey` this model minted when the call was created, or `callUnknown: true` when the record changed no call.
+- `packages/coding-agent/src/modes/rpc/compact-session-calls.ts`: `executionStart`, `executionUpdate`, `hook` and `executionEnd` return the call they changed (undefined when they ignore the record); `update` returns the updated call.
+- `packages/coding-agent/src/modes/rpc/compact-call-fold.ts`: `CallFold.identity` carries that call's identity for `tool_execution_*` and `tool_hook_status`, or `callUnknown: true` when the call shares its `toolCallId` with another call of its own message (C3.4: those records name only the `toolCallId`, so no order may pick one).
+- `packages/coding-agent/src/modes/rpc/compact-call-table.ts`: `sharesIdInMessage(call)`, set while more than one live call of one assistant message holds the same `toolCallId` and cleared when the last of them leaves the table.
+- `packages/coding-agent/src/modes/rpc/compact-call-identity.ts` (new): which live records name a call (`CALL_NAMED_RECORDS`, `toolcall_*` updates), the streamed block's index, and `unvouchedCall`, which answers `callUnknown` for such a record the lane vouched for no call.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`, `compact-lane-current.ts`: `callOwning(messageId, contentIndex)`, the calls table's own owner index.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-compact.ts`: `AcceptedRecord.call` is the whole call fold; `foldCompactRecord` returns a call record's identity (the call its fold changed, or for a `toolcall_*` update the call owning the block once it folded).
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: passes the call fold through.
+- `packages/coding-agent/src/modes/rpc/compact-message-identity.ts`: `LiveIdentity` includes `CallIdentity`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: with the flag on, a `compact_events` connection's copy of a live call record gains `runtimeItemKey`, or `callUnknown: true` when the lane holds no identity for it; a keyed `toolcall_delta`'s delta-only demotion is built from the stamped record, inline or `eventLease` envelope, so it keeps the stamp. The stamped copy is built once per delivery and shared by every compact peer, so an oversized one is staged once per record for all of them (S13 X07), its leased `record` component being the stamped text. Every other destination keeps the legacy line.
+
+### Why
+
+- RULING-123: a compact peer has to join a live call record to that call's snapshot entry across a reconnect, and `toolCallId` cannot do it because providers reuse it. The key must come from the snapshot call model itself, and a record the host cannot attribute must say so instead of omitting the key (RULING-122's rule). A key picked among calls that reuse one `toolCallId` inside one message would be an order join (C3.4), and a stamped key that can be wrong is worse than none.
+
+### Why an extension could not handle it
+
+- The calls component, the acceptance lane and the per-connection rendering are RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `eventLine` in `session-event-writer-destinations.ts`, `foldCompactRecord` in `session-acceptance-compact.ts`, the per-id record methods of `compact-session-calls.ts`, `index`/`remove` in `compact-call-table.ts`.
+
+## 2026-11-01 - A compact peer's live records carry their settled message ids (RULING-120, senpi#5331)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: `end` returns the accepted end (`joined` plus the message's `messageId` and the end's accepted sequence as `terminalSequence`, undefined when refused; a pending or failed terminal pages as `message-<terminalSequence>`, a joined message only as its `join-<n>` member's `messageId`), `fail` returns the failed row's `messageId`, and `append` returns the message its join recorded.
+- `packages/coding-agent/src/modes/rpc/compact-message-identity.ts` (new): the `LiveIdentity`/`SettledEnd` shapes and `MessageIdentities`, which captures each joined entry's owning message when its append is applied, keeps it by entry id until that entry's `entry_appended` takes it (at most `MAX_PENDING_JOINS` waiting, oldest dropped first; RULING-121, senpi#5337), remembers, in a ring of `MAX_EVICTED_JOINS`, the entry id of a join dropped at that bound and of an owned append the settled store never joined (transcript unavailable or join refused) and marks the epoch overflowed when that ring drops one, so such an entry's identity is `ownerUnknown: true` instead of a false not-owned (RULING-122, senpi#5337; counted as `ownerJoinsEvicted`/`ownerJoinsOverflowed`, one stderr line at an epoch's first overflow, ring and flag cleared with the joins), and holds the ids of the record accepted last, answered only for that record at its sequence.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-compact.ts`: `foldCompactRecord` returns that identity; `foldCompactTransition` returns the message an append joined.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: the lane feeds its `identities` from each applied append and each accepted record (an unfolded `entry_appended` still takes its entry's join or unvouched mark), and resets them when an epoch is bootstrapped or the lane retires; `storageStatus` adds the owner-join counters.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-destinations.ts`: with the flag on, the copy a `compact_events` connection receives of a live `message_end` gains `messageId` and `terminalSequence`, `entry_appended` gains `owningMessageId` (or `ownerUnknown: true` when the lane cannot vouch for the entry's owner), and `transcript_write_failed` gains `messageId`, inline or inside a leased record. Every other destination keeps the legacy line.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-settled.ts`: `settledMember` and `joinMember` name the `message-<terminalSequence>` and `join-<n>` members the overlay pages.
+
+### Why
+
+- RULING-120: a compact peer has to join a live record to the settled overlay it pages after a reconnect or a recovery cut, and the ids must come from the rows the overlay pages, not from a second derivation.
+- RULING-121 (senpi#5337): keeping only the last transcript batch's joins dropped an entry's `owningMessageId` when another batch was applied before its `entry_appended`, which the documented absence rule would read as an unowned entry.
+- RULING-122 (senpi#5337): the `MAX_PENDING_JOINS` bound dropped a join silently, which made the same false not-owned possible at the cap; the absence rule holds only if every entry the lane cannot vouch for says so.
+
+### Why an extension could not handle it
+
+- The settled store, the acceptance lane and the per-connection rendering are RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `eventLine` in `session-event-writer-destinations.ts`, `bootstrap`/`applyTranscript`/`accept`/`retire` in `session-acceptance-lane.ts`.
+
+## 2026-11-01 - host start never follows a symlink at the endpoint and re-checks reachability before removing (senpi#5314)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: `prepareSocketPath` stamps the endpoint with `lstat` instead of `stat`, so a symlink (dangling or pointing at a socket) is an entry that is not a socket and the start refuses it ("address already in use by a live server (the entry is not a socket)") without touching the link or its target. After the stale decision it re-stamps the entry, probes reachability again (an entry that now accepts is refused and kept), and re-stamps once more as the last step before `unlink`, which removes only the same dead socket entry.
+
+### Why
+
+- `host ensure` decides with `lstat` (#5283), but the start-time cleanup followed links: a dangling link read as a missing entry and the bind then failed with `host_error`, and a link to a dead socket was probed through and its link entry unlinked. A socket bound earlier can also start listening without changing identity, so the identity check alone could remove a live listener's entry.
+
+### Why an extension could not handle it
+
+- The cleanup runs inside the lifecycle supervisor before the public socket is bound, before any session or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: `prepareSocketPath` and `stampOf` in `host-lifecycle-proxy.ts`.
+
 ## 2026-11-01 - A compact cut resets every open tool call's arguments (senpi#5298, part of #4272)
 
 ### What changed
