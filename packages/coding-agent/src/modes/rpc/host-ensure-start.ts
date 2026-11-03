@@ -1,5 +1,6 @@
 /** Starting a fresh generation for `ensureHost`: settings first, then the supervisor, its pidfile, its readiness. */
 import { spawn } from "node:child_process";
+import { spawnWithPrivateFds } from "../../private-fd-spawn.ts";
 import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
@@ -87,7 +88,7 @@ export async function startHost(
 			...(options.hostArgs ?? []),
 		];
 		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);
-		child = spawn(launch.command, [...launch.args], {
+		child = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
 			env: initialHostEnvironment({

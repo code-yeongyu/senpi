@@ -22,16 +22,9 @@ function legacyFixture(): Record<string, unknown> {
 			pinned: "login-2",
 			slotState: { work: { blockedUntil: 123, blockReason: "rate_limited" } },
 			accounts: [
-				{ name: "default", access: "acc-default", refresh: "ref-default", expires: 1, source: "login" },
-				{
-					name: "work",
-					access: "acc-work",
-					refresh: "ref-work",
-					expires: 2,
-					source: "login",
-					displayName: "Work",
-				},
-				{ name: "login-2", access: "acc-pinned", refresh: "ref-pinned", expires: 3, source: "login" },
+				{ name: "default", source: "login", store: "claude-cli", dirId: "1".repeat(32) },
+				{ name: "work", source: "login", store: "claude-cli", dirId: "2".repeat(32), displayName: "Work" },
+				{ name: "login-2", source: "login", store: "claude-cli", dirId: "3".repeat(32) },
 				{
 					name: "login-3",
 					access: SENTINEL,
@@ -122,15 +115,7 @@ describe("auth.json provider-key migration", () => {
 			access: "canonical-access",
 			refresh: "canonical-refresh",
 			expires: 4_102_444_800_000,
-			accounts: [
-				{
-					name: "default",
-					access: "canonical-access",
-					refresh: "canonical-refresh",
-					expires: 1,
-					source: "login",
-				},
-			],
+			accounts: [{ name: "default", source: "login", store: "claude-cli", dirId: "4".repeat(32) }],
 		};
 		const original = JSON.stringify(
 			{

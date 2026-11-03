@@ -29,14 +29,7 @@ const start = (epoch: string, ordinal: number, messageId = `${epoch}-${ordinal}`
 });
 
 it.each([
-	[
-		"retired epoch",
-		[
-			["A", 0],
-			["B", 0],
-		],
-		["A", 1],
-	],
+	["foreign epoch after the owner's first", [["A", 0]], ["B", 1]],
 	["duplicate ordinal", [["A", 0]], ["A", 0]],
 	["same-epoch reset", [["A", 7]], ["A", 0]],
 ] as const)("rejects %s without publishing", async (_label, accepted, rejected) => {
@@ -51,30 +44,30 @@ it.each([
 	expect(state.storageStatus()).toEqual(status);
 });
 
-it("accepts never-seen epochs in consumer order, including ordinal zero after restart", async () => {
-	const state = await setup();
-	for (const [epoch, ordinal] of [
-		["A", 4],
-		["B", 0],
-		["C", 0],
-	] as const)
-		state.accept(start(epoch, ordinal));
-	expect(state.acceptedSequence).toBe(3);
-});
-
-it("keeps a live old-epoch message readable but refuses further starts after rollover", async () => {
-	const state = await setup();
+// RULING-39: the owner accepts only its registry epoch; every other nonce is refused, however many were seen.
+it("accepts only the owner's current epoch, never a later never-seen one", async () => {
+	const root = await spoolRoot();
+	const state = new CompactSessionState({ dir: root.dir, epoch: "A" });
+	cleanup.push(async () => {
+		await state.retire();
+		await root.cleanup();
+	});
+	for (let i = 0; i < 70; i++)
+		expect(() => state.accept(start(`never-seen-${i}`, 0))).toThrow(
+			expect.objectContaining({ reason: "duplicate_or_stale_start" }),
+		);
+	expect(state.acceptedSequence).toBe(0);
 	state.accept(start("A", 0, "live"));
-	state.accept(start("B", 0));
 	for (const [epoch, reason] of [
-		["A", "duplicate_or_stale_start"],
 		["B", "invalid_start_identity"],
+		["A", "duplicate_or_stale_start"],
 	] as const) {
-		expect(() => state.accept({ ...start(epoch, 1, "live"), firstOrdinal: 0, contentIndex: 1 })).toThrow(
+		expect(() => state.accept({ ...start(epoch, 0, "live"), firstOrdinal: 0, contentIndex: 1 })).toThrow(
 			expect.objectContaining({ reason }),
 		);
-		expect(state.acceptedSequence).toBe(2);
+		expect(state.acceptedSequence).toBe(1);
 	}
+	expect(() => state.accept(start("B", 1))).toThrow(expect.objectContaining({ reason: "duplicate_or_stale_start" }));
 	state.accept({ type: "block_delta", messageId: "live", contentIndex: 0, offset: 4, text: "!" });
 	state.accept({ type: "message_status", messageId: "live", persistence: "appended" });
 	const cut = state.freeze();
@@ -110,20 +103,8 @@ it("rejects a missing epoch and preserves the high-water mark after another vali
 		expect.objectContaining({ reason: "invalid_coverage" }),
 	);
 	expect(state.accept(start("A", 0))).toBe(1);
-	expect(state.accept(start("B", 0))).toBe(2);
-});
-
-it("keeps precisely the last 64 retired epochs at the 65th retirement", async () => {
-	const state = await setup();
-	for (let i = 0; i <= 65; i++) state.accept(start(`epoch-${i}`, 0));
-	expect(() => state.accept(start("epoch-1", 1))).toThrow(
-		expect.objectContaining({ reason: "duplicate_or_stale_start" }),
-	);
-	// Epoch 0 has left the explicitly bounded replay window.
-	expect(state.accept(start("epoch-0", 1))).toBe(67);
-	expect(() => state.accept(start("epoch-65", 1))).toThrow(
-		expect.objectContaining({ reason: "duplicate_or_stale_start" }),
-	);
+	expect(() => state.accept(start("B", 1))).toThrow(expect.objectContaining({ reason: "duplicate_or_stale_start" }));
+	expect(state.accept(start("A", 1))).toBe(2);
 });
 
 it("rejects a reused settled identity after page-out and after its key is removed", async () => {

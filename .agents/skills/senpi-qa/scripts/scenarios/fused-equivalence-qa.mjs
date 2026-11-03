@@ -6,21 +6,42 @@
 //   node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy \
 //     --placement fused [--cases E01,E02] [--surface rpc] [--repeat N] [--child node|binary:<path>] --evidence <slug>
 //
+// `--surface tui` (EQ.tui, plan P0-05c) runs the cases that list O8 through the real interactive TUI instead
+// (lib/equivalence-tui-cases.mjs) and compares their TUI captures against `golden-tui/<platform>`.
+//
 // The CLI child runs on Bun unless `--child` says otherwise (lib/common.mjs). Exit code 0 only when every selected
-// case matches its golden on every declared observable and its witness matches `--pipeline`.
+// case matches its golden on every declared observable and its witness matches `--pipeline`, except a cell listed in
+// fused-equivalence/deferred-goldens.mjs whose golden is missing: it is reported DEFERRED(<owner>, <issue>), never PASS,
+// and does not fail the run. A listed cell whose golden exists fails the run (lib/equivalence-deferred.mjs).
+// A `--record` run fails when a golden already on disk was not rewritten (not selected, failed, or skipped, e.g. E29
+// without a gondolin image store) unless `--leave-unrecorded <ids>` names it: a partial re-record is said out loud
+// (senpi#5189).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
+import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-goldens.mjs";
 import { startCaseRun } from "../../scenarios/fused-equivalence/cases/support/case-run.mjs";
 import { baselineManifest, goldenDir, observe } from "../../scenarios/fused-equivalence/cases/support/observe.mjs";
+import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
 import { expectedWitness, readWitness } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
+import {
+	finishRecord,
+	goldenCellVerdict,
+	staleDeferredEntries,
+	summarizeRun,
+	validateDeferredList,
+} from "../lib/equivalence-deferred.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
+import { tuiCaptureHash, tuiGoldenDir } from "../lib/equivalence-tui-capture.mjs";
+import { diffTuiObservations, tuiVerdictLine } from "../lib/equivalence-tui-compare.mjs";
+import { runTuiCase, TUI_CASE_IDS } from "../lib/equivalence-tui-cases.mjs";
 
 /** Placements and surfaces whose producers come later in the plan; asking for them is an error, never a PASS. */
 const DEFERRED = {
 	placement: { "split-local": "S27a", "split-remote": "DM1", hosted: "V4" },
-	surface: { tui: "P0-05c", desktop: "P0-07b" },
+	surface: { desktop: "P0-07b" },
 };
 
 function parseArgs(argv) {
@@ -40,7 +61,8 @@ function parseArgs(argv) {
 		if (owner) throw new Error(`--${kind} ${requested} is DEFERRED(${owner}): its producer has not landed`);
 	}
 	if (placement !== "fused") throw new Error(`unknown --placement ${placement}`);
-	if (surface !== "rpc" && surface !== "headless") throw new Error(`unknown --surface ${surface}`);
+	if (surface !== "rpc" && surface !== "headless" && surface !== "tui")
+		throw new Error(`unknown --surface ${surface}`);
 	const pipeline = value("--pipeline") ?? "default";
 	expectedWitness(pipeline);
 	const selected = value("--cases")
@@ -48,13 +70,25 @@ function parseArgs(argv) {
 		.map((id) => id.trim().toUpperCase());
 	const unknown = (selected ?? []).filter((id) => !cases.some((c) => c.id === id));
 	if (unknown.length) throw new Error(`unknown case(s): ${unknown.join(", ")}`);
+	const noTui = surface === "tui" ? (selected ?? []).filter((id) => !TUI_CASE_IDS.includes(id)) : [];
+	if (noTui.length)
+		throw new Error(`no TUI drive for case(s): ${noTui.join(", ")} (EQ.tui: ${TUI_CASE_IDS.join(", ")})`);
 	const repeat = Number.parseInt(value("--repeat") ?? "1", 10);
 	if (!Number.isInteger(repeat) || repeat < 1) throw new Error("--repeat must be a positive integer");
-	return { mode, placement, surface, pipeline, selected, repeat, evidence: value("--evidence") };
+	const leaveUnrecorded = (value("--leave-unrecorded") ?? "")
+		.split(",")
+		.map((id) => id.trim().toUpperCase())
+		.filter(Boolean);
+	if (leaveUnrecorded.length && mode !== "record") throw new Error("--leave-unrecorded applies only to --record");
+	return { mode, placement, surface, pipeline, selected, repeat, leaveUnrecorded, evidence: value("--evidence") };
 }
 
 async function runCase(testCase, { pipeline, surface }) {
 	const env = pipeline === "default" ? {} : { SENPI_EXECUTION_PIPELINE: pipeline };
+	if (surface === "tui") {
+		const { observations, sessionFile } = await runTuiCase(testCase, env);
+		return { observations, witness: readWitness(sessionFile) };
+	}
 	const spec = typeof testCase.spec === "function" ? testCase.spec() : testCase.spec;
 	const run = await startCaseRun({ ...spec, label: testCase.id.toLowerCase(), env: { ...spec.env, ...env } });
 	try {
@@ -83,11 +117,42 @@ async function main() {
 	installCleanupHooks();
 	const options = parseArgs(process.argv.slice(2));
 	const guard = guardRealAuth();
-	const selected = cases.filter((c) => !options.selected || options.selected.includes(c.id));
-	const dir = goldenDir();
+	const tui = options.surface === "tui";
+	const selected = cases.filter((c) =>
+		options.selected ? options.selected.includes(c.id) : !tui || TUI_CASE_IDS.includes(c.id),
+	);
+	const dir = tui ? tuiGoldenDir(goldenPlatform()) : goldenDir();
 	const command = `node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs ${process.argv.slice(2).join(" ")}`;
+	// Read before any golden is written: the manifest names the tree the goldens were recorded from, so a record run's own
+	// output must not mark that tree dirty.
+	const manifest = baselineManifest({ repo: repoRoot(), childRuntime: childRuntime().label, command });
+	const problems = validateDeferredList(
+		deferredGoldens,
+		cases.map((c) => c.id),
+	);
+	if (problems.length) throw new Error(`deferred-goldens.mjs is invalid:\n${problems.join("\n")}`);
+	const stale = options.mode === "compare" ? staleDeferredEntries(deferredGoldens) : [];
+	for (const entry of stale)
+		process.stdout.write(
+			`[FAIL] deferred ${entry.platform} ${entry.case} ${entry.mode}: its golden exists - remove the deferred entry (${entry.issue})\n`,
+		);
+	const cell = { platform: goldenPlatform(), mode: tui ? "tui" : "rpc" };
 	const results = [];
 	for (const testCase of selected) {
+		const skipped = testCase.skip?.();
+		if (skipped) {
+			results.push({ id: testCase.id, title: testCase.title, pass: false, skipped });
+			process.stdout.write(`[SKIPPED] ${testCase.id} ${testCase.title} - SKIPPED(${skipped})\n`);
+			continue;
+		}
+		const verdict =
+			options.mode === "compare" ? goldenCellVerdict(deferredGoldens, { ...cell, case: testCase.id }) : undefined;
+		if (verdict?.kind === "deferred") {
+			const { owner, issue, due } = verdict.entry;
+			results.push({ id: testCase.id, title: testCase.title, pass: false, deferred: { owner, issue, due } });
+			process.stdout.write(`[DEFERRED] ${testCase.id} ${testCase.title} - ${verdict.label}, due ${due}\n`);
+			continue;
+		}
 		const runs = [];
 		let error;
 		try {
@@ -116,6 +181,7 @@ async function main() {
 						goldenPath,
 						`${JSON.stringify({ id: testCase.id, title: testCase.title, observations: first }, null, 1)}\n`,
 					);
+					result.written = true;
 				}
 				result.diffs = [];
 			} else {
@@ -123,7 +189,7 @@ async function main() {
 					? JSON.parse(readFileSync(goldenPath, "utf8")).observations
 					: undefined;
 				result.diffs = golden
-					? diffNormalized(golden, first)
+					? (tui ? diffTuiObservations : diffNormalized)(golden, first)
 					: [{ path: "$", golden: "<missing golden>", actual: "<observed>" }];
 			}
 			result.observed = first;
@@ -141,12 +207,16 @@ async function main() {
 		results.push(result);
 	}
 	guard.assertUnchanged();
-	const manifest = baselineManifest({ repo: repoRoot(), childRuntime: childRuntime().label, command });
-	if (options.mode === "record") writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
-	const passed = results.filter((r) => r.pass).length;
-	process.stdout.write(
-		`\nfused-equivalence-qa ${options.mode}: ${passed}/${results.length} passed (child_runtime=${manifest.runtimes.child})\n`,
-	);
+	if (tui) manifest.hashes.tuiCapture = tuiCaptureHash();
+	const unrecorded =
+		options.mode === "record"
+			? finishRecord({ dir, results, leaveUnrecorded: options.leaveUnrecorded, manifest })
+			: [];
+	for (const line of unrecorded) process.stdout.write(`[FAIL] unrecorded golden ${line}\n`);
+	const summary = summarizeRun(results, stale, options.mode, unrecorded);
+	process.stdout.write(`\n${summary.line} (child_runtime=${manifest.runtimes.child})\n`);
+	const verdict = tui && options.mode === "compare" ? tuiVerdictLine(cell.platform, results, stale.length) : undefined;
+	if (verdict) process.stdout.write(`${verdict}\n`);
 	if (options.evidence) {
 		const out = evidenceDir(options.evidence);
 		const receipt = {
@@ -154,6 +224,8 @@ async function main() {
 			child_runtime: manifest.runtimes.child,
 			manifest,
 			options,
+			staleDeferred: stale,
+			unrecorded,
 			results: results.map(({ observed, ...rest }) => rest),
 		};
 		writeFileSync(join(out, "receipt.json"), `${JSON.stringify(receipt, null, 1)}\n`);
@@ -161,10 +233,13 @@ async function main() {
 			if (r.observed) writeFileSync(join(out, `${r.id}.observed.json`), `${JSON.stringify(r.observed, null, 1)}\n`);
 		process.stdout.write(`evidence: ${out}\n`);
 	}
-	process.exitCode = passed === results.length && results.length > 0 ? 0 : 1;
+	process.exitCode = summary.exitCode;
 }
 
-main().catch((error) => {
-	process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-	process.exitCode = 2;
-});
+const releaseTsxCache = ownTsxCache();
+main()
+	.catch((error) => {
+		process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+		process.exitCode = 2;
+	})
+	.finally(releaseTsxCache);

@@ -1,5 +1,64 @@
 # todotools Fork Tracker
 
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/prompt.ts`: `## Todo Management` keeps only the three-steps trigger and its four phases; the pointer to the description and the mark-done/reconcile sentence (the description's Rules block) are dropped.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the three `promptGuidelines`, each a restatement of the description's Rules block, are removed.
+- Terse pass: `packages/coding-agent/src/core/extensions/builtin/todotools/prompt.ts` shortens `## Todo Management` and `## Evidence`.
+
+### Why
+
+- senpi#5335: the todo rules had three homes.
+
+### Why an extension could not handle it
+
+- This extension owns the todo tool and its prompt section.
+
+### Expected merge conflict zones
+
+- LOW: `TASK_MANAGEMENT_SECTION` and the tool definition's guideline list.
+
+## 2026-11-02 - todo corrects near-canonical init shapes before validation (senpi#5332)
+
+### What changed
+
+- `normalize.ts`: `prepareTodoArguments` now rewrites six near-canonical `init` shapes before schema validation. Phase records nested inside `list[i].items` (or inside top-level `items` on an explicit `op: "init"`) are promoted to phases, and `{content}` item records become their string. A phase with tasks but no name gets a default name, an empty phase is dropped, a JSON-string `list` is parsed, stray strings in `list` are dropped, and an `op` with stray leading or trailing punctuation or whitespace (never digits) is trimmed to the known op; `rm`, `done`, `drop` and `start` are only corrected when the call names a `task` or `phase`, so a correction never turns into a bulk change. Each rewrite adds an `[auto-corrected]` notice under a reserved string key that is trusted only when `prepareTodoArguments` set it. A call no rule changes comes back as the same reference, and a rewrite that would leave `list` empty is abandoned.
+- `tools/todo.ts`: `execute` strips the reserved key with `splitPreparedCorrections` and prepends its notices to the corrections.
+- `prompt.ts`: the `init` row states that each `list` entry is one phase and that `items` holds only task strings.
+
+### Why
+
+- senpi#5332: schema validation runs before `execute`, so these shapes failed with `Validation failed for tool "todo"` and never reached the execute-time correction. A transcript scan found 78 such failures in 75 sessions, mostly from GLM and Kimi models.
+
+### Why an extension could not handle it
+
+- `prepareArguments` belongs to the tool definition this builtin registers; no extension hook sits between the provider stream and another tool's validation.
+
+### Expected merge conflict zones
+
+- LOW: `prepareTodoArguments` and the helper block in `normalize.ts`, the `execute` prologue in `tools/todo.ts`, and the `init` row in `prompt.ts`.
+
+## 2026-10-31 - todo unwraps a list wrapped one level too deep (senpi#5148)
+
+### What changed
+
+- `normalize.ts`: new `prepareTodoArguments` unwraps `list` when it arrives as a nested array (`[[{phase, items}]]`, or one inner array per phase) or as a lone `{list: [...]}` wrapper. Anything else, and any wrapper around an empty list, is passed through unchanged and fails validation as before.
+- `tools/todo.ts`: the todo tool registers it as `prepareArguments`, so the unwrap runs before schema validation on the loop's detached copy.
+
+### Why
+
+- A weaker tool-calling model sometimes sends the phased list wrapped one level too deep; the call failed validation (`list/0 must be object`) and the model often retried the same shape.
+
+### Why an extension could not handle it
+
+- `prepareArguments` belongs to the tool definition this builtin registers; no extension hook sits between the provider stream and another tool's validation.
+
+### Expected merge conflict zones
+
+- LOW: the `registerTodoTool` definition in `tools/todo.ts` and the helper block in `normalize.ts`.
+
 ## 2026-10-15 - A one-task list reaches no handoff moment (senpi#3323)
 
 ### What changed

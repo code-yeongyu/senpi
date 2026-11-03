@@ -4,10 +4,13 @@
 // Cursor exec QA already uses (scripts/scenarios/cursor-exec-lifecycle: the real generated protobuf schemas). The
 // backend sends an exec readArgs frame; today's cursor exec bridge resolves it by running the session's `read` tool
 // and answers readResult then one streamClose; the backend then ends the turn. O1-O4 come from the Run stream (the
-// decoded client frames and the request headers) instead of the fake model server. The client's run-level heartbeat
-// frames are keep-alives on a timer, not behavior, so they are left out of O1; a runRequest's JSON detail is left out too,
-// because it carries content-addressed blob ids of the prompt that hash the sandbox path and the date.
+// decoded client frames and the request headers) instead of the fake model server. Every client frame is decoded in
+// full with the generated schema (the shared wire log keeps only a 240-character prefix): the runRequest is what senpi
+// sends to Cursor, so its whole message is O1. Its content-addressed blob ids hash the prompt (sandbox path, date), so
+// the normalizer maps them one-to-one by key like every other id. The client's run-level heartbeat frames are
+// keep-alives on a timer, not behavior, so they are left out of O1.
 import { randomUUID } from "node:crypto";
+import { fromBinary, toJson } from "@bufbuild/protobuf";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -29,8 +32,16 @@ export default {
 	spec: { turns: [{ text: "E19-UNUSED" }], files: { "cursor-target.txt": "E19-CURSOR-READ\nsecond line\n" } },
 	async drive(run) {
 		const wire = await loadCursorWire();
+		const decodedWire = {
+			...wire,
+			summarizeClient: (bytes) => {
+				const { detail, ...summary } = wire.summarizeClient(bytes);
+				const schema = wire.schemas.AgentClientMessageSchema;
+				return { ...summary, decoded: toJson(schema, fromBinary(schema, bytes)) };
+			},
+		};
 		const token = `qa-cursor-${randomUUID()}`;
-		const cursor = await startRunServer(wire, { expectedAuthorization: `Bearer ${token}` });
+		const cursor = await startRunServer(decodedWire, { expectedAuthorization: `Bearer ${token}` });
 		run.cleanups.push(() => cursor.close());
 		const origin = `http://127.0.0.1:${cursor.port}`;
 		run.extraRoots.push({ prefix: origin, token: "<cursor-server>" }, { prefix: token, token: "<cursor-token>" });
@@ -45,11 +56,7 @@ export default {
 				url: RUN_PATH,
 				headers: cursor.headersReceipt ?? {},
 				body: {
-					frames: cursor.log.entries
-						.filter((e) => !TIMER_FRAMES.has(e.case))
-						.map(({ tMs, i, ...frame }) =>
-							frame.case === "runRequest" ? { ...frame, detail: undefined } : frame,
-						),
+					frames: cursor.log.entries.filter((e) => !TIMER_FRAMES.has(e.case)).map(({ tMs, i, ...frame }) => frame),
 				},
 			},
 		];

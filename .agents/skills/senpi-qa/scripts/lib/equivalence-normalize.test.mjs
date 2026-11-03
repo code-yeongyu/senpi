@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { createNormalizer, diffNormalized } from "./equivalence-normalize.mjs";
+import { createNormalizer, diffNormalized, directoryRoots } from "./equivalence-normalize.mjs";
 
 const U1 = "01a18140-5eea-72cf-aab6-4bbe9aa427cc";
 const U2 = "9d3636a4-3e1f-4346-9fa5-23e139d0478b";
@@ -81,7 +84,24 @@ test("wall-clock values never cause a difference: ties, gaps and clock races nor
 	assert.deepEqual(normalize([{ at: 1 }]), [{ at: 1 }]);
 });
 
-test("durations and resource measurements are dropped and nothing else is", () => {
+test("content-addressed blob ids map one-to-one by field, and only at those fields", () => {
+	const normalize = createNormalizer();
+	const out = normalize({
+		id: "entry-1",
+		conversationState: {
+			rootPromptMessagesJson: ["L7/T3UHG6bQTLK3q=", "KJu71vy2TD317VOe="],
+			turns: ["L7/T3UHG6bQTLK3q="],
+		},
+		spec: { turns: ["E12-FIRST"] },
+	});
+	assert.deepEqual(out, {
+		id: "<id:1>",
+		conversationState: { rootPromptMessagesJson: ["<id:2>", "<id:3>"], turns: ["<id:2>"] },
+		spec: { turns: ["E12-FIRST"] },
+	});
+});
+
+test("durations are dropped, measurement values become <measured> with their keys kept, nothing else changes", () => {
 	const normalize = createNormalizer();
 	const out = normalize({
 		durationMs: 12,
@@ -89,11 +109,58 @@ test("durations and resource measurements are dropped and nothing else is", () =
 		toolDurationMs: 9,
 		generationMs: 25,
 		queued_ms: 4,
-		memory: { liveBytes: 7 },
+		structuredContent: { exit_code: 0, wall_time_seconds: 0.1 },
+		memory: { liveBytes: 7, rssBytes: 9, heapUsedBytes: 1, heapTotalBytes: 2, externalBytes: 3 },
 		timeoutMs: 5000,
 		text: "took 12ms",
 	});
-	assert.deepEqual(out, { memory: {}, timeoutMs: 5000, text: "took 12ms" });
+	assert.deepEqual(out, {
+		structuredContent: { exit_code: 0 },
+		memory: {
+			liveBytes: "<measured>",
+			rssBytes: "<measured>",
+			heapUsedBytes: "<measured>",
+			heapTotalBytes: "<measured>",
+			externalBytes: "<measured>",
+		},
+		timeoutMs: 5000,
+		text: "took 12ms",
+	});
+	// A measurement that appears in one observation and not the other is a difference.
+	assert.equal(diffNormalized(normalize({ memory: { liveBytes: 7 } }), normalize({ memory: {} })).length, 1);
+});
+
+test("the detached-cell elapsed label in a status text becomes <elapsed>; nothing else in a status text changes", () => {
+	const normalize = createNormalizer();
+	// Every form the codemode eval-status formatter emits (formatElapsedSeconds), single- and multi-cell heads.
+	const tokenized = [
+		["↗ js · G4 detached nested calls (0s)", "↗ js · G4 detached nested calls (<elapsed>)"],
+		["↗ js · G4 detached nested calls (1s)", "↗ js · G4 detached nested calls (<elapsed>)"],
+		["↗ js · a cell that never finishes (59s)", "↗ js · a cell that never finishes (<elapsed>)"],
+		["↗ py · cell (3m)", "↗ py · cell (<elapsed>)"],
+		["↗ js · cell (2h)", "↗ js · cell (<elapsed>)"],
+		["↗ js · cell (2h 30m)", "↗ js · cell (<elapsed>)"],
+		["↗ eval 2: first, second (1d 2h 3m)", "↗ eval 2: first, second (<elapsed>)"],
+	];
+	for (const [statusText, expected] of tokenized)
+		assert.equal(normalize({ statusText }).statusText, expected, statusText);
+	const untouched = [
+		"↗ js · queued cell (queued)",
+		"↗ js · cell (1s) and more",
+		"↗ js · cell (1m 2s)",
+		"↗ js · cell (12ms)",
+		"Sending (1s)",
+		"Steering - reaches the agent at its next step",
+		"",
+	];
+	for (const statusText of untouched) assert.equal(normalize({ statusText }).statusText, statusText, statusText);
+	// Only the statusText field: the same text under another key is compared as produced.
+	assert.equal(normalize({ text: "↗ js · cell (1s)" }).text, "↗ js · cell (1s)");
+	// 0s and 1s of the same cell compare equal.
+	assert.deepEqual(
+		diffNormalized(normalize({ statusText: "↗ js · c (1s)" }), normalize({ statusText: "↗ js · c (0s)" })),
+		[],
+	);
 });
 
 test("roots and host facts are replaced longest first; other text is never masked", () => {
@@ -120,6 +187,24 @@ test("roots and host facts are replaced longest first; other text is never maske
 		os: "- OS: darwin (kernel <host:kernel>)",
 		hex: "deadbeef cafe0001",
 	});
+});
+
+test("a directory root reached through a symlink tokenizes in its allocated and its resolved form", (t) => {
+	const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "eq-roots-")));
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const real = join(scratch, "real");
+	const link = join(scratch, "link");
+	mkdirSync(real);
+	symlinkSync(real, link);
+	const normalize = createNormalizer({ roots: directoryRoots(link, "<sandbox>", { keyed: "<sandbox-key>" }) });
+	assert.deepEqual(
+		normalize({
+			allocated: `${link}/work`,
+			resolved: `${real}/work`,
+			sessionKey: `--${real.replaceAll("/", "-")}-work--`,
+		}),
+		{ allocated: "<sandbox>/work", resolved: "<sandbox>/work", sessionKey: "--<sandbox-key>-work--" },
+	);
 });
 
 test("token maps and ranks are scoped to one normalize() call", () => {

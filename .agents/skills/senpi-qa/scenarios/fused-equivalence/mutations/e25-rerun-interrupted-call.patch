@@ -1,0 +1,26 @@
+diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
+index e84fc23ee2..4721107e7b 100644
+--- a/packages/coding-agent/src/core/agent-session.ts
++++ b/packages/coding-agent/src/core/agent-session.ts
+@@ -11625,6 +11625,21 @@ export class AgentSession {
+ 				...this._sessionStartEvent,
+ 				...(this._sizesOnlyStartup ? { sizesOnly: true } : {}),
+ 			});
++			// MUTATION (P0-05e E25): re-run every dangling tool call of the reopened transcript.
++			if (this._lifecycleBinding.controller.requiresHumanContinuation) {
++				const answered = new Set(
++					this.sessionManager
++						.getBranch()
++						.flatMap((entry) =>
++							entry.type === "message" && entry.message.role === "toolResult" ? [entry.message.toolCallId] : [],
++						),
++				);
++				for (const entry of this.sessionManager.getBranch())
++					if (entry.type === "message" && entry.message.role === "assistant")
++						for (const block of entry.message.content)
++							if (block.type === "toolCall" && !answered.has(block.id))
++								void this.executeTool(block.name, block.arguments).catch(() => {});
++			}
+ 			await restoreMovedState(this.sessionManager, (moved) =>
+ 				this._extensionRunner
+ 					.emitSessionMove({ type: "session_move_import", ...moved })

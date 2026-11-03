@@ -1,16 +1,22 @@
 // EQ normalizer (plan §6.2): the one rule set every fused-equivalence observation goes through before comparison.
 //
 // - one-to-one first-occurrence token maps per id namespace (`uuid` by shape anywhere, `id` by key: a value under an id
-//   key that is not a bare uuid is one id, `<pid>:<uuid>` owner ids included);
+//   key that is not a bare uuid is one id, `<pid>:<uuid>` owner ids included; content-addressed blob ids by field);
 // - timestamps become ranks (ISO and filename-style datetimes and dates inside strings, epoch numbers under time keys):
 //   each timestamp becomes its rank of appearance inside its namespace, the key that carries it qualified by its parent
 //   key (`<ts:entry.timestamp:3>` is the third entry timestamp). Wall-clock values themselves are never compared:
 //   neighbouring events land in the same millisecond or not by chance, and a value assigned before an event is emitted
 //   can trail one emitted after it, so even their relative order is a race; event and entry order are compared directly;
-// - durations and resource measurements are dropped (duration/elapsed/latency/queued keys, kernel memory byte counts);
+// - durations are dropped (duration/elapsed/latency/queued keys); resource measurements (kernel memory byte counts)
+//   keep their key and compare as `<measured>`, so a measurement that appears or disappears is still a difference;
+// - the wall-clock elapsed label of the codemode detached-cell status (`\u2197 js \u00b7 <summary> (1s)`, formatElapsedSeconds in
+//   packages/senpi-codemode/src/extension/eval-status.ts) becomes `(<elapsed>)`, under the statusText key only: a cell that
+//   detaches at its 1 s timeout reads `(0s)` or `(1s)` depending on host load;
 // - only run-scoped prefixes are replaced: the roots the harness allocates (sandbox, checkout, fake-server origin) and
 //   the host facts the CLI renders about the machine it runs on;
 // - nothing else is masked: every other string, number, key and array order is compared as produced.
+
+import { realpathSync } from "node:fs";
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const PURE_UUID = new RegExp("^" + UUID.source + "$", "i");
@@ -37,6 +43,12 @@ const ID_KEYS = new Set([
 	"taskId",
 	"ownerId",
 ]);
+/**
+ * Content-addressed blob ids, by field (`<parent key>.<key>`, each element of the array an id): a Cursor runRequest names
+ * its prompt blobs by hash, and the prompt carries the sandbox path and the date. They share the one-to-one `id` map, so
+ * the same blob named twice gets the same token.
+ */
+const BLOB_ID_FIELDS = new Set(["conversationState.rootPromptMessagesJson", "conversationState.turns"]);
 /** Ids shorter than this are only tokenized under their key, never searched for inside other text. */
 const EMBEDDED_ID_MIN = 6;
 /**
@@ -46,10 +58,15 @@ const EMBEDDED_ID_MIN = 6;
 const GENERATED_HEX_ID_MIN = 8;
 const PURE_HEX_ID = /^[0-9a-f]+$/i;
 const TIME_KEY = /^(ts|at|since|time|timestamp|date)$|(Time|At|Timestamp|Since)(Ms)?$/;
+// `wall_time_seconds` is the bash tool's structured result field (packages/coding-agent/src/core/tools/bash.ts), the
+// command's wall time rounded to 0.1 s (P0-05e: E28 runs bash through the sandbox example).
 const DURATION_KEY =
-	/^(duration|elapsed|latency|generation|ttft|firstToken|waited|took|queued)(Ms|Us|Ns|Sec|Seconds|_ms)?$|(Duration|Elapsed|Latency|Generation|Ttft|FirstToken|Waited|Took|Queued)(Ms|Us|Ns|Sec|Seconds)?$/;
-/** Measured resource quantities (a kernel's live heap after a cell), dropped like durations. */
+	/^(duration|elapsed|latency|generation|ttft|firstToken|waited|took|queued)(Ms|Us|Ns|Sec|Seconds|_ms)?$|(Duration|Elapsed|Latency|Generation|Ttft|FirstToken|Waited|Took|Queued)(Ms|Us|Ns|Sec|Seconds)?$|^wall_time_seconds$/;
+/** Measured resource quantities (a kernel's live heap after a cell): the key is compared, the value is `<measured>`. */
 const MEASUREMENT_KEY = /^(liveBytes|rssBytes|heapUsedBytes|heapTotalBytes|externalBytes)$/;
+const MEASURED = "<measured>";
+/** The detached-cell status text with its trailing elapsed label, in exactly the forms formatElapsedSeconds emits. */
+const EVAL_STATUS_ELAPSED = /^(\u2197 .* )\((?:\d+s|\d+m|\d+h(?: \d+m)?|\d+d \d+h \d+m)\)$/u;
 // Epoch numbers under a time key: seconds or milliseconds between 2001 and 2286.
 const EPOCH_MS_MIN = 1e12;
 const EPOCH_MS_MAX = 1e13;
@@ -71,6 +88,23 @@ function epochOfNumber(value) {
 	if (value >= EPOCH_MS_MIN && value < EPOCH_MS_MAX) return value;
 	if (value >= EPOCH_S_MIN && value < EPOCH_S_MAX) return value * 1000;
 	return undefined;
+}
+
+/**
+ * A run-scoped directory root in every form a child can report it: the path as allocated and the path with its
+ * symlinks resolved (a child reports its resolved cwd, and macOS temp dirs sit behind `/tmp` and `/var` symlinks to
+ * `/private/...`). `keyed` also adds each form as a session-directory key (`/` replaced by `-`) under `keyed`'s token.
+ * @param {string} dir an existing directory
+ * @param {string} token
+ * @param {{ keyed?: string }} [options]
+ * @returns {Array<{ prefix: string, token: string }>}
+ */
+export function directoryRoots(dir, token, { keyed } = {}) {
+	const forms = [...new Set([dir, realpathSync.native(dir)])];
+	return forms.flatMap((form) => [
+		{ prefix: form, token },
+		...(keyed ? [{ prefix: form.replaceAll("/", "-"), token: keyed }] : []),
+	]);
 }
 
 /**
@@ -145,19 +179,26 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 			const namespace = parent === undefined ? (key ?? "text") : `${parent}.${key ?? "text"}`;
 			if (typeof node === "string") {
 				if (key !== undefined && ID_KEYS.has(key) && !PURE_UUID.test(node)) return onId("id", node);
-				return rewriteString(node, namespace);
+				const text = key === "statusText" ? node.replace(EVAL_STATUS_ELAPSED, "$1(<elapsed>)") : node;
+				return rewriteString(text, namespace);
 			}
 			if (typeof node === "number") {
 				const epoch = key !== undefined && TIME_KEY.test(key) ? epochOfNumber(node) : undefined;
 				return epoch === undefined ? node : onTimestamp(epoch, namespace);
 			}
-			if (Array.isArray(node)) return node.map((item) => walk(item, undefined, key ?? parent));
+			if (Array.isArray(node)) {
+				if (BLOB_ID_FIELDS.has(namespace))
+					return node.map((item) =>
+						typeof item === "string" ? onId("id", item) : walk(item, undefined, key ?? parent),
+					);
+				return node.map((item) => walk(item, undefined, key ?? parent));
+			}
 			if (node && typeof node === "object") {
 				const out = {};
 				for (const [childKey, child] of Object.entries(node)) {
-					if (DURATION_KEY.test(childKey) || MEASUREMENT_KEY.test(childKey)) continue;
+					if (DURATION_KEY.test(childKey)) continue;
 					const outKey = rewriteString(childKey);
-					out[outKey] = walk(child, childKey, key ?? parent);
+					out[outKey] = MEASUREMENT_KEY.test(childKey) ? MEASURED : walk(child, childKey, key ?? parent);
 				}
 				return out;
 			}

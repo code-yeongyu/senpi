@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { readJsonl } from "../../../../scripts/lib/common.mjs";
+import { withoutWitnessEntries } from "./witness.mjs";
 
 /** Credential-bearing headers: compared as hashes of their values only (O4). */
 const CREDENTIAL_HEADERS = new Set([
@@ -34,23 +35,23 @@ const fileContent = (bytes) => {
 	return bytes.length <= TEXT_LIMIT && Buffer.from(text, "utf8").equals(bytes) ? { text } : { sha: sha(bytes) };
 };
 const sha = (value) => `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
+/** A credential header's value as its hash, marked redacted so it never reads as a key (O4 still compares it). */
+const redactedSha = (value) => `<redacted:${sha(value)}>`;
 /**
- * The session's lifecycle tracker writes its snapshots (`session-lifecycle`) and work-custody records, and the host
- * announces loaded-surface changes (an MCP server connecting), on their own schedule beside the turn's events: where
- * one lands between two turn events is a race (a background delivery or a connect settles a millisecond earlier or
- * later). O6 and O7 keep each channel (lifecycle, surfaces) in its own ordered list, so its sequence is still compared
- * in full while its interleave with the turn and with the other channel is not.
+ * The MCP inventory announcement is emitted on the extension's own schedule: in E11 (darwin-arm64, today's code) it
+ * landed before the startup `pi-websearch` status events in one run and after them in another, and with the servers
+ * connected one at a time through `/mcp reconnect` it landed before or after that command's own notice and
+ * `command_invocation`. No case input orders it, so this one type is compared as its own list.
  */
-const LIFECYCLE_CUSTOM_TYPES = new Set(["session-lifecycle", "work-custody"]);
-const isLifecycleEntry = (entry) => entry?.type === "custom" && LIFECYCLE_CUSTOM_TYPES.has(entry.customType);
-const isLifecycleEvent = (event) =>
-	event.type === "session_lifecycle" || (event.type === "entry_appended" && isLifecycleEntry(event.entry));
 const isSurfacesEvent = (event) => event.type === "loaded_surfaces_changed";
 /**
  * A multi-session host's event-loop watchdog reports a stall when the machine is loaded (`host_stalled` with its drift):
  * whether one fires depends on how loaded the machine is, not on the session, so it is not part of O6.
  */
 const isHostHealthEvent = (event) => event.type === "host_stalled";
+
+const transcript = (file) =>
+	withoutWitnessEntries(file && existsSync(file) ? readJsonl(readFileSync(file, "utf8")) : []);
 
 /** Provider requests: the fake model server's, or those of the provider fixture a case serves itself (E19 Cursor). */
 const modelRequests = (run) =>
@@ -72,27 +73,27 @@ export const collectors = {
 				Object.entries(request.headers ?? {})
 					.filter(([name]) => !FRAMING_HEADERS.has(name))
 					.sort(([a], [b]) => a.localeCompare(b))
-					.map(([name, value]) => [name, CREDENTIAL_HEADERS.has(name) ? sha(String(value)) : value]),
+					.map(([name, value]) => [name, CREDENTIAL_HEADERS.has(name) ? redactedSha(String(value)) : value]),
 			),
 		),
 	O5: (run) => ({ calls: effectCalls(run), tree: sandboxTree(run.box.cwd), extra: run.effects }),
+	// One interleaved stream per client, as a TUI or desktop client receives it. The one exception is the event type whose
+	// position was measured to differ between runs of the same code: `loaded_surfaces_changed` (see isSurfacesEvent). It
+	// keeps its own ordered list, compared in full; only its position among the other events is not compared.
 	O6: (run) =>
 		run.clients.map((client) => ({
-			turn: client.events.filter(
-				(event) => !isLifecycleEvent(event) && !isSurfacesEvent(event) && !isHostHealthEvent(event),
-			),
-			lifecycle: client.events.filter(isLifecycleEvent),
+			events: client.events.filter((event) => !isHostHealthEvent(event) && !isSurfacesEvent(event)),
 			surfaces: client.events.filter(isSurfacesEvent),
 		})),
 	O7: (run) => {
-		const entries =
-			run.sessionFile && existsSync(run.sessionFile) ? readJsonl(readFileSync(run.sessionFile, "utf8")) : [];
+		const entries = transcript(run.sessionFile);
 		return {
 			nonEmpty: entries.length > 0,
 			count: entries.length,
 			durableIdStable: run.sessionIds.length > 0 && run.sessionIds.every((id) => id === run.sessionIds[0]),
-			entries: entries.filter((entry) => !isLifecycleEntry(entry)),
-			lifecycleEntries: entries.filter(isLifecycleEntry),
+			entries,
+			// A case that runs more than one session at once (E30) lists the other sessions' transcripts here.
+			...(run.peerSessionFiles ? { peers: run.peerSessionFiles.map((file) => transcript(file)) } : {}),
 		};
 	},
 	O8: (run) => ({ headless: run.states }),

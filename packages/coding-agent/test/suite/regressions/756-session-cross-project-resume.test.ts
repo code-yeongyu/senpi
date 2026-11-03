@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -128,7 +129,7 @@ async function runCli(args: string[], fixture: CliFixture): Promise<CliResult> {
 	const child = spawn(process.execPath, args, {
 		cwd: fixture.projectDir,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			[ENV_AGENT_DIR]: fixture.agentDir,
 			PI_OFFLINE: "1",
 			TSX_TSCONFIG_PATH: rootTsconfigPath,

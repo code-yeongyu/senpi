@@ -230,7 +230,8 @@ function loadSkillsFromDirInternal(
 			// For symlinks, check if they point to a directory and follow them
 			let isDirectory = entry.isDirectory();
 			let isFile = entry.isFile();
-			if (entry.isSymbolicLink()) {
+			const isLink = entry.isSymbolicLink();
+			if (isLink) {
 				try {
 					const stats = statSync(fullPath);
 					isDirectory = stats.isDirectory();
@@ -241,9 +242,12 @@ function loadSkillsFromDirInternal(
 				}
 			}
 
+			// A linked entry belongs to another tree: the ignore files above it do not hide it, and a linked
+			// directory gets its own ignore context, as in collectSkillEntries (senpi#5060, senpi#5069).
+			const linkedDirectory = isLink && isDirectory;
 			const relPath = toPosixPath(relative(root, fullPath));
 			const ignorePath = isDirectory ? `${relPath}/` : relPath;
-			if (ig.ignores(ignorePath)) {
+			if (!isLink && ig.ignores(ignorePath)) {
 				continue;
 			}
 
@@ -252,7 +256,7 @@ function loadSkillsFromDirInternal(
 					fullPath,
 					source,
 					false,
-					ig,
+					linkedDirectory ? ignore() : ig,
 					root,
 					provenance,
 					allowedSet,
@@ -525,4 +529,23 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 		skills: Array.from(skillMap.values()),
 		diagnostics: [...allDiagnostics, ...collisionDiagnostics],
 	};
+}
+
+/**
+ * Warnings for skill folders an ignore file hid from discovery (senpi#5060). A folder whose name a loaded
+ * skill already carries is skipped: another root supplied that skill, so nothing is missing.
+ */
+export function ignoredSkillDiagnostics(
+	ignoredSkillFiles: readonly string[],
+	loadedSkills: readonly Skill[],
+): ResourceDiagnostic[] {
+	const loadedNames = new Set(loadedSkills.map((skill) => skill.name));
+	return ignoredSkillFiles
+		.filter((skillFile) => !loadedNames.has(basename(dirname(skillFile))))
+		.map((skillFile) => ({
+			type: "warning",
+			category: "skill-ignored",
+			path: skillFile,
+			message: `Skill not loaded: ${dirname(skillFile)} is listed in an ignore file (.gitignore, .ignore or .fdignore) of the folder above it. Remove that entry to load the skill; to keep git ignoring it, list it in .git/info/exclude instead.`,
+		}));
 }
