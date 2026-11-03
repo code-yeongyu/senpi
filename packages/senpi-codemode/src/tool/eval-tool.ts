@@ -134,6 +134,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		description: prompt.description,
 		promptSnippet: prompt.promptSnippet,
 		promptGuidelines: [...prompt.promptGuidelines],
+		fullPromptGuidelines: [...prompt.fullPromptGuidelines],
 		parameters,
 		executionMode: "sequential",
 		prepareArguments: (args) => {

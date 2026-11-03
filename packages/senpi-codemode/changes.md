@@ -1,3 +1,41 @@
+## 2026-11-03 - Full eval guidelines for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: `buildEvalPrompt` also returns `fullPromptGuidelines`, the pre-#5342 per-dialect batching line and reset line.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: passes them as the eval tool's `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the eval prompt parts and the tool definition.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: the per-dialect batching guideline is removed (each dialect's description already carries it) and the remaining guideline keeps only the kernel memory notice rule.
+- Terse pass: the kernel memory notice guideline in `packages/senpi-codemode/src/prompt/eval-prompt.ts` is shortened.
+
+### Why
+
+- senpi#5335: the batching guideline and the reset rule restated the eval description.
+
+### Why an extension could not handle it
+
+- The eval tool definition owns its guidelines.
+
+### Expected merge conflict zones
+
+- LOW: `promptGuidelines` in `buildEvalPrompt`.
+
 ## 2026-10-31 - eval infers an omitted run language when it is unambiguous (senpi#5154)
 
 ### What changed

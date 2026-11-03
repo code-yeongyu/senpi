@@ -10,6 +10,12 @@ export function terminalOrApp(surface: PromptSurface): TerminalOrApp {
 	return surface === "chat" ? "app" : surface;
 }
 
+/**
+ * Which wording the shared prompt generators render (senpi#5665): `full` is their text from before the
+ * senpi#5335 diet, `diet` the slimmed text. A prompt preset declares it; every other prompt renders `diet`.
+ */
+export type SharedSections = "full" | "diet";
+
 export interface AvailableTool {
 	name: string;
 	category: "search" | "session" | "command" | "other";

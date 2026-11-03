@@ -1,3 +1,61 @@
+## 2026-10-30 - Anthropic affinity header carries the session-affinity key (senpi#2553)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the session-affinity header (`x-session-affinity`, or `x-session-id` for OpenRouter) carries `options.sessionAffinityKey ?? options.sessionId`; the `createClient` parameter is renamed `affinityKey`. Compat gating is unchanged.
+- `packages/ai/src/api/simple-options.ts`: `buildBaseOptions` forwards `sessionAffinityKey`.
+
+### Why
+
+- The coding agent sends an HMAC of the session id there so a gateway never learns the session id (senpi#2553).
+
+### Why an extension could not handle it
+
+- The header value is computed inside the provider's client construction.
+
+### Expected merge conflict zones
+
+- LOW: the `cacheSessionId`/`affinityKey` line before `createClient(` in `streamAnthropic`, the `createClient` signature, and the affinity-header block in `createClient`; one added line in `buildBaseOptions`.
+
+## 2026-10-30 - lazyStream keeps an attached provider diagnostic (senpi#3975)
+
+### What changed
+
+- `packages/ai/src/api/lazy.ts`: `createSetupErrorMessage` reads the diagnostic a provider adapter or credential pool attached to the error (`readProviderDiagnostic`) and keeps it on the error message as `providerDiagnostic`.
+
+### Why
+
+- senpi#3975: a credential pool whose every slot is limited throws its refusal through `lazyStream`. The rate-limit diagnostic it attaches, with the soonest unblock time, was dropped there, so the turn read as unclassified and the goal retried at once.
+
+### Why an extension could not handle it
+
+- `lazyStream` builds the error message every lazily loaded API returns; no extension sees the thrown error.
+
+### Expected merge conflict zones
+
+- LOW: the import block and `createSetupErrorMessage` in `lazy.ts`.
+
+## 2026-11-03 - Replayed thinking bound to a different conversation no longer wedges a session (senpi#5587)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` takes a `replay` argument; a Claude request with thinking on that replays signed thinking sends `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` plus the `thinking-binding-controls-2026-08-01` beta on every thinking branch, not only the `supportsMidConvoEffort` one, unless betas are suppressed or the transport refused the control. A budget-thinking request whose final tool-use turn lost its thinking degrades thinking as a foreign turn does. `stream()` builds every attempt from the context with rejected turns stripped, rebuilds once without the binding when a transport refuses it, and on exactly the "bound to a different conversation" 400 rebuilds once on the same model without the replayed signed thinking, records an `anthropic_thinking_binding_recovery` diagnostic and a request-shape log line; a second identical refusal ends the turn with one actionable error carrying the provider diagnostic.
+- `packages/ai/src/api/anthropic-thinking-binding.ts` (new): the error matchers, the Claude-only binding rule, `bindReplayedThinking`, the per-session memory of rejected turns and refused bindings (cleared at session teardown) and the unrecoverable-error builder.
+- `packages/ai/src/api/anthropic-request-shape-log.ts`: `logAnthropicRecovery` writes one record per rebuilt request to the debug request-shape log.
+
+### Why
+
+- The binding policy was gated on a per-model compat flag set for a handful of catalog entries, so custom and gateway Claude entries, the plain adaptive and budget branches and beta-suppressed configurations replayed signed thinking with no policy. A block minted under another prefix then failed every request of the session, because the block is stored in history; nothing recognised the 400 (the unsigned-thinking matcher predates the backticked message).
+
+### Why an extension could not handle it
+
+- The request body, its betas and the retry around the SDK call are built inside the provider adapter; an extension's payload hook runs after `buildParams` and cannot rebuild a rejected request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `buildParams` (the `thinkingBinding` beta shape and the budget-thinking degrade condition) and the `createRequest`/retry block in `stream()` of `anthropic-messages.ts`.
+- LOW: the new module and the appended function in `anthropic-request-shape-log.ts`.
+
 ## 2026-10-30 - Preserve SIWC admission and stream failures (part of #5003)
 
 ### What changed

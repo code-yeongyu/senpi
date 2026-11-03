@@ -1,5 +1,80 @@
 # core/tools changes
 
+## 2026-11-03 - Full-section guidelines for the built-in tools (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `powershell.ts`, `edit.ts`, `read.ts`, `write.ts`, `grep/index.ts`: each `*ToolSystemPromptContribution` keeps its pre-#5342 `fullGuidelines` beside the diet `guidelines`, exposed as `fullPromptGuidelines` (`ShellToolConfig.fullPromptGuidelines` for the shell tools).
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the contribution constants and the definitions' prompt fields.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/edit.ts`: the four guideline bullets (all restated by the `edits[]` schema) become one: "Put every change to one file into a single edit call."
+- `packages/coding-agent/src/core/tools/grep/index.ts`: the grep guideline is dropped; `getEvalOnlyGrepGuideline` carries the merged rule.
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/powershell.ts`: the PI_* guideline reads "PI_* environment variables carry the current model and session details."
+- Terse pass: `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/write.ts`, `packages/coding-agent/src/core/tools/edit.ts`, `packages/coding-agent/src/core/tools/bash.ts`, and `packages/coding-agent/src/core/tools/powershell.ts` shorten their guideline wording.
+
+### Why
+
+- senpi#5335: tool guidelines restated the tool schema.
+
+### Why an extension could not handle it
+
+- Tool guidelines are defined on the core tool definitions.
+
+### Expected merge conflict zones
+
+- LOW: the `guidelines` arrays of the four tools.
+
+## 2026-10-31 - Agent-shell results carry the engine trust status under a fallback (senpi#5241)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: the non-zero exit result calls `annotateShellTrust` (`engine-trust/shell-trust.ts`). Under an adopted fallback generation it adds `trust` (`status` from the adopted record, plus a heuristic `hint` with the matched pattern id when the output looks like a certificate verification error) to `details` and `structuredContent`, and appends one fixed catalog line for the model only when a hint is present. `BashToolDetails` gains the optional `trust` field. The success `outputSchema` and every result without a fallback are unchanged.
+
+### Why
+
+- omo#10762 design 6.7: an agent-shell command can fail TLS verification under a degraded certificate import while the engine's own requests succeed. The status must come from the adopted record, never from command output, which can forge any footer or trust line (design M16).
+
+### Why an extension could not handle it
+
+- The adopted trust record and the structured bash result are both built inside the core tool's result path. An extension sees the result after it is built and has no trusted view of the exit status and full output together.
+
+### Expected merge conflict zones
+
+- LOW: the `exitCode !== 0` branch of `createShellToolDefinition`'s execute, and the `BashToolDetails` interface.
+
+## 2026-11-02 - read can ignore the context model on a runtime without a session (senpi#5413)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: new `ReadToolOptions.contextModel` (default `true`). When `false`, `read` does not read `ctx.model`: no model-specific image note, and the image resize profile falls back to `resizeOptions`, as it already does when no execution context is passed.
+
+### Why
+
+- A runtime that owns no session (`bootstrapRuntime()` without a `sessionManager`, senpi#5223) refuses its loop-side context members by name, `model` included, so `read` threw on every call there. That runtime is how a tool-execution-only process will run the built-in tools (brain/hand split).
+
+### Why an extension could not handle it
+
+- `read` is a core built-in tool; how it reads its execution context is decided inside its definition.
+
+### Expected merge conflict zones
+
+- LOW: the `ReadToolOptions` property list and the two `model` reads in `createReadToolDefinition`'s image branch.
+
 ## 2026-10-27 - The core bash tool applies the session's caller env (fixes senpi#4381)
 
 ### What changed
