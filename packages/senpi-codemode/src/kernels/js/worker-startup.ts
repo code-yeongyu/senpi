@@ -107,9 +107,10 @@ async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, s
 		hostToolNames: resolveKernelToolNameSource(options.hostToolNames),
 		foreignLanguageNames: resolveKernelToolNameSource(options.foreignLanguageNames),
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
-		// A worker thread's process.env starts as a copy of the host's, so it is told what to drop and set. Never an
-		// inline worker: it runs on the host thread, whose own env must keep the host's hand-off (senpi#5635).
-		...(worker.mode === "worker" && options.inheritedEnv !== undefined
+		// A worker thread's process.env starts as a copy of the host's, so it is told what to drop and set. That includes
+		// the inline fallback, which is a worker thread too. A process kernel already starts from the scrubbed env
+		// (senpi#5635, senpi#5653).
+		...(worker.mode !== "process" && options.inheritedEnv !== undefined
 			? inheritedEnvironmentDelta(process.env, options.inheritedEnv())
 			: {}),
 		...(options.memory === undefined ? {} : { memory: options.memory }),
