@@ -98,6 +98,19 @@ describe("the hand file channel refuses what the design rules out (senpi#5645)",
 		expect(seen).toEqual(["write"]);
 	});
 
+	it("renames a file onto another spelling of itself without holding its slot twice", async () => {
+		const dirs = await handDirs("s40-self-rename");
+		const link = openLink();
+		startHand(link, dirs, []);
+		const files = remoteHost(link).deviceFiles(scopeOf(dirs.cwd));
+		await files.write(join(dirs.cwd, "a.md"), new TextEncoder().encode("a"));
+
+		await files.rename(join(dirs.cwd, "a.md"), `${dirs.cwd}/./a.md`);
+		await files.write(join(dirs.cwd, "a.md"), new TextEncoder().encode("after"));
+
+		expect(new TextDecoder().decode(await files.read(join(dirs.cwd, "a.md")))).toBe("after");
+	});
+
 	it("refuses an oversized write before anything reaches the hand", async () => {
 		const seen: string[] = [];
 		const dirs = await handDirs("s40-cap");

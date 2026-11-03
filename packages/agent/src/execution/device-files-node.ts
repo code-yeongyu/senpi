@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DeviceFileError, type DeviceFiles, type DeviceFileStat, FILE_CHANNEL_MAX_BYTES } from "./device-files.ts";
 
@@ -23,6 +23,34 @@ async function guarded<T>(path: string, signal: AbortSignal | undefined, run: ()
 	}
 }
 
+/** Reads at most the channel limit: a file that grows past it while being read is refused, never shipped in full. */
+async function readBounded(path: string, signal: AbortSignal | undefined): Promise<Uint8Array> {
+	const handle = await open(path, "r");
+	try {
+		if (!(await handle.stat()).isFile()) throw new DeviceFileError("not_a_file", path);
+		const chunks: Uint8Array[] = [];
+		let total = 0;
+		for (;;) {
+			if (signal?.aborted) throw new DeviceFileError("aborted", path);
+			const chunk = new Uint8Array(64 * 1024);
+			const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+			if (bytesRead === 0) break;
+			total += bytesRead;
+			if (total > FILE_CHANNEL_MAX_BYTES) throw new DeviceFileError("too_large", path);
+			chunks.push(chunk.subarray(0, bytesRead));
+		}
+		const bytes = new Uint8Array(total);
+		let offset = 0;
+		for (const chunk of chunks) {
+			bytes.set(chunk, offset);
+			offset += chunk.length;
+		}
+		return bytes;
+	} finally {
+		await handle.close();
+	}
+}
+
 function statOf(entry: Stats): DeviceFileStat {
 	const kind = entry.isFile() ? "file" : entry.isDirectory() ? "directory" : "other";
 	return { kind, size: entry.size, mtimeMs: entry.mtimeMs };
@@ -35,13 +63,7 @@ function statOf(entry: Stats): DeviceFileStat {
  */
 export function localDeviceFiles(): DeviceFiles {
 	return {
-		read: (path, options) =>
-			guarded(path, options?.signal, async () => {
-				const entry = await stat(path);
-				if (!entry.isFile()) throw new DeviceFileError("not_a_file", path);
-				if (entry.size > FILE_CHANNEL_MAX_BYTES) throw new DeviceFileError("too_large", path);
-				return new Uint8Array(await readFile(path, options?.signal ? { signal: options.signal } : {}));
-			}),
+		read: (path, options) => guarded(path, options?.signal, () => readBounded(path, options?.signal)),
 		write: (path, data, options) =>
 			guarded(path, options?.signal, async () => {
 				if (data.byteLength > FILE_CHANNEL_MAX_BYTES) throw new DeviceFileError("too_large", path);

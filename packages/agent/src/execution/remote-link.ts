@@ -40,6 +40,8 @@ interface Pending {
 export function createHandLink(transport: Transport): HandLink {
 	const pending = new Map<string, Pending>();
 	let announced: RemoteHello | undefined;
+	// A wait that ran out is remembered: later operations answer at once instead of each waiting again.
+	let waitedOut = false;
 	const helloWaiters = new Set<(hello: RemoteHello) => void>();
 
 	const settle = (executionId: string, reply: HandReply): void => {
@@ -103,7 +105,7 @@ export function createHandLink(transport: Transport): HandLink {
 			return replied;
 		},
 		hello(ms, signal) {
-			if (announced !== undefined || signal?.aborted) return Promise.resolve(announced);
+			if (announced !== undefined || waitedOut || signal?.aborted) return Promise.resolve(announced);
 			return new Promise((resolve) => {
 				const done = (hello: RemoteHello | undefined): void => {
 					clearTimeout(timer);
@@ -112,7 +114,10 @@ export function createHandLink(transport: Transport): HandLink {
 					resolve(hello);
 				};
 				const onAbort = (): void => done(undefined);
-				const timer = setTimeout(() => done(undefined), ms);
+				const timer = setTimeout(() => {
+					waitedOut = true;
+					done(undefined);
+				}, ms);
 				helloWaiters.add(done);
 				signal?.addEventListener("abort", onAbort, { once: true });
 			});

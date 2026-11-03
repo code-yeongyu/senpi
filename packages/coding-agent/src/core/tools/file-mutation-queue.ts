@@ -159,6 +159,26 @@ export async function acquireFileMutationLock(filePath: string, signal?: AbortSi
 }
 
 /**
+ * Holds the mutation slots of several files for one operation (a rename, a multi-file patch). Paths that name the same
+ * file under any spelling (`a.md` and `./a.md`, a case-only alias, a symlink) share one key and take one slot, so the
+ * operation never waits on a slot it holds itself; the slots are taken in key order, so two operations over the same
+ * files in a different order never wait on each other.
+ */
+export async function withFileMutationQueues<T>(filePaths: readonly string[], fn: () => Promise<T>): Promise<T> {
+	const byKey = new Map<string, string>();
+	for (const filePath of filePaths) {
+		const key = await getMutationQueueKey(filePath);
+		if (!byKey.has(key)) byKey.set(key, filePath);
+	}
+	const ordered = [...byKey.keys()].sort().map((key) => byKey.get(key) ?? key);
+	const holdFrom = (index: number): Promise<T> => {
+		const filePath = ordered[index];
+		return filePath === undefined ? fn() : withFileMutationQueue(filePath, () => holdFrom(index + 1));
+	};
+	return holdFrom(0);
+}
+
+/**
  * Serialize file mutation operations targeting the same file.
  * Operations for different files still run in parallel.
  */
