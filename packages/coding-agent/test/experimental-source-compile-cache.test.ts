@@ -190,6 +190,26 @@ describe("source compile cache global setup", () => {
 		expect(passes).toBe(2);
 	});
 
+	test("fails naming the renamed run directory and the last error when every delete pass leaves it", () => {
+		const directory = mkdtempSync(join(tmpdir(), "senpi-source-compile-cache-"));
+		directories.add(directory).add(`${directory}-removing`);
+		const notEmpty = Object.assign(new Error("ENOTEMPTY: directory not empty"), { code: "ENOTEMPTY" });
+
+		let thrown: unknown;
+		try {
+			removeRunDirectory(directory, () => {
+				throw notEmpty;
+			});
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(Error);
+		expect(thrown instanceof Error ? thrown.message : "").toContain(`${directory}-removing`);
+		expect(thrown instanceof Error ? thrown.cause : undefined).toBe(notEmpty);
+		expect(existsSync(`${directory}-removing`)).toBe(true);
+	});
+
 	test("keeps a directory the caller already named", () => {
 		process.env[SOURCE_COMPILE_CACHE_ENV] = "/caller/chosen/directory";
 

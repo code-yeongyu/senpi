@@ -48,12 +48,20 @@ export function removeRunDirectory(
 		rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
 		return;
 	}
+	let lastPass: Error | undefined;
 	for (let pass = 1; existsSync(removing); pass += 1) {
-		if (pass > DELETE_PASSES) throw new Error(`${removing} was still there after ${DELETE_PASSES} delete passes`);
+		if (pass > DELETE_PASSES) {
+			const last = lastPass?.message ?? "returned with the directory still there";
+			throw new Error(`${removing} was still there after ${DELETE_PASSES} delete passes; last pass: ${last}`, {
+				cause: lastPass,
+			});
+		}
+		lastPass = undefined;
 		try {
 			deleteTree(removing);
 		} catch (error) {
 			if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOTEMPTY") throw error;
+			lastPass = error;
 		}
 	}
 }
