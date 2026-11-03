@@ -435,7 +435,10 @@ async function loginOpenAIChatGPT(
 		if (existing.email) authorizationUrl.searchParams.set("login_hint", existing.email);
 	} else {
 		// Display metadata on OpenAI's consent screen (the user can edit it); not tied to the issued client ID.
-		authorizationUrl.searchParams.set("agent_name_hint", options?.appName ?? configuredOAuthBrandName() ?? getWireIdentity());
+		authorizationUrl.searchParams.set(
+			"agent_name_hint",
+			options?.appName ?? configuredOAuthBrandName() ?? getWireIdentity(),
+		);
 	}
 	if (consentClientId) {
 		authorizationUrl.searchParams.set("client_id", consentClientId);
