@@ -71,7 +71,7 @@ export function createHandLedger(options: HandLedgerOptions): HandLedger {
 		if (reply.status === "result_expired") return { kind: "refused", executionId, reason: "result_expired" };
 		return outcomeOf(reply.entry) ?? { kind: "refused", executionId, reason: "not_settled" };
 	};
-	const admitNew = (invoke: RemoteInvoke, args: StoreValue): Promise<LedgerReply> => {
+	const admitNew = (invoke: RemoteInvoke, digest: string): Promise<LedgerReply> => {
 		const admittedAt = now();
 		return ledger.admit({
 			issuer,
@@ -80,7 +80,7 @@ export function createHandLedger(options: HandLedgerOptions): HandLedger {
 			workspace,
 			scope: invoke.scope.id,
 			generation: GENERATION,
-			requestDigest: JSON.stringify([invoke.name, args]),
+			requestDigest: digest,
 			admittedAt,
 			leaseUntil: admittedAt + leaseMs,
 			reconcilable: false,
@@ -88,17 +88,21 @@ export function createHandLedger(options: HandLedgerOptions): HandLedger {
 	};
 	/**
 	 * Walks a call to `dispatched` from whatever its record holds: a new call from admission, a `prepared` or
-	 * `released` call that survived a restart from there. It runs only when THIS walk's `dispatch` applied.
+	 * `released` call that survived a restart from there. It runs only when THIS walk's `dispatch` applied. A record
+	 * that holds another request under this execution ID (other name, arguments or scope) is refused
+	 * `identity_conflict`, as the ledger refuses such an admission: a resumed call runs only what was frozen.
 	 */
 	const advance = async (invoke: RemoteInvoke): Promise<HandAdmission> => {
 		const { executionId } = invoke;
-		const prior = await ledger.read(keyOf(executionId));
-		const settled = prior === undefined ? undefined : outcomeOf(prior);
-		if (settled !== undefined) return { kind: "reply", message: settled };
 		const args = asStoreValue(invoke.arguments);
 		const frozen = { name: invoke.name, args, digest: JSON.stringify([invoke.name, args]) };
+		const prior = await ledger.read(keyOf(executionId));
+		if (prior !== undefined && (prior.requestDigest !== frozen.digest || prior.scope !== invoke.scope.id))
+			return { kind: "reply", message: { kind: "refused", executionId, reason: "identity_conflict" } };
+		const settled = prior === undefined ? undefined : outcomeOf(prior);
+		if (settled !== undefined) return { kind: "reply", message: settled };
 		const fromStart: Array<() => Promise<LedgerReply>> = [
-			() => admitNew(invoke, args),
+			() => admitNew(invoke, frozen.digest),
 			() => apply(executionId, { kind: "prepare" }, executor),
 			() => apply(executionId, { kind: "effect" }, executor),
 			() => apply(executionId, { kind: "freeze", call: frozen, awaitingConsent: false }, executor),

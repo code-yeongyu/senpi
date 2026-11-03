@@ -25,7 +25,6 @@ export interface KillPoint {
 }
 
 export interface HandRig {
-	readonly timers: ManualTimers;
 	/** Every tool body start, as `<scope>:<toolCallId>`, across all hand processes. */
 	readonly bodies: readonly string[];
 	/** Faults the hand processes reported (a killed hand reports the kill). */
@@ -37,6 +36,13 @@ export interface HandRig {
 	/** Hold every body until `release(toolCallId)`. */
 	gateBodies(): void;
 	release(toolCallId: string): void;
+	/**
+	 * Lets `ms` of transport time pass in small steps, running the work each due timer starts before the next step, so a
+	 * check made afterwards sees everything that time could have produced. Cases wait only through this, `settle` and
+	 * `runUntil`: a bare timer advance fires timers without letting the hand's settle chain run, and an assertion that
+	 * nothing happened would then pass whether or not the case's precondition held.
+	 */
+	advance(ms: number): Promise<void>;
 	/** Advances transport time until `promise` settles; fails past the budget. */
 	settle<T>(promise: Promise<T>, what: string, budgetMs?: number): Promise<T>;
 	runUntil(done: () => boolean, what: string, budgetMs?: number): Promise<void>;
@@ -128,14 +134,17 @@ export async function openHandRig(
 	await startHand(current).ready;
 	const host = createRemoteToolHost({ transport: sessionSide, placement: options.placement });
 
-	const runUntil = async (done: () => boolean, what: string, budgetMs = 600_000): Promise<void> => {
-		const end = timers.now() + budgetMs;
+	const pump = async (stop: () => boolean, ms: number): Promise<void> => {
+		const end = timers.now() + ms;
 		await drain();
-		while (!done()) {
-			if (timers.now() >= end) throw new Error(`${what}: not reached within ${budgetMs} ms of transport time`);
-			await timers.advanceTo(timers.now() + TICK_MS);
+		while (!stop() && timers.now() < end) {
+			await timers.advanceTo(Math.min(end, timers.now() + TICK_MS));
 			await drain();
 		}
+	};
+	const runUntil = async (done: () => boolean, what: string, budgetMs = 600_000): Promise<void> => {
+		await pump(done, budgetMs);
+		if (!done()) throw new Error(`${what}: not reached within ${budgetMs} ms of transport time`);
 	};
 	const settle = async <T>(promise: Promise<T>, what: string, budgetMs = 600_000): Promise<T> => {
 		let outcome: { value: T } | { error: unknown } | undefined;
@@ -148,7 +157,7 @@ export async function openHandRig(
 		return outcome.value;
 	};
 	return {
-		timers,
+		advance: (ms) => pump(() => false, ms),
 		bodies,
 		faults,
 		killed: killed.promise,

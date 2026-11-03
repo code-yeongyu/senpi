@@ -57,7 +57,7 @@ const killWithScopesInFlight: HandCase = async (adapters) => {
 		SCOPES.map((scope) => `${scope}:${scope}1`),
 		"MULTI-KILL-01: no call ran twice",
 	);
-	await rig.timers.advanceTo(rig.timers.now() + 200);
+	await rig.advance(200);
 	expectEqual(
 		(await rig.rows()).map((row) => row.progress.state),
 		SCOPES.map(() => "acked"),

@@ -13,7 +13,8 @@ type HandCase = CaseImplementation<HandCaseAdapters>;
 
 const SCOPES = ["a", "b"];
 const CALLS = 12;
-const PACE_MS = 20;
+/** The sends span 360 ms, past the flap profile's second drop (260 ms), so every profile acts while calls are live. */
+const PACE_MS = 30;
 const ids = (scope: string): string[] => Array.from({ length: CALLS }, (_, index) => `${scope}${index + 1}`);
 const texts = (messages: readonly ToolResultMessage[]): string[] =>
 	messages.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")).join(""));
@@ -39,7 +40,7 @@ const underProfile =
 		const batches: Array<Promise<{ readonly messages: ToolResultMessage[] }>> = [];
 		for (let index = 0; index < CALLS; index++) {
 			for (const scope of SCOPES) batches.push(rig.execute(scope, [call(ids(scope)[index] ?? "")], "sequential"));
-			await rig.timers.advanceTo(rig.timers.now() + PACE_MS);
+			await rig.advance(PACE_MS);
 		}
 		const results = await rig.settle(Promise.all(batches), `${what}: every call settled`);
 		expectEqual(
@@ -74,7 +75,7 @@ const unreachableThenBack: HandCase = async (adapters) => {
 	await rig.runUntil(() => rig.bodies.length === SCOPES.length, "FAULT-HAND-MULTI-01: every scope's call is running");
 	rig.disconnect();
 	for (const scope of SCOPES) rig.release(`${scope}1`);
-	await rig.timers.advanceTo(rig.timers.now() + 60_000);
+	await rig.advance(60_000);
 	expectEqual([...settledScopes], [], "FAULT-HAND-MULTI-01: dependent calls pause while the hand is unreachable");
 	rig.reconnect();
 	const results = await rig.settle(Promise.all(batches), "FAULT-HAND-MULTI-01: every scope resumed after reconnect");
@@ -83,7 +84,7 @@ const unreachableThenBack: HandCase = async (adapters) => {
 		SCOPES.map((scope) => [`ran:${scope}1`]),
 		"FAULT-HAND-MULTI-01: each scope settled with its own result",
 	);
-	await rig.timers.advanceTo(rig.timers.now() + 5_000);
+	await rig.advance(5_000);
 	expectEqual(
 		rig.bodies,
 		SCOPES.map((scope) => `${scope}:${scope}1`),

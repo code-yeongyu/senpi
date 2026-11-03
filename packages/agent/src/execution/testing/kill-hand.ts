@@ -57,7 +57,7 @@ const cases = COMMITS.flatMap((operation, commit) =>
 				await rig.settle(rig.killed, `${what}: the kill point fired`);
 				await rig.restart();
 				const { messages } = await rig.settle(outcome, `${what}: the session got the call's outcome`);
-				await rig.timers.advanceTo(rig.timers.now() + 200);
+				await rig.advance(200);
 				const [message] = messages;
 				const text = message?.content.map((part) => (part.type === "text" ? part.text : "")).join("");
 				if (expected.outcome === "result") {

@@ -47,7 +47,9 @@ export interface RemoteExecutorOptions {
 	readonly instance?: string;
 	/**
 	 * A call the hand could not record or answer (its durable record failed): the call gets no reply from this process,
-	 * as from a hand that died, and a restarted hand answers it from the record. Reported here, never swallowed.
+	 * as from a hand that died, and a restarted hand answers it from the record. A failed restart recovery is reported
+	 * here too, and this process then answers no frame. Reported here, never swallowed. The embedder owns the restart:
+	 * close this executor and start a new one on the same store, or the call stays unanswered while this process lives.
 	 */
 	readonly onFault: (error: unknown) => void;
 }
@@ -105,17 +107,17 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		seen.add(call.executionId);
 		const state = stateOf(call.scope);
 		if (typeof state === "string") return refuse(lane, call.executionId, state);
-		if (ledger !== undefined) {
-			const admission = await ledger.admit(call);
-			if (admission.kind === "reply") return reply(lane, admission.message);
-			if (admission.kind === "in_flight") return;
-		}
 		let scope: HandScope;
 		try {
 			scope = await state.opened;
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			return refuse(lane, call.executionId, `scope_unavailable: ${reason}`);
+		}
+		if (ledger !== undefined) {
+			const admission = await ledger.admit(call);
+			if (admission.kind === "reply") return reply(lane, admission.message);
+			if (admission.kind === "in_flight") return;
 		}
 		accepted.push(call.executionId);
 		const controller = new AbortController();
@@ -162,10 +164,14 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		for (const { lane, message } of await ledger.recover()) reply(lane, message);
 		reply(HAND_CONTROL_LANE, { kind: "hello", instance: options.instance ?? crypto.randomUUID() });
 	})();
-	ready.catch(() => undefined);
+	ready.catch((error: unknown) => options.onFault(error));
 
 	transport.onFrame(async (frame: TransportFrame) => {
-		await ready;
+		try {
+			await ready;
+		} catch {
+			return;
+		}
 		let message: RemoteHandMessage;
 		try {
 			message = decodeRemoteMessage(frame.payload);

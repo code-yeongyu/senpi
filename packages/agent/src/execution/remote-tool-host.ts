@@ -55,8 +55,9 @@ function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): Rem
  * The ToolHost that runs a session's tool calls on a hand (brain/hand split, S27a). The hand resolves, prepares,
  * validates, runs the extensions' `tool_call`/`tool_result` handlers (permission checks among them) and executes each
  * call; this host keeps the loop's side: tool events, the batch's ordering, a forwarded abort and the result messages in
- * source order. Every call is dispatched once and never re-sent: a link that fails before a settle becomes an error
- * result for that call, never a retry.
+ * source order. A call whose send is refused (the transport closed) becomes an error result, never a retry. The one
+ * re-send is on a hand's `hello` (it restarted with its durable record): every call still waiting is sent again, and
+ * the hand answers each one its record already holds instead of running it a second time.
  */
 export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost & { close(): void } {
 	const { transport } = options;
