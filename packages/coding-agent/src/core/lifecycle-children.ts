@@ -1,5 +1,5 @@
 import { readHumanWait } from "./lifecycle-attention.ts";
-import { boundBackground } from "./lifecycle-background-waits.ts";
+import { boundBackground, readBackgroundSource } from "./lifecycle-background-waits.ts";
 import { readWaitItems } from "./lifecycle-wait-items.ts";
 import type { ChildLifecycleReport, LifecycleWaits, SessionLifecycleState } from "./session-lifecycle-types.ts";
 import type { SessionEntry } from "./session-manager.ts";
@@ -81,14 +81,9 @@ export function readWaits(value: unknown): LifecycleWaits | undefined {
 	if (!isRecord(value) || typeof value.children !== "number") return undefined;
 	const background: LifecycleWaits["background"][number][] = [];
 	if (Array.isArray(value.background)) {
-		for (const source of value.background) {
-			if (!isRecord(source) || typeof source.source !== "string" || typeof source.activeCount !== "number") continue;
-			background.push({
-				source: source.source,
-				activeCount: source.activeCount,
-				...readWaitItems(source.items, source.omittedItems),
-				...(typeof source.retryAtMs === "number" ? { retryAtMs: source.retryAtMs } : {}),
-			});
+		for (const entry of value.background) {
+			const source = readBackgroundSource(entry);
+			if (source) background.push(source);
 		}
 	}
 	const human = Array.isArray(value.human)

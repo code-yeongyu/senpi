@@ -235,6 +235,11 @@ Lifecycle persistence uses custom entries on the session that owes the work:
 - `session-lifecycle`: the wire snapshot plus session identity, sealed-epoch and
   revision high-water marks, open synthetic attention occurrences, consuming run
   identity, and any unsealed self-settle intent. It is appended before publication.
+  Its `waitingOn.background` names no source: `backgroundChanges: { set?, removed? }`
+  carries only the sources added or changed (`set`) and the names that left (`removed`)
+  since the previous record, and `waitingOn.backgroundOmitted` counts every open source.
+  Restore replays the records in `seq` order to rebuild the set; a record without
+  `backgroundChanges` (written before senpi#5612) names its whole list and replaces it.
 - `work-custody`: obligation identity/key/kind and `open`, `queued`, `consumed`,
   `settled`, `held`, `cancelled`, or `passive` state. Queued records retain a delivery
   ticket and payload; consumed records name the run and transcript entry; held

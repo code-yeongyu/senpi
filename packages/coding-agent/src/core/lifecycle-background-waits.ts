@@ -1,5 +1,6 @@
+import { readWaitItems } from "./lifecycle-wait-items.ts";
 import type { LifecycleWaits } from "./session-lifecycle-types.ts";
-import type { WorkCustodyRecord } from "./work-custody-record.ts";
+import { isRecord, type WorkCustodyRecord } from "./work-custody-record.ts";
 
 /** Named background sources one lifecycle snapshot carries; the rest are only counted (senpi#5612). */
 export const MAX_BACKGROUND_WAIT_SOURCES = 32;
@@ -10,6 +11,16 @@ export const MAX_BACKGROUND_WAIT_SOURCES = 32;
  */
 export function waitingCustody(active: readonly WorkCustodyRecord[]): readonly WorkCustodyRecord[] {
 	return active.filter((record) => record.state !== "consumed");
+}
+
+export function readBackgroundSource(value: unknown): LifecycleWaits["background"][number] | undefined {
+	if (!isRecord(value) || typeof value.source !== "string" || typeof value.activeCount !== "number") return undefined;
+	return {
+		source: value.source,
+		activeCount: value.activeCount,
+		...readWaitItems(value.items, value.omittedItems),
+		...(typeof value.retryAtMs === "number" ? { retryAtMs: value.retryAtMs } : {}),
+	};
 }
 
 /**

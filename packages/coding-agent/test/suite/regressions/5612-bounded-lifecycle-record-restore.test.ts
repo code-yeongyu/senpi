@@ -1,11 +1,12 @@
 /**
- * senpi#5612: a `session-lifecycle` record is bounded however many background sources are open, and a transcript
- * written before the fix (records naming every consumed delivery of a run that was killed mid-run) still restores to
- * the same lifecycle and custody state without writing another record of that size.
+ * senpi#5612: a `session-lifecycle` record carries only the background sources that changed, restore rebuilds the
+ * full set by replaying those changes, and a transcript written before the fix (records naming every consumed
+ * delivery of a run that was killed mid-run) still restores to the same lifecycle and custody state.
  */
 import { expect, it } from "vitest";
 import type { LifecycleRecord } from "../../../src/core/lifecycle-record.ts";
 import { SessionLifecycleController } from "../../../src/core/session-lifecycle.ts";
+import type { LifecycleWaits } from "../../../src/core/session-lifecycle-types.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import type { WorkCustodyRecord } from "../../../src/core/work-custody-record.ts";
 
@@ -44,22 +45,37 @@ function recordBytes(record: LifecycleRecord): number {
 	return Buffer.byteLength(JSON.stringify(record));
 }
 
-it("a record stays under 8 KB with 2,000 open background sources and still reports their true count", () => {
-	// Given a running session that opens 2,000 background wait sources.
+function total(waits: LifecycleWaits | undefined): number {
+	return (waits?.background.length ?? 0) + (waits?.backgroundOmitted ?? 0);
+}
+
+it("2,000 open background sources write records that carry only the change, and restore replays the full set", () => {
+	// Given a running session that opens 2,000 background wait sources and then closes 500 of them.
 	const manager = SessionManager.inMemory();
 	const controller = controllerOver(manager);
 	controller.restoreComplete();
 	controller.startRun();
-	for (let index = 0; index < 2000; index += 1) controller.obligations.open(`wake:${index}`, "background");
+	const tokens = Array.from({ length: 2000 }, (_, index) =>
+		controller.obligations.open(`wake:${index}`, "background"),
+	);
+	for (const token of tokens.slice(0, 500)) token.close("cancelled");
 	controller.idle();
 
-	// Then no record grew with them, and the last one counts every source.
+	// Then no record names a source or grew with them, and the last one counts every open source.
 	const records = lifecycleRecords(manager);
-	expect(Math.max(...records.map(recordBytes))).toBeLessThan(8192);
-	const waits = records.at(-1)?.waitingOn;
-	expect(waits?.background).toHaveLength(32);
-	expect((waits?.background.length ?? 0) + (waits?.backgroundOmitted ?? 0)).toBe(2000);
+	expect(Math.max(...records.map(recordBytes))).toBeLessThan(2048);
+	expect(Math.max(...records.map((record) => record.waitingOn?.background.length ?? 0))).toBe(0);
+	expect(total(records.at(-1)?.waitingOn)).toBe(1500);
+	// And the live snapshot names the first 32 and counts the rest.
+	const live = controller.snapshot.waitingOn;
+	expect(live?.background).toHaveLength(32);
+	expect(total(live)).toBe(1500);
 	expect(controller.snapshot.state).toBe("waiting_background");
+
+	// When the transcript is restored, its replayed changes rebuild exactly the live set.
+	const restored = controllerOver(manager).snapshot.waitingOn;
+	expect(restored?.background).toEqual(live?.background);
+	expect(total(restored)).toBe(1500);
 });
 
 function consumedDelivery(index: number, runId: string): WorkCustodyRecord {
@@ -75,7 +91,7 @@ function consumedDelivery(index: number, runId: string): WorkCustodyRecord {
 }
 
 /** The shape the pre-fix engine wrote when the process was killed inside a run that had consumed many deliveries. */
-function killedMidRunBeforeTheFix(consumed: number): { manager: SessionManager; runId: string } {
+function killedMidRunBeforeTheFix(consumed: number): { manager: SessionManager; runId: string; oldRecord: number } {
 	const manager = SessionManager.inMemory();
 	const controller = controllerOver(manager);
 	controller.restoreComplete();
@@ -94,8 +110,9 @@ function killedMidRunBeforeTheFix(consumed: number): { manager: SessionManager; 
 		payload: { message: { customType: "wake", content: "wake", display: false }, deliverAs: "steer" },
 	};
 	for (const record of [...deliveries, queued]) manager.appendCustomEntry("work-custody", record);
-	manager.appendCustomEntry("session-lifecycle", {
-		...last,
+	const { backgroundChanges: _changes, ...preFix } = last;
+	const old: LifecycleRecord = {
+		...preFix,
 		seq: last.seq + 1,
 		state: "running",
 		runActive: true,
@@ -104,13 +121,14 @@ function killedMidRunBeforeTheFix(consumed: number): { manager: SessionManager; 
 			human: [],
 			background: [...deliveries, queued].map((record) => ({ source: record.key, activeCount: 1 })),
 		},
-	} satisfies LifecycleRecord);
-	return { manager, runId };
+	};
+	manager.appendCustomEntry("session-lifecycle", old);
+	return { manager, runId, oldRecord: recordBytes(old) };
 }
 
 it("a transcript written before the fix restores to the same state without re-amplifying", () => {
 	// Given a pre-fix transcript whose last record names 200 consumed deliveries and one queued delivery.
-	const { manager, runId } = killedMidRunBeforeTheFix(200);
+	const { manager, runId, oldRecord } = killedMidRunBeforeTheFix(200);
 	const before = lifecycleRecords(manager).length;
 
 	// When it is restored.
@@ -120,23 +138,29 @@ it("a transcript written before the fix restores to the same state without re-am
 
 	// Then the loaded snapshot keeps the true count without holding every name.
 	expect(loaded.waitingOn?.background).toHaveLength(32);
-	expect((loaded.waitingOn?.background.length ?? 0) + (loaded.waitingOn?.backgroundOmitted ?? 0)).toBe(201);
+	expect(total(loaded.waitingOn)).toBe(201);
 	// And it resumes the same interrupted run, with its consumed custody kept for crash recovery (senpi#4848).
 	expect(restored.ledger.runId).toBe(runId);
 	expect(restored.ledger.interrupted).toBe(true);
 	expect(restored.snapshot.state).toBe("waiting_human");
 	expect(restored.snapshot.waitingOn?.human.map((wait) => wait.kind)).toEqual(["interrupted_run"]);
+	expect(restored.snapshot.waitingOn?.background.map((wait) => wait.source)).toEqual([
+		"delivery:omo-senpi:wake:queued",
+	]);
 	expect(restored.obligations.active.filter((record) => record.state === "consumed")).toHaveLength(200);
 	expect(restored.obligations.active.filter((record) => record.state === "queued").map((r) => r.id)).toEqual([
 		"queued",
 	]);
-	// And the records it writes on load name only what it still waits on.
+	// And loading writes the stale names away once, in less than the old record took, and never again.
 	const written = lifecycleRecords(manager).slice(before);
 	expect(written.length).toBeGreaterThan(0);
-	for (const record of written) {
-		expect(record.waitingOn?.background.map((wait) => wait.source)).toEqual(["delivery:omo-senpi:wake:queued"]);
-		expect(recordBytes(record)).toBeLessThan(4096);
-	}
+	expect(written[0]?.backgroundChanges?.removed).toHaveLength(200);
+	expect(written.reduce((sum, record) => sum + recordBytes(record), 0)).toBeLessThan(oldRecord);
+	for (const record of written.slice(1)) expect(recordBytes(record)).toBeLessThan(2048);
+	// And a second restore replays the old full list plus the changes to the same single source.
+	expect(controllerOver(manager).snapshot.waitingOn?.background.map((wait) => wait.source)).toEqual([
+		"delivery:omo-senpi:wake:queued",
+	]);
 
 	// When the resumed session starts its next run and goes idle.
 	restored.startRun("human");

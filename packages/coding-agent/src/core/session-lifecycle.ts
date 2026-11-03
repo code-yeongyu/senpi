@@ -459,7 +459,15 @@ export class SessionLifecycleController {
 					: this.modelSince
 						? { kind: "model", since: this.modelSince }
 						: undefined;
-		this.ledger.update({ state, waits, holds: runtime.holds, failure, lastStop, activity });
+		this.ledger.update({
+			state,
+			waits,
+			backgroundSources: background,
+			holds: runtime.holds,
+			failure,
+			lastStop,
+			activity,
+		});
 	}
 
 	/**

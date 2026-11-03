@@ -161,7 +161,8 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   Background entries carry `source`, `activeCount`, optional `items`, optional `omittedItems`, and
   optional `retryAtMs`. `background` keeps the first 32 sources; `backgroundOmitted` counts the sources cut by
   that cap, so `background.length + (backgroundOmitted ?? 0)` is the number of background sources. A delivery
-  the session has already consumed is not a wait and is never listed, even before its run ends. `childSources` entries carry `source`, `activeCount`, optional `items`, and
+  the session has already consumed is not a wait and is never listed, even before its run ends. The durable
+  `session-lifecycle` record stores these sources as changes; see `session-format.md`. `childSources` entries carry `source`, `activeCount`, optional `items`, and
   optional `omittedItems`. Each item is `{ id, label?, startedAt? }` (`startedAt` is ISO time), taken
   from the producer's `wake_source_state` snapshot: its `items`, or the legacy `monitors` list when
   `items` is missing or null. Terminal monitors are named by their stable `mon_` id. Each list is a

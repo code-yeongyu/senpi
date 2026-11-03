@@ -1,8 +1,8 @@
 /**
  * senpi#5612: a delivery consumed inside a still-running run stayed in `waitingOn.background` until the run ended,
  * and every `session-lifecycle` record re-serialized all of them, so one long run's transcript grew with the square
- * of its deliveries (one session reached 3.67 GB). A consumed delivery is no longer a wait, and a record names at
- * most 32 background sources, so the bytes each state change writes stay flat however many deliveries arrive.
+ * of its deliveries (one session reached 3.67 GB). A consumed delivery is no longer a wait, and a record carries only
+ * the background sources that changed, so the bytes each state change writes stay flat however many deliveries arrive.
  */
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -83,15 +83,16 @@ it("a steered delivery leaves waitingOn.background the moment it is consumed, so
 	];
 
 	// Then no record waits on more than the one delivery still in flight.
-	expect(n200.maxNamedBackground).toBeLessThanOrEqual(1);
 	expect(n200.maxBackgroundTotal).toBeLessThanOrEqual(1);
+	expect(n200.maxNamedBackground).toBe(0);
 	// And each state change writes the same bytes at every N, so the transcript grows linearly.
-	expect(n200.bytesPerRecord / n50.bytesPerRecord).toBeLessThan(1.25);
-	expect(n100.bytes / n50.bytes).toBeLessThan(2.5);
-	expect(n200.bytes / n100.bytes).toBeLessThan(2.5);
+	expect(n200.bytesPerRecord / n50.bytesPerRecord).toBeLessThan(1.1);
+	expect(n200.largestRecord / n50.largestRecord).toBeLessThan(1.1);
+	expect(n100.bytes / n50.bytes).toBeLessThan(2.1);
+	expect(n200.bytes / n100.bytes).toBeLessThan(2.1);
 });
 
-it("genuinely queued followUps are counted in full while each record stays bounded", async () => {
+it("genuinely queued followUps are counted in full while each record carries only what changed", async () => {
 	// Given one running run that queues 50, 100 and 200 followUps it has not consumed yet.
 	const [n50, n100, n200] = [
 		await oneRunOfDeliveries(50, "followUp"),
@@ -101,9 +102,10 @@ it("genuinely queued followUps are counted in full while each record stays bound
 
 	// Then every queued followUp is still a wait, reported by its true count.
 	expect(n200.maxBackgroundTotal).toBe(200);
-	// But a record names at most 32 of them, so its size does not grow with the queue.
-	expect(n200.maxNamedBackground).toBeLessThanOrEqual(32);
-	expect(n200.largestRecord / n50.largestRecord).toBeLessThan(1.25);
-	expect(n100.bytes / n50.bytes).toBeLessThan(2.5);
-	expect(n200.bytes / n100.bytes).toBeLessThan(2.5);
+	// But a record carries only the followUp that changed, so its size does not grow with the queue.
+	expect(n200.maxNamedBackground).toBe(0);
+	expect(n200.bytesPerRecord / n50.bytesPerRecord).toBeLessThan(1.1);
+	expect(n200.largestRecord / n50.largestRecord).toBeLessThan(1.1);
+	expect(n100.bytes / n50.bytes).toBeLessThan(2.1);
+	expect(n200.bytes / n100.bytes).toBeLessThan(2.1);
 });
