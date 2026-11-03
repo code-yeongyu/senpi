@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Added a `block` event to the execution ledger: an executor records a preparation that ended without a frozen call as a durable `blocked` outcome, so a re-sent prepare after a restart gets the stored reply ([#5428](https://github.com/code-yeongyu/senpi/pull/5428)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.3-1] - 2026-11-03
 
 ### Breaking Changes

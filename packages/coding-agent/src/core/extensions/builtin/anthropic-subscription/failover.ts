@@ -223,7 +223,14 @@ function blockedAccount(
 	model: string | undefined,
 ): AccountSlot {
 	if (classification.kind === "auth_error") {
-		return { ...account, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error", blockedAt: now };
+		const blocked = {
+			...account,
+			blockedUntil: now + AUTH_BLOCK_REPROBE_MS,
+			blockReason: "auth_error",
+			blockedAt: now,
+		};
+		// The verdict names the sign-in it is about, so a block another engine writes is told apart (senpi#5623).
+		return blocked.store === "claude-cli" ? { ...blocked, authVerdict: { dirId: blocked.dirId, at: now } } : blocked;
 	}
 	const fallback = Math.min(MAX_RATE_LIMIT_BLOCK_MS, baseBlockMs * 2 ** attempt);
 	if (classification.modelFamily !== undefined && model !== undefined) {
@@ -358,6 +365,8 @@ async function persistBlock(
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
 						...(account.blockedAt === undefined ? {} : { blockedAt: account.blockedAt }),
+						// Only this write's own auth verdict stays with the block (senpi#5623).
+						authVerdict: existing.store === "claude-cli" ? account.authVerdict : undefined,
 						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),
 					}
 				: existing,
@@ -445,6 +454,34 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				}
 				retryAccountName = account.name;
 				attempt--;
+				continue;
+			}
+
+			// A login this process could not read (senpi#5630) moves this turn to another account and is stored nowhere:
+			// other sessions may read it fine, and an unlocked keychain must work on the very next turn.
+			if (classification.kind === "login_unreadable") {
+				if (visibleDeltaEmitted || attempt + 1 >= attemptLimit) throw classified;
+				const unreadable: AccountSlot = {
+					...account,
+					blockedUntil: now() + AUTH_BLOCK_REPROBE_MS,
+					blockReason: "login_unreadable",
+					blockedAt: now(),
+				};
+				accounts = replaceAccount(accounts, unreadable);
+				let nextAccount: AccountSlot;
+				try {
+					nextAccount = options.selectFn(accounts);
+				} catch (selectError) {
+					if (selectError instanceof AllAccountsBlockedError) throw classified;
+					throw selectError;
+				}
+				await options.onFailover?.({
+					account: unreadable,
+					classification,
+					attempt: attempt + 1,
+					visibleDeltaEmitted,
+					nextAccount,
+				});
 				continue;
 			}
 
