@@ -63,15 +63,158 @@ export interface ScopeLifecycle {
 	read(scope: string): Promise<ScopeRecord | undefined>;
 }
 
-export function createScopeLifecycle(_options: ScopeLifecycleOptions): ScopeLifecycle {
+const PREFIX = "execution.scope:";
+
+const isObject = (value: StoreValue | undefined): value is { readonly [key: string]: StoreValue } =>
+	value !== null && typeof value === "object" && !Array.isArray(value);
+
+function decode(value: StoreValue): ScopeRecord {
+	if (
+		isObject(value) &&
+		isObject(value.binding) &&
+		(value.state === "open" || value.state === "closed") &&
+		typeof value.lastActiveAt === "number" &&
+		isObject(value.resources) &&
+		Array.isArray(value.events) &&
+		isObject(value.outcomes)
+	)
+		return value as ScopeRecord;
+	throw new Error("corrupt scope record");
+}
+
+export function createScopeLifecycle(options: ScopeLifecycleOptions): ScopeLifecycle {
+	const { store, epoch, admission, clock, idleTtlMs } = options;
+	const keyOf = (scope: string): string => `${PREFIX}${JSON.stringify([scope])}`;
+	const read = async (scope: string): Promise<ScopeRecord | undefined> => {
+		const value = await store.getDocument(keyOf(scope));
+		return value === undefined ? undefined : decode(value);
+	};
+	const write = async (record: ScopeRecord, step: string, executionId: string | null): Promise<void> => {
+		await store.commit(
+			epoch,
+			[
+				{
+					op: "append",
+					id: store.mintId(),
+					kind: "execution.scope",
+					data: { scope: record.binding.scope, step, executionId },
+				},
+				{ op: "put", key: keyOf(record.binding.scope), data: record },
+			],
+			() => {},
+		);
+	};
+	const update = <T>(scope: string, decide: (record: ScopeRecord | undefined) => Promise<T>): Promise<T> =>
+		admission.admit(async () => decide(await read(scope)));
+	/** Per scope, the last admitted lifecycle event: a later call or event waits for it. */
+	const tails = new Map<string, Promise<unknown>>();
+	const after = <T>(scope: string, step: () => Promise<T>): Promise<T> => {
+		const run = (tails.get(scope) ?? Promise.resolve()).then(step, step);
+		tails.set(
+			scope,
+			run.catch(() => undefined),
+		);
+		return run;
+	};
+	const touch = (scope: string) =>
+		update(scope, async (record) => {
+			if (record?.state !== "open") return;
+			await write({ ...record, lastActiveAt: clock() }, "active", null);
+		});
+
+	const closeNow = async (record: ScopeRecord, terminate?: (resource: string) => Promise<StoreValue>) => {
+		let current = record;
+		for (const resource of Object.keys(record.resources)) {
+			if (current.outcomes[resource] !== undefined) continue;
+			if (terminate === undefined) throw new Error(`forced close of ${record.binding.scope} needs a terminate port`);
+			const outcome = await terminate(resource);
+			current = await update(record.binding.scope, async (latest) => {
+				if (latest === undefined) throw new Error(`scope ${record.binding.scope} vanished`);
+				const next = { ...latest, outcomes: { ...latest.outcomes, [resource]: outcome } };
+				await write(next, "outcome", resource);
+				return next;
+			});
+		}
+		await update(record.binding.scope, async (latest) => {
+			if (latest === undefined || latest.state === "closed") return;
+			await write({ ...latest, state: "closed", resources: {} }, "close", null);
+		});
+	};
+
 	return {
-		read: async () => undefined,
-		open: async () => ({ kind: "opened" }),
-		lifecycle: async () => ({ kind: "committed", seq: 0 }),
-		call: (_scope, run) => run(),
-		hold: async () => {},
-		release: async () => {},
-		close: async () => ({ kind: "closed" }),
-		sweepIdle: async () => [],
+		read,
+		open: (binding) =>
+			update(binding.scope, async (record) => {
+				if (record !== undefined)
+					return JSON.stringify(record.binding) === JSON.stringify(binding) && record.state === "open"
+						? ({ kind: "opened" } as const)
+						: ({ kind: "refused", reason: "conflicting_scope" } as const);
+				await write(
+					{ binding, state: "open", lastActiveAt: clock(), resources: {}, events: [], outcomes: {} },
+					"open",
+					null,
+				);
+				return { kind: "opened" } as const;
+			}),
+		lifecycle: (actor, scope, kind, handler) =>
+			after(scope, async () => {
+				const record = await read(scope);
+				if (record === undefined) return { kind: "refused", reason: "unknown_scope" } as const;
+				if (record.binding.issuer !== actor) return { kind: "refused", reason: "not_issuer" } as const;
+				if (record.state === "closed") return { kind: "refused", reason: "closed" } as const;
+				const effect = await handler();
+				return update(scope, async (latest) => {
+					if (latest === undefined || latest.state === "closed")
+						return { kind: "refused", reason: "closed" } as const;
+					const seq = latest.events.length + 1;
+					await write(
+						{ ...latest, lastActiveAt: clock(), events: [...latest.events, { seq, kind, effect }] },
+						"lifecycle",
+						`${kind}#${seq}`,
+					);
+					return { kind: "committed", seq } as const;
+				});
+			}),
+		call: (scope, run) =>
+			(tails.get(scope) ?? Promise.resolve()).then(async () => {
+				await touch(scope);
+				return run();
+			}),
+		hold: (scope, resource, kind) =>
+			update(scope, async (record) => {
+				if (record?.state !== "open") throw new Error(`scope ${scope} is not open`);
+				await write(
+					{ ...record, lastActiveAt: clock(), resources: { ...record.resources, [resource]: kind } },
+					"hold",
+					resource,
+				);
+			}),
+		release: (scope, resource) =>
+			update(scope, async (record) => {
+				if (record === undefined || record.resources[resource] === undefined) return;
+				const { [resource]: _released, ...resources } = record.resources;
+				await write({ ...record, lastActiveAt: clock(), resources }, "release", resource);
+			}),
+		close: async (actor, scope, closeOptions = {}) => {
+			const record = await read(scope);
+			if (record === undefined) return { kind: "refused", reason: "unknown_scope" };
+			if (record.binding.issuer !== actor) return { kind: "refused", reason: "not_issuer" };
+			if (record.state === "closed") return { kind: "closed" };
+			if (Object.keys(record.resources).length > 0 && closeOptions.force !== true)
+				return { kind: "refused", reason: "live_resources" };
+			await closeNow(record, closeOptions.terminate);
+			return { kind: "closed" };
+		},
+		sweepIdle: async () => {
+			const closed: string[] = [];
+			for (const { data } of await store.scanDocuments(PREFIX)) {
+				const record = decode(data);
+				if (record.state !== "open" || Object.keys(record.resources).length > 0) continue;
+				if (clock() - record.lastActiveAt <= idleTtlMs) continue;
+				await closeNow(record);
+				closed.push(record.binding.scope);
+			}
+			return closed;
+		},
 	};
 }
