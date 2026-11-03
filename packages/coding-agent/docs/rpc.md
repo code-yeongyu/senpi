@@ -737,15 +737,26 @@ or not the compact state is still live: after such a loss, refusals on either pr
 
 The legacy JSONL stream has no protocol depth limit: a record deeper than 1,024 levels is delivered unchanged to a
 legacy client. This holds whether or not the client advertises `media_placeholders`: the placeholder transform
-walks a record without recursion. Only a record the runtime's own JSON engine cannot serialize (above about 6,185 levels on Node 24
-or 40,000 on Bun 1.4, less on a deep stack) is refused, as the typed `LegacyRecordDepthError`: it is not delivered,
-the session (and a worker session's isolate) keeps running, and the next record is delivered. The refusal is
-reported once on stderr as
-`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`
-and counted by the writer that refused it. When the host's writer refuses it, the host counts it. When a worker
-session's isolate refuses it first (at the isolate's own engine limit, before the record leaves the isolate), the
-count stays in the isolate's writer and is not added to the host's count; only the stderr line reaches the host,
-through the worker's stderr.
+walks a record without recursion. Serialization has no depth limit either (senpi#5702): the writer uses the
+runtime's native `JSON.stringify`, and where that overflows its own stack (about 3,000 chained `get_tree` entries
+on Node 24, 18,000-20,000 on Bun 1.4, fewer when a value uses `toJSON`) an explicit-stack writer with the same
+semantics writes the same bytes. A `get_tree` answer for a 10,000-entry session therefore arrives whole, in its
+usual shape `{ tree, leafId }`, on the in-process host and in a worker session alike.
+
+A reply (`type: "response"`) that still cannot be written, for any method and any reason (a `BigInt` or a cycle
+in its value, a `toJSON` that throws), is never dropped: the caller receives, for the same `id`,
+
+```json
+{"id":"<request id>","type":"response","command":"<command>","success":false,"error":"<command> response could not be written: <cause>","errorCode":"response_unwritable"}
+```
+
+and the session keeps serving later requests. The host reports it once on stderr as
+`senpi rpc host: <command> response unwritable (<cause>); answered response_unwritable (session <id>)` and counts
+it with the writer's refusals. This supersedes RULING-68's "refused, never delivered" for replies. A non-reply
+record whose path still overflows the stack outside the writer is refused as before, as the typed
+`LegacyRecordDepthError`, reported as
+`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`,
+and the session keeps running.
 A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
 reader (which stops near 4,000 levels on Node) never drops it.
 
