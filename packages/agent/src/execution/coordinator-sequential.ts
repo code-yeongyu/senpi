@@ -14,7 +14,7 @@ export interface SequentialCoordinator {
 }
 
 /** The durable batch id of call `index` of `batchId`; stable across runs, so a resumed run finds it. */
-export const sequentialBatchId = (batchId: string, index: number): string => `${batchId}#${index}`;
+const sequentialBatchId = (batchId: string, index: number): string => `${batchId}#${index}`;
 
 /**
  * The cause the calls after an ABORTed call inherit, as one batch gives its unrun calls the batch's own cause: after an
