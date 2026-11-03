@@ -250,6 +250,7 @@ it("X03 the manifest never lists components: its size is independent of the comp
 			"generation",
 			"historyVersion",
 			"leaf",
+			"requiredKinds",
 			"routeKind",
 			"sequence",
 			"session",

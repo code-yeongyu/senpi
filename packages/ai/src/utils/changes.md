@@ -1,3 +1,58 @@
+## 2026-10-28 - Account-pool refusal tokens in the provider diagnostic vocabulary (#4676)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `categoryForProviderCode` accepts `account_pool_auth_blocked` (`auth`) and `account_pool_blocked` (`rate_limit`). Neither is compatible with any HTTP status, since the refusal is local.
+
+### Why
+
+- A subscription extension that refuses a request from its own account pool needs a code that survives `sanitizeProviderDiagnostic`; an opaque code may only name an `unknown` failure, and one code maps to one category, hence two tokens (#4676).
+
+### Why an extension could not handle it
+
+- The vocabulary is the closed allowlist every diagnostic is revalidated against.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` and `rate_limit` arms of `categoryForProviderCode`.
+
+## 2026-10-27 - OAuth result pages show the host's brand, not the pi logo (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-page.ts`: the hard-coded upstream pi `LOGO_SVG` is gone. `setOAuthPageBrand({ name, logo? })` sets the product shown on the sign-in success and error pages; it is kept in a `processSingleton` slot. The page renders the name as text and the logo as an `<img src>` only when it is a base64 image data URI (svg+xml, png, webp, jpeg); any other logo is dropped. Without a brand the page carries no product mark. `oauthBrandName()` returns the brand name for sign-in surfaces outside our pages (consent screens), or `senpi` when no brand is set.
+
+### Why
+
+- A desktop beta user saw the inherited pi mark on OmO's sign-in page (#4432). The page has to show the product that runs the engine.
+
+### Why an extension could not handle it
+
+- The callback servers render these pages inside the `ai` package's OAuth flows; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: the top of `oauth-page.ts` and the logo markup in `renderPage`, if upstream restyles its OAuth page.
+
+## 2026-10-31 - TLS chain-verification codes are structured transport codes (senpi#5253, closes #5244)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` (fork-only): `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, `UNABLE_TO_GET_ISSUER_CERT`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN`, `DEPTH_ZERO_SELF_SIGNED_CERT` and `CERT_UNTRUSTED` join the closed transport allowlist as `network`; `isTlsChainVerificationCode` names them.
+- `packages/ai/src/provider-diagnostic.ts` (fork-only): re-exports `isTlsChainVerificationCode` from the package root.
+
+### Why
+
+- omo#10762, design r13 6.6: the native handshake code must reach the provider failure so coding-agent can recognise a verification failure without reading message text. Hostname mismatch and expiry stay unclassified.
+
+### Why an extension could not handle it
+
+- The transport classifier runs inside the provider adapters' catch paths, below any extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `default` branch of `categoryForTransportCode`.
+
 ## 2026-11-01 - A 503 whose body says "Billing Scope" is not a quota exhaustion (senpi#4632)
 
 ### What changed
