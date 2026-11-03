@@ -12,6 +12,22 @@
 
 ### Removed
 
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- `encodeProgramStatus` builds a sanitized OSC 7501 Program Status report ([#5323](https://github.com/code-yeongyu/senpi/issues/5323))
+
+### Changed
+
+### Fixed
+
+- Shift+Enter inserts a newline instead of submitting in macOS Terminal.app ([#5647](https://github.com/code-yeongyu/senpi/pull/5647))
+
+### Removed
+
 ## [2026.11.3-2] - 2026-11-03
 
 ### Breaking Changes
