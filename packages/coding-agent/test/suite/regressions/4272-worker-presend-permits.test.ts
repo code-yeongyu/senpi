@@ -11,6 +11,7 @@ import {
 	WORKER_CONTROL_SLOTS,
 	PERMIT_WORD,
 	WORKER_PERMIT_BYTES,
+	WorkerPermitGate,
 	WorkerPermitLedger,
 } from "../../../src/modes/rpc/session-worker-permits.ts";
 import { EVENT_SAFETY_MS, within, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
@@ -140,6 +141,14 @@ it("S12b RULING-63 Q3 (3): a worker blocked on a permit wakes and exits cleanly 
 	expect(await answer()).toEqual({ outcome: "closed", built: 0 });
 	expect(await exit()).toBe(0);
 }, 600_000);
+
+// RULING-63 Q3a: the worker never attaches a block whose layout differs from the host's (an old 3-word block).
+it("S12b RULING-63 Q3a: the worker gate refuses a permit block of any other size than the shared layout", () => {
+	expect(() => new WorkerPermitGate(new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT), 0)).toThrow(
+		`expected ${PERMIT_BLOCK_BYTES}`,
+	);
+	expect(new HostPermits(new WorkerPermitLedger()).block.byteLength).toBe(PERMIT_BLOCK_BYTES);
+});
 
 // #5591: the isolate decides to wait, then the host signals, then the isolate's wait starts. The signal must still end
 // that wait; a close the wait cannot see left the worker parked until its own deadline.

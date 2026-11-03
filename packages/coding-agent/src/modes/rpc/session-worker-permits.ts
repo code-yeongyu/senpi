@@ -136,6 +136,9 @@ export class WorkerPermitGate {
 	private readonly timeoutMs: number;
 
 	constructor(block: SharedArrayBuffer, timeoutMs: number) {
+		// RULING-63 Q3a: host and worker share one block layout; a block of any other size is never attached.
+		if (block.byteLength !== PERMIT_BLOCK_BYTES)
+			throw new Error(`permit block is ${block.byteLength} bytes, expected ${PERMIT_BLOCK_BYTES}`);
 		this.state = new Int32Array(block);
 		this.timeoutMs = timeoutMs;
 	}
