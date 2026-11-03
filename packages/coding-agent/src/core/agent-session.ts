@@ -115,6 +115,7 @@ import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
+import { BridgedCallKeys } from "./session-call-keys.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
 import {
@@ -272,7 +273,6 @@ import {
 	type TreePreparation,
 	type TurnStartEvent,
 } from "./extensions/index.ts";
-import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
@@ -444,6 +444,7 @@ import {
 	type ToolDefinitionEntry,
 } from "./runtime/bootstrap.ts";
 import type { SourceInfo } from "./source-info.ts";
+import { toolInfoOf } from "./tool-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
@@ -1479,6 +1480,8 @@ export class AgentSession {
 	private readonly _writtenTicketEntries = new Map<string, string>();
 	/** How many sends that joined each ticket's queued message are still in flight. */
 	private readonly _carrierJoiners = new Map<string, number>();
+	/** Call keys minted with a bridge-started call's execution start (RULING-127 (b), senpi#5374). */
+	private readonly _bridgedCallKeys = new BridgedCallKeys();
 	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
@@ -1649,6 +1652,8 @@ export class AgentSession {
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
+	/** The prompt text the running prompt's run titles the session with when it settles (senpi#5382). */
+	private _pendingSessionTitlePrompt: string | undefined = undefined;
 	private readonly _autoTitleSessions: boolean;
 
 	// Retry state
@@ -3940,6 +3945,15 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
+		// The retry handler answers an account limit only with the fallback walk, and that walk skips
+		// every rung on the spent provider. Announcing a retry it will not start leaves an RPC client
+		// waiting for a terminal agent_end until the account resets (omo#9711).
+		if (
+			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
+			usageLimitScope(lastAssistant.errorMessage) === "account"
+		) {
+			return this._retryFallback.canTryFallback(lastAssistant.provider);
+		}
 		if (isCursorZeroTokenResourceExhausted(lastAssistant)) {
 			return true;
 		}
@@ -4073,6 +4087,7 @@ export class AgentSession {
 			}
 		}
 		this._recoveryIdentity?.hint(event, consumedEntry);
+		this._bridgedCallKeys.observe(event);
 		this._emit(carryRecovery(event, sessionEvent), event);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
@@ -4114,6 +4129,7 @@ export class AgentSession {
 					entryId = this.sessionManager.appendOwnedMessage(event.message, {
 						inputSource: this._userInputSources.get(event.message),
 						recoveryOwner: recoveryCarrier(event),
+						...(event.message.role === "assistant" ? { bridgedCalls: this._bridgedCallKeys.take() } : {}),
 					});
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
@@ -4375,6 +4391,8 @@ export class AgentSession {
 
 		if (event.type === "agent_end") {
 			this._flushPendingBashMessages();
+			// Before the continuation decision, so input sent while the title is pending still continues this run.
+			await this._settleSessionTitle();
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
@@ -5211,19 +5229,7 @@ export class AgentSession {
 	 * Get all configured tools with normalized exposure metadata and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolDefinitions.values()).map(({ definition, sourceInfo }) => ({
-			name: definition.name,
-			label: definition.label,
-			description: definition.description,
-			parameters: definition.parameters,
-			promptGuidelines: definition.promptGuidelines,
-			kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
-			permissionParser: definition.permissionParser,
-			...(definition.namespace ? { namespace: definition.namespace } : {}),
-			...(definition.annotations ? { annotations: { ...definition.annotations } } : {}),
-			sourceInfo,
-			...normalizeToolExposure(definition),
-		}));
+		return Array.from(this._toolDefinitions.values(), toolInfoOf);
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
@@ -6563,12 +6569,14 @@ export class AgentSession {
 			if (options?.thinkingLevel !== undefined) {
 				this.setSessionThinkingLevel(options.thinkingLevel);
 			}
+			this._pendingSessionTitlePrompt = titlePrompt;
 			await this._promptAgent(messages, {
 				inputOrigin: originOf(options),
 				onQueuedInput: options?.onQueuedInput,
 				onTurnAdmitted: options?.onTurnAdmitted,
 			});
 		} catch (error) {
+			this._pendingSessionTitlePrompt = undefined;
 			// A turn the engine refused never ran, so it releases the barrier it armed (senpi#4106).
 			if (options?.toolBarrier && !this._isAgentRunActive) this._toolBarrier.release(options.toolBarrier.id);
 			throw error;
@@ -6586,9 +6594,8 @@ export class AgentSession {
 		} else {
 			await this.agent.waitForIdle();
 		}
-		if (titlePrompt !== undefined) {
-			this._startSessionTitleGeneration(titlePrompt);
-		}
+		// A run that settled without its agent_end (a cancelled retry) or was aborted is not titled; the next prompt is.
+		this._pendingSessionTitlePrompt = undefined;
 	}
 
 	/** Apply before_agent_start additions and reset any prior turn's system-prompt override. */
@@ -6942,6 +6949,20 @@ export class AgentSession {
 				this._sessionTitlePromise = undefined;
 			}
 		}
+	}
+
+	/**
+	 * The auto-title is part of the `agent_end` of the run that asked for it: requested after that run's last model
+	 * response and awaited before `agent_settled` and `agent_idle`. Its `session_info_changed` therefore has one place in
+	 * the stream (after `agent_end`, before the settle), ahead of anything a host or background job does once the session
+	 * is idle. Started at network-reply time it raced those inputs (senpi#5382). An abort drops it (`_abortWithProvenance`).
+	 */
+	private async _settleSessionTitle(): Promise<void> {
+		const firstPrompt = this._pendingSessionTitlePrompt;
+		this._pendingSessionTitlePrompt = undefined;
+		if (firstPrompt === undefined) return;
+		this._startSessionTitleGeneration(firstPrompt);
+		await this._sessionTitlePromise;
 	}
 
 	private abortSessionTitleGeneration(): void {
@@ -8789,6 +8810,8 @@ export class AgentSession {
 		const shouldEmitAbort =
 			!joinedAgentEndBoundary && !wasMidRun && (hadRetryBackoff || hadCompactionOrPending || hadClearedQueues);
 		this.abortCompaction();
+		this._pendingSessionTitlePrompt = undefined;
+		this.abortSessionTitleGeneration();
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		await this._abortActiveAgentAndRetry("user");
@@ -14352,7 +14375,7 @@ export class AgentSession {
 		// Re-chain parentIds to form a linear sequence
 		let prevId: string | null = null;
 		for (const entry of branchEntries) {
-			const linear = { ...entry, parentId: prevId };
+			const linear = { ...this.sessionManager.persistedEntry(entry), parentId: prevId };
 			lines.push(JSON.stringify(linear));
 			prevId = entry.id;
 		}

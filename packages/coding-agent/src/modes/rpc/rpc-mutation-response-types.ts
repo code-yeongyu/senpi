@@ -226,6 +226,7 @@ export type RpcMutationResponse =
 	| RpcMoveSessionResponse
 	| { id?: string; type: "response"; command: "account_pin"; success: true }
 	| { id?: string; type: "response"; command: "account_remove"; success: true; data?: { notice: string } }
+	| { id?: string; type: "response"; command: "account_reset"; success: true }
 	| { id?: string; type: "response"; command: "account_order"; success: true }
 	| {
 			id?: string;

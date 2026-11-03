@@ -1,3 +1,21 @@
+## 2026-10-27 - pi-ai models entry budget covers the login-id leaf (senpi#4099)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 32 files: `auth/pool/login-id.ts`, the one-function leaf `models.ts` now imports so `Models.login` stamps a fresh `loginId` on the credential it commits.
+
+### Why
+
+- The lightweight models entry owns the login write path, so it carries the stamp a sign-in writes.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` budget comment and its `maxFiles` line.
+
 ## 2026-11-01 - Kill guard judge entry shipped in the npm bundle (senpi#5349, PR #5358)
 
 ### What changed

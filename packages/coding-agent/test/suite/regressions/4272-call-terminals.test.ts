@@ -1,5 +1,6 @@
 import { fauxToolCall } from "@earendil-works/pi-ai";
 import { expect, it } from "vitest";
+import { blockCallKey } from "../../../src/core/session-call-keys.ts";
 import { announced, callsRig } from "./4272-calls-support.ts";
 
 // Part of #4272, R3.C3.3 (RULING-13 Q2-Q4, Q7): an outstanding call's terminal: its carrier's settle with a full
@@ -16,7 +17,7 @@ it("Q2 Q7 the carrier's settle retires the call with a full projection on the S0
 		rig.toolResult("c1", "bash", "done");
 		const settled = await rig.calls();
 		const row = (await rig.lane.readSettled(settled.root)).settledMessages.find((each) => each.role === "toolResult");
-		const key = `${live.root.sessionEpoch}:${started?.sequence}.0`;
+		const key = blockCallKey(owner.messageId, 0);
 		expect(live.calls.map((entry) => entry.runtimeItemKey)).toEqual([key]);
 		expect(settled.calls).toEqual([]);
 		expect(settled.sequence).toBe(settled.root.sequence);
