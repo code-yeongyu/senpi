@@ -48,7 +48,9 @@ const BUDGETS = {
 			// +2 (senpi#4272 S02c): assistant-capture-record.ts separates frozen-value construction to keep files
 			// below 250 pure LOC; assistant-seed-frontier.ts shares the producer/projector frontier contract.
 			// Both are browser-safe leaves without new runtime dependencies. Measured: 33 files.
-			maxFiles: 33,
+			// +1 (senpi#4099): auth/pool/login-id.ts, the one-function leaf that stamps a fresh loginId on a sign-in's
+			// credential so a re-login (never a token refresh) releases a billing-pinned fallback. Measured: 34 files.
+			maxFiles: 34,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
 		"./utils/*": {
