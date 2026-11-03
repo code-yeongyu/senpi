@@ -1,3 +1,45 @@
+## 2026-11-02 - The recovery manifest states its required catalog families (senpi#5397, RULING-128)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-catalog-registry.ts`: the family registry gains `requiredKinds`: the families whose producer is `complete`, in code-unit order, each once. `familyRegistry` derives it from the same producers that mark a family `partial` (RULING-60/61), and `readFamilyRegistry` refuses a registry whose list disagrees with its rows. `familyProducers` takes the frozen root (`transcript`, `refusedCorrelations`) so the catalog and the manifest call it the same way.
+- `packages/coding-agent/src/modes/rpc/compact-catalog-families.ts`: `checkpointComponents` passes the root to `familyProducers`; the `families/families` component now carries `requiredKinds`, so its digest, and with it `checkpointDigest`, covers the list. The generator returns the registry it emitted.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest-shape.ts`, `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`: the compact-v1 manifest gains `requiredKinds` after `catalogRootLength`, copied from the registry `checkpointComponents` returned, the same object it wrote into the digested component, so the two cannot differ by construction.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-manifest-kinds.ts`: `readRequiredKinds(manifest, registry)`, the reference reader of a decoded manifest's list. It refuses a missing list (`manifest_missing_required_kinds`), an unknown kind (`manifest_unknown_required_kind`) and any list that differs from the complete families of the digest-verified `families/families` component (`manifest_required_kinds_mismatch`).
+- `packages/coding-agent/docs/rpc.md`: the manifest's fields, `requiredKinds`, and the client rules (`manifest_missing_required_kinds`, `manifest_unknown_required_kind`, `manifest_required_kinds_mismatch`, never a built-in family list). New golden `docs/engine-socket/fixtures/recovery-manifest/` (one partial family excluded); admission goldens c and i re-recorded for the manifest's new bytes.
+
+### Why
+
+- A compact client opening a root had to copy `CATALOG_FAMILIES` and subtract the partial families itself, a second source that drifts when the engine adds a family. RULING-128 (option B): partial-versus-complete is the engine's per-cut decision, so the engine states the list, inside the digested content, flag-on compact only.
+- `checkpointDigest` covers the registry component, not the manifest field, so a manifest whose list was altered while the component and digest stayed intact would open unless the reader compares the two; the contract owner made that comparison a binding open rule.
+
+### Why an extension could not handle it
+
+- The manifest and the catalog are the RPC host's compact recovery state; extensions never see a cut, its registry or its manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/compact-catalog-registry.ts` `familyProducers`, `familyRegistry` and `readFamilyRegistry`; the `assemble` signature in `packages/coding-agent/src/modes/rpc/compact-recovery-manifest.ts`.
+
+## 2026-10-30 - Track claim removal beyond close completion (senpi#4484)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: mark reservation release as pending claim work until the cross-generation claim is removed and the in-process reservation is cleared. Reopens use the existing bounded pending-claim wait even when close has already deleted its entry. A removal that throws still clears both the in-process reservation and the pending claim.
+
+### Why
+
+- The close grace deadline can complete a close while asynchronous claim removal is still running. A subsequent open found the in-process reservation without an entry and refused with `session_path_in_use` / `path_still_held`. A promise-gated regression forces that ordering without sleeps or a larger deadline.
+- A removal that threw left the in-process reservation behind with no entry left to clear it, so every later open of that path in this process was refused with `path_still_held` despite its `retry_after_ms`.
+
+### Why an extension could not handle it
+
+- The registry owns claim removal and the reservation decision before runtime construction.
+
+### Expected merge conflict zones
+
+- LOW: `session-registry.ts` imports and the constructor's `releaseReservation` callback.
+
 ## 2026-11-02 - Typed socket_closing before engine-initiated compact closes (RULING-124, senpi#5322, senpi#5395)
 
 ### What changed
