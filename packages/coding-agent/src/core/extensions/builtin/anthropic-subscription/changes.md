@@ -1,3 +1,116 @@
+## 2026-11-03 - A thinking block bound to a different conversation is a typed invalid_request failure (senpi#5587)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/provider-diagnostic.ts`: `anthropicSubscriptionDiagnostic` maps the "Invalid `signature` in `thinking` block ... bound to a different conversation" refusal (directly or inside a `ClassifiedSdkError`) to `{ category: "invalid_request", httpStatus: 400, code: "invalid_request_error" }`.
+
+### Why
+
+- The refusal had no SDK error kind with a diagnostic, so the turn ended as `unknown`.
+
+### Why an extension could not handle it
+
+- This is the extension's own diagnostic mapping.
+
+### Expected merge conflict zones
+
+- LOW: the head of `anthropicSubscriptionDiagnostic`.
+
+## 2026-11-03 - A config hot-reload keeps the resident Claude Code process (senpi#5577)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-wiring.ts`: the `session_shutdown` handler returns early for reason `reload` instead of closing the resident session. `quit`, `new`, `resume`, `fork` and `session_extensions_removed` still close it.
+
+### Why
+
+- Any non-routine `settings.json`, `models.json`, `keybindings.json` or `omo.jsonc` write reloads every session sharing the agent dir, and desktop writes these on routine actions. Each reload closed every resident process, so the next turn paid a Claude Code spawn plus a transcript resume, and on a real account a re-attach of the claude.ai connectors (oh-my-openagent#12166). The registry survives a reload and the resident query holds no per-load state (module-constant hooks, deny-only tool handlers). A reload that changes the spawn inputs is still caught by the next turn's `configFingerprint` drift.
+
+### Why an extension could not handle it
+
+- The close is this builtin's own lifecycle wiring of its resident session registry.
+
+### Expected merge conflict zones
+
+- LOW: the `session_shutdown` handler at the end of `registerSessionRegistry` in `session-registry-wiring.ts`.
+
+## 2026-10-28 - A refused account pool ends the turn with a provider diagnostic (#4676)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/provider-diagnostic.ts` (new): `anthropicSubscriptionDiagnostic(error)`. `AllAccountsBlockedError` maps to category `auth` with code `account_pool_auth_blocked` when every account is auth-blocked, otherwise `rate_limit` with code `account_pool_blocked` and `resetsAt` = the soonest retry. A pin (account fallback off) to an account that is no longer configured sets no diagnostic: that is a configuration error, not a limit, and a `rate_limit` would make a goal back off and retry something that cannot succeed. A classified SDK failure maps by kind: `auth_error` -> `auth` (`authentication_error`), `rate_limit` -> `rate_limit` (`rate_limit_error`), `overloaded` -> `provider_unavailable` (`overloaded_error`), `billing` -> `unknown` (`billing_error`), `org_not_allowed` -> `unknown` (`permission_error`); other kinds set nothing. The result is revalidated with `sanitizeProviderDiagnostic`. The pool refusal is found through a bounded walk of the error's `cause` chain (8 links), so a failure that wraps the refusal (the failover keeping the failed account's own error, #4674) still reports the pool diagnostic with its `resetsAt`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: the catch block sets `output.providerDiagnostic` from it for an `error` stop (never for an abort).
+
+### Why
+
+- A pool refused locally ended the turn as "The provider returned an error that could not be classified (anthropic-subscription, no code)", because the stream set only `errorMessage` and `provider-failure.ts` then reports `unknown` (code-yeongyu/oh-my-openagent#11683). Same class as the chatgpt-subscription fix (#3771).
+
+### Why an extension could not handle it
+
+- This is the anthropic-subscription extension's own stream adapter.
+
+### Expected merge conflict zones
+
+- LOW: the catch block of `streamAnthropicSubscription` in `stream.ts`.
+
+## 2026-10-28 - An account block keeps the failure that caused it and is logged (#4674)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: when an account fails and `selectFn` finds no other account (`AllAccountsBlockedError`), `runFailover` throws the original `ClassifiedSdkError` and attaches the pool refusal as `poolState`, instead of letting the refusal replace it. The refusal is also the error's `cause`, and `withAuthGuidance` appends `exhaustedPoolGuidance` (the soonest automatic retry as an ISO time plus each account's state, without the pool refusal note), so goal mode's `providerRetryAt` still reads the soonest retry from the turn's error. Any other `selectFn` error still propagates. Every block that is saved (shared or session-scoped) writes one `account_blocked` session.log line.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-block-log.ts`: new `logAccountBlocked`, which writes `account_blocked {seat, reason, until, shared, error}` (error capped at 200 characters) through the extension's session.log boundary. The account is named only by its salted seat digest, never its name (Desktop#4753); `until` is left out when the end time is unknown.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `AllAccountsBlockedError` carries `accounts` (name, reason, until for each candidate) and appends them to its message after the unchanged first sentence. An auth-blocked account is named with `/login anthropic-subscription`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/guidance.ts`, `stream-guidance.ts`: new `exhaustedPoolGuidance` for a failure that left no other account; `allAccountsBlockedGuidance` takes the account states and lists one line per account, so the user sees which account needs `/login`.
+
+### Why
+
+- One account failing (a refresh failure, a 401) while the others were already blocked surfaced only as "All Claude accounts ... are currently blocked", and nothing in any log recorded which account was blocked or why (code-yeongyu/oh-my-openagent#11683).
+
+### Why an extension could not handle it
+
+- This is the anthropic-subscription extension's own failover and pool selection.
+
+### Expected merge conflict zones
+
+- LOW: the catch block of `runFailover` around `selectFn`, the `AllAccountsBlockedError` constructor and its `selectAccount` call site, and `allAccountsBlockedGuidance`.
+
+## 2026-10-30 - A turn submitted while the previous turn settles waits instead of failing over (senpi#3906, senpi#5015)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts`: `submitSessionTurn` waits for the active turn's `settled` promise, bounded by `SESSION_TURN_ADMISSION_WAIT_MS` (10 s) through the request's `scheduleAbort`, then submits. An abort while waiting resolves as an aborted turn; a session closed meanwhile rejects so failover can reattach; a turn that does not settle in time keeps `ConcurrentSessionTurnAdmissionError`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-types.ts`: `ActiveTurn.settled`, resolved on both outcomes.
+
+### Why
+
+- The synchronous refusal surfaced as a provider failure, and the retry/fallback layer moved the session to another model whenever the agent loop started the next turn before the pump received the previous turn's terminal result.
+
+### Why an extension could not handle it
+
+- Turn admission lives inside this builtin provider's resident-session pump; no extension hook runs between the stream request and `submitSessionTurn`.
+
+### Expected merge conflict zones
+
+- LOW: `submitSessionTurn` and the new `admitAfter` in `session-registry-pump.ts`; `ActiveTurn` in `session-turn-types.ts`.
+
+## 2026-11-01 - The cold-seed upload cap drops old uploads in steps (part of senpi#2988)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/cold-seed-images.ts`: `selectUserFirstThenMostRecent` keeps user uploads as entries in order of appearance; past `MAX_REPLAYED_HISTORY_IMAGES` (8) the oldest entries are dropped in blocks of the new `REPLAYED_UPLOAD_DROP_STEP` (4), keeping 5 to 8 of the newest, and a dropped entry stays dropped. A re-upload of an image whose entry was already dropped opens a new entry, so the new upload is replayed while the old position keeps its note. The current turn's tool images fill the remaining slots, most recent first; one whose bytes match a dropped upload is sent in the current-turn section without making that upload's history entry replayable again.
+
+### Why
+
+- Keeping the 8 most recent uploads meant every upload after the eighth replaced an older one with the capped note in place, so each rebuilt prompt diverged deep in the history, outside the cache lookback, and wrote it to the cache again (senpi#2988 item 3). Now that happens once per 4 new uploads.
+
+### Why an extension could not handle it
+
+- The flattened cold-seed prompt is built inside this builtin provider before any extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: `selectUserFirstThenMostRecent` in `cold-seed-images.ts` (also edited by senpi#5276, which this PR is stacked on).
+
 ## 2026-11-01 - Recognize terminal-formatted Claude login output (senpi#5357)
 
 ### What changed

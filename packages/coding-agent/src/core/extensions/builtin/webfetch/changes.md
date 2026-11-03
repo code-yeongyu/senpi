@@ -2,6 +2,24 @@
 
 Vendored from [`code-yeongyu/pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) (see `external-versions.json`).
 
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts`: the three `promptGuidelines` (restating the description and schema) are removed.
+
+### Why
+
+- senpi#5335.
+
+### Why an extension could not handle it
+
+- The guidelines are part of this tool's definition.
+
+### Expected merge conflict zones
+
+- LOW: the tool definition.
+
 ## 2026-09-24 - Pin pi-webfetch 0.1.3, no port needed (senpi#2079)
 
 The only runtime change between 0.1.2 and 0.1.3 is pi-webfetch#8 (`fetcher.ts` `discardBody`: optional `dump()`, abort-aware bounded drain, quiet `destroy()`). senpi already carries it in `webfetch/response-body.ts` (see the 2026-08 entries below). The sync report's other hunks are whole-file differences against senpi's linkedom parser, lazy content loading and multi-phase progress, which stay senpi-owned. Only `external-versions.json` changes.
