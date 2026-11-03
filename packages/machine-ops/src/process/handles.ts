@@ -245,16 +245,19 @@ class LocalProcessHandle implements ProcessHandle {
 export class HandleRegistry {
 	private readonly handles = new Map<string, LocalProcessHandle>();
 	private readonly holder: HolderLink;
-	private readonly scopes: ScopeRegistry;
+	private readonly scopes: ScopeRegistry | undefined;
 	private readonly limits: Limits;
 
-	constructor(holder: HolderLink, scopes: ScopeRegistry, limits: Limits) {
+	constructor(holder: HolderLink, scopes: ScopeRegistry | undefined, limits: Limits) {
 		this.holder = holder;
 		this.scopes = scopes;
 		this.limits = limits;
 	}
 
 	async spawn(req: SpawnRequest, principal: string, limits: Limits): Promise<ProcessHandle> {
+		const scopes = this.scopes;
+		// A handle's kill sweeps its scope, so spawning needs the registry a `stateDir` configures.
+		if (scopes === undefined) throw new MachineOpError("invalid_argument", "process.spawn needs a stateDir");
 		const cap = limits.maxPtySessions ?? this.limits.maxPtySessions;
 		if (cap !== undefined) {
 			const live = [...this.handles.values()].filter((handle) => handle.state === "running").length;
@@ -263,7 +266,7 @@ export class HandleRegistry {
 		}
 		const id = `h_${randomBytes(9).toString("base64url")}`;
 		const scopeToken = newScopeToken();
-		await this.scopes.record(scopeToken, { principal, command: req.command.slice(0, 64) });
+		await scopes.record(scopeToken, { principal, command: req.command.slice(0, 64) });
 		const env: Record<string, string | undefined> = { ...curatedEnv(), ...req.env, [SCOPE_ENV]: scopeToken };
 		delete env[RUNTIME_ENV];
 		let held: HeldTerminal;
@@ -278,13 +281,13 @@ export class HandleRegistry {
 				rows: req.rows ?? 24,
 			});
 		} catch (error) {
-			await this.scopes.release(scopeToken);
+			await scopes.release(scopeToken);
 			throw error;
 		}
-		this.scopes.attach(scopeToken, held.pid);
+		scopes.attach(scopeToken, held.pid);
 		const handle = new LocalProcessHandle(
 			{ id, scopeToken, principal, command: [req.command, ...(req.args ?? [])].join(" "), held },
-			this.scopes,
+			scopes,
 			{ ...this.limits, ...limits },
 		);
 		this.handles.set(id, handle);

@@ -80,7 +80,7 @@ export {
 	type WriteToolOptions,
 } from "./write.ts";
 
-import type { MachineOps, PolicyHooks } from "@code-yeongyu/senpi-machine-ops";
+import type { MachineOps } from "@code-yeongyu/senpi-machine-ops";
 import { type AgentTool, selectedReadFolder } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
@@ -89,7 +89,7 @@ import { createFindTool, createFindToolDefinition, type FindToolOptions } from "
 import { createGlobToolDefinition, type GlobToolOptions } from "./glob.ts";
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
 import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.ts";
-import { createToolMachine } from "./machine.ts";
+import { createToolMachine, type ToolPathPolicy } from "./machine.ts";
 import { createPowerShellToolDefinition, type PowerShellToolOptions } from "./powershell.ts";
 import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
 import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.ts";
@@ -121,8 +121,8 @@ export interface ToolsOptions {
 	ls?: LsToolOptions;
 	/** The one operation layer every tool calls. Default: the process-wide local machine (principal `local-session`). */
 	machineOps?: MachineOps;
-	/** Hooks for the tool path; `beforeOp` runs once per tool call, before any effect. */
-	machinePolicy?: PolicyHooks;
+	/** Hooks for the tool path: only `beforeOp`, run once per tool call before any effect. */
+	machinePolicy?: ToolPathPolicy;
 }
 
 function toolMachine(options: ToolsOptions | undefined) {

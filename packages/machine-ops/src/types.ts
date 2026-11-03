@@ -217,7 +217,8 @@ export interface ExecResult {
 	readonly aborted: boolean;
 	readonly startedAtMs: number;
 	readonly durationMs: number;
-	readonly scopeToken: string;
+	/** The exec's scope token; undefined when the instance has no scope registry (no `stateDir`). */
+	readonly scopeToken: string | undefined;
 }
 
 export interface SpawnRequest {

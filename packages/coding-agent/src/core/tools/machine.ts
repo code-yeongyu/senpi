@@ -8,7 +8,6 @@ import {
 	type PolicyHooks,
 } from "@code-yeongyu/senpi-machine-ops";
 import { createInProcessHolderLink } from "@code-yeongyu/senpi-machine-ops/in-process-holder";
-import { getAgentDir } from "../../config.ts";
 import { killProcessTree } from "../../utils/shell.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 
@@ -27,18 +26,27 @@ const TOOL_PATH_LIMITS: Limits = {
 let processMachineOps: MachineOps | undefined;
 
 /**
- * The process-wide local MachineOps the built-in tools use when no caller supplies one. Created on first use: its
- * state (exec scope tokens) lives under `<agentDir>/machine/`.
+ * The process-wide local MachineOps the built-in tools use when no caller supplies one. It has no `stateDir`, so it
+ * records no scope tokens and writes nothing to disk: abort and timeout still kill the command's process group.
  */
 function defaultLocalMachineOps(): MachineOps {
 	processMachineOps ??= createLocalMachineOps({
-		stateDir: getAgentDir(),
 		holder: createInProcessHolderLink(),
 		killProcessTree,
 		resolveFd: () => ensureTool("fd"),
 	});
 	return processMachineOps;
 }
+
+/**
+ * The hooks the tool path honours: only `beforeOp`, once per tool call. The tools run the extension filesystem policy
+ * themselves and sub-operations carry no hooks, so `filesystem` and `afterOp` are rejected at compile time instead of
+ * being silently ignored.
+ */
+export type ToolPathPolicy = Pick<PolicyHooks, "beforeOp"> & {
+	readonly filesystem?: never;
+	readonly afterOp?: never;
+};
 
 /** One MachineOps bound to the tool path: principal `local-session`, no scope root (the tools resolve paths). */
 export interface ToolMachine {
@@ -55,7 +63,7 @@ export interface ToolMachine {
 
 const NEVER_ABORTED = new AbortController().signal;
 
-export function createToolMachine(options?: { ops?: MachineOps; policy?: PolicyHooks }): ToolMachine {
+export function createToolMachine(options?: { ops?: MachineOps; policy?: ToolPathPolicy }): ToolMachine {
 	const resolveOps = () => options?.ops ?? defaultLocalMachineOps();
 	const context = (signal: AbortSignal | undefined, pathLock?: "caller"): OpContext => ({
 		scope: { id: "local-session" },

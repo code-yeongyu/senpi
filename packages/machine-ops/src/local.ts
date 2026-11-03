@@ -10,8 +10,13 @@ import { ScopeRegistry } from "./process/scopes.ts";
 import type { FileOps, Limits, MachineOps, OpContext, ProcessOps } from "./types.ts";
 
 export interface LocalMachineOpsOptions {
-	/** Root of the host's machine state: `machine/scopes/` token files and `machine/inbox/` message logs. */
-	readonly stateDir: string;
+	/**
+	 * Root of the host's machine state; setting it configures the scope registry. With it, every exec/spawn records a
+	 * token file under `machine/scopes/` before the child starts, the child carries `SENPI_MACHINE_SCOPE`, and
+	 * `info.message` appends to `machine/inbox/`. Without it nothing is written to disk, children get no scope
+	 * variable, `process.sweep` is a no-op, and `process.spawn` / `info.message` reject with `invalid_argument`.
+	 */
+	readonly stateDir?: string;
 	/** Owner of spawned PTYs. */
 	readonly holder: HolderLink;
 	/** Host defaults; every op reads its own limits from `OpContext.limits`. Default `DEFAULT_LIMITS`. */
@@ -26,7 +31,7 @@ export interface LocalMachineOpsOptions {
 export function createLocalMachineOps(options: LocalMachineOpsOptions): MachineOps {
 	const limits = options.limits ?? DEFAULT_LIMITS;
 	const killTree = options.killProcessTree ?? defaultKillTree;
-	const scopes = new ScopeRegistry(options.stateDir, killTree);
+	const scopes = options.stateDir === undefined ? undefined : new ScopeRegistry(options.stateDir, killTree);
 	const handles = new HandleRegistry(options.holder, scopes, limits);
 	let lastOpAtMs: number | undefined;
 	const touch = <A extends unknown[], R>(fn: (...args: A) => R) => {
@@ -55,7 +60,9 @@ export function createLocalMachineOps(options: LocalMachineOpsOptions): MachineO
 		),
 		handle: (id) => handles.get(id),
 		list: (principal) => handles.list(principal),
-		sweep: touch((tokens) => scopes.sweep(tokens)),
+		sweep: touch(async (tokens) => {
+			await scopes?.sweep(tokens);
+		}),
 	};
 	const info = createLocalInfoOps({
 		stateDir: options.stateDir,

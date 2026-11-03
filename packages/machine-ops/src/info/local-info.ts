@@ -56,11 +56,11 @@ async function otherProcessInfo(pid: number): Promise<ProcessInfo> {
 }
 
 export function createLocalInfoOps(options: {
-	stateDir: string;
+	stateDir: string | undefined;
 	handle: (id: string) => ProcessHandle | undefined;
 	lastOpAtMs: () => number | undefined;
 }): InfoOps {
-	const inboxDir = join(options.stateDir, "machine", "inbox");
+	const stateDir = options.stateDir;
 	/** topic -> the tail of its append chain, resolving to the last seq written. */
 	const topics = new Map<string, Promise<number>>();
 	return {
@@ -87,6 +87,8 @@ export function createLocalInfoOps(options: {
 
 		async message(req: { topic: string; body: unknown }, ctx: OpContext): Promise<MessageResult> {
 			if (!TOPIC.test(req.topic)) throw new MachineOpError("invalid_argument", `invalid topic: ${req.topic}`);
+			if (stateDir === undefined) throw new MachineOpError("invalid_argument", "info.message needs a stateDir");
+			const inboxDir = join(stateDir, "machine", "inbox");
 			return gated("info.message", req, ctx, async () => {
 				const inboxPath = join(inboxDir, `${req.topic}.jsonl`);
 				const previous =

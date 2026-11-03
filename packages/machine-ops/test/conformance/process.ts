@@ -51,7 +51,7 @@ export function defineProcessCases(runner: ConformanceRunner, target: Conformanc
 			"the child carries the scope token, recorded before spawn",
 			withFixture(target, async ({ ops, ctx, stateDir }) => {
 				const result = await ops.process.exec(
-					{ command: `cat "${join(stateDir, "machine", "scopes")}/$OMO_MACHINE_SCOPE.json"` },
+					{ command: `cat "${join(stateDir, "machine", "scopes")}/$SENPI_MACHINE_SCOPE.json"` },
 					ctx(),
 				);
 				assert.equal(result.exitCode, 0);

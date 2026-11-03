@@ -12,6 +12,8 @@
 - Filesystem and spawn errors pass through unchanged so the tools keep their exact error text; errors the layer
   raises itself are `MachineOpError` with a code.
 - Every behaviour change needs a case in `test/conformance/`, the suite other consumers run.
+- Disk state and the `SENPI_MACHINE_SCOPE` child variable exist only when the caller passes a `stateDir`; senpi's tool
+  path passes none and must stay free of agent-dir writes.
 
 ## VALIDATION
 

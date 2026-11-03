@@ -1,9 +1,9 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OpName, PolicyDecision, PolicyHooks } from "@code-yeongyu/senpi-machine-ops";
+import type { OpName, PolicyDecision } from "@code-yeongyu/senpi-machine-ops";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createAllToolDefinitions } from "../../src/core/tools/index.ts";
+import { createAllToolDefinitions, type ToolsOptions } from "../../src/core/tools/index.ts";
 
 // senpi#5592: on the tool path, PolicyHooks.beforeOp gates each read/write/edit/bash call exactly once, before any
 // effect; a denial leaves the filesystem untouched and the command unrun.
@@ -13,7 +13,10 @@ type Call = { op: OpName; args: unknown };
 // The tools fall back to their factory cwd and skip session metadata when no extension context is passed.
 const NO_CONTEXT = undefined as never;
 
-function recordingPolicy(decide: (op: OpName) => PolicyDecision): { calls: Call[]; policy: PolicyHooks } {
+function recordingPolicy(decide: (op: OpName) => PolicyDecision): {
+	calls: Call[];
+	policy: NonNullable<ToolsOptions["machinePolicy"]>;
+} {
 	const calls: Call[] = [];
 	return {
 		calls,

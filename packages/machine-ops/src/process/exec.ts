@@ -71,28 +71,35 @@ class CappedBuffer {
 }
 
 export interface ExecDependencies {
-	readonly scopes: ScopeRegistry;
+	/** Absent: no scope token is recorded, nothing is written to disk and the child environment gets no entry. */
+	readonly scopes: ScopeRegistry | undefined;
 	readonly killTree: (pid: number) => void;
 }
 
 /**
- * Run one command in its own process group with a scope token, capped capture, a timeout and abort. Abort and
- * timeout kill the whole group and settle the result (`aborted` / `timedOut`) instead of rejecting.
+ * Run one command in its own process group (with a scope token when a registry is configured), capped capture, a
+ * timeout and abort. Abort and timeout kill the whole group and settle the result (`aborted` / `timedOut`) instead of
+ * rejecting.
  */
 export async function runExec(req: ExecRequest, ctx: OpContext, deps: ExecDependencies): Promise<ExecResult> {
 	const timeoutMs = req.timeoutMs ?? ctx.limits.execTimeoutDefaultMs;
 	if (!(timeoutMs > 0)) throw new MachineOpError("invalid_argument", "timeoutMs must be positive");
 	const shell = req.shell ?? defaultShell();
-	const token = newScopeToken();
-	await deps.scopes.record(token, { principal: ctx.principal.id, command: req.command.slice(0, 64) });
+	const scopes = deps.scopes;
+	const token = scopes === undefined ? undefined : newScopeToken();
+	if (scopes !== undefined && token !== undefined) {
+		await scopes.record(token, { principal: ctx.principal.id, command: req.command.slice(0, 64) });
+	}
 
 	const env: Record<string, string | undefined> = {
 		...(req.envMode === "exact" ? {} : curatedEnv()),
 		...req.env,
-		[SCOPE_ENV]: token,
 	};
-	// A child of the runtime is a sweep target, never runtime itself.
-	delete env[RUNTIME_ENV];
+	if (token !== undefined) {
+		env[SCOPE_ENV] = token;
+		// A child of the runtime is a sweep target, never runtime itself.
+		delete env[RUNTIME_ENV];
+	}
 	const viaStdin = shell.commandTransport === "stdin";
 	const startedAtMs = Date.now();
 	const started = performance.now();
@@ -106,7 +113,7 @@ export async function runExec(req: ExecRequest, ctx: OpContext, deps: ExecDepend
 			windowsHide: true,
 		});
 	} catch (error) {
-		await deps.scopes.release(token);
+		if (token !== undefined) await scopes?.release(token);
 		throw error;
 	}
 	if (viaStdin) {
@@ -115,7 +122,7 @@ export async function runExec(req: ExecRequest, ctx: OpContext, deps: ExecDepend
 	}
 	const pid = child.pid;
 	if (pid !== undefined) {
-		deps.scopes.attach(token, pid);
+		if (token !== undefined) scopes?.attach(token, pid);
 		req.onSpawn?.(pid);
 		const onExit = req.onExit;
 		if (onExit !== undefined) child.once("exit", () => onExit(pid));
@@ -165,7 +172,7 @@ export async function runExec(req: ExecRequest, ctx: OpContext, deps: ExecDepend
 		ctx.signal.removeEventListener("abort", onAbort);
 		// The kill grace released the wait while the child is still alive: it must not pin the event loop.
 		if (child.exitCode === null && child.signalCode === null) child.unref();
-		await deps.scopes.release(token);
+		if (token !== undefined) await scopes?.release(token);
 	}
 	if (callbackError !== undefined) throw callbackError.error;
 	return {
