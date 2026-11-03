@@ -10,7 +10,7 @@ import type { HandFileGuards } from "../../src/modes/rpc/hand-file-ops.ts";
 import { planRun } from "../../src/modes/rpc/hand-run-allowlist.ts";
 import { runOnHand } from "../../src/modes/rpc/hand-run-ops.ts";
 
-const root = mkdtempSync(join(tmpdir(), "senpi-run-url-"));
+const root = realpathSync(mkdtempSync(join(tmpdir(), "senpi-run-url-")));
 const repo = join(root, "repo");
 const mirror = join(root, "mirror.git");
 mkdirSync(repo);
@@ -81,35 +81,66 @@ describe.skipIf(process.platform === "win32")("a local url is a path under the h
 	});
 	it.each([
 		{
-			name: "a P.git symlink",
-			url: () => `file://${join(root, "linked")}`,
-			make: () => symlinkSync(mirror, join(root, "linked.git")),
+			name: "a commondir redirect",
+			url: () => {
+				const dir = join(root, "common");
+				execFileSync("git", ["init", "-q", "--bare", "--template=", dir]);
+				writeFileSync(join(dir, "commondir"), `${mirror}\n`);
+				return `file://${dir}`;
+			},
 		},
 		{
-			name: "a P/.git gitfile pointing outside",
-			url: () => `file://${join(root, "gitfile")}`,
-			make: () => {
+			name: "a gitfile (then a commondir)",
+			url: () => {
+				const target = join(root, "gitfile-target");
+				execFileSync("git", ["init", "-q", "--bare", "--template=", target]);
+				writeFileSync(join(target, "commondir"), `${mirror}\n`);
 				mkdirSync(join(root, "gitfile"));
-				writeFileSync(join(root, "gitfile", ".git"), `gitdir: ${mirror}\n`);
+				writeFileSync(join(root, "gitfile", ".git"), `gitdir: ${target}\n`);
+				return `file://${join(root, "gitfile")}`;
 			},
 		},
 		{
-			name: "a P.git/.git variant",
-			url: () => `file://${join(root, "variant")}`,
-			make: () => {
-				mkdirSync(join(root, "variant.git"));
-				symlinkSync(mirror, join(root, "variant.git", ".git"));
+			name: "objects/info/alternates",
+			url: () => {
+				const dir = join(root, "alternates");
+				execFileSync("git", ["init", "-q", "--bare", "--template=", dir]);
+				mkdirSync(join(dir, "objects", "info"), { recursive: true });
+				writeFileSync(join(dir, "objects", "info", "alternates"), `${join(mirror, "objects")}\n`);
+				return `file://${dir}`;
 			},
 		},
-	])("judges $name at the git dir git enters, and refuses it when the policy denies", async ({ url, make }) => {
-		make();
-		const read = await run(["ls-remote", url(), "refs/heads/main"], (a) => isRepoDir(a));
-		const write = await run(["push", "--quiet", url(), "main:main"], (a) => isRepoDir(a));
+		{
+			name: "the repository path itself as a symlink",
+			url: () => {
+				symlinkSync(mirror, join(root, "self-link.git"));
+				return `file://${join(root, "self-link.git")}`;
+			},
+		},
+		{
+			name: "a P.git variant",
+			url: () => {
+				mkdirSync(join(root, "variant"));
+				execFileSync("git", ["init", "-q", "--bare", "--template=", join(root, "variant.git")]);
+				return `file://${join(root, "variant")}`;
+			},
+		},
+	])("refuses $name (local_repo_shape_unsupported) without asking the policy", async ({ url }) => {
+		const target = url();
+		const read = await run(["ls-remote", target, "refs/heads/main"], () => true);
+		const write = await run(["push", "--quiet", target, "main:main"], () => true);
 		expect([read.result, write.result]).toEqual(["refused_by_policy", "refused_by_policy"]);
-		expect([...read.asked, ...write.asked].filter((a) => !isRepoDir(a))).toEqual([
-			{ operation: "read", canonicalPath: realpathSync(mirror) },
-			{ operation: "write", canonicalPath: realpathSync(mirror) },
-		]);
+		expect([...read.asked, ...write.asked].filter((a) => !isRepoDir(a))).toEqual([]);
+	});
+
+	it("allows a mirror under a symlinked ancestor when the policy permits, judging its real path", async () => {
+		symlinkSync(root, join(root, "ancestor"));
+		const { result, asked } = await run(
+			["ls-remote", `file://${join(root, "ancestor", "mirror.git")}`, "refs/heads/main"],
+			() => true,
+		);
+		expect(result).toBe("ran");
+		expect(asked.filter((a) => !isRepoDir(a))).toEqual([{ operation: "read", canonicalPath: realpathSync(mirror) }]);
 	});
 
 	it("refuses a local url that names no repository", async () => {

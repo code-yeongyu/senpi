@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DeviceFileError } from "@earendil-works/pi-agent-core";
 import { canonicalizeFilesystemPath } from "../../core/tools/filesystem-policy.ts";
@@ -79,41 +79,51 @@ export interface PolicyTarget {
 	readonly canonicalPath: string;
 }
 
-async function isGitDir(dir: string): Promise<boolean> {
-	const [head, objects, refs] = await Promise.all(
-		["HEAD", "objects", "refs"].map((entry) => stat(join(dir, entry)).catch(() => undefined)),
-	);
-	return head?.isFile() === true && objects?.isDirectory() === true && refs?.isDirectory() === true;
-}
+const SHAPE = "local_repo_shape_unsupported";
 
-/** The directory a `.git` FILE points at (`gitdir: <path>`, relative to the file), resolved through every symlink. */
-async function gitfileTarget(file: string): Promise<string | undefined> {
-	const match = /^gitdir: (.+)$/m.exec(await readFile(file, "utf8").catch(() => ""));
-	return match?.[1] === undefined
-		? undefined
-		: realpath(resolve(dirname(file), match[1].trim())).catch(() => undefined);
+const kindOf = async (path: string): Promise<"file" | "dir" | "link" | "other" | undefined> => {
+	const entry = await lstat(path).catch(() => undefined);
+	if (entry === undefined) return undefined;
+	return entry.isSymbolicLink() ? "link" : entry.isFile() ? "file" : entry.isDirectory() ? "dir" : "other";
+};
+
+/** A git dir in its plainest form: HEAD a regular file, objects/ and refs/ real directories, no redirect of any kind. */
+async function plainGitDir(dir: string): Promise<boolean> {
+	const [head, objects, refs, commondir, alternates] = await Promise.all(
+		["HEAD", "objects", "refs", "commondir", "objects/info/alternates"].map((entry) => kindOf(join(dir, entry))),
+	);
+	return head === "file" && objects === "dir" && refs === "dir" && commondir === undefined && alternates === undefined;
 }
 
 /**
- * The git directory git itself enters for a local repository path (enter_repo): the first of `P/.git`, `P`, `P.git/.git`
- * and `P.git` that exists, resolved through every symlink, a `.git` file followed to its `gitdir:` target.
+ * The one git dir a local url may name (v2.9, strict canonical shape rather than an emulation of git's lookup). The
+ * parent is resolved once (a symlinked ancestor redirects nothing: the policy judges the real path); inside the candidate
+ * nothing may redirect: the path itself is no symlink, it is a bare repository or holds a `.git` DIRECTORY, no `<path>.git`
+ * sibling exists, and the chosen dir has HEAD/objects/refs as real entries and no `commondir` or `alternates`.
  */
-async function enterRepo(path: string): Promise<string | undefined> {
-	for (const suffix of ["/.git", "", ".git/.git", ".git"]) {
-		const real = await realpath(path + suffix).catch(() => undefined);
-		const entry = real === undefined ? undefined : await stat(real).catch(() => undefined);
-		if (real === undefined || entry === undefined) continue;
-		const dir = entry.isFile() ? await gitfileTarget(real) : real;
-		if (dir !== undefined && (await isGitDir(dir))) return dir;
-	}
-	return undefined;
+async function canonicalLocalRepo(path: string): Promise<string> {
+	const parent = await realpath(dirname(path)).catch(() => undefined);
+	if (parent === undefined) throw new DeviceFileError("refused_by_policy", `${SHAPE}: no repository at ${path}`);
+	const real = join(parent, basename(path));
+	const self = await kindOf(real);
+	if (self === "link") throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${path} is a symlink`);
+	if (self !== "dir") throw new DeviceFileError("refused_by_policy", `${SHAPE}: no repository at ${path}`);
+	if ((await kindOf(`${real}.git`)) !== undefined)
+		throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${path}.git exists`);
+	const dotGit = await kindOf(join(real, ".git"));
+	if (dotGit !== undefined && dotGit !== "dir")
+		throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${path}/.git is not a directory`);
+	const dir = dotGit === "dir" ? join(real, ".git") : real;
+	if (!(await plainGitDir(dir)))
+		throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${dir} is not a plain git directory`);
+	return dir;
 }
 
 /**
  * Confines the typed path arguments of a planned git call (v2.6/v2.7). A `path` must lie inside the worktree or the git
  * directory. A `worktree` (add/remove) must lie outside the git directories, where a worktree would install hooks, and is a
- * policy WRITE. A local url (`source` read, `target` written) may live anywhere (a memory mirror does), so it is resolved
- * through every symlink, its last component included, and handed to the policy instead of being confined.
+ * policy WRITE. A local url (`source` read, `target` written) may live anywhere (a memory mirror does), so it must name a
+ * git dir in strict canonical shape, and that dir is handed to the policy instead of being confined.
  */
 export async function confinePaths(
 	paths: readonly TypedPath[],
@@ -130,8 +140,8 @@ export async function confinePaths(
 	for (const { kind, value } of paths) {
 		if (kind === "source" || kind === "target") {
 			const local = localUrlPath(value);
-			const gitDir = local === undefined ? undefined : await enterRepo(resolve(cwd, local));
-			if (gitDir === undefined) throw new DeviceFileError("refused_by_policy", `no repository at ${value}`);
+			if (local === undefined) throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${value}`);
+			const gitDir = await canonicalLocalRepo(resolve(cwd, local));
 			targets.push({ operation: kind === "source" ? "read" : "write", canonicalPath: gitDir });
 			continue;
 		}

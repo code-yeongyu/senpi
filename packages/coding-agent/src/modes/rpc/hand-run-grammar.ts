@@ -63,11 +63,11 @@ function scheme(value: string): string | undefined {
 	return /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(value)?.[1]?.toLowerCase();
 }
 
-/** git's url_is_local_not_ssh: no colon, a slash before the first colon, or a DOS drive prefix means a local path. */
+/** git's url_is_local_not_ssh: no colon, a slash before the first colon, or (on Windows only) a DOS drive means local. */
 function urlIsLocal(value: string): boolean {
 	const colon = value.indexOf(":");
 	const slash = value.indexOf("/");
-	return colon < 0 || (slash >= 0 && slash < colon) || /^[A-Za-z]:[\\/]/.test(value);
+	return colon < 0 || (slash >= 0 && slash < colon) || (process.platform === "win32" && /^[A-Za-z]:[\\/]/.test(value));
 }
 
 /** A transport git refuses here: NUL, whitespace, an option-like value, or a `<helper>::<address>` remote helper. */
