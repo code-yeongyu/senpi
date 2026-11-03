@@ -101,6 +101,46 @@ describe("todo on a split session (S39)", () => {
 		expect(await viewPhases(harness)).toEqual(phases);
 	});
 
+	it("a fused session's batch of todo calls renders each list once and ends on the newest, as today", async () => {
+		const renders: string[] = [];
+		const harness = await todoHarness((key) => renders.push(key));
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("todo", { op: "init", list: [{ phase: "Setup", items: ["one task", "two task"] }] }),
+					fauxToolCall("todo", { op: "done", task: "one task" }),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("ok"),
+		]);
+
+		await harness.session.prompt("plan it");
+
+		expect(renders.filter((key) => key === "todo-sidebar")).toHaveLength(3);
+		expect(await viewPhases(harness)).toEqual([
+			{
+				name: "Setup",
+				tasks: [
+					{ content: "one task", status: "completed" },
+					{ content: "two task", status: "in_progress" },
+				],
+			},
+		]);
+	});
+
+	it("the loop half ignores a result of another tool that carries a todo list", async () => {
+		const harness = await todoHarness();
+		const foreign = {
+			...todoResult("other-1", [{ name: "Other", tasks: [{ content: "x", status: "pending" }] }]),
+			toolName: "todowrite",
+		};
+
+		await harness.getExtensionRunner().emitMessageEnd({ type: "message_end", message: foreign });
+
+		expect(await viewPhases(harness)).toEqual([]);
+	});
+
 	it("a fused session's own todo result renders its widget once, as today", async () => {
 		const renders: string[] = [];
 		const harness = await todoHarness((key) => renders.push(key));

@@ -32,6 +32,7 @@ const sameState = (a: TodoState, b: TodoState): boolean => JSON.stringify(a) ===
 
 export default function todotoolsExtension(pi: ExtensionAPI): void {
 	let currentState: TodoState = { phases: [], ask: undefined };
+	const executedHere = new Set<string>();
 	// Armed by the first-turn opener; cleared once that run's first assistant message lands.
 	let pendingForce: { forceNamed: boolean; logged: boolean } | undefined;
 	let logger: SessionLogger | undefined;
@@ -92,11 +93,15 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 			const message = event.message;
 			if (message?.role === "assistant") clearPendingForce();
 			// A todo call that ran outside this process (on a hand) returns its list in the result's details: adopt it so
-			// the widget, /todo and the next call see it. The session's own call already set it, so that case is a no-op.
-			const ranElsewhere = getTodoStateFromToolResult(message);
-			if (ranElsewhere !== undefined && !sameState(ranElsewhere, currentState)) {
-				currentState = ranElsewhere;
-				syncWidget(ctx);
+			// the widget, /todo and the next call see it. A call this instance ran already set its list, and its result
+			// arrives only after the whole batch, so adopting it would bring back an older list.
+			if (message?.role === "toolResult" && message.toolName === "todo") {
+				if (executedHere.delete(message.toolCallId)) return;
+				const ranElsewhere = getTodoStateFromToolResult(message);
+				if (ranElsewhere !== undefined && !sameState(ranElsewhere, currentState)) {
+					currentState = ranElsewhere;
+					syncWidget(ctx);
+				}
 				return;
 			}
 			if (message?.role !== "assistant" || !Array.isArray(message.content)) {
@@ -162,7 +167,10 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 		LOOP,
 	);
 
-	const accessors = { getCurrentPhases, setCurrentPhases, getCurrentAsk, setCurrentAsk, syncWidget };
+	const noteExecuted = (toolCallId: string): void => {
+		executedHere.add(toolCallId);
+	};
+	const accessors = { getCurrentPhases, setCurrentPhases, getCurrentAsk, setCurrentAsk, syncWidget, noteExecuted };
 	registerTodoTool(pi, accessors);
 	registerTodoCommand(pi, accessors);
 }
