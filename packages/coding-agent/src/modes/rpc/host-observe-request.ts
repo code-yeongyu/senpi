@@ -36,7 +36,7 @@ import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 
 export const OBSERVE_REQUEST_FIELD = "observe";
 export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
-export const HOLD_HOST_FIELD = "hold_host";
+const HOLD_HOST_FIELD = "hold_host";
 
 const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
 	"get_protocol_info",
