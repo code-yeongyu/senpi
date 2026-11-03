@@ -103,6 +103,7 @@ function seams(overrides: Partial<ChromeRetireSeams> & Pick<ChromeRetireSeams, "
 			requestClose: requestBrowserClose,
 			killWindowsTree: async () => {
 				treeKills.push(1);
+				return true;
 			},
 			removeProfile: async (dir) => {
 				removed.push(dir);
@@ -232,6 +233,7 @@ describe("retiring Bun's Chrome quits it over CDP first (senpi#4174)", () => {
 				run.treeKills.push(1);
 				chrome.set.clear();
 				treeKilled.resolve();
+				return true;
 			},
 		};
 
