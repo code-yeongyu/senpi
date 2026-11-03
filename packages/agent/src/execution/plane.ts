@@ -100,7 +100,7 @@ interface Served {
 }
 
 /**
- * The brain's side: admits a request only while its parent is a live call on the lane it came on, serves each
+ * The brain's side: admits a request (and an abort) only while its parent is a live call on the lane it came on, serves each
  * (parent, child request) once and answers a replay from the stored answer, and aborts a parent's open requests when
  * the parent ends. Answers are kept for the parent's life only.
  */
@@ -151,7 +151,7 @@ export function createPlaneServer(options: {
 	return {
 		receive(lane: string, message: PlaneMessage): void {
 			if (message.kind === "plane.request") serve(lane, message);
-			else if (message.kind === "plane.abort")
+			else if (message.kind === "plane.abort" && options.liveLane(message.parent) === lane)
 				served.get(message.parent)?.get(message.childRequestId)?.controller.abort();
 		},
 		parentEnded(executionId: string): void {
@@ -171,13 +171,14 @@ interface Waiting {
 export function createPlaneClient(options: { readonly transport: Transport; readonly mintId?: () => string }) {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
 	const waiting = new Map<string, Map<string, Waiting>>();
-	const ended = new Set<string>();
+	const live = new Set<string>();
 
 	return {
 		requestFor(parent: string, lane: string, parentSignal: AbortSignal): NestedRequest {
+			live.add(parent);
 			return (plane, body, signal) =>
 				new Promise<JsonValue>((resolve, reject) => {
-					if (ended.has(parent) || parentSignal.aborted || signal?.aborted)
+					if (!live.has(parent) || parentSignal.aborted || signal?.aborted)
 						return reject(new PlaneRefusedError("parent_terminal"));
 					const childRequestId = mintId();
 					const children = waiting.get(parent) ?? new Map<string, Waiting>();
@@ -227,7 +228,7 @@ export function createPlaneClient(options: { readonly transport: Transport; read
 			else waiter.reject(new PlaneRefusedError(message.reason));
 		},
 		parentEnded(parent: string): void {
-			ended.add(parent);
+			live.delete(parent);
 			const children = waiting.get(parent);
 			waiting.delete(parent);
 			for (const waiter of children?.values() ?? []) waiter.reject(new PlaneRefusedError("parent_terminal"));

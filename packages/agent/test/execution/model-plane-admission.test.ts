@@ -129,6 +129,52 @@ describe("model plane admission on the brain (S31)", () => {
 		expect(first).toMatchObject({ kind: "plane.reply", parent: executionId, childRequestId: "c1" });
 	});
 
+	it("ignores an abort sent on another scope's lane, even naming a live request", async () => {
+		const { brain, hand } = link();
+		let signal: AbortSignal | undefined;
+		let release: () => void = () => {};
+		let started: () => void = () => {};
+		const serving = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		const handler: PlaneHandler = serveModelPlane(
+			(_request, abort) =>
+				new Promise((resolve) => {
+					signal = abort;
+					release = () => resolve(assistant("served"));
+					started();
+				}),
+		);
+		const host = createRemoteToolHost({
+			transport: brain,
+			placement: "split-local",
+			planes: { [MODEL_PLANE]: handler },
+		});
+		cleanups.push(() => host.close());
+		const raw = rawHand(hand);
+		const running = runCall(host, { scopeId: "scope-a" });
+		await raw.firstInvoke;
+		const [{ executionId, lane }] = raw.invokes as [{ executionId: string; lane: string }];
+
+		await hand.send(lane, request(executionId, "c1"));
+		await serving;
+		await hand.send(
+			"scope-b",
+			encodePlaneMessage({ kind: "plane.abort", parent: executionId, childRequestId: "c1" }),
+		);
+		await hand.send("scope-b", request(executionId, "probe"));
+		const [probe] = await raw.replies(1);
+		const aborted = signal?.aborted;
+		release();
+		const [, served] = await raw.replies(2);
+		await raw.settle(executionId, lane);
+		await running;
+
+		expect(probe).toMatchObject({ kind: "plane.refused", childRequestId: "probe", reason: "scope_lane_mismatch" });
+		expect(aborted).toBe(false);
+		expect(served).toMatchObject({ kind: "plane.reply", parent: executionId, childRequestId: "c1" });
+	});
+
 	it("refuses a request that arrives after its parent settled", async () => {
 		const { brain, hand } = link();
 		const calls = { count: 0 };
