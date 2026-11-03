@@ -5843,20 +5843,34 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	/**
-	 * A provider whose stored credential pools two or more accounts: whether any of them can serve the next request
-	 * (unblocked, or only cooling from a rate limit, which the pool's cooling probe retries), and the accounts with
-	 * why each is out. Undefined for a single-credential provider. Reads pool health only, never key material.
+	 * A provider whose stored credential pools two or more accounts: whether any of them can serve `modelId` now
+	 * (no live block, and no live block on that model), and the accounts with why each is out. A cooling account is
+	 * not usable until its cooldown ends, so an automated loop never probes a spent pool turn after turn (senpi#3131).
+	 * Undefined for a single-credential provider, or when pool health cannot be read (the hold then stays).
+	 * Reads pool health only, never key material.
 	 */
 	private async _pooledAccountHealth(
 		provider: string,
+		modelId: string,
 	): Promise<{ readonly usable: boolean; readonly accountsOut: string } | undefined> {
 		const storage = this._modelRuntime.authStorage;
 		if (storage === undefined) return undefined;
-		const accounts = (await getCredentialAccounts(storage, provider)).filter(
-			(account) => account.unused !== true,
-		);
+		let summaries: Awaited<ReturnType<typeof getCredentialAccounts>>;
+		try {
+			summaries = await getCredentialAccounts(storage, provider);
+		} catch {
+			return undefined;
+		}
+		const accounts = summaries.filter((account) => account.unused !== true);
 		if (accounts.length < 2) return undefined;
-		const usable = accounts.some((account) => !account.blocked || account.blockedReason === "rate_limit");
+		const now = Date.now();
+		const blocksModel = (blocked: { readonly model: string; readonly until: number }) =>
+			blocked.until > now &&
+			(blocked.model === modelId ||
+				new RegExp(`(?:^|[^a-z])${blocked.model}(?:[^a-z]|$)`, "i").test(modelId));
+		const usable = accounts.some(
+			(account) => !account.blocked && !(account.blockedModels ?? []).some(blocksModel),
+		);
 		const accountsOut = accounts
 			.map((account) => {
 				const reason = account.blockedReason ?? "blocked";
@@ -6150,7 +6164,7 @@ export class AgentSession {
 				// account's, and the pool's own block already routes around it (senpi#5590).
 				const pool =
 					model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
-						? await this._pooledAccountHealth(model.provider)
+						? await this._pooledAccountHealth(model.provider, model.id)
 						: undefined;
 				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
 				if (

@@ -12,9 +12,10 @@ const PER_MINUTE =
 	"This request would exceed your rate limit of 2,000,000 input tokens per minute (org: ORG, model: claude-opus-5-5). Please reduce the prompt length or the maximum tokens requested, or try again later.";
 const NO_CREDITS =
 	"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.";
+const WEEKLY = "You've hit your weekly limit · resets in 5 hours";
 const START = Date.UTC(2026, 10, 3, 2, 24);
 
-type Reply = "per-minute" | "no-credits" | "served";
+type Reply = "per-minute" | "weekly" | "no-credits" | "served";
 
 function failure(errorMessage: string, diagnostic: ProviderDiagnostic): AssistantMessage {
 	return { ...fauxAssistantMessage("", { stopReason: "error", errorMessage }), providerDiagnostic: diagnostic };
@@ -26,8 +27,8 @@ async function* reply(kind: Reply): AsyncGenerator<AssistantMessageEvent> {
 		return;
 	}
 	const error =
-		kind === "per-minute"
-			? failure(PER_MINUTE, {
+		kind === "per-minute" || kind === "weekly"
+			? failure(kind === "weekly" ? WEEKLY : PER_MINUTE, {
 					category: "rate_limit",
 					evidence: "structured_code",
 					code: "rate_limit_error",
@@ -129,6 +130,22 @@ describe("#5590 one pooled account's failure does not hold the whole provider", 
 
 		await expect(refusal).rejects.toMatchObject({ name: "AccountUsageLimitError" });
 		await expect(refusal).rejects.toThrow(/spent-a.*spent-b|spent-b.*spent-a/);
+		expect(attempts.filter((attempt) => attempt.startsWith("2:"))).toEqual([]);
+	});
+
+	it("keeps the hold while every account waits on a long reset, so an automated loop sends nothing", async () => {
+		const { harness, attempts, nextTurn } = await pooledSession([
+			{ name: "weekly-a", turn1: "weekly" },
+			{ name: "weekly-b", turn1: "weekly" },
+		]);
+		await harness.session.prompt("first");
+
+		nextTurn();
+		vi.setSystemTime(START + 61_000);
+		const refusal = harness.session.prompt("goal continuation", { source: "extension" });
+
+		await expect(refusal).rejects.toMatchObject({ name: "AccountUsageLimitError" });
+		await expect(refusal).rejects.toThrow(/weekly-a.*weekly-b|weekly-b.*weekly-a/);
 		expect(attempts.filter((attempt) => attempt.startsWith("2:"))).toEqual([]);
 	});
 });
