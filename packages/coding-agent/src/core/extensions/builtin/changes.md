@@ -1,3 +1,39 @@
+## 2026-11-01 - service-tier shares the -fast pairing rule with the fallback controller (senpi#5312)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: `findBaseModel` / `findFastModel` and the compatibility check move to `core/fast-model-pair.ts` and are imported; behavior is unchanged.
+
+### Why
+
+- The fallback controller needs the same pairing to let a `-fast`-keyed chain govern the base model the extension swapped in; one definition keeps the two from drifting.
+
+### Why an extension could not handle it
+
+- The controller is core; the rule had to live in a module both sides import.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the removed helper block near the top of `service-tier.ts`.
+
+## 2026-10-30 - Fallback display comment follows first-party bare expansion (senpi#5050)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/model-fallback/settings.ts`: the `displayLookup` comment now says a bare default expands across the vendor's first-party providers. No behavior change.
+
+### Why
+
+- The comment described the removed every-provider expansion.
+
+### Why an extension could not handle it
+
+- Comment-only edit to an existing builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the `displayLookup` doc comment.
+
 ## 2026-10-30 - First-class private secret input (senpi#5108)
 
 ### What changed

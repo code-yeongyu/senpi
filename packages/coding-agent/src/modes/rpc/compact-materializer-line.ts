@@ -29,11 +29,12 @@ export function materializerLine(
 	const content = compactDelta(record as RpcRecord) ? demoteToDeltaOnly(record as RpcRecord) : record;
 	const minted = fanout.events.mint({ ...caller, admissionId: owner }, at, record, { chunks: () => payload(content) });
 	if (!minted.ok) {
-		registered.connection.close?.();
+		const { reason } = minted;
 		return {
-			line: serializeJsonLine({ type: "event_lease_refused", sessionId, reason: minted.reason }),
+			line: serializeJsonLine({ type: "event_lease_refused", sessionId, reason }),
 			atomic: true,
-			undelivered: () => {},
+			// RULING-124: the refusal is the peer's last record before `socket_closing` and the close.
+			undelivered: () => registered.close("event_lease_refused", reason),
 		};
 	}
 	const held = fanout.events.claim(caller, minted.value.id, owner);
