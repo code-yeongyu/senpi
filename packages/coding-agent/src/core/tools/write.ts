@@ -1,10 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -33,23 +33,34 @@ export interface WriteOperations {
 	mkdir: (dir: string) => Promise<void>;
 }
 
-const defaultWriteOperations: WriteOperations = {
-	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
-	mkdir: (dir) => fsMkdir(dir, { recursive: true }).then(() => {}),
-};
+/**
+ * The default write operations over the shared operation layer. `files.write` creates the parent directory in the
+ * same call (`createParentDirs`), so `mkdir` has nothing left to do; the tool already holds the file's mutation slot.
+ */
+function machineWriteOperations(machine: ToolMachine, signal: AbortSignal | undefined): WriteOperations {
+	const ctx = machine.context(signal, "caller");
+	return {
+		writeFile: async (path, content) => {
+			await machine.ops.files.write({ path, bytes: Buffer.from(content, "utf-8"), createParentDirs: true }, ctx);
+		},
+		mkdir: async () => {},
+	};
+}
 
 export interface WriteToolOptions {
 	/** Custom operations for file writing. Default: local filesystem */
 	operations?: WriteOperations;
 	/** Extension-registered filesystem policy checker. */
 	filesystemPolicy?: FilesystemPolicyChecker;
+	/** Operation layer and policy gate. Default: the process-wide local machine. */
+	machine?: ToolMachine;
 }
 
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
 ): ToolDefinition<typeof writeSchema, WriteToolDetails | undefined> {
-	const ops = options?.operations ?? defaultWriteOperations;
+	const machine = options?.machine ?? defaultToolMachine();
 	const readBaseline = options?.operations ? undefined : readLocalWriteBaseline;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
@@ -69,6 +80,8 @@ export function createWriteToolDefinition(
 			_onUpdate?,
 			ctx?: ExtensionContext,
 		) {
+			await machine.begin("files.write", { path, content }, signal);
+			const ops = options?.operations ?? machineWriteOperations(machine, signal);
 			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
 			const dir = dirname(absolutePath);
 			return withFileMutationQueue(absolutePath, async () => {

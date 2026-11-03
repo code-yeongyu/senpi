@@ -106,6 +106,7 @@
         "@anthropic-ai/claude-agent-sdk": "0.3.306",
         "@anthropic-ai/sdk": "0.127.0",
         "@code-yeongyu/senpi-codemode": "^2026.11.2-3",
+        "@code-yeongyu/senpi-machine-ops": "^2026.11.2-3",
         "@earendil-works/chord": "0.99.1",
         "@earendil-works/pi-agent-core": "^2026.11.2-3",
         "@earendil-works/pi-ai": "^2026.11.2-3",
@@ -202,6 +203,16 @@
         "typescript": "7.0.2",
         "vitest": "5.0.1",
         "vitest-evals": "0.17.0",
+      },
+    },
+    "packages/machine-ops": {
+      "name": "@code-yeongyu/senpi-machine-ops",
+      "version": "2026.11.2-3",
+      "dependencies": {
+        "@earendil-works/pi-pty": "^2026.11.2-3",
+      },
+      "devDependencies": {
+        "@types/node": "26.6.2",
       },
     },
     "packages/protocol": {
@@ -409,6 +420,8 @@
     "@code-yeongyu/senpi-codemode": ["@code-yeongyu/senpi-codemode@workspace:packages/senpi-codemode"],
 
     "@code-yeongyu/senpi-evals": ["@code-yeongyu/senpi-evals@workspace:packages/evals"],
+
+    "@code-yeongyu/senpi-machine-ops": ["@code-yeongyu/senpi-machine-ops@workspace:packages/machine-ops"],
 
     "@code-yeongyu/senpi-server": ["@code-yeongyu/senpi-server@workspace:packages/server"],
 
