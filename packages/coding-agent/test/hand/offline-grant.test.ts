@@ -102,6 +102,36 @@ describe("a hand checks the sender's grant offline before a call runs (S27b)", (
 		expect(hand.aborted).toEqual([id]);
 	});
 
+	it("never runs a call whose grant is revoked after admission but before it starts", async () => {
+		const root = workspaceDir();
+		let open: () => void = () => {};
+		const scopeGate = new Promise<void>((resolve) => {
+			open = resolve;
+		});
+		const hand = grantHarness({ workspaces: [{ root }], snapshot: snapshotOf([grant()], undefined, 1), scopeGate });
+		const opening = hand.scopeOpening();
+
+		await hand.invoke(root);
+		await opening;
+		hand.verifier.install(snapshotOf([], undefined, 2));
+		open();
+		const [reply] = await hand.frameCount(1);
+
+		expect(hand.ran).toEqual([]);
+		expect(reply?.kind === "settled" && reply.result.isError).toBe(true);
+	});
+
+	it("refuses a snapshot whose revision or expiry is not a finite number, keeping the installed one", async () => {
+		const root = workspaceDir();
+		const hand = grantHarness({ workspaces: [{ root }], snapshot: snapshotOf([], 1_000, 1), now: () => 0 });
+
+		expect(() => hand.verifier.install(snapshotOf([grant()], Number.NaN, 2))).toThrow();
+		expect(() => hand.verifier.install(snapshotOf([grant()], undefined, Number.NaN))).toThrow();
+		await hand.invoke(root);
+
+		expect((await hand.frameCount(1)).map(outcome)).toEqual(["refused:grant_missing"]);
+	});
+
 	it("needs no grant for the hand's own device", async () => {
 		const root = workspaceDir();
 		const hand = grantHarness({ workspaces: [{ root }], peer: HAND });

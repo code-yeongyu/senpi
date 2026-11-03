@@ -147,6 +147,10 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 			await Promise.allSettled(dependencies);
 			let result: AgentToolResult<unknown>;
 			try {
+				// The grant must still hold when the call starts: a snapshot installed while it waited (scope opening,
+				// durable admission, earlier calls of its scope) may have revoked it, and then the tool never runs.
+				if (controller.signal.aborted || !authorize(authority, call.scope.root).ok)
+					throw new Error("The call's grant was revoked before it ran");
 				result = await scope.run({
 					toolCallId: call.toolCallId,
 					name: call.name,

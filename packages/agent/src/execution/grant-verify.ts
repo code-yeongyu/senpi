@@ -53,7 +53,7 @@ export interface GrantVerifierOptions {
 export interface GrantVerifier {
 	/** Reads one snapshot; never what the session says about itself (R16). */
 	verify(peer: string, scopeRoot: string): GrantVerdict;
-	/** Replaces the snapshot. A snapshot with a lower `rv` than the installed one is ignored (rollback). */
+	/** Replaces the snapshot. A lower `rv` than the installed one is ignored (rollback); a non-finite `rv` or `expiresAt` throws. */
 	install(snapshot: GrantSnapshot): void;
 	/** Called after every replacement, so running calls can be re-verified. Returns the unsubscribe. */
 	onReplace(listener: () => void): () => void;
@@ -128,6 +128,8 @@ export function createGrantVerifier(options: GrantVerifierOptions): GrantVerifie
 			return granted ? { ok: true, root } : { ok: false, reason: "grant_missing" };
 		},
 		install(next) {
+			if (!Number.isFinite(next.rv) || !Number.isFinite(next.expiresAt))
+				throw new Error("A grant snapshot needs a finite rv and expiresAt; the installed snapshot is kept");
 			if (snapshot !== undefined && next.rv < snapshot.rv) return;
 			snapshot = next;
 			for (const listener of [...listeners]) listener();

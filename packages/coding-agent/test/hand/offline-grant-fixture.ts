@@ -44,6 +44,8 @@ export interface GrantHarnessOptions {
 	readonly now?: () => number;
 	/** The tool's body; it runs until this settles or the call is aborted. */
 	readonly body?: (signal: AbortSignal) => Promise<void>;
+	/** Holds every scope open until it settles. */
+	readonly scopeGate?: Promise<void>;
 }
 
 export function grantHarness(options: GrantHarnessOptions) {
@@ -60,6 +62,7 @@ export function grantHarness(options: GrantHarnessOptions) {
 	const admitted: string[] = [];
 	const aborted: string[] = [];
 	const started: Array<() => void> = [];
+	const opening: Array<() => void> = [];
 	const ledger: HandLedger = {
 		admit: async (invoke) => {
 			admitted.push(invoke.executionId);
@@ -75,6 +78,8 @@ export function grantHarness(options: GrantHarnessOptions) {
 		ledger,
 		openScope: async (scope) => {
 			opened.push(scope.root);
+			for (const wake of opening.splice(0)) wake();
+			await options.scopeGate;
 			return {
 				run: async (call) => {
 					ran.push(call.toolCallId);
@@ -128,7 +133,8 @@ export function grantHarness(options: GrantHarnessOptions) {
 		return executionId;
 	};
 	const runStarted = (): Promise<void> => new Promise((resolve) => started.push(resolve));
-	return { verifier, executor, opened, ran, admitted, aborted, frames, frameCount, invoke, runStarted };
+	const scopeOpening = (): Promise<void> => new Promise((resolve) => opening.push(resolve));
+	return { verifier, executor, opened, ran, admitted, aborted, frames, frameCount, invoke, runStarted, scopeOpening };
 }
 
 export const outcome = (message: RemoteHandMessage | undefined): string =>
