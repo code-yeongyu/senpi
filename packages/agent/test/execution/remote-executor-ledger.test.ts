@@ -80,6 +80,7 @@ function startHand(store: DurableStore, openScope: OpenHandScope, ledger = handL
 	const link = fakeTransport();
 	const faults: unknown[] = [];
 	const executor = createRemoteExecutor({
+		authority: { kind: "self" },
 		transport: link.transport,
 		openScope,
 		ledger,
