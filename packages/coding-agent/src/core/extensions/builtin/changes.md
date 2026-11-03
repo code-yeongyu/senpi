@@ -1,3 +1,21 @@
+## 2026-11-02 - Shell tool hooks refuse calls on a runtime without a session (senpi#5483)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: on a runtime without a session, the `tool_call` handler refuses the call when any PreToolUse or PostToolUse hook is configured and passes it through when none is; the `tool_result` handler does nothing there. Sessions are unchanged.
+
+### Why
+
+- Tool hooks get the session's ID in their input, which a hand does not have; running the tool past configured hooks would skip them. Forwarding them to the session's process is the two-sided forwarding change.
+
+### Why an extension could not handle it
+
+- This is the builtin hooks extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `tool_call` and `tool_result` handlers.
+
 ## 2026-10-27 - look_at authenticates as the session's account (senpi#3924)
 
 ### What changed
