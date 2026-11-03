@@ -21,6 +21,7 @@ import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { forgetBinding } from "./session-reattach.ts";
+import { anthropicSubscriptionDiagnostic } from "./provider-diagnostic.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import {
@@ -51,6 +52,11 @@ export function streamAnthropicSubscription(
 		let wasAborted = false;
 		let started = false;
 		let sawStreamEvent = false;
+		const onAttemptStart = (): void => {
+			delete output.responseId;
+			output.usage = emptyOutput(model).usage;
+			sawStreamEvent = false;
+		};
 		const closeQuery = (): void => {
 			if (closed || !sdkQuery) return;
 			closed = true;
@@ -160,6 +166,7 @@ export function streamAnthropicSubscription(
 						customToolNameToSdk: resolvedTools.customToolNameToSdk,
 						toolWatchNote,
 						onContinuityDecision: recordContinuity,
+						onAttemptStart,
 						onDispatchShape: (coldSeed, estimatedTokens) => {
 							coldSeedAttempt = coldSeed;
 							coldSeedEstimate = estimatedTokens;
@@ -184,6 +191,7 @@ export function streamAnthropicSubscription(
 								).blocks,
 						),
 						query: getSdkBoundary().query,
+						onAttemptStart,
 						providerSettings,
 						env: options?.env,
 						signal: options?.signal,
@@ -288,6 +296,8 @@ export function streamAnthropicSubscription(
 			const billed = sdkResultFailureUsage(error);
 			if (billed) updateUsage(model, output, billed, "query");
 			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
+			const diagnostic = output.stopReason === "error" ? anthropicSubscriptionDiagnostic(error) : undefined;
+			if (diagnostic !== undefined) output.providerDiagnostic = diagnostic;
 			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 		} finally {

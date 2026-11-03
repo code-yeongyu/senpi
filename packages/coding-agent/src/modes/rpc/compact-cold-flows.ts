@@ -5,11 +5,11 @@ import type { CompactPersistence } from "./compact-transition.ts";
 /**
  * The four RULING-33 condition-2 flows that target settled messages. Each maps to ordered cold operations run after
  * acceptance, one typed outcome per operation; a live target answers `active_message` and stays the lane's
- * synchronous acceptance work (a live user delete is the accepted `message_remove` transition).
+ * synchronous acceptance work (a live removal is the accepted `message_remove` transition).
  */
 export type CompactColdFlow =
 	| { readonly type: "edit"; readonly messageId: string; readonly message: SeededMessage }
-	| { readonly type: "user_delete"; readonly messageId: string }
+	| { readonly type: "context_edit_removal"; readonly messageId: string }
 	| { readonly type: "compaction"; readonly removed: readonly string[] }
 	| {
 			readonly type: "branch";
@@ -26,7 +26,9 @@ export function coldFlowOperations(flow: CompactColdFlow): readonly CompactColdO
 	switch (flow.type) {
 		case "edit":
 			return [{ type: "message_replace", messageId: flow.messageId, message: flow.message }];
-		case "user_delete":
+		// A context edit with no replacement (RULING-48 (1)). A future single-message delete command must map to this
+		// same remove path, proven by a conformance test against it.
+		case "context_edit_removal":
 			return [remove(flow.messageId)];
 		case "compaction":
 			return flow.removed.map(remove);

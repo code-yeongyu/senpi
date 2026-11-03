@@ -102,8 +102,6 @@ describe.skipIf(process.platform === "win32")("silent internal host", () => {
 		const supervisor = spawn(
 			process.execPath,
 			[
-				"--import",
-				"tsx",
 				join(import.meta.dirname, "../../src/modes/rpc/host-lifecycle.ts"),
 				"--socket",
 				join(root, "public.sock"),

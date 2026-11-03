@@ -3,18 +3,17 @@ name: CI
 on:
   push:
     branches: [main]
-  # Every pull request runs CI, whatever its base: a PR stacked on another feature branch must not reach main untested
-  # (senpi#2759).
-  pull_request:
-  # ci-full-label.yml calls this workflow when a PR gets the run-full-ci label (senpi#3957).
+  # No pull_request trigger: merges are decided on a local whole-suite receipt, so hosted PR CI runs only for a PR
+  # labelled run-full-ci, through ci-full-label.yml, which calls this workflow on the label and on every later push of
+  # the labelled PR, whatever its base (senpi#2759, senpi#3957, senpi#4968).
   workflow_call:
 
 # A pull request has one run group (its ref is refs/pull/<n>/merge): a push or restack cancels the run it
 # supersedes. A main push gets its own group per commit, so its run never waits behind another main run and is
 # never cancelled or replaced by a later merge: every main commit ends with its own "Check and test" result, which
 # the release reuses as its test evidence (senpi#2960). After the fixed per-file prefix comes the workflow name, which is
-# the caller's when ci-full-label.yml calls this workflow, so a label-forced full run never cancels the PR's own run, and
-# the label run's other called workflows (their own prefixes) never cancel this one (senpi#3957).
+# the caller's when ci-full-label.yml calls this workflow, so the label run's other called workflows (their own
+# prefixes) never cancel this one (senpi#3957), and a newer push of the labelled PR cancels its superseded run.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -370,8 +369,46 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
-      - name: Normalizer unit tests
-        run: node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs
+      - name: senpi-qa harness unit tests
+        shell: bash
+        run: |
+          # tui-smoke.test.mjs drives the real tmux driver (senpi#4986 regression); make sure tmux exists.
+          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs
+
+      # E29 (example extension gondolin) starts a real micro-VM, so the runner needs QEMU and a gondolin image store with
+      # alpine-base:latest pulled ahead of time (the senpi#4751 M0 readiness recipe). Provisioned here so E29 runs on CI
+      # instead of reporting SKIPPED(host-capability) (#5265). KVM is enabled when the runner exposes /dev/kvm; gondolin
+      # falls back to TCG otherwise.
+      - name: Enable KVM for the E29 micro-VM
+        shell: bash
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          fi
+
+      - name: Install QEMU for E29
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+
+      - name: Cache the gondolin image store for E29
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gondolin-images
+          key: gondolin-images-alpine-base-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Pull alpine-base into the gondolin image store and smoke-test a VM
+        shell: bash
+        env:
+          GONDOLIN_IMAGE_STORE: ${{ runner.temp }}/gondolin-images
+        run: |
+          set -euo pipefail
+          gondolin=node_modules/@earendil-works/gondolin/dist/bin/gondolin.js
+          node "$gondolin" image pull alpine-base:latest --arch x86_64
+          timeout 900 node "$gondolin" exec -- /bin/sh -c 'uname -m; echo VM_OK' | tee gondolin-smoke.log
+          grep -q '^VM_OK' gondolin-smoke.log
+          echo "EQ_GONDOLIN_IMAGE_STORE=$GONDOLIN_IMAGE_STORE" >> "$GITHUB_ENV"
 
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
@@ -823,6 +860,12 @@ jobs:
         run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-ensure.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
+      # Exact-version proof invalidates on every Bun bump. Re-run the frozen old-parser
+      # control together with the compiled-runtime pair proof before re-enabling it.
+      - name: Run Windows private descriptor pair proof and compatibility control
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/host-private-fds-pair.test.ts test/suite/host-private-fds-pair-inherit.test.ts test/suite/host-private-fds-proof-gate.test.ts test/suite/host-private-fd-inherit.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
       - name: Run RPC host lifecycle tests
         run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
         working-directory: packages/coding-agent
@@ -1149,18 +1192,30 @@ jobs:
         shell: bash
         run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
 
+      # Skips are allowed by full test name, per platform (the macOS-only WebKit block, the Windows-only
+      # hung-Chrome test); any other skip fails the step. Keep in sync with the macos-combined copy.
       - name: Require the WebView suites to have executed
         shell: bash
         run: |
           node -e '
             const r = JSON.parse(require("fs").readFileSync("vitest-webview.json", "utf8"));
             const results = r.testResults.flatMap((file) => file.assertionResults);
+            const expectedSkips = new Set([
+              ...(process.platform === "darwin" ? [] : [
+                "Bun.WebView from an eval cell the macOS default (WebKit) backend serves a fresh view after the kernel that opened the first one resets",
+                "Bun.WebView from an eval cell the macOS default (WebKit) backend drives views from two kernels at once",
+              ]),
+              ...(process.platform === "win32" ? [
+                "a misbehaving Chrome behind the main-thread WebView service keeps the main thread and other kernels serving while Chrome is hung",
+              ] : []),
+            ]);
             const passed = results.filter((a) => a.status === "passed").length;
             const failed = results.filter((a) => a.status === "failed").length;
-            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed").length;
-            const allowedSkips = process.platform === "win32" ? 1 : 0;
-            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped);
-            if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed");
+            const unexpected = skipped.filter((a) => !expectedSkips.has(a.fullName));
+            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped.length + " unexpected-skips=" + unexpected.length);
+            for (const a of unexpected) console.log("::error::unexpected skip: " + a.fullName);
+            if (passed < 10 || failed !== 0 || unexpected.length !== 0) process.exit(1);
           '
         working-directory: packages/senpi-codemode
       - name: Check OS temp after tests
@@ -1310,7 +1365,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $sidecar = "$hostRoot/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py"
           New-Item -ItemType Directory -Force $sidecar | Out-Null
-          Copy-Item packages/senpi-codemode/src/kernels/py/prelude.py "$sidecar/prelude.py"
+          Copy-Item packages/senpi-codemode/src/kernels/py/*.py "$sidecar/"
       - name: Packaged cold and warm Python cells
         shell: pwsh
         run: |
@@ -1456,6 +1511,11 @@ jobs:
         run: |
           command -v cc >/dev/null || { echo "::error::Missing C compiler 'cc' on PATH for POSIX process-exit tests"; exit 1; }
           cc --version
+      # 3044's bun-owner case spawns `bun` as the RPC owner (#4845), so this job needs the pinned bun on PATH.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: Build workspace package entries
@@ -1766,6 +1826,8 @@ jobs:
         shell: bash
         run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
 
+      # Skips are allowed by full test name, per platform; any other skip fails the step. Keep in sync
+      # with the eval-kernel-webview copy.
       - name: Require the WebView suites to have executed
         if: ${{ !cancelled() && steps.webview.outcome == 'success' }}
         shell: bash
@@ -1773,12 +1835,22 @@ jobs:
           node -e '
             const r = JSON.parse(require("fs").readFileSync("vitest-webview.json", "utf8"));
             const results = r.testResults.flatMap((file) => file.assertionResults);
+            const expectedSkips = new Set([
+              ...(process.platform === "darwin" ? [] : [
+                "Bun.WebView from an eval cell the macOS default (WebKit) backend serves a fresh view after the kernel that opened the first one resets",
+                "Bun.WebView from an eval cell the macOS default (WebKit) backend drives views from two kernels at once",
+              ]),
+              ...(process.platform === "win32" ? [
+                "a misbehaving Chrome behind the main-thread WebView service keeps the main thread and other kernels serving while Chrome is hung",
+              ] : []),
+            ]);
             const passed = results.filter((a) => a.status === "passed").length;
             const failed = results.filter((a) => a.status === "failed").length;
-            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed").length;
-            const allowedSkips = process.platform === "win32" ? 1 : 0;
-            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped);
-            if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed");
+            const unexpected = skipped.filter((a) => !expectedSkips.has(a.fullName));
+            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped.length + " unexpected-skips=" + unexpected.length);
+            for (const a of unexpected) console.log("::error::unexpected skip: " + a.fullName);
+            if (passed < 10 || failed !== 0 || unexpected.length !== 0) process.exit(1);
           '
         working-directory: packages/senpi-codemode
 

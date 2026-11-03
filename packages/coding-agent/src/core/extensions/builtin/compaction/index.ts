@@ -813,6 +813,7 @@ export default function compactionExtension(
 				origin: "core-route" as const,
 				customInstructions: event.customInstructions,
 				systemPrompt: ctx.getSystemPrompt(),
+				systemPromptStablePrefix: ctx.getSystemPromptStablePrefix?.(),
 				tools: getSummarizationTools(),
 			};
 			let compaction: CompactionResult | undefined;
@@ -1071,7 +1072,7 @@ export default function compactionExtension(
 	pi.on("before_provider_request", async (event, ctx) => {
 		const model = event.model ?? ctx.model;
 		if (!isOpenAiRemoteCompactionModel(model)) return undefined;
-		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model, { sessionId: ctx.sessionManager.getSessionId() });
 		if (!auth.ok) return undefined;
 		const effectiveModel =
 			auth.upstreamModelId || auth.baseUrl

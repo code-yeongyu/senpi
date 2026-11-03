@@ -1,6 +1,7 @@
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
+import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
 import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import {
 	type ClientMessageAdmission,
@@ -9,7 +10,19 @@ import {
 } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { clientInputContext } from "./client-message-events.ts";
-import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
+import {
+	RPC_ERROR_NO_MODEL_SELECTED,
+	RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED,
+	RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
+	RPC_ERROR_UNKNOWN_COMMAND,
+} from "./rpc-types.ts";
+
+/** The `prompt` refusal's `errorCode` for each reason a turn cannot start. */
+const MODEL_NOT_READY_ERROR_CODES = {
+	provider_credentials_missing: RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
+	provider_credentials_expired: RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED,
+	no_model_selected: RPC_ERROR_NO_MODEL_SELECTED,
+} as const satisfies Record<ModelNotReadyCode, string>;
 
 type PromptPathOptions = Pick<
 	PromptOptions,
@@ -153,6 +166,12 @@ export async function handleClientInput(
 					: String(error),
 			...(error instanceof ClientMessageIdConflict || error instanceof AgentBusyError
 				? { errorCode: error.code }
+				: {}),
+			...(error instanceof ModelNotReadyError
+				? {
+						errorCode: MODEL_NOT_READY_ERROR_CODES[error.code],
+						...(error.provider === undefined ? {} : { errorData: { provider: error.provider } }),
+					}
 				: {}),
 			...(unknownCommand
 				? {

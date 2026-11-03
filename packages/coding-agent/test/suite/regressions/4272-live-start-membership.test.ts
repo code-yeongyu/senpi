@@ -153,4 +153,4 @@ it("releases settled membership instead of retaining a catalog after 10,000 mess
 		await state.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

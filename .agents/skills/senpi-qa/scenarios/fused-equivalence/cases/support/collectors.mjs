@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { readJsonl } from "../../../../scripts/lib/common.mjs";
+import { withoutWitnessEntries } from "./witness.mjs";
 
 /** Credential-bearing headers: compared as hashes of their values only (O4). */
 const CREDENTIAL_HEADERS = new Set([
@@ -49,7 +50,8 @@ const isSurfacesEvent = (event) => event.type === "loaded_surfaces_changed";
  */
 const isHostHealthEvent = (event) => event.type === "host_stalled";
 
-const transcript = (file) => (file && existsSync(file) ? readJsonl(readFileSync(file, "utf8")) : []);
+const transcript = (file) =>
+	withoutWitnessEntries(file && existsSync(file) ? readJsonl(readFileSync(file, "utf8")) : []);
 
 /** Provider requests: the fake model server's, or those of the provider fixture a case serves itself (E19 Cursor). */
 const modelRequests = (run) =>
@@ -79,9 +81,9 @@ export const collectors = {
 	// position was measured to differ between runs of the same code: `loaded_surfaces_changed` (see isSurfacesEvent). It
 	// keeps its own ordered list, compared in full; only its position among the other events is not compared.
 	O6: (run) =>
-		run.clients.map((client, index) => ({
+		run.clients.map((client) => ({
 			events: client.events.filter((event) => !isHostHealthEvent(event) && !isSurfacesEvent(event)),
-			surfaces: surfacesChannel(client, run.surfacesSettled?.client === index ? run.surfacesSettled : undefined),
+			surfaces: client.events.filter(isSurfacesEvent),
 		})),
 	O7: (run) => {
 		const entries = transcript(run.sessionFile);
@@ -96,25 +98,6 @@ export const collectors = {
 	},
 	O8: (run) => ({ headless: run.states }),
 };
-
-/**
- * O6 surfaces list. Without a settle barrier: every `loaded_surfaces_changed` in order. With one (E11, whose two eager
- * MCP servers connect in parallel): how many inventory snapshots the serialized wire-status captures happen to see while
- * the servers connect is a race in today's code (each connect state change, each tool registration and each
- * `get_loaded_surfaces` captures one, and an event fires only when the digest differs), so the events before the barrier
- * are not compared. What is compared exactly: the settled inventory the case read at the barrier, every surfaces event
- * after it, and the inventory read again after the last turn (a change after the barrier shows in `final` even if its
- * event shared a stdout chunk with the barrier's response).
- */
-function surfacesChannel(client, settled) {
-	const surfaces = client.events.filter(isSurfacesEvent);
-	if (!settled) return surfaces;
-	return {
-		settled: settled.mcpServers,
-		after: surfaces.filter((event) => client.events.indexOf(event) >= settled.at),
-		final: settled.final,
-	};
-}
 
 /**
  * O5 calls: every dispatched tool call in dispatch (start) order, with the target it named, the machine it ran on and

@@ -85,6 +85,34 @@ describe("job widgets on background bash sessions", () => {
 		}
 	}, 30_000);
 
+	it("sends the current job_widget_state once to an RPC client that starts receiving extension events late", async () => {
+		const { harness, log } = await createJobWidgetHarness({ authorAfterMs: 0 });
+		harnesses.push(harness);
+		harness.setResponses([answerWithBlenderSpec]);
+		const id = bashIdOf(
+			await harness.session.executeTool("bash", { command: `${BLENDER_PRINT}; sleep 30`, run_in_background: true }),
+		);
+		const late: JobWidgetState[] = [];
+		let unsubscribe: (() => void) | undefined;
+		try {
+			await log.waitFor((state) => jobState(state, id) === "live");
+			const first = new Promise<JobWidgetState>((resolve, reject) => {
+				const timer = setTimeout(() => reject(new Error("no job_widget_state for the late client")), 5_000);
+				unsubscribe = harness.getExtensionRunner().onRpcEvent(({ name, data }) => {
+					if (name !== "job_widget_state") return;
+					late.push(data as JobWidgetState);
+					clearTimeout(timer);
+					resolve(data as JobWidgetState);
+				});
+			});
+			expect(jobState(await first, id)).toBe("live");
+			expect(late).toHaveLength(1);
+		} finally {
+			unsubscribe?.();
+			await harness.session.executeTool("kill_bash", { bash_id: id });
+		}
+	}, 30_000);
+
 	it("draws the live widget above the TUI editor and on top of bash_output, driven by job_widget_state", async () => {
 		let area: Component | undefined;
 		const waiters = new Set<() => void>();

@@ -36,6 +36,17 @@ export interface RpcAuthProvider {
 	origin?: ProviderOrigin;
 }
 
+/**
+ * `get_auth_providers` `storeError`: auth.json exists but could not be loaded, so stored sign-ins read
+ * as unconfigured and every write is refused until it is repaired. `write_back_failed` is the exception:
+ * the file was read, so its sign-ins stay configured and writes are not refused (senpi#4413).
+ * Never a path or contents.
+ */
+export interface RpcAuthStoreError {
+	kind: "malformed_json" | "invalid_format" | "unreadable" | "write_back_failed";
+	reason: string;
+}
+
 /** Auth status mirror (no credential values), from getProviderAuthStatus. */
 export interface RpcAuthStatus {
 	configured: boolean;
@@ -64,6 +75,18 @@ export interface RpcProviderAccount {
 	/** Epoch ms when the block lifts; absent for `disabled` and for a block that names no time. */
 	blockedUntil?: number;
 	pinned: boolean;
+	/** `claude-cli`: signed in through the bundled Claude Code CLI, whose own store holds the login (senpi#4436). */
+	store?: "claude-cli";
+	/** Epoch ms of the account's last sign-in. */
+	signedInAt?: number;
+	/** Profile `claude auth status` reported; local only, never logged. */
+	email?: string;
+	orgName?: string;
+	subscriptionType?: string;
+	/** The sign-in connection test's last result. */
+	check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
+	/** `needs_sign_in`: the account must sign in again before it is used. */
+	signIn?: "signed_in" | "needs_sign_in";
 }
 
 // ============================================================================

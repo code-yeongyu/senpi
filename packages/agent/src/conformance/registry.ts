@@ -1,3 +1,5 @@
+import { LEDGER_REGISTRY } from "../execution/testing/ledger-registry.ts";
+
 export const ADAPTER_KINDS = ["store", "wake", "transport", "executor", "host"] as const;
 
 export type AdapterKind = (typeof ADAPTER_KINDS)[number];
@@ -55,6 +57,7 @@ const storeCase = (id: string, impl: string, expected: string): RegisteredCase =
 });
 
 export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
+	...LEDGER_REGISTRY,
 	storeCase(
 		"STORE-01",
 		STORE_CASES_IMPL,

@@ -2,12 +2,13 @@
  * The TUI's job widget area above the editor, fed by `job_widget_state`. It shows while some job is
  * live or pending, or a finished one is still lingering: one line per job, newest first, at most
  * {@link MAX_JOB_WIDGET_LINES} plus `+N more`. A finished job stays {@link DONE_LINGER_MS} after it
- * is first seen done; skipped jobs never show. Nothing polls: a state redraws only when what it
+ * is first seen done; one already done in a new area's first state (a reload re-sends every job the
+ * registry still holds) has expired and never shows; skipped jobs never show. Nothing polls: a state redraws only when what it
  * shows changed, and the one timer that runs is the next linger expiry.
  */
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import type { Theme } from "../../../../modes/interactive/theme/theme.ts";
-import { formatJobWidgetLine, type JobWidgetLineStyle, jobWidgetLineStyle } from "./tui-line.ts";
+import { cutPlain, formatJobWidgetLine, type JobWidgetLineStyle, jobWidgetLineStyle } from "./tui-line.ts";
 import type { JobWidgetEntry, JobWidgetState } from "./view-types.ts";
 
 export const JOB_WIDGET_TUI_KEY = "job-widgets";
@@ -51,7 +52,8 @@ class JobWidgetAreaComponent implements Component {
 			const line = formatJobWidgetLine(entry, inner, this.#style);
 			if (line !== undefined) lines.push(`${PAD}${line}`);
 		}
-		if (this.#rows.more > 0) lines.push(`${PAD}${this.#style.fg("muted", `+${this.#rows.more} more`)}`);
+		const more = this.#rows.more > 0 ? cutPlain(`+${this.#rows.more} more`, inner) : "";
+		if (more.length > 0) lines.push(`${PAD}${this.#style.fg("muted", more)}`);
 		this.#cache = { width, lines };
 		return lines;
 	}
@@ -71,6 +73,7 @@ export class JobWidgetArea {
 	#component: JobWidgetAreaComponent | undefined;
 	#tui: TUI | undefined;
 	#lingerTimer: ReturnType<typeof setTimeout> | undefined;
+	#seenState = false;
 	#disposed = false;
 
 	constructor(options: JobWidgetAreaOptions) {
@@ -83,11 +86,14 @@ export class JobWidgetArea {
 		if (this.#disposed) return;
 		this.#jobs = state.jobs;
 		const now = this.#now();
+		// A job already done in the first state finished before this area existed: its linger is over.
+		const doneAt = this.#seenState ? now : Number.NEGATIVE_INFINITY;
+		this.#seenState = true;
 		const present = new Set<string>();
 		for (const job of state.jobs) {
 			present.add(job.id);
 			if (job.state !== "done") this.#doneSince.delete(job.id);
-			else if (!this.#doneSince.has(job.id)) this.#doneSince.set(job.id, now);
+			else if (!this.#doneSince.has(job.id)) this.#doneSince.set(job.id, doneAt);
 		}
 		for (const id of this.#doneSince.keys()) if (!present.has(id)) this.#doneSince.delete(id);
 		this.#redraw();
