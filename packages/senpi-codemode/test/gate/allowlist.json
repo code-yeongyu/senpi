@@ -5033,6 +5033,15 @@
 				"legacyContracts/test/js-file-url-import.test.ts/codemode JS file:// module imports (senpi#4111) Given a scheme with no registered root when a cell imports it then the loader still refuses it"
 			],
 			"reason": "senpi#5496 (fixes #4111; recorded by #5460): contract tests that a JS eval cell loads file:// module URLs statically and dynamically, and that the loader still refuses a scheme with no registered root. No prompt cell moves."
+		},
+		"senpi#5431": {
+			"additions": [
+				"legacyContracts/test/scope-kernels.test.ts/eval kernels are scoped per execution scope (S16b) MULTI: one scope's globals are invisible to another scope on the same runtime",
+				"legacyContracts/test/scope-kernels.test.ts/eval kernels are scoped per execution scope (S16b) MULTI: releasing one scope closes its kernels and leaves another scope's running",
+				"legacyContracts/test/scope-kernels.test.ts/eval kernels are scoped per execution scope (S16b) MULTI: each scope writes local:// into its own root",
+				"legacyContracts/test/scope-kernels.test.ts/eval kernels are scoped per execution scope (S16b) starts nothing for a scope that never asks, and reuses one manager per scope"
+			],
+			"reason": "senpi#5431 (S16b, kernels per execution scope; landed by train #5629; recorded by #5656): contract tests that eval kernels are scoped per execution scope - globals stay invisible across scopes, releasing one scope closes only its kernels, each scope writes local:// into its own root, and a scope that never asks starts nothing while one manager is reused per scope. No prompt cell moves."
 		}
 	}
 }

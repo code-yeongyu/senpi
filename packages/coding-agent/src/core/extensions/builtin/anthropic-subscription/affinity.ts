@@ -72,6 +72,13 @@ export class AllAccountsBlockedError extends Error {
 	readonly unavailableAccount: UnavailableAccount | undefined;
 	/** Every candidate's state, so the error names which account needs /login and which waits on a reset (senpi#4671). */
 	readonly accounts: readonly BlockedAccountState[];
+	/**
+	 * When the pool waits only on rate limits, the soonest of them; else undefined (senpi#3975). Accounts out
+	 * for billing, organization, or authentication cannot serve until someone acts, so they are not counted;
+	 * every other account must be rate-limited (account-wide or on the requested model), and an unknown block
+	 * is not a rate limit. A billing deadline is a re-probe time, never the pool's reset.
+	 */
+	readonly rateLimitedUntil: number | undefined;
 
 	constructor(
 		soonestUnblockAt: number | undefined,
@@ -79,6 +86,7 @@ export class AllAccountsBlockedError extends Error {
 		limitedModel?: string,
 		unavailableAccount?: UnavailableAccount,
 		accounts: readonly BlockedAccountState[] = [],
+		rateLimitedUntil?: number,
 	) {
 		const until = soonestUnblockAt === undefined ? undefined : new Date(soonestUnblockAt).toISOString();
 		const summary =
@@ -94,6 +102,7 @@ export class AllAccountsBlockedError extends Error {
 		this.soonestUnblockAt = soonestUnblockAt;
 		this.blockReason = blockReason;
 		this.unavailableAccount = unavailableAccount;
+		this.rateLimitedUntil = rateLimitedUntil;
 	}
 }
 
@@ -135,7 +144,13 @@ export function clearExpiredBlocks(accounts: readonly AccountSlot[], now = Date.
 	return accounts.map((account) => {
 		let available = account;
 		if (account.blockReason !== undefined && (account.blockedUntil === undefined || account.blockedUntil <= now)) {
-			const { blockedUntil: _blockedUntil, blockReason: _blockReason, blockedAt: _blockedAt, ...rest } = account;
+			const {
+				blockedUntil: _blockedUntil,
+				blockReason: _blockReason,
+				blockedAt: _blockedAt,
+				authVerdict: _authVerdict,
+				...rest
+			} = account;
 			available = rest;
 		}
 		if (available.modelBlocks === undefined) return available;
@@ -182,6 +197,29 @@ function soonestUnblockAt(
 		.map((account) => unblockAt(account, now, model))
 		.filter((value): value is number => value !== undefined);
 	return candidates.length === 0 ? undefined : Math.min(...candidates);
+}
+
+/** Account blocks that need the user (top-up, organization access, a new login), not a wait. */
+const OUT_OF_POOL_REASONS: ReadonlySet<string> = new Set(["billing", "org_not_allowed", "auth_error"]);
+
+function poolRateLimitedUntil(
+	accounts: readonly AccountSlot[],
+	now: number,
+	model: string | undefined,
+): number | undefined {
+	const waiting = accounts.filter(
+		(account) => !(isAccountBlocked(account, now) && OUT_OF_POOL_REASONS.has(account.blockReason ?? "")),
+	);
+	const resets: number[] = [];
+	for (const account of waiting) {
+		const rateLimited = isAccountBlocked(account, now)
+			? account.blockReason === "rate_limit"
+			: activeModelBlockUntil(account.modelBlocks, model, now) !== undefined;
+		const until = unblockAt(account, now, model);
+		if (!rateLimited || until === undefined) return undefined;
+		resets.push(until);
+	}
+	return resets.length === 0 ? undefined : Math.min(...resets);
 }
 
 function limitedModel(accounts: readonly AccountSlot[], now: number, model: string | undefined): string | undefined {
@@ -231,5 +269,6 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 			reason: account.blockReason ?? (isAccountBlocked(account, now) ? "blocked" : "model_limit"),
 			until: unblockAt(account, now, options.model),
 		})),
+		poolRateLimitedUntil(candidates, now, options.model),
 	);
 }
