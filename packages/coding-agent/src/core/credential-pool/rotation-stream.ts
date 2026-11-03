@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import { type AssistantMessageEvent, sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
+import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
 import type { SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
@@ -92,6 +93,25 @@ function blockPatch(
 	return { ...base, blockReason: block.reason };
 }
 
+/**
+ * The last slot's error, forwarded when every slot is limited, carries the time the first slot is due back:
+ * a limit the provider classified keeps its own reset when it named one, and a failure with no diagnostic or
+ * an unclassified 429 becomes the pool's rate limit (senpi#3975). Anything else (auth, a 402/403/404 status)
+ * is left exactly as the provider said, status included.
+ */
+function withPoolRetryAt(event: AssistantMessageEvent, retryAt: number): AssistantMessageEvent {
+	if (event.type !== "error") return event;
+	const own = sanitizeProviderDiagnostic(event.error.providerDiagnostic);
+	const limit = own?.category === "rate_limit" || own?.category === "quota";
+	const unclassifiedLimit = own === undefined || (own.category === "unknown" && own.httpStatus === 429);
+	if (!limit && !unclassifiedLimit) return event;
+	const providerDiagnostic =
+		own !== undefined && limit
+			? (sanitizeProviderDiagnostic({ ...own, resetsAt: own.resetsAt ?? retryAt }) ?? own)
+			: credentialPoolBlockedDiagnostic(retryAt);
+	return providerDiagnostic === undefined ? event : { ...event, error: { ...event.error, providerDiagnostic } };
+}
+
 function failoverReason(block: CredentialBlock): SdkErrorKind {
 	return block.reason === "account_disabled" ? "billing" : block.reason;
 }
@@ -176,6 +196,7 @@ export function streamWithCredentialRotation(
 		isCommittedOutput: isCommittedRotationOutput,
 		isStreamStart: isRotationStreamStart,
 		errorFromEvent: rotationErrorFromEvent,
+		withPoolRetryAt,
 		classify: (error, context) =>
 			classifyCredentialFailure(error, {
 				...context,
