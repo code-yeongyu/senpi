@@ -5822,7 +5822,8 @@
          "path": "out/seq-1.txt",
          "text": "seq_1\n",
          "barrier": "seq-1"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        },
        {
         "type": "toolCall",
@@ -5832,7 +5833,8 @@
          "path": "out/seq-2.txt",
          "text": "seq_2\n",
          "barrier": "seq-2"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:1"
        },
        {
         "type": "toolCall",
@@ -5842,7 +5844,8 @@
          "path": "out/seq-3.txt",
          "text": "seq_3\n",
          "barrier": "seq-3"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:2"
        }
       ],
       "api": "openai-completions",
@@ -5893,7 +5896,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -5913,7 +5917,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:4>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:1"
     },
     {
      "type": "message",
@@ -5933,7 +5938,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:5>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:2"
     },
     {
      "type": "message",
