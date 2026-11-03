@@ -67,3 +67,18 @@ export function logAnthropicRequestShape(
 	};
 	append(path, `${JSON.stringify(record)}\n`);
 }
+
+/** One line per request rebuilt after a provider rejection, beside the skeletons of both attempts. */
+export function logAnthropicRecovery(
+	model: { readonly provider: string; readonly id: string },
+	recovery: string,
+	details: Readonly<Record<string, number>>,
+	env: Readonly<Record<string, string | undefined>> = processEnv(),
+): void {
+	const path = env[REQUEST_SHAPE_LOG_ENV];
+	if (path === undefined || path.length === 0) return;
+	const append = resolveAppendFile();
+	if (append === undefined) return;
+	const record = { ts: new Date().toISOString(), provider: model.provider, model: model.id, recovery, ...details };
+	append(path, `${JSON.stringify(record)}\n`);
+}

@@ -1,3 +1,21 @@
+## 2026-10-30 - Product display name in login options (senpi#5014, part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: add the configured product display name to login options.
+
+### Why
+
+- `packages/ai/src/auth/types.ts`: OpenAI registration needs the app's actual name even when its user-agent token differs.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts`: the shared login contract owns the app-supplied metadata.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: `LoginOptions`.
+
 ## 2026-10-30 - Clear SIWC sessions atomically and confirm remote revocation (part of #5003)
 
 ### What changed
