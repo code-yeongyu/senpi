@@ -1,7 +1,8 @@
 /**
- * KILL-PRESENCE: kill the engine before and after the durable pause record and the durable resume record, restart on
- * the same medium, and check that IDs are stable and the bookkeeping intact (no lost or duplicated record) and that a
- * resume is applied exactly once (senpi#5652, plan §3.5). Placement: everywhere.
+ * KILL-PRESENCE: kill the engine before and after the durable pause record and the durable resume record, then restart
+ * on the same medium (01-04) or retry in the surviving process (05), and check that IDs are stable and the bookkeeping
+ * intact (no lost or duplicated record) and that a resume is applied exactly once (senpi#5652, plan §3.5). Placement:
+ * everywhere.
  */
 import type {
 	AdmissionLine,
