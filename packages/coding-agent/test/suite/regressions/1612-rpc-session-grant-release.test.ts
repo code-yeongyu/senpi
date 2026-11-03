@@ -14,7 +14,7 @@ import {
 } from "../../../src/core/session-write-reservation.ts";
 import { RESERVATION_DENIAL_CODES, SessionPathReservations } from "../../../src/modes/rpc/session-path-reservations.ts";
 import { SESSION_WORKER_LIMITS, type SessionWriteGrant } from "../../../src/modes/rpc/session-worker-protocol.ts";
-import { reservationPhase as phase, reservationHost } from "../rpc-worker-reservation-support.ts";
+import { reservationHost, reservationStep as phase } from "../rpc-worker-reservation-support.ts";
 
 const responseSchema = z.object({ id: z.string(), success: z.boolean(), error: z.string().optional() });
 

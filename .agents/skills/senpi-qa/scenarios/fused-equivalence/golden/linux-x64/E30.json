@@ -9979,7 +9979,8 @@
          "path": "out/a.txt",
          "text": "call_a\n",
          "barrier": "a-body"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -10030,7 +10031,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -10137,7 +10139,7 @@
      {
       "type": "session",
       "version": 3,
-      "id": "<uuid:3>",
+      "id": "<uuid:4>",
       "timestamp": "<ts:peers.timestamp:1>",
       "cwd": "<sandbox>/work"
      },
@@ -10185,15 +10187,15 @@
        "runPaused": false,
        "since": "<ts:data.since:3>",
        "role": "root",
-       "rootSessionId": "<uuid:3>",
+       "rootSessionId": "<uuid:4>",
        "waitingOn": {
         "children": 0,
         "background": [],
         "human": []
        },
        "holds": [],
-       "runId": "<uuid:4>",
-       "sessionId": "<uuid:3>",
+       "runId": "<uuid:5>",
+       "sessionId": "<uuid:4>",
        "attentionSeq": 0,
        "synthetic": [],
        "epochSealed": false,
@@ -10259,7 +10261,8 @@
           "path": "out/b.txt",
           "text": "call_b\n",
           "barrier": "b-body"
-         }
+         },
+         "runtimeItemKey": "blk:<uuid:6>:0"
         }
        ],
        "api": "openai-completions",
@@ -10310,7 +10313,8 @@
        "details": {},
        "isError": false,
        "timestamp": "<ts:message.timestamp:7>"
-      }
+      },
+      "runtimeItemKey": "blk:<uuid:6>:0"
      },
      {
       "type": "message",
@@ -10360,7 +10364,7 @@
       "customType": "senpi.hooks.stop-state",
       "data": {
        "count": 0,
-       "sessionId": "<uuid:3>",
+       "sessionId": "<uuid:4>",
        "turnKey": "1:<id:25>"
       },
       "id": "<id:26>",
@@ -10382,20 +10386,20 @@
        "runPaused": false,
        "since": "<ts:data.since:4>",
        "role": "root",
-       "rootSessionId": "<uuid:3>",
+       "rootSessionId": "<uuid:4>",
        "waitingOn": {
         "children": 0,
         "background": [],
         "human": []
        },
        "holds": [],
-       "runId": "<uuid:4>",
-       "completionId": "<uuid:3>:1",
+       "runId": "<uuid:5>",
+       "completionId": "<uuid:4>:1",
        "completion": {
         "kind": "reply",
         "at": "<ts:completion.at:2>"
        },
-       "sessionId": "<uuid:3>",
+       "sessionId": "<uuid:4>",
        "attentionSeq": 0,
        "synthetic": [],
        "epochSealed": true,
