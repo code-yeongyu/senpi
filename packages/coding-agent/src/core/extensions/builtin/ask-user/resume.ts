@@ -126,10 +126,30 @@ function settleUnrestorable(
 
 export async function resumeDanglingQuestion(
 	pi: Pick<ExtensionAPI, "appendEntry" | "sendUserMessage" | "events">,
-	event: Pick<SessionStartEvent, "reason">,
+	event: Pick<SessionStartEvent, "reason" | "sizesOnly">,
 	ctx: ExtensionContext,
 ): Promise<void> {
-	if (event.reason !== "resume" && event.reason !== "reload") return;
+	// Diagnostic sizes-only startup starts no turn, so it restores nothing.
+	if (event.sizesOnly) return;
+	// senpi#4764: the CLI's initial runtime passes no explicit session_start
+	// event, so a restarted CLI opening an existing session file arrives with
+	// reason "startup" — the same as a fresh session. That is safe to include:
+	// a fresh session has no branch entries, so findDanglingQuestions finds
+	// nothing, while a reopened file's dangling question is restored exactly
+	// like on the switch_session "resume" path.
+	// Headless startup (print mode, `-p` / `--mode json`) has no question UI:
+	// restoring there would settle the question as `orphaned-after-restart`
+	// (sending a follow-up message and starting a model turn the user never
+	// asked for) and write the `ask-user:resumed` marker, so a later
+	// interactive open could never re-ask it. Skip startup restores entirely
+	// when `ctx.hasUI` is false; resume/reload keep their existing no-UI
+	// orphan delivery. Note: CLI `--fork <file>` also arrives as "startup"
+	// with copied branch entries, so a fork re-presents the source's dangling
+	// question, unlike runtime `/fork` (reason "fork", excluded above). The
+	// event carries no signal telling a forked startup from a plain restart,
+	// so this divergence is documented, not filtered.
+	if (event.reason !== "resume" && event.reason !== "reload" && event.reason !== "startup") return;
+	if (event.reason === "startup" && !ctx.hasUI) return;
 	const pending = new Set(
 		getPendingQuestions(ctx.sessionManager.getSessionId()).map((entry) => entry.request.requestId),
 	);
