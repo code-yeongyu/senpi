@@ -223,6 +223,8 @@ export function buildCustomUnsupportedRequest(
 export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
 /** `test_provider_account`: re-run the sign-in connection test on one Claude subscription account (senpi#4436). */
 export const PROVIDER_ACCOUNT_TEST_CAPABILITY = "provider_account_test";
+/** `account_reset`: reset one named account's local health, keeping its credentials (senpi#4879, senpi#5698). */
+export const ACCOUNT_RESET_CAPABILITY = "account_reset";
 
 /** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
 export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";
