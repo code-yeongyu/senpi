@@ -6694,7 +6694,8 @@
          "language": "js",
          "summary": "a cell that never finishes",
          "code": "await fetch(process.env.EQ_BARRIER_ORIGIN + \"/__barrier/never-released\").then((r) => r.text());\nprint(\"unreachable\");"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -6731,7 +6732,7 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:3>",
+      "id": "<uuid:4>",
       "key": "wake-source:senpi-codemode",
       "source": "senpi-codemode",
       "kind": "background",
@@ -6844,7 +6845,8 @@
       },
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -6944,7 +6946,7 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:3>",
+      "id": "<uuid:4>",
       "key": "wake-source:senpi-codemode",
       "source": "senpi-codemode",
       "kind": "background",
@@ -7055,8 +7057,8 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "open",
       "sessionId": "<uuid:1>"
@@ -7085,7 +7087,7 @@
        "children": 0,
        "background": [
         {
-         "source": "delivery:senpi-codemode:notification:<uuid:5>",
+         "source": "delivery:senpi-codemode:notification:<uuid:6>",
          "activeCount": 1
         }
        ],
@@ -7113,11 +7115,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:6>",
+      "ticketId": "<uuid:7>",
       "sessionId": "<uuid:1>"
      },
      "id": "<id:21>",
@@ -7128,11 +7130,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:6>",
+      "ticketId": "<uuid:7>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -7177,14 +7179,14 @@
        "children": 0,
        "background": [
         {
-         "source": "delivery:senpi-codemode:notification:<uuid:5>",
+         "source": "delivery:senpi-codemode:notification:<uuid:6>",
          "activeCount": 1
         }
        ],
        "human": []
       },
       "holds": [],
-      "runId": "<uuid:7>",
+      "runId": "<uuid:8>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
@@ -7202,7 +7204,7 @@
      "content": "<system-reminder>Detached eval cell call_doomed (js) was killed at the 3s hard limit.\n(no output)\nThe JavaScript worker was not restarted; variables from earlier cells are kept.</system-reminder>",
      "display": false,
      "details": {
-      "ticketId": "<uuid:6>"
+      "ticketId": "<uuid:7>"
      },
      "id": "<id:25>",
      "parentId": "<id:24>",
@@ -7212,11 +7214,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "consumed",
-      "ticketId": "<uuid:6>",
+      "ticketId": "<uuid:7>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -7225,7 +7227,7 @@
        },
        "deliverAs": "steer"
       },
-      "runId": "<uuid:7>",
+      "runId": "<uuid:8>",
       "transcriptEntryId": "<id:25>",
       "sessionId": "<uuid:1>"
      },
@@ -7292,11 +7294,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "settled",
-      "ticketId": "<uuid:6>",
+      "ticketId": "<uuid:7>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -7305,7 +7307,7 @@
        },
        "deliverAs": "steer"
       },
-      "runId": "<uuid:7>",
+      "runId": "<uuid:8>",
       "transcriptEntryId": "<id:25>",
       "sessionId": "<uuid:1>"
      },
@@ -7335,7 +7337,7 @@
        "human": []
       },
       "holds": [],
-      "runId": "<uuid:7>",
+      "runId": "<uuid:8>",
       "completionId": "<uuid:1>:2",
       "completion": {
        "kind": "reply",

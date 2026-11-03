@@ -28,8 +28,11 @@ const EVENTS = new Set([
 	"speculative_applied",
 	"speculative_stale",
 	"speculative_invalidated",
+	"speculative_reused",
+	"speculative_regenerated",
 	"idle_trigger",
 	"idle_applied",
+	"idle_apply_skipped",
 	"blocking_started",
 	"warm_consumed",
 	"core_route_generated",
@@ -52,6 +55,8 @@ export type CompactionLoggerEvent =
 	| "speculative_applied"
 	| "speculative_stale"
 	| "speculative_invalidated"
+	| "speculative_reused"
+	| "speculative_regenerated"
 	| "blocking_started"
 	| "warm_consumed"
 	| "core_route_generated"
@@ -66,6 +71,7 @@ export type CompactionLoggerEvent =
 	| "ineffective_counted"
 	| "idle_trigger"
 	| "idle_applied"
+	| "idle_apply_skipped"
 	| "summary_failed"
 	| "remote_aborted"
 	| "blocking_aborted";

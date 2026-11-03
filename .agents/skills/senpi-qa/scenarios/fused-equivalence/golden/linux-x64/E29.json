@@ -4767,7 +4767,8 @@
         "name": "read",
         "arguments": {
          "path": "a.txt"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -4817,7 +4818,8 @@
       ],
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
