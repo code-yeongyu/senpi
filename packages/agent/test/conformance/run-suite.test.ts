@@ -13,6 +13,8 @@ import { STORE_CASES } from "../../src/durable/testing/store-cases.ts";
 import { WAKE_CASES } from "../../src/durable/testing/wake-cases.ts";
 import { BATCH_CASES } from "../../src/execution/testing/batch-cases.ts";
 import { KILL_BATCH_CASES } from "../../src/execution/testing/kill-batch.ts";
+import { MULTI_SEQ_CASES } from "../../src/execution/testing/multi-seq-cases.ts";
+import { SEQ_CASES } from "../../src/execution/testing/seq-cases.ts";
 import { KILL_LEDGER_CASES } from "../../src/execution/testing/kill-ledger.ts";
 import { LEDGER_CASES } from "../../src/execution/testing/ledger-cases.ts";
 import { FAULT_TRANSPORT_CASES } from "../../src/transport/testing/fault-cases.ts";
@@ -134,6 +136,8 @@ describe("the ./conformance export", () => {
 			"LEDGER_CASES",
 			"MULTI_CASES",
 			"MULTI_HOST_CASES",
+			"MULTI_SEQ_CASES",
+			"SEQ_CASES",
 			"STORE_CASES",
 			"TRANSPORT_CASES",
 			"TransportClosedError",
@@ -144,6 +148,7 @@ describe("the ./conformance export", () => {
 			"createBunTimerHost",
 			"createExecutionLedger",
 			"createInProcessNetwork",
+			"createSequentialCoordinator",
 			"createManualTimers",
 			"createReliableTransport",
 			"createWakeHost",
@@ -173,6 +178,8 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...KILL_LEDGER_CASES,
 	...BATCH_CASES,
 	...KILL_BATCH_CASES,
+	...SEQ_CASES,
+	...MULTI_SEQ_CASES,
 	...STORE_CASES,
 	...KILL_STORE_CASES,
 	...WAKE_CASES,
