@@ -10301,42 +10301,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_ledger",
-        "toolCallId": "<id:6>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -10428,6 +10392,42 @@
          "endedAt": "<ts:timing.endedAt:2>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_ledger",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
       }
      },
      {
@@ -12040,42 +12040,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 7,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:14>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "restoring": false,
-       "persisted": true,
-       "runId": "<uuid:41>",
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activityRevision": {
-        "instanceId": "<uuid:33>",
-        "revision": 3
-       },
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_ledger",
-        "toolCallId": "<id:25>",
-        "since": "<ts:activity.since:5>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:14>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -12183,6 +12147,42 @@
          "endedAt": "<ts:timing.endedAt:8>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 7,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:14>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "restoring": false,
+       "persisted": true,
+       "runId": "<uuid:41>",
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activityRevision": {
+        "instanceId": "<uuid:33>",
+        "revision": 3
+       },
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_ledger",
+        "toolCallId": "<id:25>",
+        "since": "<ts:activity.since:5>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:14>"
       }
      },
      {
@@ -14189,42 +14189,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 13,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 5,
-       "selfSettleEligible": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:26>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "restoring": false,
-       "persisted": true,
-       "runId": "<uuid:64>",
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activityRevision": {
-        "instanceId": "<uuid:56>",
-        "revision": 3
-       },
-       "activity": {
-        "kind": "tool",
-        "toolName": "ask_user_question",
-        "toolCallId": "<id:43>",
-        "since": "<ts:activity.since:10>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:26>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -14346,6 +14310,42 @@
          "endedAt": "<ts:timing.endedAt:14>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 13,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 5,
+       "selfSettleEligible": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:26>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "restoring": false,
+       "persisted": true,
+       "runId": "<uuid:64>",
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activityRevision": {
+        "instanceId": "<uuid:56>",
+        "revision": 3
+       },
+       "activity": {
+        "kind": "tool",
+        "toolName": "ask_user_question",
+        "toolCallId": "<id:43>",
+        "since": "<ts:activity.since:10>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:26>"
       }
      },
      {
@@ -16303,42 +16303,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 21,
-       "epoch": 4,
-       "epochOrigin": "human",
-       "humanInputRevision": 8,
-       "selfSettleEligible": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:35>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "restoring": false,
-       "persisted": true,
-       "runId": "<uuid:135>",
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activityRevision": {
-        "instanceId": "<uuid:136>",
-        "revision": 3
-       },
-       "activity": {
-        "kind": "tool",
-        "toolName": "ask_user_question",
-        "toolCallId": "<id:67>",
-        "since": "<ts:activity.since:13>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:35>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -16426,6 +16390,42 @@
          "endedAt": "<ts:timing.endedAt:20>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 21,
+       "epoch": 4,
+       "epochOrigin": "human",
+       "humanInputRevision": 8,
+       "selfSettleEligible": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:35>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "restoring": false,
+       "persisted": true,
+       "runId": "<uuid:135>",
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activityRevision": {
+        "instanceId": "<uuid:136>",
+        "revision": 3
+       },
+       "activity": {
+        "kind": "tool",
+        "toolName": "ask_user_question",
+        "toolCallId": "<id:67>",
+        "since": "<ts:activity.since:13>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:35>"
       }
      },
      {

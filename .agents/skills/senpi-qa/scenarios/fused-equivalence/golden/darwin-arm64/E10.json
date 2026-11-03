@@ -5147,42 +5147,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "parse_duration",
-        "toolCallId": "<id:6>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -5270,6 +5234,42 @@
          "endedAt": "<ts:timing.endedAt:2>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "parse_duration",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
       }
      },
      {
@@ -6676,42 +6676,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 3,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:12>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:23>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "parse_duration",
-        "toolCallId": "<id:16>",
-        "since": "<ts:activity.since:5>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:12>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -6799,6 +6763,42 @@
          "endedAt": "<ts:timing.endedAt:10>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 3,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:12>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:23>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "parse_duration",
+        "toolCallId": "<id:16>",
+        "since": "<ts:activity.since:5>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:12>"
       }
      },
      {
