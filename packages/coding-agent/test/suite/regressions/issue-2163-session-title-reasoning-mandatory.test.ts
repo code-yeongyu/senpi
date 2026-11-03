@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import type { Api, Model, ThinkingLevelMap } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { SessionTitleOutcome } from "../../../src/core/session-title-answer.ts";
 import { generateSessionTitle } from "../../../src/core/session-title-generator.ts";
 
 // Regression for #2163 and #1266: the mock mirrors OpenRouter's mandatory-reasoning contract.
@@ -104,7 +105,7 @@ function openRouterModel(id: string, baseUrl: string, thinkingLevelMap?: Thinkin
 	} as Model<Api>;
 }
 
-function titleFor(model: Model<Api>): Promise<string | undefined> {
+function titleFor(model: Model<Api>): Promise<SessionTitleOutcome> {
 	return generateSessionTitle({
 		firstPrompt: TITLE_PROMPT,
 		model,
@@ -139,7 +140,7 @@ describe("issue #2163: session titles on endpoints that mandate reasoning", () =
 			max: "max",
 		});
 
-		await expect(titleFor(model)).resolves.toBe("Fix Login Bug");
+		await expect(titleFor(model)).resolves.toEqual({ kind: "titled", title: "Fix Login Bug" });
 
 		expect(endpoint.requests).toHaveLength(1);
 		expect(endpoint.requests[0]?.reasoningEffort).toBe("minimal");
@@ -150,7 +151,7 @@ describe("issue #2163: session titles on endpoints that mandate reasoning", () =
 		endpoint = await startMockEndpoint({ mandatoryReasoning: true });
 		const model = openRouterModel("meta/muse-spark-1.3-contributor", endpoint.baseUrl);
 
-		await expect(titleFor(model)).resolves.toBe("Fix Login Bug");
+		await expect(titleFor(model)).resolves.toEqual({ kind: "titled", title: "Fix Login Bug" });
 
 		expect(endpoint.requests.map((request) => request.reasoningEffort)).toEqual(["none", "low"]);
 		expect(endpoint.requests[1]?.maxTokens).toBeGreaterThan(64);
@@ -160,7 +161,7 @@ describe("issue #2163: session titles on endpoints that mandate reasoning", () =
 		endpoint = await startMockEndpoint({ mandatoryReasoning: true });
 		const model = openRouterModel("z-ai/glm-5.3-flash", endpoint.baseUrl);
 
-		await expect(titleFor(model)).resolves.toBe("Fix Login Bug");
+		await expect(titleFor(model)).resolves.toEqual({ kind: "titled", title: "Fix Login Bug" });
 
 		expect(endpoint.requests.map((request) => request.reasoningEffort)).toEqual(["none", "low"]);
 	});
@@ -187,7 +188,7 @@ describe("issue #2163: session titles on endpoints that mandate reasoning", () =
 			},
 		} as Model<Api>;
 
-		await expect(titleFor(model)).resolves.toBe("Fix Login Bug");
+		await expect(titleFor(model)).resolves.toEqual({ kind: "titled", title: "Fix Login Bug" });
 
 		expect(endpoint.requests).toHaveLength(1);
 		expect(endpoint.requests[0]?.zaiThinking).toBe("enabled");
@@ -199,7 +200,7 @@ describe("issue #2163: session titles on endpoints that mandate reasoning", () =
 		endpoint = await startMockEndpoint({ mandatoryReasoning: false });
 		const model = openRouterModel("z-ai/glm-5.2", endpoint.baseUrl, { off: "none", high: "high", xhigh: "xhigh" });
 
-		await expect(titleFor(model)).resolves.toBe("Fix Login Bug");
+		await expect(titleFor(model)).resolves.toEqual({ kind: "titled", title: "Fix Login Bug" });
 
 		expect(endpoint.requests).toHaveLength(1);
 		expect(endpoint.requests[0]?.reasoningEffort).toBe("none");

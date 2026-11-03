@@ -6,11 +6,11 @@ import type {
 	Context,
 	Model,
 	SimpleStreamOptions,
-	TextContent,
 	ThinkingLevel,
 } from "@earendil-works/pi-ai/compat";
 import { completeSimple, type RetryPolicy, retryAssistantCall } from "@earendil-works/pi-ai/compat";
 import { withoutServerSearch } from "./extensions/builtin/server-search-fallback.ts";
+import { readTitleAnswer, type SessionTitleOutcome, type TitleAnswer, titleOutcome } from "./session-title-answer.ts";
 import { initialTitleReasoning, mandatoryReasoningRetryLevel } from "./session-title-reasoning.ts";
 
 interface SessionTitleAuth {
@@ -18,6 +18,11 @@ interface SessionTitleAuth {
 	readonly headers?: Record<string, string>;
 	readonly extraBody?: Record<string, unknown>;
 	readonly env?: Record<string, string>;
+}
+
+interface TitleRequest {
+	readonly reasoning: ThinkingLevel | undefined;
+	readonly maxTokens: number;
 }
 
 interface GenerateSessionTitleOptions {
@@ -58,7 +63,8 @@ const LOW_SIGNAL_PROMPTS = new Set([
 
 const TITLE_MAX_TOKENS = 64;
 // Reasoning tokens count against the completion budget, so a title that must reason needs room
-// for the thinking and the `<title>` answer.
+// for the thinking and the `<title>` answer. A model that thinks although no level was sent (a gateway
+// that cannot turn thinking off) gets this budget on one retry after it spends the small one (#5471).
 const REASONING_TITLE_MAX_TOKENS = 1024;
 
 const MAX_TITLE_RETRIES = 1;
@@ -89,39 +95,56 @@ export function shouldSkipSessionTitle(text: string): boolean {
 	return LOW_SIGNAL_PROMPTS.has(normalized);
 }
 
-export async function generateSessionTitle(options: GenerateSessionTitleOptions): Promise<string | undefined> {
+export async function generateSessionTitle(options: GenerateSessionTitleOptions): Promise<SessionTitleOutcome> {
 	if (shouldSkipSessionTitle(options.firstPrompt)) {
-		return undefined;
+		return { kind: "untitled" };
 	}
 
 	// Titles are cosmetic background work: honor the caller's retry policy so a
 	// single transient provider error (e.g. a 529 overloaded stream) does not
 	// surface as a scary runtime error. Mirrors completeSummarization().
 	const reasoning = initialTitleReasoning(options.model);
-	let response = await requestTitle(options, reasoning);
+	let request: TitleRequest = { reasoning, maxTokens: titleBudget(reasoning) };
+	let response = await requestTitle(options, request);
 	const retryReasoning =
 		response.stopReason === "error"
 			? mandatoryReasoningRetryLevel(options.model, reasoning, response.errorMessage)
 			: undefined;
 	if (retryReasoning !== undefined) {
-		response = await requestTitle(options, retryReasoning);
+		request = { reasoning: retryReasoning, maxTokens: titleBudget(retryReasoning) };
+		response = await requestTitle(options, request);
 	}
+	let answer = settledAnswer(response);
+	if (
+		answer.kind === "no-answer" &&
+		response.stopReason === "length" &&
+		request.maxTokens < REASONING_TITLE_MAX_TOKENS
+	) {
+		request = { reasoning: request.reasoning, maxTokens: REASONING_TITLE_MAX_TOKENS };
+		response = await requestTitle(options, request);
+		answer = settledAnswer(response);
+	}
+	return titleOutcome(answer, options.firstPrompt, response, request.maxTokens);
+}
+
+function titleBudget(reasoning: ThinkingLevel | undefined): number {
+	return reasoning === undefined ? TITLE_MAX_TOKENS : REASONING_TITLE_MAX_TOKENS;
+}
+
+function settledAnswer(response: AssistantMessage): TitleAnswer {
 	if (response.stopReason === "error") {
 		throw new Error(humanizeProviderError(response.errorMessage ?? "Session title generation failed"));
 	}
-	return parseSessionTitle(response);
+	return readTitleAnswer(response);
 }
 
-function requestTitle(
-	options: GenerateSessionTitleOptions,
-	reasoning: ThinkingLevel | undefined,
-): Promise<AssistantMessage> {
+function requestTitle(options: GenerateSessionTitleOptions, request: TitleRequest): Promise<AssistantMessage> {
 	return retryAssistantCall(
 		() =>
 			completeTitle(
 				options.model,
 				buildTitleContext(options.firstPrompt),
-				buildTitleOptions(options, reasoning),
+				buildTitleOptions(options, request),
 				options.streamFn,
 			),
 		options.retry,
@@ -142,16 +165,14 @@ function buildTitleContext(firstPrompt: string): Context {
 	};
 }
 
-function buildTitleOptions(
-	options: GenerateSessionTitleOptions,
-	reasoning: ThinkingLevel | undefined,
-): SimpleStreamOptions {
+function buildTitleOptions(options: GenerateSessionTitleOptions, request: TitleRequest): SimpleStreamOptions {
+	const { reasoning, maxTokens } = request;
 	const titleOptions: SimpleStreamOptions = {
 		...options.baseOptions,
 		onPayload: withoutServerSearch(options.baseOptions?.onPayload),
 		sessionId: options.sessionId,
 		cacheRetention: options.model.cacheRetention === "none" ? "none" : "short",
-		maxTokens: reasoning === undefined ? TITLE_MAX_TOKENS : REASONING_TITLE_MAX_TOKENS,
+		maxTokens,
 	};
 	if (reasoning !== undefined) {
 		titleOptions.reasoning = reasoning;
@@ -185,24 +206,6 @@ async function completeTitle(
 	}
 	const stream = await streamFn(model, normalizeContext(context), options);
 	return stream.result();
-}
-
-function parseSessionTitle(message: AssistantMessage): string | undefined {
-	const text = message.content
-		.filter((part): part is TextContent => part.type === "text")
-		.map((part) => part.text)
-		.join("")
-		.trim();
-	const match = text.match(/<title>\s*([\s\S]*?)\s*<\/title>/i);
-	const rawTitle = match?.[1];
-	if (rawTitle === undefined) {
-		return undefined;
-	}
-	const title = sanitizeTitle(rawTitle);
-	if (!title || title.toLowerCase() === "none") {
-		return undefined;
-	}
-	return title;
 }
 
 /**
@@ -259,18 +262,4 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function sanitizeTitle(text: string): string {
-	return text
-		.replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
-		.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-		.replace(/\u001b[\u0020-\u002f]*[\u0030-\u007e]/g, "")
-		.replace(/[\r\n]+/g, " ")
-		.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
-		.replace(/\s+/g, " ")
-		.replace(/^["'`]+|["'`.!?]+$/g, "")
-		.trim()
-		.slice(0, 80)
-		.trim();
 }

@@ -413,6 +413,7 @@ import {
 import { SessionThinkingMemory, type ThinkingLevelSource } from "./session-thinking-memory.ts";
 import { restoreMovedState } from "./session-move/extension-state.ts";
 import type { SessionRelocationHost } from "./session-relocation.ts";
+import { SessionTitleAttempts } from "./session-title-attempts.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
@@ -1647,6 +1648,7 @@ export class AgentSession {
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
+	private readonly _sessionTitleAttempts = new SessionTitleAttempts();
 	private readonly _autoTitleSessions: boolean;
 
 	// Retry state
@@ -6848,7 +6850,7 @@ export class AgentSession {
 		if (!this._autoTitleSessions || this.sessionManager.getSessionName() || shouldSkipSessionTitle(firstPrompt)) {
 			return;
 		}
-		if (this._sessionTitleAbortController !== undefined) {
+		if (this._sessionTitleAbortController !== undefined || this._sessionTitleAttempts.exhausted) {
 			return;
 		}
 		const model = this.model;
@@ -6869,7 +6871,7 @@ export class AgentSession {
 			// A title is a background, cosmetic job: its auth retry is cancellable with the title and reports
 			// nothing to the UI (no retry banner or summary spinner for a job the user never started).
 			const auth = await this._getSummarizationRequestAuth(model, abortController.signal, {});
-			const title = await generateSessionTitle({
+			const outcome = await generateSessionTitle({
 				firstPrompt,
 				model,
 				auth,
@@ -6882,17 +6884,21 @@ export class AgentSession {
 			if (abortController.signal.aborted) {
 				return;
 			}
-			if (title && !this.sessionManager.getSessionName()) {
-				this.setSessionName(title);
-			}
+			this._sessionTitleAttempts.apply(outcome, model, {
+				hasName: () => Boolean(this.sessionManager.getSessionName()),
+				setName: (name) => this.setSessionName(name),
+				notifyWarning: (message) => this._extensionRunner.getUIContext().notify(message, "warning"),
+				logger: this._sessionLogger,
+			});
 		} catch (error) {
 			if (abortController.signal.aborted) {
 				return;
 			}
 			// A missing title is cosmetic, so the failure stays out of the runtime-error surface.
-			this._sessionLogger.debug("session_title_failed", {
-				error: error instanceof Error ? error.message : String(error),
-			});
+			this._sessionTitleAttempts.recordFailure(
+				error instanceof Error ? error.message : String(error),
+				this._sessionLogger,
+			);
 		} finally {
 			if (this._sessionTitleAbortController === abortController) {
 				this._sessionTitleAbortController = undefined;
