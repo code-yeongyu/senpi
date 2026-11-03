@@ -23,7 +23,9 @@ export type TestSwitch =
 	| "EXIT_MID_JOB"
 	| "EXIT_ON_START"
 	| "HANG_BEFORE_READY"
-	| "BLOCK_READER";
+	| "BLOCK_READER"
+	/** `=<ms>`: a cancelled job's owned-group kill lands that late, as on a loaded host where the signal is slow to act. */
+	| "DELAY_GROUP_KILL";
 
 export interface TestControls {
 	readonly enabled: (name: TestSwitch) => boolean;

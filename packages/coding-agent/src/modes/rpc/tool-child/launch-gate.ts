@@ -172,17 +172,29 @@ export class LaunchGate {
 		for (const [launchId, { request }] of this.#slots) {
 			if (request.jobId !== jobId || request.lifetime !== "owned" || request.containment !== "own-group") continue;
 			if (request.pgid === undefined || request.pgid <= 1) continue;
-			try {
-				process.kill(-request.pgid, "SIGKILL");
-				ended.push({ launchId, pgid: request.pgid });
-			} catch {
-				// The group ended between its last member and our signal.
-			}
+			if (this.#killGroup(request.pgid)) ended.push({ launchId, pgid: request.pgid });
 		}
 		// The worker that would have reported these launches' completion is gone with its job: report it here, so the
 		// slots return to the clock and the server's log is complete.
 		for (const { launchId } of ended) this.done(launchId, { signal: "SIGKILL" });
 		return ended.map(({ pgid }) => pgid);
+	}
+
+	/** SIGKILLs one group; false when it had already ended. Test-only `DELAY_GROUP_KILL` makes the kill land late. */
+	#killGroup(pgid: number): boolean {
+		const kill = (): boolean => {
+			try {
+				process.kill(-pgid, "SIGKILL");
+				return true;
+			} catch {
+				// The group ended between its last member and our signal.
+				return false;
+			}
+		};
+		const delayMs = Number(this.#controls.value("DELAY_GROUP_KILL") ?? 0);
+		if (delayMs <= 0) return kill();
+		setTimeout(kill, delayMs);
+		return true;
 	}
 
 	done(launchId: string, outcome: { readonly exitCode?: number; readonly signal?: string }): void {
