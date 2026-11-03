@@ -2524,6 +2524,11 @@ keeps the host-wide default (`--auto-title-sessions` or the `auto_title_sessions
 `auto_title_per_session` in `get_protocol_info` before relying on the field; an older host ignores it. A non-boolean is
 refused with `invalid_launch_profile`. Sessions resumed with existing context messages are never retitled.
 
+The title is generated as part of the settle of the prompt's run: the title request follows that run's last model
+request, and its `session_info_changed` is emitted after the run's `agent_end` and before its `agent_settled` and
+`agent_idle`, so it precedes anything a client or a background job does once the session is idle. A run that is aborted
+(Esc, Stop, `abort`) is not titled; the next prompt's run titles the session instead.
+
 `--auto-title-sessions` still opts every session on that host into titling when `auto_title` is omitted. It is
 deprecated for multi-session hosts — prefer per-session `open_session.auto_title` so two clients on one daemon do not collide
 over a launch-profile flag:
@@ -5827,6 +5832,13 @@ A turn consists of one assistant response plus any resulting tool calls and resu
 ### message_start / message_end
 
 Emitted when a message begins and completes. The `message` field contains an `AgentMessage`.
+
+An assistant message's `diagnostics` also carries recovery notices. For
+`claude_sdk_oauth_long_context_fallback`, `details.contextWindow` is `200000`
+and `details.message` is displayable notice text. Render it as a muted notice
+for that turn, alongside any session-continuity notice, rather than as an error.
+The fallback applies only to that request; it does not change the selected
+model or its default 1M window. Saved assistant messages retain the diagnostic.
 
 ```json
 {"type": "message_start", "message": {...}}
