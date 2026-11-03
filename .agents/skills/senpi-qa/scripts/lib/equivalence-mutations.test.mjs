@@ -39,6 +39,7 @@ const PLAN_ROWS = [
 	"broken desktop render",
 	"interrupted call re-run on resume (E25)",
 	"tool result delivered to the other session (E30)",
+	"prepared routed to legacy (witness, S18b)",
 ];
 
 const ROW = Object.freeze({
@@ -160,4 +161,31 @@ test("the table escapes cell separators", () => {
 	const table = renderTable([{ ...ROW, expect: { E01: /a|b/ }, status: STATUS.KILLED, note: "" }], "darwin-arm64");
 	assert.match(table, /`a\\\|b`/);
 	assert.equal(table.split("\n").length, 3);
+});
+
+const WITNESS_ROW = Object.freeze({
+	id: "x-witness",
+	row: "prepared routed to legacy (witness, S18b)",
+	observation: "witness",
+	surface: "rpc",
+	pipeline: "prepared",
+	patch: "witness.patch",
+	cases: ["E01"],
+	expect: { E01: /^witness\.pipeline: actual="legacy" expected="prepared"$/ },
+});
+
+test("a witness mismatch is a diff row, so a witness mutation is KILLED, not WRONG_FAILURE", () => {
+	const run = {
+		exitCode: 1,
+		results: [{ id: "E01", pass: false, diffs: [], repeatDiffs: [], witnessOk: false, witness: { pipeline: "legacy" } }],
+	};
+
+	const verdict = classifyMutation(WITNESS_ROW, { runnable: ["E01"], baseline: PASSING, run, revert: CLEAN });
+
+	assert.equal(verdict.status, STATUS.KILLED);
+});
+
+test("a row may name its own pipeline, which must be legacy or prepared", () => {
+	assert.deepEqual(validateManifest([WITNESS_ROW], CONTEXT), []);
+	assert.match(validateManifest([{ ...WITNESS_ROW, pipeline: "default" }], CONTEXT).join("\n"), /pipeline must be/);
 });

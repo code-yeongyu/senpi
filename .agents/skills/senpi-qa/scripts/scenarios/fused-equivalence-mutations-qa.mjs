@@ -146,18 +146,22 @@ async function main() {
 		const eqDir = join(scratch.dir, EQ_REL);
 		const plans = selected.map((m) => ({ m, plan: planRow(m, { platform, deferredGoldens, eqDir }) }));
 		const baseline = new Map();
-		for (const surface of ["rpc", "tui"]) {
-			const caseIds = [...new Set(plans.filter((p) => p.m.surface === surface).flatMap((p) => p.plan.runnable))];
-			if (!caseIds.length) continue;
-			process.stdout.write(`baseline ${surface} ${caseIds.join(",")} (unmutated)\n`);
-			const slug = `p05d-baseline-${surface}`;
-			const run = await runEq(scratch.dir, { surface, caseIds, ...options, slug, log: join(out, `${slug}.log`) });
-			for (const id of caseIds)
-				baseline.set(
-					`${surface} ${id}`,
-					run.results.find((r) => r.id === id)?.pass ? "PASS" : `exit ${run.exitCode}`,
-				);
-		}
+		const pipelineOf = (m) => m.pipeline ?? options.pipeline;
+		for (const surface of ["rpc", "tui"])
+			for (const pipeline of new Set(plans.map((p) => pipelineOf(p.m)))) {
+				const rows = plans.filter((p) => p.m.surface === surface && pipelineOf(p.m) === pipeline);
+				const caseIds = [...new Set(rows.flatMap((p) => p.plan.runnable))];
+				if (!caseIds.length) continue;
+				process.stdout.write(`baseline ${surface} ${pipeline} ${caseIds.join(",")} (unmutated)\n`);
+				const slug = `p05d-baseline-${surface}-${pipeline}`;
+				const log = join(out, `${slug}.log`);
+				const run = await runEq(scratch.dir, { surface, caseIds, ...options, pipeline, slug, log });
+				for (const id of caseIds)
+					baseline.set(
+						`${surface} ${pipeline} ${id}`,
+						run.results.find((r) => r.id === id)?.pass ? "PASS" : `exit ${run.exitCode}`,
+					);
+			}
 		for (const { m, plan } of plans) {
 			const row = { ...m, platform, status: plan.status, note: plan.note, skipped: plan.skipped, results: [] };
 			rows.push(row);
@@ -179,11 +183,13 @@ async function main() {
 				surface: m.surface,
 				caseIds: plan.runnable,
 				...options,
+				pipeline: pipelineOf(m),
 				slug,
 				log: join(out, `${slug}.log`),
 			});
 			const revert = revertPatch(scratch.dir, patchFile);
-			const surfaceBaseline = new Map(plan.runnable.map((id) => [id, baseline.get(`${m.surface} ${id}`)]));
+			const key = (id) => `${m.surface} ${pipelineOf(m)} ${id}`;
+			const surfaceBaseline = new Map(plan.runnable.map((id) => [id, baseline.get(key(id))]));
 			const verdict = classifyMutation(m, { runnable: plan.runnable, baseline: surfaceBaseline, run, revert });
 			Object.assign(row, {
 				status: verdict.status,

@@ -1,0 +1,10 @@
+diff --git a/packages/coding-agent/src/core/execution/pipeline-witness.ts b/packages/coding-agent/src/core/execution/pipeline-witness.ts
+index ad180eb155..b0baa77feb 100644
+--- a/packages/coding-agent/src/core/execution/pipeline-witness.ts
++++ b/packages/coding-agent/src/core/execution/pipeline-witness.ts
+@@ -30,5 +30,4 @@ export function bindPipelineWitness(agent: Agent, manager: SessionManager, root:
+ 	if (pipeline !== "prepared") return;
+ 	if (agent.toolHost !== undefined)
+ 		throw new Error("SENPI_EXECUTION_PIPELINE=prepared cannot replace the ToolHost this session was built with");
+-	agent.toolHost = createPreparedToolHost(agent);
+ }

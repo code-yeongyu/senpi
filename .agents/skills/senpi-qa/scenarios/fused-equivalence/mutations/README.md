@@ -29,6 +29,7 @@ compare there first, and then per row applies the patch, runs `fused-equivalence
 | (P0-07b) | broken desktop render | O8 desktop | EQ.desktop | DEFERRED: the desktop PR (P0-07b) ships the patch and runs it with EQ.desktop |
 | `e25-rerun-interrupted-call.patch` | interrupted call re-run on resume (E25) | O5 | E25 | a reopened interrupted session re-runs every tool call that has no result |
 | `e30-tool-result-to-other-session.patch` | tool result delivered to the other session (E30) | O6/O7 | E30 | `tool_execution_end` is broadcast to every RPC connection, the other session's included |
+| `witness.patch` | prepared routed to legacy (witness, S18b) | witness | E01 | `SENPI_EXECUTION_PIPELINE=prepared` no longer installs the prepared ToolHost, so the call runs on the legacy scheduler; the row runs with `pipeline: "prepared"` and must fail the `witness.pipeline` assertion |
 
 Origins: the O1, O2, O3 and reordered-effects patches are P0-05b's (senpi#4639), the dialog patch is P0-05c's
 (senpi#4661), and the E25 and E30 patches are P0-05e's (senpi#4751); each was regenerated with `git diff` at this

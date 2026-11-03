@@ -136,4 +136,14 @@ export const mutations = Object.freeze([
 			E30: /^error: Error: E30 solo compare: session A differs from its solo run in \d+ row\(s\): \$\.O6\[0\]\.events\[\d+\]\.type: solo="[a-z_]+" concurrent="tool_execution_end";/,
 		},
 	},
+	{
+		id: "witness-prepared-routed-legacy",
+		row: "prepared routed to legacy (witness, S18b)",
+		observation: "witness",
+		surface: "rpc",
+		pipeline: "prepared",
+		patch: "witness.patch",
+		cases: ["E01"],
+		expect: { E01: /^witness\.pipeline: actual="legacy" expected="prepared"$/ },
+	},
 ]);

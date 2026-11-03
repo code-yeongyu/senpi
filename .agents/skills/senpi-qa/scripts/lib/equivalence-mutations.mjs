@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { goldenCellVerdict } from "./equivalence-deferred.mjs";
 
 const SURFACES = ["rpc", "tui", "desktop"];
-const OBSERVATIONS = ["O1", "O2", "O3", "O4", "O5", "O6/O7", "O8 TUI", "O8 desktop"];
+const OBSERVATIONS = ["O1", "O2", "O3", "O4", "O5", "O6/O7", "O8 TUI", "O8 desktop", "witness"];
+const PIPELINES = ["legacy", "prepared"];
 
 /**
  * Row verdicts. KILLED is the only proof; DEFERRED and NO_B0 say why a row has no proof on this platform and never
@@ -42,6 +43,8 @@ export function validateManifest(mutations, { caseIds, patchDir, tuiCaseIds }) {
 		if (!nonEmpty(m.row)) problems.push(`${where}: row (the plan §6.4 mutation row) is required`);
 		if (!OBSERVATIONS.includes(m.observation)) problems.push(`${where}: observation must be one of ${OBSERVATIONS}`);
 		if (!SURFACES.includes(m.surface)) problems.push(`${where}: surface must be one of ${SURFACES}`);
+		if (m.pipeline !== undefined && !PIPELINES.includes(m.pipeline))
+			problems.push(`${where}: pipeline must be one of ${PIPELINES} when given`);
 		if (m.deferred) {
 			for (const key of ["owner", "reason", "due"])
 				if (!nonEmpty(m.deferred[key])) problems.push(`${where}: deferred.${key} is required`);
@@ -130,6 +133,11 @@ export function classifyMutation(mutation, { runnable, baseline, run, revert }) 
 		}
 		const rows = [...(result.diffs ?? []), ...(result.repeatDiffs ?? [])].map(diffRowText);
 		if (result.error) rows.push(`error: ${result.error}`);
+		// The witness is not part of the EQ equality (plan §6.3), so a witness mismatch is its own row here.
+		if (result.witnessOk === false)
+			rows.push(
+				`witness.pipeline: actual=${JSON.stringify(result.witness?.pipeline)} expected=${JSON.stringify(mutation.pipeline ?? "legacy")}`,
+			);
 		const match = rows.find((row) => mutation.expect[id].test(row)) ?? null;
 		cases.push({ case: id, outcome: "FAIL", match, firstRow: rows[0] ?? null, rows: rows.length });
 	}
