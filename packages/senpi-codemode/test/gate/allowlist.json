@@ -5042,6 +5042,18 @@
 				"legacyContracts/test/scope-kernels.test.ts/eval kernels are scoped per execution scope (S16b) starts nothing for a scope that never asks, and reuses one manager per scope"
 			],
 			"reason": "senpi#5431 (S16b, kernels per execution scope; landed by train #5629; recorded by #5656): contract tests that eval kernels are scoped per execution scope - globals stay invisible across scopes, releasing one scope closes only its kernels, each scope writes local:// into its own root, and a scope that never asks starts nothing while one manager is reused per scope. No prompt cell moves."
+		},
+		"senpi#5653": {
+			"additions": [
+				"legacyContracts/test/js-kernel-shell-capture-late-pin.test.ts/issue #5635 the worker env pin covers every Bun spawn path a Bun.spawn after the cell settled still gets the pinned view",
+				"legacyContracts/test/js-kernel-shell-capture-late-pin.test.ts/issue #5635 the worker env pin covers every Bun spawn path a new Bun.$.Shell() instance starts from the pinned view",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the worker-thread delta names exactly the dropped names and the origin it sets",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the Python interpreter spawns without the hand-off and with the origin and session values",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the process-isolated JS kernel child spawns without the hand-off",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off a worker JS kernel's cells and their children see no hand-off while the host keeps it",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off a inline JS kernel's cells and their children see no hand-off while the host keeps it"
+			],
+			"reason": "senpi#5653 (fixes #5635; RPC key transport scrub stack): contract tests that kernel environments never carry the host's supervisor hand-off - the inline and worker JS kernels, the process-isolated JS child and the Python interpreter spawn without it while the host keeps it, the worker-thread delta names exactly the dropped names and the origin it sets, and the worker env pin covers late Bun.spawn and new Bun.$.Shell() paths. No prompt cell moves."
 		}
 	}
 }
