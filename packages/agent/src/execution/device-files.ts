@@ -116,7 +116,7 @@ const CODES: readonly DeviceFileErrorCode[] = [
 	"protocol",
 ];
 
-export function isDeviceFileErrorCode(value: unknown): value is DeviceFileErrorCode {
+function isDeviceFileErrorCode(value: unknown): value is DeviceFileErrorCode {
 	return typeof value === "string" && (CODES as readonly string[]).includes(value);
 }
 
