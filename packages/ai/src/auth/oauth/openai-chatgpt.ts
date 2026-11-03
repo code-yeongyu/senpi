@@ -7,7 +7,7 @@
 
 import { randomBytes } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
+import { configuredOAuthBrandName, oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type {
@@ -434,7 +434,8 @@ async function loginOpenAIChatGPT(
 		if (existing.idToken) authorizationUrl.searchParams.set("id_token_hint", existing.idToken);
 		if (existing.email) authorizationUrl.searchParams.set("login_hint", existing.email);
 	} else {
-		authorizationUrl.searchParams.set("agent_name_hint", options?.appName ?? getWireIdentity());
+		// Display metadata on OpenAI's consent screen (the user can edit it); not tied to the issued client ID.
+		authorizationUrl.searchParams.set("agent_name_hint", options?.appName ?? configuredOAuthBrandName() ?? getWireIdentity());
 	}
 	if (consentClientId) {
 		authorizationUrl.searchParams.set("client_id", consentClientId);
