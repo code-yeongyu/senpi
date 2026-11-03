@@ -94,3 +94,31 @@ export type { KillHandDeclaration } from "../execution/testing/kill-hand.ts";
 export { KILL_HAND_CASES, KILL_HAND_DECLARATIONS } from "../execution/testing/kill-hand.ts";
 export { MULTI_HAND_CASES } from "../execution/testing/multi-hand-cases.ts";
 export type { KillLedgerDeclaration } from "../execution/testing/kill-ledger.ts";
+export type { BatchCoordinator, BatchCoordinatorOptions } from "../execution/coordinator.ts";
+export { BatchManifestConflictError, createBatchCoordinator } from "../execution/coordinator.ts";
+export { interruptedReplayText } from "../execution/coordinator-plan.ts";
+export type {
+	BatchCallPlan,
+	BatchDecision,
+	BatchExecutor,
+	BatchManifest,
+	BatchPlan,
+	BatchRecord,
+	BatchResult,
+	CallOutcome,
+	ExecutionRef,
+	ManifestCall,
+	PrepareReply,
+	PrepareRequest,
+	SettleReply,
+} from "../execution/coordinator-types.ts";
+export { BATCH_CASES } from "../execution/testing/batch-cases.ts";
+export type {
+	BatchCaseAdapters,
+	BatchExecutorConformanceAdapter,
+	ExecutorOpenOptions,
+	PausePoint,
+} from "../execution/testing/batch-executor.ts";
+export { referenceBatchExecutor } from "../execution/testing/batch-executor.ts";
+export type { KillBatchDeclaration } from "../execution/testing/kill-batch.ts";
+export { KILL_BATCH_CASES, KILL_BATCH_DECLARATIONS } from "../execution/testing/kill-batch.ts";
