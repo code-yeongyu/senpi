@@ -18,6 +18,7 @@ const writeSchema = Type.Object({
 export const writeToolSystemPromptContribution = {
 	snippet: "Create or overwrite files",
 	guidelines: ["write only for new files or full rewrites."],
+	fullGuidelines: ["Use write only for new files or complete rewrites."],
 } as const;
 
 export type WriteToolInput = Static<typeof writeSchema>;
@@ -71,6 +72,7 @@ export function createWriteToolDefinition(
 			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
 		promptSnippet: writeToolSystemPromptContribution.snippet,
 		promptGuidelines: [...writeToolSystemPromptContribution.guidelines],
+		fullPromptGuidelines: [...writeToolSystemPromptContribution.fullGuidelines],
 		parameters: writeSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
