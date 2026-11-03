@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-11-03 - Full-section guidelines for the built-in tools (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `powershell.ts`, `edit.ts`, `read.ts`, `write.ts`, `grep/index.ts`: each `*ToolSystemPromptContribution` keeps its pre-#5342 `fullGuidelines` beside the diet `guidelines`, exposed as `fullPromptGuidelines` (`ShellToolConfig.fullPromptGuidelines` for the shell tools).
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the contribution constants and the definitions' prompt fields.
+
 ## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
 
 ### What changed

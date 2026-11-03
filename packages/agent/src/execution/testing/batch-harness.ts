@@ -1,7 +1,8 @@
 import type { DurableStore, StoreValue, StoreWrite } from "../../durable/store.ts";
 import { createAdmissionLine } from "../../durable/store-admission.ts";
 import { type BatchCoordinator, createBatchCoordinator } from "../coordinator.ts";
-import type { BatchExecutor, BatchPlan, CallOutcome } from "../coordinator-types.ts";
+import { createNestedAdmission, type NestedAdmissionControl } from "../nested.ts";
+import type { BatchConsent, BatchExecutor, BatchPlan, CallOutcome } from "../coordinator-types.ts";
 import type { BatchCaseAdapters, PausePoint } from "./batch-executor.ts";
 
 const ADMITTED_AT = 100;
@@ -22,7 +23,7 @@ const isObject = (value: StoreValue | undefined): value is { readonly [key: stri
 
 function labelOf(writes: readonly StoreWrite[]): string | undefined {
 	for (const write of writes) {
-		if (write.op !== "append" || write.kind !== "execution.batch") continue;
+		if (write.op !== "append" || (write.kind !== "execution.batch" && write.kind !== "execution.nested")) continue;
 		const data = write.data;
 		if (!isObject(data)) return undefined;
 		return typeof data.executionId === "string" ? `${String(data.step)}:${data.executionId}` : String(data.step);
@@ -126,6 +127,7 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 		await (await adapters.store.open(medium)).claim(0, 1);
 		return medium;
 	};
+	let clock = NOW;
 	const executors = new Map<string, { medium: string; killed: AbortController; endpoint: BatchExecutor }>();
 	const start = async (id: string, medium: string): Promise<void> => {
 		const killed = new AbortController();
@@ -134,7 +136,7 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 			id,
 			store,
 			epoch: 1,
-			now: () => NOW,
+			now: () => clock,
 			trace,
 			pause,
 			killed: killed.signal,
@@ -150,6 +152,11 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 		prepare: (request) => current(id).prepare(request),
 		release: (ref) => current(id).release(ref),
 		abort: (ref) => current(id).abort(ref),
+		consent: (ref, frozenDigest) => {
+			const endpoint = current(id);
+			if (endpoint.consent === undefined) throw new Error(`executor ${id} takes no consent`);
+			return endpoint.consent(ref, frozenDigest);
+		},
 	});
 	const kill = (id: string): string => {
 		const found = executors.get(id);
@@ -182,17 +189,38 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 			found.open = open;
 			return { reached: found.reached.promise, open: () => open.resolve() };
 		},
-		/** A fresh brain process over the brain's durable medium, optionally dying around one of its writes. */
-		brain: async (dieAt?: BrainKill): Promise<BatchCoordinator> => {
+		/**
+		 * A fresh brain process over the brain's durable medium, optionally dying around one of its writes. Two issuers
+		 * on one harness are two sessions' brains sharing the executors.
+		 */
+		brain: async (dieAt?: BrainKill, issuer = "brain", consent?: BatchConsent): Promise<BatchCoordinator> => {
 			const opened = await adapters.store.open(brainMedium);
 			return createBatchCoordinator({
-				issuer: "brain",
+				...(consent === undefined ? {} : { consent }),
+				issuer,
 				store: brainStore(opened, onDurable, dieAt),
 				epoch: 1,
 				admission: createAdmissionLine(),
 				executor: proxy,
 			});
 		},
+		/** The brain's nested admission over the same durable medium, optionally dying around one of its writes. */
+		nested: async (dieAt?: BrainKill, issuer = "brain"): Promise<NestedAdmissionControl> => {
+			const opened = await adapters.store.open(brainMedium);
+			return createNestedAdmission({
+				issuer,
+				store: brainStore(opened, onDurable, dieAt),
+				epoch: 1,
+				admission: createAdmissionLine(),
+				clock: () => clock,
+			});
+		},
+		/** Moves every executor's clock: a lease that ends before the new time is expired on the next ledger event. */
+		advance: (ms: number): void => {
+			clock += ms;
+		},
+		/** The executor proxy for `id`, as the brain reaches it (a late approval goes through it). */
+		executor: proxy,
 		/** Kill the executor process and start a new one on the same durable medium. */
 		restartExecutor: async (id: string): Promise<void> => start(id, kill(id)),
 		/** Kill the executor and start it on a new, empty medium: every execution it held is lost. */
