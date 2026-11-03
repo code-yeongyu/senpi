@@ -188,6 +188,8 @@ export function sdkErrorGuidance(kind: SdkErrorKind): string | undefined {
 			return "This organization's policy disallows subscription OAuth use here. Use an API key (ANTHROPIC_API_KEY) or an account from an allowed organization.";
 		case "billing":
 			return "The selected Claude account has a billing problem. Check the plan at claude.com or switch accounts with /claude-account pin <name>.";
+		case "login_unreadable":
+			return `Claude Code could not read this account's login. If your Mac's keychain is locked, unlock it (security unlock-keychain) and retry; otherwise run /login ${PROVIDER}.`;
 		case "auth_error":
 			return `The account's OAuth token was rejected. Re-run /login ${PROVIDER} to refresh it, or remove the account with /claude-account remove <name>.`;
 		case "entitlement":
