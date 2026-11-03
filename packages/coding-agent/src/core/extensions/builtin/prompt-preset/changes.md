@@ -1,3 +1,46 @@
+## 2026-11-03 - Opus and Fable presets declare full shared sections (senpi#5665)
+
+### What changed
+
+- Reverts #5199 (the `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-opus-5-5.ts` / `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts` core trims): both cores are back to their 037918157 text.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `presetSharedSections(name)`. A preset declares `sharedSections: "full" | "diet"` (default `diet`); the Opus and Fable presets declare `full`: claude-fable-5, claude-fable-5-1, claude-fable-5-5, claude-opus-5-5, claude-opus-5, claude-opus-4-5..4-8. gpt-6-astra, Sonnet, Haiku and every other preset stay `diet`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: `buildPreset` passes the declared `sharedSections` to the builder, and `withDefaults` keeps `fullToolPrompt`; `index.ts` forwards `fullToolPrompt` from the session options.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/active-preset.ts`: `resolveActivePresetName(ctx)` (the logic `index.ts` used for the header) and `activeSharedSections(ctx)`, which the terminal, todotools, websearch and bash-timeout extensions read.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: each rule keeps its pre-#5342 `fullDirective`; `sharedSections` selects it.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-opus-4-5.ts`, `claude-opus-4-6.ts`, `claude-opus-4-7.ts`, `claude-opus-4-8.ts`: pass the declared `sharedSections` to the shared builders. Every Opus/Fable preset prompt is byte-identical to main 037918157 again; every other preset to main 836fe1c75.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: `FULL_SHARED_SECTION_PRESETS`, the preset builders' shared-builder calls, and their native-baseline lines.
+
+## 2026-10-31 - Opus 5.5 and Fable 5.1 cores drop generic harness rules and duplicate lines (senpi#5199, fixes #5198)
+
+### What changed
+
+- `claude-opus-5-5.ts`, `claude-fable-5-1.ts`: the git-commit hard limit, the ASCII-only style clause, the specialized-search line, and the `waitForAnswer` parenthetical are removed from both cores. Opus 5.5 also states its scope rule once (Fable 5.1 wording) and drops lines another section already owns: the execution-tooling "extra read is cheap" rationale, the "Should pass" and "verify by default" lines, the fourth hard limit's tail, Style's "Act, then report", and the surgical-edit sentence (documented for Fable 5.1 only). `claude-fable-5-5` renders the 5.1 core and moves with it.
+- `test/suite/prompt-presets-native-baseline.json`: the 18 `claude-opus-5-5:*`, `claude-fable-5-1:*`, `claude-fable-5-5:*` hashes are recaptured; no other hash changes.
+- Size (o200k, 11 tools / no tools, terminal): Opus 5.5 2179 -> 2003 / 1870 -> 1725; Fable 5.1 1893 -> 1828 / 1584 -> 1550.
+
+### Why
+
+- The owner's rule: a model preset tunes OmO's own core for the model; generic coding-harness rules and lines with no guide section, trace, or issue behind them do not belong, and each rule has one home.
+
+### Why an extension could not handle it
+
+- Preset prompts are builtin extension code.
+
+### Expected merge conflict zones
+
+- LOW: `claude-opus-5-5.ts`, `claude-fable-5-1.ts`, and their native-baseline lines.
+
 ## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
 
 ### What changed
