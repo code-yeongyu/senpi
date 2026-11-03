@@ -17,7 +17,7 @@ export interface McpControlInventoryChanged {
 	readonly startupSettled?: true;
 }
 
-export function isMcpControlInventoryRequest(value: unknown): value is McpControlInventoryRequest {
+function isMcpControlInventoryRequest(value: unknown): value is McpControlInventoryRequest {
 	return (
 		typeof value === "object" &&
 		value !== null &&
