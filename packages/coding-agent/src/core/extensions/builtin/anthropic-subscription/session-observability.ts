@@ -19,6 +19,8 @@ export type ContinuityReason =
 	| "prefix_matched"
 	| "registry_miss"
 	| "idle_ttl"
+	| "idle_cap"
+	| "child_settled"
 	| "capacity"
 	| "model_selected"
 	| "thinking_level_selected"
@@ -82,6 +84,8 @@ const SANITIZED_REASONS = new Set<string>([
 	"prefix_matched",
 	"registry_miss",
 	"idle_ttl",
+	"idle_cap",
+	"child_settled",
 	"capacity",
 	"model_selected",
 	"thinking_level_selected",

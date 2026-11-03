@@ -3,7 +3,7 @@ export interface SessionRegistryReapHandle {
 	unref(): void;
 }
 
-export type ReapCandidate = { generation: number; lastUsedAt: number };
+export type ReapCandidate = { generation: number; lastUsedAt: number; idleTtlMs?: number };
 
 export type SessionReapDeps = {
 	now: () => number;
@@ -44,7 +44,7 @@ export class SessionReapScheduler {
 		this.scheduled.delete(senpiSessionId);
 		const candidate = this.deps.candidate(senpiSessionId, generation);
 		if (!candidate) return;
-		const remaining = candidate.lastUsedAt + this.deps.idleTtlMs - this.deps.now();
+		const remaining = candidate.lastUsedAt + (candidate.idleTtlMs ?? this.deps.idleTtlMs) - this.deps.now();
 		if (remaining <= 0) this.deps.expire(senpiSessionId);
 		else this.arm(senpiSessionId, generation, remaining);
 	}

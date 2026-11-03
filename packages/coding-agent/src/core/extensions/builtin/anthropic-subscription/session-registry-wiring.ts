@@ -32,6 +32,7 @@ import {
 	getSession,
 	recordBranchInfo,
 	recordPendingFork,
+	releaseSessionWhenIdle,
 	switchSessionModel,
 } from "./session-registry.ts";
 import { sentHashesForEntry, sentMessageHashes, sentMessages } from "./session-sync.ts";
@@ -211,6 +212,17 @@ export function registerSessionRegistry(
 		// Code on every reload, and on a real account re-attached the claude.ai connectors.
 		if (event.reason === "reload") return;
 		closeSession(ctx.sessionManager.getSessionId(), event.reason);
+	});
+	pi.on("agent_settled", (_event, ctx) => {
+		// A task/delegate child (execution ancestry in its header, not fork provenance) is done once its run
+		// settles, so its resident process must not sit out the 30-minute TTL meant for interactive sessions
+		// (senpi#5689). The binding stays, so a revived child reattaches with resume instead of flattening.
+		if (ctx.sessionManager.getHeader?.()?.spawnedBy === undefined) return;
+		const sessionId = ctx.sessionManager.getSessionId();
+		const entry = getSession(sessionId);
+		if (!entry) return;
+		if (entry.activeTurn === null) rememberBinding(bindingFromEntry(entry, sentHashesForEntry(entry) ?? []));
+		releaseSessionWhenIdle(sessionId, "child_settled");
 	});
 	pi.on("session_extensions_removed", async (_event, ctx) => {
 		closeSession(ctx.sessionManager.getSessionId(), "extensions_removed");
