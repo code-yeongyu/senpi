@@ -139,6 +139,7 @@ export class UnusableEntries {
 		this.cooldowns.clear(entryKey(model));
 		this.cooldowns.clear(accountKey(model.provider));
 		this.accountErrors.delete(model.provider);
+		this.clearFamilyHolds(model.provider);
 	}
 
 	/** The provider's accounts changed (a login, an added or re-authorized account): every hold it earned is stale. */
@@ -148,6 +149,19 @@ export class UnusableEntries {
 		for (const model of models) {
 			if (model.provider === provider) this.cooldowns.clear(entryKey(model));
 		}
+		this.clearFamilyHolds(provider);
+	}
+
+	/** A family hold and its pending probe go wherever the provider's own holds go (senpi#5596). */
+	private clearFamilyHolds(provider: string): void {
+		const prefix = familyKey(provider, "");
+		for (const key of [...this.familyErrors.keys()]) {
+			if (!key.startsWith(prefix)) continue;
+			this.cooldowns.clear(key);
+			this.familyErrors.delete(key);
+		}
+		this.pendingProbes.delete(provider);
+		this.widenedFamilies.delete(provider);
 	}
 }
 

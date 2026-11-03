@@ -67,6 +67,28 @@ describe("#5596 a limit that names no model family probes another family once", 
 		expect(harness.faux.getCallLog()).toHaveLength(1);
 	});
 
+	it("releases the family hold where account holds are released, so a reselected model serves again", async () => {
+		let now = 0;
+		const harness = await createHarness({
+			models: [{ id: "claude-fable-5-1" }],
+			fallbackNow: () => now,
+			fallbackWallNow: () => START + now,
+			settings: { compaction: { enabled: false }, retry: { enabled: true, maxRetries: 0 } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: WEEKLY }),
+			fauxAssistantMessage("served after reselect"),
+		]);
+		await harness.session.prompt("first");
+
+		now += 60_000;
+		await harness.session.setModel(harness.getModel());
+		await harness.session.prompt("goal continuation", { source: "extension" });
+
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+	});
+
 	it("widens to the account only when the other family is limited too, naming both", async () => {
 		const { harness, tick } = await session();
 		harness.setResponses([
