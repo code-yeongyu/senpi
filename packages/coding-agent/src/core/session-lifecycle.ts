@@ -1,6 +1,7 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { effectiveWakes, type TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import type { Goal } from "./extensions/builtin/goal/types.ts";
+import { boundBackground, waitingCustody } from "./lifecycle-background-waits.ts";
 import { LifecycleChildren } from "./lifecycle-children.ts";
 import { LifecycleLedger, type LifecyclePersistence } from "./lifecycle-ledger.ts";
 import { projectWaitItems } from "./lifecycle-wait-items.ts";
@@ -282,6 +283,7 @@ export class SessionLifecycleController {
 	private evaluate(): void {
 		const runtime = this.options.readRuntime();
 		const active = this.obligations.active;
+		const waiting = waitingCustody(active);
 		const childRecords = this.children.reports
 			.filter((report) => report.childSessionId !== this.options.sessionId && report.terminal === undefined)
 			.sort((a, b) => (a.taskId < b.taskId ? -1 : a.taskId > b.taskId ? 1 : 0));
@@ -295,14 +297,14 @@ export class SessionLifecycleController {
 				...(label === undefined ? {} : { label }),
 				...(since === undefined ? {} : { since }),
 			}));
-		const childSources = active
+		const childSources = waiting
 			.filter((record) => record.kind === "children")
 			.map((record) => ({
 				source: record.source ?? record.key,
 				activeCount: record.activeCount ?? 1,
 				...projectWaitItems(record),
 			}));
-		const background: LifecycleWaits["background"][number][] = active
+		const background: LifecycleWaits["background"][number][] = waiting
 			.filter((record) => record.kind === "background")
 			.map((record) => ({
 				source: record.source ?? record.key,
@@ -311,7 +313,7 @@ export class SessionLifecycleController {
 			}));
 		const children = Math.max(
 			childRecords.length,
-			active
+			waiting
 				.filter((record) => record.kind === "children")
 				.reduce((sum, record) => sum + (record.activeCount ?? 1), 0),
 		);
@@ -342,7 +344,7 @@ export class SessionLifecycleController {
 					background.push({ source: "staged-recovery", activeCount: 1 });
 					break;
 				case "wake-source":
-					if (active.some((record) => record.source === expectation.source)) break;
+					if (waiting.some((record) => record.source === expectation.source)) break;
 					// A channel name is not a producer-declared kind.
 					background.push({ source: expectation.source, activeCount: 1 });
 					break;
@@ -422,7 +424,7 @@ export class SessionLifecycleController {
 					: undefined;
 		const waits: LifecycleWaits = {
 			children,
-			background,
+			...boundBackground(background),
 			human,
 			...(childSources.length ? { childSources } : {}),
 			...(childReports.length ? { childReports } : {}),

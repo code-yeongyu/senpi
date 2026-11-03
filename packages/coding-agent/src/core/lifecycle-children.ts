@@ -1,4 +1,5 @@
 import { readHumanWait } from "./lifecycle-attention.ts";
+import { boundBackground } from "./lifecycle-background-waits.ts";
 import { readWaitItems } from "./lifecycle-wait-items.ts";
 import type { ChildLifecycleReport, LifecycleWaits, SessionLifecycleState } from "./session-lifecycle-types.ts";
 import type { SessionEntry } from "./session-manager.ts";
@@ -139,9 +140,16 @@ export function readWaits(value: unknown): LifecycleWaits | undefined {
 		value.childReportsOmitted > 0
 			? value.childReportsOmitted
 			: 0);
+	// An older record may name every source it waited on; restoring it keeps the same bound a new record has.
+	const backgroundOmitted =
+		typeof value.backgroundOmitted === "number" &&
+		Number.isSafeInteger(value.backgroundOmitted) &&
+		value.backgroundOmitted > 0
+			? value.backgroundOmitted
+			: 0;
 	return {
 		children: value.children,
-		background,
+		...boundBackground(background, backgroundOmitted),
 		human,
 		...(childSources.length ? { childSources } : {}),
 		...(reports.length ? { childReports: reports.slice(0, 32) } : {}),
