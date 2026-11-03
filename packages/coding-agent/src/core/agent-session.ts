@@ -13590,8 +13590,8 @@ export class AgentSession {
 			// Add to agent state immediately
 			this.agent.state.messages.push(bashMessage);
 
-			// Save to session
-			this.sessionManager.appendMessage(bashMessage);
+			// Save to session; every RPC observer learns of it the way it learns of any persisted entry (senpi#5576).
+			this._emitEntryAppended(this.sessionManager.appendMessage(bashMessage));
 			this._incrementMessageRevision();
 		}
 	}
@@ -13632,7 +13632,7 @@ export class AgentSession {
 			this.agent.state.messages.push(bashMessage);
 
 			// Save to session
-			this.sessionManager.appendMessage(bashMessage);
+			this._emitEntryAppended(this.sessionManager.appendMessage(bashMessage));
 			this._incrementMessageRevision();
 		}
 
