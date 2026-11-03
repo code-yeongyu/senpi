@@ -71,6 +71,10 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 		pipeline: { ...base, resolve: async (call) => resolved.get(call.id) },
 	});
 	const byId = new Map(calls.map((call) => [call.id, call]));
+	if (byId.size !== calls.length)
+		throw new Error("prepared pipeline: duplicate tool call id in one batch; each call needs its own id");
+	const renamed = new Map<string, AgentToolCall>();
+	const named = (call: AgentToolCall): AgentToolCall => renamed.get(call.id) ?? call;
 	const callOf = (id: string): AgentToolCall => {
 		const call = byId.get(id);
 		if (call === undefined) throw new Error(`prepared pipeline: unknown call ${id}`);
@@ -92,8 +96,10 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 	const endpoint: BatchExecutor = {
 		prepare: async (ref) => {
 			const call = callOf(ref.executionId);
+			if (signal?.aborted) return { kind: "batch_abort" };
 			const tool = call.incomplete === true ? undefined : await base.resolve(call, context);
 			resolved.set(call.id, tool);
+			if (tool !== undefined && tool.name !== call.name) renamed.set(call.id, { ...call, name: tool.name });
 			await emit({
 				type: "tool_execution_start",
 				toolCallId: call.id,
@@ -113,13 +119,17 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 				leaseUntil: ref.leaseUntil,
 				...(signal === undefined ? {} : { signal }),
 			});
+			if (signal?.aborted) {
+				pending.set(call.id, aborted(named(call)));
+				return { kind: "batch_abort" };
+			}
 			if (reply.kind === "prepared") return { kind: "prepared", frozenDigest: reply.call.digest };
 			if (reply.kind === "refused") throw new Error(`prepared pipeline refused ${call.id}: ${reply.reason}`);
 			const result =
 				reply.kind === "blocked" && reply.requestedName !== undefined && tool !== undefined
 					? withToolNameCorrection(reply.result, reply.requestedName, tool.name)
 					: reply.result;
-			pending.set(call.id, { toolCall: call, result, isError: true });
+			pending.set(call.id, { toolCall: named(call), result, isError: true });
 			const value = toStoreValue({ content: result.content ?? [] });
 			return reply.kind === "blocked" ? { kind: "blocked", result: value } : { kind: "batch_abort" };
 		},
@@ -148,14 +158,16 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 					},
 				};
 			}
+			if (reply.kind !== "aborted") throw new Error(`prepared pipeline: release ${reply.kind} for ${call.id}`);
 			await finish(
-				reply.kind === "aborted" ? { toolCall: call, result: reply.result, isError: true } : aborted(call),
+				signal?.aborted ? aborted(named(call)) : { toolCall: named(call), result: reply.result, isError: true },
 			);
 			return { kind: "settled", outcome: { reason: "cancelled", hooksRan: true, uncertain: false } };
 		},
 		abort: async (ref) => {
 			const call = callOf(ref.executionId);
-			if (started.has(call.id)) await finish(pending.get(call.id) ?? aborted(call));
+			if (started.has(call.id))
+				await finish(signal?.aborted ? aborted(named(call)) : (pending.get(call.id) ?? aborted(named(call))));
 			return { kind: "settled", outcome: { reason: "cancelled", hooksRan: false, uncertain: false } };
 		},
 	};

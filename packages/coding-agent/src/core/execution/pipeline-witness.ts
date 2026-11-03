@@ -27,5 +27,8 @@ export function bindPipelineWitness(agent: Agent, manager: SessionManager, root:
 	agent.onExecutionPipeline ??= (witness) => {
 		manager.appendCustomEntry(PIPELINE_WITNESS_ENTRY_TYPE, witness);
 	};
-	if (pipeline === "prepared") agent.toolHost = createPreparedToolHost(agent);
+	if (pipeline !== "prepared") return;
+	if (agent.toolHost !== undefined)
+		throw new Error("SENPI_EXECUTION_PIPELINE=prepared cannot replace the ToolHost this session was built with");
+	agent.toolHost = createPreparedToolHost(agent);
 }

@@ -40,7 +40,12 @@ const blockNamed =
 
 type Call = readonly [name: string, args: JsonObject];
 
-async function turn(pipeline: "legacy" | "prepared", calls: readonly Call[], extensions: ExtensionFactory[] = []) {
+async function turn(
+	pipeline: "legacy" | "prepared",
+	calls: readonly Call[],
+	extensions: ExtensionFactory[] = [],
+	options: { readonly duplicateIds?: boolean } = {},
+) {
 	const harness = await createHarness({ tools: [echo, serial], extensionFactories: extensions });
 	harnesses.push(harness);
 	const receipts: string[] = [];
@@ -50,12 +55,20 @@ async function turn(pipeline: "legacy" | "prepared", calls: readonly Call[], ext
 	if (pipeline === "prepared") harness.agent.toolHost = createPreparedToolHost(harness.agent);
 	harness.setResponses([
 		fauxAssistantMessage(
-			calls.map(([name, args], index) => ({ ...fauxToolCall(name, args), id: `call-${index}` })),
+			calls.map(([name, args], index) => ({
+				...fauxToolCall(name, args),
+				id: options.duplicateIds === true ? "call-dup" : `call-${index}`,
+			})),
 			{ stopReason: "toolUse" },
 		),
 		fauxAssistantMessage("done"),
 	]);
-	await harness.session.prompt("go");
+	let error: string | undefined;
+	await harness.session.prompt("go").catch((caught: unknown) => {
+		error = caught instanceof Error ? caught.message : String(caught);
+	});
+	for (const message of harness.session.messages)
+		if (message.role === "assistant" && message.errorMessage !== undefined) error ??= message.errorMessage;
 	const events = harness.events.flatMap((event) => {
 		if (event.type.startsWith("tool_execution_")) {
 			const tool = event as { toolCallId: string; toolName: string; isError?: boolean };
@@ -79,7 +92,7 @@ async function turn(pipeline: "legacy" | "prepared", calls: readonly Call[], ext
 				]
 			: [],
 	);
-	return { events, results, receipts };
+	return { events, results, receipts, error };
 }
 
 async function same(calls: readonly Call[], extensions: ExtensionFactory[] = []) {
@@ -136,6 +149,52 @@ describe("the prepared pipeline equals today's scheduler (S18b)", () => {
 			],
 			[blockNamed("serial")],
 		);
+	});
+
+	it("names the resolved tool, not the model's spelling, on calls that end without running", async () => {
+		await same(
+			[
+				["Serial", { n: 1 }],
+				["Echo", { n: 2 }],
+			],
+			[blockNamed("serial")],
+		);
+	});
+
+	it("stops preparing after an abort and answers every prepared call 'Operation aborted', as today", async () => {
+		const abortOnSerial: ExtensionFactory = (pi) => {
+			pi.on("tool_call", (event, ctx) => {
+				if (event.toolName === "serial") ctx.abort();
+				return undefined;
+			});
+		};
+
+		await same(
+			[
+				["echo", { n: 1 }],
+				["serial", { n: 2 }],
+				["missing", {}],
+				["echo", { n: 4 }],
+			],
+			[blockNamed("echo"), abortOnSerial],
+		);
+	});
+
+	it("refuses a batch that repeats a call ID instead of silently running one call twice", async () => {
+		const prepared = await turn(
+			"prepared",
+			[
+				["echo", { n: 1 }],
+				["echo", { n: 2 }],
+			],
+			[],
+			{ duplicateIds: true },
+		);
+
+		expect(prepared.results.map((result) => result.content)).not.toContainEqual([
+			{ type: "text", text: JSON.stringify({ n: 2 }) },
+		]);
+		expect(prepared.error).toMatch(/duplicate tool call id/);
 	});
 
 	it("writes one prepared receipt per call, and the legacy scheduler a legacy one", async () => {
