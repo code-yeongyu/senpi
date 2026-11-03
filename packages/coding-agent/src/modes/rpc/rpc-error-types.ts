@@ -28,6 +28,12 @@ export const RPC_ERROR_INVALID_ARGUMENT = "invalid_argument";
 /** An answer would pass the per-response byte budget; read the history in pages (`get_entries` `limit`/`maxBytes`). */
 export const RPC_ERROR_RESPONSE_TOO_LARGE = "response_too_large";
 
+/**
+ * The answer to this request was built but could not be written (its value cannot be serialized: a BigInt, a cycle, a
+ * throwing `toJSON`); `error` names the cause. Sent in place of the reply so the caller is never left waiting (senpi#5702).
+ */
+export const RPC_ERROR_RESPONSE_UNWRITABLE = "response_unwritable";
+
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
@@ -211,4 +217,5 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_INVALID_RELEASE_REASON
 	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
 	| typeof RPC_ERROR_RELEASE_FAILED
-	| typeof RPC_ERROR_HOST_DRAINING;
+	| typeof RPC_ERROR_HOST_DRAINING
+	| typeof RPC_ERROR_RESPONSE_UNWRITABLE;
