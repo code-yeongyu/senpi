@@ -91,7 +91,11 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		"  }",
 		"  const match = /^([a-z][a-z0-9+.-]*):\\/\\/(.*)$/i.exec(specifier);",
 		"  let target = specifier;",
-		"  if (match) {",
+		// A file URL names an absolute module path, exactly like the absolute-path branch below, so it loads as written
+		// (senpi#4111); every other `scheme://` must map onto a registered local root.
+		"  if (match && match[1].toLowerCase() === 'file') {",
+		"    target = new URL(specifier).href;",
+		"  } else if (match) {",
 		"    const scheme = match[1].toLowerCase();",
 		"    const root = context.localRootUrls[scheme];",
 		"    if (!root) throw new Error('Unsupported module protocol: ' + specifier);",
@@ -113,7 +117,7 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		"  const run = (resolved) => (options === undefined ? import(resolved) : import(resolved, options));",
 		"  const load = (resolved) => (permissionLoad ? permissionLoad(() => run(resolved)) : run(resolved));",
 		"  const resolvePackage = globalThis[Symbol.for('senpi.kernel.resolvePackage')];",
-		"  if (target === specifier && typeof resolvePackage === 'function') {",
+		"  if (!match && target === specifier && typeof resolvePackage === 'function') {",
 		"    const resolved = resolvePackage(specifier, [context.cwdUrl, context.packageRootUrl]);",
 		"    if (resolved !== undefined) return await load(resolved);",
 		"  }",
