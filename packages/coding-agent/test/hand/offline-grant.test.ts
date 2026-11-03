@@ -113,7 +113,7 @@ describe("a hand checks the sender's grant offline before a call runs (S27b)", (
 
 	it("never takes the session's own word: a sessionRef naming a granted peer does not stand in for a grant", async () => {
 		const root = workspaceDir();
-		const hand = grantHarness({ workspaces: [{ root }], snapshot: snapshotOf([]) });
+		const hand = grantHarness({ workspaces: [{ root }], snapshot: snapshotOf([grant()]), peer: "device-other" });
 
 		await hand.invoke(root, BRAIN);
 

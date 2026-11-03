@@ -71,7 +71,8 @@ describe("the hand places a call's root in one of its own workspaces (S27b)", ()
 
 	it("opens the scope on the canonical root, not the path the call named", async () => {
 		const { ws } = scratch();
-		const named = join(ws, "sub", "..", "sub");
+		const named = join(ws, "alias");
+		symlinkSync(join(ws, "sub"), named);
 
 		expect(await replyFor(named, ws)).toEqual({ reply: "settled", opened: [join(ws, "sub")] });
 	});
