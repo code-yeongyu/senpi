@@ -163,7 +163,11 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		if (dispatched.status !== "applied" || dispatched.entry.progress.state !== "dispatched") {
 			return refusal(dispatched);
 		}
-		const executed = await runBody(body, signal, request.onUpdate ?? (() => {}));
+		const executed = await runBody(
+			body,
+			signal,
+			request.onUpdateFor?.(body.toolCall) ?? request.onUpdate ?? (() => {}),
+		);
 		const { result, isError } = await finalizeBody(body, executed, pipeline, signal);
 		const value = resultValue(result, isError, body.requestedName);
 		const recorded = await step(key, generation, { kind: "result", value });

@@ -1246,7 +1246,12 @@ async function executeToolCalls(
 			calls: toolCalls,
 			mode: config.toolExecution ?? "parallel",
 		},
-		{ signal, emit, recordWitness: config.onExecutionPipeline },
+		{
+			signal,
+			emit,
+			recordWitness: config.onExecutionPipeline,
+			local: { context: currentContext, assistantMessage },
+		},
 	);
 }
 

@@ -69,6 +69,11 @@ export {
 	emitToolResultMessage,
 	shouldTerminateToolBatch,
 } from "./execution/tool-outcome-events.ts";
+export { createAdmissionLine } from "./durable/store-admission.ts";
+export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
+export { createBatchCoordinator } from "./execution/coordinator.ts";
+export type { BatchExecutor, BatchPlan } from "./execution/coordinator-types.ts";
+export { createExecutionLedger } from "./execution/ledger.ts";
 export { createRemoteToolHost, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
@@ -188,5 +193,5 @@ export * from "./response-timing.ts";
 export * from "./search/index.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
 export { prepareToolArguments } from "./tool-arguments.ts";
-export { resolveToolNameAlias } from "./tool-name-alias.ts";
+export { resolveToolNameAlias, withToolNameCorrection } from "./tool-name-alias.ts";
 export * from "./types.ts";
