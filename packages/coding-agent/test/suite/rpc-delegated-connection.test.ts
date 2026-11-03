@@ -37,8 +37,11 @@ import { corpusRequest, NO_ID, type Opened, TODAY } from "../characterization/rp
 
 type WireRecord = Record<string, unknown>;
 
-/** `RPC_METHOD_CLASSES_DIGEST` on b2c54a166c: this change adds methods outside the table, never a table entry. */
-const DIGEST_ON_BASE = "71d6846585dffea212d60019e24296f5cd2882c0e8ff54b4d6e40cef3945b80a";
+/**
+ * `RPC_METHOD_CLASSES_DIGEST` on main as of the last merge (fecca3f8ca, which added `account_reset`): this change adds
+ * methods outside the table, never a table entry, so the branch digest equals main's.
+ */
+const DIGEST_ON_BASE = "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed";
 const FORWARDABLE = [
 	"observe",
 	"drive",
