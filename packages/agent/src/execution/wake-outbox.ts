@@ -15,7 +15,7 @@ export interface WakeOutboxOptions {
 export interface WakeOutbox {
 	/** Commits the wake and returns it; the caller sends it (or a later `reoffer` does). */
 	offer(wake: Omit<WakeEvent, "eventId">): Promise<WakeEvent>;
-	/** Sends every un-acked wake in offer order (on reconnect) but those refused for good; a failed send leaves it pending. */
+	/** Sends every un-acked wake in offer order (on reconnect) but those refused for good (not_scope_hand, scope_closed); a failed send or an unknown scope leaves it pending for the next re-offer. */
 	reoffer(send: (wake: WakeEvent) => Promise<WakeReceipt>): Promise<number>;
 	/** Applies one brain answer: an ack removes the wake; a refusal keeps it for retention and stops its re-offers. Idempotent. */
 	receipt(receipt: WakeReceipt): Promise<void>;
@@ -72,7 +72,9 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 		update(async (record) => {
 			if (!record.pending.some((wake) => wake.eventId === answer.eventId)) return;
 			if (answer.kind === "refused") {
-				if (record.refused[answer.eventId] === answer.reason) return;
+				// The scope may not be bound yet (a brain restart, a bind racing this outbox): only a refusal that cannot change
+				// is recorded and stops the re-offers.
+				if (answer.reason === "unknown_scope" || record.refused[answer.eventId] === answer.reason) return;
 				await write(
 					{ ...record, refused: { ...record.refused, [answer.eventId]: answer.reason } },
 					"refused",

@@ -81,16 +81,16 @@ const binding: WakeCase = async (adapters) => {
 	await outbox.receipt({ kind: "refused", eventId: wake.eventId, reason: "not_scope_hand" });
 	await outbox.receipt({ kind: "refused", eventId: foreign.eventId, reason: "unknown_scope" });
 	expectEqual(ids(await outbox.pending()), [wake.eventId, foreign.eventId], "a refusal is never an ack");
-	let resent = 0;
+	const resent: string[] = [];
 	expectEqual(
 		await outbox.reoffer(async (sent) => {
-			resent += 1;
+			resent.push(sent.eventId);
 			return inbox.receive("e2", sent);
 		}),
-		0,
-		"a wake refused for good is never re-offered",
+		1,
+		"a wake refused for good is never re-offered; an unknown scope is retried",
 	);
-	expectEqual(resent, 0, "nothing sent");
+	expectEqual(resent, [foreign.eventId], "only the unknown-scope wake is sent again");
 	await outbox.closeScope("s");
 	await outbox.closeScope("elsewhere");
 	h.advance(WAKE_RETENTION_MS + 1);
@@ -143,6 +143,24 @@ const brainRetention: WakeCase = async (adapters) => {
 	expectEqual(await inbox.sweep(), [], "a scope is dropped once");
 };
 
+/**
+ * WAKEX-08: a wake that reaches the brain before its scope is bound (a brain restart, or the bind racing the hand's
+ * outbox) is refused unknown_scope but not for good: once the scope binds, the re-offer delivers it exactly once.
+ */
+const beforeBinding: WakeCase = async (adapters) => {
+	const h = await batchHarness(adapters);
+	let bound = false;
+	const outbox = await h.wakeOutbox("e1");
+	const inbox = await h.wakeInbox((scope) => (bound && scope === "s" ? "e1" : undefined));
+	const wake = await outbox.offer(wakeOf(1));
+	await outbox.reoffer(linkTo(inbox));
+	expectEqual(ids(await outbox.pending()), [wake.eventId], "still pending on the hand");
+	bound = true;
+	expectEqual(await outbox.reoffer(linkTo(inbox)), 1, "re-offered once the scope is bound");
+	expectEqual(await outbox.pending(), [], "acked");
+	expectEqual(ids((await inbox.read()).pending), [wake.eventId], "delivered once");
+};
+
 /** WAKEX-07: two drains at once hand each wake to the loop exactly once. */
 const concurrentDrains: WakeCase = async (adapters) => {
 	const h = await batchHarness(adapters);
@@ -167,4 +185,5 @@ export const WAKE_EXEC_CASES: ReadonlyMap<string, WakeCase> = new Map([
 	["WAKEX-05", retention],
 	["WAKEX-06", brainRetention],
 	["WAKEX-07", concurrentDrains],
+	["WAKEX-08", beforeBinding],
 ]);

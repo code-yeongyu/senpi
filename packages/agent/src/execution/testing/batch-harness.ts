@@ -2,6 +2,7 @@ import type { DurableStore, StoreValue, StoreWrite } from "../../durable/store.t
 import { createAdmissionLine } from "../../durable/store-admission.ts";
 import { type BatchCoordinator, createBatchCoordinator } from "../coordinator.ts";
 import { createNestedAdmission, type NestedAdmissionControl } from "../nested.ts";
+import { createScopeLifecycle, type ScopeLifecycle } from "../scope-lifecycle.ts";
 import { createWakeInbox, type WakeInbox } from "../wake-inbox.ts";
 import { createWakeOutbox, type WakeOutbox } from "../wake-outbox.ts";
 import type { BatchConsent, BatchExecutor, BatchPlan, CallOutcome } from "../coordinator-types.ts";
@@ -169,6 +170,7 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 	for (const id of ["e1", "e2"]) await start(id, await claimed());
 	const brainMedium = await claimed();
 	const wakeMedia = new Map<string, string>();
+	let scopeMedium: string | undefined;
 	const brainWrites: string[] = [];
 	const writeWaiters = new Map<string, PromiseWithResolvers<readonly string[]>>();
 	const onDurable = (label: string): void => {
@@ -231,6 +233,17 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 				epoch: 1,
 				admission: createAdmissionLine(),
 				clock: () => clock,
+			});
+		},
+		/** The endpoint's scope lifecycle on its own medium, optionally dying around one of its writes. */
+		scopes: async (idleTtlMs: number, dieAt?: BrainKill): Promise<ScopeLifecycle> => {
+			if (scopeMedium === undefined) scopeMedium = await claimed();
+			return createScopeLifecycle({
+				store: brainStore(await adapters.store.open(scopeMedium), () => {}, dieAt),
+				epoch: 1,
+				admission: createAdmissionLine(),
+				clock: () => clock,
+				idleTtlMs,
 			});
 		},
 		/** The `wake_expired` records a hand's outbox logged, in log order. */

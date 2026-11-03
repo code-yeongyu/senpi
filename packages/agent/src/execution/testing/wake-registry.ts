@@ -27,6 +27,11 @@ export const WAKE_EXEC_REGISTRY: readonly RegisteredCase[] = [
 		"a closed scope dedups re-offers within retention and refuses late or new wakes",
 	),
 	wakeCase("WAKEX-07", WAKE_EXEC_IMPL, "concurrent drains hand each wake to the loop exactly once"),
+	wakeCase(
+		"WAKEX-08",
+		WAKE_EXEC_IMPL,
+		"a wake refused before its scope binds is re-offered and delivered once it binds",
+	),
 	wakeCase("KILL-WAKEX-01", KILL_WAKEX_IMPL, "a hand killed before the outbox commit leaves nothing to re-offer"),
 	wakeCase("KILL-WAKEX-02", KILL_WAKEX_IMPL, "a hand killed after the outbox commit re-offers the wake once"),
 	wakeCase(
