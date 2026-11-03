@@ -14,7 +14,7 @@ import {
 	AllAccountsBlockedError,
 	selectAccount,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
-import { allAccountsBlockedDiagnostic } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
+import { anthropicSubscriptionDiagnostic } from "../../../src/core/extensions/builtin/anthropic-subscription/provider-diagnostic.ts";
 import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import { terminalProviderAuthFailure } from "../../../src/core/extensions/builtin/goal/terminal-provider-error.ts";
 import { providerFailureOf } from "../../../src/core/provider-failure.ts";
@@ -219,18 +219,30 @@ describe("goal parks while every pool slot is blocked (#3975)", () => {
 		expect(message.providerDiagnostic?.category).not.toBe("rate_limit");
 	});
 
+	it("parks on the rate-limited slot's reset, never on a slot out for auth that is due back sooner", async () => {
+		vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+		const message = await blockedPoolTurn([
+			{ name: "limited", reason: "rate_limit", until: NOW + 2 * HOUR },
+			{ name: "signed-out", reason: "auth_error", until: NOW + 1_000 },
+		]);
+
+		expect(message.providerDiagnostic).toMatchObject({ category: "rate_limit", resetsAt: probedRetryAt(NOW) });
+	});
+
 	it.each([
 		["rate limits", ["rate_limit", "rate_limit"], true],
 		["billing blocks", ["billing", "billing"], false],
 		["organization refusals", ["org_not_allowed", "org_not_allowed"], false],
 		["auth blocks", ["auth_error", "auth_error"], false],
-		["mixed billing and rate limits", ["billing", "rate_limit"], false],
-		["mixed organization and rate limits", ["org_not_allowed", "rate_limit"], false],
-		["mixed auth and rate limits", ["auth_error", "rate_limit"], false],
+		// An account out for billing, organization, or auth is not part of the pool that waits; the rest decide.
+		["mixed billing and rate limits", ["billing", "rate_limit"], true],
+		["mixed organization and rate limits", ["org_not_allowed", "rate_limit"], true],
+		["mixed auth and rate limits", ["auth_error", "rate_limit"], true],
 		["unknown blocks", [undefined, undefined], false],
+		["mixed unknown blocks and rate limits", [undefined, "rate_limit"], false],
 		["model limits", ["model_limit", "model_limit"], true],
 		["mixed model and account limits", ["model_limit", "rate_limit"], true],
-		["mixed model limits and billing", ["model_limit", "billing"], false],
+		["mixed model limits and billing", ["model_limit", "billing"], true],
 	] as const)("classifies the Anthropic Subscription lane's %s refusal", (_label, reasons, isLimit) => {
 		const until = NOW + 2 * HOUR;
 		const accounts: AccountSlot[] = reasons.map((reason, index) => ({
@@ -250,15 +262,17 @@ describe("goal parks while every pool slot is blocked (#3975)", () => {
 			refusal = error;
 		}
 		expect(refusal).toBeInstanceOf(AllAccountsBlockedError);
-		const diagnostic = allAccountsBlockedDiagnostic(refusal);
+		const diagnostic = anthropicSubscriptionDiagnostic(refusal);
 		if (isLimit) expect(diagnostic).toMatchObject({ category: "rate_limit", resetsAt: until });
-		else expect(diagnostic).toBeUndefined();
+		else expect(diagnostic?.category).not.toBe("rate_limit");
 	});
 
 	it("does not infer an Anthropic rate limit from a deadline alone", () => {
-		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(NOW + HOUR))).toBeUndefined();
-		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(NOW + HOUR, "auth_error"))).toBeUndefined();
-		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(undefined))).toBeUndefined();
+		expect(anthropicSubscriptionDiagnostic(new AllAccountsBlockedError(NOW + HOUR))).toBeUndefined();
+		expect(anthropicSubscriptionDiagnostic(new AllAccountsBlockedError(NOW + HOUR, "auth_error"))?.category).toBe(
+			"auth",
+		);
+		expect(anthropicSubscriptionDiagnostic(new AllAccountsBlockedError(undefined))).toBeUndefined();
 	});
 
 	it("sends nothing before the unblock time, one notice naming it, and one resume after it", async () => {
