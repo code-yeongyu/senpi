@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { goalFilePath } from "../src/core/extensions/builtin/goal/persistence.ts";
 import { goalStoreRef } from "../src/core/extensions/builtin/goal/store-ref.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
+import { bashToolSystemPromptContribution } from "../src/core/tools/bash.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
 describe("createAgentSession session manager defaults", () => {
@@ -119,9 +120,10 @@ describe("createAgentSession session manager defaults", () => {
 			thinkingLevel: "high",
 		});
 		expect(session.sessionFile).toBeTruthy();
-		expect(session.systemPrompt).toContain(
-			"You can inspect PI_* environment variables for current model and session details.",
-		);
+		// The eval-only bash tool's own guideline still reaches the prompt (read from the tool, not restated here).
+		for (const guideline of bashToolSystemPromptContribution.guidelines) {
+			expect(session.systemPrompt).toContain(guideline);
+		}
 
 		// Eval-only routing keeps `bash` out of the model-visible tool array, so the tool
 		// is fetched from the registry it is still reachable through.

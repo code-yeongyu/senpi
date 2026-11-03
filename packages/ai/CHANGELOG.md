@@ -12,6 +12,57 @@
 
 ### Removed
 
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Stored credentials carry an optional `loginId` that each sign-in through `Models.login` writes fresh; a token refresh keeps or drops it and never mints one ([#4430](https://github.com/code-yeongyu/senpi/pull/4430))
+- Provider diagnostic codes `account_pool_blocked` (`rate_limit`) and `account_pool_auth_blocked` (`auth`) for a request a subscription account pool refuses locally (#4676).
+
+### Changed
+
+### Fixed
+
+- A managed account-pool placeholder credential is never sent to a provider's token endpoint; resolving it without an account fails with an auth error instead of a provider 401 ([#4426](https://github.com/code-yeongyu/senpi/pull/4426))
+- The page shown after a provider browser sign-in no longer shows the pi logo; it shows the product set with `setOAuthPageBrand` ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- The ChatGPT sign-in authorize request falls back to the host's brand name as `agent_name_hint` when the caller passes no app name ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- Anthropic sessions whose replayed thinking is bound to a different conversation recover instead of failing every turn: Claude requests replaying signed thinking ask the API to drop a mismatched block, and the 400 is retried once on the same model without the replayed thinking ([#5589](https://github.com/code-yeongyu/senpi/pull/5589))
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- A provider request that fails TLS chain verification now reports the runtime's verification code (for example `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`) as its `network` diagnostic code instead of the SDK's connection error class or no diagnostic ([#5253](https://github.com/code-yeongyu/senpi/pull/5253))
+
+### Fixed
+
+- Sign in with ChatGPT reuses the standalone AI CLI's installation ID and uses the configured app name during registration (part of [#5003](https://github.com/code-yeongyu/senpi/issues/5003)).
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fall back to ambient environment variables when stored Google Vertex location or project is an empty string ([#5135](https://github.com/code-yeongyu/senpi/pull/5135)).
+- A 503 whose error body merely mentions a billing lookup (e.g. "resolve Billing Scope: ... dial tcp: i/o timeout") is no longer classified as a spent account, so the turn retries instead of failing as an account usage limit ([#4632](https://github.com/code-yeongyu/senpi/issues/4632))
+
+### Removed
+
 ## [2026.11.2-2] - 2026-11-02
 
 ### Breaking Changes
