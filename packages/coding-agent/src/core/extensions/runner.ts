@@ -2379,9 +2379,10 @@ export class ExtensionRunner {
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
 
-		for (const ext of [...this.extensions]) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_result")) {
 			const handlers = toolEventHandlers(
 				ext,
+				own,
 				"tool_result",
 				options,
 				(index) => async () => options.forward?.toolResult(ext.path, index, currentEvent),
@@ -2459,9 +2460,10 @@ export class ExtensionRunner {
 	): Promise<ToolCallEventResult | undefined> {
 		let result: ToolCallEventResult | undefined;
 
-		for (const ext of [...this.extensions]) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_call")) {
 			const handlers = toolEventHandlers(
 				ext,
+				own,
 				"tool_call",
 				options,
 				(index) => async () => options.forward?.toolCall(ext.path, index, event),

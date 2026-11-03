@@ -74,17 +74,17 @@ export function twoSidedExtensions(extensions: readonly Extension[]): Set<string
  */
 export function toolEventHandlers(
 	extension: Extension,
+	own: readonly HandlerFn[],
 	event: ToolEventType,
 	options: ToolEventDispatchOptions,
 	forwardOne: (handler: number) => HandlerFn,
 ): HandlerFn[] {
-	const own = extension.handlers.get(event)?.slice() ?? [];
 	if (options.only !== undefined) {
 		if (extension.path !== options.only.extension) return [];
-		const target = undeclaredHandlers(extension, event)[options.only.handler];
+		const target = own.filter((handler) => extension.handlerSides?.get(handler) === undefined)[options.only.handler];
 		return target === undefined ? [] : [target];
 	}
-	if (options.forward?.extensions.has(extension.path) !== true) return own;
+	if (options.forward?.extensions.has(extension.path) !== true) return [...own];
 	let ordinal = 0;
 	return own.map((handler) => (extension.handlerSides?.get(handler) === undefined ? forwardOne(ordinal++) : handler));
 }
