@@ -22,13 +22,18 @@ import {
 	type CredentialSlotState,
 } from "./credential-pool/state-store.ts";
 import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
-import { isListedStoredSlot, SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	type AccountSlot,
+	isListedStoredSlot,
+	SENTINEL_OAUTH_FIELDS,
+} from "./extensions/builtin/anthropic-subscription/accounts.ts";
 import { isAccountBlocked } from "./extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	accountDirFor,
 	isValidAccountDirId,
 	removeAccountDir,
 } from "./extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
+import { renameAccountLink } from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
 import {
 	defaultExecutableDeps,
 	resolveClaudeCodeExecutable,
@@ -361,7 +366,12 @@ export async function renameCredentialAccount(
 		) {
 			throw new Error(`Stored provider account not found: ${name}`);
 		}
-		return renameSlotDisplayName(current, name, displayName);
+		const renamed = renameSlotDisplayName(current, name, displayName);
+		renameAccountLink(
+			claudeCliAgentDir(storage),
+			(renamed.accounts as AccountSlot[] | undefined)?.find((slot) => slot.name === name),
+		);
+		return renamed;
 	});
 	emitProviderAccountsChanged(provider);
 }

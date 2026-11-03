@@ -16,21 +16,50 @@ export type AccountDirLink = {
 	readonly dirId: string;
 	readonly name: string;
 	readonly signedInAt: number;
+	readonly displayName?: string;
 };
 
+function linkPath(agentDir: string, dirId: string): string {
+	return join(accountDirFor(agentDir, dirId), ACCOUNT_LINK_FILE);
+}
+
 export function writeAccountLink(agentDir: string, link: AccountDirLink): void {
-	const record = { name: link.name, signedInAt: link.signedInAt };
-	writeFileSync(join(accountDirFor(agentDir, link.dirId), ACCOUNT_LINK_FILE), `${JSON.stringify(record)}\n`, {
-		mode: 0o600,
-	});
+	const record = {
+		name: link.name,
+		signedInAt: link.signedInAt,
+		...(link.displayName === undefined ? {} : { displayName: link.displayName }),
+	};
+	writeFileSync(linkPath(agentDir, link.dirId), `${JSON.stringify(record)}\n`, { mode: 0o600 });
 }
 
 function parseLink(dirId: string, text: string): AccountDirLink | undefined {
 	const parsed: unknown = JSON.parse(text);
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { name, signedInAt } = parsed as { name?: unknown; signedInAt?: unknown };
+	const { name, signedInAt, displayName } = parsed as { name?: unknown; signedInAt?: unknown; displayName?: unknown };
 	if (typeof name !== "string" || typeof signedInAt !== "number") return undefined;
-	return { dirId, name, signedInAt };
+	return { dirId, name, signedInAt, ...(typeof displayName === "string" ? { displayName } : {}) };
+}
+
+function readLink(agentDir: string, dirId: string): AccountDirLink | undefined {
+	try {
+		return parseLink(dirId, readFileSync(linkPath(agentDir, dirId), "utf8"));
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * A rename or clear-name of a signed-in Claude CLI account rewrites its dir's record with the new display name. The
+ * caller runs it inside the auth.json lock of the rename, so the record and the slot change together and a later
+ * re-link restores the name the user chose, not the one a stale writer still holds. A slot without a recorded dir
+ * (signed out, never signed in on this engine) has nothing to rewrite.
+ */
+export function renameAccountLink(agentDir: string, slot: AccountSlot | undefined): void {
+	if (slot?.store !== "claude-cli" || !isValidAccountDirId(slot.dirId)) return;
+	const link = readLink(agentDir, slot.dirId);
+	if (link === undefined || link.name !== slot.name) return;
+	const { displayName: _previous, ...rest } = link;
+	writeAccountLink(agentDir, slot.displayName === undefined ? rest : { ...rest, displayName: slot.displayName });
 }
 
 export function readAccountLinks(agentDir: string): AccountDirLink[] {
@@ -41,12 +70,8 @@ export function readAccountLinks(agentDir: string): AccountDirLink[] {
 		return [];
 	}
 	return dirIds.filter(isValidAccountDirId).flatMap((dirId) => {
-		try {
-			const link = parseLink(dirId, readFileSync(join(accountDirFor(agentDir, dirId), ACCOUNT_LINK_FILE), "utf8"));
-			return link === undefined ? [] : [link];
-		} catch {
-			return [];
-		}
+		const link = readLink(agentDir, dirId);
+		return link === undefined ? [] : [link];
 	});
 }
 
@@ -71,7 +96,7 @@ function newestUnreferenced(
 function relinkedSlot(slot: AccountSlot | undefined, link: AccountDirLink): ClaudeCliAccountSlot {
 	return {
 		name: link.name,
-		...(slot?.displayName === undefined ? {} : { displayName: slot.displayName }),
+		...(link.displayName === undefined ? {} : { displayName: link.displayName }),
 		source: "login",
 		store: "claude-cli",
 		dirId: link.dirId,
@@ -83,7 +108,8 @@ function relinkedSlot(slot: AccountSlot | undefined, link: AccountDirLink): Clau
 /**
  * The accounts after an old-format writer replaced the entry (senpi#5594): each signed-in account dir that no slot
  * references takes back its account. A slot of that name that must sign in again points at the dir again and keeps
- * its display name and model blocks; a missing account is appended. A healthy slot of that name already signed in
+ * its model blocks; a missing account is appended. The display name comes from the record, which every rename
+ * rewrites, so a stale writer's older label never wins. A healthy slot of that name already signed in
  * elsewhere keeps its dir. Of several dirs recording one name, the newest sign-in wins.
  */
 export function relinkAccountDirs(accounts: readonly AccountSlot[], links: readonly AccountDirLink[]): AccountSlot[] {
