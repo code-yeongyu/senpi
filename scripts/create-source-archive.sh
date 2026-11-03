@@ -134,6 +134,7 @@ required_paths=(
     "packages/coding-agent/package.json"
     "packages/coding-agent/src/utils/image-resize-worker.ts"
     "packages/coding-agent/src/core/extensions/builtin/permission-system/path-identity-worker.ts"
+    "packages/coding-agent/src/core/kill-guard/index.ts"
     "packages/coding-agent/src/core/export-html/template.css"
 )
 
