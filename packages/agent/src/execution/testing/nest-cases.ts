@@ -115,6 +115,20 @@ const generationAndScope: NestCase = async (adapters) => {
 		refusedWith("conflicting_parent"),
 		"opening it again with another generation",
 	);
+	const { capabilities, budget, leaseUntil, admittedAt, scope, executor, generation, executionId } = nestParent;
+	expectEqual(
+		await nested.open({ capabilities, budget, leaseUntil, admittedAt, scope, executor, generation, executionId }),
+		{ kind: "opened" },
+		"the same parent with its fields in another order",
+	);
+	for (const field of ["generation", "admittedAt", "leaseUntil", "budget"] as const) {
+		const broken = { ...nestParent, executionId: `bad-${field}`, [field]: Number.NaN };
+		let threw = false;
+		await nested.open(broken).catch(() => {
+			threw = true;
+		});
+		expectEqual([threw, await nested.read(broken.executionId)], [true, undefined], `a NaN ${field} is never written`);
+	}
 };
 
 /** NEST-05: during preflight only the preparation-phase set admits (a `tool_call` hook's cross-plane call). */
