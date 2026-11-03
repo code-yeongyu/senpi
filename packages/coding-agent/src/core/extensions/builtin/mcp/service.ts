@@ -2,7 +2,7 @@ import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-referen
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
-import { getMcpMrtrPresentation, type McpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
+import { getMcpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
@@ -25,13 +25,13 @@ import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
 import { prepareProjectSkillServer } from "./project-skill-policy.ts";
-import { createMcpRequestOrigin, type McpRequestOrigin } from "./request-origin.ts";
-import { McpMrtrError } from "./modern/errors.ts";
+import type { McpRequestOrigin } from "./request-origin.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
 import { getMcpServiceExposureStatus } from "./service-exposure.ts";
 import { registerMcpServiceDirectTools } from "./service-register.ts";
+import * as scopes from "./service-scopes.ts";
 import { buildMcpServerSnapshot } from "./service-snapshot.ts";
 import { refreshMcpToolsOnListChanged, subscribeMcpToolsChanged } from "./service-tools-changed.ts";
 import type {
@@ -72,49 +72,22 @@ type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" |
 	Partial<Pick<ExtensionAPI, "events">>;
 
 /**
- * One execution scope a binding serves beside its own context (brain/hand S16c): a runtime that serves several
- * scopes keeps each one's MCP forms, presentation and control inventory instead of the latest scope taking them.
- */
-interface McpBindingScope {
-	readonly sessionId: string | undefined;
-	presentation: McpMrtrPresentation | undefined;
-	readonly ui: () => McpElicitationUi | undefined;
-}
-
-/** A context's elicitation UI, read per request: a host that offers none answers no form (`hasUI` false). */
-function elicitationUiOf(ctx: McpSessionContext): () => McpElicitationUi | undefined {
-	return () => (ctx.hasUI === false ? undefined : ctx.ui);
-}
-
-/**
  * One live session's binding to the service (#2514): the session's own extension API and
  * tool-search service, resolved per call, and what was registered there. Connections stay
  * shared across bindings; only the binding is per session.
  */
-interface McpSessionBinding {
-	readonly lifetime: AbortController;
-	presentation?: McpMrtrPresentation;
+interface McpSessionBinding extends scopes.McpScopedBinding {
 	readonly pi: McpToolRegistrar;
 	/** Only for a session whose extension load owns no tool-search service (SDK and test hosts). */
 	readonly fallbackToolSearch: ToolSearchService | undefined;
 	/** True when `fallbackToolSearch` is the process-wide fallback rather than a private one. */
 	readonly holdsProcessFallback: boolean;
-	readonly context: McpSessionContext;
-	/** The config this session resolved at attach: its tools register and are fenced against it alone (senpi#2597). */
-	readonly config: ResolvedMcpConfig;
 	/** This session's trust, env and agent dir: they resolve and spawn the servers it declares (senpi#2986). */
 	readonly options: McpSessionOptions;
 	readonly registeredIdentities: Map<string, string>;
 	registration: McpSessionRegistration | undefined;
 	/** The session id read at attach, while the context is live: a released session's context may already be stale. */
 	readonly sessionId: string | undefined;
-	/**
-	 * The further execution scopes of one runtime this binding also serves, by session manager (brain/hand S16c).
-	 * Empty while it serves its own context alone, which is every session-owned host today.
-	 */
-	readonly scopes: Map<object, McpBindingScope>;
-	/** Its own context's elicitation UI, so a scoped call of that context opens its form there and not in a peer's. */
-	readonly ui: () => McpElicitationUi | undefined;
 }
 
 /** A session's resolved config with the context and options that declared it; a binding is one. */
@@ -272,24 +245,12 @@ export class McpService {
 	}
 
 	/**
-	 * A further execution scope of the runtime that owns `pi` joins its binding (brain/hand S16c): the binding is not
-	 * replaced, no config is re-synced and nothing in flight is aborted. The scope's calls are served, its MCP forms
-	 * open in its own UI and its own presentation presents them, while the scope that attached first keeps all three.
-	 * A `session_start` rebinds and drops every joined scope, so a session-owned extension still serves one session.
+	 * A further execution scope of the runtime that owns `pi` joins its binding (brain/hand S16c) without a rebind, a
+	 * config re-sync or an abort; only its own wire status is published. A `session_start` drops every joined scope.
 	 */
 	async attachScope(ctx: McpSessionContext, pi: McpToolRegistrar): Promise<void> {
 		const binding = this.#bindings.get(pi);
-		const sessionManager = ctx.sessionManager;
-		if (binding === undefined || sessionManager === undefined || sessionManager === binding.context.sessionManager) {
-			return;
-		}
-		const sessionId = sessionManager.getSessionId?.();
-		binding.scopes.set(sessionManager, {
-			sessionId,
-			presentation: ctx.ui === undefined ? undefined : getMcpMrtrPresentation(ctx.ui),
-			ui: elicitationUiOf(ctx),
-		});
-		// The binding's registration already answers this scope's calls; only its own wire status is still unpublished.
+		const sessionId = binding === undefined ? undefined : scopes.joinBindingScope(binding, ctx)?.sessionId;
 		if (sessionId !== undefined && shouldCaptureWireStatus(ctx)) await this.refreshWireStatusSnapshot(sessionId);
 	}
 
@@ -369,9 +330,8 @@ export class McpService {
 		const binding: McpSessionBinding = {
 			lifetime: new AbortController(),
 			presentation: owner.context.ui === undefined ? undefined : getMcpMrtrPresentation(owner.context.ui),
-			// A fresh binding serves its own context only: a session_start drops every scope a runtime had joined.
 			scopes: new Map(),
-			ui: elicitationUiOf(owner.context),
+			ui: scopes.elicitationUiOf(owner.context),
 			pi,
 			fallbackToolSearch,
 			holdsProcessFallback,
@@ -1033,8 +993,7 @@ export class McpService {
 				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
 				contextRequired: binding.context.mode !== undefined,
 				sessionManager: binding.context.sessionManager,
-				// One runtime's further scopes are served by this one binding, not refused as another session's calls.
-				servesSession: (sessionManager) => sessionManager !== undefined && binding.scopes.has(sessionManager),
+				servesSession: (sessionManager) => scopes.bindingServesScope(binding, sessionManager),
 				requestOrigin: (entry, caller) => this.#requestOrigin(binding, entry, caller),
 				bindPresentation: (ui) => this.bindMcpMrtrPresentation(binding.pi, ui),
 				// A new attach of this session replaces its binding (and with it its config); a peer's attach does not.
@@ -1108,7 +1067,7 @@ export class McpService {
 		return (
 			live.findLast((binding) => binding.context.sessionManager?.getSessionId?.() === sessionId) ??
 			// A further scope of a runtime reports the binding that serves it: one runtime declares one set of servers.
-			live.findLast((binding) => [...binding.scopes.values()].some((scope) => scope.sessionId === sessionId))
+			live.findLast((binding) => scopes.bindingServesScopeSession(binding, sessionId))
 		);
 	}
 
@@ -1215,30 +1174,7 @@ export class McpService {
 	bindMcpMrtrPresentation(pi: object, ui: ExtensionUIContext, sessionManager?: object): void {
 		const binding = this.#bindings.get(pi);
 		const presentation = getMcpMrtrPresentation(ui);
-		if (!binding || !presentation) return;
-		// A joined scope presents its own forms; the binding's own context keeps the binding's presentation.
-		const scope = sessionManager === undefined ? undefined : binding.scopes.get(sessionManager);
-		if (scope === undefined) binding.presentation = presentation;
-		else scope.presentation = presentation;
-	}
-
-	/**
-	 * The execution scope a call belongs to, while this binding serves several (brain/hand S16c). A binding serving
-	 * its own context alone resolves to none, and its requests carry no scope: the single-session path is unchanged.
-	 */
-	#callerScope(
-		binding: McpSessionBinding,
-		caller: { readonly sessionManager?: object } | undefined,
-	):
-		| { key: object; presentation: McpMrtrPresentation | undefined; ui: () => McpElicitationUi | undefined }
-		| undefined {
-		const key = caller?.sessionManager;
-		if (binding.scopes.size === 0 || key === undefined) return undefined;
-		const joined = binding.scopes.get(key);
-		if (joined !== undefined) return { key, presentation: joined.presentation, ui: joined.ui };
-		return key === binding.context.sessionManager
-			? { key, presentation: binding.presentation, ui: binding.ui }
-			: undefined;
+		if (binding && presentation) scopes.bindScopePresentation(binding, presentation, sessionManager);
 	}
 
 	#requestOrigin(
@@ -1246,26 +1182,11 @@ export class McpService {
 		entry: McpConnectionEntry,
 		caller?: { readonly sessionManager?: object },
 	): McpRequestOrigin {
-		const source = binding.config.servers[entry.name]?.source;
-		const scope = this.#callerScope(binding, caller);
-		const presentation = scope === undefined ? binding.presentation : scope.presentation;
-		return createMcpRequestOrigin({
+		return scopes.scopedRequestOrigin(
 			binding,
-			connection: entry.connection,
-			signal: AbortSignal.any([binding.lifetime.signal, entry.connection.requestLifetimeSignal]),
-			presentation,
-			privateFormsEnforced: presentation?.privateForms !== undefined,
-			privateForm: presentation?.privateForms?.capture(),
-			scope: scope?.key,
-			elicitationUi: scope?.ui,
-			serverLabel: entry.name,
-			serverSource:
-				source === "project" || source === "claude"
-					? "project"
-					: source === "skill" || source === "extension"
-						? "plugin"
-						: "user",
-			isCurrent: () =>
+			entry,
+			caller,
+			() =>
 				!this.#disposed &&
 				!binding.lifetime.signal.aborted &&
 				this.#bindings.get(binding.pi) === binding &&
@@ -1273,12 +1194,7 @@ export class McpService {
 				declares(binding.config, entry.name, entry.configHash) &&
 				entry.isCurrent?.() !== false &&
 				entry.credentialsCurrent?.() !== false,
-			resolveAuthority: async (signal) => {
-				if (await entry.generationChanged?.()) throw new McpMrtrError("MCP_MRTR_CONTEXT_CHANGED");
-				// Same observed-revocation boundary as ordinary MCP requests. Never prompts for a new grant.
-				return await entry.connection.projectPolicy?.resolve(signal, false);
-			},
-		});
+		);
 	}
 
 	getMcpElicitationUi(): McpElicitationUi | undefined {

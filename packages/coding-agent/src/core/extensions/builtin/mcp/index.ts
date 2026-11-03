@@ -10,11 +10,7 @@ import type {
 } from "../../types.ts";
 import { installMcpNativeToolSearchGate } from "../tool-search/native-search.ts";
 import { registerMcpCommands } from "./commands.ts";
-import {
-	isMcpControlInventoryRequest,
-	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
-	MCP_CONTROL_INVENTORY_REQUEST_EVENT,
-} from "./control-inventory.ts";
+import { forwardMcpControlInventory } from "./control-inventory.ts";
 import { injectMcpInstructions, refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
 import { registerMcpPromptCommands } from "./prompts.ts";
@@ -22,7 +18,7 @@ import { expandMcpResourceMentions } from "./resources.ts";
 import { getMcpService, McpService } from "./service.ts";
 import { createMcpSkillReveal } from "./skill-reveal.ts";
 import type { SkillLike } from "./skills.ts";
-import { reportMcpAsyncError, safeEventBusOn, wrapAsync } from "./wrap.ts";
+import { reportMcpAsyncError, wrapAsync } from "./wrap.ts";
 
 const MCP_BUILTIN_EXTENSION_PATH = "<builtin:mcp>";
 
@@ -37,28 +33,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		const scopeAttaches = new WeakMap<object, Promise<void>>();
 		const runtimeKey = {};
 		const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
-		let controlInventoryDisposed = false;
-		const unsubscribeControlInventoryRequest = safeEventBusOn(
-			pi.events,
-			MCP_CONTROL_INVENTORY_REQUEST_EVENT,
-			(data) => {
-				if (!isMcpControlInventoryRequest(data) || !attachedSessionIds.has(data.sessionId)) return;
-				data.respond(service.refreshWireStatusSnapshot(data.sessionId));
-			},
-		);
-		const unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot, startupSettled) => {
-			if (sessionId === undefined || !attachedSessionIds.has(sessionId)) return;
-			pi.events.emit(
-				MCP_CONTROL_INVENTORY_CHANGED_EVENT,
-				startupSettled ? { sessionId, snapshot, startupSettled: true } : { sessionId, snapshot },
-			);
-		});
-		const disposeControlInventory = (): void => {
-			if (controlInventoryDisposed) return;
-			controlInventoryDisposed = true;
-			unsubscribeControlInventoryRequest();
-			unsubscribeWireStatus();
-		};
+		const disposeControlInventory = forwardMcpControlInventory(pi.events, service, attachedSessionIds);
 		const sink = {
 			logger: {
 				error(message: string, data?: unknown): void {
