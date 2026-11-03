@@ -104,6 +104,7 @@ export async function openHandRig(
 	const startHand = (store: DurableStore) => {
 		const ledger = createExecutionLedger({ store, epoch: 1, admission: createAdmissionLine() });
 		return createRemoteExecutor({
+			authority: { kind: "self" },
 			transport: handSide,
 			openScope: async (scope) => scopeRunner(scope.id),
 			ledger: createHandLedger({
