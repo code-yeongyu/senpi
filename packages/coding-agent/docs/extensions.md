@@ -686,6 +686,21 @@ pi.on("session_compact_failed", async (event, ctx) => {
 });
 ```
 
+#### session_compact_requested
+
+Fired by manual compaction (`/compact`, RPC, `ctx.compact()`) when native preparation finds nothing to summarize, so `session_before_compact` cannot fire: the branch already ends in a compaction entry, or it is too small for the native cut. An extension that owns compaction can serve the request by returning a `compaction`; the first handler that returns one wins, and the result is applied like a `session_before_compact` result (`session_compact` reports `fromExtension: true`). With no result the native "Already compacted" / "Nothing to compact (session too small)" refusal stands. `session_before_compact` is unchanged, so an owner subscribes to both events.
+
+```typescript
+pi.on("session_compact_requested", async (event, ctx) => {
+  // event.reason - always "manual"
+  // event.nativeOutcome - "already-compacted" or "too-small"
+  // event.branchEntries, event.customInstructions
+  return {
+    compaction: { summary: "...", firstKeptEntryId: "...", tokensBefore: 0 },
+  };
+});
+```
+
 This accepted/rejected contract has been emitted since [#248](https://github.com/code-yeongyu/senpi/pull/248): accepted events carry `compactionEntry`, while rejected events carry `accepted: false` and `rejectionCause` with no compaction entry. Built-in handlers are required to guard on `event.accepted`; for example, the `claude-sdk-oauth` session registry now does so before recording a compaction fork.
 
 #### session_before_tree / session_tree

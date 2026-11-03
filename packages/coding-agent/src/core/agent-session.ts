@@ -10063,7 +10063,18 @@ export class AgentSession {
 		this._releaseBlockedPostCompactionAdmission();
 		const pathEntries = this.sessionManager.getBranch();
 		const settings = cursorOverflowCompactionSettings(this._getCompactionSettings(model), model.provider, "manual");
-		if (!prepareCompaction(pathEntries, settings)) {
+		const nativePreparation = prepareCompaction(pathEntries, settings);
+		let ownerCompaction: CompactionResult | undefined;
+		if (!nativePreparation) {
+			const lastEntry = pathEntries[pathEntries.length - 1];
+			const alreadyCompacted = lastEntry?.type === "compaction";
+			ownerCompaction = await this._requestOwnerCompaction(
+				pathEntries,
+				alreadyCompacted ? "already-compacted" : "too-small",
+				customInstructions,
+			);
+		}
+		if (!nativePreparation && !ownerCompaction) {
 			const requestId = randomUUID();
 			const lastEntry = pathEntries[pathEntries.length - 1];
 			const error = new Error(
@@ -10111,6 +10122,7 @@ export class AgentSession {
 				requestId,
 				customInstructions,
 				willRetry: false,
+				...(ownerCompaction ? { precomputed: ownerCompaction } : {}),
 			});
 			if (!execution.accepted) {
 				throw new CompactionRejectedError(execution.rejectionCause);
@@ -10156,6 +10168,26 @@ export class AgentSession {
 			if (disconnected && !this.isCompacting) this._reconnectToAgent();
 			if (outcome === "completed") this._resumeQueuedMessagesAfterCompaction();
 		}
+	}
+
+	/**
+	 * Manual compaction with an empty native preparation asks a registered compaction owner to serve it
+	 * (`session_compact_requested`, senpi#3354) before the native refusal stands.
+	 */
+	private async _requestOwnerCompaction(
+		branchEntries: SessionEntry[],
+		nativeOutcome: "already-compacted" | "too-small",
+		customInstructions: string | undefined,
+	): Promise<CompactionResult | undefined> {
+		if (!this._extensionRunner.hasHandlers("session_compact_requested")) return undefined;
+		const result = await this._extensionRunner.emit({
+			type: "session_compact_requested",
+			reason: "manual",
+			nativeOutcome,
+			branchEntries,
+			...(customInstructions !== undefined ? { customInstructions } : {}),
+		});
+		return result?.compaction;
 	}
 
 	async applyCompaction(
