@@ -343,6 +343,30 @@ describe("ask-user resume", () => {
 		expect(userMessages).toEqual([]);
 	});
 
+	// The sizes-only early return must also hold on a reason that restores
+	// on main (unlike startup, which main never restored at all).
+	it("does not restore a dangling question on sizes-only resume", async () => {
+		const sessionManager = await danglingSession();
+		const { userMessages, handlers } = install(sessionManager);
+		const question = vi.fn(async () => ANSWER);
+		await emitStart(handlers, "resume", ctx(sessionManager, question), true);
+		expect(question).not.toHaveBeenCalled();
+		expect(resumedIds(sessionManager)).toEqual([]);
+		expect(userMessages).toEqual([]);
+	});
+
+	// Review follow-up on senpi#5700: a headless startup (print mode) has no
+	// question UI, so restoring would settle the question as orphaned, start
+	// an unasked model turn, and mark it resumed so a later interactive open
+	// could never re-ask it. Headless startup must restore nothing at all.
+	it("does not restore a dangling question on headless startup", async () => {
+		const sessionManager = await danglingSession();
+		const { userMessages, handlers } = install(sessionManager);
+		await emitStart(handlers, "startup", ctx(sessionManager));
+		expect(resumedIds(sessionManager)).toEqual([]);
+		expect(userMessages).toEqual([]);
+	});
+
 	it("delivers one orphaned-after-restart message when resume has no UI", async () => {
 		const sessionManager = await danglingSession();
 		const { userMessages, handlers } = install(sessionManager);
