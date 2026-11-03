@@ -14,6 +14,7 @@ const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
 const TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0\x07";
 const NATIVE_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
+const APPLE_TERMINAL_ESCAPED_RETURN_SEQUENCE = "\x1b\r";
 const DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 // Bun's macOS tty shim can report synchronous ioctl EIO as raw positive errno 5 without a string code.
@@ -96,7 +97,14 @@ export function normalizeNativeShiftEnterInput(
 	return data;
 }
 
+/**
+ * Terminal.app can deliver Shift+Return as ESC CR, which legacy key parsing reads as Alt+Enter.
+ * The pressed native Shift keeps it apart from an Option-as-Meta Return, which stays Alt+Enter.
+ */
 export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
+	if (isAppleTerminal && data === APPLE_TERMINAL_ESCAPED_RETURN_SEQUENCE && isShiftPressed) {
+		return NATIVE_SHIFT_ENTER_SEQUENCE;
+	}
 	return normalizeNativeShiftEnterInput(data, isAppleTerminal, isShiftPressed);
 }
 
@@ -722,13 +730,13 @@ export class ProcessTerminal implements Terminal {
 
 	private forwardInputSequence(sequence: string): void {
 		if (!this.inputHandler) return;
-		const shouldDetectNativeShiftEnter =
-			sequence === "\r" && (isAppleTerminalSession() || process.platform === "win32");
-		const input = normalizeNativeShiftEnterInput(
-			sequence,
-			shouldDetectNativeShiftEnter,
-			shouldDetectNativeShiftEnter && isNativeModifierPressed("shift"),
-		);
+		const isReturn = sequence === "\r" || sequence === APPLE_TERMINAL_ESCAPED_RETURN_SEQUENCE;
+		const isAppleTerminal = isReturn && isAppleTerminalSession();
+		const shouldDetectNativeShiftEnter = isAppleTerminal || (sequence === "\r" && process.platform === "win32");
+		const isShiftPressed = shouldDetectNativeShiftEnter && isNativeModifierPressed("shift");
+		const input = isAppleTerminal
+			? normalizeAppleTerminalInput(sequence, true, isShiftPressed)
+			: normalizeNativeShiftEnterInput(sequence, shouldDetectNativeShiftEnter, isShiftPressed);
 		this.inputHandler(input);
 	}
 
