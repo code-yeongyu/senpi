@@ -153,7 +153,7 @@ import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
-import type { DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, FullToolPrompt } from "./dynamic-prompt/build.ts";
 import {
 	type BuildDynamicSystemPromptOptions,
 	buildDynamicSystemPrompt,
@@ -1800,6 +1800,7 @@ export class AgentSession {
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
+	private _toolFullPromptGuidelines: Map<string, string[]> = new Map();
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
@@ -5724,8 +5725,11 @@ export class AgentSession {
 		];
 		const toolSnippets: Record<string, string> = {};
 		const promptGuidelines: string[] = [];
+		// What the full shared sections list (senpi#5665): every snippet, and each tool's full guidelines.
+		const fullToolPrompt: FullToolPrompt = { toolSnippets: {}, promptGuidelines: [] };
 		for (const name of contributingToolNames) {
 			const snippet = this._toolPromptSnippets.get(name);
+			if (snippet) fullToolPrompt.toolSnippets[name] = snippet;
 			// A model-facing tool whose schema description the model already reads gets no snippet line;
 			// withheld eval-only tools keep theirs (senpi#5335).
 			const describedToModel =
@@ -5738,6 +5742,8 @@ export class AgentSession {
 			if (toolGuidelines) {
 				promptGuidelines.push(...toolGuidelines);
 			}
+			const fullGuidelines = this._toolFullPromptGuidelines.get(name) ?? toolGuidelines;
+			if (fullGuidelines) fullToolPrompt.promptGuidelines.push(...fullGuidelines);
 		}
 
 		const loadedSkills = this._resourceLoader.getSkills().skills;
@@ -5752,6 +5758,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			fullToolPrompt,
 			surface: this._promptSurface ?? resolvePromptSurface(process.env),
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
@@ -12349,6 +12356,15 @@ export class AgentSession {
 					const guidelines = this._normalizePromptGuidelines(definition.promptGuidelines);
 					return guidelines.length > 0 ? ([definition.name, guidelines] as const) : undefined;
 				})
+				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
+		);
+		this._toolFullPromptGuidelines = new Map(
+			Array.from(definitionRegistry.values())
+				.map(({ definition }) =>
+					definition.fullPromptGuidelines === undefined
+						? undefined
+						: ([definition.name, this._normalizePromptGuidelines(definition.fullPromptGuidelines)] as const),
+				)
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
 		const wrappedExtensionTools = registry.extensionTools;

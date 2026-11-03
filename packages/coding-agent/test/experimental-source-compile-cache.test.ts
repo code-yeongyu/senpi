@@ -78,10 +78,15 @@ describe("source compile cache global setup", () => {
 		const teardown = setupSourceCompileCache();
 		const directory = process.env[SOURCE_COMPILE_CACHE_ENV];
 
-		expect(teardown).toBeTypeOf("function");
-		expect(directory).toBeDefined();
-		expect(existsSync(directory ?? "")).toBe(true);
-		teardown?.();
+		try {
+			expect(teardown).toBeTypeOf("function");
+			expect(directory).toBeDefined();
+			expect(existsSync(directory ?? "")).toBe(true);
+		} finally {
+			// senpi#5011: run teardown even when an assertion above fails, so a
+			// failing run does not leave its temp directory behind.
+			teardown?.();
+		}
 		expect(process.env[SOURCE_COMPILE_CACHE_ENV]).toBeUndefined();
 		expect(existsSync(directory ?? "")).toBe(false);
 	});
