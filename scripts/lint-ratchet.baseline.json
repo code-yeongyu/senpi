@@ -140,7 +140,7 @@
     "typescript/no-non-null-assertion": 1
   },
   "packages/agent/src/proxy.ts": {
-    "typescript/no-explicit-any": 4,
+    "typescript/no-explicit-any": 1,
     "typescript/no-non-null-assertion": 1
   },
   "packages/agent/src/types.ts": {
