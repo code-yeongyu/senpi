@@ -4,7 +4,8 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { registerTodoCommand } from "./commands.ts";
 import { FIRST_TURN_CUSTOM_TYPE, FIRST_TURN_REMINDER, shouldArmFirstTurn, withForcedTodoChoice } from "./first-turn.ts";
 import { phasesFromCursorTodos } from "./native-todo-mirror.ts";
-import { TASK_MANAGEMENT_SECTION } from "./prompt.ts";
+import { activeSharedSections } from "../prompt-preset/active-preset.ts";
+import { FULL_TASK_MANAGEMENT_SECTION, TASK_MANAGEMENT_SECTION } from "./prompt.ts";
 import {
 	clonePhases,
 	getLatestTodoStateFromBranchEntries,
@@ -96,7 +97,8 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 	pi.on(
 		"before_agent_start",
 		async (event, ctx) => {
-			const systemPrompt = `${event.systemPrompt}\n${TASK_MANAGEMENT_SECTION}`;
+			const section = activeSharedSections(ctx) === "full" ? FULL_TASK_MANAGEMENT_SECTION : TASK_MANAGEMENT_SECTION;
+			const systemPrompt = `${event.systemPrompt}\n${section}`;
 			if (event.preview) return { systemPrompt };
 			const branchEntries = ctx.sessionManager.getBranch();
 			const setting = readFirstTurnPlan(ctx);
