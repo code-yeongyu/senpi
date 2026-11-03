@@ -1,4 +1,4 @@
-// senpi#5675 (S14): the durable wake path (WAKE-EXEC and KILL-WAKEX) on the memory store.
+// senpi#5675 (S14): the durable wake path (WAKEX and KILL-WAKEX) on the memory store.
 import { describe, expect, it } from "vitest";
 import { findImplementationGaps } from "../../src/conformance/mapping.ts";
 import { CONFORMANCE_REGISTRY } from "../../src/conformance/registry.ts";
@@ -29,9 +29,9 @@ const cases = new Map([...WAKE_EXEC_CASES, ...KILL_WAKEX_CASES]);
 describe("durable wake conformance on the memory store", () => {
 	for (const [id, run] of cases) it(id, () => run({ store: memoryStore(), executor: referenceBatchExecutor }));
 
-	it("registers every WAKE-EXEC and KILL-WAKEX case with an implementation", () => {
-		const registry = CONFORMANCE_REGISTRY.filter(({ id }) => /^(WAKE-EXEC|KILL-WAKEX)-/.test(id));
-		expect(registry).toHaveLength(11);
+	it("registers every WAKEX and KILL-WAKEX case with an implementation", () => {
+		const registry = CONFORMANCE_REGISTRY.filter(({ id }) => /^(WAKEX|KILL-WAKEX)-/.test(id));
+		expect(registry).toHaveLength(13);
 		expect(findImplementationGaps(registry, cases)).toEqual({ unimplemented: [], unregistered: [] });
 	});
 });

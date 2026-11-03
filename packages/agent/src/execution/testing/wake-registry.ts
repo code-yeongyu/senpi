@@ -12,19 +12,21 @@ const wakeCase = (id: string, impl: string, expected: string): RegisteredCase =>
 });
 
 export const WAKE_EXEC_REGISTRY: readonly RegisteredCase[] = [
-	wakeCase("WAKE-EXEC-01", WAKE_EXEC_IMPL, "a wake is durable on the hand, committed on the brain, acked, taken once"),
+	wakeCase("WAKEX-01", WAKE_EXEC_IMPL, "a wake is durable on the hand, committed on the brain, acked, taken once"),
+	wakeCase("WAKEX-02", WAKE_EXEC_IMPL, "a re-offered wake whose ack was lost is deduplicated by event id and acked"),
+	wakeCase("WAKEX-03", WAKE_EXEC_IMPL, "un-acked wakes are re-offered on reconnect in offer order"),
 	wakeCase(
-		"WAKE-EXEC-02",
+		"WAKEX-04",
 		WAKE_EXEC_IMPL,
-		"a re-offered wake whose ack was lost is deduplicated by event id and acked",
+		"a wake refused for its scope commits nothing, is never acked and is not re-offered",
 	),
-	wakeCase("WAKE-EXEC-03", WAKE_EXEC_IMPL, "un-acked wakes are re-offered on reconnect in offer order"),
+	wakeCase("WAKEX-05", WAKE_EXEC_IMPL, "an un-acked wake lives until scope close plus 7 days, then wake_expired"),
 	wakeCase(
-		"WAKE-EXEC-04",
+		"WAKEX-06",
 		WAKE_EXEC_IMPL,
-		"a wake from a hand not bound to its scope commits nothing and is never acked",
+		"a closed scope dedups re-offers within retention and refuses late or new wakes",
 	),
-	wakeCase("WAKE-EXEC-05", WAKE_EXEC_IMPL, "an un-acked wake lives until scope close plus 7 days, then wake_expired"),
+	wakeCase("WAKEX-07", WAKE_EXEC_IMPL, "concurrent drains hand each wake to the loop exactly once"),
 	wakeCase("KILL-WAKEX-01", KILL_WAKEX_IMPL, "a hand killed before the outbox commit leaves nothing to re-offer"),
 	wakeCase("KILL-WAKEX-02", KILL_WAKEX_IMPL, "a hand killed after the outbox commit re-offers the wake once"),
 	wakeCase(

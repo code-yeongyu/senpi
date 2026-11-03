@@ -17,10 +17,10 @@ export interface WakeInboxOptions {
 export interface WakeInbox {
 	/** `sender` is the authenticated hand. The returned `ack` is the `wake_ack` to send; it exists only once committed. */
 	receive(sender: string, wake: WakeEvent): Promise<WakeReceipt>;
-	/** Hands each committed wake to the loop, then removes it; a crash in between hands it over again (dedup by id). */
+	/** Hands each committed wake to the loop, then removes it; drains run one at a time, and a crash in between hands the same wake over again, so the consumer is idempotent by event id. */
 	drain(consume: (wake: WakeEvent) => Promise<void>): Promise<number>;
 	closeScope(scope: string): Promise<void>;
-	/** Forgets the event ids of scopes closed longer ago than the retention. */
+	/** Forgets the event ids of scopes closed longer ago than the retention; the close stays, so a late wake is refused. */
 	sweep(): Promise<readonly string[]>;
 	read(): Promise<WakeInboxRecord>;
 }
@@ -52,6 +52,21 @@ export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
 	const update = <T>(decide: (record: WakeInboxRecord) => Promise<T>): Promise<T> =>
 		admission.admit(async () => decide(await read()));
 
+	let draining: Promise<unknown> = Promise.resolve();
+	const drainOnce = async (consume: (wake: WakeEvent) => Promise<void>): Promise<number> => {
+		let taken = 0;
+		for (const wake of (await read()).pending) {
+			await consume(wake);
+			await update(async (record) => {
+				if (!record.pending.some((entry) => entry.eventId === wake.eventId)) return;
+				const pending = record.pending.filter((entry) => entry.eventId !== wake.eventId);
+				await write({ ...record, pending }, "take", wake.eventId);
+			});
+			taken += 1;
+		}
+		return taken;
+	};
+
 	return {
 		read,
 		receive: (sender, wake) =>
@@ -61,6 +76,8 @@ export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
 				if (bound !== sender) return { kind: "refused", eventId: wake.eventId, reason: "not_scope_hand" };
 				const seen = record.seen[wake.scope] ?? [];
 				if (seen.includes(wake.eventId)) return { kind: "ack", eventId: wake.eventId, duplicate: true };
+				if (record.closed[wake.scope] !== undefined)
+					return { kind: "refused", eventId: wake.eventId, reason: "scope_closed" };
 				await write(
 					{
 						...record,
@@ -72,18 +89,10 @@ export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
 				);
 				return { kind: "ack", eventId: wake.eventId, duplicate: false };
 			}),
-		drain: async (consume) => {
-			let taken = 0;
-			for (const wake of (await read()).pending) {
-				await consume(wake);
-				await update(async (record) => {
-					if (!record.pending.some((entry) => entry.eventId === wake.eventId)) return;
-					const pending = record.pending.filter((entry) => entry.eventId !== wake.eventId);
-					await write({ ...record, pending }, "take", wake.eventId);
-				});
-				taken += 1;
-			}
-			return taken;
+		drain: (consume) => {
+			const run = draining.then(() => drainOnce(consume));
+			draining = run.catch(() => undefined);
+			return run;
 		},
 		closeScope: (scope) =>
 			update(async (record) => {
@@ -94,7 +103,7 @@ export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
 			update(async (record) => {
 				const now = clock();
 				const gone = Object.entries(record.closed)
-					.filter(([, closedAt]) => now > closedAt + WAKE_RETENTION_MS)
+					.filter(([scope, closedAt]) => now > closedAt + WAKE_RETENTION_MS && record.seen[scope] !== undefined)
 					.map(([scope]) => scope);
 				if (gone.length === 0) return [];
 				const drop = new Set(gone);
@@ -102,7 +111,7 @@ export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
 					{
 						seen: Object.fromEntries(Object.entries(record.seen).filter(([scope]) => !drop.has(scope))),
 						pending: record.pending,
-						closed: Object.fromEntries(Object.entries(record.closed).filter(([scope]) => !drop.has(scope))),
+						closed: record.closed,
 					},
 					"sweep",
 					null,
