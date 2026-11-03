@@ -49,6 +49,8 @@ export class LaunchGate {
 	>();
 	/** Final slot state of recent finished launches, so a test query after `launch_done` still reads the counts. */
 	readonly #finished = new Map<string, SlotState>();
+	/** `launchesDone` waiters, re-checked on every `done`. */
+	readonly #doneWaiters = new Set<() => void>();
 	readonly #controls: TestControls;
 	#next = 0;
 
@@ -168,16 +170,44 @@ export class LaunchGate {
 	 * one. Detached launches outlive their job by contract and are left alone. Returns the groups signalled.
 	 */
 	endJobGroups(jobId: string): number[] {
-		const ended: Array<{ readonly launchId: string; readonly pgid: number }> = [];
-		for (const [launchId, { request }] of this.#slots) {
-			if (request.jobId !== jobId || request.lifetime !== "owned" || request.containment !== "own-group") continue;
-			if (request.pgid === undefined || request.pgid <= 1) continue;
-			if (this.#killGroup(request.pgid)) ended.push({ launchId, pgid: request.pgid });
-		}
+		const ended = this.#ownedGroupsOf(jobId).filter(({ pgid }) => this.#killGroup(pgid));
 		// The worker that would have reported these launches' completion is gone with its job: report it here, so the
 		// slots return to the clock and the server's log is complete.
 		for (const { launchId } of ended) this.done(launchId, { signal: "SIGKILL" });
 		return ended.map(({ pgid }) => pgid);
+	}
+
+	/**
+	 * Kills the job's owned own-group commands while the worker that launched them still holds their handles, so each
+	 * leader's own exit reaches this gate as its `done` (senpi#5601). Returns the launches signalled.
+	 */
+	signalJobGroups(jobId: string): string[] {
+		return this.#ownedGroupsOf(jobId)
+			.filter(({ pgid }) => this.#killGroup(pgid))
+			.map(({ launchId }) => launchId);
+	}
+
+	/** Settles once every named launch is done: its leader exited, or `endJobGroups` reported it. */
+	launchesDone(launchIds: readonly string[]): Promise<void> {
+		return new Promise((resolve) => {
+			const check = (): void => {
+				if (launchIds.some((launchId) => this.#slots.has(launchId))) return;
+				this.#doneWaiters.delete(check);
+				resolve();
+			};
+			this.#doneWaiters.add(check);
+			check();
+		});
+	}
+
+	#ownedGroupsOf(jobId: string): Array<{ readonly launchId: string; readonly pgid: number }> {
+		const groups: Array<{ readonly launchId: string; readonly pgid: number }> = [];
+		for (const [launchId, { request }] of this.#slots) {
+			if (request.jobId !== jobId || request.lifetime !== "owned" || request.containment !== "own-group") continue;
+			if (request.pgid === undefined || request.pgid <= 1) continue;
+			groups.push({ launchId, pgid: request.pgid });
+		}
+		return groups;
 	}
 
 	/** SIGKILLs one group; false when it had already ended. Test-only `DELAY_GROUP_KILL` makes the kill land late. */
@@ -204,6 +234,7 @@ export class LaunchGate {
 		this.#finished.set(launchId, this.clock.read(entry.slot));
 		if (this.#finished.size > FINISHED_SLOT_STATES) this.#finished.delete(this.#finished.keys().next().value ?? "");
 		this.clock.releaseSlot(entry.slot);
+		for (const check of [...this.#doneWaiters]) check();
 		this.#channel.send({
 			type: "launch_done",
 			launchId,
