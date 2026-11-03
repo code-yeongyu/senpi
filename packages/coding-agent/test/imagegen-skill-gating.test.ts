@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ImageGenAuthRegistry } from "../src/core/extensions/builtin/imagegen/auth.ts";
-import { IMAGE_GEN_SECTION, registerImageGenExtension } from "../src/core/extensions/builtin/imagegen/index.ts";
+import { registerImageGenExtension } from "../src/core/extensions/builtin/imagegen/index.ts";
 import { setImageGenRegistry } from "../src/core/extensions/builtin/imagegen/state.ts";
 import { builtinExtensions } from "../src/core/extensions/builtin/index.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
@@ -80,7 +80,8 @@ describe("imagegen skill contribution", () => {
 		expect(skillPaths).toHaveLength(1);
 		expect(loaded.diagnostics).toEqual([]);
 		expect(loaded.skills.map((skill) => skill.name)).toContain("gpt-image-gen");
-		expect(prompt?.systemPrompt).toBe(`base\n${IMAGE_GEN_SECTION}`);
+		// senpi#5335: the skill catalog line is the trigger; no prompt section is added.
+		expect(prompt).toBeUndefined();
 	});
 
 	it("contributes no skill or section when credentials are absent", async () => {
