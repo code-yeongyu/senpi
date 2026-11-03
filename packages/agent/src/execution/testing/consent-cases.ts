@@ -60,9 +60,14 @@ async function expiredWhileAwaiting(h: BatchHarness, answer: ConsentAnswer, late
 	);
 	expectEqual(h.count("body:a") + h.count("body:g") + h.count("body:c"), 0, "no body ran");
 	expectEqual(h.count("shim:g"), 1, "no automatic successor: g was never prepared again");
+	const frozenDigest = approver.requests[0]?.digest ?? "";
+	const late = await h.executor("e1").consent?.({ issuer: "brain", executionId: "g", generation: 1 }, frozenDigest);
+	expectEqual(
+		late?.kind === "settled" ? late.outcome.reason : late?.kind,
+		"lease_expired",
+		"a later approval is rejected with the endpoint's own lease_expired outcome",
+	);
 	expectEqual(await h.ledgerState("e1", "g"), "settled", "the endpoint is terminal");
-	const late = await h.executor("e1").consent?.({ issuer: "brain", executionId: "g", generation: 1 }, "x");
-	expectEqual(late?.kind, "settled", "a later approval is rejected with the stored terminal outcome");
 	expectEqual(await (await h.brain(undefined, "brain", approver.port)).run(plan), result, "recovery decides the same");
 	expectEqual(approver.requests.length, 1, "recovery asks nobody again");
 }

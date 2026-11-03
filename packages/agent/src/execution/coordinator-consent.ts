@@ -29,6 +29,11 @@ const denied = (gate: ConsentRecord["gate"], answer: ConsentAnswer): PrepareRepl
 
 /** The executor no longer knows a call it prepared (design 5.6.2 "a lost prepared execution"): uncertain, never rerun. */
 const lost: ExecutionOutcome = { reason: "uncertain", hooksRan: true, uncertain: true };
+/**
+ * The approver reports the lease ran out while the call awaited Gate B. Nothing is sent to the executor: its own lease
+ * clock settles the call `lease_expired` (an abort would record `cancelled` while its clock is behind the brain's).
+ */
+const expired: ExecutionOutcome = { reason: "lease_expired", hooksRan: true, uncertain: true };
 
 async function answer(step: ConsentStep, gate: ConsentRecord["gate"], digest: string): Promise<ConsentAnswer> {
 	const { recorded } = step;
@@ -60,7 +65,8 @@ export async function gateRawCall(
 /**
  * Gate B, after preparation: the approval binds the frozen digest and the executor releases without rerunning hooks.
  * A denial is a blocked per-call result; an expiry (or an approval the lease already outran) settles the call
- * `lease_expired`, which ABORTs the batch's unreleased calls. Nothing is ever prepared again: no automatic successor.
+ * `lease_expired` at the endpoint, which ABORTs the batch's unreleased calls. Nothing is ever prepared again: no
+ * automatic successor.
  */
 export async function resolveFrozenConsent(step: ConsentStep, frozenDigest: string): Promise<PrepareReply> {
 	const given = await answer(step, "frozen", frozenDigest);
@@ -68,10 +74,8 @@ export async function resolveFrozenConsent(step: ConsentStep, frozenDigest: stri
 		await step.executor.abort(step.ref);
 		return denied("frozen", given);
 	}
-	const reply =
-		given === "approved"
-			? await consentOn(step.executor, step.ref, frozenDigest)
-			: await step.executor.abort(step.ref);
+	if (given === "expired") return { kind: "settled", outcome: expired };
+	const reply = await consentOn(step.executor, step.ref, frozenDigest);
 	if (reply.kind === "prepared") return { kind: "prepared", frozenDigest };
 	if (reply.kind === "unknown_execution") return { kind: "settled", outcome: lost };
 	return { kind: "settled", outcome: reply.outcome };

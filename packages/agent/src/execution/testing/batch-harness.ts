@@ -1,6 +1,7 @@
 import type { DurableStore, StoreValue, StoreWrite } from "../../durable/store.ts";
 import { createAdmissionLine } from "../../durable/store-admission.ts";
 import { type BatchCoordinator, createBatchCoordinator } from "../coordinator.ts";
+import { createNestedAdmission, type NestedAdmissionControl } from "../nested.ts";
 import type { BatchConsent, BatchExecutor, BatchPlan, CallOutcome } from "../coordinator-types.ts";
 import type { BatchCaseAdapters, PausePoint } from "./batch-executor.ts";
 
@@ -22,7 +23,7 @@ const isObject = (value: StoreValue | undefined): value is { readonly [key: stri
 
 function labelOf(writes: readonly StoreWrite[]): string | undefined {
 	for (const write of writes) {
-		if (write.op !== "append" || write.kind !== "execution.batch") continue;
+		if (write.op !== "append" || (write.kind !== "execution.batch" && write.kind !== "execution.nested")) continue;
 		const data = write.data;
 		if (!isObject(data)) return undefined;
 		return typeof data.executionId === "string" ? `${String(data.step)}:${data.executionId}` : String(data.step);
@@ -201,6 +202,17 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 				epoch: 1,
 				admission: createAdmissionLine(),
 				executor: proxy,
+			});
+		},
+		/** The brain's nested admission over the same durable medium, optionally dying around one of its writes. */
+		nested: async (dieAt?: BrainKill, issuer = "brain"): Promise<NestedAdmissionControl> => {
+			const opened = await adapters.store.open(brainMedium);
+			return createNestedAdmission({
+				issuer,
+				store: brainStore(opened, onDurable, dieAt),
+				epoch: 1,
+				admission: createAdmissionLine(),
+				clock: () => clock,
 			});
 		},
 		/** Moves every executor's clock: a lease that ends before the new time is expired on the next ledger event. */
