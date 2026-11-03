@@ -1707,9 +1707,10 @@ export interface BeforeAgentStartEvent {
 	systemPrompt: string;
 	/**
 	 * Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded
-	 * without re-discovering resources. Every handler of one turn shares this object. Each entry a handler adds to
-	 * `sections` is appended to the final prompt for this turn as `<name>\ncontent\n</name>`, after any returned
-	 * `systemPrompt`.
+	 * without re-discovering resources. Every handler of one turn shares this object, and `sections` starts empty each
+	 * turn. Each valid entry present when a handler returns is appended to this turn's prompt as
+	 * `<name>\ncontent\n</name>`, before builtin `runLast` handlers run so MCP instructions stay last. Valid entries a
+	 * handler added before throwing are kept; invalid ones are dropped and reported.
 	 */
 	systemPromptOptions: BuildSystemPromptOptions & { sections: Record<string, string> };
 	/**

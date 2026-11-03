@@ -535,11 +535,17 @@ function beforeAgentStartDispatchOrder(extensions: Extension[]) {
 	const phase = (keep: (ext: Extension, handler: EventHandlerFn) => boolean) =>
 		snapshot.map(({ ext, handlers }) => ({ ext, handlers: handlers.filter((handler) => keep(ext, handler)) }));
 	// Builtin run-last handlers close the phase order, so MCP instructions stay last even after another
-	// extension's run-last handler (senpi#4448).
+	// extension's run-last handler (senpi#4448). `closing` marks that phase.
 	return [
-		...phase((ext, handler) => !runsLast(ext, handler)),
-		...phase((ext, handler) => runsLast(ext, handler) && !isBuiltin(ext)),
-		...phase((ext, handler) => runsLast(ext, handler) && isBuiltin(ext)),
+		...phase((ext, handler) => !runsLast(ext, handler)).map((entry) => ({ ...entry, closing: false })),
+		...phase((ext, handler) => runsLast(ext, handler) && !isBuiltin(ext)).map((entry) => ({
+			...entry,
+			closing: false,
+		})),
+		...phase((ext, handler) => runsLast(ext, handler) && isBuiltin(ext)).map((entry) => ({
+			...entry,
+			closing: true,
+		})),
 	];
 }
 
@@ -2683,26 +2689,50 @@ export class ExtensionRunner {
 		let systemPromptModified = false;
 		let stableLength = systemPrompt.length;
 		// One copy per emit, shared by every handler, so sections never leak into the session's base options.
-		const currentOptions: BeforeAgentStartEvent["systemPromptOptions"] = {
-			...systemPromptOptions,
-			sections: { ...(systemPromptOptions.sections ?? {}) },
-		};
-		const dropInvalidSections = (extensionPath: string): void => {
-			if (typeof currentOptions.sections !== "object" || currentOptions.sections === null) {
-				currentOptions.sections = {};
-			}
-			for (const [name, content] of Object.entries(currentOptions.sections)) {
-				if (isValidSystemPromptSectionName(name) && typeof content === "string") continue;
-				delete currentOptions.sections[name];
+		// `sections` starts empty: sections already on the base options are rendered into `systemPrompt`.
+		const currentOptions: BeforeAgentStartEvent["systemPromptOptions"] = { ...systemPromptOptions, sections: {} };
+		// Rendering reads only this private copy of the valid entries, taken after each handler, so a handler that
+		// mutates or freezes `sections` later cannot make rendering throw and fail the turn.
+		let acceptedSections: Record<string, string> = {};
+		const renderedSectionNames = new Set<string>();
+		const acceptSections = (extensionPath: string): void => {
+			const live: unknown = currentOptions.sections;
+			const accepted: Record<string, string> = {};
+			for (const [name, content] of typeof live === "object" && live !== null ? Object.entries(live) : []) {
+				if (isValidSystemPromptSectionName(name) && typeof content === "string") {
+					accepted[name] = content;
+					continue;
+				}
 				this.emitError({
 					extensionPath,
 					event: "before_agent_start",
 					error: `Invalid system prompt section "${name}": names match /^[a-z][a-z0-9_-]*$/ (not "preamble") and content is a string`,
 				});
 			}
+			acceptedSections = accepted;
+			currentOptions.sections = { ...accepted };
 		};
+		// Appends accepted sections not yet rendered. It runs once before the builtin run-last handlers, so MCP
+		// instructions still close the prompt (senpi#4448), and once more after dispatch for later additions.
+		const appendSections = (): void => {
+			const pending = Object.fromEntries(
+				Object.entries(acceptedSections).filter(([name]) => !renderedSectionNames.has(name)),
+			);
+			const rendered = renderCustomSections(pending);
+			for (const name of Object.keys(pending)) renderedSectionNames.add(name);
+			if (!rendered) return;
+			// Sections are volatile: the cacheable prefix never extends past them.
+			stableLength = Math.min(stableLength, currentSystemPrompt.length);
+			currentSystemPrompt += rendered;
+			systemPromptModified = true;
+		};
+		let sectionsInserted = false;
 
-		dispatch: for (const { ext, handlers } of beforeAgentStartDispatchOrder(this.extensions)) {
+		dispatch: for (const { ext, handlers, closing } of beforeAgentStartDispatchOrder(this.extensions)) {
+			if (closing && !sectionsInserted) {
+				sectionsInserted = true;
+				appendSections();
+			}
 			for (const handler of handlers) {
 				if (options.signal?.aborted === true) break dispatch;
 				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
@@ -2732,7 +2762,7 @@ export class ExtensionRunner {
 					try {
 						handlerResult = await handler(event, ctx);
 					} finally {
-						dropInvalidSections(ext.path);
+						acceptSections(ext.path);
 					}
 					let parts: readonly DynamicSystemPromptPart[] | undefined;
 
@@ -2774,11 +2804,7 @@ export class ExtensionRunner {
 			}
 		}
 
-		const renderedSections = renderCustomSections(currentOptions.sections);
-		if (renderedSections) {
-			currentSystemPrompt += renderedSections;
-			systemPromptModified = true;
-		}
+		appendSections();
 
 		if (messages.length > 0 || systemPromptModified) {
 			return {

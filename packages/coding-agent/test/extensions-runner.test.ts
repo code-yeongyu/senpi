@@ -1264,11 +1264,12 @@ describe("ExtensionRunner", () => {
 			expect(baseOptions.sections).toBeUndefined();
 		});
 
-		it("drops an invalid section even when the handler that added it throws", async () => {
+		it("keeps valid sections and drops invalid ones when the handler that added them throws", async () => {
 			const extCode = `
 				export default function(pi) {
 					pi.on("before_agent_start", async (event) => {
 						event.systemPromptOptions.sections["Bad Name"] = "dropped";
+						event.systemPromptOptions.sections.kept = "still appended";
 						throw new Error("handler failed");
 					});
 				}
@@ -1284,10 +1285,42 @@ describe("ExtensionRunner", () => {
 
 			const combined = await runner.emitBeforeAgentStart("hello", undefined, "base", { cwd: tempDir });
 
-			expect(combined).toBeUndefined();
+			// Intended: a throw loses only the handler's return value, not the valid sections it already added.
+			expect(combined?.systemPrompt).toBe("base\n\n<kept>\nstill appended\n</kept>");
 			expect(errors).toEqual([
 				`Invalid system prompt section "Bad Name": names match /^[a-z][a-z0-9_-]*$/ (not "preamble") and content is a string`,
 				"handler failed",
+			]);
+		});
+	});
+
+	describe("before_agent_start section edge cases", () => {
+		it("survives a frozen sections object and skips sections already on the base options", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_agent_start", async (event) => {
+						event.systemPromptOptions.sections = Object.freeze({ "Bad Name": "dropped", fresh: "new" });
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-frozen.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			// The base prompt already contains its own sections; the runner must not append them a second time.
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, "base", {
+				cwd: tempDir,
+				sections: { base_only: "rendered by buildSystemPrompt" },
+			});
+
+			expect(combined?.systemPrompt).toBe("base\n\n<fresh>\nnew\n</fresh>");
+			expect(errors).toEqual([
+				`Invalid system prompt section "Bad Name": names match /^[a-z][a-z0-9_-]*$/ (not "preamble") and content is a string`,
 			]);
 		});
 	});

@@ -46,6 +46,17 @@ const thirdPartyRunLastExtension: ExtensionFactory = (pi) => {
 	});
 };
 
+/** Loads after the MCP builtin and adds a section instead of returning a prompt (senpi#3579). */
+const sectionExtension: ExtensionFactory = (pi) => {
+	pi.on(
+		"before_agent_start",
+		(event) => {
+			event.systemPromptOptions.sections.later_section = "section body";
+		},
+		{ previewSafe: true },
+	);
+};
+
 const LATER_STABLE_BLOCK = "<later-stable-block>same in every session</later-stable-block>";
 
 /** Loads after the MCP builtin and declares its block stable, like a harness-rules extension. */
@@ -120,6 +131,34 @@ describe("MCP instructions are the last system-prompt block (senpi#4448)", () =>
 			expect(systemPrompt.indexOf(LATER_BLOCK)).toBeLessThan(systemPrompt.indexOf(RUN_LAST_BLOCK));
 			expect(systemPrompt.indexOf(RUN_LAST_BLOCK)).toBeGreaterThan(-1);
 			expect(systemPrompt.indexOf(RUN_LAST_BLOCK)).toBeLessThan(mcpAt);
+			expect(systemPrompt.endsWith("</mcp_instructions>")).toBe(true);
+		}
+	});
+
+	it("puts a section added by a later extension before <mcp_instructions>, on a real turn and a preview", async () => {
+		// Given: the MCP builtin and a later extension that only adds a before_agent_start section.
+		const harness = await startHarness([sectionExtension]);
+
+		// When: a turn goes out, and the host composes a preview.
+		let turnPrompt = "";
+		harness.setResponses([
+			(context) => {
+				turnPrompt = getCurrentSystemPrompt(context.messages);
+				return fauxAssistantMessage("done");
+			},
+		]);
+		await harness.session.prompt("capture prompt");
+		const preview = await harness
+			.getExtensionRunner()
+			.emitBeforeAgentStart("", undefined, "BASE", { cwd: process.cwd() } as BuildSystemPromptOptions, {
+				preview: true,
+			});
+
+		// Then: the section block is in both prompts, ahead of the MCP instructions that still close them.
+		for (const systemPrompt of [turnPrompt, preview?.systemPrompt ?? ""]) {
+			const sectionAt = systemPrompt.indexOf("<later_section>\nsection body\n</later_section>");
+			expect(sectionAt).toBeGreaterThan(-1);
+			expect(sectionAt).toBeLessThan(systemPrompt.indexOf('<mcp_instructions server="fx">'));
 			expect(systemPrompt.endsWith("</mcp_instructions>")).toBe(true);
 		}
 	});
