@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readlinkSync, type Stats, symlinkSync, unlinkSync } from "node:fs";
-import { lstat, mkdir, rm, unlink } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { logoutClaudeCli } from "./claude-cli-auth-status.ts";
@@ -35,6 +35,27 @@ export function isValidAccountDirId(dirId: string): boolean {
 export function accountDirFor(agentDir: string, dirId: string): string {
 	if (!isValidAccountDirId(dirId)) throw new Error("Invalid Claude account dir id");
 	return join(agentDir, "anthropic-subscription-claude", dirId);
+}
+
+/**
+ * The access token the claude CLI keeps for an account dir, as it stands: read only, never refreshed (senpi#4436).
+ * Undefined when the credential file is missing, unreadable, malformed or already expired; the CLI renews it on
+ * its next turn.
+ */
+export async function readClaudeCliAccessToken(accountDir: string, now: number): Promise<string | undefined> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(await readFile(join(accountDir, ".credentials.json"), "utf8"));
+	} catch {
+		return undefined;
+	}
+	const oauth =
+		typeof parsed === "object" && parsed !== null ? (parsed as { claudeAiOauth?: unknown }).claudeAiOauth : undefined;
+	if (typeof oauth !== "object" || oauth === null) return undefined;
+	const { accessToken, expiresAt } = oauth as { accessToken?: unknown; expiresAt?: unknown };
+	if (typeof accessToken !== "string" || accessToken === "") return undefined;
+	if (typeof expiresAt === "number" && expiresAt <= now) return undefined;
+	return accessToken;
 }
 
 /** The root the accounts share: an inherited `CLAUDE_CONFIG_DIR`, else `~/.claude`. */

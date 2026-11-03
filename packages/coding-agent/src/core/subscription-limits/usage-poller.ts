@@ -165,6 +165,7 @@ export function startSubscriptionUsagePolling(options: {
 				store: storage,
 				env: (name) => process.env[name],
 				now: Date.now,
+				agentDir: options.agentDir,
 			}),
 		fetch: fetchUsageJson,
 		now: Date.now,
