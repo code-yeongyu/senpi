@@ -210,7 +210,7 @@ export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 		"a stalled or long lane in A does not starve B: B is delivered within a bounded number of A's frames",
 	),
 	transportCase(
-		"MULTI-FAIR-02",
+		"MULTI-FAIR-03",
 		MULTI_CASES_IMPL,
 		"a frame lost on one lane is resent on that lane's own deadline: another lane's ACK progress never postpones it",
 	),
