@@ -134,7 +134,7 @@
        "type": "function",
        "function": {
         "name": "todo",
-        "description": "**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no \"task-1\"/\"task-N\" exists. Pass the content text in the task field.**\n\nOn each completion the earliest still-open task (in phase order) auto-promotes to in_progress.\nCompleting tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.\n\n## Operations\n\n| op | Required fields | Effect |\n|---|---|---|\n| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing) |\n| init | items: string[] | Flattened single-phase init |\n| start | task | Mark in progress |\n| done | task or phase | Mark completed |\n| drop | task or phase | Mark abandoned |\n| rm | task or phase (optional) | Remove task or phase; omit both to clear |\n| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |\n| view | - | Read-only: echo list |\n\nExample: {\"op\":\"init\",\"list\":[{\"phase\":\"Setup\",\"items\":[\"Survey code\",\"Write tests\"]}]}\n\n## Anatomy\n- **Task content**: 5–10 words; what, not how. Unique identifier.\n- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.\n\n## Rules\n- Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.\n- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.\n- Blocked? append a task to the active phase, or drop.\n- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.\n\n## When to create a list\n- User explicitly requests one\n- User provides a set of tasks\n- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect\n\n<critical>\nUser hands you a multi-step plan (phased todo, numbered/bulleted checklist, or \"N bugs/items/tasks\"):\n- You MUST init the list with EVERY item as its own task before working.\n- Enumerate all; NEVER summarize into fewer tasks, sample \"the important ones\", drop items, or track the rest from memory.\n</critical>",
+        "description": "**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no \"task-1\"/\"task-N\" exists. Pass the content text in the task field.**\n\nOn each completion the earliest still-open task (in phase order) auto-promotes to in_progress.\nCompleting tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.\n\n## Operations\n\n| op | Required fields | Effect |\n|---|---|---|\n| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing). Each list entry is exactly one phase; items holds only task strings |\n| init | items: string[] | Flattened single-phase init |\n| start | task | Mark in progress |\n| done | task or phase | Mark completed |\n| drop | task or phase | Mark abandoned |\n| rm | task or phase (optional) | Remove task or phase; omit both to clear |\n| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |\n| view | - | Read-only: echo list |\n\nExample: {\"op\":\"init\",\"list\":[{\"phase\":\"Setup\",\"items\":[\"Survey code\",\"Write tests\"]}]}\n\n## Anatomy\n- **Task content**: 5–10 words; what, not how. Unique identifier.\n- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.\n\n## Rules\n- Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.\n- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.\n- Blocked? append a task to the active phase, or drop.\n- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.\n\n## When to create a list\n- User explicitly requests one\n- User provides a set of tasks\n- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect\n\n<critical>\nUser hands you a multi-step plan (phased todo, numbered/bulleted checklist, or \"N bugs/items/tasks\"):\n- You MUST init the list with EVERY item as its own task before working.\n- Enumerate all; NEVER summarize into fewer tasks, sample \"the important ones\", drop items, or track the rest from memory.\n</critical>",
         "parameters": {
          "type": "object",
          "properties": {
@@ -277,6 +277,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -805,7 +809,7 @@
        "type": "function",
        "function": {
         "name": "todo",
-        "description": "**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no \"task-1\"/\"task-N\" exists. Pass the content text in the task field.**\n\nOn each completion the earliest still-open task (in phase order) auto-promotes to in_progress.\nCompleting tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.\n\n## Operations\n\n| op | Required fields | Effect |\n|---|---|---|\n| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing) |\n| init | items: string[] | Flattened single-phase init |\n| start | task | Mark in progress |\n| done | task or phase | Mark completed |\n| drop | task or phase | Mark abandoned |\n| rm | task or phase (optional) | Remove task or phase; omit both to clear |\n| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |\n| view | - | Read-only: echo list |\n\nExample: {\"op\":\"init\",\"list\":[{\"phase\":\"Setup\",\"items\":[\"Survey code\",\"Write tests\"]}]}\n\n## Anatomy\n- **Task content**: 5–10 words; what, not how. Unique identifier.\n- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.\n\n## Rules\n- Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.\n- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.\n- Blocked? append a task to the active phase, or drop.\n- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.\n\n## When to create a list\n- User explicitly requests one\n- User provides a set of tasks\n- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect\n\n<critical>\nUser hands you a multi-step plan (phased todo, numbered/bulleted checklist, or \"N bugs/items/tasks\"):\n- You MUST init the list with EVERY item as its own task before working.\n- Enumerate all; NEVER summarize into fewer tasks, sample \"the important ones\", drop items, or track the rest from memory.\n</critical>",
+        "description": "**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no \"task-1\"/\"task-N\" exists. Pass the content text in the task field.**\n\nOn each completion the earliest still-open task (in phase order) auto-promotes to in_progress.\nCompleting tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.\n\n## Operations\n\n| op | Required fields | Effect |\n|---|---|---|\n| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing). Each list entry is exactly one phase; items holds only task strings |\n| init | items: string[] | Flattened single-phase init |\n| start | task | Mark in progress |\n| done | task or phase | Mark completed |\n| drop | task or phase | Mark abandoned |\n| rm | task or phase (optional) | Remove task or phase; omit both to clear |\n| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |\n| view | - | Read-only: echo list |\n\nExample: {\"op\":\"init\",\"list\":[{\"phase\":\"Setup\",\"items\":[\"Survey code\",\"Write tests\"]}]}\n\n## Anatomy\n- **Task content**: 5–10 words; what, not how. Unique identifier.\n- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.\n\n## Rules\n- Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.\n- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.\n- Blocked? append a task to the active phase, or drop.\n- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.\n\n## When to create a list\n- User explicitly requests one\n- User provides a set of tasks\n- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect\n\n<critical>\nUser hands you a multi-step plan (phased todo, numbered/bulleted checklist, or \"N bugs/items/tasks\"):\n- You MUST init the list with EVERY item as its own task before working.\n- Enumerate all; NEVER summarize into fewer tasks, sample \"the important ones\", drop items, or track the rest from memory.\n</critical>",
         "parameters": {
          "type": "object",
          "properties": {
@@ -948,6 +952,10 @@
             "type": "string"
            },
            "description": "Never include search results from these domains"
+          },
+          "max_results": {
+           "type": "integer",
+           "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
           }
          },
          "additionalProperties": false
@@ -1418,7 +1426,7 @@
      "type": "function",
      "function": {
       "name": "todo",
-      "description": "**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no \"task-1\"/\"task-N\" exists. Pass the content text in the task field.**\n\nOn each completion the earliest still-open task (in phase order) auto-promotes to in_progress.\nCompleting tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.\n\n## Operations\n\n| op | Required fields | Effect |\n|---|---|---|\n| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing) |\n| init | items: string[] | Flattened single-phase init |\n| start | task | Mark in progress |\n| done | task or phase | Mark completed |\n| drop | task or phase | Mark abandoned |\n| rm | task or phase (optional) | Remove task or phase; omit both to clear |\n| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |\n| view | - | Read-only: echo list |\n\nExample: {\"op\":\"init\",\"list\":[{\"phase\":\"Setup\",\"items\":[\"Survey code\",\"Write tests\"]}]}\n\n## Anatomy\n- **Task content**: 5–10 words; what, not how. Unique identifier.\n- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.\n\n## Rules\n- Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.\n- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.\n- Blocked? append a task to the active phase, or drop.\n- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.\n\n## When to create a list\n- User explicitly requests one\n- User provides a set of tasks\n- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect\n\n<critical>\nUser hands you a multi-step plan (phased todo, numbered/bulleted checklist, or \"N bugs/items/tasks\"):\n- You MUST init the list with EVERY item as its own task before working.\n- Enumerate all; NEVER summarize into fewer tasks, sample \"the important ones\", drop items, or track the rest from memory.\n</critical>",
+      "description": "**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no \"task-1\"/\"task-N\" exists. Pass the content text in the task field.**\n\nOn each completion the earliest still-open task (in phase order) auto-promotes to in_progress.\nCompleting tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.\n\n## Operations\n\n| op | Required fields | Effect |\n|---|---|---|\n| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing). Each list entry is exactly one phase; items holds only task strings |\n| init | items: string[] | Flattened single-phase init |\n| start | task | Mark in progress |\n| done | task or phase | Mark completed |\n| drop | task or phase | Mark abandoned |\n| rm | task or phase (optional) | Remove task or phase; omit both to clear |\n| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |\n| view | - | Read-only: echo list |\n\nExample: {\"op\":\"init\",\"list\":[{\"phase\":\"Setup\",\"items\":[\"Survey code\",\"Write tests\"]}]}\n\n## Anatomy\n- **Task content**: 5–10 words; what, not how. Unique identifier.\n- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.\n\n## Rules\n- Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.\n- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.\n- Blocked? append a task to the active phase, or drop.\n- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.\n\n## When to create a list\n- User explicitly requests one\n- User provides a set of tasks\n- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect\n\n<critical>\nUser hands you a multi-step plan (phased todo, numbered/bulleted checklist, or \"N bugs/items/tasks\"):\n- You MUST init the list with EVERY item as its own task before working.\n- Enumerate all; NEVER summarize into fewer tasks, sample \"the important ones\", drop items, or track the rest from memory.\n</critical>",
       "parameters": {
        "type": "object",
        "properties": {
@@ -1561,6 +1569,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -2015,7 +2027,7 @@
      "type": "function",
      "function": {
       "name": "todo",
-      "description": "**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no \"task-1\"/\"task-N\" exists. Pass the content text in the task field.**\n\nOn each completion the earliest still-open task (in phase order) auto-promotes to in_progress.\nCompleting tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.\n\n## Operations\n\n| op | Required fields | Effect |\n|---|---|---|\n| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing) |\n| init | items: string[] | Flattened single-phase init |\n| start | task | Mark in progress |\n| done | task or phase | Mark completed |\n| drop | task or phase | Mark abandoned |\n| rm | task or phase (optional) | Remove task or phase; omit both to clear |\n| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |\n| view | - | Read-only: echo list |\n\nExample: {\"op\":\"init\",\"list\":[{\"phase\":\"Setup\",\"items\":[\"Survey code\",\"Write tests\"]}]}\n\n## Anatomy\n- **Task content**: 5–10 words; what, not how. Unique identifier.\n- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.\n\n## Rules\n- Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.\n- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.\n- Blocked? append a task to the active phase, or drop.\n- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.\n\n## When to create a list\n- User explicitly requests one\n- User provides a set of tasks\n- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect\n\n<critical>\nUser hands you a multi-step plan (phased todo, numbered/bulleted checklist, or \"N bugs/items/tasks\"):\n- You MUST init the list with EVERY item as its own task before working.\n- Enumerate all; NEVER summarize into fewer tasks, sample \"the important ones\", drop items, or track the rest from memory.\n</critical>",
+      "description": "**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no \"task-1\"/\"task-N\" exists. Pass the content text in the task field.**\n\nOn each completion the earliest still-open task (in phase order) auto-promotes to in_progress.\nCompleting tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.\n\n## Operations\n\n| op | Required fields | Effect |\n|---|---|---|\n| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing). Each list entry is exactly one phase; items holds only task strings |\n| init | items: string[] | Flattened single-phase init |\n| start | task | Mark in progress |\n| done | task or phase | Mark completed |\n| drop | task or phase | Mark abandoned |\n| rm | task or phase (optional) | Remove task or phase; omit both to clear |\n| append | phase?, items: string[] | Append tasks to phase; lazily creates phase |\n| view | - | Read-only: echo list |\n\nExample: {\"op\":\"init\",\"list\":[{\"phase\":\"Setup\",\"items\":[\"Survey code\",\"Write tests\"]}]}\n\n## Anatomy\n- **Task content**: 5–10 words; what, not how. Unique identifier.\n- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.\n\n## Rules\n- Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.\n- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.\n- Blocked? append a task to the active phase, or drop.\n- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.\n\n## When to create a list\n- User explicitly requests one\n- User provides a set of tasks\n- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect\n\n<critical>\nUser hands you a multi-step plan (phased todo, numbered/bulleted checklist, or \"N bugs/items/tasks\"):\n- You MUST init the list with EVERY item as its own task before working.\n- Enumerate all; NEVER summarize into fewer tasks, sample \"the important ones\", drop items, or track the rest from memory.\n</critical>",
       "parameters": {
        "type": "object",
        "properties": {
@@ -2158,6 +2170,10 @@
           "type": "string"
          },
          "description": "Never include search results from these domains"
+        },
+        "max_results": {
+         "type": "integer",
+         "description": "Maximum number of results to return, 1-50. Outranks a websearch.json entry's maxResults for this call; values outside the range are clamped."
         }
        },
        "additionalProperties": false
@@ -3226,10 +3242,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:5>",
       "phase": "start",
-      "statusMessage": "running hooks"
+      "statusMessage": "running kill-guard"
      },
      {
       "type": "tool_hook_status",
@@ -3237,10 +3253,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:6>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": "running kill-guard",
       "completedAt": "<ts:events.completedAt:3>",
       "status": "completed"
      },
@@ -3250,10 +3266,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:7>",
       "phase": "start",
-      "statusMessage": "matching project rules"
+      "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
@@ -3261,10 +3277,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:8>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:4>",
       "status": "completed"
      },
@@ -3274,10 +3290,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:9>",
       "phase": "start",
-      "statusMessage": "applying bash timeout"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -3285,10 +3301,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:10>",
       "phase": "end",
-      "statusMessage": "applying bash timeout",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:5>",
       "status": "completed"
      },
@@ -3298,10 +3314,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:11>",
       "phase": "start",
-      "statusMessage": "running terminal"
+      "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
@@ -3309,10 +3325,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:12>",
       "phase": "end",
-      "statusMessage": "running terminal",
+      "statusMessage": "applying bash timeout",
       "completedAt": "<ts:events.completedAt:6>",
       "status": "completed"
      },
@@ -3322,10 +3338,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:13>",
       "phase": "start",
-      "statusMessage": "checking compaction state"
+      "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
@@ -3333,10 +3349,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:14>",
       "phase": "end",
-      "statusMessage": "checking compaction state",
+      "statusMessage": "running terminal",
       "completedAt": "<ts:events.completedAt:7>",
       "status": "completed"
      },
@@ -3346,10 +3362,10 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:15>",
       "phase": "start",
-      "statusMessage": "running mcp"
+      "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
@@ -3357,11 +3373,35 @@
       "hookName": "PreToolUse",
       "toolName": "eq_write",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:16>",
       "phase": "end",
-      "statusMessage": "running mcp",
+      "statusMessage": "checking compaction state",
       "completedAt": "<ts:events.completedAt:8>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call_killed:PreToolUse:8",
+      "hookName": "PreToolUse",
+      "toolName": "eq_write",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:mcp>",
+      "startedAt": "<ts:events.startedAt:17>",
+      "phase": "start",
+      "statusMessage": "running mcp"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call_killed:PreToolUse:8",
+      "hookName": "PreToolUse",
+      "toolName": "eq_write",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:mcp>",
+      "startedAt": "<ts:events.startedAt:18>",
+      "phase": "end",
+      "statusMessage": "running mcp",
+      "completedAt": "<ts:events.completedAt:9>",
       "status": "completed"
      }
     ],
