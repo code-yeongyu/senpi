@@ -16,6 +16,7 @@ import {
 	toStoreValue,
 } from "./executor-freeze.ts";
 import type {
+	ConsentReply,
 	PreparedExecutor,
 	PreparedExecutorOptions,
 	PrepareReply,
@@ -201,7 +202,10 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		return reply;
 	}
 
+	const consent = async (): Promise<ConsentReply> => ({ kind: "refused", reason: "not_implemented" });
+
 	return {
+		consent,
 		prepare: (request) => {
 			const { name, arguments: args, incomplete, errorMessage } = request.call;
 			const requestDigest = digestOf(toStoreValue({ name, args, incomplete, errorMessage }));

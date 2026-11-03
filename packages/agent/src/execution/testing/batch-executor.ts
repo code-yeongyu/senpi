@@ -11,6 +11,14 @@ export type PausePoint = "hook" | "dispatch" | "body";
 /** What the scripted `tool_call` chain decides for a tool name; unknown names are allowed. */
 const BATCH_TOOLS: Readonly<Record<string, StoppedReply["kind"]>> = { deny: "blocked", stop: "batch_abort" };
 
+/**
+ * Tools whose body needs consent (design 5.6.1). `gated`'s shim changes the call, so its frozen call always differs
+ * from the raw one; `ask`'s shim keeps it, so a Gate A approval of the raw digest also covers the frozen call.
+ */
+export const CONSENT_TOOLS: ReadonlySet<string> = new Set(["gated", "ask"]);
+const frozenDigestOf = (name: string, requestDigest: string): string =>
+	name === "ask" ? requestDigest : `${requestDigest}:frozen`;
+
 export interface ExecutorOpenOptions {
 	readonly id: string;
 	/** The executor's own durable store, already claimed at `epoch`. */
@@ -89,6 +97,8 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 				return stopped ?? { kind: "settled", outcome: progress.outcome };
 			}
 			if (!("call" in progress)) throw new Error(`no stored prepare reply in state ${progress.state}`);
+			if (progress.state === "prepared_awaiting_consent")
+				return { kind: "prepared_awaiting_consent", frozenDigest: progress.call.digest };
 			return { kind: "prepared", frozenDigest: progress.call.digest };
 		};
 		const settled = async (ref: ExecutionRef): Promise<SettleReply> => {
@@ -125,8 +135,9 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 				const block: ExecutionEvent = { kind: "block", value: { kind: decision, name: call.name } };
 				return stored(expectEntry(await apply(request, block, id), "block"));
 			}
-			const frozen = { ...call, digest: `${requestDigest}:frozen` };
-			const freeze: ExecutionEvent = { kind: "freeze", call: frozen, awaitingConsent: false };
+			const frozen = { ...call, digest: frozenDigestOf(call.name, requestDigest) };
+			const awaitingConsent = CONSENT_TOOLS.has(call.name) && request.authorizedDigest !== frozen.digest;
+			const freeze: ExecutionEvent = { kind: "freeze", call: frozen, awaitingConsent };
 			return stored(expectEntry(await apply(request, freeze, id), "freeze"));
 		};
 
@@ -155,6 +166,18 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 			return settled(ref);
 		};
 
+		const consent = async (ref: ExecutionRef, frozenDigest: string) => {
+			const entry = await ledger.read(keyOf(ref));
+			if (entry === undefined) return { kind: "unknown_execution" } as const;
+			if ("call" in entry.progress && entry.progress.call.digest !== frozenDigest)
+				throw new Error(`consent for ${ref.executionId} names another frozen call`);
+			const reply = await apply(ref, { kind: "consent" }, ref.issuer);
+			if (reply.status === "refused" && reply.reason !== "terminal" && reply.reason !== "invalid_transition")
+				throw new Error(`consent refused: ${reply.reason}`);
+			const after = await ledger.read(keyOf(ref));
+			return after?.progress.state === "prepared" ? ({ kind: "prepared" } as const) : settled(ref);
+		};
+
 		const once = <A extends ExecutionRef, R>(run: (input: A) => Promise<R>) => {
 			const inflight = new Map<string, Promise<R>>();
 			return (input: A): Promise<R> => {
@@ -167,6 +190,14 @@ export const referenceBatchExecutor: BatchExecutorConformanceAdapter = {
 				return started;
 			};
 		};
-		return { prepare: once(prepare), release: once(release), abort: once(abort) };
+		return {
+			prepare: once(prepare),
+			release: once(release),
+			abort: once(abort),
+			consent: (ref, frozenDigest) => {
+				alive();
+				return consent(ref, frozenDigest);
+			},
+		};
 	},
 };
