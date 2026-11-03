@@ -1,21 +1,21 @@
 {
  "repo": {
-  "head": "065143ea1759315cf08b3c0b38cacf306cdb3d07",
+  "head": "39eb164be5681ad97179f08180650aca9e6efaf8",
   "dirty": false
  },
  "platform": "linux-x64",
  "runtimes": {
-  "harness": "node@24.21.0",
+  "harness": "node@24.22.0",
   "child": "bun@1.4.4"
  },
  "hashes": {
-  "harness": "sha256:47f3ad25138154aaaf214bbb979f0613d47215591380b67d0b86dfa0ad506ec2",
+  "harness": "sha256:5fe3134997505314cb3372731a034e9300acd49e50a95bfefbe0ebe6a79bdf60",
   "normalizer": "sha256:84514c2fcc12276a4ff77acbbee2903ab61a040de09f87bf7650ca74d1c5fa7e",
   "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
-  "cases": "sha256:0e66f4c361bd3708ff028a8314e1c1a6e528c2db261c573bdbfb8c508fbc23b5",
+  "cases": "sha256:ca4b96a7ac956e725e9dfcbb58d1b6ec057012828b6ee1105b3b122f37e46b92",
   "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --cases E01,E02,E03,E04,E05,E06,E07,E08,E09,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E26,E27,E30 --leave-unrecorded E29 --evidence eq-5342-record",
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --repeat 3 --pipeline legacy --placement fused --evidence eq5692-linux-rec2",
  "hostPin": {
   "cpuModel": "EQ-Synthetic CPU",
   "cores": 997,

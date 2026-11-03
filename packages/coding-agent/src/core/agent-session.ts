@@ -115,6 +115,7 @@ import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
+import { BridgedCallKeys } from "./session-call-keys.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
 import {
@@ -152,7 +153,7 @@ import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
-import type { DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, FullToolPrompt } from "./dynamic-prompt/build.ts";
 import {
 	type BuildDynamicSystemPromptOptions,
 	buildDynamicSystemPrompt,
@@ -271,7 +272,6 @@ import {
 	type TreePreparation,
 	type TurnStartEvent,
 } from "./extensions/index.ts";
-import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
@@ -442,6 +442,7 @@ import {
 	type ToolDefinitionEntry,
 } from "./runtime/bootstrap.ts";
 import type { SourceInfo } from "./source-info.ts";
+import { toolInfoOf } from "./tool-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
@@ -1477,6 +1478,8 @@ export class AgentSession {
 	private readonly _writtenTicketEntries = new Map<string, string>();
 	/** How many sends that joined each ticket's queued message are still in flight. */
 	private readonly _carrierJoiners = new Map<string, number>();
+	/** Call keys minted with a bridge-started call's execution start (RULING-127 (b), senpi#5374). */
+	private readonly _bridgedCallKeys = new BridgedCallKeys();
 	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
@@ -1647,6 +1650,8 @@ export class AgentSession {
 
 	private _sessionTitleAbortController: AbortController | undefined = undefined;
 	private _sessionTitlePromise: Promise<void> | undefined = undefined;
+	/** The prompt text the running prompt's run titles the session with when it settles (senpi#5382). */
+	private _pendingSessionTitlePrompt: string | undefined = undefined;
 	private readonly _autoTitleSessions: boolean;
 
 	// Retry state
@@ -1787,6 +1792,7 @@ export class AgentSession {
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
+	private _toolFullPromptGuidelines: Map<string, string[]> = new Map();
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
@@ -2240,7 +2246,11 @@ export class AgentSession {
 					this._modelRuntime.hasConfiguredAuth(model.provider),
 			);
 		if (available) return available;
-		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.accountError(sessionModel.provider));
+		throw new AccountUsageLimitError(
+			sessionModel.provider,
+			this._retryFallback.accountError(sessionModel.provider),
+			this._retryFallback.accountResetAt(sessionModel.provider),
+		);
 	}
 
 	private _logCompactionModelFallback(
@@ -3934,6 +3944,15 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
+		// The retry handler answers an account limit only with the fallback walk, and that walk skips
+		// every rung on the spent provider. Announcing a retry it will not start leaves an RPC client
+		// waiting for a terminal agent_end until the account resets (omo#9711).
+		if (
+			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
+			usageLimitScope(lastAssistant.errorMessage) === "account"
+		) {
+			return this._retryFallback.canTryFallback(lastAssistant.provider);
+		}
 		if (isCursorZeroTokenResourceExhausted(lastAssistant)) {
 			return true;
 		}
@@ -4067,6 +4086,7 @@ export class AgentSession {
 			}
 		}
 		this._recoveryIdentity?.hint(event, consumedEntry);
+		this._bridgedCallKeys.observe(event);
 		this._emit(carryRecovery(event, sessionEvent), event);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
@@ -4108,6 +4128,7 @@ export class AgentSession {
 					entryId = this.sessionManager.appendOwnedMessage(event.message, {
 						inputSource: this._userInputSources.get(event.message),
 						recoveryOwner: recoveryCarrier(event),
+						...(event.message.role === "assistant" ? { bridgedCalls: this._bridgedCallKeys.take() } : {}),
 					});
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
@@ -4193,7 +4214,11 @@ export class AgentSession {
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
-				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, { errorMessage: msg.errorMessage });
+				// Keep the provider's retry-after: without it this re-note replaced a stated reset with a guess (senpi#5568).
+				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, {
+					errorMessage: msg.errorMessage,
+					retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
+				});
 			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
@@ -4365,6 +4390,8 @@ export class AgentSession {
 
 		if (event.type === "agent_end") {
 			this._flushPendingBashMessages();
+			// Before the continuation decision, so input sent while the title is pending still continues this run.
+			await this._settleSessionTitle();
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
@@ -5201,19 +5228,7 @@ export class AgentSession {
 	 * Get all configured tools with normalized exposure metadata and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolDefinitions.values()).map(({ definition, sourceInfo }) => ({
-			name: definition.name,
-			label: definition.label,
-			description: definition.description,
-			parameters: definition.parameters,
-			promptGuidelines: definition.promptGuidelines,
-			kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
-			permissionParser: definition.permissionParser,
-			...(definition.namespace ? { namespace: definition.namespace } : {}),
-			...(definition.annotations ? { annotations: { ...definition.annotations } } : {}),
-			sourceInfo,
-			...normalizeToolExposure(definition),
-		}));
+		return Array.from(this._toolDefinitions.values(), toolInfoOf);
 	}
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
@@ -5701,8 +5716,11 @@ export class AgentSession {
 		];
 		const toolSnippets: Record<string, string> = {};
 		const promptGuidelines: string[] = [];
+		// What the full shared sections list (senpi#5665): every snippet, and each tool's full guidelines.
+		const fullToolPrompt: FullToolPrompt = { toolSnippets: {}, promptGuidelines: [] };
 		for (const name of contributingToolNames) {
 			const snippet = this._toolPromptSnippets.get(name);
+			if (snippet) fullToolPrompt.toolSnippets[name] = snippet;
 			// A model-facing tool whose schema description the model already reads gets no snippet line;
 			// withheld eval-only tools keep theirs (senpi#5335).
 			const describedToModel =
@@ -5715,6 +5733,8 @@ export class AgentSession {
 			if (toolGuidelines) {
 				promptGuidelines.push(...toolGuidelines);
 			}
+			const fullGuidelines = this._toolFullPromptGuidelines.get(name) ?? toolGuidelines;
+			if (fullGuidelines) fullToolPrompt.promptGuidelines.push(...fullGuidelines);
 		}
 
 		const loadedSkills = this._resourceLoader.getSkills().skills;
@@ -5729,6 +5749,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			fullToolPrompt,
 			surface: this._promptSurface ?? resolvePromptSurface(process.env),
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
@@ -6108,13 +6129,24 @@ export class AgentSession {
 			try {
 				await this._maybeRestoreFallbackPrimary();
 				const model = this.model;
-				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
+				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+				if (
+					model &&
+					!this._pendingModelSwitch &&
+					this._retryFallback.isProviderSpent(model.provider) &&
+					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
+				) {
 					this._retryFallback.resetTurn();
 					this._fallbackTurnFailures = [];
 					const errorMessage = this._retryFallback.accountError(model.provider);
 					// Routing around a remembered failure did not observe another provider failure.
 					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
-						throw new AccountUsageLimitError(model.provider, errorMessage);
+						throw new AccountUsageLimitError(
+							model.provider,
+							errorMessage,
+							this._retryFallback.accountResetAt(model.provider),
+						);
 					}
 				}
 			} catch (error) {
@@ -6494,12 +6526,14 @@ export class AgentSession {
 			if (options?.thinkingLevel !== undefined) {
 				this.setSessionThinkingLevel(options.thinkingLevel);
 			}
+			this._pendingSessionTitlePrompt = titlePrompt;
 			await this._promptAgent(messages, {
 				inputOrigin: originOf(options),
 				onQueuedInput: options?.onQueuedInput,
 				onTurnAdmitted: options?.onTurnAdmitted,
 			});
 		} catch (error) {
+			this._pendingSessionTitlePrompt = undefined;
 			// A turn the engine refused never ran, so it releases the barrier it armed (senpi#4106).
 			if (options?.toolBarrier && !this._isAgentRunActive) this._toolBarrier.release(options.toolBarrier.id);
 			throw error;
@@ -6517,9 +6551,8 @@ export class AgentSession {
 		} else {
 			await this.agent.waitForIdle();
 		}
-		if (titlePrompt !== undefined) {
-			this._startSessionTitleGeneration(titlePrompt);
-		}
+		// A run that settled without its agent_end (a cancelled retry) or was aborted is not titled; the next prompt is.
+		this._pendingSessionTitlePrompt = undefined;
 	}
 
 	/** Apply before_agent_start additions and reset any prior turn's system-prompt override. */
@@ -6873,6 +6906,20 @@ export class AgentSession {
 				this._sessionTitlePromise = undefined;
 			}
 		}
+	}
+
+	/**
+	 * The auto-title is part of the `agent_end` of the run that asked for it: requested after that run's last model
+	 * response and awaited before `agent_settled` and `agent_idle`. Its `session_info_changed` therefore has one place in
+	 * the stream (after `agent_end`, before the settle), ahead of anything a host or background job does once the session
+	 * is idle. Started at network-reply time it raced those inputs (senpi#5382). An abort drops it (`_abortWithProvenance`).
+	 */
+	private async _settleSessionTitle(): Promise<void> {
+		const firstPrompt = this._pendingSessionTitlePrompt;
+		this._pendingSessionTitlePrompt = undefined;
+		if (firstPrompt === undefined) return;
+		this._startSessionTitleGeneration(firstPrompt);
+		await this._sessionTitlePromise;
 	}
 
 	private abortSessionTitleGeneration(): void {
@@ -8720,6 +8767,8 @@ export class AgentSession {
 		const shouldEmitAbort =
 			!joinedAgentEndBoundary && !wasMidRun && (hadRetryBackoff || hadCompactionOrPending || hadClearedQueues);
 		this.abortCompaction();
+		this._pendingSessionTitlePrompt = undefined;
+		this.abortSessionTitleGeneration();
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		await this._abortActiveAgentAndRetry("user");
@@ -12284,6 +12333,15 @@ export class AgentSession {
 				})
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
+		this._toolFullPromptGuidelines = new Map(
+			Array.from(definitionRegistry.values())
+				.map(({ definition }) =>
+					definition.fullPromptGuidelines === undefined
+						? undefined
+						: ([definition.name, this._normalizePromptGuidelines(definition.fullPromptGuidelines)] as const),
+				)
+				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
+		);
 		const wrappedExtensionTools = registry.extensionTools;
 		this._toolRegistry = registry.toolRegistry;
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
@@ -14283,7 +14341,7 @@ export class AgentSession {
 		// Re-chain parentIds to form a linear sequence
 		let prevId: string | null = null;
 		for (const entry of branchEntries) {
-			const linear = { ...entry, parentId: prevId };
+			const linear = { ...this.sessionManager.persistedEntry(entry), parentId: prevId };
 			lines.push(JSON.stringify(linear));
 			prevId = entry.id;
 		}
