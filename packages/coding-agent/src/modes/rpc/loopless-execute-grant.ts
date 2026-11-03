@@ -1,10 +1,12 @@
 /**
- * Who may run tool calls on a loopless runtime (senpi#5413). Until the remote tool executor runs the extensions'
- * `tool_call`/`tool_result` handlers (permission checks among them) for a tool-execution-only process, nothing in the
- * product may execute through a loopless runtime: the only allowed caller is the in-process test harness. Closed and
- * fail-closed: a runtime built without a grant this module issued refuses every call.
+ * Who may run tool calls on a loopless runtime (senpi#5413). Closed and fail-closed: a runtime built without a grant this
+ * module issued refuses every call. Two callers exist:
+ * - the in-process test harness, which runs tools directly;
+ * - the remote tool executor (S27a). A runtime built with its grant runs the extensions' `tool_call` handlers
+ *   (permission checks among them) before every call and the `tool_result` handlers after it; a `tool_call` handler
+ *   that blocks or throws stops the call before the tool runs.
  */
-const LOOPLESS_EXECUTE_CALLERS = ["in-process-test-harness"] as const;
+const LOOPLESS_EXECUTE_CALLERS = ["in-process-test-harness", "remote-tool-executor"] as const;
 
 export type LooplessExecuteCaller = (typeof LOOPLESS_EXECUTE_CALLERS)[number];
 
@@ -27,6 +29,18 @@ export function grantLooplessExecuteToTestHarness(): LooplessExecuteGrant {
 	const grant: LooplessExecuteGrant = Object.freeze({ caller: "in-process-test-harness" });
 	issued.add(grant);
 	return grant;
+}
+
+/** Issues the remote tool executor's grant: every call made with it runs the extensions' tool handlers. */
+export function grantLooplessExecuteToRemoteExecutor(): LooplessExecuteGrant {
+	const grant: LooplessExecuteGrant = Object.freeze({ caller: "remote-tool-executor" });
+	issued.add(grant);
+	return grant;
+}
+
+/** True when calls made with `grant` must run the extensions' `tool_call`/`tool_result` handlers. */
+export function looplessGrantRunsToolHandlers(grant: LooplessExecuteGrant | undefined): boolean {
+	return isLooplessExecuteGranted(grant) && grant?.caller === "remote-tool-executor";
 }
 
 /** True only for a grant this module issued to an allowed caller. */
