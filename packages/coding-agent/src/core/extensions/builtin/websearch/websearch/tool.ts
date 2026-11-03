@@ -96,6 +96,7 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 		description: "Search the web for current information and return source URLs for citation.",
 		promptSnippet: "Search the web for current information, documentation, news, or external facts.",
 		promptGuidelines: [WEB_SEARCH_CITE_GUIDELINE],
+		fullPromptGuidelines: ["After using web_search, cite relevant returned URLs in the final answer."],
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx: ExtensionContext) {
 			if (params.allowed_domains?.length && params.blocked_domains?.length) {

@@ -1,3 +1,4 @@
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type { Api, AssistantMessage, AssistantMessageEvent, Model, ProviderStreams } from "../types.ts";
 import { assistantEvents, pushAssistantProgress, setAssistantReader } from "../utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -6,6 +7,7 @@ import { describeReplacedInstall } from "../utils/provider-failure-description.t
 import { OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "../utils/retry.ts";
 
 function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMessage {
+	const providerDiagnostic = readProviderDiagnostic(error);
 	return {
 		role: "assistant",
 		content: [],
@@ -22,6 +24,7 @@ function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMe
 		},
 		stopReason: "error",
 		errorMessage: describeReplacedInstall(error) ?? (error instanceof Error ? error.message : String(error)),
+		...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
 		...(isOAuthRefreshUnavailableError(error)
 			? {
 					diagnostics: [

@@ -7237,7 +7237,8 @@
          "language": "js",
          "summary": "start the background waiter",
          "code": "const started = await tool.bash({ command: \"curl -s \\\"$EQ_BARRIER_ORIGIN/__barrier/wake-1\\\" && echo X6_WAKE_TAIL\", run_in_background: true });\nprint(started.text);"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -7274,7 +7275,7 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:3>",
+      "id": "<uuid:4>",
       "key": "wake-source:terminal-background-sessions",
       "source": "terminal-background-sessions",
       "kind": "background",
@@ -7370,7 +7371,7 @@
         {
          "name": "bash",
          "ok": true,
-         "callId": "js-<uuid:4>",
+         "callId": "js-<uuid:5>",
          "args": {
           "command": "curl -s \"$EQ_BARRIER_ORIGIN/__barrier/wake-1\" && echo X6_WAKE_TAIL",
           "run_in_background": true
@@ -7402,7 +7403,8 @@
       },
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -7502,7 +7504,7 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:3>",
+      "id": "<uuid:4>",
       "key": "wake-source:terminal-background-sessions",
       "source": "terminal-background-sessions",
       "kind": "background",
@@ -7569,8 +7571,8 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-terminal:notification:<uuid:6>",
+      "id": "<uuid:6>",
+      "key": "delivery:senpi-terminal:notification:<uuid:7>",
       "kind": "background",
       "state": "open",
       "sessionId": "<uuid:1>"
@@ -7599,7 +7601,7 @@
        "children": 0,
        "background": [
         {
-         "source": "delivery:senpi-terminal:notification:<uuid:6>",
+         "source": "delivery:senpi-terminal:notification:<uuid:7>",
          "activeCount": 1
         },
         {
@@ -7631,11 +7633,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-terminal:notification:<uuid:6>",
+      "id": "<uuid:6>",
+      "key": "delivery:senpi-terminal:notification:<uuid:7>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:7>",
+      "ticketId": "<uuid:8>",
       "sessionId": "<uuid:1>"
      },
      "id": "<id:21>",
@@ -7646,11 +7648,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-terminal:notification:<uuid:6>",
+      "id": "<uuid:6>",
+      "key": "delivery:senpi-terminal:notification:<uuid:7>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:7>",
+      "ticketId": "<uuid:8>",
       "payload": {
        "message": {
         "customType": "senpi-terminal:notification",
@@ -7695,14 +7697,14 @@
        "children": 0,
        "background": [
         {
-         "source": "delivery:senpi-terminal:notification:<uuid:6>",
+         "source": "delivery:senpi-terminal:notification:<uuid:7>",
          "activeCount": 1
         }
        ],
        "human": []
       },
       "holds": [],
-      "runId": "<uuid:8>",
+      "runId": "<uuid:9>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
@@ -7720,7 +7722,7 @@
      "content": "<system-reminder>Background terminal session <id:11> finished: completed (exit code 0).\nFinal output:\n{\"released\":true}X6_WAKE_TAIL</system-reminder>",
      "display": false,
      "details": {
-      "ticketId": "<uuid:7>"
+      "ticketId": "<uuid:8>"
      },
      "id": "<id:25>",
      "parentId": "<id:24>",
@@ -7730,11 +7732,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-terminal:notification:<uuid:6>",
+      "id": "<uuid:6>",
+      "key": "delivery:senpi-terminal:notification:<uuid:7>",
       "kind": "background",
       "state": "consumed",
-      "ticketId": "<uuid:7>",
+      "ticketId": "<uuid:8>",
       "payload": {
        "message": {
         "customType": "senpi-terminal:notification",
@@ -7743,7 +7745,7 @@
        },
        "deliverAs": "steer"
       },
-      "runId": "<uuid:8>",
+      "runId": "<uuid:9>",
       "transcriptEntryId": "<id:25>",
       "sessionId": "<uuid:1>"
      },
@@ -7810,11 +7812,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-terminal:notification:<uuid:6>",
+      "id": "<uuid:6>",
+      "key": "delivery:senpi-terminal:notification:<uuid:7>",
       "kind": "background",
       "state": "settled",
-      "ticketId": "<uuid:7>",
+      "ticketId": "<uuid:8>",
       "payload": {
        "message": {
         "customType": "senpi-terminal:notification",
@@ -7823,7 +7825,7 @@
        },
        "deliverAs": "steer"
       },
-      "runId": "<uuid:8>",
+      "runId": "<uuid:9>",
       "transcriptEntryId": "<id:25>",
       "sessionId": "<uuid:1>"
      },
@@ -7853,7 +7855,7 @@
        "human": []
       },
       "holds": [],
-      "runId": "<uuid:8>",
+      "runId": "<uuid:9>",
       "completionId": "<uuid:1>:1",
       "completion": {
        "kind": "reply",

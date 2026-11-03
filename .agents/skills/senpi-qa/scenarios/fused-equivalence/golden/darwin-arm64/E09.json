@@ -3129,7 +3129,8 @@
          "path": "out/aborted.txt",
          "text": "call_abort\n",
          "barrier": "abort-1"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -3180,7 +3181,8 @@
       "details": {},
       "isError": true,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "custom",

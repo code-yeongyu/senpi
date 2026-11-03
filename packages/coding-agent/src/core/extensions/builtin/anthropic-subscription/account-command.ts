@@ -6,7 +6,6 @@ import { accountLimitsFor, describeAccountLimits } from "../../../subscription-l
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "../account-display-name.ts";
 import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
-import { emitProviderAccountsChanged } from "./account-events.ts";
 import {
 	ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 	pinProviderAccount,
@@ -201,7 +200,9 @@ async function addAccount(ctx: ExtensionCommandContext, deps: ClaudeAccountComma
 				receipt = committed;
 			},
 		});
-		emitProviderAccountsChanged(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+		// senpi#5116: ModelRuntime.login already emits accounts_changed (with
+		// the "login" remedy); a second emit here sent RPC clients a duplicate
+		// auth_accounts_changed event.
 		ctx.ui.notify("Anthropic Subscription account added.", "info");
 		await promptAccountDisplayName(ctx, receipt);
 	} catch (error) {
