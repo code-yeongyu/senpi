@@ -1,3 +1,39 @@
+## 2026-11-03 - Loopless worker entry in the release binaries (senpi#5438)
+
+### What changed
+
+- `scripts/build-binaries.sh`: both `bun build --compile` lines (Windows and the other platforms) add `./src/modes/rpc/loopless-worker.ts` after `./src/modes/rpc/session-worker.ts`.
+
+### Why
+
+- Release binaries must contain every worker entry the runtime can start; the loopless worker isolate is new (senpi#5413).
+
+### Why an extension could not handle it
+
+- This is the release binary build itself.
+
+### Expected merge conflict zones
+
+- LOW: the two compile lines, which other worker entries also extend.
+
+## 2026-10-30 - pi-ai ./models entry budget +3 (senpi#3975)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: `./models` budget 33 -> 36 for `provider-diagnostic.ts`, `utils/provider-diagnostic-vocabulary.ts` and `utils/provider-diagnostic-carrier.ts`, reached from `api/lazy.ts`.
+
+### Why
+
+- senpi#3975: `lazyStream` must keep a validated attached diagnostic.
+
+### Why an extension could not handle it
+
+- Repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` budget comment.
+
 ## 2026-10-27 - pi-ai models entry budget covers the login-id leaf (senpi#4099)
 
 ### What changed
