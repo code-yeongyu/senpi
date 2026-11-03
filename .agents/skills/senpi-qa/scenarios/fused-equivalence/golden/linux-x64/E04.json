@@ -5002,7 +5002,8 @@
         "name": "qa",
         "arguments": {
          "legacy": "42"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        },
        {
         "type": "toolCall",
@@ -5010,7 +5011,8 @@
         "name": "qa",
         "arguments": {
          "legacy": "7"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:1"
        }
       ],
       "api": "openai-completions",
@@ -5061,7 +5063,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -5081,7 +5084,8 @@
       "details": {},
       "isError": true,
       "timestamp": "<ts:message.timestamp:4>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:1"
     },
     {
      "type": "message",
