@@ -107,6 +107,9 @@ async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, s
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
 		...(options.memory === undefined ? {} : { memory: options.memory }),
 		...(options.kernelToolsEnabled === false ? { kernelToolsDisabled: true } : {}),
+		...(options.killGuard === undefined
+			? {}
+			: { killGuard: { moduleUrl: String(options.killGuard.moduleUrl), agentPid: options.killGuard.agentPid } }),
 	});
 	await ready;
 }

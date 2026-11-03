@@ -1,3 +1,59 @@
+## 2026-10-27 - One slot pick for the stream and auxiliary callers (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/session-slot.ts` (new): `pickRotationSlot` (pin, else affinity order with the user's account order) and `selectSessionSlot` (that pick over the stream's first-attempt candidates; when the stream would refuse it throws the stream's refusal).
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `streamWithCredentialRotation`'s `select` calls `pickRotationSlot`. `ModelRuntime.getSessionAuth` loads `selectSessionSlot` from `session-slot.ts` with a dynamic import next to the rotation stream.
+- `packages/coding-agent/src/core/credential-pool/failover.ts`: `attemptCandidates` (untried unblocked slots, else the cooling probe: the rate-limited slot due back first) and `noSlotsError` are extracted from `runCredentialFailover` and exported, so the stream and `selectSessionSlot` share one all-blocked rule.
+
+### Why
+
+- Auxiliary requests must authenticate as the account the session's turns use; sharing the pick keeps the two from drifting.
+
+### Why an extension could not handle it
+
+- Slot selection is internal to the credential pool.
+
+### Expected merge conflict zones
+
+- LOW: the `select` callback in `rotation-stream.ts`; the candidate/refusal lines at the top of `runCredentialFailover`'s loop in `failover.ts`.
+
+## 2026-10-30 - A guessed limit backoff stops at 30 minutes (senpi#4091)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: `rateLimitCooldown` caps the guessed exponential term at `GUESSED_BACKOFF_CAP_MS` (30 minutes). A server hint still floors the cooldown, and a provider-stated usage reset still blocks until that reset, capped at 48 hours.
+
+### Why
+
+- A limit with no parseable reset doubled its cooldown on every failed half-open probe, up to 48 hours, so a spent account stayed blocked for hours after its provider window had reset.
+
+### Why an extension could not handle it
+
+- The cooldown is computed inside the credential pool's failure classifier.
+
+### Expected merge conflict zones
+
+- LOW: the constants block and `rateLimitCooldown` in `classify.ts`.
+
+## 2026-10-30 - The generic pool announces its account switches (senpi#2304, senpi#5017)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `onRotate` records the account a pre-output failover left, and the next account's attempt emits one `emitProviderAccountFailover(provider, from, to, reason)` (`account_disabled` maps to `billing`). Nothing is emitted after committed output or when no account is left.
+
+### Why
+
+- Only the Anthropic subscription lane emitted `account_failover`; the generic pool switched accounts with no signal to RPC clients or the TUI.
+
+### Why an extension could not handle it
+
+- The switch happens inside the core credential-pool engine that `ModelRuntime` drives; no extension hook observes it.
+
+### Expected merge conflict zones
+
+- LOW: the `runCredentialFailover({...})` options in `streamWithCredentialRotation`.
+
 ## 2026-11-01 - slotsStartedByLogin is module-private (senpi#5281)
 
 ### What changed

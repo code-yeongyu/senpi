@@ -1,3 +1,41 @@
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: the Claude routing rule drops the "nearly free / stale assumption" aside, and both dialects drop "A result that hides a failed item or a truncated tail is not evidence" (the eval description states it).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts`: `GLM5_TUNING` drops the waitForAnswer parenthetical the ask_user_question schema states.
+- Terse pass: the Claude dialect of `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts` and `GLM5_TUNING` in `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts` render the terse wording (Kimi dialect unchanged).
+
+### Why
+
+- senpi#5335.
+
+### Why an extension could not handle it
+
+- These are preset modules.
+
+### Expected merge conflict zones
+
+- LOW: the touched directive strings.
+
+## 2026-11-02 - gpt-6-astra core: terse, no Verification, tool list or file-operations block (senpi#5390)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: `## Verification` removed; `stop-checks` in `## Stop Goal` names the checks up front, runs them once and never re-verifies verified results. `## File operations` and the tool list leave the core; `## Tool Guidelines` stays. `## Writing` is codex's gpt-6-astra "Writing style" verbatim. `root-cause` opens `## Scope and Recovery`. Tool-bound rules carry `requiresTool` and render only when the session has the tool. Every other directive is restated tersely. o200k 4,355 -> 3,674 on a real first-turn tool set.
+
+### Why
+
+Q (2026-11-02) asked to replace the Astra prompt after comparing it with the Codex CLI request for the same model: drop the blocks that cost tokens without earning them, take Codex's writing section, and steer the model to diagnose root causes.
+
+### Why an extension could not handle it
+
+This is the preset's own core text.
+
+### Expected merge conflict zones
+
+`gpt-6-astra.ts` rule constants and `buildGpt6AstraCore`; the `gpt-6-astra:*` hashes in `test/suite/prompt-presets-native-baseline.json`.
+
 ## 2026-10-31 - DeepSeek V4.1 Flash full-core rewrite (senpi#5195, fixes #5194)
 
 ### What changed

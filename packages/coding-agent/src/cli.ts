@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
+import { dispatchKillGuardCommand } from "./cli/kill-guard-command.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import {
 	APP_NAME,
@@ -89,6 +90,10 @@ function reexecUnderBunIfNeeded(): boolean {
 	process.exitCode = result.status ?? 1;
 	return true;
 }
+
+// The kill guard's runtime shims ask this executable to judge a signal (senpi#5349). Hidden and never in help; it
+// loads only the judge, so it answers before any runtime re-exec or engine import.
+await dispatchKillGuardCommand(process.argv.slice(2));
 
 if (reexecUnderBunIfNeeded()) {
 	process.exit();
