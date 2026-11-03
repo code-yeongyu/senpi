@@ -40,6 +40,9 @@ function outcomeOf(entry: ExecutionEntry): RemoteHandMessage | undefined {
 		const result: RemoteToolResult = JSON.parse(String(outcome.value));
 		return { kind: "settled", executionId, result };
 	}
+	// A hand settles a call only with `result` (settle) or a recovery terminal. A `blocked` outcome is the brain's
+	// prepared executor's (S09): a record holding one was not written by this hand, so it is refused, never reported as run.
+	if (outcome.reason === "blocked") return { kind: "refused", executionId, reason: "foreign_outcome" };
 	return {
 		kind: "terminal",
 		executionId,

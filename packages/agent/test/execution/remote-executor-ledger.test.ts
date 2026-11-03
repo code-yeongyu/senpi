@@ -133,6 +133,35 @@ describe("remote executor with a durable record", () => {
 		expect([hand.faults, hand.sent]).toEqual([[failure], []]);
 	});
 
+	it("refuses, never runs or reports as settled, a record holding the brain executor's blocked outcome", async () => {
+		const store = await claimed(createMemoryStoreMedium());
+		const ledger = createExecutionLedger({ store, epoch: 1, admission: createAdmissionLine() });
+		const key = { issuer: "session", commandId: "e1" };
+		const digest = JSON.stringify(["probe", { id: 1 }]);
+		const at = { key, generation: 1, actor: { id: "hand" }, now: 1_000 };
+		await ledger.admit({
+			issuer: "session",
+			commandId: "e1",
+			executor: "hand",
+			workspace: "workspace",
+			scope: "s",
+			generation: 1,
+			requestDigest: digest,
+			admittedAt: 1_000,
+			leaseUntil: 3_601_000,
+			reconcilable: false,
+		});
+		await ledger.apply({ ...at, event: { kind: "prepare" } });
+		await ledger.apply({ ...at, event: { kind: "block", value: { reply: "blocked" } } });
+		const ran: unknown[] = [];
+		const hand = startHand(store, recording(ran));
+		await hand.executor.ready;
+		await hand.deliver(invoke({ id: 1 }));
+		await hand.sentCount(3);
+		const refusal = { kind: "refused", executionId: "e1", reason: "foreign_outcome" };
+		expect([ran, hand.sent]).toEqual([[], [refusal, { kind: "hello", instance: expect.any(String) }, refusal]]);
+	});
+
 	it.each([
 		{ resent: { id: 1 }, outcome: "runs the frozen call once", sent: "settled", bodies: [{ id: 1 }] },
 		{ resent: { id: 2 }, outcome: "refuses other arguments", sent: "refused", bodies: [] },
