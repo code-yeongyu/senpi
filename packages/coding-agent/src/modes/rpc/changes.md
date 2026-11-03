@@ -1,13 +1,3 @@
-## 2026-11-03 - A host signal between a permit worker's checks and its wait no longer leaves it parked (senpi#5591)
-
-### What changed
-
-- `packages/coding-agent/src/modes/rpc/session-worker-permits.ts`: the permit block gains a fourth word, `wake`, a count only the host adds to on every signal (grant, deny, close), and the one word `WorkerPermitGate.acquire` waits on. Each pass of the wait loop reads `wake` before its other checks and waits on that value, so a signal published after the checks changes the waited word and the wait returns at once. `PERMIT_BLOCK_BYTES` is the block size, derived from `PERMIT_WORD`.
-
-### Why
-
-- The worker waited on `credit`, which a close does not change. A close published after the worker's last check and before its `Atomics.wait` started notified nobody, and the wait then compared an unchanged `credit` and slept until its own deadline (300 s in the acceptance test, the control timeout in production), so a closing worker was held for the whole deadline (senpi#5591). A test now holds the isolate at its wait call, sends the close (and a grant) into that window, and only then lets the wait start.
-
 ## 2026-11-02 - Typed socket_closing before engine-initiated compact closes (RULING-124, senpi#5322, senpi#5395)
 
 ### What changed
