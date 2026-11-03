@@ -1,3 +1,39 @@
+## 2026-10-30 - Goal parks on a provider limit with one notice; refused turns are not stalls (senpi#3975)
+
+### What changed
+
+- `monitor-continuation.ts`: a provider-retry park with a known resume time notifies once ("Goal paused until <local time> (<ISO>) ..."). A turn whose last assistant message ended in an error neither counts toward nor clears the toolless stall streak.
+
+### Why
+
+- senpi#3975: refused turns while every credential was limited injected `<goal_stall_check>` after three blocks, and the park was silent.
+
+### Why an extension could not handle it
+
+- This is the goal extension itself.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentEnd` around `#recordToollessContinuationTurn`, and the provider-retry branch of `afterAgentSettled`.
+
+## 2026-10-27 - get_goal is search-exposed (senpi#4454)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`: `get_goal` is deferred to by-name activation through the tool search; `create_goal` and `update_goal` stay active.
+
+### Why
+
+- Each deferred tool leaves the first request's tool list and system prompt, so every request carries fewer tool-schema tokens (senpi#4454).
+
+### Why an extension could not handle it
+
+- This builtin owns its tool registration.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`.
+
 ## 2026-10-26 - Request-level refusals retain goal recovery (senpi#2491)
 
 ### What changed

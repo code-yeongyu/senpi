@@ -33,7 +33,9 @@ export const SESSION_PATH_ROOT_FILES = [
  */
 export const RECOVERY_PATH_FILES = [
 	"src/modes/rpc/session-event-fanout.ts",
+	"src/modes/rpc/session-recovery-pins.ts",
 	"src/modes/rpc/compact-recovery-state.ts",
+	"src/modes/rpc/compact-recovery-streams.ts",
 	"src/modes/rpc/compact-recovery-types.ts",
 ] as const;
 

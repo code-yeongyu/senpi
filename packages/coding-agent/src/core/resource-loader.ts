@@ -61,7 +61,7 @@ import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-mem
 import { SettingsManager } from "./settings-manager.ts";
 import type { SkillProvenance } from "./skill-access.ts";
 import type { Skill } from "./skills.ts";
-import { loadSkills } from "./skills.ts";
+import { ignoredSkillDiagnostics, loadSkills } from "./skills.ts";
 import { warnIfLargeSkillCatalog } from "./skills-prompt.ts";
 import {
 	BUILTIN_PATH_PREFIX,
@@ -687,6 +687,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.userSkillRoots = [...(resolvedPaths.skillRoots ?? []), ...(cliExtensionPaths.skillRoots ?? [])]
 			.filter((selection) => selection.kind === "user")
 			.map((selection) => selection.selectedRoot);
+		this.ignoredSkillFiles = this.noSkills ? [] : [...(resolvedPaths.ignoredSkills ?? [])];
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -1150,6 +1151,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private userSkillRoots: string[] = [];
+	private ignoredSkillFiles: string[] = [];
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
@@ -1182,7 +1184,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 				skill.sourceInfo ??
 				this.getDefaultSourceInfoForPath(skill.filePath),
 		}));
-		this.skillDiagnostics = [...resolvedSkills.diagnostics, ...warnIfLargeSkillCatalog(this.skills)];
+		this.skillDiagnostics = [
+			...resolvedSkills.diagnostics,
+			...ignoredSkillDiagnostics(this.ignoredSkillFiles, this.skills),
+			...warnIfLargeSkillCatalog(this.skills),
+		];
 	}
 
 	private updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {

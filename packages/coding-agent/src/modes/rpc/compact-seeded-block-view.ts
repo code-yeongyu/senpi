@@ -8,7 +8,7 @@ export async function readSeededFields(store: CompactContentStore, fields: Seede
 	const values = new CompactValues(store);
 	const result: Record<string, unknown> = {};
 	for (const [key, ref] of Object.entries(fields)) {
-		const value = await values.read(ref);
+		const value = await values.read(ref, valid);
 		valid();
 		Object.defineProperty(result, key, { value, enumerable: true, configurable: true, writable: true });
 	}

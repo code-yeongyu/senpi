@@ -122,6 +122,14 @@ export function isTodoPhaseArray(value: unknown): value is TodoPhase[] {
 	return Array.isArray(value) && value.every(isTodoPhase);
 }
 
+/** The list a `todo` (or legacy `todowrite`) tool result carries in its details; `undefined` for any other message. */
+export function getTodoStateFromToolResult(message: unknown): TodoState | undefined {
+	if (!isRecord(message) || message.role !== "toolResult") return undefined;
+	if (message.toolName !== "todo" && message.toolName !== "todowrite") return undefined;
+	const parsed = readTodoPayload(message.details);
+	return parsed ? { phases: clonePhases(parsed.phases), ask: parsed.ask } : undefined;
+}
+
 /** Latest todo list and its captured ask on the branch; the ask travels with the entry that wrote the list. */
 export function getLatestTodoStateFromBranchEntries(entries: readonly BranchEntry[]): TodoState {
 	let state: TodoState = { phases: [], ask: undefined };
@@ -133,12 +141,8 @@ export function getLatestTodoStateFromBranchEntries(entries: readonly BranchEntr
 			continue;
 		}
 
-		if (entry.type !== "message" || !isRecord(entry.message)) continue;
-		if (entry.message.role !== "toolResult") continue;
-		if (entry.message.toolName !== "todo" && entry.message.toolName !== "todowrite") continue;
-
-		const parsed = readTodoPayload(entry.message.details);
-		if (parsed) state = { phases: clonePhases(parsed.phases), ask: parsed.ask };
+		if (entry.type !== "message") continue;
+		state = getTodoStateFromToolResult(entry.message) ?? state;
 	}
 
 	return state;

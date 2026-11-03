@@ -7,20 +7,32 @@
 
 import { randomBytes } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
-import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
-import { getProviderEnvValue } from "../../utils/provider-env.ts";
-import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
+import { configuredOAuthBrandName, oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
+import {
+	classifyOAuthRefreshFailure,
+	OAuthClientConfigurationError,
+	OAuthReauthorizationRequiredError,
+	OAuthTokenEndpointError,
+} from "../../utils/oauth-refresh-error.ts";
+import type {
+	LoginOptions,
+	LogoutOptions,
+	OAuthAuth,
+	OAuthCredential,
+	OAuthRevocationResult,
+	ProviderAuthInteraction,
+} from "../types.ts";
+import { getWireIdentity } from "../../wire-identity.ts";
 import { generatePKCE } from "./pkce.ts";
 
 // every login registers a new client with this ID; OpenAI returns the issued client ID in the callback
 const DYNAMIC_CLIENT_ID = "dynamic_agent_client";
-const AGENT_NAME_HINT = "Pi";
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AUTHORIZE_URL = "https://auth.openai.com/api/accounts/authorize";
 const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
+const DISCOVERY_URL = "https://auth.openai.com/.well-known/openid-configuration";
 const RESOURCE = "https://api.openai.com/v1";
-const CALLBACK_HOST = getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1";
+const CALLBACK_HOST = "127.0.0.1";
 const CALLBACK_PORT = 1455;
 const CALLBACK_PATH = "/auth/callback";
 const REDIRECT_URI = `http://127.0.0.1:${CALLBACK_PORT}${CALLBACK_PATH}`;
@@ -37,6 +49,7 @@ type AuthorizationResult = {
 type CallbackServer = {
 	server: Server;
 	result: Promise<AuthorizationResult>;
+	redirectUri: string;
 };
 
 type TokenResponse = {
@@ -62,16 +75,20 @@ function authorizationResultFromCallback(url: URL, expectedState: string): Autho
 	return { code, clientId };
 }
 
-function authorizationResultFromManualInput(input: string, expectedState: string): AuthorizationResult {
+function authorizationResultFromManualInput(
+	input: string,
+	expectedState: string,
+	redirectUri: string,
+): AuthorizationResult {
 	let url: URL;
 	try {
 		url = new URL(input.trim());
 	} catch {
 		throw new Error("Paste the full callback URL from the browser");
 	}
-	const expected = new URL(REDIRECT_URI);
+	const expected = new URL(redirectUri);
 	if (url.origin !== expected.origin || url.pathname !== expected.pathname) {
-		throw new Error(`The pasted callback URL must start with ${REDIRECT_URI}`);
+		throw new Error(`The pasted callback URL must start with ${redirectUri}`);
 	}
 	const error = url.searchParams.get("error");
 	if (error) throw new Error(`ChatGPT authorization failed: ${error}`);
@@ -83,8 +100,9 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
 	response.end(body);
 }
 
-function startCallbackServer(expectedState: string): Promise<CallbackServer> {
+function startCallbackServer(expectedState: string, preferredPort: number): Promise<CallbackServer> {
 	return new Promise((resolve, reject) => {
+		let redirectUri = REDIRECT_URI;
 		let resolveResult!: (result: AuthorizationResult) => void;
 		let rejectResult!: (error: Error) => void;
 		const result = new Promise<AuthorizationResult>((resolveAuthorization, rejectAuthorization) => {
@@ -94,7 +112,7 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
 
 		const server = createServer((request, response) => {
 			try {
-				const url = new URL(request.url || "", REDIRECT_URI);
+				const url = new URL(request.url || "", redirectUri);
 				if (url.pathname !== CALLBACK_PATH) {
 					sendHtml(response, 404, oauthErrorHtml("Callback route not found."));
 					return;
@@ -123,13 +141,42 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
 			}
 		});
 
-		server.once("error", reject);
-		server.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
+		const onListening = () => {
+			server.removeListener("error", onBindError);
 			server.removeListener("error", reject);
+			const address = server.address();
+			if (!address || typeof address === "string") {
+				server.close();
+				reject(new Error("OpenAI OAuth callback server did not bind to TCP"));
+				return;
+			}
+			redirectUri = `http://${CALLBACK_HOST}:${address.port}${CALLBACK_PATH}`;
 			server.on("error", rejectResult);
-			resolve({ server, result });
-		});
+			resolve({ server, result, redirectUri });
+		};
+		const onBindError = (error: NodeJS.ErrnoException) => {
+			server.removeListener("listening", onListening);
+			if (error.code !== "EADDRINUSE") {
+				reject(error);
+				return;
+			}
+			server.once("error", reject);
+			server.listen(0, CALLBACK_HOST, onListening);
+		};
+		server.once("error", onBindError);
+		server.listen(preferredPort, CALLBACK_HOST, onListening);
 	});
+}
+
+/** Read machine codes only; error_description is diagnostic text, not a recovery signal. */
+function tokenErrorCode(value: unknown): string | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const error: unknown = Reflect.get(value, "error");
+	if (typeof error === "string") return error;
+	const code: unknown = Reflect.get(value, "code");
+	if (typeof code === "string") return code;
+	const type: unknown = Reflect.get(value, "type");
+	return tokenErrorCode(error) ?? (typeof type === "string" ? type : undefined);
 }
 
 async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise<TokenResponse> {
@@ -144,10 +191,31 @@ async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise
 	});
 	if (!response.ok) {
 		const responseBody = await response.text().catch(() => "");
-		throw new OAuthTokenEndpointError(
+		const error = new OAuthTokenEndpointError(
 			`OpenAI OAuth token request failed (${response.status}): ${responseBody || response.statusText}`,
 			response.status,
 		);
+		if (body.get("grant_type") === "refresh_token" && classifyOAuthRefreshFailure(error) === "permanent") {
+			let code: string | undefined;
+			try {
+				const parsed: unknown = JSON.parse(responseBody);
+				code = tokenErrorCode(parsed);
+			} catch {
+				// Non-JSON errors retain the HTTP status and diagnostic below.
+			}
+			switch (code) {
+				case "invalid_grant":
+				case "invalid_refresh_token":
+				case "token_expired":
+				case "refresh_token_expired":
+				case "refresh_token_invalidated":
+				case "refresh_token_reused":
+					throw new OAuthReauthorizationRequiredError(code, response.status);
+				case "invalid_client":
+					throw new OAuthClientConfigurationError(response.status);
+			}
+		}
+		throw error;
 	}
 	const data: unknown = await response.json();
 	if (typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -188,6 +256,7 @@ async function exchangeAuthorizationCode(
 	code: string,
 	verifier: string,
 	clientId: string,
+	redirectUri: string,
 	signal: AbortSignal,
 ): Promise<OAuthCredential> {
 	const token = await requestToken(
@@ -196,7 +265,7 @@ async function exchangeAuthorizationCode(
 			client_id: clientId,
 			code,
 			code_verifier: verifier,
-			redirect_uri: REDIRECT_URI,
+			redirect_uri: redirectUri,
 			resource: RESOURCE,
 		}),
 		signal,
@@ -226,6 +295,73 @@ async function refreshAccessToken(credential: OAuthCredential, signal: AbortSign
 	return credentialFromTokenResponse(token, clientId);
 }
 
+async function revokeSession(credential: OAuthCredential, options?: LogoutOptions): Promise<OAuthRevocationResult> {
+	const unconfirmed: OAuthRevocationResult = { status: "remote_revocation_unconfirmed" };
+	if (!credential.refresh || typeof credential.clientId !== "string" || !credential.clientId.trim()) {
+		return unconfirmed;
+	}
+	const signal = AbortSignal.any([...(options?.signal ? [options.signal] : []), AbortSignal.timeout(15_000)]);
+	const sleep =
+		options?.sleep ??
+		((milliseconds: number) =>
+			new Promise<void>((resolve, reject) => {
+				signal.throwIfAborted();
+				const onAbort = () => {
+					clearTimeout(timer);
+					reject(signal.reason);
+				};
+				const timer = setTimeout(() => {
+					signal.removeEventListener("abort", onAbort);
+					resolve();
+				}, milliseconds);
+				signal.addEventListener("abort", onAbort, { once: true });
+			}));
+	let endpoint: string | undefined;
+	const delays = [250, 1000];
+	for (let attempt = 0; attempt <= delays.length; attempt++) {
+		try {
+			signal.throwIfAborted();
+			if (attempt > 0) await sleep(delays[attempt - 1]);
+			if (!endpoint) {
+				const discovery = await fetch(DISCOVERY_URL, { signal, redirect: "error" });
+				if (!discovery.ok) {
+					if (discovery.status >= 500) continue;
+					return unconfirmed;
+				}
+				const metadata: unknown = await discovery.json();
+				if (
+					typeof metadata !== "object" ||
+					metadata === null ||
+					!("revocation_endpoint" in metadata) ||
+					typeof metadata.revocation_endpoint !== "string"
+				) {
+					return unconfirmed;
+				}
+				const url = new URL(metadata.revocation_endpoint);
+				if (url.protocol !== "https:" || url.username || url.password) return unconfirmed;
+				endpoint = url.href;
+			}
+			const response = await fetch(endpoint, {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					token: credential.refresh,
+					token_type_hint: "refresh_token",
+					client_id: credential.clientId,
+				}),
+				signal,
+				redirect: "error",
+			});
+			// RFC 7009 returns an empty 200 for both revoked and already-invalid tokens.
+			if (response.status === 200) return { status: "revoked" };
+			if (response.status < 500) return unconfirmed;
+		} catch {
+			if (signal.aborted) return unconfirmed;
+		}
+	}
+	return unconfirmed;
+}
+
 /** OpenAI identifies each installation ("agent host") by a stable URI such as `urn:uuid:<uuid>`. */
 function agentHostId(deviceId: string | undefined): string {
 	if (!deviceId || !UUID_PATTERN.test(deviceId)) {
@@ -236,7 +372,7 @@ function agentHostId(deviceId: string | undefined): string {
 
 async function loginOpenAIChatGPT(
 	interaction: ProviderAuthInteraction,
-	options?: LoginOptions,
+	options?: LoginOptions & { readonly preferredCallbackPort?: number },
 ): Promise<OAuthCredential> {
 	const hostId = agentHostId(options?.getDeviceId?.());
 	const { verifier, challenge } = await generatePKCE();
@@ -244,21 +380,23 @@ async function loginOpenAIChatGPT(
 	const nonce = randomValue();
 	let callback: CallbackServer | undefined;
 	try {
-		callback = await startCallbackServer(state);
+		callback = await startCallbackServer(state, options?.preferredCallbackPort ?? CALLBACK_PORT);
 	} catch (error) {
 		interaction.notify({
 			type: "info",
 			message: `Could not listen on ${REDIRECT_URI}; paste the final redirect URL to continue. ${error instanceof Error ? error.message : String(error)}`,
 		});
 	}
+	const redirectUri = callback?.redirectUri ?? REDIRECT_URI;
 
 	const authorizationUrl = new URL(AUTHORIZE_URL);
 	authorizationUrl.search = new URLSearchParams({
 		client_id: DYNAMIC_CLIENT_ID,
-		agent_name_hint: AGENT_NAME_HINT,
+		// Display metadata on OpenAI's consent screen (the user can edit it); not tied to the issued client ID.
+		agent_name_hint: options?.appName ?? configuredOAuthBrandName() ?? getWireIdentity(),
 		ext_agent_host_id: hostId,
 		response_type: "code",
-		redirect_uri: REDIRECT_URI,
+		redirect_uri: redirectUri,
 		resource: RESOURCE,
 		scope: SCOPE,
 		state,
@@ -278,15 +416,15 @@ async function loginOpenAIChatGPT(
 		.prompt({
 			type: "manual_code",
 			message: "Complete login in your browser, or paste the final redirect URL here:",
-			placeholder: REDIRECT_URI,
+			placeholder: redirectUri,
 			signal: AbortSignal.any([manualAbort.signal, interaction.signal]),
 		})
-		.then((input) => authorizationResultFromManualInput(input, state));
+		.then((input) => authorizationResultFromManualInput(input, state, redirectUri));
 
 	try {
 		const result = await (callback ? Promise.race([callback.result, manualCode]) : manualCode);
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return await exchangeAuthorizationCode(result.code, verifier, result.clientId, interaction.signal);
+		return await exchangeAuthorizationCode(result.code, verifier, result.clientId, redirectUri, interaction.signal);
 	} catch (error) {
 		if (interaction.signal.aborted) throw new Error("Login cancelled");
 		throw error;
@@ -302,13 +440,18 @@ async function loginOpenAIChatGPT(
 	}
 }
 
-export const openaiChatGPTOAuth: OAuthAuth = {
+export const openaiChatGPTOAuth = {
 	name: "OpenAI (ChatGPT subscription)",
 	isSubscription: true,
 	loginLabel: "Sign in with ChatGPT",
 	login: loginOpenAIChatGPT,
 	refresh: refreshAccessToken,
+	revoke: revokeSession,
+	async check({ credential }) {
+		if (!credential?.access || !credential.refresh || credential.signedOut === true) return undefined;
+		return { type: "oauth", source: "OAuth" };
+	},
 	async toAuth(credential) {
 		return { apiKey: credential.access };
 	},
-};
+} satisfies OAuthAuth;

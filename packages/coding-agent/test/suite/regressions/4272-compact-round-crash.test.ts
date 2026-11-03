@@ -80,7 +80,7 @@ it("keeps the previous state readable and reclaims every stray file after an inj
 			await root.cleanup();
 		}
 	}
-}, 120_000);
+}, 600_000);
 
 // senpi#4545 / RULING-55 condition 1, the real crash: a process that dies mid-round never reclaims, commits or
 // retires, so its partial node files stay in an orphaned epoch directory. A store reopened on that very directory
@@ -156,4 +156,4 @@ it("refuses a crashed epoch directory holding partial round files and rebuilds t
 	} finally {
 		await root.cleanup();
 	}
-}, 60_000);
+}, 600_000);

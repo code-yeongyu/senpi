@@ -120,7 +120,7 @@ export class SocketEventSinkActor {
 	enqueue(
 		line: string,
 		key?: string,
-		onWritten?: () => void,
+		onWritten?: (written: boolean) => void,
 		demotedLine?: string,
 		reply = false,
 		held?: () => boolean,
@@ -130,7 +130,7 @@ export class SocketEventSinkActor {
 		const bytes = Buffer.byteLength(line);
 		if (this.shed.dropsRecords) {
 			if (reply) this.admitReply({ line, bytes, onWritten, reply, current });
-			else onWritten?.();
+			else onWritten?.(false);
 			return;
 		}
 		if (key !== undefined) this.queue.supersede(key);
@@ -140,7 +140,7 @@ export class SocketEventSinkActor {
 				else this.cut("overflow");
 				// The cut covers this record; only a reply still needs its own place.
 				if (reply) this.admitReply({ line, bytes, onWritten, reply, current });
-				else onWritten?.();
+				else onWritten?.(false);
 				void this.drain();
 				return;
 			}
@@ -190,7 +190,7 @@ export class SocketEventSinkActor {
 	private admitReply(entry: QueueEntry): void {
 		if (!this.fits(entry.bytes)) {
 			this.recovery?.loseReply();
-			entry.onWritten?.();
+			entry.onWritten?.(false);
 			return;
 		}
 		this.shed.admitReply(entry);
@@ -262,10 +262,7 @@ export class SocketEventSinkActor {
 		}
 		// A recovery first waits for the peer to drain again; then the gap opens the frames.
 		await waitForDrainOrStall(this.stallPeer, 0);
-		if (this.closed || !this.recovery) {
-			entry.barrier.end();
-			return;
-		}
+		if (this.closed || !this.recovery) return;
 		const barrier = this.shed.take(entry, this.snapshot, () => !this.closed);
 		const gap = this.recovery.takeGap();
 		if (!this.recoveryEnabled) this.recovery = undefined;
@@ -294,11 +291,18 @@ export class SocketEventSinkActor {
 					const item = this.queue.shift();
 					if (item === undefined) break;
 					if (isBarrier(item)) {
-						await this.deliver(item);
+						// Dequeued, the entry is neither queued nor the attempt, so nothing else ends it: its barrier
+						// (a stale recovery's fresh cut included) ends here whatever deliver returned or threw.
+						try {
+							await this.deliver(item);
+						} finally {
+							item.barrier.end();
+						}
 						continue;
 					}
-					if ((item.held?.() ?? true) && (item.current?.() ?? true)) await this.write(item.line);
-					item.onWritten?.();
+					const written = (item.held?.() ?? true) && (item.current?.() ?? true);
+					if (written) await this.write(item.line);
+					item.onWritten?.(written);
 				}
 			} catch (cause) {
 				this.failure = cause;

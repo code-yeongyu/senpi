@@ -40,7 +40,7 @@ describe("detectSimilarRun", () => {
 
 	it("returns undefined while the run is all-identical (identical detector owns it)", () => {
 		const records = recs(
-			...Array.from({ length: SIMILAR_RUN_THRESHOLD }, () => ["read", { path: "a.ts" }] as [string, unknown]),
+			...Array.from({ length: SIMILAR_RUN_THRESHOLD }, (): [string, unknown] => ["read", { path: "a.ts" }]),
 		);
 		expect(detectSimilarRun(records)).toBeUndefined();
 	});

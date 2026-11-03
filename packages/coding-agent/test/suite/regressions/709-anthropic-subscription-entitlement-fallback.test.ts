@@ -10,15 +10,13 @@ import { selectAccount } from "../../../src/core/extensions/builtin/anthropic-su
 import { classifySdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import { runFailover } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
 const fableUsageCredits =
 	"Claude Code returned an error result: Fable 5 requires usage credits. Run /usage-credits to continue or switch models with /model.";
-const accountPool: AccountSlot[] = [
-	{ name: "alpha", refresh: "r-alpha", access: "a-alpha", expires: 1, source: "login" },
-	{ name: "bravo", refresh: "r-bravo", access: "a-bravo", expires: 1, source: "login" },
-];
+const accountPool: AccountSlot[] = [cliSlot("alpha"), cliSlot("bravo")];
 const now = 10_000;
 
 async function storeWithAccounts(): Promise<CredentialStore> {

@@ -43,9 +43,16 @@ const installGuardedWorker = (Guarded) => {
 };
 const originals = { ...fs.promises, readFileSync: fs.readFileSync, realpathSync: fs.realpathSync };
 const execFile = process.getBuiltinModule("node:child_process").execFile;
+const spawnSync = process.getBuiltinModule("node:child_process").spawnSync;
 const cleanupExecFile = (...args) => {
 	engineDepth++;
 	try { return execFile(...args); }
+	finally { engineDepth--; }
+};
+// The kill guard reads the process table and dry-runs pgrep with the engine's own spawnSync, never a cell wrapper.
+const killGuardSpawnSync = (...args) => {
+	engineDepth++;
+	try { return spawnSync(...args); }
 	finally { engineDepth--; }
 };
 const { dirname } = process.getBuiltinModule("node:path");
@@ -80,6 +87,7 @@ await initializePermissionRuntime((authorize) => { runtimeAuthorize = authorize;
 	permissionIO,
 	resolverIO: originals,
 	cleanupExecFile,
+	killGuardSpawnSync,
 	activate,
 	installGuardedWorker,
 });

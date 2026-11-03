@@ -1,3 +1,406 @@
+## 2026-11-02 - One tool-catalog projection for hand/fused parity (S22, senpi#5419)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/tool-catalog.ts` (new): `toolCatalog` projects each tool as a caller sees it (name, description, parameter schema and the normalized search exposure), in catalog order. `handToolCatalog` applies it to a hand runtime's definitions. Nothing in the product imports it yet; `test/hand/catalog-parity.test.ts` requires the hand's catalog to equal the fused engine's for the same configuration.
+
+### Why
+
+- A hand must expose exactly the tools the fused engine exposes, or callers see a different tool set depending on placement (senpi#5419).
+
+### Why an extension could not handle it
+
+- It compares the core runtime's tool registry across two runtime compositions.
+
+### Expected merge conflict zones
+
+- LOW: new directory.
+
+## 2026-11-02 - The headless engine's host options and endpoint (S23, senpi#5418)
+
+### What changed
+
+- `packages/coding-agent/src/modes/headless/headless-host.ts` (new): `headlessHostOptions` sets `sessionOwner: "machine"` and the engine's own endpoint, `<agentDir>/rpc/headless.sock` (a named pipe on Windows), apart from the shared host's `rpc.sock`. It also exports `headlessSocketPath`, `headlessEndpoint` and `runHeadlessHost`. No CLI flag or entry point selects it yet.
+
+### Why
+
+- It is the headless engine's composition of the host and its endpoint, built before the flag that selects it (senpi#5418).
+
+### Why an extension could not handle it
+
+- It configures the RPC host itself.
+
+### Expected merge conflict zones
+
+- LOW: new directory.
+
+## 2026-11-01 - Export `ProgramStatus` (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports the `ProgramStatus` type used by `ctx.ui.setProgramStatus`.
+
+### Why
+
+- Extensions type the status they pass to the new UI method from the public package.
+
+### Why an extension could not handle it
+
+- The package's public type surface is defined only here.
+
+### Expected merge conflict zones
+
+- LOW: one name in the extension type export list.
+
+## 2026-10-30 - Print mode lists the primary failure first on exhaustion (senpi#4084)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the fallback-exhaustion stderr line lists the primary failure first, then each failed rung.
+
+### Why
+
+- `packages/coding-agent/src/modes/print-mode.ts`: senpi#4084: print mode reported only the last rung's error, hiding the failure that started the fallback.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/print-mode.ts`: print mode writes its own exhaustion line before any extension output; no hook rewrites it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/print-mode.ts`: LOW, the exhaustion line.
+
+## 2026-11-01 - Kill guard runtime layer: hidden judge subcommand and exports (senpi#5349, PR #5358)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/bun/cli.ts`: both entries first call `dispatchKillGuardCommand()` from the new `src/cli/kill-guard-command.ts`. When the first argument is the hidden `__kill-guard`, it loads only `core/kill-guard/check-command.ts`, runs the check and exits. In the Node launcher that happens before any runtime re-exec or engine import; in the compiled binary's entry (`src/bun/cli.ts`, which `scripts/build-binaries.sh` compiles) it happens before the agent-directory command, provider registration and `cli-main`, so the check never creates or touches the agent dir. The command never appears in help.
+- `packages/coding-agent/src/index.ts`: exports `activateKillGuardRuntime`, `releaseKillGuardRuntime`, `activeKillGuardEnvironment` and the `KillGuardRuntime` and `ActivateKillGuardRuntimeOptions` types from the new `core/kill-guard/runtime.ts`. A holder's release (session end, or the user switching the guard off) drops only that holder; the most recently activated remaining holder's layer stays active.
+
+### Why
+
+- The runtime shims judge the real argv of every agent-spawned `kill`, `pkill` and `killall`. In the compiled binary the only executable they can call is the binary itself, and the binary starts at `src/bun/cli.ts`, not `src/cli.ts`; without the dispatch there, every judged kill in the shipped binary failed closed (exit 126) and booted the engine against the agent dir. The codemode extension hands the same runtime layer to eval kernels through the package root.
+
+### Why an extension could not handle it
+
+- The compiled binary's argv dispatch is the CLI launcher itself, and the bundled codemode extension reaches the coding agent only through `@code-yeongyu/senpi`.
+
+### Expected merge conflict zones
+
+- LOW: the block after the static imports and before `reexecUnderBunIfNeeded()` in `src/cli.ts`; the first statements after the static imports in `src/bun/cli.ts`; the kill-guard export list in `src/index.ts`.
+
+## 2026-11-01 - Kill guard judge exported for the codemode bridge and workers (senpi#5349, PR #5354)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `decideKillGuardRequest`, `KILL_GUARD_TAG`, `KILL_GUARD_MODULE_URL`, `killGuardProtectedPids`, `readKillGuardSetting` and the `KillGuardRequest`, `KillGuardVerdict`, `KillGuardSetting` types from the new `core/kill-guard/` module.
+
+### Why
+
+- The codemode extension decides Python kernels' kill-guard checks on the host, exports the protected pids to its kernels, reads the user switch, and hands its JS workers the judge module's URL; all of it comes from the coding agent so there is one judge.
+- Release ordering: this PR judges `bash_input` only when the call is plain typing; a line edited with keys, recalled from history or built by an expansion is judged where the shell runs it, which #5358 delivers. Between the merges of #5354 and #5358 those lines are unjudged at every layer, so no senpi release and no omo pin bump is cut between the two.
+
+### Why an extension could not handle it
+
+- The bundled codemode extension reaches the coding agent only through the package root (`@code-yeongyu/senpi`); the judge must live in the coding agent because its own `tool_call` guard and durable-monitor restore use it too.
+
+### Expected merge conflict zones
+
+- LOW: the export list next to `createEventBus` in `src/index.ts`.
+
+## 2026-10-31 - Coordinator publishes its readiness socket last (senpi#5185)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/coordinator.ts`: `main()` now listens on the public socket before the control socket (previously control first). Stale-socket cleanup on a failed start is unchanged.
+
+### Why
+
+- `ensureCoordinator()` treats an accepting control socket as "coordinator ready", and `startServer()` registers and returns `socketPath` as soon as that registration completes. With control published first, a client that connected right after `startServer()` resolved could get `connect ENOENT` on the public socket (seen as a load flake in `experimental-remote-runtime.test.ts`).
+
+### Why an extension could not handle it
+
+- The coordinator is an internal transport process started by the experimental runtime; no extension hook runs in it.
+
+### Expected merge conflict zones
+
+- LOW: the two `listen`/`restrictSocket` pairs in `main()` of `packages/coding-agent/src/experimental/coordinator.ts`.
+
+## 2026-10-26 - Export the failed-compaction error (senpi#4161)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: export `RequiredCompactionError` and `REQUIRED_COMPACTION_ERROR_MESSAGE` from the package root.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: SDK callers need the typed error (`code: "compaction_failed"`) to tell a failed compaction from other prompt failures.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: the package root export list is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/index.ts` next to the `auth-storage.ts` export.
+
+## 2026-10-31 - Detect Windows private pipes by mode bits (senpi#5142)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: classify FIFOs using the file-type mode mask instead of `Stats.isFIFO()`, preserving the existing pair proof, descriptor, alias and inheritance checks. Uses the shared `isFifoMode` predicate from `utils/inherited-duplex.ts`.
+
+### Why
+
+- Windows source runtimes can report FIFO mode bits while `Stats.isFIFO()` returns false, causing valid inherited private pipe pairs to be refused (#5137, part of #4859).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/private-fds.ts` validates inherited descriptors during startup, before extensions can receive a private channel.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/private-fds.ts` pipe classification; the release proof enablement remains separate.
+
+## 2026-10-31 - Record the Windows private pipe-pair proof for Bun 1.4.4 (#4898, PR #5125)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: `WINDOWS_PRIVATE_FD_PAIR_PROVEN` now records `{ bun: "1.4.4" }`, so win32 accepts a version-proven pipe pair under exactly that Bun and still refuses it under any other Bun or platform.
+
+### Why
+
+- The compiled-runtime pair proof and the old-parser compatibility control passed on windows-latest under Bun 1.4.4, the Bun the desktop app binds.
+
+### Why an extension could not handle it
+
+- The proof gate is part of bootstrap descriptor capture, which runs before extensions load.
+
+### Expected merge conflict zones
+
+- The proof constant in private descriptor parsing.
+
+## 2026-10-30 - Atomic socket compact negotiation (S17, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: Own compact capability selection and admission on the registered socket, preserving typed correlated replies across worker isolates.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: Require the accepted capability pair before record-producing admission and never downgrade a selected peer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: Socket registration, host capability discovery, factory ownership and isolate wire routing are core RPC boundaries.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: Capability and admission hooks; private worker frame fields and handler declarations.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/index.ts`.
+- Export the guarded secret-input option, unavailable error and settled RPC event from the public package.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-28 - Full access in a linked git worktree honours the main checkout's saved decision (senpi#4388)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the CLI runtime factory reads the saved decision once through `getSavedProjectTrust` and uses it for the Full-access trust, the trusted-project fallback and `trustFromFullAccess`, instead of three `trustStore.get(cwd)` calls.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: without it, Full access in a worktree whose main checkout is saved as "do not trust" trusted the project anyway, and a worktree that inherits "trust" was marked as trusted only through Full access, so leaving Full access withdrew that trust.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the Full-access trust decision is made while the runtime is built, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the trust-manager import line and the project-trust block of the CLI runtime factory in `main.ts`.
+
+## 2026-10-29 - Version-proven Windows private descriptor pairs (#4859, PR #4864)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: represents a private channel as a POSIX socket or an ordered Windows pipe pair; flattens valid-name descriptor aliases before adoption. On Windows, clears inheritance once for every table-named in-range safe integer before any shape, alias, IPC, proof or type decision, including refused entries. Invalid-name keys do not alias valid POSIX channels. `WINDOWS_PRIVATE_FD_PAIR_PROVEN` ships as `false`; when enabled it records the exact proven Bun version, so any runtime bump fails closed until the Windows proof and old-parser compatibility control re-run.
+- `packages/coding-agent/src/private-fd-spawn.ts`: forwards both halves atomically on explicit hops, closes both owned copies after spawn, and carries consumed channels or shell spawns as null declarations.
+
+### Why
+
+- Windows private channels need separate read and write handles while preserving the existing declaration and one-shot ownership contract.
+
+### Why an extension could not handle it
+
+- Descriptor capture and inheritance clearing must finish during bootstrap, before extensions or unrelated children can start.
+
+### Expected merge conflict zones
+
+- Private descriptor parsing, ownership maps, and explicit-hop stdio construction.
+
+## 2026-10-28 - Source processes of one test run share a Node compile cache (senpi#4614)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/source-compile-cache.ts` (new): `enableSourceCompileCache()` enables Node's compile cache in the directory named by `SENPI_SOURCE_COMPILE_CACHE` (`SOURCE_COMPILE_CACHE_ENV`), read late-bound off `node:module` like `compile-cache.ts`; unset, it does nothing.
+- `packages/coding-agent/src/experimental/source-resolver.ts`: the `--import` preload form calls `enableSourceCompileCache()` after registering the workspace resolver. Library imports through `registerWorkspaceSourceResolver()` never enable it.
+
+### Why
+
+- senpi#4614: every test child launched through the source loader type-stripped and compiled its whole workspace graph again (the faux session worker loads 1,700 modules, 527 of them TypeScript). Node's compile cache keys entries by source content and also stores the strip result, so a repeated launch inside one run reuses that work while edited files are still recompiled. Measured on the Linux node 26 receipt image: faux session worker launch 1,588 ms -> 1,117 ms warm, with a one-time 0.4-0.5 s write at the first launch's exit.
+
+### Why an extension could not handle it
+
+- The preload runs before any entrypoint or extension loads; the cache has to be enabled there to cover the entry's own import graph.
+
+### Expected merge conflict zones
+
+- LOW: the import list and the preload block at the end of `packages/coding-agent/src/experimental/source-resolver.ts`; `source-compile-cache.ts` is fork-only.
+
+## 2026-10-29 - Export the extension RPC request context type (senpi#4728, #4775)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: export the `ExtensionRpcRequestContext` type next to `ExtensionRpcRequestHandler`.
+
+### Why
+
+- Extension handlers that use the trusted owner context need its type from the package root.
+
+### Why an extension could not handle it
+
+- The type describes a host-issued capability; extensions consume it, they cannot declare it.
+
+### Expected merge conflict zones
+
+- LOW: the extension type export list in `packages/coding-agent/src/index.ts`.
+
+## 2026-10-29 - Named private descriptors reach exactly one engine launch (senpi#4771)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts` (new): reads and removes `SENPI_PRIVATE_FDS` (a JSON object mapping each name to a descriptor or to `null`) at startup, before anything can spawn. `null` means the launcher declared the channel but this spawn path has no descriptor (for example a Windows shell shim). Entries are parsed one by one: a valid lowercase-ASCII name is always declared, and only an integer from 5 to 15 that is an open socket, is not named twice and is not the runtime's own IPC channel becomes a channel; any other value keeps the name declared and unavailable. FIFOs are never adopted (runtime-internal pipes are FIFOs). A named socket above 15 or named twice is closed at capture. Measured: every runtime marks inherited descriptors up to at least 21 close-on-exec at startup, while Node on Linux leaks 24 and above into every child it spawns, so only 5..15 is adopted. A table that does not parse declares the names it still quotes, all unavailable. Windows adopts no descriptor and keeps only declarations. The table is read once, in the main thread, right after the valid-cwd guard in each entry (the guard stays the first import; in `bun/cli.ts` capture follows the sandbox environment restore); session Workers never read it. New queries: `privateChannelDeclared(name)`, `privateTablePresent()` (a table was present, even unparseable) and `privateFdTableUnparseable()` (present, but no name could be read). `takeInheritedPrivateChannel(name)` claims a named duplex once; the capture is shared through a process-wide symbol, so the bundled CLI and the public subpath see the same claims.
+- `packages/coding-agent/src/private-fd-spawn.ts` (new): `spawnWithPrivateFds` (called with the call site's own `spawn` reference) / `preparePrivateFdSpawn` add the captured descriptors to one explicit engine spawn's stdio table, restore the table only in that child's environment, and close this process's copies after the spawn. `null` entries forward hop to hop like descriptors, and a forwarded descriptor stays declared as `null` for any later hop (an ensure retry); a shell or Windows hop receives every name as `null`. An unparseable table is forwarded as the marker `unparseable`, so every hop reads the same state. The supervisor-to-engine hop is final (`SENPI_PRIVATE_FDS_FINAL`): the engine claims its channels but never forwards them, so a host it starts later inherits neither the table nor the descriptors.
+- `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/cli-main.ts`, `packages/coding-agent/src/bun/cli.ts`: import the capture first; the Bun re-exec and the full-CLI child forward through the helper.
+
+### Why
+
+- A launcher (the desktop app) needs a private, engine-lifetime duplex to one engine generation. The only extra startup descriptor was MCP enrollment, which closes after its bounded exchange (#4749).
+
+### Why an extension could not handle it
+
+- The descriptors must cross the CLI re-exec, `host ensure`, the supervisor and the engine spawn, all of which happen before any extension loads, and the table must leave the environment before unrelated children start.
+
+### Expected merge conflict zones
+
+- The second import (after the valid-cwd guard) of `cli.ts`, `cli-main.ts` and `modes/rpc/host-supervisor-entry.ts`, the first import of `modes/rpc/host-lifecycle.ts`, the import right after `sandbox-env-setup.ts` in `bun/cli.ts`; the re-exec block in `cli.ts`.
+
+## 2026-10-28 - Job widgets public host API (job widgets P3)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `core/extensions/builtin/job-widgets/public.ts` (`registerJobWidgetSource`, `getJobWidgetState`, `setJobWidgetAuthorResolver`, `TextTap`, `JOB_WIDGET_STATE_EVENT` and the v1 contract types).
+
+### Why
+
+- Hosts (omo's task jobs) register jobs and their model route. The root entry is the path the extension loader maps to the running instance, so the registry's module state is shared with the host; a subpath export would load a second copy.
+
+### Why an extension could not handle it
+
+- The public entry point is `src/index.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the line after the event-bus export in `src/index.ts`.
+
+## 2026-10-28 - Export the upstream MCP extension API types (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports the `RegisteredMcpServer` and `McpServersChangeEvent` types.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: extensions such as `pi-mcp-adapter` import `RegisteredMcpServer` from the package entry.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: the package entry is host-owned.
+
+### Expected merge conflict zones
+
+- LOW: the type export list; upstream exports the same names.
+
+## 2026-10-27 - Session launch profile carries a per-session caller env (fixes senpi#4381)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` passes `launchProfile.sessionEnv` to the session it creates, next to `promptSurface` and `browserEngine`.
+
+### Why
+
+- `open_session.env` must reach the session's tool subprocesses through the launch profile, the same per-session path every other open field takes; the process environment is the wrong scope on a shared host.
+
+### Why an extension could not handle it
+
+- The runtime factory is the only place that turns a launch profile into an `AgentSession`.
+
+### Expected merge conflict zones
+
+- LOW: the `createSession` option literal in `createCliRuntimeFactory`.
+
+## 2026-10-27 - Export the input attribution type (senpi#4482)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `InputAttribution` beside `InputEvent` and `InputSource`.
+
+### Why
+
+- Extension authors type their `input` handlers against the package's public types (senpi#4471).
+
+### Why an extension could not handle it
+
+- The package's public type surface is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the extension type export list in `src/index.ts`.
+
+## 2026-10-25 - Dispatch the attachment presentation before runtime creation (senpi#4269)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: dispatches the explicit attachment through a lazy interactive presentation boundary. A refusal or connection failure prints one `Error:` line and exits 1, without a stack trace.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: connecting, disconnecting, or failing to find a session must never initialize an in-process replacement.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the CLI composition root owns mode dispatch before runtime and extension initialization.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: dispatch immediately after the version short circuit.
+
 ## 2026-10-27 - Preserve seed emission frontier in the staged projection (part of #4272)
 
 ### What changed

@@ -1,5 +1,6 @@
 /** Real supervisor; only the socket child's exit and open completion are test-controlled. */
 import childProcess from "node:child_process";
+import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { mock } from "node:test";
@@ -73,6 +74,8 @@ if (mode === "host" || mode === "successor-host") {
 } else {
 	if (!socket || !agentDir) throw new Error("missing supervisor paths");
 	let child: childProcess.ChildProcess | undefined;
+	let holdClose = false;
+	let releaseClose: (() => void) | undefined;
 	const spawn = childProcess.spawn;
 	mock.method(childProcess, "spawn", (...args: Parameters<typeof childProcess.spawn>) => {
 		if (!Array.isArray(args[2]?.stdio)) throw new Error("expected explicit stdio");
@@ -83,6 +86,16 @@ if (mode === "host" || mode === "successor-host") {
 		return child;
 	});
 	const createServer = net.createServer;
+	const rename = fs.rename;
+	mock.method(fs, "rename", async (...args: Parameters<typeof rename>) => {
+		if (holdClose && args[0] === socket) {
+			await new Promise<void>((resolve) => {
+				releaseClose = resolve;
+				process.send?.({ type: "close-held" });
+			});
+		}
+		return rename(...args);
+	});
 	mock.method(net, "createServer", (accept: (peer: net.Socket) => void) => {
 		const server = createServer((peer) => {
 			accept(peer);
@@ -96,6 +109,16 @@ if (mode === "host" || mode === "successor-host") {
 	});
 	syncBuiltinESMExports();
 	process.on("message", (message) => {
+		if (message === "hold-close") {
+			holdClose = true;
+			process.send?.({ type: "close-armed" });
+			return;
+		}
+		if (message === "release-close") {
+			holdClose = false;
+			releaseClose?.();
+			return;
+		}
 		if (typeof message === "string") child?.send(message);
 	});
 	await runHostSupervisor({

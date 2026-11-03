@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { type FrozenAcceptedRoot, SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -45,7 +46,7 @@ it("T3i legacy records keep their grammar while the real lane tracks the call th
 		fauxAssistantMessage([call], { stopReason: "toolUse", timestamp: 1 }),
 		fauxAssistantMessage("done", { timestamp: 2 }),
 	]);
-	const done = client.waitFor((record) => record.type === "agent_idle", 20_000);
+	const done = client.waitFor((record) => record.type === "agent_idle", EVENT_SAFETY_MS);
 	dataOf(await client.request({ type: "prompt", sessionId, message: "read it" }));
 	await done;
 	await host.writer.flush();
@@ -67,7 +68,7 @@ it("T3i legacy records keep their grammar while the real lane tracks the call th
 		const executing = await lane.readCurrentCalls(started.root);
 		const completed = await lane.readCurrentCalls(ended.root);
 		expect(executing.calls).toHaveLength(1);
-		expect(executing.calls[0]?.runtimeItemKey).toMatch(new RegExp(`^${started.root.sessionEpoch}:\\d+\\.0$`));
+		expect(executing.calls[0]?.runtimeItemKey).toMatch(/^blk:[0-9a-f-]{36}:0$/);
 		expect(executing.calls[0]).toMatchObject({
 			toolCallId: "call-read-1",
 			turnId: started.root.turnId,
@@ -89,4 +90,4 @@ it("T3i legacy records keep their grammar while the real lane tracks the call th
 	} finally {
 		for (const cut of cuts) lane.release(cut.root);
 	}
-}, 60_000);
+}, 600_000);

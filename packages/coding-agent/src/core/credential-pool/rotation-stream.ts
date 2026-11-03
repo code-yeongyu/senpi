@@ -1,15 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import { type AssistantMessageEvent, sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
+import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
+import type { SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import { emitProviderAccountsChanged } from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import {
+	emitProviderAccountFailover,
+	emitProviderAccountsChanged,
+} from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import type { SdkErrorKind } from "../extensions/builtin/anthropic-subscription/errors.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
-import { listRotationSlots, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
+import { listRotationSlots, type RotationSlot, type RotationSources, releaseProbeLease } from "./rotation-slots.ts";
+import { pickRotationSlot } from "./session-slot.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
@@ -80,6 +86,29 @@ function blockPatch(
 	return { ...base, blockReason: block.reason };
 }
 
+/**
+ * The last slot's error, forwarded when every slot is limited, carries the time the first slot is due back:
+ * a limit the provider classified keeps its own reset when it named one, and a failure with no diagnostic or
+ * an unclassified 429 becomes the pool's rate limit (senpi#3975). Anything else (auth, a 402/403/404 status)
+ * is left exactly as the provider said, status included.
+ */
+function withPoolRetryAt(event: AssistantMessageEvent, retryAt: number): AssistantMessageEvent {
+	if (event.type !== "error") return event;
+	const own = sanitizeProviderDiagnostic(event.error.providerDiagnostic);
+	const limit = own?.category === "rate_limit" || own?.category === "quota";
+	const unclassifiedLimit = own === undefined || (own.category === "unknown" && own.httpStatus === 429);
+	if (!limit && !unclassifiedLimit) return event;
+	const providerDiagnostic =
+		own !== undefined && limit
+			? (sanitizeProviderDiagnostic({ ...own, resetsAt: own.resetsAt ?? retryAt }) ?? own)
+			: credentialPoolBlockedDiagnostic(retryAt);
+	return providerDiagnostic === undefined ? event : { ...event, error: { ...event.error, providerDiagnostic } };
+}
+
+function failoverReason(block: CredentialBlock): SdkErrorKind {
+	return block.reason === "account_disabled" ? "billing" : block.reason;
+}
+
 export type CredentialRotationOptions = {
 	sources: RotationSources;
 	/** Stable session key keeps a session on its slot; absent, each request distributes. */
@@ -112,23 +141,31 @@ export function streamWithCredentialRotation(
 	const useAffinity = sources.policy?.affinity !== false;
 	const pooled: PooledCredential | undefined = sources.credential;
 	const now = sources.now ?? Date.now;
+	// The account a failover just left. The switch is announced once the next account's attempt starts,
+	// so RPC clients and the TUI hear "from -> to" only for a switch that actually happens (senpi#2304).
+	let leaving: { name: string; block: CredentialBlock } | undefined;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
 		select: (candidates) => {
-			const pinned = candidates.find((candidate) => candidate.pinned === true);
-			if (pinned) return pinned;
-			const ranked = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
-			const ordered = applyAccountOrder(pooled?.order, ranked);
-
-			const winner = ordered[0];
+			const winner = pickRotationSlot(candidates, { affinityKey, useAffinity, hasher, order: pooled?.order });
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
 			return winner;
 		},
-		runAttempt,
+		runAttempt: (slot) => {
+			if (leaving !== undefined && leaving.name !== slot.name) {
+				emitProviderAccountFailover(sources.providerId, leaving.name, slot.name, failoverReason(leaving.block));
+			}
+			leaving = undefined;
+			return runAttempt(slot);
+		},
+		onRotate: ({ slot, block, committedOutput }) => {
+			leaving = committedOutput ? undefined : { name: slot.name, block };
+		},
 		isCommittedOutput: isCommittedRotationOutput,
 		isStreamStart: isRotationStreamStart,
 		errorFromEvent: rotationErrorFromEvent,
+		withPoolRetryAt,
 		classify: (error, context) =>
 			classifyCredentialFailure(error, {
 				...context,
@@ -150,6 +187,8 @@ export function streamWithCredentialRotation(
 						Object.keys(modelBlocks ?? {}).length !== Object.keys(current.modelBlocks ?? {}).length;
 					return {
 						...current,
+						// Health a success leaves behind belongs to the account, not to this token (senpi#4093).
+						...(slot.storedRevision === undefined ? {} : { credentialRevision: slot.storedRevision }),
 						lastSuccessAt: now(),
 						lease: undefined,
 						blockedUntil: undefined,
@@ -163,11 +202,21 @@ export function streamWithCredentialRotation(
 			// A healthy account answering again changes nothing a listing shows.
 			if (written !== STORE_BUSY && released) emitProviderAccountsChanged(sources.providerId);
 		},
+		// A probe that ended without a verdict hands its lease back at once instead of holding the slot
+		// for the lease's whole TTL (senpi#4094).
+		// Only the lease this request took: `slot.lease` mirrors the shared file and can be another request's.
+		releaseSlot: async (slot) => {
+			if (slot.heldLeaseId === undefined) return;
+			await releaseProbeLease(sources.repository, sources.providerId, slot.lane, slot.name, slot.heldLeaseId);
+		},
 		persistBlock: async (slot, block) => {
 			const revision =
 				slot.lane === "env" && slot.envVarName !== undefined && slot.envKey !== undefined
 					? await sources.repository.envCredentialRevision(slot.envVarName, slot.envKey)
-					: slot.storedRevision;
+					: // A rejected token is a verdict on that token; every other block is a verdict on the account (senpi#4093).
+						block.reason === "auth_error"
+						? slot.materialRevision
+						: slot.storedRevision;
 			const written = await writeHealthUnlessStoreBusy(`${block.reason} block on ${slot.name}`, () =>
 				sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
 					blockPatch(block, current, now(), revision, sources.policy, options.modelId),
