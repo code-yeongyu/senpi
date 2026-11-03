@@ -7,6 +7,8 @@ export type SdkErrorKind =
 	| "rate_limit"
 	| "overloaded"
 	| "auth_error"
+	/** Claude Code found no login it could read in the account's dir (senpi#5630); says nothing about the account. */
+	| "login_unreadable"
 	| "billing"
 	| "org_not_allowed"
 	| "entitlement"
@@ -133,6 +135,9 @@ function classifyErrorKind(error: unknown, askedLegacyLongContext: boolean): Sdk
 	if (/\b(?:extra usage|usage credits) (?:is|are) required for long context\b/.test(text)) {
 		return { kind: "long_context_unavailable", retryable: true };
 	}
+	// Claude Code's own text when it cannot read a login (no login, or a locked macOS keychain): a fact about this
+	// process, not a server verdict on the account, so it never becomes a shared auth block (senpi#5630).
+	if (/\bnot logged in\b/.test(text)) return { kind: "login_unreadable", retryable: true };
 	if (
 		/\b(enotfound|eai_again|econnreset|econnrefused|etimedout|enetunreach|ehostunreach|und_err_connect_timeout|und_err_socket)\b|fetch failed|socket hang up|connection reset by peer/.test(
 			text,
