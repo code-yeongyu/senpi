@@ -247,6 +247,16 @@ describe.skipIf(process.platform === "win32")("a local url is a path under the h
 		expect([...read.asked, ...write.asked].filter((a) => !isRepoDir(a))).toEqual([]);
 	});
 
+	it("never runs the source repo's own pre-push hook on a local push: the client gets core.hooksPath=/dev/null too", async () => {
+		const src = committed();
+		const marker = join(root, `pre-push-ran-${crypto.randomUUID()}`);
+		mkdirSync(join(src, ".git", "hooks"), { recursive: true });
+		writeFileSync(join(src, ".git", "hooks", "pre-push"), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
+		const dir = bare(`client-hook-${crypto.randomUUID()}.git`);
+		const pushed = await runIn(src, ["push", "--quiet", `file://${dir}`, "main:main"], () => true);
+		expect([pushed.result, pushed.code, existsSync(marker)]).toEqual(["ran", 0, false]);
+	});
+
 	it("never runs a local target's hooks on a push: the hardened receive-pack sets core.hooksPath=/dev/null", async () => {
 		const dir = bare("hooked.git");
 		const marker = join(root, "hook-ran");
