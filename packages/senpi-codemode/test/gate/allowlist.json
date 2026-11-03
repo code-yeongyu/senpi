@@ -4024,6 +4024,1015 @@
 				}
 			],
 			"reason": "senpi#5052: Windows Python kernel startup restore added isolated Win32 lexical-joining parity cases and a packaged-assets check for the isolated Windows startup host; the old combined parity title is removed. Reviewed and merged without reviewed-addition records; no prompt cell moves."
+		},
+		"senpi#5181": {
+			"additions": [
+				"legacyContracts/test/kernels/shared/spawn-failure.test.ts/Ruby kernel whose interpreter cannot be spawned (senpi#3500) settles the queued cell with the spawn error and closes without a retirement failure",
+				"legacyContracts/test/kernels/shared/spawn-failure.test.ts/Julia kernel whose interpreter cannot be spawned (senpi#3500) settles the queued cell with the spawn error and closes without a retirement failure"
+			],
+			"reason": "senpi#5181 (fixes #3500; recorded by #5460): contract tests that a Ruby or Julia kernel whose interpreter cannot be spawned settles the queued cell with the spawn error and closes cleanly. They reached main after senpi#5208 measured its head, so main's codemode-gate stayed red from that merge on. No prompt cell moves."
+		},
+		"senpi#4797": {
+			"additions": [
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell walks the chrome-backend view's history with goBack() and goForward()"
+			],
+			"reason": "senpi#4797 (reached main through senpi#5054; recorded by #5460): contract test that a proxied Bun.WebView from an eval cell walks the chrome-backend history with goBack() and goForward(). No prompt cell moves."
+		},
+		"senpi#5358": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/worker-kill-guard.js",
+				"legacyContracts/test/kill-guard-kernels.test.ts/JavaScript kernel cells (E4, E5, E6, A8) refuses the reporter's command and a protected pid in the worker kernel",
+				"legacyContracts/test/kill-guard-kernels.test.ts/JavaScript kernel cells (E4, E5, E6, A8) refuses the reporter's command and a protected pid in the inline fallback kernel",
+				"legacyContracts/test/kill-guard-kernels.test.ts/JavaScript kernel cells under Bun (E4, C32, C33) refuses Bun.$ text, an interpolated empty branch and a timer that fires after the cell",
+				"legacyContracts/test/kill-guard-kernels.test.ts/Python kernel cells (E7, E8, A4, C20b) refuses the reporter's command through os.system and subprocess, and os.kill of a protected pid",
+				"legacyContracts/test/kill-guard-runtime-env.test.ts/kernel session environment and the kill guard's runtime layer hands kernels the shim PATH entry, BASH_ENV and the judge exports while the guard is on",
+				"legacyContracts/test/kill-guard-runtime-env.test.ts/kernel session environment and the kill guard's runtime layer keeps the runtime layer out of kernels while terminal.killGuard is off in user settings (C23)",
+				"legacyContracts/test/kill-guard-runtime-env.test.ts/kernel session environment and the kill guard's runtime layer adds nothing when no host activated the runtime layer",
+				"legacyContracts/test/kill-guard-worker-capture.test.ts/worker kill guard (A8) judges a wrapped spawnSync with the captured originals and never re-enters the wrapper (N1)",
+				"legacyContracts/test/kill-guard-worker-capture.test.ts/worker kill guard (A8) refuses a broad pattern without reading the table",
+				"legacyContracts/test/kill-guard-worker-capture.test.ts/worker kill guard (A8) judges every shell a cell builds with new Bun.$.Shell(), shaped as on Bun 1.4.4"
+			],
+			"reason": "senpi#5358 (recorded by #5460): the kill guard's runtime layer. The JS worker now eagerly imports src/kernels/js/worker-kill-guard.js (firstKernel import row), and the new kill-guard-kernels, kill-guard-runtime-env and kill-guard-worker-capture contract tests pin the refusals in the worker, inline-fallback and Python kernels and the kernel session environment. No prompt cell moves."
+		},
+		"senpi#5330": {
+			"additions": [
+				"legacyContracts/test/js-kernel-webview-launch.test.ts/retiring a real Bun Chrome (senpi#4174) #given a launched Chrome #when it is retired #then its process, its code_sign_clone and its profile are gone"
+			],
+			"reason": "senpi#5330 (fixes #4174, landed via train senpi#5467; recorded by #5460): contract test that retiring a launched Bun Chrome removes its process, its code_sign_clone and its profile. No prompt cell moves."
+		},
+		"senpi#5342": {
+			"additions": [],
+			"reason": "senpi#5342 (recorded by #5460): the eval prompt guideline rewrite reaches every prompt cell (5 presets x spawns x monitor x 3 language sets x 2 runtimes x host line = 240). Only promptGuidelines, bytes and tokens move; description and promptSnippet are unchanged.",
+			"changes": [
+				{
+					"key": "prompts/default/false/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/false/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/default/true/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/false/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/claude/true/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/false/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/codex/true/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/node",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/node/host",
+					"reason": "senpi#5342 (system prompt diet, #5335) rewrote buildEvalPrompt's promptGuidelines: it dropped the per-style batching line (the unchanged description already carries it) and folded the reset and memory-notice line into one terse sentence. Value measured on main ee6f6865c6."
+				}
+			]
+		},
+		"senpi#5496": {
+			"additions": [
+				"legacyContracts/test/js-file-url-import.test.ts/codemode JS file:// module imports (senpi#4111) Given a file URL from pathToFileURL when a cell imports it dynamically then the module loads",
+				"legacyContracts/test/js-file-url-import.test.ts/codemode JS file:// module imports (senpi#4111) Given a file URL when a cell imports it statically then the module loads",
+				"legacyContracts/test/js-file-url-import.test.ts/codemode JS file:// module imports (senpi#4111) Given a scheme with no registered root when a cell imports it then the loader still refuses it"
+			],
+			"reason": "senpi#5496 (fixes #4111; recorded by #5460): contract tests that a JS eval cell loads file:// module URLs statically and dynamically, and that the loader still refuses a scheme with no registered root. No prompt cell moves."
 		}
 	}
 }

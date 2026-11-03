@@ -2,24 +2,18 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import { supportsFmt } from "./bun-fmt.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const ciWorkflow = parse(readFileSync(join(root, ".github", "workflows", "ci.yml"), "utf8"));
 
-// Resolve oxfmt from node_modules rather than through a package-manager runner,
-// so the gate is exercised identically under npm, bun and pnpm.
-const oxfmtPackagePath = createRequire(import.meta.url).resolve("oxfmt/package.json");
-const oxfmtPackage = JSON.parse(readFileSync(oxfmtPackagePath, "utf8"));
-const oxfmtBin = join(
-	dirname(oxfmtPackagePath),
-	typeof oxfmtPackage.bin === "string" ? oxfmtPackage.bin : oxfmtPackage.bin.oxfmt,
-);
+const fmtWrapper = join(root, "scripts", "bun-fmt.mjs");
+const FMT_WRAPPER_COMMAND = /^node scripts\/bun-fmt\.mjs\b/;
 
 const staticCheckRun = (() => {
 	const job = Object.values(ciWorkflow.jobs).find((candidate) => candidate?.name === "Static checks");
@@ -44,45 +38,74 @@ const formatCheckScript = () => {
 };
 
 describe("CI format gate", () => {
-	it("runs an oxfmt form that reports drift instead of rewriting it", () => {
+	it("runs bun fmt in a form that reports drift instead of rewriting it", () => {
 		// Given: the format script the Static checks job's check script runs.
 		const script = formatCheckScript();
 
-		// Then: it is oxfmt in check mode, or the gate can never fail.
-		assert.match(script, /^oxfmt\b/, `CI format script must invoke oxfmt: ${script}`);
-		assert.match(script, /--check\b/, `CI oxfmt invocation must report drift: ${script}`);
-		assert.doesNotMatch(script, /--write\b/, `CI oxfmt invocation rewrites files: ${script}`);
+		// Then: it is the bun fmt wrapper in check mode, or the gate can never fail.
+		assert.match(script, FMT_WRAPPER_COMMAND, `CI format script must invoke scripts/bun-fmt.mjs: ${script}`);
+		assert.match(script, /--check\b/, `CI bun fmt invocation must report drift: ${script}`);
+		assert.doesNotMatch(script, /--write\b/, `CI bun fmt invocation rewrites files: ${script}`);
 	});
 
-	it("fails on unformatted input with the CI oxfmt invocation", (t) => {
+	it("fails on unformatted input with the CI bun fmt invocation", (t) => {
 		// Given: a drifted file under a path .oxfmtrc.json actually includes.
 		const fixture = mkdtempSync(join(root, "packages", "coding-agent", "src", "ci-format-gate-fixture-"));
 		t.after(() => rmSync(fixture, { recursive: true, force: true }));
 		const drifted = join(fixture, "drifted.ts");
 		writeFileSync(drifted, "export const value   =    1;\n");
 		const flags = formatCheckScript()
-			.replace(/^oxfmt/, "")
+			.replace(FMT_WRAPPER_COMMAND, "")
 			.trim()
 			.split(/\s+/)
 			.filter((flag) => flag.startsWith("-"));
 
-		// When: the CI script's own oxfmt argv runs against the drifted file.
-		const result = spawnSync(process.execPath, [oxfmtBin, ...flags, drifted], {
+		// When: the CI script's own argv runs against the drifted file.
+		const result = spawnSync(process.execPath, [fmtWrapper, ...flags, drifted], {
 			cwd: root,
 			timeout: 60000,
 			encoding: "utf8",
 		});
 
-		// Then: oxfmt saw the file, reported the drift as a failure, and left it untouched.
+		// Then: bun fmt saw the file, reported the drift as a failure, and left it untouched.
 		assert.match(result.stdout + result.stderr, /drifted\.ts/);
 		assert.equal(result.status, 1, `expected drift to fail. stdout: ${result.stdout}\nstderr: ${result.stderr}`);
 		assert.equal(readFileSync(drifted, "utf8"), "export const value   =    1;\n");
+	});
+
+	it("passes on formatted input with the CI bun fmt invocation", (t) => {
+		// Given: the same fixture path, already formatted.
+		const fixture = mkdtempSync(join(root, "packages", "coding-agent", "src", "ci-format-gate-fixture-"));
+		t.after(() => rmSync(fixture, { recursive: true, force: true }));
+		const formatted = join(fixture, "formatted.ts");
+		writeFileSync(formatted, "export const value = 1;\n");
+
+		// When: the wrapper checks it.
+		const result = spawnSync(process.execPath, [fmtWrapper, "--check", formatted], {
+			cwd: root,
+			timeout: 60000,
+			encoding: "utf8",
+		});
+
+		// Then: the check passes, so a pass is not the wrapper swallowing every result.
+		assert.equal(result.status, 0, `expected a clean file to pass. stdout: ${result.stdout}\nstderr: ${result.stderr}`);
+	});
+
+	it("refuses a Bun without the fmt command instead of re-entering the fmt script", () => {
+		assert.equal(supportsFmt("1.4.4"), true);
+		assert.equal(supportsFmt("1.4.5\n"), true);
+		assert.equal(supportsFmt("1.5.0"), true);
+		assert.equal(supportsFmt("2.0.0"), true);
+		assert.equal(supportsFmt("1.4.3"), false);
+		assert.equal(supportsFmt("1.3.9"), false);
+		assert.equal(supportsFmt("0.9.9"), false);
+		assert.equal(supportsFmt("not-a-version"), false);
 	});
 
 	it("keeps an explicit autofix script for local use", () => {
 		const fixScript = packageJson.scripts["check:fix"];
 		assert.ok(fixScript, "expected a check:fix script for local autofix");
 		assert.match(fixScript, /npm run fmt(?![:\w])/);
-		assert.equal(packageJson.scripts.fmt, "oxfmt");
+		assert.equal(packageJson.scripts.fmt, "node scripts/bun-fmt.mjs");
 	});
 });
