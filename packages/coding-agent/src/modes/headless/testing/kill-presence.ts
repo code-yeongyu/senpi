@@ -177,4 +177,24 @@ export const KILL_PRESENCE_CASES: readonly KillPresenceCase[] = [
 		);
 		await restarted.presence.ready(SESSION, "request");
 	}),
+	killCase("KILL-PRESENCE-05", "pause", "durable", async (adapter) => {
+		const medium = await claimed(adapter);
+		const survivor = await engine(adapter, medium, "durable");
+		await expectKilled(survivor.presence.machineOffline(OWNER), "pause");
+		await survivor.presence.machineOffline(OWNER);
+		expectSame(
+			(await records(survivor)).map(({ kind }) => kind),
+			[PRESENCE_PAUSE_RECORD],
+			"a retry adds no second pause",
+		);
+		expectSame(shape(survivor), pausedOnOwner, "the retry adopts the durable pause");
+		await survivor.presence.machineOnline(OWNER);
+		const kinds = [PRESENCE_PAUSE_RECORD, PRESENCE_RESUME_RECORD];
+		expectSame(
+			(await records(survivor)).map(({ kind }) => kind),
+			kinds,
+			"the one pause is resumed exactly once",
+		);
+		expectSame((await engine(adapter, medium)).presence.view(SESSION).paused, false, "no open pause is left");
+	}),
 ];

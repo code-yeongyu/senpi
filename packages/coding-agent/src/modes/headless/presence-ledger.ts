@@ -22,7 +22,7 @@ export interface PresencePause {
 }
 
 export interface PresenceLedger {
-	/** Records that `sessionId` waits on `machine`; the caller holds at most one open pause per session and machine. */
+	/** Records that `sessionId` waits on `machine`; returns the open pause unchanged when one already exists. */
 	pause(sessionId: string, machine: string, role: PresenceRole): Promise<PresencePause>;
 	/** Resumes the open pause of `sessionId` on `machine`; `undefined` when none is open (already resumed). */
 	resume(sessionId: string, machine: string): Promise<PresencePause | undefined>;
@@ -66,6 +66,8 @@ export function createPresenceLedger(options: {
 		pause: (sessionId, machine, role) =>
 			admission.admit(async () => {
 				const key = openKey(sessionId, machine);
+				const open = await read(key);
+				if (open !== undefined) return open;
 				const pause: PresencePause = { pauseId: store.mintId(), sessionId, machine, role };
 				await store.commit(
 					epoch,
