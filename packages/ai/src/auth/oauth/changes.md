@@ -1,3 +1,21 @@
+## 2026-10-30 - SIWC host and app identity (senpi#5014, part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: use the configured product name for initial registration, with the standalone wire identity as the default, and require UUIDv4 host IDs.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OpenAI requires a stable UUIDv4 host identifier and the app's actual name rather than upstream's hard-coded name.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: the bundled OAuth flow owns the authorization parameters.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: authorization URL construction and host ID validation.
+
 ## 2026-10-30 - Implement SIWC renewable-session revocation (part of #5003)
 
 ### What changed

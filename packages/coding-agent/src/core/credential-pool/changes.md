@@ -1,3 +1,39 @@
+## 2026-10-30 - A guessed limit backoff stops at 30 minutes (senpi#4091)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: `rateLimitCooldown` caps the guessed exponential term at `GUESSED_BACKOFF_CAP_MS` (30 minutes). A server hint still floors the cooldown, and a provider-stated usage reset still blocks until that reset, capped at 48 hours.
+
+### Why
+
+- A limit with no parseable reset doubled its cooldown on every failed half-open probe, up to 48 hours, so a spent account stayed blocked for hours after its provider window had reset.
+
+### Why an extension could not handle it
+
+- The cooldown is computed inside the credential pool's failure classifier.
+
+### Expected merge conflict zones
+
+- LOW: the constants block and `rateLimitCooldown` in `classify.ts`.
+
+## 2026-10-30 - The generic pool announces its account switches (senpi#2304, senpi#5017)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `onRotate` records the account a pre-output failover left, and the next account's attempt emits one `emitProviderAccountFailover(provider, from, to, reason)` (`account_disabled` maps to `billing`). Nothing is emitted after committed output or when no account is left.
+
+### Why
+
+- Only the Anthropic subscription lane emitted `account_failover`; the generic pool switched accounts with no signal to RPC clients or the TUI.
+
+### Why an extension could not handle it
+
+- The switch happens inside the core credential-pool engine that `ModelRuntime` drives; no extension hook observes it.
+
+### Expected merge conflict zones
+
+- LOW: the `runCredentialFailover({...})` options in `streamWithCredentialRotation`.
+
 ## 2026-11-01 - slotsStartedByLogin is module-private (senpi#5281)
 
 ### What changed

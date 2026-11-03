@@ -1,3 +1,21 @@
+## 2026-10-30 - Conformance archive producer scripts (senpi#5059)
+
+### What changed
+
+- `packages/agent/package.json`: adds the `pack:conformance` and `check:conformance-archive` scripts and the `@types/bun` development dependency the producer scripts typecheck against.
+
+### Why
+
+- `packages/agent/package.json`: the producer runs on Bun and needs a named entry point plus a typecheck of its Bun-only scripts.
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json`: package scripts and development dependencies live only in the package manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/package.json` scripts and devDependencies.
+
 ## 2026-10-29 - Bun SQLite host for the durable-core conformance suite (senpi#4744, fixes #4740)
 
 ### What changed

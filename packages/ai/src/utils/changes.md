@@ -1,3 +1,40 @@
+## 2026-10-31 - TLS chain-verification codes are structured transport codes (senpi#5253, closes #5244)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` (fork-only): `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, `UNABLE_TO_GET_ISSUER_CERT`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN`, `DEPTH_ZERO_SELF_SIGNED_CERT` and `CERT_UNTRUSTED` join the closed transport allowlist as `network`; `isTlsChainVerificationCode` names them.
+- `packages/ai/src/provider-diagnostic.ts` (fork-only): re-exports `isTlsChainVerificationCode` from the package root.
+
+### Why
+
+- omo#10762, design r13 6.6: the native handshake code must reach the provider failure so coding-agent can recognise a verification failure without reading message text. Hostname mismatch and expiry stay unclassified.
+
+### Why an extension could not handle it
+
+- The transport classifier runs inside the provider adapters' catch paths, below any extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `default` branch of `categoryForTransportCode`.
+
+## 2026-11-01 - A 503 whose body says "Billing Scope" is not a quota exhaustion (senpi#4632)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `isQuotaExhaustionMessage()` and `classifyErrorMessage()` split the quota patterns into a strong set (explicit codes such as `insufficient_quota`, `usage_limit_reached`, `credits_required`) and the bare `billing` word. Bare billing prose is ignored only when a transient server signal is present (a 5xx status token or the OpenAI-envelope `server_error` type) and no strong marker is present, so the 503/timeout in the same message can classify as retryable.
+
+### Why
+
+- A gateway 503 whose body merely mentions a billing lookup ("resolve Billing Scope: ... dial tcp: i/o timeout") was classified as a spent account, so the turn never retried even though the account served neighbouring requests. The status, not the prose, should gate a bare billing mention.
+
+### Why an extension could not handle it
+
+- Retry classification is a core choke point in `packages/ai/src/utils/retry.ts`; no extension hook reorders the non-retryable-before-retryable pattern test.
+
+### Expected merge conflict zones
+
+- LOW: the quota-pattern lists are edited by neighbouring billing/quota work (e.g. senpi#4097, #5040), but those touch different markers; the new gating helpers are additive.
+
 ## 2026-10-30 - Share exact SIWC recovery decisions (part of #5003)
 
 ### What changed

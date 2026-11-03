@@ -12,6 +12,95 @@
 
 ### Removed
 
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Under a degraded engine certificate import (fallback), a failed agent-shell command (`bash`, terminal foreground and background sessions) carries a `trust` status from the adopted record and, when its output looks like a certificate verification error, a heuristic hint with the matched pattern id ([#5248](https://github.com/code-yeongyu/senpi/pull/5248))
+- Under a fallback engine trust generation, a provider request that fails TLS chain verification reports `agent_end.failure.trust` with the fallback reason and its repair action id, and records it once per process and reason in the trust diagnostics file ([#5253](https://github.com/code-yeongyu/senpi/pull/5253))
+- RPC `get_protocol_info` answers carry `method_classes: { version, digest }`, the version and sha256 digest of the inbound method-class table the engine runs, so a client that classifies records with its own copy of the table can tell whether that copy is current ([#5476](https://github.com/code-yeongyu/senpi/pull/5476)).
+- RPC `set_client_info` accepts `remoteOrigin: { deviceId, deviceName? }`, declared once per connection by a relay forwarder for the remote device it speaks for. Every `select`, `confirm`, `input`, `editor` and `question` dialog that connection raises carries it as `remoteOrigin` (also inside the mirrored `ui_request_pending`), so a client can label dialogs raised by a remote device's turn; local connections' dialogs carry none ([#5479](https://github.com/code-yeongyu/senpi/pull/5479)).
+
+### Changed
+
+- The first-turn system prompt drops text the tool schemas already carry: no `## Available Tools` line for a tool whose description the model sees, fewer tool guidelines, one terminal section that also states the bash timeout facts, and no separate timeout policy or image generation section ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))
+- The shared prompt sections, tool guidelines, and terminal section use terser wording; tool names, call shapes, the routing line, and the Handoff template are unchanged ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))
+
+### Fixed
+
+- Reopening a closed session waits for an in-flight path-claim removal after the close grace deadline instead of refusing a session that has already ended ([#4484](https://github.com/code-yeongyu/senpi/issues/4484)).
+- OAuth registration receives the configured product display name, including branded distributions (part of [#5003](https://github.com/code-yeongyu/senpi/issues/5003)).
+- Anthropic Subscription: a turn started while the previous turn is still finishing now waits for it instead of failing and moving the session to a fallback model ([#3906](https://github.com/code-yeongyu/senpi/issues/3906))
+- A subscription account that hit a limit with no stated reset is checked again at least every 30 minutes instead of staying blocked for up to 48 hours ([#5034](https://github.com/code-yeongyu/senpi/pull/5034)).
+- When the fallback chain runs out, the error shown in the TUI and print mode now leads with the failure that started the fallback (for example a usage 400) instead of the last model's error, and `retry_fallback_exhausted` carries `primaryError` and every failed rung in `failures` ([#4084](https://github.com/code-yeongyu/senpi/issues/4084))
+- The todo tool now accepts near-canonical `init` calls (phases nested inside `items`, nameless or empty phases, a JSON-string `list`, stray strings in `list`, an `op` with stray leading or trailing punctuation or whitespace (never digits)), corrects them, and reports each correction instead of failing validation ([#5336](https://github.com/code-yeongyu/senpi/pull/5336))
+- With compact socket updates enabled, the recovery manifest names the catalog families its root requires (`requiredKinds`), so a client opens exactly those instead of copying the engine's family list ([#5397](https://github.com/code-yeongyu/senpi/issues/5397))
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- `/gpt-account` and `/claude-account` show each account's limit windows under it: the share used, when each window resets and how old the reading is; an account nothing has reported for says so instead of showing 0% ([#5051](https://github.com/code-yeongyu/senpi/pull/5051))
+- Kill guard: an agent command, `monitor`, plain `bash_input` line (printable text and backspace, submitted by Enter, a line break in the text or an `enter` key, with no other named key), `tool.bash` call or restored durable monitor that would signal every process (`kill -1`, a `pkill` pattern such as `a||b`, `.*` or a single letter), a protected process (pid 1, the agent, its ancestors, the user's service manager) or a process group holding one, including behind `busybox` and `env -S`/`--split-string`, is refused before it runs, with a `[senpi:kill-guard]` message naming the rule and a narrow alternative; any other `bash_input` call (escape sequences, control, cursor and history keys) reaches a program the guard cannot see and is judged by the shell that runs it ([#5358](https://github.com/code-yeongyu/senpi/pull/5358), same release); `terminal.killGuard: "off"` in user settings turns it off ([#5354](https://github.com/code-yeongyu/senpi/pull/5354))
+- Kill guard runtime layer: on macOS and Linux every agent shell, monitor and eval kernel gets `kill`, `pkill` and `killall` shims first on `PATH` and a `BASH_ENV` wrapper for bash's builtin `kill` (chaining any `BASH_ENV` you set); an interactive bash they start gets the same wrapper from a `PROMPT_COMMAND` hook that runs before its first prompt, after your startup files, and then runs your own `PROMPT_COMMAND`. Lines typed into a running shell with `bash_input` are judged there too, edited, recalled and history-expanded ones included, which completes the plain-line `bash_input` check of #5354 (both ship in the same release). Signal targets only known when a command runs, such as `pkill -f "$P"`, `xargs kill` or a script's `kill $PID`, are judged then and refused with exit 126. The npm install and the compiled binary both judge them. Commands you type yourself with `!` are not judged, unless an extension's `user_bash` handler runs them through operations that use the agent shell environment. `terminal.killGuard: "off"` installs nothing and leaves `PROMPT_COMMAND` as you set it ([#5358](https://github.com/code-yeongyu/senpi/pull/5358))
+- The attached TUI (`--attach`) shows "Requested from <device>" above a dialog raised by a turn that came from another of your devices ([#5484](https://github.com/code-yeongyu/senpi/pull/5484))
+- `web_search` takes an optional `max_results` (1-50) that outranks a `websearch.json` entry's `maxResults` and the ten-result default, and every result snippet is capped at 500 characters ([#5486](https://github.com/code-yeongyu/senpi/pull/5486))
+- `websearch.json` accepts `ollama` as a `web_search` provider: with an `apiKey` it posts the query to Ollama Cloud's `/api/web_search` with a bearer token and returns up to 10 results. It is used only when listed explicitly; the no-config default chain is unchanged ([#5485](https://github.com/code-yeongyu/senpi/issues/5485), [#5487](https://github.com/code-yeongyu/senpi/pull/5487)).
+- `web_search` gains a `jina` provider for Jina Reader: the query goes in the `https://s.jina.ai` URL path with `count` clamped to 1-20, the key is sent as a bearer token, and a single allowed domain maps to Jina's `X-Site` host filter ([5488](https://github.com/code-yeongyu/senpi/pull/PR)).
+- Add the `synthetic` web search provider: a keyed `websearch.json` entry posting `{query}` to `https://api.synthetic.new/v2/search`, with domain filters folded into the query and results sliced to `maxResults` locally ([#5489](https://github.com/code-yeongyu/senpi/pull/5489))
+- `web_search` accepts `parallel`: without an `apiKey` it calls Parallel's public MCP `web_search` tool, and with one it posts to the beta Search API with `mode: "fast"` and 10,000-character excerpts ([#5485](https://github.com/code-yeongyu/senpi/issues/5485)).
+- `websearch.json` accepts `firecrawl` as a `web_search` provider: with an `apiKey` it sends a bearer token to Firecrawl's `/v2/search`, without one it searches Firecrawl's keyless tier. It is used only when listed explicitly; the no-config default chain is unchanged ([#5485](https://github.com/code-yeongyu/senpi/issues/5485), [#5491](https://github.com/code-yeongyu/senpi/pull/5491)).
+- `websearch.json` accepts `openrouter` as a `web_search` provider: with an `apiKey` and a `model` it grounds the query through OpenRouter's `web` plugin and returns the cited pages as results. It is used only when listed explicitly; the no-config default chain is unchanged ([#5485](https://github.com/code-yeongyu/senpi/issues/5485), [#5492](https://github.com/code-yeongyu/senpi/pull/5492)).
+- `websearch.json` accepts `tinyfish` as a `web_search` provider: it needs an `apiKey` and sends keyed GET requests to `https://api.search.tinyfish.ai`, asking for at most ten results per page and reading further pages until the requested count is met, a page comes back short, or ten pages have been read ([#5493](https://github.com/code-yeongyu/senpi/pull/5493))
+- `web_search` gains an explicit-only `public` provider: one entry searches Startpage, Google, DuckDuckGo, Ecosia and Mojeek at once, merges duplicate URLs, ranks pages more engines agree on first, and answers within 5 seconds once any engine has results (30 s cap). It is not part of the no-config default chain ([#5494](https://github.com/code-yeongyu/senpi/pull/5494)).
+
+### Changed
+
+- The gpt-6-astra system prompt is shorter (about 16% fewer tokens): it drops the Verification section and the file-operations block, names its checks in the stop condition, asks the model to fix root causes, and uses Codex's writing-style section ([#5390](https://github.com/code-yeongyu/senpi/issues/5390)).
+- `bootstrapRuntime()` without a `sessionManager` now builds a session-less runtime whose built-in tools run: the runner has no session, `read` ignores the context model and `bash` exposes no session environment ([#5433](https://github.com/code-yeongyu/senpi/pull/5433))
+
+### Fixed
+
+- A new human message retries compaction after a failed automatic attempt instead of remaining blocked by stale admission state. If compaction still cannot complete, the TUI says to run `/compact` or `/new`; print mode and SDK callers get a message without slash commands, and SDK callers get a typed `RequiredCompactionError` (`code: "compaction_failed"`, exported from the package root). ([#4212](https://github.com/code-yeongyu/senpi/pull/4212))
+- A model fallback through the shipped fallback chains now keeps the session's thinking effort (for example `medium`) instead of switching it to `max`; a level written on a rung in your own `retry.fallbackChains` is still used ([#4103](https://github.com/code-yeongyu/senpi/pull/5001))
+- An automatic switch to another logged-in account is no longer silent: each switch is announced once as "from -> to" with its reason, as an `account_failover` event for RPC clients and as a TUI status line ([#5017](https://github.com/code-yeongyu/senpi/pull/5017), part of [#2304](https://github.com/code-yeongyu/senpi/issues/2304))
+- Experimental server: a client connecting right after the server starts no longer fails with `connect ENOENT` on the public socket ([#5187](https://github.com/code-yeongyu/senpi/pull/5187))
+- A 503 whose error body merely mentions a billing lookup (e.g. "resolve Billing Scope: ... dial tcp: i/o timeout") is no longer a billing failure, so the same-provider fallback rung is no longer skipped as an account limit ([#4632](https://github.com/code-yeongyu/senpi/issues/4632))
+- Anthropic Subscription cold seeds with more than 8 earlier image uploads no longer re-write the whole conversation to the prompt cache on every new upload; the oldest uploads are dropped from the replay 4 at a time ([#5278](https://github.com/code-yeongyu/senpi/pull/5278))
+- A fallback chain keyed by a `-fast` model alias now governs a session started on that alias, so a usage-limited first rung falls back to the next one ([#5313](https://github.com/code-yeongyu/senpi/pull/5313))
+- Retiring the WebView service's Chrome now asks it to quit over CDP `Browser.close` and waits (bounded) for it to exit before falling back to the per-OS kill (SIGTERM then SIGKILL on macOS/Linux, the unchanged process-tree kill on Windows), then removes its temp profile, so macOS no longer collects a `code_sign_clone` copy of Chrome and a `.bun-chrome` profile per launch ([#5330](https://github.com/code-yeongyu/senpi/pull/5330))
+- An "Always" permission answer now approves calls only in the session that gave it: when one permission service serves several sessions, another session's identical call is still asked, including nested tool dispatches. A service that serves one session decides as before, and answers persisted to the approved store stay shared across the project's sessions ([#5380](https://github.com/code-yeongyu/senpi/pull/5380)).
+- With the engine-socket compact-updates flag on, an engine-initiated close of a compact socket now sends a typed `socket_closing` record (`code`, `retryable`, optional `detail`) first, so the client can tell whether to reconnect; legacy and flag-off sockets are unchanged ([#5322](https://github.com/code-yeongyu/senpi/issues/5322)).
+- A socket host that receives SIGTERM while a connected peer has stopped reading now exits on its own inside the supervisor's stop window, instead of waiting for SIGKILL ([#5395](https://github.com/code-yeongyu/senpi/issues/5395)).
+- Startup no longer stalls for seconds recompiling every cached MCP tool schema on each catalog cache read ([#5405](https://github.com/code-yeongyu/senpi/pull/5405))
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Behind the compact-updates flag, a `compact_events` RPC connection's live `message_end`, `entry_appended` and `transcript_write_failed` records carry the message ids of the settled recovery rows (`messageId`, `terminalSequence`, `owningMessageId`), so a client can join them across a reconnect, including an entry whose `entry_appended` arrives after other transcript batches, and an entry whose owner the host can no longer vouch for carries `ownerUnknown: true` rather than looking unowned; every other connection receives the same bytes as before ([#5331](https://github.com/code-yeongyu/senpi/issues/5331), [#5337](https://github.com/code-yeongyu/senpi/issues/5337))
+- Behind the compact-updates flag, a `compact_events` RPC connection's live `toolcall_*` updates, `tool_execution_start`/`update`/`end` and `tool_hook_status` records carry the `runtimeItemKey` of their call, the key its recovery snapshot entry carries, so a client can join them across a reconnect even when a `toolCallId` is reused; a record the host cannot attribute to a call, including an execution or hook record for one of several calls reusing one `toolCallId` inside one message, carries `callUnknown: true` instead. Every other connection receives the same bytes as before ([#5346](https://github.com/code-yeongyu/senpi/issues/5346))
+- RPC `question` frames carry an optional `raisedBy`: the connection whose command raised the question, or `"agent"` when no connection's command started the work. Questions are still broadcast to every attached connection ([#5388](https://github.com/code-yeongyu/senpi/pull/5388)).
+
+### Changed
+
+### Fixed
+
+- An RPC host start refuses a symlink at its socket path instead of following it, and never removes a socket entry that became reachable after it was judged stale ([#5318](https://github.com/code-yeongyu/senpi/pull/5318))
+- `senpi update` and the startup update notice order zero-padded and `-1` CalVer versions such as `2026.11.02-1`, so installs on those releases see newer releases again ([#5411](https://github.com/code-yeongyu/senpi/pull/5411))
+
+### Removed
+
 ## [2026.11.02-1] - 2026-11-02
 
 ### Breaking Changes
