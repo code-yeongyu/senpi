@@ -1,3 +1,22 @@
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: the per-dialect batching guideline is removed (each dialect's description already carries it) and the remaining guideline keeps only the kernel memory notice rule.
+- Terse pass: the kernel memory notice guideline in `packages/senpi-codemode/src/prompt/eval-prompt.ts` is shortened.
+
+### Why
+
+- senpi#5335: the batching guideline and the reset rule restated the eval description.
+
+### Why an extension could not handle it
+
+- The eval tool definition owns its guidelines.
+
+### Expected merge conflict zones
+
+- LOW: `promptGuidelines` in `buildEvalPrompt`.
+
 ## 2026-10-31 - eval infers an omitted run language when it is unambiguous (senpi#5154)
 
 ### What changed
