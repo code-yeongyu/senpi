@@ -1,3 +1,21 @@
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts`: `IMAGE_GEN_SECTION` and its `before_agent_start` handler are removed; the gpt-image-gen skill catalog line already carries the trigger.
+
+### Why
+
+- senpi#5335: the section's first sentence restated the skill trigger and its second named no tool.
+
+### Why an extension could not handle it
+
+- The section was this extension's own prompt contribution.
+
+### Expected merge conflict zones
+
+- LOW: the removed handler.
+
 ## 2026-10-16 - Resolve the openai provider like model calls; never strand on a gateway without images (omo#10285)
 
 ### What changed
