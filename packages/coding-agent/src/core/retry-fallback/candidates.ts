@@ -22,6 +22,8 @@ export interface CandidateFilters {
 	isCircuitOpen(base: string): boolean;
 	/** A model whose every rung is out for this walk (a network blip on it, senpi#3344). */
 	isModelSkipped?(base: string): boolean;
+	/** The same model on another provider, after a failure that belongs to the model itself (senpi#4083). */
+	isSameModelSkipped?(selector: Pick<FallbackSelector, "provider" | "id">): boolean;
 	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are skipped. */
 	isProviderSpent?(provider: string): boolean;
 	/** Provider-wide conservative skip after a request refusal; credentials are unavailable at this scan (senpi#2491). */
@@ -86,6 +88,10 @@ function scanCandidates(
 		const base = baseSelector(selector);
 		if (filters.isModelSkipped?.(base)) {
 			filters.skip(raw, "network-blip");
+			continue;
+		}
+		if (filters.isSameModelSkipped?.(selector)) {
+			filters.skip(raw, "same-model");
 			continue;
 		}
 		if (filters.tried.has(rungSelector(selector))) {

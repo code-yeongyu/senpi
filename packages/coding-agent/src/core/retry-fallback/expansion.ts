@@ -114,7 +114,7 @@ export function parseBareSelector(raw: string): BareSelectorParts | undefined {
  * Strips a provider-side namespace so Bedrock's `global.anthropic.claude-opus-5`
  * and a gateway's `anthropic/claude-opus-5` both reduce to `claude-opus-5`.
  */
-function withoutNamespace(modelId: string): string {
+export function withoutNamespace(modelId: string): string {
 	const cut = Math.max(modelId.lastIndexOf("."), modelId.lastIndexOf("/"));
 	return cut === -1 ? modelId : modelId.slice(cut + 1);
 }
