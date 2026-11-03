@@ -26,7 +26,9 @@ describe("the run allowlist accepts every call shape the memory component makes 
 		["literal pathspecs", ["--literal-pathspecs", "ls-files", "--", "a b.md"]],
 		["remote", ["remote", "-v"]],
 		["ls-remote file", ["ls-remote", "file:///tmp/bare.git"]],
-		["commit-tree", ["commit-tree", "-F", "-", "abc"]],
+		["commit-tree", ["commit-tree", "abc", "-p", "def", "-F", "-"]],
+		["hash-object with filters off", ["hash-object", "-w", "--no-filters", "--stdin"]],
+		["hash-object for a path", ["hash-object", "--path=notes/a.md", "--stdin"]],
 	])("accepts %s", (_label, argv) => {
 		const result = plan("git", argv);
 
@@ -34,7 +36,7 @@ describe("the run allowlist accepts every call shape the memory component makes 
 	});
 
 	it("carries the identity keys and the hand's own baseline, nothing else", () => {
-		const result = plan("git", ["commit-tree", "-F", "-", "abc"], {
+		const result = plan("git", ["commit-tree", "abc", "-F", "-"], {
 			GIT_AUTHOR_NAME: "A",
 			GIT_AUTHOR_EMAIL: "a@x",
 			GIT_COMMITTER_NAME: "C",
@@ -90,6 +92,17 @@ describe("the run allowlist refuses everything else (senpi#5645)", () => {
 		["-c after the subcommand", "git", ["log", "-c", "x"]],
 		["lsof another shape", "lsof", ["-F", "--", "p"]],
 		["lsof another uid", "lsof", ["-w", "-a", "-d", "cwd", "-u", "0", "-Fpn"]],
+		["an abbreviated --upload-pack", "git", ["ls-remote", "--upload-pac=touch m; git-upload-pack", "file:///r"]],
+		["a one-letter abbreviation", "git", ["ls-remote", "--u=x", "u"]],
+		["an abbreviated --template", "git", ["init", "--templ=/tmp/t"]],
+		["an abbreviated --receive-pack on push", "git", ["push", "--receive-p=x", "u"]],
+		["worktree add into the hooks dir without -b", "git", ["worktree", "add", "--detach", ".git/hooks", "c"]],
+		["log --output", "git", ["log", "-1", "--format=%B", "--output=/tmp/x"]],
+		["diff --no-index", "git", ["diff", "--no-index", "--", "/dev/null", "/etc/hosts"]],
+		["init with -q", "git", ["init", "--template=", "-q"]],
+		["commit-tree reading a message file", "git", ["commit-tree", "abc", "-F", "/etc/hosts"]],
+		["hash-object reading a file", "git", ["hash-object", "-w", "/etc/hosts"]],
+		["hash-object --path without stdin", "git", ["hash-object", "--path=/etc/hosts"]],
 	])("refuses %s", (_label, exe, argv) => {
 		expect(plan(exe, argv)).toMatchObject({ ok: false });
 	});

@@ -5,6 +5,8 @@
  * are the scan's result and are covered by a behavioral test, not compared with themselves.
  */
 
+import { FLAGS, VALUE_FLAGS } from "./hand-run-grammar.ts";
+
 export interface RunRequest {
 	readonly exe: string;
 	readonly argv: readonly string[];
@@ -98,15 +100,50 @@ const CONFIG_KEYS = keySet([
 	"omo.sync.space",
 ]);
 
-const REFUSED_ANYWHERE = [
-	/^--upload-pack(=|$)/,
-	/^--receive-pack(=|$)/,
-	/^--exec(=|$)/,
-	/^--exec-path(=|$)/,
-	/^--config-env(=|$)/,
-	/^--template(=|$)/,
-	/^(ext|fd)::/i,
-];
+function flagsAllowed(sub: string, rest: readonly string[]): string | undefined {
+	const declared = FLAGS[sub] ?? { exact: [], prefixes: [] };
+	for (let index = 0; index < rest.length; index++) {
+		const arg = rest[index] ?? "";
+		if (arg === "--") return undefined;
+		if (!arg.startsWith("-")) continue;
+		if (sub === "log" && /^-\d+$/.test(arg)) continue;
+		if (declared.exact.includes(arg)) {
+			if (VALUE_FLAGS.has(arg)) index++;
+			continue;
+		}
+		if (declared.prefixes.some((prefix) => arg.startsWith(prefix))) continue;
+		return arg;
+	}
+	return undefined;
+}
+
+/** `<tree> [-p <parent>]* -F -`: the message always comes from stdin, never from a file. */
+function commitTreeShape(rest: readonly string[]): string | undefined {
+	const [tree, ...tail] = rest;
+	if (tree === undefined || tree.startsWith("-") || !equal(tail.slice(-2), ["-F", "-"])) return "commit-tree shape";
+	const parents = tail.slice(0, -2);
+	for (let index = 0; index < parents.length; index += 2)
+		if (parents[index] !== "-p" || (parents[index + 1] ?? "-").startsWith("-")) return "commit-tree shape";
+	return undefined;
+}
+
+/** `[-w] --no-filters --stdin` or `[-w] --path=<p> --stdin`: content from stdin only, never a file argument. */
+function hashObjectShape(rest: readonly string[]): string | undefined {
+	const body = rest[0] === "-w" ? rest.slice(1) : rest;
+	const filters = body[0] === "--no-filters" || (body[0] ?? "").startsWith("--path=");
+	return body.length === 2 && filters && body[1] === "--stdin" ? undefined : "hash-object shape";
+}
+
+function worktreeShape(rest: readonly string[]): string | undefined {
+	const [action, ...args] = rest;
+	if (action === "prune" && args.length === 0) return undefined;
+	if (action === "list" && equal(args, ["--porcelain"])) return undefined;
+	if (action === "add" && args.length === 4 && args[0] === "-b" && args.slice(1).every((arg) => !arg.startsWith("-")))
+		return undefined;
+	const removed = args[0] === "--force" ? args.slice(1) : args;
+	if (action === "remove" && removed.length === 1 && !(removed[0] ?? "-").startsWith("-")) return undefined;
+	return "worktree shape";
+}
 
 const equal = (left: readonly string[], right: readonly string[]): boolean =>
 	left.length === right.length && left.every((value, index) => value === right[index]);
@@ -126,12 +163,16 @@ function subcommandArgs(sub: string, rest: readonly string[]): string | undefine
 		case "remote":
 			return equal(rest, ["-v"]) ? undefined : "remote shape";
 	}
-	for (const arg of rest) {
-		if (arg === "-c") return "-c after the subcommand";
-		if (sub === "init" && arg === "--template=") continue;
-		if (REFUSED_ANYWHERE.some((pattern) => pattern.test(arg))) return arg;
-	}
-	return undefined;
+	if (sub === "worktree") return worktreeShape(rest);
+	if (sub === "commit-tree") return commitTreeShape(rest);
+	if (sub === "hash-object") return hashObjectShape(rest);
+	if (sub === "init")
+		return rest.includes("--template=") && rest.every((arg) => arg === "--template=" || !arg.startsWith("-"))
+			? undefined
+			: "init shape";
+	const flag = flagsAllowed(sub, rest);
+	if (flag !== undefined) return flag;
+	return rest.some((arg) => /^(ext|fd)::/i.test(arg)) ? "transport url" : undefined;
 }
 
 function planGit(argv: readonly string[]): string[] | string {

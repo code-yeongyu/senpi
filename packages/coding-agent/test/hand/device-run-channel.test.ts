@@ -1,6 +1,7 @@
 // senpi#5645 (S40 PR 2): the `run` operation through a real hand. The memory component's git shapes run on the device;
 // the first step of each demonstrated code-execution chain is refused, so the second step has nothing to run; and the
 // hand's handlers judge exactly the command that runs, as `bash`.
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DeviceFileError, type DeviceFiles } from "@earendil-works/pi-agent-core";
@@ -38,23 +39,22 @@ describe("the run operation on a hand (senpi#5645)", () => {
 		const repo = join(cwd, "repo");
 		await files.mkdir(repo);
 
-		const init = await files.run({ exe: "git", argv: ["init", "--template=", "-q"], cwd: repo });
+		const init = await files.run({ exe: "git", argv: ["init", "--template="], cwd: repo });
 		await files.run({ exe: "git", argv: ["config", "--local", "omo.agentId", "agent-1"], cwd: repo });
 		const read = await files.run({ exe: "git", argv: ["config", "--local", "--get", "omo.agentId"], cwd: repo });
 		const bare = join(cwd, "mirror.git");
-		await files.mkdir(bare);
-		await files.run({ exe: "git", argv: ["init", "--bare", "--template=", "-q"], cwd: bare });
+		execFileSync("git", ["init", "--bare", "-q", bare]);
 		const remote = await files.run({ exe: "git", argv: ["ls-remote", `file://${bare}`], cwd: repo });
 
 		expect([init.code, text(read.stdout), remote.code]).toEqual([0, "agent-1", 0]);
 		expect(existsSync(join(repo, ".git", "hooks", "pre-commit.sample"))).toBe(false);
 	});
 
-	it("refuses the first step of both code-execution chains, so nothing runs after them", async () => {
+	it("refuses the run-channel first step of both code-execution chains (config sshCommand/hooksPath, a shell)", async () => {
 		const { files, cwd } = await hand();
 		const repo = join(cwd, "repo");
 		await files.mkdir(repo);
-		await files.run({ exe: "git", argv: ["init", "--template=", "-q"], cwd: repo });
+		await files.run({ exe: "git", argv: ["init", "--template="], cwd: repo });
 		const marker = join(cwd, "ran");
 
 		const sshCommand = await code(
@@ -80,7 +80,7 @@ describe("the run operation on a hand (senpi#5645)", () => {
 		const { files, cwd } = await hand([recorder]);
 		const repo = join(cwd, "repo");
 		await files.mkdir(repo);
-		await files.run({ exe: "git", argv: ["init", "--template=", "-q"], cwd: repo });
+		await files.run({ exe: "git", argv: ["init", "--template="], cwd: repo });
 
 		const listed = await files.run({
 			exe: "git",
@@ -93,5 +93,49 @@ describe("the run operation on a hand (senpi#5645)", () => {
 			"git -c core.fsmonitor=false -c protocol.file.allow=always --literal-pathspecs ls-files -- 'a b; touch x'",
 		);
 		expect(existsSync(join(repo, "x"))).toBe(false);
+	});
+	it("blocks the .git/config route when a tool_call handler refuses writes under .git (the N1 hook point)", async () => {
+		const noGitWrites: InlineExtension = (pi) => {
+			pi.on("tool_call", (event) => {
+				const path = String((event.input as { path?: unknown }).path ?? "");
+				return event.toolName === "write" && path.includes("/.git/")
+					? { block: true, reason: "no .git writes" }
+					: undefined;
+			});
+		};
+		const { files, cwd } = await hand([noGitWrites]);
+		const repo = join(cwd, "repo");
+		await files.mkdir(repo);
+		await files.run({ exe: "git", argv: ["init", "--template="], cwd: repo });
+		const marker = join(cwd, "ran");
+
+		const write = await code(
+			files.write(
+				join(repo, ".git", "config"),
+				new TextEncoder().encode(`[core]\n\tsshCommand = touch ${marker}\n`),
+			),
+		);
+		await code(files.run({ exe: "git", argv: ["ls-remote", "ssh://example.invalid/x"], cwd: repo }));
+
+		expect(write).toBe("refused_by_policy");
+		expect(existsSync(marker)).toBe(false);
+	});
+
+	it("refuses a worktree inside the repository's git directory", async () => {
+		const { files, cwd } = await hand();
+		const repo = join(cwd, "repo");
+		await files.mkdir(repo);
+		await files.run({ exe: "git", argv: ["init", "--template="], cwd: repo });
+
+		const refused = await code(
+			files.run({
+				exe: "git",
+				argv: ["worktree", "add", "-b", "h", join(repo, ".git", "hooks"), "HEAD"],
+				cwd: repo,
+			}),
+		);
+
+		expect(refused).toBe("refused_by_policy");
+		expect(existsSync(join(repo, ".git", "hooks"))).toBe(false);
 	});
 });
