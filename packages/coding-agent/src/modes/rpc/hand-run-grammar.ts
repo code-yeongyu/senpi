@@ -62,7 +62,7 @@ const blobref = (value: string): boolean => {
 const filesystem = (value: string): boolean => value.length > 0 && !NUL.test(value) && !/^[-:]/.test(value);
 
 function scheme(value: string): string | undefined {
-	return /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(value)?.[1]?.toLowerCase();
+	return /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(value)?.[1];
 }
 
 /** git's url_is_local_not_ssh: no colon, a slash before the first colon, or (on Windows only) a DOS drive means local. */

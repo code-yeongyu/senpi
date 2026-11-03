@@ -57,6 +57,14 @@ export async function confinedIndexFile(value: string, cwd: string, env: Record<
 	return join(parent, basename(value));
 }
 
+/** Any `url.*` key (insteadOf, pushInsteadOf) in the run's effective config: git could rewrite a judged url (V5). */
+export async function hasUrlRewrites(cwd: string, env: Record<string, string>): Promise<boolean> {
+	const output = await git(["config", "--get-regexp", "^url\\."], cwd, env).catch((error: { code?: number }) =>
+		error.code === 1 ? "" : Promise.reject(error),
+	);
+	return output.trim().length > 0;
+}
+
 async function gitDirs(cwd: string, env: Record<string, string>): Promise<readonly string[]> {
 	const [gitDir, commonDir] = (await git(["rev-parse", "--absolute-git-dir", "--git-common-dir"], cwd, env))
 		.trim()
@@ -78,8 +86,6 @@ async function canonicalTarget(raw: string, cwd: string): Promise<string> {
 export interface PolicyTarget {
 	readonly operation: "read" | "write";
 	readonly canonicalPath: string;
-	/** Receive-pack hooks a push into this target would run, judged by the caller as bash executions. */
-	readonly hooks?: readonly string[];
 }
 
 /**
@@ -109,8 +115,7 @@ export async function confinePaths(
 					`local_repo_shape_unsupported: only an absolute file:// url: ${value}`,
 				);
 			const operation = kind === "source" ? "read" : "write";
-			const repo = await canonicalLocalRepo(local, operation);
-			targets.push({ operation, canonicalPath: repo.gitDir, hooks: repo.hooks });
+			targets.push({ operation, canonicalPath: await canonicalLocalRepo(local) });
 			continue;
 		}
 		const canonical = await canonicalTarget(value, cwd);

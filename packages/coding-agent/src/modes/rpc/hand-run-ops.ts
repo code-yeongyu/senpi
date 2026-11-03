@@ -10,7 +10,8 @@ import {
 import { type Flock, holdActivityLock } from "./hand-activity-lock.ts";
 import type { HandFileGuards } from "./hand-file-ops.ts";
 import { type HandRunContext, planRun, renderCommand } from "./hand-run-allowlist.ts";
-import { confinePaths, confinedIndexFile, gitIsSupported, runDirectory } from "./hand-run-checks.ts";
+import { confinePaths, confinedIndexFile, gitIsSupported, hasUrlRewrites, runDirectory } from "./hand-run-checks.ts";
+import { transportFor } from "./hand-run-transport.ts";
 
 export interface RunArgs {
 	readonly exe: string;
@@ -68,24 +69,27 @@ export async function runOnHand(
 	const cwd = await runDirectory(deps.root, args.cwd);
 	const verdict = await deps.guards.filesystemPolicy()?.({ operation: "write", canonicalPath: cwd, toolName: "bash" });
 	if (verdict !== undefined && !verdict.allow) throw new DeviceFileError("refused_by_policy", verdict.reason);
-	await judged(deps.guards, renderCommand(plan.exe, plan.argv));
-	const env = { ...plan.env };
+	const transport =
+		plan.exe === "git"
+			? transportFor(plan.argv, plan.env, plan.paths)
+			: { argv: plan.argv, env: plan.env, local: false };
+	const env = { ...transport.env };
 	if (plan.exe === "git") {
 		if (!(await gitIsSupported(env))) throw new DeviceFileError("unsupported", "git 2.29 or newer is required");
+		if (transport.local && (await hasUrlRewrites(cwd, env)))
+			throw new DeviceFileError("refused_by_policy", "local_url_rewritten: a url.* rewrite is configured");
+	}
+	await judged(deps.guards, renderCommand(plan.exe, transport.argv));
+	if (plan.exe === "git") {
 		if (env.GIT_INDEX_FILE !== undefined) env.GIT_INDEX_FILE = await confinedIndexFile(env.GIT_INDEX_FILE, cwd, env);
-		for (const { operation, canonicalPath, hooks } of await confinePaths(plan.paths, cwd, env)) {
+		for (const { operation, canonicalPath } of await confinePaths(plan.paths, cwd, env)) {
 			const decision = await deps.guards.filesystemPolicy()?.({ operation, canonicalPath, toolName: "bash" });
 			if (decision !== undefined && !decision.allow) throw new DeviceFileError("refused_by_policy", decision.reason);
-			for (const hook of hooks ?? [])
-				await judged(deps.guards, renderCommand(hook, [])).catch((error: unknown) => {
-					const reason = error instanceof Error ? error.message : String(error);
-					throw new DeviceFileError("refused_by_policy", `receive-pack hook ${hook}: ${reason}`);
-				});
 		}
 	}
 	const hold = args.activityLock === true && plan.exe === "git" ? await holdActivityLock(cwd, deps.flock) : undefined;
 	try {
-		return await spawnBounded(plan.exe, plan.argv, cwd, env, args, hold?.fd, signal);
+		return await spawnBounded(plan.exe, transport.argv, cwd, env, args, hold?.fd, signal);
 	} finally {
 		await hold?.release();
 	}

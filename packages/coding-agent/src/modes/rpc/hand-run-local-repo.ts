@@ -1,24 +1,16 @@
 // The one local repository shape a `run` url slot may name (S40 PR 2, design v2.10, senpi#5645). The hand does not emulate
 // git's repository lookup (review rounds 1-6 kept finding redirects it missed); it accepts a plain repository at an
-// absolute, already-normal path and refuses anything that could redirect git's reads or writes. For a push target it also
-// lists the receive-pack hooks git would run, so the hand's handlers judge each one. Refusals are `local_repo_shape_unsupported`.
+// absolute, already-normal path whose config holds only an exact key allowlist (design v3.1), and refuses anything that
+// could redirect git's reads or writes. A local push runs a hardened receive-pack (hand-run-transport.ts), so no target hook
+// ever runs. Refusals are `local_repo_shape_unsupported`.
 import { execFile } from "node:child_process";
 import { lstat, readdir, realpath } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { DeviceFileError } from "@earendil-works/pi-agent-core";
 
 const SHAPE = "local_repo_shape_unsupported";
 /** Entries the redirect walk inspects before it refuses instead of guessing; a memory mirror has a few hundred refs. */
 const WALK_BOUND = 20_000;
-/** The hooks receive-pack runs on a push (githooks(5)); only these can execute during `run`'s push. */
-const RECEIVE_HOOKS = [
-	"pre-receive",
-	"update",
-	"post-receive",
-	"post-update",
-	"reference-transaction",
-	"push-to-checkout",
-];
 
 const refuse = (detail: string): never => {
 	throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${detail}`);
@@ -50,8 +42,8 @@ async function noLinks(path: string, recursive: boolean, budget: { left: number 
 
 /**
  * The git dir: HEAD a regular file, objects/ and refs/ real directories, no commondir or alternates, and no symlink
- * anywhere git would follow it: refs/ (all of it), packed-refs, HEAD, config, hooks/, and objects/ with its info/ and
- * pack/ (a loose object's own file is never a redirect; its fan-out directory is checked).
+ * anywhere git would follow it: refs/ and logs/ (all of them), packed-refs, HEAD, config, hooks/, worktrees/ and each
+ * worktrees/<id>, and every entry of objects/ plus info/ and pack/ (a loose object's own file is never a redirect).
  */
 async function plainGitDir(dir: string): Promise<void> {
 	const [head, objects, refs, commondir, alternates] = await Promise.all(
@@ -63,6 +55,8 @@ async function plainGitDir(dir: string): Promise<void> {
 	for (const entry of ["HEAD", "config", "packed-refs"]) await noLinks(join(dir, entry), false, budget);
 	await noLinks(join(dir, "refs"), true, budget);
 	await noLinks(join(dir, "hooks"), true, budget);
+	await noLinks(join(dir, "logs"), true, budget);
+	await noLinks(join(dir, "worktrees"), false, budget);
 	await noLinks(join(dir, "objects"), false, budget);
 	for (const sub of ["info", "pack"]) await noLinks(join(dir, "objects", sub), false, budget);
 }
@@ -94,44 +88,41 @@ function gitConfig(file: string): Promise<readonly (readonly [string, string])[]
 	});
 }
 
-/**
- * The receive-pack hooks a push into `dir` would run, for the hand's handlers to judge one by one. The hook directory is
- * `hooks/` or the target's `core.hooksPath` (resolved against the git dir, no symlink at it or inside it); `include.*` and
- * `includeIf.*` are refused because the hand cannot see through them.
- */
-async function receiveHooks(dir: string): Promise<readonly string[]> {
-	const config = join(dir, "config");
-	const entries =
-		(await kindOf(config)) === "file"
-			? await gitConfig(config).catch(() => refuse("push target config is unreadable"))
-			: [];
-	if (entries.some(([key]) => key.startsWith("include.") || key.startsWith("includeif.")))
-		refuse("push target config uses include/includeIf");
-	const custom = entries.filter(([key]) => key === "core.hookspath").at(-1)?.[1] ?? "";
-	const hooksDir = custom === "" ? join(dir, "hooks") : resolve(dir, custom);
-	if (custom !== "") await noLinks(hooksDir, true, { left: WALK_BOUND });
-	const found: string[] = [];
-	for (const name of RECEIVE_HOOKS) {
-		const path = join(hooksDir, name);
-		const entry = await lstat(path).catch(() => undefined);
-		if (entry?.isSymbolicLink() === true) refuse(`hook ${path} is a symlink`);
-		if (entry?.isFile() === true && (entry.mode & 0o111) !== 0) found.push(path);
-	}
-	return found;
-}
+const INIT_KEYS = new Set([
+	"core.repositoryformatversion",
+	"core.filemode",
+	"core.bare",
+	"core.ignorecase",
+	"core.precomposeunicode",
+	"core.logallrefupdates",
+]);
+const CLONE_KEY = /^remote\..+\.(?:url|fetch|mirror|tagopt)$/;
+const WORKING_CLONE_KEY = /^branch\..+\.(?:remote|merge)$|^user\.(?:name|email)$/;
 
-export interface LocalRepo {
-	readonly gitDir: string;
-	/** Executable receive-pack hooks a push would run (none for a read); the caller judges each as a bash execution. */
-	readonly hooks: readonly string[];
+/**
+ * The target's config holds ONLY the keys `git init` and `git clone` write (design v3.1, an allowlist, never a denylist):
+ * hooks, filters, receive.*, extensions.*, includes and every other execution or redirect key are refused by construction.
+ */
+async function allowlistedConfig(dir: string, bare: boolean): Promise<void> {
+	const config = join(dir, "config");
+	if ((await kindOf(config)) !== "file") refuse(`${dir} has no config file`);
+	const entries = await gitConfig(config).catch(() => refuse("target config is unreadable"));
+	for (const [key, value] of entries) {
+		if (key === "core.bare") {
+			if (value !== String(bare)) refuse(`core.bare=${value} on a ${bare ? "bare" : "working-clone"} target`);
+			continue;
+		}
+		const allowed = INIT_KEYS.has(key) || CLONE_KEY.test(key) || (!bare && WORKING_CLONE_KEY.test(key));
+		if (!allowed) refuse(`target config key ${key} is not allowlisted`);
+	}
 }
 
 /**
  * The git dir an absolute, normal local path names, in strict canonical shape. The parent is resolved once (a symlinked
  * ANCESTOR of a normal path redirects nothing: the policy judges the real path); the path itself is no symlink, it is a
- * bare repository or holds a `.git` DIRECTORY, and no `<path>.git` sibling exists.
+ * bare repository or a working clone holding a `.git` DIRECTORY, and no `<path>.git` sibling exists.
  */
-export async function canonicalLocalRepo(path: string, operation: "read" | "write"): Promise<LocalRepo> {
+export async function canonicalLocalRepo(path: string): Promise<string> {
 	const parent = await realpath(dirname(path)).catch(() => refuse(`no repository at ${path}`));
 	const real = join(parent, basename(path));
 	const self = await kindOf(real);
@@ -142,5 +133,6 @@ export async function canonicalLocalRepo(path: string, operation: "read" | "writ
 	if (dotGit !== undefined && dotGit !== "dir") refuse(`${path}/.git is not a directory`);
 	const gitDir = dotGit === "dir" ? join(real, ".git") : real;
 	await plainGitDir(gitDir);
-	return { gitDir, hooks: operation === "write" ? await receiveHooks(gitDir) : [] };
+	await allowlistedConfig(gitDir, dotGit !== "dir");
+	return gitDir;
 }
