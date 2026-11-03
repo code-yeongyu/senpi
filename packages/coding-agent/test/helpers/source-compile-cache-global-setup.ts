@@ -25,9 +25,11 @@ export default function setup(): (() => void) | undefined {
 // with ENOTEMPTY and turns a passing run into exit 1 (senpi#5370). Renaming the directory first takes it
 // away from every writer, because each write resolves the original path again: a later write finds no
 // directory and Node drops it as a cache miss. Only a call already past its path lookup when the rename
-// lands can still add an entry to the renamed tree, and no new call can reach it, so the delete's bounded
-// retry (`maxRetries` walks the tree again after ENOTEMPTY) sees that tree settle instead of chasing it.
-function removeRunDirectory(directory: string): void {
+// lands can still add an entry to the renamed tree, and no new call can reach it.
+export function removeRunDirectory(
+	directory: string,
+	deleteTree: (path: string) => void = (path) => rmSync(path, { recursive: true, force: true, maxRetries: 3 }),
+): void {
 	const removing = `${directory}-removing`;
 	try {
 		renameSync(directory, removing);
@@ -36,5 +38,5 @@ function removeRunDirectory(directory: string): void {
 		rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
 		return;
 	}
-	rmSync(removing, { recursive: true, force: true, maxRetries: 3 });
+	deleteTree(removing);
 }
