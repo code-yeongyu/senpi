@@ -9,7 +9,7 @@ import {
 	parseOpenAIImageSize,
 } from "@earendil-works/pi-ai/compat";
 import { defineTool, type ExtensionContext } from "../../types.ts";
-import { type ImageGenAuthResolution, imageGenCandidates, SETUP_REASON } from "./auth.ts";
+import { type ImageGenAuthResolution, imageGenAvailability, imageGenCandidates, SETUP_REASON } from "./auth.ts";
 import { DEFAULT_IMAGE_MODEL, failure, type GenerateImageDetails, IMAGE_MODEL_NAMES, Params } from "./params.ts";
 import { displayPath, outputFormatOf, resolveTargets, withFormatExtension } from "./paths.ts";
 import { loadMaskImage, loadReferenceImages } from "./reference-images.ts";
@@ -126,9 +126,19 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			return failure(NATIVE_BYPASS_MESSAGE, "provider_native_bypass", context);
 		}
 
-		const candidates = imageGenCandidates({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+		const modelRegistry = imageGenRegistryOverride() ?? ctx.modelRegistry;
+		const candidates = imageGenCandidates({ modelRegistry });
 		const firstCandidate = await candidates.next();
 		if (firstCandidate.done) {
+			// A configured source whose credential did not resolve (a failing key command) is not "not configured" (senpi#5707).
+			const configured = await imageGenAvailability({ modelRegistry });
+			if (configured.kind !== "none") {
+				return failure(
+					`Error: image generation is configured through ${configured.providerId ?? "OPENAI_API_KEY"}, but its credential could not be resolved (a key command failed or returned nothing). Fix that credential and retry.`,
+					"credential_unavailable",
+					context,
+				);
+			}
 			return failure(SETUP_REASON, "missing_config", context);
 		}
 		let source = sourceLabel(firstCandidate.value);

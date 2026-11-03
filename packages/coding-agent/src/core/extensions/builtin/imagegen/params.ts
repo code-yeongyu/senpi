@@ -123,7 +123,13 @@ export interface GenerateImageDetails {
 	/** Provider-reported transparency of the saved images, when it reports one. */
 	transparentBackground?: boolean;
 	error?: string;
-	reason?: "missing_config" | "provider_native_bypass" | "invalid_params" | "write_failed" | "provider_error";
+	reason?:
+		| "missing_config"
+		| "credential_unavailable"
+		| "provider_native_bypass"
+		| "invalid_params"
+		| "write_failed"
+		| "provider_error";
 }
 
 export function failure(

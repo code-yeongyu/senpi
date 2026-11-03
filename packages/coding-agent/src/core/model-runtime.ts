@@ -98,6 +98,7 @@ import {
 	validateExtensionProvider,
 } from "./provider-composer.ts";
 import { createProviderSemaphores } from "./provider-concurrency.ts";
+import { configuredAuthIsHeaderOnly } from "./provider-request-auth.ts";
 import { type ProviderOrigin, providerOriginOf } from "./provider-origin.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
@@ -959,6 +960,11 @@ export class ModelRuntime implements Models {
 
 	getProviderAuthStatus(providerId: string): AuthStatus {
 		return this.resolveProviderAuth(providerId).status;
+	}
+
+	/** Whether the provider's configuration authenticates with credential headers only, naming no API key. */
+	providerAuthIsHeaderOnly(providerId: string): boolean {
+		return configuredAuthIsHeaderOnly(this.config.getProvider(providerId), this.extensionProviders.get(providerId));
 	}
 
 	/**

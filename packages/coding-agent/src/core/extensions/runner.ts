@@ -3,7 +3,7 @@
  */
 
 import { basename } from "node:path";
-import { startOpenTimer } from "../open-timing.ts";
+import { openTimingEnabled, startOpenTimer } from "../open-timing.ts";
 import { SecretInputUnavailableError } from "./secret-input.ts";
 import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
 import { requestExtensionRpc } from "./rpc-request.ts";
@@ -2282,7 +2282,7 @@ export class ExtensionRunner {
 		const isSessionShutdown = event.type === "session_shutdown";
 		let shutdownBudget: SessionShutdownBudget | undefined;
 		let quitDeadline: QuitDeadline | undefined;
-		const timer = event.type === "session_start" ? startOpenTimer("session_start") : undefined;
+		const timer = event.type === "session_start" && openTimingEnabled() ? startOpenTimer("session_start") : undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {

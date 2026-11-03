@@ -73,6 +73,17 @@ export async function resolveCompatibilityRequestHeaders(
 	return model.headers || configured ? { ...model.headers, ...configured } : undefined;
 }
 
+/** A models.json or extension provider that names credential headers and no API key (senpi#5707). */
+export function configuredAuthIsHeaderOnly(
+	config: ModelsJsonProvider | undefined,
+	extension: ProviderConfigInput | undefined,
+): boolean {
+	return (
+		configuredApiKey(config, extension) === undefined &&
+		configuredHeaderAuthStatus(config?.headers, extension?.headers)?.configured === true
+	);
+}
+
 export function configuredRequestAuthStatus(
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderConfigInput | undefined,

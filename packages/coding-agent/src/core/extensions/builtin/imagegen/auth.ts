@@ -15,7 +15,12 @@ export type ImageGenProviderAuthResult = ProviderCredential;
 
 export type ImageGenAuthRegistry<TModel extends ImageGenAuthModel = ImageGenAuthModel> = Pick<
 	CredentialResolver<TModel>,
-	"authStorage" | "getAll" | "getApiKeyAndHeaders" | "getProviderAuth" | "getProviderAuthStatus"
+	| "authStorage"
+	| "getAll"
+	| "getApiKeyAndHeaders"
+	| "getProviderAuth"
+	| "getProviderAuthStatus"
+	| "providerAuthIsHeaderOnly"
 >;
 
 export interface ResolveImageGenAuthDeps<TModel extends ImageGenAuthModel = ImageGenAuthModel> {
@@ -175,8 +180,11 @@ function storedPlaceholderKey(stored: unknown): boolean {
  * Whether image generation has a source, in the precedence `imageGenCandidates` uses, read from
  * configuration only (senpi#5707). Session open and every request ask this, so it never resolves a
  * key: a `!command` key helper, an OAuth refresh or a token mint runs when the tool actually sends
- * a request, where `imageGenCandidates` still falls through a source that fails. A registry that
- * cannot report provider auth status statically is resolved as before.
+ * a request, where `imageGenCandidates` still falls through a source that fails and a configured
+ * source that resolves to nothing is reported as `credential_unavailable`. Without resolving,
+ * placeholder keys are recognized only where their value is readable here (a stored credential,
+ * OPENAI_API_KEY); one inside a models.json key or a provider env var counts as configured and
+ * fails at use. A registry that cannot report provider auth status statically is resolved as before.
  */
 export async function imageGenAvailability<TModel extends ImageGenAuthModel>(
 	deps: ResolveImageGenAuthDeps<TModel>,
@@ -191,9 +199,11 @@ export async function imageGenAvailability<TModel extends ImageGenAuthModel>(
 	}
 	const keyed = (providerId: string): boolean => {
 		const status = authStatus.call(registry, providerId);
-		return (
-			status.configured && status.ambient !== true && !storedPlaceholderKey(registry.authStorage.get(providerId))
-		);
+		if (!status.configured || status.ambient === true) return false;
+		if (status.source === "runtime") return true;
+		if (status.source === "stored") return !storedPlaceholderKey(registry.authStorage.get(providerId));
+		// Resolution needs an API key; a provider configured with credential headers alone never yields one.
+		return registry.providerAuthIsHeaderOnly?.(providerId) !== true;
 	};
 	const openAiKind = (baseUrl: string) => (sameBaseUrl(baseUrl, OPENAI_BASE_URL) ? "native-openai" : "gateway");
 	const env = deps.env ?? process.env;

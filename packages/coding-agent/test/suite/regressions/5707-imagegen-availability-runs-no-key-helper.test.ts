@@ -7,6 +7,7 @@ import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { imageGenAvailability, resolveImageGenAuth } from "../../../src/core/extensions/builtin/imagegen/auth.ts";
 import imageGenExtension from "../../../src/core/extensions/builtin/imagegen/index.ts";
 import { setImageGenRegistry, setNativeBypass } from "../../../src/core/extensions/builtin/imagegen/state.ts";
+import { type GenerateImageDetails, generateImageTool } from "../../../src/core/extensions/builtin/imagegen/tool.ts";
 import openaiImageGenExtension from "../../../src/core/extensions/builtin/openai-image-gen/index.ts";
 import { ExtensionRunner } from "../../../src/core/extensions/runner.ts";
 import { ModelRegistry } from "../../../src/core/model-registry.ts";
@@ -128,13 +129,33 @@ describe("senpi#5707: image-generation availability is decided without running c
 		},
 		{ name: "scanned gateways", providers: { zzz: gateway("zzz"), "my-openai": gateway("my-openai") }, env: {} },
 		{ name: "only OPENAI_API_KEY", providers: {}, env: { OPENAI_API_KEY: "sk-env-test" } },
-	])("names the source resolution would use: $name", async ({ providers, stored, env }) => {
+		{
+			name: "a gateway keyed only by a header",
+			providers: {
+				hdr: {
+					api: "openai-completions",
+					baseUrl: "https://hdr.example/v1",
+					headers: { Authorization: "Bearer hdr-token" },
+					models: [{ id: "hdr-chat" }],
+				},
+			},
+			env: {},
+		},
+		{
+			name: "a runtime key over a stored placeholder",
+			providers: {},
+			stored: "SK-SENTINEL-DO-NOT-LOG-2",
+			runtime: "sk-runtime-test",
+			env: {},
+		},
+	])("names the source resolution would use: $name", async ({ providers, stored, runtime, env }) => {
 		const dir = mkdtempSync(join(tmpdir(), "senpi-5707-parity-"));
 		tempDirs.push(dir);
 		writeFileSync(join(dir, "models.json"), JSON.stringify({ providers }));
 		const authStorage = AuthStorage.create(join(dir, "auth.json"));
 		if (stored !== undefined) await authStorage.modify("openai", async () => ({ type: "api_key", key: stored }));
 		const registry = ModelRegistry.create(authStorage, join(dir, "models.json"));
+		if (runtime !== undefined) await registry.modelRuntime.setRuntimeApiKey("openai", runtime);
 
 		const resolved = await resolveImageGenAuth({ modelRegistry: registry, env });
 		const available = await imageGenAvailability({ modelRegistry: registry, env });
@@ -146,6 +167,46 @@ describe("senpi#5707: image-generation availability is decided without running c
 				provenance: resolved.provenance,
 			});
 		}
+	});
+
+	it.each([
+		{
+			name: "a models.json openai override",
+			providers: (helper: string) => ({ openai: { baseUrl: "https://proxy.example/v1", apiKey: helper } }),
+		},
+		{ name: "a stored openai key", providers: () => ({}), stored: true },
+	])("keeps image generation when the ONLY key is a helper: $name", async ({ providers, stored }) => {
+		vi.stubEnv("OPENAI_API_KEY", "");
+		vi.stubEnv("PI_IMAGE_GEN_PROVIDER", "");
+		const dir = mkdtempSync(join(tmpdir(), "senpi-5707-helper-only-"));
+		tempDirs.push(dir);
+		const marker = join(dir, "helper-runs");
+		const helper = `!printf x >> '${marker}'; exit 1`;
+		writeFileSync(join(dir, "models.json"), JSON.stringify({ providers: providers(helper) }));
+		const authStorage = AuthStorage.create(join(dir, "auth.json"));
+		if (stored) await authStorage.modify("openai", async () => ({ type: "api_key", key: helper }));
+		const registry = ModelRegistry.create(authStorage, join(dir, "models.json"));
+		const runner = await runnerFor(dir, registry);
+
+		const resources = await runner.emitResourcesDiscover(dir, "startup");
+
+		expect(resources.skillPaths).toHaveLength(1);
+		expect(helperRuns(marker)).toBe(0);
+	});
+
+	it("runs the helper at use time and reports its failure as credential_unavailable", async () => {
+		vi.stubEnv("OPENAI_API_KEY", "");
+		vi.stubEnv("PI_IMAGE_GEN_PROVIDER", "");
+		const { cwd, marker, registry } = fixture();
+		setImageGenRegistry(registry);
+		const ctx = { cwd, modelRegistry: registry } as unknown as Parameters<typeof generateImageTool.execute>[4];
+
+		const result = await generateImageTool.execute("call-1", { prompt: "a red fox" }, undefined, undefined, ctx);
+
+		const details = result.details as GenerateImageDetails;
+		expect(details.reason).toBe("credential_unavailable");
+		expect(JSON.stringify(result.content)).toContain("helper-gateway");
+		expect(helperRuns(marker)).toBeGreaterThan(0);
 	});
 
 	it("reports nothing configured when no source names a key", async () => {
