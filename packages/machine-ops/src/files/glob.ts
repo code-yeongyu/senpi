@@ -32,7 +32,7 @@ async function isMissing(dir: string): Promise<boolean> {
 }
 
 /** Look `fd` (or Debian's `fdfind`) up on PATH. */
-export async function findFdOnPath(): Promise<string | undefined> {
+async function findFdOnPath(): Promise<string | undefined> {
 	const names = process.platform === "win32" ? ["fd.exe"] : ["fd", "fdfind"];
 	for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
 		if (!dir) continue;
@@ -54,7 +54,7 @@ export async function findFdOnPath(): Promise<string | undefined> {
  * .gitignore rules stop at nested repo boundaries), `--no-require-git` outside one, hidden files included, and a
  * path-containing pattern matched against the full path. Error text is the tool's own.
  */
-export function runFdGlob(
+function runFdGlob(
 	fdPath: string,
 	pattern: string,
 	searchPath: string,
@@ -176,12 +176,7 @@ export function globToRegExp(glob: string): RegExp {
 }
 
 /** Pure-Node fallback when no fd exists: skips .git and node_modules, does not read .gitignore. */
-export async function walkGlob(
-	pattern: string,
-	searchPath: string,
-	limit: number,
-	signal: AbortSignal,
-): Promise<GlobResult> {
+async function walkGlob(pattern: string, searchPath: string, limit: number, signal: AbortSignal): Promise<GlobResult> {
 	const matcher = globToRegExp(pattern.replace(/^\.\//, ""));
 	const matchBasename = !pattern.includes("/");
 	const entries: { path: string }[] = [];

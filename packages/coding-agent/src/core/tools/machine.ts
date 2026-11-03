@@ -30,7 +30,7 @@ let processMachineOps: MachineOps | undefined;
  * The process-wide local MachineOps the built-in tools use when no caller supplies one. Created on first use: its
  * state (exec scope tokens) lives under `<agentDir>/machine/`.
  */
-export function defaultLocalMachineOps(): MachineOps {
+function defaultLocalMachineOps(): MachineOps {
 	processMachineOps ??= createLocalMachineOps({
 		stateDir: getAgentDir(),
 		holder: createInProcessHolderLink(),
