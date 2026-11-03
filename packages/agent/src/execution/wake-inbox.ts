@@ -9,7 +9,7 @@ export interface WakeInboxOptions {
 	readonly epoch: number;
 	readonly admission: AdmissionLine;
 	readonly clock: () => number;
-	/** The authenticated hand bound to a scope (design 5.6.6), or undefined for a scope this brain does not own. */
+	/** The authenticated hand bound to a scope (design 5.6.6), or undefined for a scope this brain does not own (yet): such a wake is refused unknown_scope and re-offered by the hand. */
 	readonly owner: (scope: string) => string | undefined;
 }
 
