@@ -45,7 +45,7 @@ describe.skipIf(process.platform === "win32")("senpi#3246 host session drain fai
 		await control.wake();
 		failing = true;
 		await control.wake();
-		control.dispose();
+		await control.dispose();
 
 		expect({ whileFailing, afterRecovery: reports.filter((line) => line.includes("drain failed")).length }).toEqual({
 			whileFailing: 1,

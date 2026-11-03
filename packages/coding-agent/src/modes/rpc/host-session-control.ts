@@ -25,7 +25,8 @@ import { type InboxWatch, WakeScheduler, watchInbox } from "../interactive/sessi
 
 interface ActiveRegistration {
 	readonly scheduler: WakeScheduler;
-	readonly release: () => void;
+	/** Stops every edge source synchronously; settles once the inbox watch stopped writing into its inbox. */
+	readonly release: () => Promise<void>;
 }
 
 export class HostSessionControl implements ControlEndpointHost {
@@ -34,6 +35,8 @@ export class HostSessionControl implements ControlEndpointHost {
 	private readonly session: AgentSession;
 	private readonly socket: string | undefined;
 	private readonly report: (line: string) => void;
+	/** Registrations still arming and released inbox watches still stopping: what `dispose` joins. */
+	private readonly settling = new Set<Promise<unknown>>();
 
 	constructor(session: AgentSession, socket: string | undefined, report: (line: string) => void) {
 		this.session = session;
@@ -41,8 +44,12 @@ export class HostSessionControl implements ControlEndpointHost {
 		this.report = report;
 	}
 
-	async register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
-		this.releaseActive();
+	register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
+		return this.track(this.registerNow(options));
+	}
+
+	private async registerNow(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
+		void this.releaseActive();
 		if (this.disposed || this.socket === undefined) return { status: "unsupported", reason: "unsupported_mode" };
 		const { session } = this;
 		// Every wake runs a pass, so a failure that repeats is reported once, until a pass succeeds again.
@@ -69,11 +76,12 @@ export class HostSessionControl implements ControlEndpointHost {
 		let inbox: InboxWatch | undefined;
 		const registration: ActiveRegistration = {
 			scheduler,
-			release: () => {
+			release: async () => {
 				unsubscribeIdle();
 				unsubscribeEmitted();
-				inbox?.stop();
+				const inboxStopped = inbox?.stop();
 				scheduler.dispose();
+				await inboxStopped;
 			},
 		};
 		try {
@@ -83,15 +91,15 @@ export class HostSessionControl implements ControlEndpointHost {
 				(error) => this.report(`control inbox watch failed: ${errorText(error)}`),
 			);
 		} catch (error) {
-			registration.release();
+			await registration.release();
 			return { status: "failed", reason: errorText(error) };
 		}
 		// A rebind may dispose this host while the watch arms; a registration it outlived stays inert.
 		if (this.disposed) {
-			registration.release();
+			await registration.release();
 			return { status: "unsupported", reason: "unsupported_mode" };
 		}
-		this.releaseActive();
+		void this.releaseActive();
 		this.active = registration;
 		// Anything that reached the inbox before this point is picked up by this first pass, and anything
 		// written after it but before the watch was armed (no event for it) by the pass once arming settled.
@@ -101,7 +109,7 @@ export class HostSessionControl implements ControlEndpointHost {
 			status: "registered",
 			socket: this.socket,
 			dispose: async () => {
-				if (this.active === registration) this.releaseActive();
+				if (this.active === registration) await this.releaseActive();
 			},
 		};
 	}
@@ -120,16 +128,31 @@ export class HostSessionControl implements ControlEndpointHost {
 		return { admitted: [] };
 	}
 
-	/** Synchronous so a rebind never gains an await: every edge source stops here. */
-	dispose(): void {
+	/**
+	 * Every edge source stops synchronously, so a rebind never gains an await. The promise settles once no
+	 * inbox watch of this host writes into its inbox any more (a registration still arming included), so
+	 * an owner may remove the inbox's tree then (senpi#5609). It never rejects.
+	 */
+	dispose(): Promise<void> {
 		this.disposed = true;
-		this.releaseActive();
+		void this.releaseActive();
+		return Promise.all([...this.settling]).then(() => undefined);
 	}
 
-	private releaseActive(): void {
+	private releaseActive(): Promise<void> {
 		const active = this.active;
 		this.active = undefined;
-		active?.release();
+		return active === undefined ? Promise.resolve() : this.track(active.release());
+	}
+
+	private track<T>(work: Promise<T>): Promise<T> {
+		const settled = work.then(
+			() => undefined,
+			() => undefined,
+		);
+		this.settling.add(settled);
+		void settled.then(() => this.settling.delete(settled));
+		return work;
 	}
 }
 
