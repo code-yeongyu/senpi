@@ -6,7 +6,7 @@ import { handleClientInput } from "../../../src/modes/rpc/client-input-handler.t
 import { subscribeSessionRecords } from "../../../src/modes/rpc/session-record-stream.ts";
 import { createHarness } from "../harness.ts";
 
-// senpi#5583: RPC clients (the desktop session timeline, omo-desktop-app#5693) attribute a call's
+// senpi#5583: RPC clients (for example a desktop session timeline) attribute a call's
 // tool_execution_* records by assuming the call's assistant entry was published before them. This reads the
 // RPC records from subscribeSessionRecords, the projection every host connection and terminal endpoint
 // streams, for input admitted with a clientMessageId so the projection's client-correlation path is live.
