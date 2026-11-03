@@ -137,7 +137,13 @@ export function clearExpiredBlocks(accounts: readonly AccountSlot[], now = Date.
 	return accounts.map((account) => {
 		let available = account;
 		if (account.blockReason !== undefined && (account.blockedUntil === undefined || account.blockedUntil <= now)) {
-			const { blockedUntil: _blockedUntil, blockReason: _blockReason, blockedAt: _blockedAt, ...rest } = account;
+			const {
+				blockedUntil: _blockedUntil,
+				blockReason: _blockReason,
+				blockedAt: _blockedAt,
+				authVerdict: _authVerdict,
+				...rest
+			} = account;
 			available = rest;
 		}
 		if (available.modelBlocks === undefined) return available;

@@ -1,3 +1,21 @@
+## 2026-10-30 - Print mode lists the primary failure first on exhaustion (senpi#4084)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the fallback-exhaustion stderr line lists the primary failure first, then each failed rung.
+
+### Why
+
+- `packages/coding-agent/src/modes/print-mode.ts`: senpi#4084: print mode reported only the last rung's error, hiding the failure that started the fallback.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/print-mode.ts`: print mode writes its own exhaustion line before any extension output; no hook rewrites it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/print-mode.ts`: LOW, the exhaustion line.
+
 ## 2026-11-01 - Kill guard runtime layer: hidden judge subcommand and exports (senpi#5349, PR #5358)
 
 ### What changed

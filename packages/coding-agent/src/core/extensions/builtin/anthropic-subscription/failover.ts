@@ -51,7 +51,7 @@ export type FailoverOptions<TEvent> = {
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	signal?: AbortSignal;
 	/** Records a refused 1M window so the retry, built by `runAttempt`, requests the standard one. */
-	onLongContextRefused?: () => void;
+	onLongContextRefused?: (error: unknown) => void;
 	/** The session this turn belongs to: blocks that bind only this session are remembered under it. */
 	sessionKey?: string;
 	/**
@@ -223,7 +223,14 @@ function blockedAccount(
 	model: string | undefined,
 ): AccountSlot {
 	if (classification.kind === "auth_error") {
-		return { ...account, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error", blockedAt: now };
+		const blocked = {
+			...account,
+			blockedUntil: now + AUTH_BLOCK_REPROBE_MS,
+			blockReason: "auth_error",
+			blockedAt: now,
+		};
+		// The verdict names the sign-in it is about, so a block another engine writes is told apart (senpi#5623).
+		return blocked.store === "claude-cli" ? { ...blocked, authVerdict: { dirId: blocked.dirId, at: now } } : blocked;
 	}
 	const fallback = Math.min(MAX_RATE_LIMIT_BLOCK_MS, baseBlockMs * 2 ** attempt);
 	if (classification.modelFamily !== undefined && model !== undefined) {
@@ -358,6 +365,8 @@ async function persistBlock(
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
 						...(account.blockedAt === undefined ? {} : { blockedAt: account.blockedAt }),
+						// Only this write's own auth verdict stays with the block (senpi#5623).
+						authVerdict: existing.store === "claude-cli" ? account.authVerdict : undefined,
 						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),
 					}
 				: existing,
@@ -423,7 +432,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			if (classification.kind === "long_context_unavailable") {
 				if (visibleDeltaEmitted || longContextRetried) throw classified;
 				longContextRetried = true;
-				options.onLongContextRefused?.();
+				options.onLongContextRefused?.(error);
 				retryAccountName = account.name;
 				attempt--;
 				continue;
