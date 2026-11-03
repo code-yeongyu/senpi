@@ -126,10 +126,18 @@ function settleUnrestorable(
 
 export async function resumeDanglingQuestion(
 	pi: Pick<ExtensionAPI, "appendEntry" | "sendUserMessage" | "events">,
-	event: Pick<SessionStartEvent, "reason">,
+	event: Pick<SessionStartEvent, "reason" | "sizesOnly">,
 	ctx: ExtensionContext,
 ): Promise<void> {
-	if (event.reason !== "resume" && event.reason !== "reload") return;
+	// Diagnostic sizes-only startup starts no turn, so it restores nothing.
+	if (event.sizesOnly) return;
+	// senpi#4764: the CLI's initial runtime passes no explicit session_start
+	// event, so a restarted CLI opening an existing session file arrives with
+	// reason "startup" — the same as a fresh session. That is safe to include:
+	// a fresh session has no branch entries, so findDanglingQuestions finds
+	// nothing, while a reopened file's dangling question is restored exactly
+	// like on the switch_session "resume" path.
+	if (event.reason !== "resume" && event.reason !== "reload" && event.reason !== "startup") return;
 	const pending = new Set(
 		getPendingQuestions(ctx.sessionManager.getSessionId()).map((entry) => entry.request.requestId),
 	);

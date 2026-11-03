@@ -162,9 +162,10 @@ async function emitStart(
 	handlers: Map<string, StartHandler[]>,
 	reason: SessionStartEvent["reason"],
 	context: ExtensionContext,
+	sizesOnly?: boolean,
 ) {
 	for (const handler of handlers.get("session_start") ?? []) {
-		await handler({ type: "session_start", reason }, context);
+		await handler({ type: "session_start", reason, ...(sizesOnly ? { sizesOnly } : {}) }, context);
 	}
 }
 
@@ -308,6 +309,38 @@ describe("ask-user resume", () => {
 		await emitStart(handlers, "resume", ctx(sessionManager, question));
 		expect(question).toHaveBeenCalledOnce();
 		expect(userMessages).toHaveLength(1);
+	});
+
+	// senpi#4764: a restarted CLI opens an existing session file with
+	// session_start reason "startup" (the initial runtime passes no explicit
+	// event), so the dangling question must be re-presented there too, not
+	// only on the switch_session "resume" path.
+	it("re-presents a dangling ask_user_question once on startup", async () => {
+		const sessionManager = await danglingSession();
+		const { userMessages, received, handlers } = install(sessionManager);
+		const question = vi.fn(async (request: QuestionRequest) => {
+			expect(request.requestId).toBe(CALL_ID);
+			expect(request.questions).toEqual(CANONICAL_QUESTIONS);
+			return ANSWER;
+		});
+		await emitStart(handlers, "startup", ctx(sessionManager, question));
+		expect(question).toHaveBeenCalledOnce();
+		expect(resumedIds(sessionManager)).toEqual([CALL_ID]);
+		expect(await received.promise).toBe(formatUserMessage(ANSWER, CALL_ID, CANONICAL_QUESTIONS));
+		await emitStart(handlers, "startup", ctx(sessionManager, question));
+		expect(question).toHaveBeenCalledOnce();
+		expect(userMessages).toHaveLength(1);
+	});
+
+	// Diagnostic sizes-only startup starts no turn, so it must not restore.
+	it("does not restore a dangling question on sizes-only startup", async () => {
+		const sessionManager = await danglingSession();
+		const { userMessages, handlers } = install(sessionManager);
+		const question = vi.fn(async () => ANSWER);
+		await emitStart(handlers, "startup", ctx(sessionManager, question), true);
+		expect(question).not.toHaveBeenCalled();
+		expect(resumedIds(sessionManager)).toEqual([]);
+		expect(userMessages).toEqual([]);
 	});
 
 	it("delivers one orphaned-after-restart message when resume has no UI", async () => {
