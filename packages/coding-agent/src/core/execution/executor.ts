@@ -16,6 +16,8 @@ import {
 	toStoreValue,
 } from "./executor-freeze.ts";
 import type {
+	ConsentReply,
+	ConsentRequest,
 	PreparedExecutor,
 	PreparedExecutorOptions,
 	PrepareReply,
@@ -41,6 +43,8 @@ function incompleteMessage(name: string, errorMessage: string | undefined): stri
 /** A durable row that already passed admission: answer from it and never run preparation again. */
 function fromRow(entry: ExecutionEntry): PrepareReply {
 	const progress = entry.progress;
+	if (progress.state === "prepared_awaiting_consent")
+		return { kind: "prepared_awaiting_consent", call: progress.call };
 	if ("call" in progress) return { kind: "prepared", call: progress.call };
 	if (progress.state !== "settled") return { kind: "refused", reason: progress.state };
 	const outcome = progress.outcome;
@@ -130,7 +134,15 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 				return stop(key, generation, { kind: "blocked", result, ...named });
 			}
 			const frozen = freezeCall(tool.name, prepared.args);
-			const freeze = await step(key, generation, { kind: "freeze", call: frozen, awaitingConsent: false });
+			// Gate A approved this exact request; it covers the frozen call only when preparation left the call unchanged.
+			const covered =
+				request.authorizedDigest === requestDigest &&
+				freezeCall(call.name, toStoreValue(call.arguments)).digest === frozen.digest;
+			const awaitingConsent =
+				options.consent !== undefined &&
+				!covered &&
+				options.consent.needsConsent({ name: frozen.name, args: frozen.args });
+			const freeze = await step(key, generation, { kind: "freeze", call: frozen, awaitingConsent });
 			if (freeze.status !== "applied") return refusal(freeze);
 			bodies.set(keyId(key), {
 				...named,
@@ -140,7 +152,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 				assistantMessage: request.assistantMessage,
 				context: request.context,
 			});
-			return { kind: "prepared", call: frozen, ...named };
+			return { kind: awaitingConsent ? "prepared_awaiting_consent" : "prepared", call: frozen, ...named };
 		} catch (error) {
 			return stop(key, generation, { kind: "blocked", result: errorResult(messageOf(error)), ...named });
 		}
@@ -201,7 +213,33 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		return reply;
 	}
 
+	// An approval reaches the ledger as the issuer's own `consent` event and only for the frozen call it names; a lease
+	// that ran out first settles the call `lease_expired`, so the approval answers with that terminal row.
+	async function consent(request: ConsentRequest): Promise<ConsentReply> {
+		const entry = await ledger.read(request.key);
+		if (entry === undefined) return { kind: "refused", reason: "not_found" };
+		if ("call" in entry.progress && entry.progress.call.digest !== request.frozenDigest)
+			return { kind: "refused", reason: "frozen_digest_mismatch" };
+		const reply = await ledger.apply({
+			key: request.key,
+			generation: request.generation,
+			actor: request.actor,
+			now: clock(),
+			event: { kind: "consent" },
+		});
+		if (reply.status === "applied" && reply.entry.progress.state === "prepared") return { kind: "prepared" };
+		if (reply.status === "applied" || reply.status === "replayed") return { kind: "replayed", entry: reply.entry };
+		if (reply.status === "refused" && reply.reason === "terminal") {
+			const terminal = await ledger.read(request.key);
+			return terminal === undefined
+				? { kind: "refused", reason: "not_found" }
+				: { kind: "replayed", entry: terminal };
+		}
+		return refusal(reply);
+	}
+
 	return {
+		consent,
 		prepare: (request) => {
 			const { name, arguments: args, incomplete, errorMessage } = request.call;
 			const requestDigest = digestOf(toStoreValue({ name, args, incomplete, errorMessage }));
@@ -222,7 +260,10 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 			preparations.set(id, { admission, reply });
 			// Only a prepared call keeps its memo (release needs it); every other reply is durable or retryable.
 			const forget = () => preparations.get(id)?.reply === reply && preparations.delete(id);
-			void reply.then((settled) => settled.kind === "prepared" || forget(), forget);
+			void reply.then(
+				(settled) => settled.kind === "prepared" || settled.kind === "prepared_awaiting_consent" || forget(),
+				forget,
+			);
 			return reply;
 		},
 		release,

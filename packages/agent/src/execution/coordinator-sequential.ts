@@ -18,11 +18,13 @@ const sequentialBatchId = (batchId: string, index: number): string => `${batchId
 
 /**
  * The cause the calls after an ABORTed call inherit, as one batch gives its unrun calls the batch's own cause: after an
- * interrupted preparation they replay with today's placeholder (X12), after a stop as an aborted batch.
+ * interrupted preparation they replay with today's placeholder (X12), after a stop as an aborted batch. A one-call batch
+ * ABORTs only on its call's preparation, so an aborting call that is not `not_run` settled at preparation, and one batch
+ * fails that closed as an interrupted preparation whatever the stored reason (`blocked` included, `abortCause`).
  */
 function inheritedCause(aborting: CallOutcome | undefined): "batch_abort" | "interrupted_preparation" {
-	if (aborting?.kind === "not_run") return aborting.cause;
-	return aborting?.kind === "interrupted" ? "interrupted_preparation" : "batch_abort";
+	if (aborting === undefined) return "batch_abort";
+	return aborting.kind === "not_run" ? aborting.cause : "interrupted_preparation";
 }
 
 export function createSequentialCoordinator(coordinator: BatchCoordinator): SequentialCoordinator {

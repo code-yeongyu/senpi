@@ -4,7 +4,9 @@ import { findImplementationGaps } from "../../src/conformance/mapping.ts";
 import { CONFORMANCE_REGISTRY } from "../../src/conformance/registry.ts";
 import { createMemoryStoreMedium, type MemoryStoreMedium, openMemoryStore } from "../../src/durable/store-memory.ts";
 import type { StoreConformanceAdapter } from "../../src/durable/testing/store-harness.ts";
+import { createSequentialCoordinator } from "../../src/execution/coordinator-sequential.ts";
 import { referenceBatchExecutor } from "../../src/execution/testing/batch-executor.ts";
+import { batchPlan } from "../../src/execution/testing/batch-harness.ts";
 import { MULTI_SEQ_CASES } from "../../src/execution/testing/multi-seq-cases.ts";
 import { SEQ_CASES } from "../../src/execution/testing/seq-cases.ts";
 
@@ -32,6 +34,24 @@ describe("sequential coordinator conformance on the memory store", () => {
 			await run({ store: memoryStore(), executor: referenceBatchExecutor });
 		});
 	}
+
+	it("a call whose one-call batch ABORTs on a blocked preparation outcome hands the rest interrupted_preparation", async () => {
+		const blocked = { kind: "blocked", result: "stopped" } as const;
+		const sequential = createSequentialCoordinator({
+			run: async () => ({ decision: "ABORT", outcomes: [blocked] }),
+			read: async () => undefined,
+		});
+		const result = await sequential.run(
+			batchPlan("seq-blocked-abort", [
+				["a", "e1"],
+				["b", "e1"],
+			]),
+		);
+		expect(result).toEqual({
+			decision: "ABORT",
+			outcomes: [blocked, { kind: "not_run", cause: "interrupted_preparation" }],
+		});
+	});
 
 	it("has a runnable implementation for every registered SEQ and MULTI-FAIR-02 case", () => {
 		const registry = CONFORMANCE_REGISTRY.filter(({ id }) => /^SEQ-|^MULTI-FAIR-02$/.test(id));

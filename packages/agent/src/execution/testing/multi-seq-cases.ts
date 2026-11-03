@@ -8,8 +8,11 @@ import { batchHarness, batchPlan, resultOf } from "./batch-harness.ts";
  * MULTI-FAIR-02 (Z2, S11): session A runs a long sequential batch on executor e1 and its first call is held inside its
  * body; session B's batch on the same executor runs to completion meanwhile, and A then continues in its own order.
  */
-/** The bound on B's run: it only turns a starved B into a named failure instead of a hung case, never paces it. */
-const STARVED_MS = 60_000;
+/**
+ * The bound on B's run: it only turns a starved B into a named failure instead of a hung case, never paces it. It stays
+ * under the package's 30 s test timeout, so the named failure, not the generic timeout, is what a starved B reports.
+ */
+const STARVED_MS = 20_000;
 
 const longSequentialDoesNotStarve: CaseImplementation<BatchCaseAdapters> = async (adapters) => {
 	const h = await batchHarness(adapters);
@@ -30,13 +33,14 @@ const longSequentialDoesNotStarve: CaseImplementation<BatchCaseAdapters> = async
 			["b2", "e1"],
 		]),
 	);
+	let bound: ReturnType<typeof setTimeout> | undefined;
 	const starved = new Promise<never>((_, reject) => {
-		setTimeout(
+		bound = setTimeout(
 			() => reject(new Error("MULTI-FAIR-02: B did not finish while A's call was held")),
 			STARVED_MS,
-		).unref?.();
+		);
 	});
-	const resultB = await Promise.race([runB, starved]);
+	const resultB = await Promise.race([runB, starved]).finally(() => clearTimeout(bound));
 	expectEqual(resultB.outcomes, [resultOf("b1"), resultOf("b2")], "B finishes while A's call is held");
 	expectEqual(h.count("shim:a2"), 0, "A's next call waits for its own held call, not for B");
 	held.open();

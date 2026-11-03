@@ -17,6 +17,7 @@ import { BATCH_CASES } from "../../src/execution/testing/batch-cases.ts";
 import { KILL_BATCH_CASES } from "../../src/execution/testing/kill-batch.ts";
 import { MULTI_SEQ_CASES } from "../../src/execution/testing/multi-seq-cases.ts";
 import { SEQ_CASES } from "../../src/execution/testing/seq-cases.ts";
+import { CONSENT_CASES } from "../../src/execution/testing/consent-cases.ts";
 import { KILL_LEDGER_CASES } from "../../src/execution/testing/kill-ledger.ts";
 import { LEDGER_CASES } from "../../src/execution/testing/ledger-cases.ts";
 import { MULTI_HAND_CASES } from "../../src/execution/testing/multi-hand-cases.ts";
@@ -125,6 +126,7 @@ describe("the ./conformance export", () => {
 			"BATCH_CASES",
 			"BatchManifestConflictError",
 			"CONFORMANCE_REGISTRY",
+			"CONSENT_CASES",
 			"DurableStoreError",
 			"FAULT_HAND_CASES",
 			"FAULT_PROFILE_NAMES",
@@ -186,6 +188,7 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...BATCH_CASES,
 	...KILL_BATCH_CASES,
 	...SEQ_CASES,
+	...CONSENT_CASES,
 	...MULTI_SEQ_CASES,
 	...STORE_CASES,
 	...KILL_STORE_CASES,

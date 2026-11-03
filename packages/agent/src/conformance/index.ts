@@ -117,6 +117,7 @@ export type { SequentialCoordinator } from "../execution/coordinator-sequential.
 export { createSequentialCoordinator } from "../execution/coordinator-sequential.ts";
 export { MULTI_SEQ_CASES } from "../execution/testing/multi-seq-cases.ts";
 export { SEQ_CASES } from "../execution/testing/seq-cases.ts";
+export { CONSENT_CASES } from "../execution/testing/consent-cases.ts";
 export type {
 	BatchCaseAdapters,
 	BatchExecutorConformanceAdapter,
