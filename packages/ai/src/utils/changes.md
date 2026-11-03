@@ -1,3 +1,21 @@
+## 2026-11-01 - A 503 whose body says "Billing Scope" is not a quota exhaustion (senpi#4632)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `isQuotaExhaustionMessage()` and `classifyErrorMessage()` split the quota patterns into a strong set (explicit codes such as `insufficient_quota`, `usage_limit_reached`, `credits_required`) and the bare `billing` word. Bare billing prose is ignored only when a transient server signal is present (a 5xx status token or the OpenAI-envelope `server_error` type) and no strong marker is present, so the 503/timeout in the same message can classify as retryable.
+
+### Why
+
+- A gateway 503 whose body merely mentions a billing lookup ("resolve Billing Scope: ... dial tcp: i/o timeout") was classified as a spent account, so the turn never retried even though the account served neighbouring requests. The status, not the prose, should gate a bare billing mention.
+
+### Why an extension could not handle it
+
+- Retry classification is a core choke point in `packages/ai/src/utils/retry.ts`; no extension hook reorders the non-retryable-before-retryable pattern test.
+
+### Expected merge conflict zones
+
+- LOW: the quota-pattern lists are edited by neighbouring billing/quota work (e.g. senpi#4097, #5040), but those touch different markers; the new gating helpers are additive.
+
 ## 2026-10-30 - Share exact SIWC recovery decisions (part of #5003)
 
 ### What changed

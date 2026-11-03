@@ -155,11 +155,11 @@ describe("OpenAI ChatGPT OAuth", () => {
 					authorizeUrl = url;
 				},
 			}),
-			{ getDeviceId: () => DEVICE_ID },
+			{ getDeviceId: () => DEVICE_ID, appName: "Configured Agent" },
 		);
 
 		expect(authorizeUrl?.searchParams.get("client_id")).toBe("dynamic_agent_client");
-		expect(authorizeUrl?.searchParams.get("agent_name_hint")).toBe("Pi");
+		expect(authorizeUrl?.searchParams.get("agent_name_hint")).toBe("Configured Agent");
 		expect(authorizeUrl?.searchParams.get("ext_agent_host_id")).toBe(`urn:uuid:${DEVICE_ID}`);
 		expect(authorizeUrl?.searchParams.get("scope")).toBe(REQUIRED_SCOPE);
 		expect(authorizeUrl?.searchParams.has("prompt")).toBe(false);
@@ -291,6 +291,22 @@ describe("OpenAI ChatGPT OAuth", () => {
 			).rejects.toBeInstanceOf(OpenAIIdTokenValidationError);
 		},
 	);
+
+	// senpi#5003: a host keeps its identity across account registrations.
+	it("reuses the installation host ID across two sign-ins", async () => {
+		const hostIds: (string | null)[] = [];
+		for (const clientId of ["oaiapp_first", "oaiapp_second"]) {
+			stubTokenEndpoint(tokenResponse(), undefined, { aud: clientId });
+			await openaiChatGPTOAuth.login(
+				loginInteraction({
+					callbackClientId: clientId,
+					onAuthorize: (url) => hostIds.push(url.searchParams.get("ext_agent_host_id")),
+				}),
+				{ getDeviceId: () => DEVICE_ID },
+			);
+		}
+		expect(hostIds).toEqual([`urn:uuid:${DEVICE_ID}`, `urn:uuid:${DEVICE_ID}`]);
+	});
 
 	it("rejects registration without an issued client ID", async () => {
 		const fetchMock = stubTokenEndpoint(tokenResponse());
@@ -442,6 +458,9 @@ describe("OpenAI ChatGPT OAuth", () => {
 		await expect(openaiChatGPTOAuth.login(interaction, { getDeviceId: () => "not-a-uuid" })).rejects.toThrow(
 			"requires a device ID",
 		);
+		await expect(
+			openaiChatGPTOAuth.login(interaction, { getDeviceId: () => "e61bbe28-07ef-166d-8e5d-a344f94ab305" }),
+		).rejects.toThrow("requires a device ID");
 		expect(authorizationStarted).toBe(false);
 	});
 
