@@ -2240,7 +2240,11 @@ export class AgentSession {
 					this._modelRuntime.hasConfiguredAuth(model.provider),
 			);
 		if (available) return available;
-		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.accountError(sessionModel.provider));
+		throw new AccountUsageLimitError(
+			sessionModel.provider,
+			this._retryFallback.accountError(sessionModel.provider),
+			this._retryFallback.accountResetAt(sessionModel.provider),
+		);
 	}
 
 	private _logCompactionModelFallback(
@@ -3934,6 +3938,15 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
+		// The retry handler answers an account limit only with the fallback walk, and that walk skips
+		// every rung on the spent provider. Announcing a retry it will not start leaves an RPC client
+		// waiting for a terminal agent_end until the account resets (omo#9711).
+		if (
+			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
+			usageLimitScope(lastAssistant.errorMessage) === "account"
+		) {
+			return this._retryFallback.canTryFallback(lastAssistant.provider);
+		}
 		if (isCursorZeroTokenResourceExhausted(lastAssistant)) {
 			return true;
 		}
@@ -4193,7 +4206,11 @@ export class AgentSession {
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
-				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, { errorMessage: msg.errorMessage });
+				// Keep the provider's retry-after: without it this re-note replaced a stated reset with a guess (senpi#5568).
+				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, {
+					errorMessage: msg.errorMessage,
+					retryAfterMs: msg.errorMessage ? this._getProviderRetryDelayMs(msg.errorMessage) : undefined,
+				});
 			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
@@ -6108,13 +6125,24 @@ export class AgentSession {
 			try {
 				await this._maybeRestoreFallbackPrimary();
 				const model = this.model;
-				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
+				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+				if (
+					model &&
+					!this._pendingModelSwitch &&
+					this._retryFallback.isProviderSpent(model.provider) &&
+					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
+				) {
 					this._retryFallback.resetTurn();
 					this._fallbackTurnFailures = [];
 					const errorMessage = this._retryFallback.accountError(model.provider);
 					// Routing around a remembered failure did not observe another provider failure.
 					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
-						throw new AccountUsageLimitError(model.provider, errorMessage);
+						throw new AccountUsageLimitError(
+							model.provider,
+							errorMessage,
+							this._retryFallback.accountResetAt(model.provider),
+						);
 					}
 				}
 			} catch (error) {
