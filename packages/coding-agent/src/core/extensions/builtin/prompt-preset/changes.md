@@ -1,3 +1,23 @@
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: the Claude routing rule drops the "nearly free / stale assumption" aside, and both dialects drop "A result that hides a failed item or a truncated tail is not evidence" (the eval description states it).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts`: `GLM5_TUNING` drops the waitForAnswer parenthetical the ask_user_question schema states.
+- Terse pass: the Claude dialect of `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts` and `GLM5_TUNING` in `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts` render the terse wording (Kimi dialect unchanged).
+
+### Why
+
+- senpi#5335.
+
+### Why an extension could not handle it
+
+- These are preset modules.
+
+### Expected merge conflict zones
+
+- LOW: the touched directive strings.
+
 ## 2026-11-02 - gpt-6-astra core: terse, no Verification, tool list or file-operations block (senpi#5390)
 
 ### What changed

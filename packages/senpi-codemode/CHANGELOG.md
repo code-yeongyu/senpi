@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.3-1] - 2026-11-03
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- JS eval imports a module by `file://` URL (for example `import(pathToFileURL(p).href)`) instead of refusing it as an unsupported protocol; other schemes without a registered root are still refused ([#4111](https://github.com/code-yeongyu/senpi/issues/4111), reported by @yjacket).
 
 ### Removed
 
