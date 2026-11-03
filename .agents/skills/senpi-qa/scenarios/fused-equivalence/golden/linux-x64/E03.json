@@ -7227,7 +7227,8 @@
          "path": "out/w1.txt",
          "text": "<id:9>\n",
          "barrier": "wave-w1"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        },
        {
         "type": "toolCall",
@@ -7237,7 +7238,8 @@
          "path": "out/w2.txt",
          "text": "<id:10>\n",
          "barrier": "wave-w2"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:1"
        },
        {
         "type": "toolCall",
@@ -7247,7 +7249,8 @@
          "path": "out/s3.txt",
          "text": "<id:11>\n",
          "barrier": "wave-s3"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:2"
        },
        {
         "type": "toolCall",
@@ -7257,7 +7260,8 @@
          "path": "out/w4.txt",
          "text": "<id:12>\n",
          "barrier": "wave-w4"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:3"
        },
        {
         "type": "toolCall",
@@ -7267,7 +7271,8 @@
          "path": "out/w5.txt",
          "text": "<id:13>\n",
          "barrier": "wave-w5"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:4"
        }
       ],
       "api": "openai-completions",
@@ -7318,7 +7323,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -7338,7 +7344,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:4>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:1"
     },
     {
      "type": "message",
@@ -7358,7 +7365,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:5>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:2"
     },
     {
      "type": "message",
@@ -7378,7 +7386,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:6>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:3"
     },
     {
      "type": "message",
@@ -7398,7 +7407,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:7>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:4"
     },
     {
      "type": "message",
