@@ -1,4 +1,4 @@
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { TOOL_RESULT_PLACEHOLDER, type ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { AgentToolCall } from "../types.ts";
 import {
@@ -6,19 +6,30 @@ import {
 	encodeRemoteMessage,
 	type RemoteHandMessage,
 	type RemoteInvoke,
+	type RemoteTerminal,
 	type RemoteToolResult,
 } from "./remote-protocol.ts";
 import type { ToolHost, ToolHostCall, ToolHostOptions, ToolHostResult } from "./tool-host.ts";
 
+/**
+ * Where the hand runs relative to the session. It decides what a call that ended without a result (the hand restarted
+ * while it ran) looks like to the model, and is always stated, never inferred:
+ * - `split-local`: one machine. Recovery equals today's: the call gets today's placeholder result and is not run again.
+ * - `cross-machine`: the endpoint contract. The call is reported as uncertain, never run again.
+ */
+export type HandPlacement = "split-local" | "cross-machine";
+
 export interface RemoteToolHostOptions {
 	/** The session's end of the link to the hand; lanes are execution scope IDs. */
 	readonly transport: Transport;
+	readonly placement: HandPlacement;
 	/** What the session says about itself; the hand never acts on it (R16). */
 	readonly sessionRef?: string;
 	readonly mintId?: () => string;
 }
 
 interface Pending {
+	readonly invoke: RemoteInvoke;
 	readonly resolve: (result: RemoteToolResult) => void;
 }
 
@@ -26,12 +37,27 @@ function errorResult(text: string): RemoteToolResult {
 	return { content: [{ type: "text", text }], details: {}, isError: true };
 }
 
+function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): RemoteToolResult {
+	if (placement === "split-local")
+		return { content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }], details: {}, isError: false };
+	const { reason, uncertain, hooksRan } = terminal;
+	const effects = uncertain ? "Its effects are uncertain." : "It had no effect.";
+	return {
+		content: [
+			{ type: "text", text: `The tool call ended without a result (${reason}) and was not run again. ${effects}` },
+		],
+		details: { outcome: reason, uncertain, hooksRan },
+		isError: true,
+	};
+}
+
 /**
  * The ToolHost that runs a session's tool calls on a hand (brain/hand split, S27a). The hand resolves, prepares,
  * validates, runs the extensions' `tool_call`/`tool_result` handlers (permission checks among them) and executes each
  * call; this host keeps the loop's side: tool events, the batch's ordering, a forwarded abort and the result messages in
- * source order. Every call is dispatched once and never re-sent: a link that fails before a settle becomes an error
- * result for that call, never a retry.
+ * source order. A call whose send is refused (the transport closed) becomes an error result, never a retry. The one
+ * re-send is on a hand's `hello` (it restarted with its durable record): every call still waiting is sent again, and
+ * the hand answers each one its record already holds instead of running it a second time.
  */
 export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost & { close(): void } {
 	const { transport } = options;
@@ -52,8 +78,20 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 		} catch {
 			return;
 		}
-		if (message.kind === "settled") settle(message.executionId, message.result);
-		else if (message.kind === "refused")
+		const ack = (executionId: string): void =>
+			void transport.send(frame.lane, encodeRemoteMessage({ kind: "ack", executionId })).catch(() => undefined);
+		if (message.kind === "hello") {
+			for (const { invoke } of pending.values())
+				void transport.send(invoke.scope.id, encodeRemoteMessage(invoke)).catch(() => undefined);
+			return;
+		}
+		if (message.kind === "settled") {
+			settle(message.executionId, message.result);
+			ack(message.executionId);
+		} else if (message.kind === "terminal") {
+			settle(message.executionId, terminalResult(options.placement, message));
+			ack(message.executionId);
+		} else if (message.kind === "refused")
 			settle(message.executionId, errorResult(`The hand refused this tool call: ${message.reason}`));
 	});
 
@@ -62,7 +100,7 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 		signal: AbortSignal | undefined,
 	): { readonly settled: Promise<RemoteToolResult> } => {
 		const settled = new Promise<RemoteToolResult>((resolve) => {
-			pending.set(invoke.executionId, { resolve });
+			pending.set(invoke.executionId, { invoke, resolve });
 		});
 		if (signal?.aborted) settle(invoke.executionId, errorResult("Operation aborted"));
 		else {

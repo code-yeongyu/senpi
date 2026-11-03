@@ -85,7 +85,10 @@ async function installLane(slot: AccountSlot, status: ClaudeCliAuthStatus = { st
 	return store;
 }
 
-/** Claude Code stand-in: the first `failing` spawns answer like a CLI with no login, the rest serve the turn. */
+const TOKEN_REJECTED =
+	'Please run /login · API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired"}}';
+
+/** Claude Code stand-in: the first `failing` spawns answer with a token the server rejected, the rest serve the turn. */
 function installSdk(failing = 0): ScriptedResidentQuery[] {
 	const queries: ScriptedResidentQuery[] = [];
 	const query: SdkQuery = ({ prompt, options }) => {
@@ -100,7 +103,7 @@ function installSdk(failing = 0): ScriptedResidentQuery[] {
 						id: `m-${n}`,
 						type: "message",
 						role: "assistant",
-						content: fail ? [{ type: "text", text: "Not logged in · Please run /login" }] : [],
+						content: fail ? [{ type: "text", text: TOKEN_REJECTED }] : [],
 					},
 					...(fail ? { error: "authentication_failed" } : {}),
 					parent_tool_use_id: null,
@@ -111,7 +114,7 @@ function installSdk(failing = 0): ScriptedResidentQuery[] {
 					type: "result",
 					subtype: "success",
 					...(fail ? { is_error: true } : {}),
-					result: fail ? "Not logged in · Please run /login" : `ok-${n}`,
+					result: fail ? TOKEN_REJECTED : `ok-${n}`,
 					session_id: sessionId,
 				}),
 			],
@@ -181,7 +184,7 @@ describe("senpi#5623 an auth block another engine wrote about a token the Claude
 		clock += 60_000;
 		const refused = await turn("s2");
 
-		expect(failed.errorMessage).toMatch(/Not logged in/);
+		expect(failed.errorMessage).toMatch(/API Error: 401/);
 		expect(refused.errorMessage).toMatch(/currently blocked \(authentication error\)/);
 		expect(refused.errorMessage).toMatch(/No request was sent/);
 		expect(queries).toHaveLength(1);

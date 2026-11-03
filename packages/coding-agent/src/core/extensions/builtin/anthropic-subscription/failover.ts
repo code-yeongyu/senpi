@@ -457,6 +457,34 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				continue;
 			}
 
+			// A login this process could not read (senpi#5630) moves this turn to another account and is stored nowhere:
+			// other sessions may read it fine, and an unlocked keychain must work on the very next turn.
+			if (classification.kind === "login_unreadable") {
+				if (visibleDeltaEmitted || attempt + 1 >= attemptLimit) throw classified;
+				const unreadable: AccountSlot = {
+					...account,
+					blockedUntil: now() + AUTH_BLOCK_REPROBE_MS,
+					blockReason: "login_unreadable",
+					blockedAt: now(),
+				};
+				accounts = replaceAccount(accounts, unreadable);
+				let nextAccount: AccountSlot;
+				try {
+					nextAccount = options.selectFn(accounts);
+				} catch (selectError) {
+					if (selectError instanceof AllAccountsBlockedError) throw classified;
+					throw selectError;
+				}
+				await options.onFailover?.({
+					account: unreadable,
+					classification,
+					attempt: attempt + 1,
+					visibleDeltaEmitted,
+					nextAccount,
+				});
+				continue;
+			}
+
 			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
 			// With no session to hold it, a block is shared as before: dropping it would re-send every
 			// sessionless request to the spent account until its window resets.
