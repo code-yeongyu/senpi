@@ -182,11 +182,14 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 			found.open = open;
 			return { reached: found.reached.promise, open: () => open.resolve() };
 		},
-		/** A fresh brain process over the brain's durable medium, optionally dying around one of its writes. */
-		brain: async (dieAt?: BrainKill): Promise<BatchCoordinator> => {
+		/**
+		 * A fresh brain process over the brain's durable medium, optionally dying around one of its writes. Two issuers
+		 * on one harness are two sessions' brains sharing the executors.
+		 */
+		brain: async (dieAt?: BrainKill, issuer = "brain"): Promise<BatchCoordinator> => {
 			const opened = await adapters.store.open(brainMedium);
 			return createBatchCoordinator({
-				issuer: "brain",
+				issuer,
 				store: brainStore(opened, onDurable, dieAt),
 				epoch: 1,
 				admission: createAdmissionLine(),

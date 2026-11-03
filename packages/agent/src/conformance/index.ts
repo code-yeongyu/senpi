@@ -113,6 +113,10 @@ export type {
 	SettleReply,
 } from "../execution/coordinator-types.ts";
 export { BATCH_CASES } from "../execution/testing/batch-cases.ts";
+export type { SequentialCoordinator } from "../execution/coordinator-sequential.ts";
+export { createSequentialCoordinator } from "../execution/coordinator-sequential.ts";
+export { MULTI_SEQ_CASES } from "../execution/testing/multi-seq-cases.ts";
+export { SEQ_CASES } from "../execution/testing/seq-cases.ts";
 export type {
 	BatchCaseAdapters,
 	BatchExecutorConformanceAdapter,
