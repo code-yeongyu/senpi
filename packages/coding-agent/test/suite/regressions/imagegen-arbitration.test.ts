@@ -247,8 +247,8 @@ function registryFor(creds: CredDirection): ImageGenAuthRegistry {
 // skill must agree on the active image-generation surface.
 //
 // Native injection depends on: model (api=responses + official-or-compat) AND env=on.
-// Client tool behavior depends on: nativeBypass (set by injector) or resolveImageGenAuth.
-// Skill contribution depends on: resolveImageGenAuth != none.
+// Client tool behavior depends on: nativeBypass (set by injector) or imageGenAvailability.
+// Skill contribution depends on: imageGenAvailability != none.
 //
 // Coherence rules:
 //   nativeInjection > 0  →  toolBehavior = bypass  AND  nativeSection = true
