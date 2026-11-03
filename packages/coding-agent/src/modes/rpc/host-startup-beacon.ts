@@ -69,6 +69,82 @@ function write(state: BeaconState, line: string): void {
 }
 
 const state = captured();
+const reporter = state ? startupReporter((line) => write(state, line)) : undefined;
+
+/**
+ * The supervisor's one writer to its startup pipe. Its own milestones and its host child's relayed records come from
+ * two processes, so nothing about the pipes orders them: on Windows the supervisor's internal probe can connect before
+ * the relay has read the host's `host_runtime`. The launcher's phase order is kept here instead - no host record is
+ * forwarded before `supervisor_setup`, and `internal_ready`, with everything after it, waits for the relayed
+ * `host_runtime`. A relay that ends first releases what it held, so the launcher still decides.
+ */
+export function startupReporter(emit: (line: string) => void) {
+	let relaying = false;
+	let relayEnded = false;
+	let setupSent = false;
+	let runtimeRelayed = false;
+	const heldOwn: string[] = [];
+	const heldHost: string[] = [];
+	const waitingForHost = (): boolean => relaying && !relayEnded && !runtimeRelayed;
+	const releaseOwn = (): void => {
+		if (!waitingForHost()) for (const line of heldOwn.splice(0)) emit(line);
+	};
+	const forwardHost = (record: string): void => {
+		emit(relayStartupLine(record));
+		if (recordMilestone(record) === "host_runtime") runtimeRelayed = true;
+		releaseOwn();
+	};
+	return {
+		report(line: string, milestone: StartupMilestone): void {
+			if (heldOwn.length > 0 || (milestone === "internal_ready" && waitingForHost())) {
+				heldOwn.push(line);
+				return;
+			}
+			emit(line);
+			if (milestone !== "supervisor_setup") return;
+			setupSent = true;
+			for (const record of heldHost.splice(0)) forwardHost(record);
+		},
+		/** A line over the record limit is forwarded truncated, so the launcher rejects it. */
+		relay(stream: Readable): void {
+			relaying = true;
+			const forward = (record: string): void => {
+				if (setupSent) forwardHost(record);
+				else heldHost.push(record);
+			};
+			const ended = (): void => {
+				relayEnded = true;
+				releaseOwn();
+			};
+			let pending = "";
+			stream.setEncoding("utf8");
+			stream.on("data", (chunk: string) => {
+				pending += chunk;
+				for (let newline = pending.indexOf("\n"); newline >= 0; newline = pending.indexOf("\n")) {
+					forward(pending.slice(0, newline));
+					pending = pending.slice(newline + 1);
+				}
+				if (pending.length > MAX_STARTUP_EVENT_BYTES) {
+					forward(pending.slice(0, MAX_STARTUP_EVENT_BYTES + 1));
+					pending = "";
+				}
+			});
+			stream.on("end", ended);
+			stream.on("close", ended);
+			stream.on("error", ended);
+		},
+	};
+}
+
+/** Ordering only: the launcher validates every relayed record itself. */
+function recordMilestone(record: string): unknown {
+	try {
+		const value: unknown = JSON.parse(record);
+		return typeof value === "object" && value !== null ? Reflect.get(value, "milestone") : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /** The hand-off this process reports for, when it is a coordinated producer. */
 export function startupHandOff(): StartupHandOff | undefined {
@@ -76,7 +152,8 @@ export function startupHandOff(): StartupHandOff | undefined {
 }
 
 export function reportStartupMilestone(milestone: StartupMilestone): void {
-	if (state) write(state, startupEventLine(state.handOff.binding, state.handOff.role, ++state.seq, milestone));
+	if (state && reporter)
+		reporter.report(startupEventLine(state.handOff.binding, state.handOff.role, ++state.seq, milestone), milestone);
 }
 
 /** The environment value for the host child a coordinated supervisor spawns, or undefined when uncoordinated. */
@@ -84,27 +161,11 @@ export function hostChildStartupHandOff(fillers: readonly number[]): string | un
 	return state ? encodeStartupHandOff({ ...state.handOff, role: "host", fillers }) : undefined;
 }
 
-/**
- * The supervisor relays its host child's startup pipe verbatim inside relay frames. It never writes a host
- * milestone itself; a line over the record limit is forwarded truncated, so the launcher rejects it.
- */
+/** The supervisor relays its host child's startup pipe verbatim inside relay frames; it never writes a host milestone itself. */
 export function relayHostStartupEvents(stream: Readable | null | undefined): void {
-	if (!state || !stream) {
+	if (!reporter || !stream) {
 		stream?.resume();
 		return;
 	}
-	let pending = "";
-	stream.setEncoding("utf8");
-	stream.on("data", (chunk: string) => {
-		pending += chunk;
-		for (let newline = pending.indexOf("\n"); newline >= 0; newline = pending.indexOf("\n")) {
-			write(state, relayStartupLine(pending.slice(0, newline)));
-			pending = pending.slice(newline + 1);
-		}
-		if (pending.length > MAX_STARTUP_EVENT_BYTES) {
-			write(state, relayStartupLine(pending.slice(0, MAX_STARTUP_EVENT_BYTES + 1)));
-			pending = "";
-		}
-	});
-	stream.on("error", () => {});
+	reporter.relay(stream);
 }
