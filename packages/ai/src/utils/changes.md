@@ -1,3 +1,21 @@
+## 2026-10-30 - Credential-pool-blocked diagnostic token (senpi#3975)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `CREDENTIAL_POOL_BLOCKED_CODE` (`credential_pool_blocked`, category `rate_limit`) and `credentialPoolBlockedDiagnostic(resetsAt)`.
+
+### Why
+
+- senpi#3975: a pool whose every account is limited needs a structured rate limit with its reset, not an unclassified failure.
+
+### Why an extension could not handle it
+
+- The diagnostic vocabulary is a closed allowlist validated by `sanitizeProviderDiagnostic`.
+
+### Expected merge conflict zones
+
+- LOW: the head of the file and the `rate_limit` cases of `categoryForProviderCode` / `isProviderCodeStatusCompatible`.
+
 ## 2026-10-28 - Account-pool refusal tokens in the provider diagnostic vocabulary (#4676)
 
 ### What changed

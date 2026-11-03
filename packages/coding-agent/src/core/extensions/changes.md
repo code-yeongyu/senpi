@@ -1,3 +1,81 @@
+## 2026-11-03 - Tools carry full-section guidelines (senpi#5665 selection) (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition.fullPromptGuidelines` (optional), the guidelines rendered instead of `promptGuidelines` when the active preset declares full shared sections.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the `ToolDefinition` prompt fields.
+
+## 2026-11-02 - Runtime facts a runner without a session can answer (senpi#5483)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindSessionlessFacts({ getAllTools, getLoadedHookSources? })` lets the host of a runner without a session bind the registered-tool list, `pi.getActiveTools()` (empty, as `getActiveTools()` already answers without a session) and the hook configuration sources; its contexts then answer `getLoadedHookSources()` instead of refusing it as loop-side. An unbound runner without a session still refuses all three.
+
+### Why
+
+- A hand runs its extensions' `tool_call` handlers before every call (senpi#5482); the builtin handlers read these facts (the permission system resolves extension tools' parsers through `getAllTools`, the tool-search catalog boots on the first call), and refusing them refused every call.
+
+### Why an extension could not handle it
+
+- The session-less context narrowing is the runner's.
+
+### Expected merge conflict zones
+
+- LOW: next to `bindCore()` and in `withoutSession()`.
+
+## 2026-11-02 - optional runs declaration places a registration on one side of a split session (senpi#5478)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `ExtensionSide` (`"brain" | "hand"`) and `HandlerRegistrationOptions` (`runs?: ExtensionSide`). Every `pi.on` overload takes `options?: HandlerRegistrationOptions`; `BeforeAgentStartHandlerOptions` and `ContextHandlerOptions` extend it. `ToolDefinition.runs?`, `ExtensionSessionProfile.side?` and `Extension.handlerSides?` (a `WeakMap` from each handler registered with `runs` to its side) are added. All are optional.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `ExtensionSessionOptions.side?` names the side a generation loads for and is carried in the session profile (not exposed on `pi`). `pi.on` records a declared `runs` in `handlerSides`; when the generation is loaded for one side, a handler declared for the other side is not registered and its unsubscribe is a no-op. `pi.registerTool` keeps `runs` on the definition and registers the tool on every side. A `runs` value other than `"brain"` or `"hand"` fails the registration, and with it the extension load.
+
+### Why
+
+- When a session's agent loop and its tool execution run as separate processes, an extension needs a way to say which side a registration belongs on (senpi#5474). An extension that declares nothing keeps today's behavior, and so does every fused session: no caller names a side yet, so nothing changes until the split is switched on.
+
+### Why an extension could not handle it
+
+- Registration and its options are the extension API itself: the loader builds `pi` and decides what an extension generation registers.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `on(...)` overload block of `ExtensionAPI` in `types.ts` (every overload gains the optional `options` parameter); any upstream overload added there needs the same parameter.
+- LOW: `ToolDefinition` next to `placement`, `ExtensionSessionProfile`, the `Extension` handler metadata fields, and in `loader.ts` `ExtensionSessionOptions`/`sessionProfile()`, the head of `pi.on` and the parameter check in `pi.registerTool`.
+
+## 2026-11-01 - `ctx.ui.setProgramStatus` reports OSC 7501 program status (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIContext.setProgramStatus(status: ProgramStatus | undefined): void` next to `setTitle`, and `ProgramStatus` re-exported from the TUI package. `undefined` clears the status.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `noOpUIContext.setProgramStatus` is a no-op, so print, JSON and headless contexts report nothing.
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports the `ProgramStatus` type.
+- `herdr:blocked` gains an optional `kind` (`"question"` or `"permission"`) on its active event; existing listeners that read `active`, `id` and `label` are unaffected.
+
+### Why
+
+- The builtin herdr reporter (and any extension) needs a way to tell the terminal whether the agent is idle, working or blocked on the user without writing to stdout, which the TUI takes over, and to say how the user must act on a block.
+
+### Why an extension could not handle it
+
+- Raw terminal writes belong to the host's TUI terminal; an extension has no handle on it and its stdout is redirected. The UI context contract is core.
+
+### Expected merge conflict zones
+
+- MEDIUM: `ExtensionUIContext` next to `setTitle` in `types.ts` when upstream adds UI methods.
+- LOW: `noOpUIContext` in `runner.ts`; one type in the `index.ts` export list.
+
 ## 2026-10-31 - Extension event placement for a runtime without a session (senpi#5250)
 
 ### What changed
