@@ -111,6 +111,7 @@ import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnosti
 import { SettingsManager } from "./core/settings-manager.ts";
 import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
+import { startOpenTimer } from "./core/open-timing.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import { getSavedProjectTrust, hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
@@ -896,11 +897,13 @@ export function createCliRuntimeFactory(
 	}: Omit<Parameters<CreateAgentSessionRuntimeFactory>[0], "sessionManager" | "sessionStartEvent"> & {
 		isInitialRuntime: boolean;
 	}) => {
+		const timer = startOpenTimer("runtime-services");
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
 		const savedProjectTrust = await getSavedProjectTrust(trustStore, cwd);
+		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
 		const fullAccessTrust =
@@ -984,6 +987,7 @@ export function createCliRuntimeFactory(
 				extensionFactories,
 			},
 		});
+		timer.mark("services");
 		return { services, projectTrustDiagnostics };
 	};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
@@ -1074,6 +1078,7 @@ export function createCliRuntimeFactory(
 			startupLoadingIndicator.setPhase("opening session");
 		}
 		markSwitch("sessionOptions");
+		const timer = startOpenTimer("runtime-session");
 		const created = await createAgentSessionFromServices({
 			services,
 			sessionManager,
@@ -1101,6 +1106,7 @@ export function createCliRuntimeFactory(
 			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
+		timer.mark("create_session");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
 			// senpi#2395: re-apply the level the CLI asked for, so a clamp keeps its requested level and reason.
