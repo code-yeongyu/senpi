@@ -4,7 +4,7 @@
  * accounts' limits, using the CLI's access token as it stands: read only, never refreshed. Tokens are dummy strings;
  * `fetch` is faked, so nothing leaves the process.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
@@ -119,5 +119,27 @@ describe("the usage poll reads claude CLI accounts", () => {
 
 		expect(await tokensByAccount(agentDir, store)).toEqual({});
 		expect(await tokensByAccount(undefined, storeWith([cliAccount("my", valid)]))).toEqual({});
+	});
+	it("follows no link: a linked account dir or credential file offers no token", async () => {
+		const linkedDir = "f".repeat(32);
+		const linkedFile = "0".repeat(32);
+		const agentDir = agentDirWith({});
+		const outside = mkdtempSync(join(tmpdir(), "senpi-usage-poll-cli-outside-"));
+		roots.push(outside);
+		writeFileSync(
+			join(outside, ".credentials.json"),
+			JSON.stringify({ claudeAiOauth: { accessToken: "dummy-main-cli-token", expiresAt: NOW + 3_600_000 } }),
+		);
+		mkdirSync(join(agentDir, "anthropic-subscription-claude"), { recursive: true });
+		symlinkSync(outside, accountDirFor(agentDir, linkedDir));
+		mkdirSync(accountDirFor(agentDir, linkedFile));
+		symlinkSync(join(outside, ".credentials.json"), join(accountDirFor(agentDir, linkedFile), ".credentials.json"));
+
+		const tokens = await tokensByAccount(
+			agentDir,
+			storeWith([cliAccount("linked-dir", linkedDir), cliAccount("linked-file", linkedFile)]),
+		);
+
+		expect(tokens).toStrictEqual({ "linked-dir": undefined, "linked-file": undefined });
 	});
 });

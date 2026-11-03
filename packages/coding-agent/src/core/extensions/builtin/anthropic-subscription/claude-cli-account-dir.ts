@@ -40,12 +40,17 @@ export function accountDirFor(agentDir: string, dirId: string): string {
 /**
  * The access token the claude CLI keeps for an account dir, as it stands: read only, never refreshed (senpi#4436).
  * Undefined when the credential file is missing, unreadable, malformed or already expired; the CLI renews it on
- * its next turn.
+ * its next turn. Only the file store is read, which the CLI uses on Linux and Windows; on macOS the CLI keeps the
+ * token in the Keychain, so a macOS account offers none. Like `removeAccountDir`, it follows no link: a linked
+ * account dir or credential file (say, to the user's own `~/.claude`) offers none.
  */
 export async function readClaudeCliAccessToken(accountDir: string, now: number): Promise<string | undefined> {
+	const file = join(accountDir, ".credentials.json");
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(await readFile(join(accountDir, ".credentials.json"), "utf8"));
+		const [dirStats, fileStats] = await Promise.all([lstat(accountDir), lstat(file)]);
+		if (!dirStats.isDirectory() || !fileStats.isFile()) return undefined;
+		parsed = JSON.parse(await readFile(file, "utf8"));
 	} catch {
 		return undefined;
 	}
