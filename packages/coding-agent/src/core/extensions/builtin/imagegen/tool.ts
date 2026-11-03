@@ -122,7 +122,7 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 		if (prompt.length === 0) {
 			return failure("Error: prompt must contain non-whitespace text.", "invalid_params", context);
 		}
-		if (isNativeBypass()) {
+		if (isNativeBypass(ctx.sessionManager)) {
 			return failure(NATIVE_BYPASS_MESSAGE, "provider_native_bypass", context);
 		}
 
