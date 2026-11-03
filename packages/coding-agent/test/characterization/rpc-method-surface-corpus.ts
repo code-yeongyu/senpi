@@ -28,7 +28,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	cancel_attempt: "no::Unknown command: cancel_attempt",
 	reset_stream: "no::Unknown command: reset_stream",
 	get_protocol_info:
-		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,mode,path_identity_resolver,protocolVersion,serverVersion}",
+		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,method_classes,mode,path_identity_resolver,protocolVersion,serverVersion}",
 	open_session: "ok{sessionId,state}",
 	close_session: '{"sessionId":"$SID"} => ok{}',
 	release_session: '{"sessionId":"$SID","reason":"takeover"} => ok{attachments,dropped,released,session_path}',

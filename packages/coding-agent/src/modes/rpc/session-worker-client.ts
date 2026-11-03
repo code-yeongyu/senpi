@@ -9,6 +9,7 @@ import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { workerCapabilities } from "./worker-client-capabilities.ts";
 import { captureAdmissionReply, withAdmissionReply } from "./compact-admission-reply.ts";
 import { roleConnection } from "./connection-roles.ts";
+import { originField } from "./remote-origin.ts";
 import { answeredUiRequestId, isGrantSelectRequest, refusedExtensionUiResponse } from "./extension-ui-response.ts";
 import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
 import type { SecretInputRoute } from "./secret-input-requests.ts";
@@ -240,6 +241,7 @@ export class SessionWorkerClient {
 					command,
 					connection,
 					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+					...originField(options.connectionRoles?.originOf(connection)),
 					...(owner === undefined ? {} : { owner }),
 				});
 			},
