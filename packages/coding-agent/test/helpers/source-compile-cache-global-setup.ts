@@ -1,4 +1,4 @@
-import { mkdtempSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SOURCE_COMPILE_CACHE_ENV } from "../../src/experimental/source-compile-cache.ts";
@@ -26,6 +26,16 @@ export default function setup(): (() => void) | undefined {
 // away from every writer, because each write resolves the original path again: a later write finds no
 // directory and Node drops it as a cache miss. Only a call already past its path lookup when the rename
 // lands can still add an entry to the renamed tree, and no new call can reach it.
+//
+// Such a call can still defeat one delete of the renamed tree. A temporary file renamed over its entry
+// while the delete walks the tree makes the walk's unlink of it fail with ENOENT, and Node 24's rmSync reads
+// that as "the path is already gone": it returns without an error or a retry and leaves the tree behind
+// (senpi#5678). A file created after the walk fails the final rmdir with ENOTEMPTY instead. So the delete
+// runs again whenever a pass ends with the tree still there; every such pass is caused by a call that was
+// already in flight at the rename, those calls are finite, and a pass that finds the tree settled removes
+// it. The bound turns a tree that something keeps writing into into a clear error instead of a hung run.
+const DELETE_PASSES = 100;
+
 export function removeRunDirectory(
 	directory: string,
 	deleteTree: (path: string) => void = (path) => rmSync(path, { recursive: true, force: true, maxRetries: 3 }),
@@ -38,5 +48,12 @@ export function removeRunDirectory(
 		rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
 		return;
 	}
-	deleteTree(removing);
+	for (let pass = 1; existsSync(removing); pass += 1) {
+		if (pass > DELETE_PASSES) throw new Error(`${removing} was still there after ${DELETE_PASSES} delete passes`);
+		try {
+			deleteTree(removing);
+		} catch (error) {
+			if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOTEMPTY") throw error;
+		}
+	}
 }
