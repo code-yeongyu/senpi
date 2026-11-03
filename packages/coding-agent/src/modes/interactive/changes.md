@@ -1,3 +1,40 @@
+## 2026-11-01 - The TUI writes OSC 7501 program status (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension UI context implements `setProgramStatus` by writing `encodeProgramStatus(status, APP_COMMAND)` through `this.ui.terminal.write`, only when stdout is a TTY. An identical consecutive report, or a clear with no active status, writes nothing. `stop()` writes `state=clear` when a status is active and ignores later reports, so a quit never leaves a `working` or `blocked` record behind in the terminal.
+- `withBlockedHostDialog` adds `kind: "permission"` to its `herdr:blocked` event when the dialog carries `toolCallId`, the marker of a permission request.
+
+### Why
+
+- herdr-core and other OSC 7501 terminals learn the agent's state only from this sequence. The app name is the branded command, so OmO reports `omo` and standalone Senpi `senpi`.
+
+### Why an extension could not handle it
+
+- The extension UI context and the TUI terminal are owned by interactive mode; extensions cannot write around the stdout takeover.
+
+### Expected merge conflict zones
+
+- LOW: the `setTitle` neighbourhood of the extension UI context, `withBlockedHostDialog`, the field list beside `extensionTerminalTitle`, the `@earendil-works/pi-tui` import list, and the progress clear at the top of `stop()`.
+
+## 2026-10-26 - A request retried at 200k shows a transcript notice (senpi#4065)
+
+### What changed
+
+- `components/continuity-notice.ts`: `ContinuityNoticeTracker.noticeFor` uses the shared fallback diagnostic and label, and renders both notices when a turn also fell back from session resume.
+
+### Why
+
+- A window fallback changes what the model can see; the user must be told rather than find out from compaction.
+
+### Why an extension could not handle it
+
+- The continuity notices are rendered by interactive mode from the assistant message's diagnostics.
+
+### Expected merge conflict zones
+
+- LOW: the diagnostic type constants and the first checks in `noticeFor`.
+
 ## 2026-10-30 - The exhaustion notice leads with the primary failure (senpi#4084)
 
 ### What changed
