@@ -3,6 +3,7 @@ import { expectEqual } from "../../durable/testing/store-harness.ts";
 import { createSequentialCoordinator } from "../coordinator-sequential.ts";
 import type { CallOutcome } from "../coordinator-types.ts";
 import type { BatchCaseAdapters } from "./batch-executor.ts";
+import { ExecutorKilledError } from "./batch-executor.ts";
 import { BrainKilledError, batchHarness, batchPlan, expectRejects, resultOf } from "./batch-harness.ts";
 
 type SeqCase = CaseImplementation<BatchCaseAdapters>;
@@ -61,6 +62,28 @@ const interleave: SeqCase = async (adapters) => {
 	const replayed = await createSequentialCoordinator(await stop.brain()).run(stopPlan);
 	expectEqual(replayed, stopped, "recovery after a stop prepares nothing new");
 	expectEqual(stop.trace.length, 6, "and runs nothing again");
+
+	const restart = await batchHarness(adapters);
+	const restartPlan = batchPlan("seq-01-restart", [
+		["r", "e1"],
+		["c", "e2"],
+	]);
+	const hookR = restart.hold("r", "hook");
+	const brain = createSequentialCoordinator(await restart.brain());
+	const first = brain.run(restartPlan);
+	await hookR.reached;
+	await restart.restartExecutor("e1");
+	await expectRejects(first, ExecutorKilledError, "the executor died during r's preparation");
+	const interrupted = await brain.run(restartPlan);
+	expectEqual(
+		interrupted.outcomes,
+		[
+			{ kind: "interrupted", reason: "hand_restarted", uncertain: true },
+			{ kind: "not_run", cause: "interrupted_preparation" },
+		],
+		"the call after an interrupted preparation replays with today's placeholder, as in one batch (X12)",
+	);
+	expectEqual(restart.count("shim:c"), 0, "and is never prepared");
 };
 
 export const SEQ_CASES: ReadonlyMap<string, SeqCase> = new Map([["SEQ-01", interleave]]);

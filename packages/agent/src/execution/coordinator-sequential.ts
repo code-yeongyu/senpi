@@ -16,7 +16,14 @@ export interface SequentialCoordinator {
 /** The durable batch id of call `index` of `batchId`; stable across runs, so a resumed run finds it. */
 export const sequentialBatchId = (batchId: string, index: number): string => `${batchId}#${index}`;
 
-const NOT_RUN: CallOutcome = { kind: "not_run", cause: "batch_abort" };
+/**
+ * The cause the calls after an ABORTed call inherit, as one batch gives its unrun calls the batch's own cause: after an
+ * interrupted preparation they replay with today's placeholder (X12), after a stop as an aborted batch.
+ */
+function inheritedCause(aborting: CallOutcome | undefined): "batch_abort" | "interrupted_preparation" {
+	if (aborting?.kind === "not_run") return aborting.cause;
+	return aborting?.kind === "interrupted" ? "interrupted_preparation" : "batch_abort";
+}
 
 export function createSequentialCoordinator(coordinator: BatchCoordinator): SequentialCoordinator {
 	return {
@@ -29,8 +36,10 @@ export function createSequentialCoordinator(coordinator: BatchCoordinator): Sequ
 					calls: [call],
 				});
 				outcomes.push(...single.outcomes);
-				if (single.decision === "ABORT")
-					return { decision: "ABORT", outcomes: [...outcomes, ...plan.calls.slice(index + 1).map(() => NOT_RUN)] };
+				if (single.decision === "ABORT") {
+					const notRun: CallOutcome = { kind: "not_run", cause: inheritedCause(single.outcomes[0]) };
+					return { decision: "ABORT", outcomes: [...outcomes, ...plan.calls.slice(index + 1).map(() => notRun)] };
+				}
 			}
 			return { decision: "RELEASE", outcomes };
 		},
