@@ -113,6 +113,16 @@ export type {
 	SettleReply,
 } from "../execution/coordinator-types.ts";
 export { BATCH_CASES } from "../execution/testing/batch-cases.ts";
+export type { SequentialCoordinator } from "../execution/coordinator-sequential.ts";
+export { createSequentialCoordinator } from "../execution/coordinator-sequential.ts";
+export { MULTI_SEQ_CASES } from "../execution/testing/multi-seq-cases.ts";
+export { SEQ_CASES } from "../execution/testing/seq-cases.ts";
+export { CONSENT_CASES } from "../execution/testing/consent-cases.ts";
+export type { NestedAdmissionControl, NestedAdmissionOptions } from "../execution/nested.ts";
+export { createNestedAdmission } from "../execution/nested.ts";
+export { NEST_CASES } from "../execution/testing/nest-cases.ts";
+export { CANCEL_CASES } from "../execution/testing/cancel-cases.ts";
+export { KILL_NEST_CASES } from "../execution/testing/kill-nest.ts";
 export type {
 	BatchCaseAdapters,
 	BatchExecutorConformanceAdapter,

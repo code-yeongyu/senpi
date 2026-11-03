@@ -1,6 +1,8 @@
 import { KILL_HAND_DECLARATIONS } from "../execution/testing/kill-hand.ts";
 import { BATCH_REGISTRY } from "../execution/testing/batch-registry.ts";
 import { LEDGER_REGISTRY } from "../execution/testing/ledger-registry.ts";
+import { NEST_REGISTRY } from "../execution/testing/nest-registry.ts";
+import { SEQ_REGISTRY } from "../execution/testing/seq-registry.ts";
 
 export const ADAPTER_KINDS = ["store", "wake", "transport", "executor", "host"] as const;
 
@@ -97,6 +99,8 @@ const storeCase = (id: string, impl: string, expected: string): RegisteredCase =
 export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 	...LEDGER_REGISTRY,
 	...BATCH_REGISTRY,
+	...SEQ_REGISTRY,
+	...NEST_REGISTRY,
 	storeCase(
 		"STORE-01",
 		STORE_CASES_IMPL,
@@ -245,7 +249,7 @@ export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 		"a stalled or long lane in A does not starve B: B is delivered within a bounded number of A's frames",
 	),
 	transportCase(
-		"MULTI-FAIR-02",
+		"MULTI-FAIR-03",
 		MULTI_CASES_IMPL,
 		"a frame lost on one lane is resent on that lane's own deadline: another lane's ACK progress never postpones it",
 	),

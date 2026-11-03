@@ -127,57 +127,66 @@ export class McpPresenterEnrollment {
 		this.stream = stream;
 		let pending: { request: PresenterEnrollment; key: KeyObject; transcript: string; deadline: number } | undefined;
 		let consumed = false;
-		const stop = privateFrames(stream, (value) => {
-			if (consumed) return;
-			if (!pending) {
-				if (isRecord(value) && value.type === "enroll" && value.version !== 2) {
-					consumed = true;
-					stop();
-					stream.end(`${JSON.stringify({ type: "unavailable", versions: [2] })}\n`);
+		const stop = privateFrames(
+			stream,
+			(value) => {
+				if (consumed) return;
+				if (!pending) {
+					if (isRecord(value) && value.type === "enroll" && value.version !== 2) {
+						consumed = true;
+						stop();
+						stream.end(`${JSON.stringify({ type: "unavailable", versions: [2] })}\n`);
+						return;
+					}
+					const request = parsePresenterEnrollment(value);
+					if (!request || request.predecessorHostInstance === this.hostInstance) {
+						stream.destroy();
+						return;
+					}
+					this.nonces.add(request.launchRequestNonce);
+					pending = {
+						request,
+						key: createPublicKey(request.publicKey),
+						transcript: presenterEnrollmentTranscript(
+							request,
+							this.hostInstance,
+							randomBytes(32).toString("hex"),
+						),
+						deadline: performance.now() + 30_000,
+					};
+					send(stream, {
+						type: "challenge",
+						version: 2,
+						transcript: pending.transcript,
+						hostInstance: this.hostInstance,
+					});
 					return;
 				}
-				const request = parsePresenterEnrollment(value);
-				if (!request || request.predecessorHostInstance === this.hostInstance) {
+				const attempt = pending;
+				consumed = true;
+				pending = undefined;
+				stop();
+				if (performance.now() >= attempt.deadline || !signed(value, attempt.transcript, attempt.key)) {
 					stream.destroy();
 					return;
 				}
-				this.nonces.add(request.launchRequestNonce);
-				pending = {
-					request,
-					key: createPublicKey(request.publicKey),
-					transcript: presenterEnrollmentTranscript(request, this.hostInstance, randomBytes(32).toString("hex")),
-					deadline: performance.now() + 30_000,
-				};
-				send(stream, {
-					type: "challenge",
-					version: 2,
-					transcript: pending.transcript,
-					hostInstance: this.hostInstance,
-				});
-				return;
-			}
-			const attempt = pending;
-			consumed = true;
-			pending = undefined;
-			stop();
-			if (performance.now() >= attempt.deadline || !signed(value, attempt.transcript, attempt.key)) {
-				stream.destroy();
-				return;
-			}
-			const principal = { id: randomUUID(), key: attempt.key, enrollment: attempt.request };
-			enrolled(principal);
-			stream.end(
-				`${JSON.stringify({
-					type: "enrolled",
-					version: 2,
-					principalId: principal.id,
-					hostInstance: this.hostInstance,
-					backendGeneration: attempt.request.backendGeneration,
-					launchRequestNonce: attempt.request.launchRequestNonce,
-					endpoint: this.endpoint,
-				})}\n`,
-			);
-		});
+				const principal = { id: randomUUID(), key: attempt.key, enrollment: attempt.request };
+				enrolled(principal);
+				stream.end(
+					`${JSON.stringify({
+						type: "enrolled",
+						version: 2,
+						principalId: principal.id,
+						hostInstance: this.hostInstance,
+						backendGeneration: attempt.request.backendGeneration,
+						launchRequestNonce: attempt.request.launchRequestNonce,
+						endpoint: this.endpoint,
+					})}\n`,
+				);
+			},
+			// A successor's exchange starts at its P7, not when this host opened the channel (senpi#4602).
+			"parked",
+		);
 	}
 
 	dispose(): void {

@@ -33,32 +33,23 @@ import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-pa
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
-import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
-import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
+import { handoffUnregisteredHost } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
-import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
+import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
+import { startupEnvelope } from "./host-startup-policy.ts";
+import { startSuccessor } from "./host-successor.ts";
 
 const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
 
-/**
- * The longest a handoff holds the ensure lock: its probe of the running host, the two session counts
- * an unregistered host gets (before the swap and the recount after it), then the successor's start.
- */
-export const HANDOFF_LOCK_HOLD_MS = HANDOFF_PROBE_TIMEOUT_MS + 2 * SESSION_COUNT_TIMEOUT_MS + SUCCESSOR_START_BUDGET_MS;
-
-/**
- * How long a handoff waits for the lock. The longest holder is an ensure that probes the running host
- * and then hands it off itself (its upgrade path), or one that waits out a stopped host's stall before
- * starting a replacement; 10 s of headroom for a slow runner.
- */
-const HANDOFF_LOCK_WAIT_MS =
-	HANDOFF_PROBE_TIMEOUT_MS + Math.max(HANDOFF_LOCK_HOLD_MS, STOP_WAIT_BUDGET_MS + 10_000) + 10_000;
-
 export interface HandoffHostOptions {
-	readonly presenterBootstrap?: Duplex;
+	/**
+	 * The launch owner's enrollment channel. A provider (a running host's deferred handover) is called only when the
+	 * successor reaches its presenter phase, so its permit is fresh for the exchange (senpi#4602).
+	 */
+	readonly presenterBootstrap?: Duplex | (() => Promise<Duplex | undefined>);
 	/** Deployment opt-in. An enforcing predecessor never downgrades during replacement. */
 	readonly mcpPresenterEnforcement?: boolean;
 	readonly socket: string;
@@ -74,11 +65,11 @@ export interface HandoffHostOptions {
 	 * How the successor is launched from supervisor argv. Defaults to THIS process's runtime; a
 	 * running host performing an idle handover passes the runtime of the CLI that asked for it.
 	 */
-	readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
+	readonly launch?: (args: readonly string[]) => SuccessorLaunch;
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */
-		readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
+		readonly launch?: (args: readonly string[]) => SuccessorLaunch;
 		/** Runs after the public socket identity is captured and before the successor is spawned. */
 		readonly beforeSpawn?: () => Promise<void>;
 		/** Runs once the successor is spawned and its generation recorded, before its answer is awaited. */
@@ -87,6 +78,13 @@ export interface HandoffHostOptions {
 		readonly beforeRegistration?: () => Promise<void>;
 		readonly platform?: NodeJS.Platform;
 	};
+}
+
+/** `reportsStartup`: the command is the engine's own supervisor, which reports its startup phases (senpi#4602). */
+export interface SuccessorLaunch {
+	readonly command: string;
+	readonly args: readonly string[];
+	readonly reportsStartup?: boolean;
 }
 
 /** Why a handoff did not happen. Every one of them leaves the running host untouched. */
@@ -131,7 +129,8 @@ export type HandoffResult =
  */
 export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
 	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
-	const release = await acquireHostEnsureLock(options.socket, HANDOFF_LOCK_WAIT_MS);
+	// W: the same bound an ensure waits, covering one compliant holder H (senpi#4602).
+	const release = await acquireHostEnsureLock(options.socket, startupEnvelope(childStalledStopMaxMs()).lockWait);
 	try {
 		return await handoffHostLocked(options);
 	} finally {

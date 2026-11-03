@@ -1,5 +1,45 @@
 # todotools Fork Tracker
 
+## 2026-11-03 - Full Todo Management section for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/prompt.ts`: `FULL_TASK_MANAGEMENT_SECTION`, the pre-#5342 section.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: appends it when `activeSharedSections(ctx)` is `full`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the three pre-#5342 guidelines as `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the before_agent_start section append and the tool definition's prompt fields.
+
+## 2026-11-03 - todo is loop-side on a split session (senpi#5646)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the `todo` tool declares `runs: "brain"` and reports each call it executes to `noteExecuted`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: `session_start`, `session_tree`, `message_end`, `before_agent_start`, `before_provider_request`, `agent_end`, `session_abort` and `session_shutdown` register with `runs: "brain"`; `message_end` adopts a `todo` tool result of a call this instance did not execute (`tools/todo.ts` records each call it runs through the optional `noteExecuted` accessor) and re-renders the widget; a result of its own call, which arrives only after the whole batch, is never adopted, and results of other tools are ignored.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-storage.ts`: `getTodoStateFromToolResult()`, the tool-result parser `getLatestTodoStateFromBranchEntries` already used, now shared and exported from `state.ts`.
+
+### Why
+
+On a split session (brain/hand, S39) todo is a loop-side tool: its only effect is the session's list, Ask/Now/Next and widget. A hand's generation must not register handlers that read a session it does not own, and the loop must see a list that was built outside its process.
+
+### Why an extension could not handle it
+
+todotools is the builtin that owns the list; its own registrations are what declare the sides.
+
+### Expected merge conflict zones
+
+`index.ts` handler registrations; `todo-storage.ts` branch reader.
+
 ## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
 
 ### What changed

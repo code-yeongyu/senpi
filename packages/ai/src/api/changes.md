@@ -1,3 +1,40 @@
+## 2026-10-30 - Anthropic affinity header carries the session-affinity key (senpi#2553)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the session-affinity header (`x-session-affinity`, or `x-session-id` for OpenRouter) carries `options.sessionAffinityKey ?? options.sessionId`; the `createClient` parameter is renamed `affinityKey`. Compat gating is unchanged.
+- `packages/ai/src/api/simple-options.ts`: `buildBaseOptions` forwards `sessionAffinityKey`.
+
+### Why
+
+- The coding agent sends an HMAC of the session id there so a gateway never learns the session id (senpi#2553).
+
+### Why an extension could not handle it
+
+- The header value is computed inside the provider's client construction.
+
+### Expected merge conflict zones
+
+- LOW: the `cacheSessionId`/`affinityKey` line before `createClient(` in `streamAnthropic`, the `createClient` signature, and the affinity-header block in `createClient`; one added line in `buildBaseOptions`.
+
+## 2026-10-30 - lazyStream keeps an attached provider diagnostic (senpi#3975)
+
+### What changed
+
+- `packages/ai/src/api/lazy.ts`: `createSetupErrorMessage` reads the diagnostic a provider adapter or credential pool attached to the error (`readProviderDiagnostic`) and keeps it on the error message as `providerDiagnostic`.
+
+### Why
+
+- senpi#3975: a credential pool whose every slot is limited throws its refusal through `lazyStream`. The rate-limit diagnostic it attaches, with the soonest unblock time, was dropped there, so the turn read as unclassified and the goal retried at once.
+
+### Why an extension could not handle it
+
+- `lazyStream` builds the error message every lazily loaded API returns; no extension sees the thrown error.
+
+### Expected merge conflict zones
+
+- LOW: the import block and `createSetupErrorMessage` in `lazy.ts`.
+
 ## 2026-11-03 - Replayed thinking bound to a different conversation no longer wedges a session (senpi#5587)
 
 ### What changed
