@@ -1,3 +1,217 @@
+## 2026-11-03 - Full shared sections for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildSystemPrompt` also collects `fullToolPrompt` (every contributing tool's snippet, and its `fullPromptGuidelines` else `promptGuidelines`) into the system prompt options, so a full-sections preset lists the tools as before #5342; the base prompt stays diet.
+- `packages/coding-agent/src/core/system-prompt.ts`: `getEvalOnlyGrepGuideline` takes `sharedSections` and returns the pre-#5342 sentence for `full`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: `_rebuildSystemPrompt`'s snippet loop and the tool-registry guideline maps.
+
+## 2026-11-03 - A rebind racing a finishing mover's lock-directory cleanup no longer crashes (senpi#5618)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-holders.ts`: `takeMoveLock` creates the lock directory through `createLockDir`, which treats ENOENT from the recursive mkdir as "the directory was removed again" and lets the loop retry the exclusive publish; the next iteration's mkdir recreates it. Only one such ENOENT in a row is tolerated, so a path that can never be created (a dangling symlink) still fails fast with ENOENT. `publishHolderRecord` runs its `mkdirSync` inside the existing one-retry ENOENT guard.
+
+### Why
+
+- A mover that finishes removes the emptied `session-holders/<id>` directory. Node's recursive mkdir reports EEXIST for a directory another process just created, stats it, and fails with ENOENT when that stat lands after the removal. The second of two concurrent rebinds then died with ENOENT from `takeMoveLock` instead of taking the lock and finding the move already done (the `issue-2184-session-hold` concurrent-rebind failure under load). The exclusive lock still decides who moves; only the directory creation tolerates the race.
+
+### Why an extension could not handle it
+
+- The move lock and holder records are core session-ownership primitives used by `rebindSessionFile` and session opening.
+
+### Expected merge conflict zones
+
+- LOW: the ENOENT branch of `takeMoveLock` and the start of `publishHolderRecord` in `session-holders.ts`.
+
+## 2026-11-03 - A user's turn re-probes a guessed usage-limit hold (senpi#5568)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: at the turn boundary, a user-attributed turn (TUI input, or RPC input from an `interactive_user` connection) releases a remembered account usage-limit hold whose length was a guessed default and sends the request; extension turns and agent-driven RPC keep the pre-request refusal. A hold whose reset the provider stated is respected for every source, and the refusal names that reset. The `agent_end` account-limit re-note now passes the provider's retry-after, so it no longer replaces a stated reset with a guessed default.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`, `unusable.ts`, `controller.ts`, `usage-limit.ts`: suppressions record whether the provider stated their length and the wall-clock reset; `accountResetAt` and `releaseGuessedAccountHold` expose that; `AccountUsageLimitError` takes the reset.
+- `packages/ai/src/utils/provider-failure-description.ts`: the account-limit description accepts a caller-known `resetsAt` used when the provider text names none.
+
+### Why
+
+- A typed prompt (a bare `.` included) was refused from an in-memory guess without contacting the provider, and the refusal named no reset, so the user could not tell a live limit from a stale hold.
+
+### Why an extension could not handle it
+
+- The refusal runs inside `AgentSession._prompt` before extensions see the input, against the session's private retry-fallback state.
+
+### Expected merge conflict zones
+
+- LOW: the turn-boundary block in `AgentSession._prompt` and the account-limit `noteHealthFailure` call in the `agent_end` handler.
+
+## 2026-11-02 - One tool-info projection for sessions and loopless runtimes (senpi#5483)
+
+### What changed
+
+- `packages/coding-agent/src/core/tool-info.ts` is new: `toolInfoOf(entry)` is the `pi.getAllTools()` projection of one registered tool.
+- `packages/coding-agent/src/core/agent-session.ts`: `getAllTools()` maps its tool definitions through `toolInfoOf`; the projection is unchanged.
+
+### Why
+
+- A loopless runtime (a hand) must answer `pi.getAllTools()` exactly as a session does; the permission system resolves extension tools' permission parsers with it.
+
+### Why an extension could not handle it
+
+- `getAllTools` is the host's own registry projection.
+
+### Expected merge conflict zones
+
+- LOW: `AgentSession.getAllTools()` body.
+
+## 2026-11-02 - Session files persist each call's runtimeItemKey, minted by the producer (RULING-126/127, senpi#5374)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-call-keys.ts` (new): `blockCallKey(messageId, contentIndex)` (`blk:<messageId>:<contentIndex>`), the out-of-band execution key of a bridge-started call (`executionCallKey`, `carryExecutionCallKey`), and `BridgedCallKeys`, which mints `exe:<uuid>` for every top-level `tool_execution_start` of the open assistant message that no waiting block of its id joins, assigns those keys to the message's blocks oldest first by content index (a block that streams or appears only in the terminal), and hands them to the message's persistence.
+- `packages/coding-agent/src/core/session-file-call-keys.ts` (new): `SessionFileCallKeys`, the out-of-band side table of one session file. Loading strips `runtimeItemKey` from toolCall parts and `runtimeItemKey`/`callUnknown` from toolResult entries into it; every entry write puts them back after the entry's own fields. A new assistant entry keys each toolCall part by its block (or its bridged key, by content index); a new toolResult entry is keyed only when its id names exactly one open, keyed toolCall part of the latest assistant entry on the branch, and is `callUnknown: true` otherwise (a reused id, a closed call, no keyed part), never neither. An old session's parts get no key: nothing mints one at load.
+- `packages/coding-agent/src/core/session-manager.ts`: owns one `SessionFileCallKeys`, cleared on a file switch and a new session; `_adoptFileEntries` strips into it, `_materializeEntry`'s file recovery strips the re-read entry, `_transcriptEntryBytes` decorates every append, rewrite, migration and branch write (and the journal bytes, which are the same bytes); `appendOwnedMessage` takes `bridgedCalls`; `_loadEntries` (`SessionManager.inMemory` with entries) strips and adopts ingested entries like a file load.
+- `packages/coding-agent/src/core/session-manager.ts` (RULING-127 review): `_loadFullHistoryEntries` strips the keys from every full-history re-read, so a compacted session's trimmed mirror (`getEntries`, `getEntry`, `getTree`, `getFullBranch`) never returns them; `persistedEntry(entry)` returns an entry as the file holds it.
+- `packages/coding-agent/src/core/agent-session.ts`: observes every agent event with `BridgedCallKeys` before emitting it, and passes the ended assistant message's `bridgedCalls` to its persistence; `exportToJsonl` writes each entry as the file holds it (`persistedEntry`), so an exported session keeps its keys.
+- `packages/coding-agent/src/core/session-recovery-identity.ts`: `carryRecovery` also carries a record's execution key to its copy; the contract comment names the producer's key as the live records' key source.
+
+### Why
+
+- RULING-126/127: a client rebuilding a thread from the session file saw only the reusable `toolCallId`, so calls that reuse an id collapsed on reload. The key is session-file data in every session, flag on or off, from one identity source: the producer mints it, so persisted == live == snapshot, and the in-memory message never holds it, so no legacy or flag-off byte changes.
+
+### Why an extension could not handle it
+
+- Session persistence, the agent event stream and the recovery carrier are core internals.
+
+### Expected merge conflict zones
+
+- LOW: `_loadFullHistoryEntries`, `persistedEntry` and `_loadEntries` in `session-manager.ts`; the entry spread in `AgentSession.exportToJsonl`.
+- LOW: the `SessionManager` field block, `_beginSessionFile`, `_resetToNewSession`, `_adoptFileEntries`, `_transcriptEntryBytes`, `_materializeEntry`, `appendOwnedMessage`/`_appendMessage`; `AgentSession`'s field block, `_processAgentEvent` around `_emit` and the `appendOwnedMessage` call; `carryRecovery`.
+
+## 2026-11-02 - The auto-title settles with its run (senpi#5382)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `prompt()` records its title prompt as pending instead of starting the title after the prompt settled. The run's `agent_end` handling (`_settleSessionTitle`) requests the title right after the run's last model response and awaits it before the continuation decision, `agent_settled` and `agent_idle`, so `session_info_changed` is emitted after `agent_end` and before the settle. A user abort (`_abortWithProvenance`) drops the pending title and cancels one in flight; the aborted run is not titled and the next prompt's run titles the session. A prompt that fails, or a run that settles without its `agent_end`, clears the pending title.
+- `packages/coding-agent/docs/rpc.md`, `packages/coding-agent/docs/json.md`: document where the auto-title's `session_info_changed` sits in the stream.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the title started after the prompt had settled, so its `session_info_changed` landed when the title reply returned, while the host and background jobs act on an idle session at their own times (a `clear_queue` emits `queue_update`, a background job's wake appends `work-custody` entries). Two recordings of the same fused-equivalence script put those events in different orders (desktop E09 and E16, senpi#5382). Waiting for the title inside the run gives it one place in the stream; the title request still follows the run's own model requests.
+
+### Why an extension could not handle it
+
+- The auto-title is started, awaited and applied by `AgentSession` around its own run settle; an extension cannot move it into the run's `agent_end` handling.
+
+### Expected merge conflict zones
+
+- MEDIUM: the top of the `agent_end` branch of the agent event handler and `_abortWithProvenance` in `packages/coding-agent/src/core/agent-session.ts`.
+- LOW: the end of `_prompt()` (pending title set before `_promptAgent`, cleared after the settle waits) and the new `_settleSessionTitle` beside `abortSessionTitleGeneration`.
+
+## 2026-11-02 - The recovery identity contract names the snapshot call ambiguity mark (RULING-123 C3.4, senpi#5348)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-recovery-identity.ts`: the contract comment adds that the snapshot `calls` and settled rows of calls sharing one `toolCallId` inside one message carry `callUnknown: true`. No code changed.
+
+### Why
+
+- The contract comment states the live-record rule, so it must also state the matching snapshot rule.
+
+### Why an extension could not handle it
+
+- It is the core contract comment for the recovery carrier.
+
+### Expected merge conflict zones
+
+- LOW: the comment above `RecoveryCarrier`.
+
+## 2026-10-30 - Stable hashed per-session key on Anthropic Messages requests (senpi#2553)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-affinity-key.ts` (new): `sessionAffinityStreamOptions` derives `HMAC-SHA256(install salt, "session-affinity\0" + (affinitySessionId ?? sessionId))` for `anthropic-messages` models and returns it as `sessionAffinityKey` plus `metadata.user_id` in the Claude Code shape (`user_<key>_account__session_<uuid-shaped key>`). A caller-supplied `metadata.user_id` wins; a model whose compat sets `sendSessionAffinityHeaders: false` gets neither.
+- `packages/coding-agent/src/core/install-salt.ts` (new): the race-safe per-install salt (create, hard-link into place, process-only fallback) moved from the anthropic-subscription seat digest; `installSalt(agentDir, relativePath)`.
+- `packages/coding-agent/src/core/sdk.ts`: the session `streamFn` spreads `sessionAffinityStreamOptions(...)` into every request.
+- `packages/coding-agent/src/core/settings-shapes.ts`, `packages/coding-agent/src/core/settings-manager.ts`: `promptCache.sessionAffinity` (default true) and `getPromptCacheSessionAffinity()`; `false` restores the earlier behavior.
+
+### Why
+
+- Long sessions sent no stable session key, so a multi-account gateway re-wrote the 235-270k cached prefix on another account on many follow-up calls inside the cache TTL (senpi#2553). The key is stable across turns, retries, fallback hops and resumes of one session, differs between sessions, never carries the session id or any identity, and sits outside the prompt-cache key.
+
+### Why an extension could not handle it
+
+- The key must be on every request of every session, including SDK and embedded sessions that load no extensions, and `before_provider_request` sees the payload after the client and its affinity header are already built.
+
+### Expected merge conflict zones
+
+- LOW: the `modelRuntime.streamSimple(model, context, {` spread in `sdk.ts` `streamFn`; the `getPromptCacheKeepAliveSettings` neighborhood in `settings-manager.ts`; the end of `PromptCacheSettings`.
+
+## 2026-10-30 - Inject file-backed session refresh locks (senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts` implements per-provider/slot file locks, strictly reloads credentials after acquisition, and retains short global write locks. `packages/coding-agent/src/core/runtime-credentials.ts` forwards the capability.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts` must serialize rotating refresh exchanges across processes without blocking unrelated accounts. `packages/coding-agent/src/core/runtime-credentials.ts` is the production overlay and must preserve that exclusion.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/auth-storage.ts` owns the persistent store and file locks; `packages/coding-agent/src/core/runtime-credentials.ts` owns the store overlay below extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: lock acquisition and constructor. `packages/coding-agent/src/core/runtime-credentials.ts`: constructor forwarding.
+
+## 2026-10-30 - An account limit announces a retry only when another provider can serve (senpi#5016)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_willRetryAfterAgentEnd` mirrors the retry handler's account-limit branch. For an account-scope usage limit it returns `canTryFallback(<spent provider>)` instead of predicting from the same-model retry budget.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: the `canTryFallback` parameter doc now covers a spent account as well as a request-level refusal.
+
+### Why
+
+- The handler answers an account limit only with the fallback walk, which skips every rung on the spent provider. The predictor said `willRetry: true`, the walk found nothing, and no retry or later `agent_end` followed, so an RPC client waiting for the terminal end stayed running until the account reset (oh-my-openagent#9711).
+
+### Why an extension could not handle it
+
+- `agent_end.willRetry` is computed by `AgentSession` before extensions and RPC clients see the event.
+
+### Expected merge conflict zones
+
+- LOW: the head of `_willRetryAfterAgentEnd` in `agent-session.ts`.
+
+## 2026-10-29 - Identify an unknown account during reset (desktop#4203)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-account-reset.ts`: add a typed account-not-found error so RPC can distinguish an invalid selector from a failed write without forwarding storage diagnostics. Existing full-reset semantics remain shared with the slash command.
+
+### Why
+
+- Part of sisyphuslabs/omo-desktop-app#4203 (U1): reset failures must be correlated and actionable without exposing credential material.
+
+### Why an extension could not handle it
+
+- Both health stores are updated by the existing shared reset operation before it publishes the account-change event.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/credential-account-reset.ts`: unknown-account error type.
+
 ## 2026-11-03 - RPC bash results reach observers as entry_appended (senpi#5576)
 
 ### What changed

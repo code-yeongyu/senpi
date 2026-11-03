@@ -1,3 +1,21 @@
+## 2026-10-30 - Serialize rotating-token refresh per session (senpi#5003, PR #5024)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts` adds the optional `CredentialStore.withRefreshLock` capability. `packages/ai/src/auth/oauth-refresh.ts` holds it across read-latest, exchange and persistence, sharing a stable provider/slot identity between flat, named-slot and catalog refreshes.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/oauth-refresh.ts` previously provided only process-local exchange deduplication. Compare-and-swap after exchange cannot prevent two processes from consuming one rotating refresh token. The global write lock stays outside the exchange as required by #1542.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/oauth-refresh.ts` define the credential-store contract and common refresh path below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: credential-store capability. `packages/ai/src/auth/oauth-refresh.ts`: pre-exchange read and dispatch.
+
 ## 2026-10-27 - Credentials carry a login id that only a sign-in writes (senpi#4099)
 
 ### What changed
