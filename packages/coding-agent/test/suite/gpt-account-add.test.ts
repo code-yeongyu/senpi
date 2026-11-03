@@ -92,7 +92,8 @@ describe("/gpt-account add", () => {
 		await registeredGptCommand().handler("add", ctx);
 		const stored = storage.get(provider.id);
 		expect(listSlots(stored).map((slot) => slot.name)).toEqual(["default", "login-2"]);
-		expect(projectSlot(stored, "default")).toEqual(legacy);
+		// senpi#4099: the sign-in stamps the pool-level loginId; the saved account's own material is unchanged.
+		expect(projectSlot(stored, "default")).toEqual({ ...legacy, loginId: expect.any(String) });
 		expect(projectSlot(stored, "login-2")).toMatchObject({ route: "siwc", clientId: "oaiapp_synthetic" });
 		expect(notices.some((notice) => notice.type === "error")).toBe(false);
 	});

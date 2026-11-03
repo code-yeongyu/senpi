@@ -186,7 +186,8 @@ it("signs two validated SIWC accounts into the existing provider and replaces a 
 	expect(committed).toEqual(["login-2", "login-3", "login-2"]);
 	const pool = await credentials.read(provider.id);
 	expect(listSlots(pool)).toHaveLength(3);
-	expect(projectSlot(pool, "default")).toEqual(legacy);
+	// senpi#4099: every sign-in stamps the pool-level loginId; the legacy slot's own material is unchanged.
+	expect(projectSlot(pool, "default")).toEqual({ ...legacy, loginId: expect.any(String) });
 	expect(projectSlot(pool, "login-2")).toMatchObject({ subject: "one", access: "synthetic-one-3" });
 	expect(projectSlot(pool, "login-3")).toMatchObject({ subject: "two", access: "synthetic-two-2" });
 	expect(provider.auth.oauth?.loginLabel).toBe("Continue with ChatGPT");
