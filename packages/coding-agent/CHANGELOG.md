@@ -12,6 +12,34 @@
 
 ### Removed
 
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Under a degraded engine certificate import (fallback), a failed agent-shell command (`bash`, terminal foreground and background sessions) carries a `trust` status from the adopted record and, when its output looks like a certificate verification error, a heuristic hint with the matched pattern id ([#5248](https://github.com/code-yeongyu/senpi/pull/5248))
+- Under a fallback engine trust generation, a provider request that fails TLS chain verification reports `agent_end.failure.trust` with the fallback reason and its repair action id, and records it once per process and reason in the trust diagnostics file ([#5253](https://github.com/code-yeongyu/senpi/pull/5253))
+- RPC `get_protocol_info` answers carry `method_classes: { version, digest }`, the version and sha256 digest of the inbound method-class table the engine runs, so a client that classifies records with its own copy of the table can tell whether that copy is current ([#5476](https://github.com/code-yeongyu/senpi/pull/5476)).
+- RPC `set_client_info` accepts `remoteOrigin: { deviceId, deviceName? }`, declared once per connection by a relay forwarder for the remote device it speaks for. Every `select`, `confirm`, `input`, `editor` and `question` dialog that connection raises carries it as `remoteOrigin` (also inside the mirrored `ui_request_pending`), so a client can label dialogs raised by a remote device's turn; local connections' dialogs carry none ([#5479](https://github.com/code-yeongyu/senpi/pull/5479)).
+
+### Changed
+
+- The first-turn system prompt drops text the tool schemas already carry: no `## Available Tools` line for a tool whose description the model sees, fewer tool guidelines, one terminal section that also states the bash timeout facts, and no separate timeout policy or image generation section ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))
+- The shared prompt sections, tool guidelines, and terminal section use terser wording; tool names, call shapes, the routing line, and the Handoff template are unchanged ([#5335](https://github.com/code-yeongyu/senpi/issues/5335))
+
+### Fixed
+
+- Reopening a closed session waits for an in-flight path-claim removal after the close grace deadline instead of refusing a session that has already ended ([#4484](https://github.com/code-yeongyu/senpi/issues/4484)).
+- OAuth registration receives the configured product display name, including branded distributions (part of [#5003](https://github.com/code-yeongyu/senpi/issues/5003)).
+- Anthropic Subscription: a turn started while the previous turn is still finishing now waits for it instead of failing and moving the session to a fallback model ([#3906](https://github.com/code-yeongyu/senpi/issues/3906))
+- A subscription account that hit a limit with no stated reset is checked again at least every 30 minutes instead of staying blocked for up to 48 hours ([#5034](https://github.com/code-yeongyu/senpi/pull/5034)).
+- When the fallback chain runs out, the error shown in the TUI and print mode now leads with the failure that started the fallback (for example a usage 400) instead of the last model's error, and `retry_fallback_exhausted` carries `primaryError` and every failed rung in `failures` ([#4084](https://github.com/code-yeongyu/senpi/issues/4084))
+- The todo tool now accepts near-canonical `init` calls (phases nested inside `items`, nameless or empty phases, a JSON-string `list`, stray strings in `list`, an `op` with stray leading or trailing punctuation or whitespace (never digits)), corrects them, and reports each correction instead of failing validation ([#5336](https://github.com/code-yeongyu/senpi/pull/5336))
+- With compact socket updates enabled, the recovery manifest names the catalog families its root requires (`requiredKinds`), so a client opens exactly those instead of copying the engine's family list ([#5397](https://github.com/code-yeongyu/senpi/issues/5397))
+
+### Removed
+
 ## [2026.11.2-3] - 2026-11-02
 
 ### Breaking Changes

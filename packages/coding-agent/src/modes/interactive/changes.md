@@ -1,3 +1,21 @@
+## 2026-10-30 - The exhaustion notice leads with the primary failure (senpi#4084)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: when earlier rungs failed, the `retry_fallback_exhausted` notice leads with the primary failure even if the last rung's error was retryable.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: senpi#4084: the notice showed only the last rung's error, so a primary 400 (usage, billing) hid behind a later rung's `Connection error.`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the TUI's built-in exhaustion notice is rendered by the interactive mode itself; an extension cannot replace it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: LOW, the `retry_fallback_exhausted` case.
+
 ## 2026-10-30 - Announce automatic account switches in the TUI (senpi#2304, senpi#5017)
 
 ### What changed
