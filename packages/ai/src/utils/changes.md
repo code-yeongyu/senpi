@@ -1,3 +1,22 @@
+## 2026-10-31 - TLS chain-verification codes are structured transport codes (senpi#5253, closes #5244)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` (fork-only): `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, `UNABLE_TO_GET_ISSUER_CERT`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN`, `DEPTH_ZERO_SELF_SIGNED_CERT` and `CERT_UNTRUSTED` join the closed transport allowlist as `network`; `isTlsChainVerificationCode` names them.
+- `packages/ai/src/provider-diagnostic.ts` (fork-only): re-exports `isTlsChainVerificationCode` from the package root.
+
+### Why
+
+- omo#10762, design r13 6.6: the native handshake code must reach the provider failure so coding-agent can recognise a verification failure without reading message text. Hostname mismatch and expiry stay unclassified.
+
+### Why an extension could not handle it
+
+- The transport classifier runs inside the provider adapters' catch paths, below any extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `default` branch of `categoryForTransportCode`.
+
 ## 2026-11-01 - A 503 whose body says "Billing Scope" is not a quota exhaustion (senpi#4632)
 
 ### What changed
