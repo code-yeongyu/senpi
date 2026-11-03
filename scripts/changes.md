@@ -1,3 +1,41 @@
+## 2026-11-01 - Kill guard judge entry shipped in the npm bundle (senpi#5349, PR #5358)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: a `kill-guard-check` lazy entry (in `scripts/bundle-entry-points.mjs`) emits `core/kill-guard/check-entry.js` as `kill-guard-check.js`. The build fails when `core/kill-guard/runtime.js` lands in a different directory, because that module resolves the entry by URL.
+
+### Why
+
+- On an npm install the runtime shims run the judge as the host's runtime plus this entry script.
+
+### Why an extension could not handle it
+
+- This is the release bundle build itself.
+
+### Expected merge conflict zones
+
+- LOW: `lazyEntryPoints` in `scripts/bundle-entry-points.mjs` next to the `kill-guard` entry, and the directory checks in `buildBundle`.
+
+## 2026-11-01 - Kill guard judge shipped as its own module in every layout (senpi#5349, PR #5354)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: the build fails when the judge (`kill-guard.js`, emitted by a new `kill-guard` lazy entry in `scripts/bundle-entry-points.mjs`) and the chunk `core/kill-guard/host.js` lands in are in different directories.
+- `scripts/build-binaries.sh`: both release `bun build --compile` commands embed `./src/core/kill-guard/index.ts`.
+- `scripts/create-source-archive.sh`: the source archive requires `packages/coding-agent/src/core/kill-guard/index.ts`.
+
+### Why
+
+- A codemode worker cannot resolve the `@code-yeongyu/senpi` peer specifier in every layout, so the host hands it a URL to the judge's own file, which must exist in the npm bundle, the compiled binary and the source archive.
+
+### Why an extension could not handle it
+
+- These are the release build scripts themselves.
+
+### Expected merge conflict zones
+
+- LOW: `lazyEntryPoints` in `scripts/bundle-entry-points.mjs`, the path-identity directory check in `buildBundle`, the two compile lines and the required-path list.
+
 ## 2026-11-02 - Refuse a release version the shipped update checker cannot order (#5406, PR #5411)
 
 ### What changed
