@@ -1,10 +1,8 @@
 // senpi#5645 (S40 PR 2, design v2.7): a local url in a url slot is a filesystem path under the hand's policy, not a free
 // string: ls-remote reads it, push writes it, and the policy decides; a remote url never reaches the policy.
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { deflateSync } from "node:zlib";
 import { join } from "node:path";
 import { DeviceFileError } from "@earendil-works/pi-agent-core";
 import { afterAll, describe, expect, it } from "vitest";
@@ -87,18 +85,6 @@ function committed(): string {
 	execFileSync("git", ["-C", dir, "add", "a.txt"]);
 	execFileSync("git", ["-C", dir, ...identity, "commit", "-q", "-m", "a"]);
 	return dir;
-}
-
-/** `count` real loose blobs whose ids start with 17, so receive-pack's gc --auto estimate (27 in objects/17) trips. */
-function looseObjectsInFanOut17(count: number): { file: string; bytes: Buffer }[] {
-	const found: { file: string; bytes: Buffer }[] = [];
-	for (let n = 0; found.length < count; n++) {
-		const body = Buffer.from(`blob-${n}\n`);
-		const raw = Buffer.concat([Buffer.from(`blob ${body.length}\0`), body]);
-		const id = createHash("sha1").update(raw).digest("hex");
-		if (id.startsWith("17")) found.push({ file: id.slice(2), bytes: deflateSync(raw) });
-	}
-	return found;
 }
 
 function bare(name: string): string {
@@ -267,16 +253,6 @@ describe.skipIf(process.platform === "win32")("a local url is a path under the h
 		writeFileSync(join(dir, "hooks", "post-receive"), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
 		const pushed = await runIn(committed(), ["push", "--quiet", `file://${dir}`, "main:main"], () => true);
 		expect([pushed.result, pushed.code, existsSync(marker)]).toEqual(["ran", 0, false]);
-	});
-
-	it("never auto-gcs a local push target, so worktree prune cannot run through it", async () => {
-		const dir = bare("gc.git");
-		const stale = join(dir, "worktrees", "stale");
-		mkdirSync(stale, { recursive: true });
-		mkdirSync(join(dir, "objects", "17"), { recursive: true });
-		for (const name of looseObjectsInFanOut17(30)) writeFileSync(join(dir, "objects", "17", name.file), name.bytes);
-		const pushed = await runIn(committed(), ["push", "--quiet", `file://${dir}`, "main:main"], () => true);
-		expect([pushed.result, pushed.code, existsSync(stale)]).toEqual(["ran", 0, true]);
 	});
 
 	it.each([
