@@ -19,6 +19,8 @@ import { CONSENT_CASES } from "../../src/execution/testing/consent-cases.ts";
 import { NEST_CASES } from "../../src/execution/testing/nest-cases.ts";
 import { CANCEL_CASES } from "../../src/execution/testing/cancel-cases.ts";
 import { KILL_NEST_CASES } from "../../src/execution/testing/kill-nest.ts";
+import { WAKE_EXEC_CASES } from "../../src/execution/testing/wake-exec-cases.ts";
+import { KILL_WAKEX_CASES } from "../../src/execution/testing/kill-wakex.ts";
 import { KILL_LEDGER_CASES } from "../../src/execution/testing/kill-ledger.ts";
 import { LEDGER_CASES } from "../../src/execution/testing/ledger-cases.ts";
 import { FAULT_TRANSPORT_CASES } from "../../src/transport/testing/fault-cases.ts";
@@ -138,6 +140,7 @@ describe("the ./conformance export", () => {
 			"KILL_NEST_CASES",
 			"KILL_STORE_CASES",
 			"KILL_STORE_DECLARATIONS",
+			"KILL_WAKEX_CASES",
 			"KILL_WAKE_CASES",
 			"KILL_WAKE_DECLARATIONS",
 			"LEDGER_CASES",
@@ -150,6 +153,8 @@ describe("the ./conformance export", () => {
 			"TRANSPORT_CASES",
 			"TransportClosedError",
 			"WAKE_CASES",
+			"WAKE_EXEC_CASES",
+			"WAKE_RETENTION_MS",
 			"buildManifest",
 			"computeSuiteHash",
 			"createBatchCoordinator",
@@ -161,6 +166,8 @@ describe("the ./conformance export", () => {
 			"createReliableTransport",
 			"createSequentialCoordinator",
 			"createWakeHost",
+			"createWakeInbox",
+			"createWakeOutbox",
 			"decodeReferencePacket",
 			"findImplementationGaps",
 			"findMappingProblems",
@@ -192,6 +199,8 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...NEST_CASES,
 	...CANCEL_CASES,
 	...KILL_NEST_CASES,
+	...WAKE_EXEC_CASES,
+	...KILL_WAKEX_CASES,
 	...MULTI_SEQ_CASES,
 	...STORE_CASES,
 	...KILL_STORE_CASES,

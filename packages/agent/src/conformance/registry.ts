@@ -1,6 +1,7 @@
 import { BATCH_REGISTRY } from "../execution/testing/batch-registry.ts";
 import { LEDGER_REGISTRY } from "../execution/testing/ledger-registry.ts";
 import { NEST_REGISTRY } from "../execution/testing/nest-registry.ts";
+import { WAKE_EXEC_REGISTRY } from "../execution/testing/wake-registry.ts";
 import { SEQ_REGISTRY } from "../execution/testing/seq-registry.ts";
 
 export const ADAPTER_KINDS = ["store", "wake", "transport", "executor", "host"] as const;
@@ -64,6 +65,7 @@ export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 	...BATCH_REGISTRY,
 	...SEQ_REGISTRY,
 	...NEST_REGISTRY,
+	...WAKE_EXEC_REGISTRY,
 	storeCase(
 		"STORE-01",
 		STORE_CASES_IMPL,
