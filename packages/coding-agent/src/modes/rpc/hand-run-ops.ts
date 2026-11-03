@@ -73,12 +73,8 @@ export async function runOnHand(
 	if (plan.exe === "git") {
 		if (!(await gitIsSupported(env))) throw new DeviceFileError("unsupported", "git 2.29 or newer is required");
 		if (env.GIT_INDEX_FILE !== undefined) env.GIT_INDEX_FILE = await confinedIndexFile(env.GIT_INDEX_FILE, cwd, env);
-		for (const worktree of await confinePaths(plan.paths, cwd, env)) {
-			const decision = await deps.guards.filesystemPolicy()?.({
-				operation: "write",
-				canonicalPath: worktree,
-				toolName: "bash",
-			});
+		for (const { operation, canonicalPath } of await confinePaths(plan.paths, cwd, env)) {
+			const decision = await deps.guards.filesystemPolicy()?.({ operation, canonicalPath, toolName: "bash" });
 			if (decision !== undefined && !decision.allow) throw new DeviceFileError("refused_by_policy", decision.reason);
 		}
 	}

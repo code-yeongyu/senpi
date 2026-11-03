@@ -3,7 +3,7 @@ import { lstat, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DeviceFileError } from "@earendil-works/pi-agent-core";
 import { canonicalizeFilesystemPath } from "../../core/tools/filesystem-policy.ts";
-import type { TypedPath } from "./hand-run-grammar.ts";
+import { localUrlPath, type TypedPath } from "./hand-run-grammar.ts";
 
 const MIN_GIT: readonly [number, number] = [2, 29];
 
@@ -73,32 +73,46 @@ async function canonicalTarget(raw: string, cwd: string): Promise<string> {
 	return join(await canonicalizeFilesystemPath(dirname(target)), basename(target));
 }
 
+/** A filesystem location a planned git call reads or writes outside the confinement rules, for the hand's policy. */
+export interface PolicyTarget {
+	readonly operation: "read" | "write";
+	readonly canonicalPath: string;
+}
+
 /**
- * Confines the typed path arguments of a planned git call (v2.6). A `path` must lie inside the worktree or the git
- * directory; a `worktree` (add/remove) must lie outside the git directories, where a worktree would install hooks, and is
- * returned for the caller's write-policy check.
+ * Confines the typed path arguments of a planned git call (v2.6/v2.7). A `path` must lie inside the worktree or the git
+ * directory. A `worktree` (add/remove) must lie outside the git directories, where a worktree would install hooks, and is a
+ * policy WRITE. A local url (`source` read, `target` written) may live anywhere (a memory mirror does), so it is resolved
+ * through every symlink, its last component included, and handed to the policy instead of being confined.
  */
 export async function confinePaths(
 	paths: readonly TypedPath[],
 	cwd: string,
 	env: Record<string, string>,
-): Promise<readonly string[]> {
+): Promise<readonly PolicyTarget[]> {
 	if (paths.length === 0) return [];
 	const dirs = await gitDirs(cwd, env);
 	const top = await git(["rev-parse", "--show-toplevel"], cwd, env).then(
 		(output) => canonicalizeFilesystemPath(output.trim()),
 		() => undefined,
 	);
-	const worktrees: string[] = [];
+	const targets: PolicyTarget[] = [];
 	for (const { kind, value } of paths) {
+		if (kind === "source" || kind === "target") {
+			const local = localUrlPath(value);
+			if (local === undefined) throw new DeviceFileError("refused_by_policy", `url: ${value}`);
+			const canonicalPath = await canonicalizeFilesystemPath(resolve(cwd, local));
+			targets.push({ operation: kind === "source" ? "read" : "write", canonicalPath });
+			continue;
+		}
 		const canonical = await canonicalTarget(value, cwd);
 		const inGitDir = dirs.some((dir) => inside(canonical, dir) || (kind === "worktree" && inside(dir, canonical)));
 		if (kind === "worktree") {
 			if (inGitDir)
 				throw new DeviceFileError("refused_by_policy", "worktree path is inside the repository's git directory");
-			worktrees.push(canonical);
+			targets.push({ operation: "write", canonicalPath: canonical });
 		} else if (!inGitDir && (top === undefined || !inside(canonical, top)))
 			throw new DeviceFileError("refused_by_policy", `path outside the repository: ${value}`);
 	}
-	return worktrees;
+	return targets;
 }

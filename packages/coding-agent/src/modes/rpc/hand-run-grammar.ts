@@ -23,11 +23,14 @@ export type Kind =
 	| "relpath"
 	| "gitpath"
 	| "path"
-	| "worktree";
+	| "worktree"
+	| "source"
+	| "target";
 
 /** A path-kind argument the hand still has to confine on the device before git runs. */
 export interface TypedPath {
-	readonly kind: "path" | "worktree";
+	/** path: inside the repo; worktree: outside the git dirs (write); source: a local url read; target: a local url written. */
+	readonly kind: "path" | "worktree" | "source" | "target";
 	readonly value: string;
 }
 
@@ -57,6 +60,25 @@ const blobref = (value: string): boolean => {
 };
 const filesystem = (value: string): boolean => value.length > 0 && !NUL.test(value) && !/^[-:]/.test(value);
 
+/** A url git reaches over the network: ssh, https, or the scp form `user@host:path`. */
+function remote(value: string): boolean {
+	return (
+		/^(?:https|ssh):\/\/[^\s\0]+$/.test(value) ||
+		/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:(?!\/\/)[A-Za-z0-9._/~-]+$/.test(value)
+	);
+}
+
+/** The filesystem path a local url names (`file:///abs`, or a bare absolute or relative path), else undefined. */
+export function localUrlPath(value: string): string | undefined {
+	if (NUL.test(value) || /^(?:ext|fd)::/i.test(value)) return undefined;
+	if (value.startsWith("file://")) {
+		const rest = value.slice("file://".length);
+		return rest.startsWith("/") && !rest.includes("?") && !rest.includes("#") ? decodeURIComponent(rest) : undefined;
+	}
+	if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || value.startsWith("-")) return undefined;
+	return value.length > 0 ? value : undefined;
+}
+
 const KINDS: Readonly<Record<Kind, (value: string) => boolean>> = {
 	rev,
 	range,
@@ -81,6 +103,8 @@ const KINDS: Readonly<Record<Kind, (value: string) => boolean>> = {
 	gitpath: (value) => value === "index" || value === "MERGE_HEAD",
 	path: filesystem,
 	worktree: filesystem,
+	source: (value) => remote(value) || localUrlPath(value) !== undefined,
+	target: (value) => remote(value) || localUrlPath(value) !== undefined,
 };
 
 const FORMAT = eq("--format=", "fmt");
@@ -141,7 +165,7 @@ export const SHAPES: Readonly<Record<string, readonly (readonly Item[])[]>> = {
 		["--stage", "-z", "--", k("path")],
 		["--eol", "-z"],
 	],
-	"ls-remote": [[k("url"), k("ref")]],
+	"ls-remote": [[k("source"), k("ref")]],
 	"ls-tree": [
 		["-r", "--name-only", "-z", k("rev"), opt("--", k("path"))],
 		["-r", "-l", "-z", k("rev")],
@@ -157,7 +181,7 @@ export const SHAPES: Readonly<Record<string, readonly (readonly Item[])[]>> = {
 	],
 	"merge-base": [["--is-ancestor", k("rev"), k("rev")]],
 	"prune-packed": [["--quiet"]],
-	push: [["--quiet", k("url"), k("refspec")]],
+	push: [["--quiet", k("target"), k("refspec")]],
 	"read-tree": [["--empty"], [k("rev")]],
 	remote: [["-v"]],
 	reset: [["--soft", k("rev")]],
@@ -218,8 +242,9 @@ function match(
 	if (arg === undefined) return false;
 	const value = "prefix" in item ? (arg.startsWith(item.prefix) ? arg.slice(item.prefix.length) : undefined) : arg;
 	if (value === undefined || !KINDS[item.kind](value)) return false;
-	const typed = item.kind === "path" || item.kind === "worktree";
-	if (typed) paths.push({ kind: item.kind, value });
+	const local = (item.kind === "source" || item.kind === "target") && !remote(value);
+	const typed = item.kind === "path" || item.kind === "worktree" || local;
+	if (typed) paths.push({ kind: item.kind === "path" || item.kind === "worktree" ? item.kind : item.kind, value });
 	if (next(at + 1)) return true;
 	if (typed) paths.pop();
 	return false;

@@ -32,6 +32,8 @@ const SAMPLE: Readonly<Record<Kind, string>> = {
 	gitpath: "index",
 	path: "a.md",
 	worktree: "../wt",
+	source: "https://example.invalid/r",
+	target: "https://example.invalid/r",
 };
 
 interface Slot {
@@ -56,6 +58,7 @@ function fill(items: readonly Item[], args: string[], slots: Slot[]): void {
 const CONTEXT = { uid: 501, platform: "darwin" as const, ownEnv: {} };
 const plan = (argv: readonly string[]) => planRun({ exe: "git", argv, env: {} }, CONTEXT);
 const INERT: readonly Kind[] = ["msg", "fmt"];
+const FILESYSTEM: readonly Kind[] = ["path", "worktree", "source", "target"];
 
 const cases = Object.entries(SHAPES).flatMap(([sub, shapes]) =>
 	shapes.map((shape, index) => {
@@ -89,20 +92,25 @@ describe("every admitted shape types every argument (senpi#5645)", () => {
 	});
 
 	it.each(cases)("$name: an outside path in a non-path slot is refused", ({ sub, args, slots }) => {
-		const typed = slots.filter(
-			(slot) => slot.kind !== "path" && slot.kind !== "worktree" && !INERT.includes(slot.kind),
-		);
+		const typed = slots.filter((slot) => !FILESYSTEM.includes(slot.kind) && !INERT.includes(slot.kind));
 		const admitted = typed.filter(
 			({ at, prefix }) => plan([sub, ...args.map((arg, i) => (i === at ? `${prefix}${outside}` : arg))]).ok,
 		);
 		expect(admitted.map((slot) => slot.kind)).toEqual([]);
 	});
 
-	it.each(cases.filter((c) => c.slots.some((slot) => slot.kind === "path" || slot.kind === "worktree")))(
+	it.each(cases.filter((c) => c.slots.some((slot) => FILESYSTEM.includes(slot.kind))))(
 		"$name: every path slot is confined (outside target, symlinked last component)",
 		async ({ sub, args, slots }) => {
 			const refusals: string[] = [];
-			for (const slot of slots.filter((s) => s.kind === "path" || s.kind === "worktree")) {
+			for (const slot of slots.filter((s) => FILESYSTEM.includes(s.kind))) {
+				if (slot.kind === "source" || slot.kind === "target") {
+					const planned = plan([sub, ...args.map((arg, i) => (i === slot.at ? `file://${outside}` : arg))]);
+					if (!planned.ok) throw new Error(planned.reason);
+					const targets = await confinePaths(planned.paths, repo, {});
+					expect(targets.map((target) => target.operation)).toEqual([slot.kind === "source" ? "read" : "write"]);
+					continue;
+				}
 				for (const value of slot.kind === "path" ? [outside, "link"] : [join(repo, ".git", "hooks"), "link"]) {
 					const planned = plan([sub, ...args.map((arg, i) => (i === slot.at ? value : arg))]);
 					if (!planned.ok) {
