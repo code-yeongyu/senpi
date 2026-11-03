@@ -1,3 +1,60 @@
+## 2026-10-30 - The exhaustion notice leads with the primary failure (senpi#4084)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: when earlier rungs failed, the `retry_fallback_exhausted` notice leads with the primary failure even if the last rung's error was retryable.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: senpi#4084: the notice showed only the last rung's error, so a primary 400 (usage, billing) hid behind a later rung's `Connection error.`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the TUI's built-in exhaustion notice is rendered by the interactive mode itself; an extension cannot replace it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: LOW, the `retry_fallback_exhausted` case.
+
+## 2026-10-30 - Announce automatic account switches in the TUI (senpi#2304, senpi#5017)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `registerSignalHandlers` subscribes to provider account events (cleaned up with the other process handlers) and shows a status line for each `failover` event.
+- `packages/coding-agent/src/modes/interactive/account-failover-notice.ts` (new): `formatAccountFailoverNotice` words it as `Switched <provider> account <from> -> <to>: <reason>.`
+
+### Why
+
+- No lane's account switch reached the TUI, so users with several logins could not tell a request moved to another account.
+
+### Why an extension could not handle it
+
+- The event bus is host-internal and the notice belongs to the host's status line; no extension hook receives provider account events.
+
+### Expected merge conflict zones
+
+- LOW: the end of `registerSignalHandlers` and the import block in `interactive-mode.ts`.
+
+## 2026-10-26 - Slash-command recovery for a failed compaction in the TUI (senpi#4161)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/required-compaction-wording.ts`: maps the surface-neutral failed-compaction message to the TUI wording "Run /compact to retry, or /new to start a fresh session."
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showError` (rejected prompts) shows that wording.
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: a turn that stopped on a failed compaction renders that wording.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: only the TUI has `/compact` and `/new`, so only the TUI names them.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: error rendering for rejected prompts and error stops is owned by interactive mode, not by an extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showError`; `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts` `case "error"` fallback text.
+
 ## 2026-10-31 - The extra-usage warning no longer sniffs sk-ant-oat API keys (senpi#5131)
 
 ### What changed

@@ -54,6 +54,13 @@
 // rule, Verification keeps the claim audit and drops the "Should pass" flourish,
 // and the fourth Hard Limit drops the tail Scope already states. Net the core
 // shrinks; no rule is added.
+//
+// 2026-10-31 (senpi#5198): the owner's rule is that a preset tunes OmO's own
+// core for the model, never pastes generic coding-harness rules. Removed: the
+// git-commit hard limit and the ASCII-only style clause (both carried over
+// from generic cores, no guide section or trace for this model) and the
+// specialized-search line (it restates the tool list) and the waitForAnswer
+// parenthetical (ask_user_question's own description).
 
 import { APP_NAME } from "../../../../config.ts";
 import {
@@ -64,17 +71,8 @@ import {
 	terminalOrApp,
 } from "../../../dynamic-prompt/build.ts";
 import { buildHandoffSection, CHAT_FINAL_MESSAGE } from "../../../dynamic-prompt/handoff.ts";
-import { getToolsPromptDisplay } from "../../../dynamic-prompt/tool-categorization.ts";
 import { APP_UNRUN_CHECK_RULE, buildTestDisciplineSection } from "../../../dynamic-prompt/verification.ts";
 import { buildExecutionToolingParagraph } from "./execution-tooling.ts";
-
-function buildSearchLine(context: DynamicPromptCoreContext): string {
-	const triggerTools = getToolsPromptDisplay(context.tools);
-	if (!triggerTools) {
-		return "";
-	}
-	return `\nSpecialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.\n`;
-}
 
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open every turn with one short routing line:
@@ -91,7 +89,7 @@ function buildClaudeFable51Core(context: DynamicPromptCoreContext): string {
 ## Intent Gate
 
 ${INTENT_GATE_LEAD[terminalOrApp(context.surface)]}
-${buildSearchLine(context)}
+
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code and report; no edits.
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
@@ -101,7 +99,7 @@ Derive intent from the latest user turn alone: a new direction drops the stale p
 
 ## Scope
 
-The request sets the scope, and the scope is the deliverable: deliver all of it and only it. Make routine judgment calls yourself; ask only when different readings would lead to materially different work, and ask after doing everything that does not depend on the answer, through ask_user_question when it is available (waitForAnswer true when the next step depends on the answer). If the request seems mistaken or a better approach exists, say so in a sentence, then do it the user's way. If part of the task is blocked, finish every other part and say exactly what you left out and why.
+The request sets the scope, and the scope is the deliverable: deliver all of it and only it. Make routine judgment calls yourself; ask only when different readings would lead to materially different work, and ask after doing everything that does not depend on the answer, through ask_user_question when it is available. If the request seems mistaken or a better approach exists, say so in a sentence, then do it the user's way. If part of the task is blocked, finish every other part and say exactly what you left out and why.
 
 Smallest correct change wins: no refactors beside a focused fix, no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code; validate only at system boundaries. A pre-existing bug or performance concern you notice is a follow-up for your summary, not a change in this diff. Scratch checks verify and get discarded; commit tests only where the task asks for them or the repository already keeps tests for that kind of change, sized like the neighboring test files. Prefer a surgical edit over rewriting a file when the result would be identical.
 
@@ -123,7 +121,6 @@ ${context.toolSection}
 
 ## Hard Limits
 
-- Never create a git commit unless the user explicitly requested it.
 - Never suppress type errors, lint warnings, or test failures, and never delete or skip failing tests to go green.
 - Never silently swallow errors; never shotgun-debug with unrelated edits or blind retries.
 - Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature.
@@ -136,7 +133,7 @@ Pause only when the work genuinely requires the user - a destructive or irrevers
 
 Have an opinion: agree or disagree plainly, and say why; raise only real problems. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone, profanity included.
 
-Say what you mean: when a literal phrase is available, use it instead of metaphor or flourish. Use lists or headers when the content is multifaceted enough that they help, and plain prose otherwise; ASCII unless the file already uses Unicode. ${context.surface === "chat" ? `${CHAT_FINAL_MESSAGE},` : "The final message of a change opens with the Handoff block; write its For you slot"} for a reader who did not see the work: the outcome in complete sentences, then how it was verified, shortened by dropping detail that does not change what the reader does next rather than by compressing into fragments, arrow chains, or invented labels.`;
+Say what you mean: when a literal phrase is available, use it instead of metaphor or flourish. Use lists or headers when the content is multifaceted enough that they help, and plain prose otherwise. ${context.surface === "chat" ? `${CHAT_FINAL_MESSAGE},` : "The final message of a change opens with the Handoff block; write its For you slot"} for a reader who did not see the work: the outcome in complete sentences, then how it was verified, shortened by dropping detail that does not change what the reader does next rather than by compressing into fragments, arrow chains, or invented labels.`;
 }
 
 export function buildClaudeFable51Prompt(options: BuildDynamicSystemPromptOptions): string {

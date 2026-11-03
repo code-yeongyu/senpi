@@ -9,6 +9,8 @@ export interface NativeWebView extends EventTarget {
 	onNavigationFailed: ((error: Error) => void) | null;
 	navigate(url: string): Promise<void>;
 	close(): void;
+	/** Raw Chrome DevTools Protocol on the view's session (Chrome backend only). */
+	cdp?(method: string, params?: Readonly<Record<string, unknown>>): Promise<unknown>;
 }
 
 export interface NativeWebViewClass {

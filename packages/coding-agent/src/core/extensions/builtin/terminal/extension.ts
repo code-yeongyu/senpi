@@ -3,6 +3,7 @@ import { encodedSessionId } from "../../../session-sidecar-store.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
+import { resolveBashTimeoutDefaults } from "../bash-timeout/timeout.ts";
 import { isEvalOnlyRouting } from "../eval-only-routing.ts";
 import {
 	buildToolContext,
@@ -31,6 +32,7 @@ import { createBashOutputTool } from "./tools/bash-output.ts";
 import { createBashResizeTool } from "./tools/bash-resize.ts";
 import { TERMINAL_CHILD_JOB_KINDS, terminalChildJob } from "./tools/child-placement.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
+import { resolveForegroundWindowSeconds } from "./tools/foreground-window.ts";
 import { bindTerminalManifestWriter, createMonitorTool } from "./tools/monitor.ts";
 
 /**
@@ -241,7 +243,12 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		"before_agent_start",
 		async (event) => {
 			return {
-				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({ evalOnly: isEvalOnlyRouting(pi), ptyBash: !state.steppedAside })}`,
+				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({
+					evalOnly: isEvalOnlyRouting(pi),
+					ptyBash: !state.steppedAside,
+					foregroundWindowSeconds: resolveForegroundWindowSeconds(process.env),
+					defaultTimeoutSeconds: resolveBashTimeoutDefaults(process.env).defaultSeconds,
+				})}`,
 			};
 		},
 		{ previewSafe: true },
