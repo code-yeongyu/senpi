@@ -127,7 +127,9 @@ export function defineProcessCases(runner: ConformanceRunner, target: Conformanc
 				const result = await ops.process.exec({ command: "sleep 30 >/dev/null 2>&1 & echo $!" }, ctx());
 				const survivor = Number(Buffer.from(result.stdout).toString().trim());
 				assert.equal(await pidGoneWithin(survivor, 0), false, "background child should outlive its shell");
-				await ops.process.sweep([result.scopeToken]);
+				const token = result.scopeToken;
+				assert.ok(token !== undefined, "an instance with a stateDir records a scope token");
+				await ops.process.sweep([token]);
 				assert.equal(await pidGoneWithin(survivor, 3000), true);
 			}),
 		);
