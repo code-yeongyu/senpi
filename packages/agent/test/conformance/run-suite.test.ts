@@ -15,6 +15,12 @@ import { FAULT_HAND_CASES } from "../../src/execution/testing/fault-hand-cases.t
 import { KILL_HAND_CASES } from "../../src/execution/testing/kill-hand.ts";
 import { BATCH_CASES } from "../../src/execution/testing/batch-cases.ts";
 import { KILL_BATCH_CASES } from "../../src/execution/testing/kill-batch.ts";
+import { MULTI_SEQ_CASES } from "../../src/execution/testing/multi-seq-cases.ts";
+import { SEQ_CASES } from "../../src/execution/testing/seq-cases.ts";
+import { CONSENT_CASES } from "../../src/execution/testing/consent-cases.ts";
+import { NEST_CASES } from "../../src/execution/testing/nest-cases.ts";
+import { CANCEL_CASES } from "../../src/execution/testing/cancel-cases.ts";
+import { KILL_NEST_CASES } from "../../src/execution/testing/kill-nest.ts";
 import { KILL_LEDGER_CASES } from "../../src/execution/testing/kill-ledger.ts";
 import { LEDGER_CASES } from "../../src/execution/testing/ledger-cases.ts";
 import { MULTI_HAND_CASES } from "../../src/execution/testing/multi-hand-cases.ts";
@@ -122,7 +128,9 @@ describe("the ./conformance export", () => {
 			"ADAPTER_KINDS",
 			"BATCH_CASES",
 			"BatchManifestConflictError",
+			"CANCEL_CASES",
 			"CONFORMANCE_REGISTRY",
+			"CONSENT_CASES",
 			"DurableStoreError",
 			"FAULT_HAND_CASES",
 			"FAULT_PROFILE_NAMES",
@@ -133,6 +141,7 @@ describe("the ./conformance export", () => {
 			"KILL_HAND_DECLARATIONS",
 			"KILL_LEDGER_CASES",
 			"KILL_LEDGER_DECLARATIONS",
+			"KILL_NEST_CASES",
 			"KILL_STORE_CASES",
 			"KILL_STORE_DECLARATIONS",
 			"KILL_WAKE_CASES",
@@ -141,6 +150,9 @@ describe("the ./conformance export", () => {
 			"MULTI_CASES",
 			"MULTI_HAND_CASES",
 			"MULTI_HOST_CASES",
+			"MULTI_SEQ_CASES",
+			"NEST_CASES",
+			"SEQ_CASES",
 			"STORE_CASES",
 			"TRANSPORT_CASES",
 			"TransportClosedError",
@@ -152,7 +164,9 @@ describe("the ./conformance export", () => {
 			"createExecutionLedger",
 			"createInProcessNetwork",
 			"createManualTimers",
+			"createNestedAdmission",
 			"createReliableTransport",
+			"createSequentialCoordinator",
 			"createWakeHost",
 			"decodeReferencePacket",
 			"findImplementationGaps",
@@ -180,6 +194,12 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...KILL_LEDGER_CASES,
 	...BATCH_CASES,
 	...KILL_BATCH_CASES,
+	...SEQ_CASES,
+	...CONSENT_CASES,
+	...NEST_CASES,
+	...CANCEL_CASES,
+	...KILL_NEST_CASES,
+	...MULTI_SEQ_CASES,
 	...STORE_CASES,
 	...KILL_STORE_CASES,
 	...WAKE_CASES,

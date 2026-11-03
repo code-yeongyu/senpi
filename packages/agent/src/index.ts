@@ -73,6 +73,14 @@ export {
 	type RemoteToolResult,
 } from "./execution/remote-protocol.ts";
 export {
+	createErrorToolResult,
+	createToolResultMessage,
+	emitToolExecutionEnd,
+	emitToolExecutionUpdate,
+	emitToolResultMessage,
+	shouldTerminateToolBatch,
+} from "./execution/tool-outcome-events.ts";
+export {
 	authorize,
 	createGrantVerifier,
 	DEFAULT_WORKSPACE,

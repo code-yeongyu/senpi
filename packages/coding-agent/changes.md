@@ -1,3 +1,21 @@
+## 2026-11-03 - Loopless worker entry in the compiled binary (senpi#5438)
+
+### What changed
+
+- `packages/coding-agent/package.json` (`build:binary`): `./src/modes/rpc/loopless-worker.ts` joins the `bun build --compile` entry list, next to `./src/modes/rpc/session-worker.ts`, so the compiled binary can start a loopless worker isolate.
+
+### Why
+
+- A loopless worker runs in its own isolate (senpi#5413, brain/hand split); a compiled binary starts isolates only from entries compiled into it.
+
+### Why an extension could not handle it
+
+- The compiled entry list is the build script itself.
+
+### Expected merge conflict zones
+
+- LOW: the `build:binary` entry list, which other worker entries also extend.
+
 ## 2026-11-01 - Kill guard judge embedded in the compiled binary (senpi#5349, PR #5354)
 
 ### What changed
