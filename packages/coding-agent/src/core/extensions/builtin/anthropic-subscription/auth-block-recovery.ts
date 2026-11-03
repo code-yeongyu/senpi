@@ -49,7 +49,13 @@ async function probeClaudeCliSlot(
 		const credential = current as AnthropicSubscriptionCredential;
 		const stored = credential.accounts?.find((candidate) => candidate.name === slot.name);
 		if (!stored || !isClaudeCliProbeDue(stored, input.now)) return current;
-		const { blockReason: _reason, blockedUntil: _until, blockedAt: _at, ...unblocked } = stored;
+		const {
+			blockReason: _reason,
+			blockedUntil: _until,
+			blockedAt: _at,
+			authVerdict: _verdict,
+			...unblocked
+		} = stored;
 		const next: AccountSlot = loggedIn
 			? unblocked
 			: {
@@ -57,6 +63,7 @@ async function probeClaudeCliSlot(
 					blockReason: "auth_error",
 					blockedUntil: input.now + AUTH_BLOCK_REPROBE_MS,
 					blockedAt: input.now,
+					authVerdict: { dirId: stored.dirId, at: input.now },
 				};
 		return {
 			...credential,
