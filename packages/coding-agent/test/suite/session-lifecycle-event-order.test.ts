@@ -44,7 +44,7 @@ function line(event: Harness["events"][number]): string[] {
 	return [];
 }
 
-async function order(extensions: ExtensionFactory[]): Promise<string[]> {
+async function run(extensions: ExtensionFactory[]): Promise<Harness["events"]> {
 	const harness = await createHarness({ tools: [echo], extensionFactories: extensions });
 	harnesses.push(harness);
 	harness.setResponses([
@@ -58,10 +58,37 @@ async function order(extensions: ExtensionFactory[]): Promise<string[]> {
 		fauxAssistantMessage("done"),
 	]);
 	await harness.session.prompt("go");
-	return harness.events.flatMap(line).filter((entry) => !entry.startsWith("message_") || !entry.endsWith(" custom"));
+	return harness.events;
 }
 
+async function order(extensions: ExtensionFactory[]): Promise<string[]> {
+	return (await run(extensions))
+		.flatMap(line)
+		.filter((entry) => !entry.startsWith("message_") || !entry.endsWith(" custom"));
+}
+
+// A slow assistant message_start handler toggles a wake source after the loop has moved on, so the lifecycle events
+// held for the agent's later events are still queued when this immediate change is raised.
+const lateWakeToggle: ExtensionFactory = (pi) => {
+	pi.on("message_start", async (event) => {
+		if ((event.message as { role: string }).role !== "assistant") return;
+		for (let turn = 0; turn < 5; turn++) await macrotask();
+		pi.events?.emit("wake_source_state", { source: "order-test", activeCount: 1 });
+		await macrotask();
+		pi.events?.emit("wake_source_state", { source: "order-test", activeCount: 0 });
+	});
+};
+
 describe("session_lifecycle events sit immediately before their cause (senpi#4360)", () => {
+	it("never delivers an older lifecycle snapshot after a newer one", async () => {
+		const seqs = (await run([lateWakeToggle]))
+			.filter((event) => event.type === "session_lifecycle")
+			.map((event) => (event as { lifecycle: { seq: number } }).lifecycle.seq);
+
+		expect(seqs.length).toBeGreaterThan(4);
+		expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+	});
+
 	it("pins the order of a two-call turn", async () => {
 		const events = await order([]);
 		const at = (entry: string, from = 0): number => events.indexOf(entry, from);

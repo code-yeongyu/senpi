@@ -3659,7 +3659,7 @@ export class AgentSession {
 		const pendingEnd = pendingMessage;
 
 		const deliverThenProcess = (): Promise<void> => {
-			for (const held of heldLifecycle) this._emit(held);
+			this._lifecycleEvents.release(heldLifecycle, (held) => this._emit(held));
 			return this._processAgentEvent(queuedEvent, signal);
 		};
 		const processing = this._agentEventQueue.then(deliverThenProcess, deliverThenProcess);
@@ -8101,7 +8101,14 @@ export class AgentSession {
 				this._emitEntryAppended(id);
 				return id;
 			},
-			emit: (event) => this._lifecycleEvents.emit(event, (held) => this._emit(held)),
+			emit: (event) =>
+				this._lifecycleEvents.emit(
+					event,
+					(lifecycle) => this._emit(lifecycle),
+					(run) => {
+						this._agentEventQueue = this._agentEventQueue.then(run, run);
+					},
+				),
 			holdInterruptedRun: () => {
 				this._holdForInterruptedRun({ triggerTurn: true });
 			},
