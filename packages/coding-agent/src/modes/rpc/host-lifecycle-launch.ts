@@ -11,7 +11,10 @@ import { isBunBinary } from "../../config.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPath } from "./host-cli-entry.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
-import { HOST_INSTANCE_ID_ENV, INTERNAL_KEY_STDIN_ENV } from "./host-identity-env.ts";
+import { HOST_INSTANCE_ID_ENV, HOST_STARTUP_EVENTS_ENV, INTERNAL_KEY_STDIN_ENV } from "./host-identity-env.ts";
+import { hostChildStartupHandOff } from "./host-startup-beacon.ts";
+import { hostChildStdio } from "./host-lifecycle-startup.ts";
+import { releaseStartupFillers } from "../../private-fd-startup-fillers.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
 	HOST_PUBLIC_SOCKET_ENV,
@@ -22,7 +25,7 @@ import {
 	HOST_WATCH_PSTART_ENV,
 	HOST_WATCH_PSTART_TICKS_ENV,
 } from "./host-watchdog.ts";
-import type { SocketFileIdentity } from "./socket-ownership.ts";
+import { parseSocketIdentity, type SocketFileIdentity } from "./socket-ownership.ts";
 import { SOCKET_SECRET_FILE_ENV } from "./socket-transport.ts";
 
 export interface SupervisorLaunch {
@@ -48,6 +51,11 @@ export interface SupervisorLaunch {
 	 * somebody else now, and replacing it would unlink an endpoint this process cannot prove it owns.
 	 */
 	readonly replaceIdentity?: SocketFileIdentity;
+	/**
+	 * The predecessor generation whose owner token the adoption must find (senpi#4602): passed only for a predecessor
+	 * that advertises the endpoint owner fence. Without it the adoption checks the entry identity alone, as before.
+	 */
+	readonly replaceOwner?: string;
 }
 
 export { resolveCliMainPath } from "./host-cli-entry.ts";
@@ -98,6 +106,7 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	let presenterBootstrapFd: number | undefined;
 	let bindSocket: string | undefined;
 	let replaceIdentity: SocketFileIdentity | undefined;
+	let replaceOwner: string | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
 		if (arg === "--mcp-presenter-fd" && argv[index + 1] === "4") {
@@ -139,6 +148,10 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 			replaceIdentity = parseSocketIdentity(argv[++index]);
 			continue;
 		}
+		if (arg === "--replace-owner" && index + 1 < argv.length) {
+			replaceOwner = argv[++index];
+			continue;
+		}
 		hostArgs.push(arg);
 	}
 	return socket === undefined
@@ -154,6 +167,7 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 					ownerFd,
 					bindSocket,
 					replaceIdentity,
+					replaceOwner,
 					presenterBootstrapFd,
 				};
 }
@@ -172,12 +186,6 @@ export function keepOwnerPipe(child: ChildProcess): void {
 		ownerPipes.delete(pipe);
 		pipe.destroy();
 	});
-}
-
-/** `<dev>:<ino>` as the ensure captured it; anything else is no identity at all, never a guess. */
-function parseSocketIdentity(value: string): SocketFileIdentity | undefined {
-	const match = /^(\d+):(\d+)$/.exec(value);
-	return match ? { dev: Number(match[1]), ino: Number(match[2]) } : undefined;
 }
 
 /**
@@ -265,6 +273,8 @@ export function spawnHostChild(options: {
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
 	readonly publicSocket: string;
+	/** Give the child the startup pipe and its hand-off (a coordinated start of the engine's own host, senpi#4602). */
+	readonly reportsStartup?: boolean;
 }): ChildProcess {
 	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
 	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
@@ -272,6 +282,7 @@ export function spawnHostChild(options: {
 	const bootstrap = launch.presenterBootstrapFd !== undefined && !childLaunch.shell;
 	if (bootstrap) childLaunch.args.push("--mcp-presenter-fd", "4");
 	// Property access also preserves OS-level instrumentation on runtimes with captured builtin exports.
+	const startupStdio = hostChildStdio(bootstrap, options.reportsStartup === true);
 	const child = spawnWithPrivateFds(
 		(command, args, options) => childProcess.spawn(command, args, options),
 		childLaunch.command,
@@ -294,17 +305,14 @@ export function spawnHostChild(options: {
 				[INTERNAL_KEY_STDIN_ENV]: options.internalKey ? "1" : undefined,
 				[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
 				...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
+				[HOST_STARTUP_EVENTS_ENV]: options.reportsStartup
+					? hostChildStartupHandOff(startupStdio.fillers)
+					: undefined,
 			},
 			// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 			// wait on and keeps the write end owned by this process alone.
 			shell: childLaunch.shell,
-			stdio: [
-				process.platform === "win32" ? "ignore" : "pipe",
-				"ignore",
-				"inherit",
-				"pipe",
-				...(bootstrap ? ["pipe" as const] : []),
-			],
+			stdio: startupStdio.stdio,
 			// The supervisor is spawned detached, so on win32 it owns no console. A
 			// console-subsystem child started from it would allocate a fresh one,
 			// which Windows Terminal renders as an empty window that takes focus.
@@ -314,6 +322,7 @@ export function spawnHostChild(options: {
 		// The engine ends the private descriptor chain: a host it starts later never inherits them.
 		{ final: true },
 	);
+	releaseStartupFillers(child, startupStdio.fillers);
 	if (launch.presenterBootstrapFd !== undefined) {
 		const fd = launch.presenterBootstrapFd;
 		// The opt-in helper stays outside the supervisor's fixed startup import budget.
