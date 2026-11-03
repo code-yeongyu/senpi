@@ -5988,7 +5988,9 @@ export class InteractiveMode {
 					this.showNoticeBox({
 						title: `✕ Fallback refused for context budget · ${event.chainKey}`,
 						tone: "error",
-						why: [describeFallbackExhaustion(event), ...event.refusals.map((refusal) => refusal.detail)].join("\n"),
+						why: [describeFallbackExhaustion(event), ...event.refusals.map((refusal) => refusal.detail)].join(
+							"\n",
+						),
 					});
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 					break;
