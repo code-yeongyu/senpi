@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
-import type { SessionEnvironment } from "../session-env.ts";
+import type { InheritedEnvironment, SessionEnvironment } from "../session-env.ts";
 import type { KernelLifecycle } from "../shared/kernel-death.ts";
 import type { InvocationPermissions } from "../shared/invocation-authority.ts";
 import { readProcessGroupCpuTime } from "../shared/process-group-cpu.ts";
@@ -14,6 +14,8 @@ export interface RubyKernelStartOptions extends KernelLifecycle {
 	readonly connection: BridgeConnectionConfig;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The host environment kernel children inherit, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: InheritedEnvironment;
 	readonly command?: string;
 	readonly spawn?: SubprocessSpawn;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
@@ -41,6 +43,7 @@ export class RubyKernel extends SubprocessKernel {
 			cwd: options.cwd,
 			sessionId: options.sessionId,
 			sessionEnv: options.sessionEnv,
+			inheritedEnv: options.inheritedEnv,
 			connection: options.connection,
 			spawn: options.spawn,
 			onMessage: options.onMessage,

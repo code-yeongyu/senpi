@@ -2585,9 +2585,11 @@ works against every generation. A watcher can therefore read a session's state a
 `get_entries` with `observe: true`) as often as it likes: the host's attached count stays at 0 and its idle window
 keeps running.
 
-A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
-id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
-on every socket request. When a connection's first non-observing request names the host's own generation, the
+A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host keeps its generation
+id (`SENPI_RPC_HOST_INSTANCE_ID`) in its own environment (a socket host that named itself writes it there at start),
+and every child it starts for an agent (shells, eval kernels, the tool child) gets it as
+`SENPI_RPC_ORIGIN_HOST_INSTANCE` instead, so a nested host never adopts it as its own identity. `RpcClient` sends
+whichever of the two it has as `"origin_host_instance"` on every socket request. When a connection's first non-observing request names the host's own generation, the
 connection neither holds the window open, nor blocks the owner-death grace, nor keeps an empty host alive. Without
 this, a task tree whose children open their own children on the shard they run in (omo's `p` shards are keyed by the
 root session) keeps that shard alive through its own connections after the owner and every outside client are gone.

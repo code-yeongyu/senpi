@@ -222,8 +222,11 @@ export class SubprocessKernel {
 			...this.options,
 			env:
 				this.options.env ??
-				(this.options.sessionEnv
-					? applySessionEnvironment(globalThis.process.env, this.options.sessionEnv)
+				(this.options.sessionEnv || this.options.inheritedEnv
+					? applySessionEnvironment(
+							this.options.inheritedEnv?.() ?? globalThis.process.env,
+							this.options.sessionEnv,
+						)
 					: undefined),
 		});
 		const process = new SubprocessProcess(child, {

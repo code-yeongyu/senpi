@@ -15,6 +15,8 @@ export interface PythonEnvironmentsOptions {
 	readonly cwd: string;
 	readonly interpreter: string;
 	readonly settings: Pick<ResolvedCodemodeSettings, "environments">;
+	/** The host env pip inherits, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: () => Readonly<Record<string, string | undefined>>;
 }
 
 export class PythonEnvironments {
@@ -67,6 +69,7 @@ export class PythonEnvironments {
 			cwd: this.#options.cwd,
 			signal,
 			...(onOutput === undefined ? {} : { onOutput }),
+			...(this.#options.inheritedEnv === undefined ? {} : { inheritedEnv: this.#options.inheritedEnv }),
 		});
 		if (this.#mode === mode) this.#currentBase = base;
 		return receipt;

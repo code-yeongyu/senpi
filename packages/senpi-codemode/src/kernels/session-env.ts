@@ -20,6 +20,30 @@ export const SESSION_ENVIRONMENT_KEYS = [
 	"OMO_BROWSER_ENGINE",
 ] as const;
 
+/**
+ * The environment a kernel and its children inherit from the host: `process.env` without the RPC host's
+ * supervisor hand-off, plus the origin attribution (senpi#5635). Computed once by the extension through
+ * `childEnvironmentOf` at each spawn, so a restarted kernel sees the host env as it is then; kernels
+ * default to `process.env` when none is given.
+ */
+export type InheritedEnvironment = () => Readonly<Record<string, string | undefined>>;
+
+/**
+ * How `inherited` differs from `base`: the names it drops and the values it sets. The worker-thread kernel
+ * gets these instead of an env, because its `process.env` starts as a copy of the host's.
+ */
+export function inheritedEnvironmentDelta(
+	base: Readonly<Record<string, string | undefined>>,
+	inherited: Readonly<Record<string, string | undefined>>,
+): { removedEnv: string[]; inheritedSet: Record<string, string> } {
+	const removedEnv = Object.keys(base).filter((name) => !Object.hasOwn(inherited, name));
+	const inheritedSet: Record<string, string> = {};
+	for (const [name, value] of Object.entries(inherited)) {
+		if (value !== undefined && base[name] !== value) inheritedSet[name] = value;
+	}
+	return { removedEnv, inheritedSet };
+}
+
 /** Resolved per-session values for {@link SESSION_ENVIRONMENT_KEYS}; absent keys stay unset. */
 export type SessionEnvironment = Readonly<Record<string, string>>;
 

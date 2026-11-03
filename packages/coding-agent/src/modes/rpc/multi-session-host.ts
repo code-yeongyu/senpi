@@ -39,6 +39,7 @@ import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
 import { armHostWatchdog } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import { publishHostInstanceId } from "./host-identity-env.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -278,6 +279,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 
 async function runSocketHost(options: MultiSessionHostOptions, socketPath: string): Promise<never> {
 	await prepareSocketPath(socketPath);
+	publishHostInstanceId(hostInstanceId());
 	const writer = new SessionEventWriter(() => {});
 	const connections = new Map<string, HostConnection>();
 	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a

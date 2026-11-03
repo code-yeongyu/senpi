@@ -63,6 +63,7 @@ describe("issue #5635 agent shells never carry the host's supervisor hand-off", 
 		expect(HANDOFF.filter((name) => name in env)).toEqual([]);
 		for (const [name, value] of Object.entries(KEEP)) expect(env[name]).toBe(value);
 		expect(env.HOME).toBe(process.env.HOME);
+		expect(env.SENPI_RPC_ORIGIN_HOST_INSTANCE).toBe("synthetic-SENPI_RPC_HOST_INSTANCE_ID");
 		expect(HANDOFF.filter((name) => process.env[name] === undefined)).toEqual([]);
 	});
 

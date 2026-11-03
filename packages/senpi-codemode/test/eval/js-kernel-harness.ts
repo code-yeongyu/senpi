@@ -11,6 +11,7 @@ export interface JavaScriptKernelHarnessOptions {
 	readonly localRoots?: JavaScriptKernelOptions["localRoots"];
 	readonly artifactsDir?: string;
 	readonly sessionEnv?: JavaScriptKernelOptions["sessionEnv"];
+	readonly inheritedEnv?: JavaScriptKernelOptions["inheritedEnv"];
 	readonly workerEntryUrl?: JavaScriptKernelOptions["workerEntryUrl"];
 }
 
@@ -25,6 +26,7 @@ export async function withJavaScriptKernel<T>(
 		...(options.localRoots === undefined ? {} : { localRoots: options.localRoots }),
 		...(options.artifactsDir === undefined ? {} : { artifactsDir: options.artifactsDir }),
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
+		...(options.inheritedEnv === undefined ? {} : { inheritedEnv: options.inheritedEnv }),
 		...(options.workerEntryUrl === undefined ? {} : { workerEntryUrl: options.workerEntryUrl }),
 	});
 	try {

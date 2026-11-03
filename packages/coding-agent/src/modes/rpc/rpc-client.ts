@@ -36,6 +36,7 @@ import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts"
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { isProviderAccountEvent, type RpcClientEvent, type RpcEventListener } from "./rpc-client-events.ts";
+import { childEnvironmentOf } from "./host-identity-env.ts";
 import { connectRpcClientSocket } from "./rpc-client-socket.ts";
 import {
 	armRequestDeadline,
@@ -259,7 +260,8 @@ export class RpcClient {
 		const childProcess = spawn("node", [cliPath, ...args], {
 			cwd: this.options.cwd,
 			env: {
-				...process.env,
+				// A stdio child never reads the host's supervisor hand-off (senpi#5635).
+				...childEnvironmentOf(process.env),
 				// The spawned child must BE the process this client signals and reaps. An ambient
 				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
 				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease

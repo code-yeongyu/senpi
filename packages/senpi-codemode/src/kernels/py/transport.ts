@@ -9,7 +9,7 @@ import {
 	isKernelToHostMessage,
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
-import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
+import { applySessionEnvironment, type InheritedEnvironment, type SessionEnvironment } from "../session-env.ts";
 import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
 import { readKernelCpuTime } from "../shared/process-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
@@ -50,6 +50,8 @@ export interface PythonTransportOptions {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The host environment kernel children inherit, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: InheritedEnvironment;
 	/** The kill guard (senpi#5349): the host's protected pids; absent = the guard is off for this kernel. */
 	readonly killGuard?: { readonly protectedPids: readonly number[] };
 	readonly startupTimeoutMs: number;
@@ -131,7 +133,7 @@ export class PythonKernelTransport {
 			args: [...invocation.args, "-u", scriptPath],
 			cwd: options.cwd,
 			env: {
-				...applySessionEnvironment(process.env, options.sessionEnv),
+				...applySessionEnvironment(options.inheritedEnv?.() ?? process.env, options.sessionEnv),
 				...options.env,
 				PYTHONUNBUFFERED: "1",
 				PYTHONIOENCODING: "utf-8",
