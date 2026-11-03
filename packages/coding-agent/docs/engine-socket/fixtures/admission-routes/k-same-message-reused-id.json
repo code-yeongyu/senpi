@@ -77,10 +77,10 @@
 			"runtimeItemKey": "call-2",
 			"callUnknown": true
 		},
-		"settled/message-0000000000000113": {
+		"settled/message-0000000000000117": {
 			"messageId": "00000000-0000-4000-8000-000000000003",
 			"turnId": "00000000-0000-4000-8000-000000000002",
-			"terminalSequence": 113,
+			"terminalSequence": 117,
 			"role": "toolResult",
 			"runtimeItemKey": "call-1",
 			"callUnknown": true,
@@ -141,10 +141,10 @@
 				}
 			}
 		},
-		"settled/message-0000000000000116": {
+		"settled/message-0000000000000120": {
 			"messageId": "00000000-0000-4000-8000-000000000004",
 			"turnId": "00000000-0000-4000-8000-000000000002",
-			"terminalSequence": 116,
+			"terminalSequence": 120,
 			"role": "toolResult",
 			"runtimeItemKey": "call-2",
 			"callUnknown": true,
@@ -174,7 +174,7 @@
 				"owningMessageId": "00000000-0000-4000-8000-000000000001",
 				"contentIndex": 1,
 				"parentKey": null,
-				"startSequence": 66,
+				"startSequence": 68,
 				"startedAtMs": 1793491200000,
 				"requestedName": "read",
 				"resolvedName": "read",
