@@ -38,7 +38,10 @@ import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
-import { readAccountLinks } from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
+import {
+	backfillAccountLinks,
+	readAccountLinks,
+} from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
 import {
 	resolveReadOnlyCredential,
 	resolveStoredCredential,
@@ -583,6 +586,19 @@ export class AuthStorage implements CredentialStore {
 			this.recordError(
 				new Error(
 					`A Claude login in auth.json was left unchanged because ${moved.skipped}. Claude logins from the old sign-in are no longer used; sign in again with Claude: run /login anthropic-subscription.`,
+				),
+			);
+		}
+		const subscription = moved.data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as
+			| AnthropicSubscriptionCredential
+			| undefined;
+		const unrecorded = authPath ? backfillAccountLinks(dirname(authPath), subscription?.accounts ?? []) : [];
+		const unrecordedReason = `Claude account dir records could not be written for: ${unrecorded.join(", ")}`;
+		if (unrecorded.length > 0 && !this.reportedMigrationSkips.has(unrecordedReason)) {
+			this.reportedMigrationSkips.add(unrecordedReason);
+			this.recordError(
+				new Error(
+					`${unrecordedReason}. If another OmO session running an older version rewrites auth.json, these accounts may need to sign in again; check that their account dirs under anthropic-subscription-claude are writable.`,
 				),
 			);
 		}

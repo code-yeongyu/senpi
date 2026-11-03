@@ -4,7 +4,7 @@
  * every signed-in account dir the stale write left unreferenced, instead of minting a fresh dir and asking the
  * account to sign in again. All tokens are dummy strings; every dir is a temp dir.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { accountDirFor } from "../../../src/core/extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
@@ -55,6 +55,17 @@ describe("senpi#5594 a stale pre-#4436 writer does not lose signed-in Claude acc
 		expect(accounts.find((slot) => slot.name === "default")?.dirId).toBe(signedIn[0]?.dirId);
 		expect(loaded(authPath)).toEqual(accounts);
 		expect(readFileSync(authPath, "utf8")).toBe(bytes);
+	});
+
+	it("accounts signed in before dir records existed get one at load, so a later stale write still re-links them", async () => {
+		const { agentDir, authPath, signedIn } = await twoSignedInAccounts();
+		for (const slot of signedIn) rmSync(join(accountDirFor(agentDir, slot.dirId), ".senpi-account.json"));
+		loaded(authPath);
+		writeStale(authPath, staleEntry("default"));
+
+		expect(loaded(authPath).map((slot) => [slot.name, slot.dirId, slot.signInRequired])).toEqual(
+			signedIn.map((slot) => [slot.name, slot.dirId, undefined]),
+		);
 	});
 
 	it("does not resurrect a removed account when no stale writer ran", async () => {

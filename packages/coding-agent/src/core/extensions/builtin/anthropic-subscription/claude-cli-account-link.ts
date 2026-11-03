@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AccountSlot, ClaudeCliAccountSlot } from "./accounts.ts";
 import { accountDirFor, isValidAccountDirId } from "./claude-cli-account-dir.ts";
@@ -62,6 +62,39 @@ export function renameAccountLink(agentDir: string, slot: AccountSlot | undefine
 	writeAccountLink(agentDir, slot.displayName === undefined ? rest : { ...rest, displayName: slot.displayName });
 }
 
+function isAccountDir(path: string): boolean {
+	try {
+		return lstatSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Gives every signed-in Claude CLI account whose dir has no record one, at load (senpi#5594): accounts signed in
+ * before records existed are otherwise left without the link that lets a stale writer's drop be undone. Only a
+ * healthy slot whose dir is a real dir is recorded; a signed-out slot owns no login yet. Returns the accounts whose
+ * record could not be written, so the caller can report them.
+ */
+export function backfillAccountLinks(agentDir: string, accounts: readonly AccountSlot[]): string[] {
+	return accounts.flatMap((slot) => {
+		if (slot.store !== "claude-cli" || slot.signInRequired !== undefined || !isValidAccountDirId(slot.dirId))
+			return [];
+		if (!isAccountDir(accountDirFor(agentDir, slot.dirId)) || readLink(agentDir, slot.dirId) !== undefined) return [];
+		try {
+			writeAccountLink(agentDir, {
+				dirId: slot.dirId,
+				name: slot.name,
+				signedInAt: slot.signedInAt ?? 0,
+				...(slot.displayName === undefined ? {} : { displayName: slot.displayName }),
+			});
+			return [];
+		} catch {
+			return [slot.name];
+		}
+	});
+}
+
 export function readAccountLinks(agentDir: string): AccountDirLink[] {
 	let dirIds: string[];
 	try {
@@ -69,10 +102,13 @@ export function readAccountLinks(agentDir: string): AccountDirLink[] {
 	} catch {
 		return [];
 	}
-	return dirIds.filter(isValidAccountDirId).flatMap((dirId) => {
-		const link = readLink(agentDir, dirId);
-		return link === undefined ? [] : [link];
-	});
+	return dirIds
+		.filter(isValidAccountDirId)
+		.sort()
+		.flatMap((dirId) => {
+			const link = readLink(agentDir, dirId);
+			return link === undefined ? [] : [link];
+		});
 }
 
 function newestUnreferenced(
