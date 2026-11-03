@@ -1,3 +1,23 @@
+## 2026-10-27 - One slot pick for the stream and auxiliary callers (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/session-slot.ts` (new): `pickRotationSlot` (pin, else affinity order with the user's account order) and `selectSessionSlot` (that pick over the stream's first-attempt candidates; when the stream would refuse it throws the stream's refusal).
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `streamWithCredentialRotation`'s `select` calls `pickRotationSlot`. `ModelRuntime.getSessionAuth` loads `selectSessionSlot` from `session-slot.ts` with a dynamic import next to the rotation stream.
+- `packages/coding-agent/src/core/credential-pool/failover.ts`: `attemptCandidates` (untried unblocked slots, else the cooling probe: the rate-limited slot due back first) and `noSlotsError` are extracted from `runCredentialFailover` and exported, so the stream and `selectSessionSlot` share one all-blocked rule.
+
+### Why
+
+- Auxiliary requests must authenticate as the account the session's turns use; sharing the pick keeps the two from drifting.
+
+### Why an extension could not handle it
+
+- Slot selection is internal to the credential pool.
+
+### Expected merge conflict zones
+
+- LOW: the `select` callback in `rotation-stream.ts`; the candidate/refusal lines at the top of `runCredentialFailover`'s loop in `failover.ts`.
+
 ## 2026-10-30 - A guessed limit backoff stops at 30 minutes (senpi#4091)
 
 ### What changed
