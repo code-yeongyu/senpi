@@ -74,6 +74,20 @@ describe("Gate B on the batch coordinator", () => {
 		expect(h.count("body:g")).toBe(0);
 	});
 
+	it("a brain that dies right after recording an approval asks nobody again: recovery applies the stored answer", async () => {
+		const h = await batchHarness(adapters());
+		const approver = scriptedConsent();
+		const plan = batchPlan("gate-b-crash", [["g", "e1", "gated"]]);
+		const first = (await h.brain({ label: "consent:g", at: "after" }, "brain", approver.port)).run(plan);
+		await approver.asked;
+		approver.answer("approved");
+		await expect(first).rejects.toThrow("brain killed around consent:g");
+		const recovered = await (await h.brain(undefined, "brain", approver.port)).run(plan);
+		expect(recovered.outcomes).toEqual([resultOf("g", "gated")]);
+		expect(approver.requests).toHaveLength(1);
+		expect([h.count("hook:g"), h.count("body:g")]).toEqual([1, 1]);
+	});
+
 	it("an executor with no consent configured never waits: today's freeze path is unchanged", async () => {
 		const h = await batchHarness(adapters());
 		const result = await (await h.brain()).run(batchPlan("no-consent", [["b", "e1"]]));

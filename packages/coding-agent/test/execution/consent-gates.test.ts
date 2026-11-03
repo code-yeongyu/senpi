@@ -124,6 +124,9 @@ describe("Gate B on the prepared executor (cross-machine only)", () => {
 			state: "settled",
 			outcome: { reason: "lease_expired", uncertain: true },
 		});
+		const again = await x.consent("a", prepared.call.digest);
+		if (again.kind !== "replayed") throw new Error(`expected the terminal row again, got ${again.kind}`);
+		expect(again.entry.progress).toEqual(late.entry.progress);
 		expect(x.runs).toEqual([]);
 	});
 
