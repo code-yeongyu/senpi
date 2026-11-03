@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import type { SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
 	emitProviderAccountFailover,
@@ -15,16 +15,19 @@ import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { listRotationSlots, type RotationSlot, type RotationSources, releaseProbeLease } from "./rotation-slots.ts";
-import { preferHeadroom } from "./selection-order.ts";
+import {
+	orderRotationSlots,
+	pickRotationSlot,
+	rememberedHeadroomAccount,
+	rememberHeadroomAccount,
+	type SlotPickPolicy,
+} from "./session-slot.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
 
 /** The exact hash the claude-sdk-oauth affinity oracle uses, so pools never remap. */
 export const sha256SlotHasher: SlotHasher = (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0);
-
-/** Only headroom-induced changes are remembered; ordinary HRW membership changes keep their existing behavior. */
-const headroomAffinities = new WeakMap<RotationSources["repository"], Map<string, string>>();
 
 /**
  * A limit naming one model family lands on that family only: the slot's own
@@ -133,25 +136,30 @@ export function streamWithCredentialRotation(
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
 		select: (candidates) => {
-			const pinned = candidates.find((candidate) => candidate.pinned === true);
-			if (pinned) return pinned;
-			const ranked = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
-			const ordered = applyAccountOrder(pooled?.order, ranked);
-
-			const sessionKey = `${sources.providerId}\0${affinityKey}`;
-			const remembered = rememberAffinity ? headroomAffinities.get(sources.repository)?.get(sessionKey) : undefined;
-			const winner = preferHeadroom(
-				ordered,
-				sources.providerId,
-				subscriptionLimits.snapshot(),
-				now(),
-				remembered,
-			)[0];
+			const remembered = rememberAffinity
+				? rememberedHeadroomAccount(sources.repository, sources.providerId, affinityKey)
+				: undefined;
+			const policy: SlotPickPolicy = {
+				affinityKey,
+				useAffinity,
+				hasher,
+				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+				headroom: {
+					providerId: sources.providerId,
+					limits: subscriptionLimits.snapshot(),
+					now: now(),
+					...(remembered === undefined ? {} : { remembered }),
+				},
+			};
+			const winner = pickRotationSlot(candidates, policy);
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
-			if (rememberAffinity && (remembered !== undefined || winner !== ordered[0])) {
-				const sessions = headroomAffinities.get(sources.repository) ?? new Map<string, string>();
-				sessions.set(sessionKey, winner.name);
-				headroomAffinities.set(sources.repository, sessions);
+			// A pinned winner is the user's choice, not a headroom move, so it is never remembered.
+			if (
+				rememberAffinity &&
+				winner.pinned !== true &&
+				(remembered !== undefined || winner !== orderRotationSlots(candidates, policy)[0])
+			) {
+				rememberHeadroomAccount(sources.repository, sources.providerId, affinityKey, winner.name);
 			}
 			return winner;
 		},

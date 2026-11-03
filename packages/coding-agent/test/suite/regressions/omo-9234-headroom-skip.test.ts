@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
+import {
+	listRotationSlots,
+	sha256SlotHasher,
+	streamWithCredentialRotation,
+} from "../../../src/core/credential-pool/rotation-stream.ts";
+import { rememberedHeadroomAccount, selectSessionSlot } from "../../../src/core/credential-pool/session-slot.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
 import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { selectAccount } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
@@ -151,4 +156,43 @@ it("does not replace a near-limit Claude account with a blocked account", () => 
 it("keeps the selected Claude account when account fallback is explicitly disabled", () => {
 	report("anthropic-subscription", [{ id: "quota", label: "5h", usedPercent: 95 }]);
 	expect(selectAccount(accounts, { accountOrder: names, accountFallback: false }).name).toBe("alpha");
+});
+
+// Auxiliary requests (compaction, /btw, look-at, keepalive) authenticate as the stream's own first pick,
+// so a headroom skip and the account it remembered must reach them too.
+it("auxiliary session auth takes the stream's headroom pick", async () => {
+	report("chatgpt-subscription", [
+		{ id: "quota", label: "5h", usedPercent: 100, resetsAt: new Date(NOW + 60_000).toISOString() },
+	]);
+	expect(await generic()).toBe("beta");
+	const providerId = "chatgpt-subscription";
+	const credential: PooledCredential = {
+		type: "api_key",
+		key: "synthetic-alpha",
+		accounts: names.map((name) => ({ name, key: `synthetic-${name}`, source: "login" })),
+		order: names,
+	};
+	const remembered = rememberedHeadroomAccount(repository, providerId, "headroom-session");
+	expect(remembered).toBe("beta");
+	const slots = await listRotationSlots(
+		{ providerId, credential, env: () => undefined, repository },
+		{ acquireLeases: false },
+	);
+	const auxiliary = selectSessionSlot(
+		slots,
+		{
+			affinityKey: "headroom-session",
+			useAffinity: true,
+			hasher: sha256SlotHasher,
+			order: names,
+			headroom: {
+				providerId,
+				limits: subscriptionLimits.snapshot(),
+				now: NOW,
+				...(remembered ? { remembered } : {}),
+			},
+		},
+		NOW,
+	);
+	expect(auxiliary?.name).toBe("beta");
 });
