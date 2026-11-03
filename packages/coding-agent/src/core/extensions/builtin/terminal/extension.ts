@@ -18,6 +18,7 @@ import { appendMonitorOverflow } from "./monitor-overflow-file.ts";
 import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
+import { NotificationWakeGate } from "./notification-wake-gate.ts";
 import { TerminalNotifier } from "./notify.ts";
 import { buildTerminalPromptSection } from "./prompt.ts";
 import { createDigestSlot, registerRestoreDigestRenderer } from "./restore-digest.ts";
@@ -94,6 +95,7 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 export function registerTerminalExtension(pi: ExtensionAPI): void {
 	let reducedMotion = false;
 	let agentBusy = false;
+	let wakeGate: NotificationWakeGate | null = null;
 	const state: TerminalExtensionState = {
 		bundle: null,
 		settings: TERMINAL_SETTINGS_DEFAULTS,
@@ -149,15 +151,18 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.shellPath = settingsManager.getShellPath();
 		reducedMotion = settingsManager.getReducedMotion();
 		agentBusy = false;
+		wakeGate?.dispose();
+		const gate = new NotificationWakeGate((message, options) => pi.sendMessage(message, options));
+		wakeGate = gate;
 		state.notifier = new TerminalNotifier({
-			sendMessage: (message, options) => pi.sendMessage(message, options),
+			sendMessage: gate.sendMessage,
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 		});
 		state.monitorNotifier?.dispose();
 		const overflowWarned = new Set<string>();
 		state.monitorNotifier = new MonitorNotifier({
-			sendMessage: (message, options) => pi.sendMessage(message, options),
+			sendMessage: gate.sendMessage,
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 			getSettings: () => state.settings.monitor,
@@ -203,10 +208,12 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_start", () => {
 		agentBusy = true;
+		wakeGate?.noteTurnStart();
 	});
 
 	pi.on("agent_end", () => {
 		agentBusy = false;
+		wakeGate?.noteTurnEnd();
 	});
 
 	pi.on("session_parked", () => {
@@ -230,6 +237,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	pi.on("input", (event) => {
 		if (event.source === "extension") return;
 		state.monitorNotifier?.noteActivity();
+		wakeGate?.noteUserInput();
 		flushRestoreDigest(pi, state);
 		const resumed = state.bundle?.monitors.resume() ?? [];
 		if (resumed.length > 0) state.monitorNotifier?.resume(resumed.map((monitor) => monitor.id));
@@ -237,6 +245,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 
 	pi.on("tool_call", () => {
 		state.monitorNotifier?.noteActivity();
+		wakeGate?.noteToolCall();
 	});
 
 	pi.on(
@@ -258,6 +267,8 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.monitorNotifier?.dispose();
 		state.monitorNotifier = null;
 		state.notifier = null;
+		wakeGate?.dispose();
+		wakeGate = null;
 		state.statusTicker.stop();
 		const sessionKey = sessionKeyOf(ctx) ?? sessionKeyOf(state.ctx);
 		if (event.reason === "reload" && state.bundle && sessionKey !== undefined) {

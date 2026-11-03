@@ -425,4 +425,88 @@ describe("terminal extension auto-detach wiring", () => {
 
 		for (const handler of handlers.get("session_shutdown") ?? []) await handler({}, ctx);
 	});
+	it("holds a completion notice after two idle turns and wakes once the backoff passes", async () => {
+		vi.useFakeTimers();
+		let exited = false;
+		let resolveExit!: () => void;
+		const exitDone = new Promise<void>((resolve) => {
+			resolveExit = resolve;
+		});
+		const exitResult = { exitCode: 0, timedOut: false, cancelled: false, signal: null };
+		const exitListeners = new Set<() => void>();
+		const runtime = {
+			get exited() {
+				return exited;
+			},
+			get exitResult() {
+				return exited ? exitResult : null;
+			},
+			session: {
+				kill: vi.fn(),
+				waitExit: () => exitDone,
+				onExit: (listener: () => void) => {
+					if (exited) queueMicrotask(listener);
+					else exitListeners.add(listener);
+					return () => exitListeners.delete(listener);
+				},
+			},
+			onOutput: () => () => {},
+			fullOutput: () => "done",
+			readDelta: () => ({ text: "", droppedChars: 0 }),
+		};
+		type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
+		type Tool = { name: string; execute: (...args: never[]) => Promise<unknown> };
+		const handlers = new Map<string, Handler[]>();
+		const tools = new Map<string, Tool>();
+		const notices: Array<{ options: { triggerTurn?: boolean } }> = [];
+		const fakePi = {
+			registerTool: (tool: Tool) => tools.set(tool.name, tool),
+			registerMessageRenderer: () => {},
+			on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
+			sendMessage: (_message: unknown, options: { triggerTurn?: boolean }) => notices.push({ options }),
+			sendUserMessage: () => {},
+			getActiveTools: () => [],
+			setActiveTools: () => {},
+		} as unknown as ExtensionAPI;
+		autoDetachSpawn.enabled = true;
+		autoDetachSpawn.spawn = (toolContext: unknown) => {
+			vi.spyOn((toolContext as TerminalToolContext).manager, "get").mockReturnValue(
+				runtime as unknown as TerminalRuntimeSession,
+			);
+			return { id: "bash_1", runtime };
+		};
+		registerTerminalExtension(fakePi);
+		const ctx = {
+			cwd: process.cwd(),
+			mode: "tui",
+			model: { id: "fixture", api: "anthropic-messages" },
+			ui: { notify: () => {}, setStatus: () => {} },
+		} as unknown as ExtensionContext;
+		const fire = async (event: string) => {
+			for (const handler of handlers.get(event) ?? []) await handler({}, ctx);
+		};
+		await fire("session_start");
+		const bash = tools.get("bash") as unknown as {
+			execute: (id: string, input: { command: string; timeout: number }) => Promise<TerminalToolResult>;
+		};
+		const execution = bash.execute("foreground", { command: "fixture", timeout: 900 });
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(firstText(await execution)).toContain("auto-detached to background with ID: bash_1");
+
+		// Two turns end without a tool call, then the background session finishes.
+		for (let turn = 0; turn < 2; turn++) {
+			await fire("agent_start");
+			await fire("agent_end");
+		}
+		exited = true;
+		for (const listener of exitListeners) listener();
+		resolveExit();
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(notices).toHaveLength(0);
+
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(notices).toHaveLength(1);
+		expect(notices[0]?.options.triggerTurn).toBe(true);
+		await fire("session_shutdown");
+	});
 });
