@@ -49,7 +49,12 @@ export function parseBeginHandover(record: Readonly<Record<string, unknown>>): I
 		ifInstanceId: if_instance_id,
 		ifGeneration: if_generation,
 		targetRuntimeBuildId: target_runtime_build_id,
-		launch: { command: launch.command, args: launch.args },
+		// A requester of this build launches a successor that reports its startup phases (senpi#4602).
+		launch: {
+			command: launch.command,
+			args: launch.args,
+			...(launch.reports_startup === true && { reportsStartup: true }),
+		},
 		hostArgs: host_args,
 		env: env as Readonly<Record<string, string>>,
 		...(mcpPresenterEnforcement !== undefined && { mcpPresenterEnforcement }),
@@ -142,7 +147,8 @@ export async function performIdleHandover(context: {
 	readonly request: IdleHandoverRequest;
 	readonly socket: string;
 	readonly agentDir: string;
-	readonly presenterBootstrap?: Duplex;
+	/** Called only when the successor reaches its P7 (senpi#4602). */
+	readonly presenterBootstrap?: () => Promise<Duplex | undefined>;
 }): Promise<HandoverOutcome> {
 	const { request, socket, agentDir } = context;
 	const env: Record<string, string | null> = {};
@@ -157,7 +163,11 @@ export async function performIdleHandover(context: {
 		env,
 		expectedRuntimeBuildId: request.targetRuntimeBuildId,
 		...(request.policy !== undefined && { policy: request.policy }),
-		launch: (argv) => ({ command: request.launch.command, args: [...request.launch.args, ...argv] }),
+		launch: (argv) => ({
+			command: request.launch.command,
+			args: [...request.launch.args, ...argv],
+			...(request.launch.reportsStartup === true && { reportsStartup: true }),
+		}),
 	});
 	if (result.action === "refuse") {
 		return { ok: false, reason: result.detail === undefined ? result.reason : `${result.reason}: ${result.detail}` };
