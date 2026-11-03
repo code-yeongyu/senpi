@@ -31,7 +31,7 @@ describe("durable wake conformance on the memory store", () => {
 
 	it("registers every WAKEX and KILL-WAKEX case with an implementation", () => {
 		const registry = CONFORMANCE_REGISTRY.filter(({ id }) => /^(WAKEX|KILL-WAKEX)-/.test(id));
-		expect(registry).toHaveLength(13);
+		expect(registry).toHaveLength(14);
 		expect(findImplementationGaps(registry, cases)).toEqual({ unimplemented: [], unregistered: [] });
 	});
 });
