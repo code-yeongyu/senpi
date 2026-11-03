@@ -59,7 +59,9 @@ export function proxyWithAdmission(
 		});
 
 	async function requests(): Promise<void> {
-		if (internal && launchProven) await write(internal, `${JSON.stringify({ type: RPC_LAUNCH_PROOF_RECORD })}\n`);
+		// Queued, never awaited: the client is resumed as soon as this returns, and its records are read only once the
+		// loop below is iterating. The write still lands on the hop before any record that loop forwards.
+		if (internal && launchProven) internal.write(`${JSON.stringify({ type: RPC_LAUNCH_PROOF_RECORD })}\n`);
 		for await (const line of lines(auth?.input ?? client, MAX_RPC_LINE_CHARACTERS)) {
 			if (line === undefined) {
 				await reply(

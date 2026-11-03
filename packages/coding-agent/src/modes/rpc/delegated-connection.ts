@@ -28,8 +28,8 @@ import {
 } from "./method-classes.ts";
 import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 
-export const DECLARE_DELEGATION_COMMAND = "declare_delegation";
-export const CLASSIFY_RECORD_COMMAND = "classify_record";
+const DECLARE_DELEGATION_COMMAND = "declare_delegation";
+const CLASSIFY_RECORD_COMMAND = "classify_record";
 
 /**
  * How a connection's transport proves the launch key: `proven` at admission (the Windows socket secret), `in_band`
@@ -164,7 +164,9 @@ export class ConnectionDelegations {
 	inspect(id: string | undefined, record: unknown): DelegationVerdict {
 		const state = id === undefined ? undefined : this.state(id);
 		const type = typeof record === "object" && record !== null ? Reflect.get(record, "type") : undefined;
-		if (type === RPC_LAUNCH_PROOF_RECORD && state?.proofSource === "in_band") {
+		// A connection with a proof source only receives this record from its own transport (the filters refuse it from
+		// clients); one proven at admission (the Windows supervisor's hop) already counts and just drops it.
+		if (type === RPC_LAUNCH_PROOF_RECORD && state?.proofSource !== undefined) {
 			state.proven = true;
 			return CONSUMED;
 		}
