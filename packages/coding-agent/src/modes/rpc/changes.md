@@ -1,3 +1,44 @@
+## 2026-11-02 - A loopless session-worker runtime (senpi#5436)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts` is new: `createLooplessRuntimeFactory(configuration, local)(profile)` builds the CLI's cwd-bound services (settings, project trust decided without a UI, model registry, extensions and their flags), then the tool registry through `bootstrapRuntime()` / `buildToolRegistry()` on a runner without a session. `LooplessRuntime` exposes `definitions`, `diagnostics`, `execute(name, toolCallId, params, signal)` and `dispose()`.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-call.ts` is new: `execute` prepares and schema-validates each call's arguments as the agent loop does before the tool runs; invalid arguments and a failing tool are an `isError` result. It does not run the extensions' `tool_call`/`tool_result` handlers: the remote tool executor that will call this runtime places them.
+- `packages/coding-agent/src/modes/rpc/loopless-execute-grant.ts` is new: until that executor exists, `execute` refuses every call (`LooplessExecuteRefusedError`) unless the runtime was built with a grant from a closed allowlist whose only caller is the in-process test harness; a missing, forged or out-of-harness grant fails closed.
+- `packages/coding-agent/src/modes/rpc/loopless-runtime-settings.ts` is new: the UI-less project-trust decision (its `project_trust` handler errors reported as diagnostics) and the CLI tool filters (`--tools`, `--no-tools`, `--no-builtin-tools`, `--exclude-tools`, settings `defaultTools`), resolved as `createAgentSession` resolves them.
+- The runtime places tools through `createToolChildRuntime()` with its own scope, so `--tool-runtime child` runs child-placed work on its own tool child, and `dispose()` marks the extension contexts stale before closing the dispatcher and the child.
+
+### Why
+
+- A tool-execution-only process (brain/hand split, senpi#5413) needs OmO's tools and extensions with only the agent loop removed, writing no transcript.
+
+### Why an extension could not handle it
+
+- The session worker's runtime is built before any extension loads, and an extension cannot remove the loop it runs under.
+
+### Expected merge conflict zones
+
+- LOW: new file; the project-trust decision mirrors `createCliRuntimeFactory` in `src/main.ts`, so a change there should be mirrored here.
+
+## 2026-10-27 - get_auth_providers reports a sign-in store that could not be loaded (senpi#4413)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` adds `storeError` from `authStorage.getLoadError()`, read after the rows are built.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`: new `RpcAuthStoreError` (`kind: "malformed_json" | "invalid_format" | "unreadable" | "write_back_failed"`, `reason`), exported from `rpc-types.ts`. `packages/coding-agent/src/modes/rpc/rpc-read-response-types.ts`: `get_auth_providers` `data` gains optional `storeError`.
+
+### Why
+
+- Clients showed "Not connected" for every stored sign-in when the store could not be read, because nothing in the response said why.
+
+### Why an extension could not handle it
+
+- The `get_auth_providers` response shape is built in the RPC connection handler.
+
+### Expected merge conflict zones
+
+- LOW: the `get_auth_providers` case in `connection-handler.ts` and the RPC type unions (additive).
+
 ## 2026-11-02 - The recovery manifest states its required catalog families (senpi#5397, RULING-128)
 
 ### What changed

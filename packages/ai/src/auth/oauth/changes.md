@@ -1,3 +1,21 @@
+## 2026-10-27 - The ChatGPT authorize hint names the host product, not "Pi" (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: `agent_name_hint` on the first-time `dynamic_agent_client` authorize URL is the caller's `appName`, else the brand the host set with `setOAuthPageBrand` (`configuredOAuthBrandName()`), else the wire identity (`senpi` by default). Main's SIWC change already replaced the old `AGENT_NAME_HINT = "Pi"` with `appName ?? getWireIdentity()`; this PR adds the host-brand step between the two. The flow stays vendored and unregistered in the fork.
+
+### Why
+
+- OpenAI shows `agent_name_hint` on its consent screen; branded hosts must not show "Pi" (#4432). OpenAI documents it as editable display metadata, not identity, and it is not tied to the issued client ID, so a host name is safe.
+
+### Why an extension could not handle it
+
+- The value is built inside the bundled login flow; no hook reaches the authorize URL.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `agent_name_hint` line in `loginOpenAIChatGPT`; the fork's chain is `options?.appName ?? configuredOAuthBrandName() ?? getWireIdentity()`, upstream passes `options?.agentName ?? AGENT_NAME_HINT`.
+
 ## 2026-10-30 - SIWC host and app identity (senpi#5014, part of #5003)
 
 ### What changed
