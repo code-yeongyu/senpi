@@ -11,6 +11,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import { dirname, join, relative, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
@@ -203,22 +204,51 @@ describe("defaultRun process seam", () => {
 	});
 
 	it("kills the whole process tree and reports timedOut on timeout", async () => {
-		// The grandchild INHERITS the child's stdout pipe (fd 1), so the seam's stdout stream
-		// only reaches EOF once BOTH processes have released it - i.e. once the whole tree is
-		// dead. defaultRun resolves on that stream close, which makes this proof event-driven:
-		// no wall-clock deadline, no liveness polling, nothing that can pass by timing luck.
-		const script = [
-			'const { spawn } = require("node:child_process");',
-			'const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", 1, "ignore"] });',
-			"console.log(JSON.stringify({ self: process.pid, grandchild: grandchild.pid }));",
-			"setInterval(() => {}, 1000);",
-		].join("\n");
-		const result = await defaultRun(process.execPath, ["-e", script], { timeoutMs: 500 });
-		expect(result.timedOut).toBe(true);
-		const pids = JSON.parse(result.stdout.trim()) as { self: number; grandchild: number };
-		// Pipe EOF already proved both processes released fd 1, which only happens at exit.
-		expect(pidAlive(pids.self)).toBe(false);
-		expect(pidAlive(pids.grandchild)).toBe(false);
+		// On timeout, waitForChildProcess destroys the pipes and resolves on the DIRECT child's
+		// exit, so the grandchild can still be dying from the group SIGKILL when defaultRun
+		// returns (#5205): a one-shot liveness read races the kernel. Instead the grandchild holds
+		// a TCP connection to this test, which the kernel closes only when the grandchild exits,
+		// so the server-side 'close' is the exact event that proves the tree is dead.
+		const server = createServer();
+		const accepted = new Promise<Socket>((resolveAccepted) => {
+			server.once("connection", (socket) => {
+				socket.resume();
+				resolveAccepted(socket);
+			});
+		});
+		await new Promise<void>((resolveListening) => server.listen(0, "127.0.0.1", resolveListening));
+		const { port } = server.address() as AddressInfo;
+		try {
+			// The child prints the pids only after the grandchild reports its connection is up, so
+			// printed pids guarantee there is a connection whose close we can await.
+			const grandchildScript = `require("node:net").connect(${port}, "127.0.0.1", () => process.send("up")); setInterval(() => {}, 1000);`;
+			const script = [
+				'const { spawn } = require("node:child_process");',
+				`const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildScript)}], { stdio: ["ignore", "ignore", "ignore", "ipc"] });`,
+				'grandchild.once("message", () => console.log(JSON.stringify({ self: process.pid, grandchild: grandchild.pid })));',
+				"setInterval(() => {}, 1000);",
+			].join("\n");
+			const result = await defaultRun(process.execPath, ["-e", script], { timeoutMs: 2_000 });
+			expect(result.timedOut).toBe(true);
+			const pids = JSON.parse(result.stdout.trim()) as { self: number; grandchild: number };
+			// waitForChildProcess resolved on the direct child's exit; a reaped zombie reads as dead.
+			expect(pidAlive(pids.self)).toBe(false);
+			const socket = await accepted;
+			let deadline: NodeJS.Timeout | undefined;
+			const grandchildExited =
+				socket.destroyed ||
+				(await Promise.race([
+					new Promise<boolean>((resolveClosed) => socket.once("close", () => resolveClosed(true))),
+					new Promise<boolean>((resolveDeadline) => {
+						deadline = setTimeout(() => resolveDeadline(false), 10_000);
+					}),
+				]));
+			clearTimeout(deadline);
+			if (!grandchildExited) process.kill(pids.grandchild, "SIGKILL");
+			expect(grandchildExited).toBe(true);
+		} finally {
+			server.close();
+		}
 	});
 });
 
