@@ -24,7 +24,10 @@ describe.skipIf(process.platform === "win32")("issue #5635 the legitimate key re
 		});
 
 		// When: a lifecycle supervisor runs from that shell and starts its host child.
-		const child = spawn("bun", [fixture, "supervisor"], { env: shellEnv, stdio: ["ignore", "ignore", "pipe"] });
+		const child = spawn(process.execPath, [fixture, "supervisor"], {
+			env: shellEnv,
+			stdio: ["ignore", "ignore", "pipe"],
+		});
 		let stderr = "";
 		child.stderr.on("data", (data) => {
 			stderr += String(data);

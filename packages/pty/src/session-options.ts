@@ -24,7 +24,7 @@ export function defaultCommand(): string {
  * value kept as an explicit deletion. Every backend receives it, so no backend inherits the OS environment, which
  * under Bun still holds what JS deleted from `process.env` (omo#12157: the engine trust closure).
  */
-export function childEnvironment(
+function childEnvironment(
 	overrides: Readonly<Record<string, string | undefined>> = {},
 ): Record<string, string | undefined> {
 	const env: Record<string, string | undefined> = {};
