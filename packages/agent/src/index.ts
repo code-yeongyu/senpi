@@ -61,6 +61,14 @@ export {
 	RemoteProtocolError,
 	type RemoteToolResult,
 } from "./execution/remote-protocol.ts";
+export {
+	createErrorToolResult,
+	createToolResultMessage,
+	emitToolExecutionEnd,
+	emitToolExecutionUpdate,
+	emitToolResultMessage,
+	shouldTerminateToolBatch,
+} from "./execution/tool-outcome-events.ts";
 export { createRemoteToolHost, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
