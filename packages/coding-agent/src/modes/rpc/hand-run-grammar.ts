@@ -2,6 +2,8 @@
 // position and kind, taken from the memory component's call sites. A flag never takes a value unless its shape says so,
 // so a boolean flag cannot swallow the next argument, and a path is only ever a `path`/`worktree` slot the hand confines.
 
+import { posix } from "node:path";
+
 export type Kind =
 	| "rev"
 	| "range"
@@ -82,19 +84,34 @@ function remote(value: string): boolean {
 	return !urlIsLocal(value);
 }
 
-/** The filesystem path a local url names (`file:///abs`, or a path git treats as local), else undefined. */
+/**
+ * The filesystem path a local url names (v2.10): ONLY an absolute `file:///` url whose decoded path is already normal
+ * (no `.`, `..` or empty segment, no trailing slash), which is all the memory component sends. A bare or relative path or
+ * a leading `~` is left to git's own resolution, so it is refused, never resolved here.
+ */
 export function localUrlPath(value: string): string | undefined {
-	if (unsafeUrl(value)) return undefined;
-	const named = scheme(value);
-	if (named === undefined) return urlIsLocal(value) ? value : undefined;
+	if (unsafeUrl(value) || scheme(value) !== "file") return undefined;
 	const rest = value.slice("file://".length);
-	if (named !== "file" || !rest.startsWith("/") || /[?#]/.test(rest)) return undefined;
+	if (!rest.startsWith("/") || /[?#]/.test(rest)) return undefined;
+	let path: string;
 	try {
-		return decodeURIComponent(rest);
+		path = decodeURIComponent(rest);
 	} catch {
 		return undefined;
 	}
+	const normal = path.length > 1 && !NUL.test(path) && !path.endsWith("/") && posix.normalize(path) === path;
+	return normal &&
+		path
+			.split("/")
+			.slice(1)
+			.every((part) => part !== "" && part !== "." && part !== "..")
+		? path
+		: undefined;
 }
+
+/** A url slot's value git would treat as a local repository (a file url or a path), which the hand then judges strictly. */
+const localCandidate = (value: string): boolean =>
+	!unsafeUrl(value) && (scheme(value) === "file" || (scheme(value) === undefined && urlIsLocal(value)));
 
 const KINDS: Readonly<Record<Kind, (value: string) => boolean>> = {
 	rev,
@@ -117,8 +134,8 @@ const KINDS: Readonly<Record<Kind, (value: string) => boolean>> = {
 	gitpath: (value) => value === "index" || value === "MERGE_HEAD",
 	path: filesystem,
 	worktree: filesystem,
-	source: (value) => remote(value) || localUrlPath(value) !== undefined,
-	target: (value) => remote(value) || localUrlPath(value) !== undefined,
+	source: (value) => remote(value) || localCandidate(value),
+	target: (value) => remote(value) || localCandidate(value),
 };
 
 const FORMAT = eq("--format=", "fmt");
@@ -258,9 +275,7 @@ function match(
 	if (value === undefined || !KINDS[item.kind](value)) return false;
 	const kind = item.kind;
 	const typed =
-		kind === "path" ||
-		kind === "worktree" ||
-		((kind === "source" || kind === "target") && localUrlPath(value) !== undefined);
+		kind === "path" || kind === "worktree" || ((kind === "source" || kind === "target") && localCandidate(value));
 	if (typed) paths.push({ kind, value });
 	if (next(at + 1)) return true;
 	if (typed) paths.pop();

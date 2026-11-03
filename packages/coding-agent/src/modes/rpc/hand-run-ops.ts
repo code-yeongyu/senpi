@@ -73,9 +73,14 @@ export async function runOnHand(
 	if (plan.exe === "git") {
 		if (!(await gitIsSupported(env))) throw new DeviceFileError("unsupported", "git 2.29 or newer is required");
 		if (env.GIT_INDEX_FILE !== undefined) env.GIT_INDEX_FILE = await confinedIndexFile(env.GIT_INDEX_FILE, cwd, env);
-		for (const { operation, canonicalPath } of await confinePaths(plan.paths, cwd, env)) {
+		for (const { operation, canonicalPath, hooks } of await confinePaths(plan.paths, cwd, env)) {
 			const decision = await deps.guards.filesystemPolicy()?.({ operation, canonicalPath, toolName: "bash" });
 			if (decision !== undefined && !decision.allow) throw new DeviceFileError("refused_by_policy", decision.reason);
+			for (const hook of hooks ?? [])
+				await judged(deps.guards, renderCommand(hook, [])).catch((error: unknown) => {
+					const reason = error instanceof Error ? error.message : String(error);
+					throw new DeviceFileError("refused_by_policy", `receive-pack hook ${hook}: ${reason}`);
+				});
 		}
 	}
 	const hold = args.activityLock === true && plan.exe === "git" ? await holdActivityLock(cwd, deps.flock) : undefined;

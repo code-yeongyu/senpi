@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DeviceFileError } from "@earendil-works/pi-agent-core";
 import { canonicalizeFilesystemPath } from "../../core/tools/filesystem-policy.ts";
 import { localUrlPath, type TypedPath } from "./hand-run-grammar.ts";
+import { canonicalLocalRepo } from "./hand-run-local-repo.ts";
 
 const MIN_GIT: readonly [number, number] = [2, 29];
 
@@ -77,46 +78,8 @@ async function canonicalTarget(raw: string, cwd: string): Promise<string> {
 export interface PolicyTarget {
 	readonly operation: "read" | "write";
 	readonly canonicalPath: string;
-}
-
-const SHAPE = "local_repo_shape_unsupported";
-
-const kindOf = async (path: string): Promise<"file" | "dir" | "link" | "other" | undefined> => {
-	const entry = await lstat(path).catch(() => undefined);
-	if (entry === undefined) return undefined;
-	return entry.isSymbolicLink() ? "link" : entry.isFile() ? "file" : entry.isDirectory() ? "dir" : "other";
-};
-
-/** A git dir in its plainest form: HEAD a regular file, objects/ and refs/ real directories, no redirect of any kind. */
-async function plainGitDir(dir: string): Promise<boolean> {
-	const [head, objects, refs, commondir, alternates] = await Promise.all(
-		["HEAD", "objects", "refs", "commondir", "objects/info/alternates"].map((entry) => kindOf(join(dir, entry))),
-	);
-	return head === "file" && objects === "dir" && refs === "dir" && commondir === undefined && alternates === undefined;
-}
-
-/**
- * The one git dir a local url may name (v2.9, strict canonical shape rather than an emulation of git's lookup). The
- * parent is resolved once (a symlinked ancestor redirects nothing: the policy judges the real path); inside the candidate
- * nothing may redirect: the path itself is no symlink, it is a bare repository or holds a `.git` DIRECTORY, no `<path>.git`
- * sibling exists, and the chosen dir has HEAD/objects/refs as real entries and no `commondir` or `alternates`.
- */
-async function canonicalLocalRepo(path: string): Promise<string> {
-	const parent = await realpath(dirname(path)).catch(() => undefined);
-	if (parent === undefined) throw new DeviceFileError("refused_by_policy", `${SHAPE}: no repository at ${path}`);
-	const real = join(parent, basename(path));
-	const self = await kindOf(real);
-	if (self === "link") throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${path} is a symlink`);
-	if (self !== "dir") throw new DeviceFileError("refused_by_policy", `${SHAPE}: no repository at ${path}`);
-	if ((await kindOf(`${real}.git`)) !== undefined)
-		throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${path}.git exists`);
-	const dotGit = await kindOf(join(real, ".git"));
-	if (dotGit !== undefined && dotGit !== "dir")
-		throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${path}/.git is not a directory`);
-	const dir = dotGit === "dir" ? join(real, ".git") : real;
-	if (!(await plainGitDir(dir)))
-		throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${dir} is not a plain git directory`);
-	return dir;
+	/** Receive-pack hooks a push into this target would run, judged by the caller as bash executions. */
+	readonly hooks?: readonly string[];
 }
 
 /**
@@ -140,9 +103,14 @@ export async function confinePaths(
 	for (const { kind, value } of paths) {
 		if (kind === "source" || kind === "target") {
 			const local = localUrlPath(value);
-			if (local === undefined) throw new DeviceFileError("refused_by_policy", `${SHAPE}: ${value}`);
-			const gitDir = await canonicalLocalRepo(resolve(cwd, local));
-			targets.push({ operation: kind === "source" ? "read" : "write", canonicalPath: gitDir });
+			if (local === undefined)
+				throw new DeviceFileError(
+					"refused_by_policy",
+					`local_repo_shape_unsupported: only an absolute file:// url: ${value}`,
+				);
+			const operation = kind === "source" ? "read" : "write";
+			const repo = await canonicalLocalRepo(local, operation);
+			targets.push({ operation, canonicalPath: repo.gitDir, hooks: repo.hooks });
 			continue;
 		}
 		const canonical = await canonicalTarget(value, cwd);

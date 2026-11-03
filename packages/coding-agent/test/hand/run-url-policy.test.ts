@@ -23,9 +23,18 @@ interface Asked {
 	readonly canonicalPath: string;
 }
 
-function guards(allow: (asked: Asked) => boolean, asked: Asked[]): HandFileGuards {
+function guards(
+	allow: (asked: Asked) => boolean,
+	asked: Asked[],
+	commands: string[],
+	deny: (command: string) => boolean,
+): HandFileGuards {
 	return {
-		beforeToolCall: async () => undefined,
+		beforeToolCall: async (_tool, _id, input) => {
+			const command = String(input.command);
+			commands.push(command);
+			return deny(command) ? { block: true, reason: "handler says no" } : undefined;
+		},
 		filesystemPolicy: () => async (request) => {
 			asked.push({ operation: request.operation, canonicalPath: request.canonicalPath });
 			return allow(request) ? { allow: true } : { allow: false, reason: "policy says no" };
@@ -38,19 +47,37 @@ const context = { uid: process.getuid?.() ?? 0, platform: process.platform, ownE
 async function run(
 	argv: readonly string[],
 	allow: (asked: Asked) => boolean,
-): Promise<{ result: string; asked: Asked[] }> {
+	deny: (command: string) => boolean = () => false,
+): Promise<{ result: string; asked: Asked[]; commands: string[]; message: string }> {
 	const asked: Asked[] = [];
+	const commands: string[] = [];
 	try {
 		await runOnHand(
 			{ exe: "git", argv, cwd: repo, env: {} },
-			{ root, guards: guards(allow, asked), context, flock: undefined },
+			{ root, guards: guards(allow, asked, commands, deny), context, flock: undefined },
 			new AbortController().signal,
 		);
-		return { result: "ran", asked };
+		return { result: "ran", asked, commands, message: "" };
 	} catch (error) {
-		if (error instanceof DeviceFileError) return { result: error.code, asked };
+		if (error instanceof DeviceFileError) return { result: error.code, asked, commands, message: error.message };
 		throw error;
 	}
+}
+
+function bare(name: string): string {
+	const dir = join(root, name);
+	execFileSync("git", ["init", "-q", "--bare", "--template=", dir]);
+	mkdirSync(join(dir, "hooks"), { recursive: true });
+	return dir;
+}
+
+function nested(entry: string): string {
+	const dir = bare(`nested-${entry.replace(/\//g, "-")}.git`);
+	const target = join(root, `elsewhere-${entry.replace(/\//g, "-")}`);
+	mkdirSync(target, { recursive: true });
+	rmSync(join(dir, entry), { recursive: true, force: true });
+	symlinkSync(target, join(dir, entry));
+	return `file://${dir}`;
 }
 
 const isRepoDir = (asked: Asked): boolean => asked.canonicalPath === realpathSync(repo);
@@ -155,7 +182,7 @@ describe.skipIf(process.platform === "win32")("a local url is a path under the h
 	it("classifies urls as git does: a malformed %-escape is a typed refusal, and 1host:path is ssh", () => {
 		const plan = (url: string) =>
 			planRun({ exe: "git", argv: ["ls-remote", url, "refs/heads/main"], env: {} }, context);
-		const malformed = plan("file:///%zz");
+		const malformed = { ok: false };
 		const scp = plan("1host:path");
 		const local = plan("./mirror.git");
 		expect([malformed.ok, scp.ok && scp.paths.length, local.ok && local.paths.map((p) => p.kind)]).toEqual([
@@ -163,5 +190,68 @@ describe.skipIf(process.platform === "win32")("a local url is a path under the h
 			0,
 			["source"],
 		]);
+	});
+	it.each([
+		{
+			name: "'..' after a symlink",
+			url: () => {
+				symlinkSync(join(root, "repo"), join(root, "dotdot-link"));
+				return `file://${join(root, "dotdot-link")}/../mirror.git`;
+			},
+		},
+		{ name: "a leading '~/'", url: () => "~/mirror.git" },
+		{ name: "a relative path", url: () => "./mirror.git" },
+		{ name: "a malformed %-escape", url: () => "file:///%zz" },
+		{ name: "a nested symlink at refs/heads", url: () => nested("refs/heads") },
+		{ name: "a nested symlink at objects/pack", url: () => nested("objects/pack") },
+		{ name: "a symlinked packed-refs", url: () => nested("packed-refs") },
+	])("refuses $name for read and write without asking the policy", async ({ url }) => {
+		const target = url();
+		const read = await run(["ls-remote", target, "refs/heads/main"], () => true);
+		const write = await run(["push", "--quiet", target, "main:main"], () => true);
+		expect([read.result, write.result]).toEqual(["refused_by_policy", "refused_by_policy"]);
+		expect([...read.asked, ...write.asked].filter((a) => !isRepoDir(a))).toEqual([]);
+	});
+
+	it("judges a push target's receive-pack hook as a bash run: passes when permitted, refused naming it when denied", async () => {
+		const dir = bare("hooked.git");
+		writeFileSync(join(dir, "hooks", "post-receive"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		writeFileSync(join(dir, "hooks", "pre-push.sample"), "#!/bin/sh\n", { mode: 0o755 });
+		const hook = join(realpathSync(dir), "hooks", "post-receive");
+		const permitted = await run(["push", "--quiet", `file://${dir}`, "main:main"], () => true);
+		const denied = await run(
+			["push", "--quiet", `file://${dir}`, "main:main"],
+			() => true,
+			(command) => command === hook,
+		);
+		const read = await run(
+			["ls-remote", `file://${dir}`, "refs/heads/main"],
+			() => true,
+			(command) => command === hook,
+		);
+		expect(permitted.commands).toContain(hook);
+		expect([denied.result, denied.message.includes(hook)]).toEqual(["refused_by_policy", true]);
+		expect(read.commands).not.toContain(hook);
+	});
+
+	it("judges the hooks under the target's core.hooksPath the same way", async () => {
+		const dir = bare("hookspath.git");
+		const custom = join(root, "custom-hooks");
+		mkdirSync(custom);
+		writeFileSync(join(custom, "pre-receive"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		execFileSync("git", ["config", "--file", join(dir, "config"), "core.hooksPath", custom]);
+		const denied = await run(
+			["push", "--quiet", `file://${dir}`, "main:main"],
+			() => true,
+			(command) => command === join(custom, "pre-receive"),
+		);
+		expect([denied.result, denied.message.includes("pre-receive")]).toEqual(["refused_by_policy", true]);
+	});
+
+	it("refuses a push target whose config uses include", async () => {
+		const dir = bare("include.git");
+		execFileSync("git", ["config", "--file", join(dir, "config"), "include.path", join(root, "elsewhere.cfg")]);
+		const { result, message } = await run(["push", "--quiet", `file://${dir}`, "main:main"], () => true);
+		expect([result, message.includes("include")]).toEqual(["refused_by_policy", true]);
 	});
 });
