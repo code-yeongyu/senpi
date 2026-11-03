@@ -6,10 +6,11 @@ import {
 	readFileSync,
 	rmdirSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // A finishing mover removes the emptied `session-holders/<id>` directory. Node's recursive mkdir reports EEXIST
@@ -19,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // node returns for that interleaving: the race is reproduced exactly once instead of hoping two processes collide.
 const fsHooks = vi.hoisted(() => ({
 	dir: "",
+	asyncMkdirs: 0,
 	onAsyncMkdir: undefined as (() => Promise<void>) | undefined,
 	onSyncMkdir: undefined as (() => void) | undefined,
 }));
@@ -35,6 +37,10 @@ function mkdirEnoent(path: string): NodeJS.ErrnoException {
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
 	const mkdir = (async (path: Parameters<typeof actual.mkdir>[0], ...rest: unknown[]) => {
+		if (path === fsHooks.dir) fsHooks.asyncMkdirs += 1;
+		// Stops an unbounded retry deterministically: an error the lock code never tolerates ends the loop.
+		if (path === fsHooks.dir && fsHooks.asyncMkdirs > 4)
+			throw new Error("lock-directory mkdir retried without bound");
 		const hook = fsHooks.onAsyncMkdir;
 		if (hook !== undefined && path === fsHooks.dir) {
 			fsHooks.onAsyncMkdir = undefined;
@@ -61,7 +67,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const { rebindSessionFile } = await import("../../../src/core/session-rebind.ts");
-const { holdSessionFile } = await import("../../../src/core/session-holders.ts");
+const { holdSessionFile, withSessionMoveLock } = await import("../../../src/core/session-holders.ts");
 const { encodedSessionId } = await import("../../../src/core/session-sidecar-store.ts");
 
 const SESSION_ID = "0197f6e4-4cf9-7f44-a2d8-f8f7f49ee9d3";
@@ -69,6 +75,7 @@ const roots: string[] = [];
 afterEach(() => {
 	fsHooks.onAsyncMkdir = undefined;
 	fsHooks.onSyncMkdir = undefined;
+	fsHooks.asyncMkdirs = 0;
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -86,7 +93,7 @@ function session() {
 		`${JSON.stringify({ type: "session", id: SESSION_ID, cwd: join(root, "old-repo") })}\n${body}`,
 	);
 	fsHooks.dir = join(oldDir, "session-holders", encodedSessionId(SESSION_ID));
-	return { source, target: join(newDir, name), newDir, cwd: join(root, "new-repo"), body };
+	return { root, source, target: join(newDir, name), newDir, cwd: join(root, "new-repo"), body };
 }
 
 describe("issue #5618 move-lock directory removed by a finishing mover", () => {
@@ -105,6 +112,19 @@ describe("issue #5618 move-lock directory removed by a finishing mover", () => {
 		expect(rest.join("\n")).toBe(body);
 		expect(readdirSync(newDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 		expect(existsSync(fsHooks.dir)).toBe(false);
+	});
+
+	it("a lock directory that can never be created (dangling symlink) still fails fast with ENOENT", async () => {
+		const { source, root } = session();
+		mkdirSync(dirname(fsHooks.dir), { recursive: true });
+		symlinkSync(join(root, "missing"), fsHooks.dir);
+		const move = vi.fn(() => "moved");
+
+		await expect(withSessionMoveLock(source, SESSION_ID, move, { waitMs: 200 })).rejects.toMatchObject({
+			code: "ENOENT",
+		});
+		expect(move).not.toHaveBeenCalled();
+		expect(fsHooks.asyncMkdirs).toBe(2);
 	});
 
 	it("a holder whose record-directory mkdir loses that race still publishes its record", () => {

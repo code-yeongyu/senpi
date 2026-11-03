@@ -224,18 +224,23 @@ export async function liveSessionHolders(
 
 // A concurrent mover that finishes removes the emptied lock directory. A recursive mkdir that saw the directory
 // exist and stats it after that removal fails with ENOENT (senpi#5618): the directory is merely gone again, so the
-// caller retries the publish, which recreates it. Who moves is still decided by the exclusive lock alone.
-async function createLockDir(dir: string): Promise<void> {
+// publish fails once more and the next call here recreates it. Returns whether this mkdir hit that ENOENT. Only one
+// in a row is tolerated: a second means the path can never be created (a dangling symlink), which fails fast. Who
+// moves is still decided by the exclusive lock alone.
+async function createLockDir(dir: string, tolerateEnoent: boolean): Promise<boolean> {
 	try {
 		await mkdir(dir, { recursive: true });
+		return false;
 	} catch (error) {
-		if (errorCode(error) !== "ENOENT") throw error;
+		if (!tolerateEnoent || errorCode(error) !== "ENOENT") throw error;
+		return true;
 	}
 }
 
 async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): Promise<string> {
 	const mine = identityRecord();
 	const deadline = Date.now() + waitMs;
+	let lockDirVanished = false;
 	while (true) {
 		try {
 			await publishExclusive(lock, mine);
@@ -243,7 +248,7 @@ async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): 
 		} catch (error) {
 			const code = errorCode(error);
 			if (code === "ENOENT") {
-				await createLockDir(dirname(lock));
+				lockDirVanished = await createLockDir(dirname(lock), !lockDirVanished);
 				continue;
 			}
 			if (code !== "EEXIST") throw error;
