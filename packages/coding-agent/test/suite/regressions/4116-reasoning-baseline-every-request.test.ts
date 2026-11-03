@@ -2,9 +2,10 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type FauxResponseFactory, fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { ModelUsabilityBudgetError } from "../../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
 import { resumeReasoningBaseline } from "../../../src/core/reasoning-baseline.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
-import { createHarness, type Harness } from "../harness.ts";
+import { createHarness, type Harness, type HarnessOptions } from "../harness.ts";
 
 // senpi#4116: once a session holds a configuration_update, every request must carry the same request-level
 // effort (the baseline) and effort changes travel only as configuration_update items. The first request of a
@@ -32,6 +33,27 @@ function flagged(harness: Harness, modelId: string): Model<string> {
 	return withCapability;
 }
 
+/** Flags every model in the runtime catalog, so the favorites a cycle resolves there take `configuration_update`. */
+function flagCatalog(harness: Harness): void {
+	harness.modelRegistry.registerProvider("openai", {
+		baseUrl: harness.getModel().baseUrl,
+		apiKey: "faux-key",
+		api: "openai-responses",
+		models: harness.models.map((model) => ({
+			id: model.id,
+			name: model.name,
+			api: "openai-responses",
+			reasoning: model.reasoning,
+			input: model.input,
+			cost: model.cost,
+			contextWindow: model.contextWindow,
+			maxTokens: model.maxTokens,
+			baseUrl: model.baseUrl,
+			compat: { supportsConfigurationUpdate: true },
+		})),
+	});
+}
+
 function recording(sent: Array<string | undefined>, step: "tool" | "text"): FauxResponseFactory {
 	return (_context, options) => {
 		sent.push(options?.reasoning);
@@ -48,19 +70,72 @@ describe("reasoning baseline on every request (senpi#4116)", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	async function openAIHarness(): Promise<Harness> {
+	async function openAIHarness(extensionFactories?: HarnessOptions["extensionFactories"]): Promise<Harness> {
 		const harness = await createHarness({
 			api: "openai-responses",
 			provider: "openai",
 			models: [
-				{ id: "gpt-6-luna", reasoning: true },
-				{ id: "gpt-6-sol", reasoning: true },
+				{ id: "gpt-6-luna", reasoning: true, contextWindow: 100_000, maxTokens: 4_000 },
+				{ id: "gpt-6-sol", reasoning: true, contextWindow: 100_000, maxTokens: 4_000 },
 			],
 			tools: [echoTool()],
+			...(extensionFactories === undefined ? {} : { extensionFactories }),
 		});
 		harnesses.push(harness);
 		return harness;
 	}
+
+	/** On luna with baseline `medium` and live level `high`; favorites cycle luna -> sol at `xhigh`. */
+	async function onLunaWithBaseline(harness: Harness): Promise<void> {
+		flagCatalog(harness);
+		harness.session.setThinkingLevel("medium");
+		const luna = flagged(harness, "gpt-6-luna");
+		await harness.session.setModel(luna);
+		harness.session.setThinkingLevel("high");
+		expect(harness.agent.state.reasoningBaseline).toBe("medium");
+		harness.session.setFavoriteModels([
+			{ model: luna },
+			{ model: flagged(harness, "gpt-6-sol"), thinkingLevel: "xhigh" },
+		]);
+	}
+
+	it("Given a favorite cycle from a flagged model to another flagged model when it runs then it sends its own level and keeps no baseline from the previous model", async () => {
+		// Given
+		const harness = await openAIHarness();
+		await onLunaWithBaseline(harness);
+
+		// When
+		const cycled = await harness.session.cycleModel();
+		const sent: Array<string | undefined> = [];
+		harness.setResponses([recording(sent, "tool"), recording(sent, "text")]);
+		await harness.session.prompt("after cycle");
+
+		// Then
+		expect(cycled?.model.id).toBe("gpt-6-sol");
+		expect(harness.agent.state.thinkingLevel).toBe("xhigh");
+		expect(harness.agent.state.reasoningBaseline).toBeUndefined();
+		expect(sent).toEqual(["xhigh", "xhigh"]);
+		expect(resumeReasoningBaseline(harness.sessionManager.getBranch())).toBeUndefined();
+	});
+
+	it("Given a favorite cycle refused after model_select when it rethrows then the session keeps the baseline it came in with", async () => {
+		// Given
+		const harness = await openAIHarness([
+			(pi) => {
+				pi.on("model_select", (event) =>
+					event.model.id === "gpt-6-sol" ? { systemPrompt: "large ".repeat(100_000) } : undefined,
+				);
+			},
+		]);
+		await onLunaWithBaseline(harness);
+
+		// When
+		await expect(harness.session.cycleModel()).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+
+		// Then
+		expect(harness.session.model?.id).toBe("gpt-6-luna");
+		expect(harness.agent.state.reasoningBaseline).toBe("medium");
+	});
 
 	it("Given an effort change on a flagged model when a run makes tool calls then every request carries the baseline", async () => {
 		// Given

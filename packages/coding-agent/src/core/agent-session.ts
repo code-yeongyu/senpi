@@ -9281,8 +9281,9 @@ export class AgentSession {
 		} else {
 			this._setThinkingLevel(thinking.level, false, thinking.selection, opts.origin);
 		}
-		// Another model's prompt cache starts empty, so the level that came with the switch is the one its
-		// requests carry, never the previous model's level as a baseline (senpi#4116).
+		// The previous model's level is never pinned as the new model's baseline: the level that came with the
+		// switch is the one its requests carry (senpi#4116). A return to an earlier model starts without a baseline
+		// too, because the baseline is held per session, not per model.
 		if (modelIdentityChanged) this.agent.state.reasoningBaseline = undefined;
 		this._thinkingLevelSource = thinking.source;
 
@@ -9490,13 +9491,20 @@ export class AgentSession {
 		this._retryFallback.clearForManualModelChange(next.model);
 		const thinking = this._getThinkingForModelSwitch(next.model, next.thinkingLevel, next.thinkingSelection);
 
+		// The cycle commits without `_switchActiveModel`, so it applies the same baseline rules itself (senpi#4116).
+		const previousReasoningBaseline = this.agent.state.reasoningBaseline;
 		this.agent.state.model = next.model;
+		const modelIdentityChanged = !modelsAreEqual(currentModel, next.model);
+		if (modelIdentityChanged || !supportsConfigurationUpdate(next.model)) {
+			this.agent.state.reasoningBaseline = undefined;
+		}
 		const previousTier = this._currentServiceTier;
 		const previousFastMode = this.isFastModeActive();
 		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
 
 		// Apply thinking level and provenance from the favorite projection or remembered preference.
 		this._setThinkingLevel(thinking.level, false, thinking.selection, cycle.origin);
+		if (modelIdentityChanged) this.agent.state.reasoningBaseline = undefined;
 		this._thinkingLevelSource = thinking.source;
 
 		const previousSystemPrompt = this.agent.state.systemPrompt;
@@ -9513,6 +9521,7 @@ export class AgentSession {
 			if (postHookDeferral !== undefined) {
 				if (currentModel) this.agent.state.model = currentModel;
 				this.agent.state.systemPrompt = previousSystemPrompt;
+				this.agent.state.reasoningBaseline = previousReasoningBaseline;
 				this._currentServiceTier = previousTier;
 				this._admitSwitchCompactionRequired(next.model, postHookDeferral, cycle.persistDefault, cycle.origin);
 				return {
@@ -9573,6 +9582,7 @@ export class AgentSession {
 			if (currentModel) this.agent.state.model = currentModel;
 			else delete (this.agent.state as { model?: Model<Api> }).model;
 			this.agent.state.systemPrompt = previousSystemPrompt;
+			this.agent.state.reasoningBaseline = previousReasoningBaseline;
 			this._currentServiceTier = previousTier;
 			throw error;
 		}
