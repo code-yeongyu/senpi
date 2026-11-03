@@ -193,8 +193,8 @@ export class LifecycleLedger {
 	update(input: {
 		readonly state: SessionLifecycleState;
 		readonly waits: LifecycleWaits;
-		/** Every background source, before `waits.background` is bounded to 32. */
-		readonly backgroundSources: readonly BackgroundSource[];
+		/** Every background source, before `waits.background` is bounded to 32; defaults to `waits.background`. */
+		readonly backgroundSources?: readonly BackgroundSource[];
 		readonly holds: readonly LifecycleHold[];
 		readonly failure?: SessionLifecycle["failure"];
 		readonly lastStop?: SessionLifecycle["lastStop"];
@@ -258,8 +258,9 @@ export class LifecycleLedger {
 			// Input changes during session_start are collected, but cannot publish.
 			return;
 		}
-		const sameBackground = JSON.stringify(this.liveBackground) === JSON.stringify(input.backgroundSources);
-		this.liveBackground = input.backgroundSources;
+		const sources = input.backgroundSources ?? input.waits.background;
+		const sameBackground = JSON.stringify(this.liveBackground) === JSON.stringify(sources);
+		this.liveBackground = sources;
 		const sameActivity = JSON.stringify(this.current.activity) === JSON.stringify(next.activity);
 		// An unchanged lifecycle writes nothing; an unwritten revision waits for the record that carries it (senpi#3980).
 		if (this.current.persisted && sameActivity && sameBackground && equivalent(this.current, next)) return;
