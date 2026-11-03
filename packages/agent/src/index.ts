@@ -73,6 +73,20 @@ export {
 	type RemoteToolResult,
 } from "./execution/remote-protocol.ts";
 export {
+	authorize,
+	createGrantVerifier,
+	DEFAULT_WORKSPACE,
+	type GrantRefusal,
+	type GrantRow,
+	type GrantSnapshot,
+	type GrantVerdict,
+	type GrantVerifier,
+	type GrantVerifierOptions,
+	HAND_CAPABILITY,
+	type HandAuthority,
+	type WorkspaceRoot,
+} from "./execution/grant-verify.ts";
+export {
 	createModelPlaneClient,
 	decodeModelPlaneRequest,
 	MODEL_PLANE,
