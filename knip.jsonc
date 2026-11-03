@@ -192,8 +192,8 @@
       "packages/ai/src/auth/oauth/devin-token.ts": ["DEVIN_API_ENDPOINT", "DEVIN_FALLBACK_EXPIRY_MS", "DEVIN_TOKEN_URL", "devinCredential"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_KIMI_CODE_REGION, KIMI_CODE_REGION_PROFILES, isKimiCodeRegion
       "packages/ai/src/auth/oauth/kimi-region.ts": ["DEFAULT_KIMI_CODE_REGION", "KIMI_CODE_REGION_PROFILES", "isKimiCodeRegion"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS, managedSentinelMaterials
-      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName", "managedSentinelMaterials"],
+      // pre-existing at origin main aceb1cc1d9: unused exports assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS
+      "packages/ai/src/auth/pool/slots.ts": ["DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName"],
       // pre-existing at origin main aceb1cc1d9: unused exports ALIBABA_TOKEN_PLAN_IMAGE_MODELS, ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS
       "packages/ai/src/providers/alibaba-token-plan.models.ts": ["ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS", "ALIBABA_TOKEN_PLAN_IMAGE_MODELS"],
       // pre-existing at origin main aceb1cc1d9: unused exports AMAZON_BEDROCK_IMAGE_MODELS, AMAZON_BEDROCK_CLASSIFIER_MODELS
@@ -567,8 +567,6 @@
       "packages/coding-agent/src/core/event-loop-slicer.ts": ["DEFAULT_SLICE_BUDGET_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports ansiToHtml
       "packages/coding-agent/src/core/export-html/ansi-to-html.ts": ["ansiToHtml"],
-      // pre-existing at origin main aceb1cc1d9: unused exports CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW
-      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/context-window.ts": ["CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW"],
       // pre-existing at origin main aceb1cc1d9: unused exports objectToShape
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/custom-tools-schema.ts": ["objectToShape"],
       // pre-existing at origin main aceb1cc1d9: unused exports TRANSIENT_RETRIES_PER_TURN, TRANSIENT_RETRY_DELAY_MS
@@ -1552,6 +1550,7 @@
         // Bundled as separate entries or started by path (build-coding-agent-bundle.mjs, worker URLs, child spawns).
         "src/modes/rpc/host-supervisor-entry.ts",
         "src/modes/rpc/session-worker.ts",
+        "src/modes/rpc/loopless-worker.ts",
         "src/modes/rpc/host-lifecycle.ts",
         "src/modes/rpc/tool-child/module-job-worker.ts",
         "src/tool-child-main.ts",

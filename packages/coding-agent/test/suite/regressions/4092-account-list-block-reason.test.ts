@@ -10,7 +10,7 @@ import { registerClaudeAccountCommand } from "../../../src/core/extensions/built
 import { addAccount, emptyCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import gptAccountExtension from "../../../src/core/extensions/builtin/gpt-account.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
-import { cliSlot } from "../../support/claude-cli-test-slots.ts";
+import { cliAuthBlock, cliSlot } from "../../support/claude-cli-test-slots.ts";
 import { type Command, createAccountCommandContext, registerCommand } from "../account-command-harness.ts";
 
 // senpi#4092: every TUI account list says why an account sits out and until when, instead of a bare "blocked".
@@ -90,7 +90,7 @@ describe("account lists say why an account is blocked and until when (senpi#4092
 	it("/claude-account", async () => {
 		const slots = [
 			{ name: "limited", blockReason: "rate_limit", blockedUntil: UNTIL },
-			{ name: "rejected", blockReason: "auth_error", blockedUntil: UNTIL },
+			{ name: "rejected", ...cliAuthBlock(cliSlot("rejected").dirId, UNTIL, 1) },
 			{ name: "disabled", blockReason: "account_disabled" },
 			{ name: "healthy" },
 		].map(({ name, ...health }) => cliSlot(name, health));

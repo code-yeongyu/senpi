@@ -1,3 +1,21 @@
+## 2026-10-27 - Compaction authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`, `compaction/openai-remote.ts`, `compaction/index.ts`: `getApiKeyAndHeaders` receives `{ sessionId: sessionManager.getSessionId() }`; the remote-compaction context type accepts the option.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller; the fix is passing its session to the registry.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call lines.
+
 ## 2026-10-27 - Compaction summary requests split the system prompt like the turn (senpi#4447)
 
 ### What changed
