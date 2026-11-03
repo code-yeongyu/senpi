@@ -12,6 +12,26 @@
 
 ### Removed
 
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Stored credentials carry an optional `loginId` that each sign-in through `Models.login` writes fresh; a token refresh keeps or drops it and never mints one ([#4430](https://github.com/code-yeongyu/senpi/pull/4430))
+- Provider diagnostic codes `account_pool_blocked` (`rate_limit`) and `account_pool_auth_blocked` (`auth`) for a request a subscription account pool refuses locally (#4676).
+
+### Changed
+
+### Fixed
+
+- A managed account-pool placeholder credential is never sent to a provider's token endpoint; resolving it without an account fails with an auth error instead of a provider 401 ([#4426](https://github.com/code-yeongyu/senpi/pull/4426))
+- The page shown after a provider browser sign-in no longer shows the pi logo; it shows the product set with `setOAuthPageBrand` ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- The ChatGPT sign-in authorize request falls back to the host's brand name as `agent_name_hint` when the caller passes no app name ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- Anthropic sessions whose replayed thinking is bound to a different conversation recover instead of failing every turn: Claude requests replaying signed thinking ask the API to drop a mismatched block, and the 400 is retried once on the same model without the replayed thinking ([#5589](https://github.com/code-yeongyu/senpi/pull/5589))
+
+### Removed
+
 ## [2026.11.3-1] - 2026-11-03
 
 ### Breaking Changes
