@@ -5,7 +5,9 @@
  * stall or kill it and observe what the supervisor and its callers record, without booting a session
  * runtime. argv: <serverVersion> <capabilities> <behavior: answer|silent> ... --listen unix://<path>
  */
+import { writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { join } from "node:path";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "../../src/modes/rpc/host-identity-env.ts";
 import { internalHostTransport } from "../../src/modes/rpc/host-internal-transport.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "../../src/modes/rpc/host-stop-intent.ts";
@@ -51,9 +53,16 @@ server.listen(socketPath);
 const loopLag = new LoopLagWatchdog({ emit: () => {}, log: () => {} });
 loopLag.start();
 // The same lifetime binding the real host arms: the supervisor's watch config plus the stdin lifetime fd.
-armHostWatchdog(internalHostTransport(readHostWatchdogConfigFromBrandEnv(), undefined).watchdogConfig, () =>
-	process.exit(0),
-);
+const watchdogConfig = internalHostTransport(readHostWatchdogConfigFromBrandEnv(), undefined).watchdogConfig;
+armHostWatchdog(watchdogConfig, () => process.exit(0));
+// senpi#4742: a process-table entry precedes stdin-key bootstrap and watchdog arming.
+// Tests that freeze the supervisor must observe this boundary, not merely our pid.
+if (watchdogConfig?.daemonDir !== undefined && watchdogConfig.instanceId !== undefined) {
+	writeFileSync(
+		join(watchdogConfig.daemonDir, "generations", watchdogConfig.instanceId, "fixture-watchdog-ready"),
+		"",
+	);
+}
 process.on("SIGTERM", () => process.exit(0));
 // A drain SIGNAL is ignored, so a suite can tell which channel reached the host: the fixture has no
 // sessions to park, and leaves at once only when its supervisor's signal-free relay asks (#3653).

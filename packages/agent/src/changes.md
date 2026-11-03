@@ -1,3 +1,327 @@
+## 2026-11-03 - Offline grant check on the hand (senpi#5659)
+
+### What changed
+
+- `packages/agent/src/execution/grant-verify.ts` is new: grant snapshot, verifier, `HandAuthority` and `authorize()`.
+- `packages/agent/src/execution/remote-executor.ts`: required `authority`; the grant check runs after the closed and lane checks and before the seen set, the ledger and the scope; the scope opens on the canonical root; a snapshot replacement aborts running calls it no longer allows.
+- `packages/agent/src/execution/testing/hand-harness.ts`: passes `{ kind: "self" }`.
+- `packages/agent/src/index.ts`: exports the verifier surface.
+
+### Why
+
+Brain/hand split S27b (R14.b): across machines the pair grant is the whole authority model for a user's own devices, checked with no per-call round trip. Design approved by the security gate (capability `execute`).
+
+### Why an extension could not handle it
+
+The check must precede the executor's own durable admission and scope opening.
+
+### Expected merge conflict zones
+
+`remote-executor.ts` invoke ordering and options; `src/index.ts` exports.
+
+## 2026-11-03 - List a directory while another process removes one of its entries (senpi#5615)
+
+### What changed
+
+- `packages/agent/src/harness/env/nodejs.ts`: `NodeExecutionEnv.listDir` omits an entry whose `lstat` fails with `ENOENT` after `readdir` listed it, instead of failing the whole listing. Any other per-entry error is still returned.
+
+### Why
+
+- A Session worker holds its session through a `<session>.jsonl.lock` directory next to the session file and removes it on release. A session listing that read the directory just before a worker released its lock failed with `Failed to list sessions directory ...: ENOENT ... lstat '<session>.jsonl.lock'`, so a server refreshing its session catalog while a worker retired failed that refresh (senpi#5272). The removed entry is now absent from the listing, as if `readdir` had run a moment later.
+
+### Why an extension could not handle it
+
+- `listDir` is the harness file-system primitive under `JsonlSessionRepo.list`; no extension hook runs between `readdir` and the per-entry `lstat`.
+
+### Expected merge conflict zones
+
+- LOW: the per-entry `try`/`catch` in `NodeExecutionEnv.listDir`.
+
+## 2026-11-02 - A hand's durable call record and its conformance cases (senpi#5513)
+
+### What changed
+
+- `packages/agent/src/execution/remote-hand-ledger.ts` is new: `createHandLedger()` admits each invoke into the execution ledger and walks it to `dispatched` before it runs, records its result, answers a re-delivered invoke from the record (refusing `identity_conflict` when the record holds another request under that execution ID), and on restart runs the ledger's recovery, then re-sends the outcomes the session has not acknowledged.
+- `packages/agent/src/execution/ledger.ts`: `ExecutionLedger.scan()` lists every row.
+- `packages/agent/src/execution/remote-executor.ts`: optional `ledger`, required `onFault` (a failed restart recovery is reported there and the hand then answers no frame), a `hello` after a restarted hand recovered, and `ack` handling; a call's scope is opened before the call is recorded, so a scope that cannot open leaves no record.
+- `packages/agent/src/execution/remote-tool-host.ts`: required `placement`; `terminal` outcomes mapped per placement; every outcome acknowledged; waiting calls re-sent on `hello`.
+- `packages/agent/src/execution/remote-protocol.ts`: `ack`, `terminal` and `hello` messages.
+- `packages/agent/src/execution/testing/{hand-harness,kill-hand,multi-hand-cases,fault-hand-cases}.ts` are new, registered in `packages/agent/src/conformance/registry.ts` and exported from `packages/agent/src/conformance/index.ts`; `packages/agent/src/index.ts` exports the new hand APIs.
+
+### Why
+
+- Brain/hand split (senpi#5482): a hand that dies after receiving a call left the session waiting forever, and a restarted hand had no record to keep it from running a call twice.
+
+### Why an extension could not handle it
+
+- The execution ledger, the ToolHost seam and the conformance registry are the agent core's.
+
+### Expected merge conflict zones
+
+- LOW: the end of `CONFORMANCE_REGISTRY` in `registry.ts` and the hand export blocks in `index.ts` and `conformance/index.ts`.
+
+## 2026-11-02 - Remote ToolHost and hand executor (senpi#5483)
+
+### What changed
+
+- `packages/agent/src/execution/remote-tool-host.ts` is new: `createRemoteToolHost({ transport, sessionRef? })` sends each raw call of a batch to a hand on the scope's lane, emits the tool events, waits per call in `sequential` mode, forwards an abort, and returns result messages in source order; a call is never re-sent.
+- `packages/agent/src/execution/remote-executor.ts` is new: `createRemoteExecutor({ transport, openScope })` opens scopes lazily, refuses a known scope with another root and a repeated execution ID, never passes the session reference on, and keeps `sequential` tool barriers per scope.
+- `packages/agent/src/execution/remote-protocol.ts` is new: the `invoke`, `abort`, `settled` and `refused` messages and a strict decoder.
+- `packages/agent/src/index.ts` exports the three modules, the reference transport and the `Transport` types.
+
+### Why
+
+- Brain/hand split (senpi#5482): a session must be able to run its tool calls on a hand, first on one machine over the in-process carrier.
+
+### Why an extension could not handle it
+
+- The ToolHost seam and the transport live in the agent core; an extension cannot replace where the loop dispatches tool calls.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` export list, next to the internal-events exports.
+
+## 2026-11-02 - Durable batch coordinator (senpi#5429)
+
+### What changed
+
+- `packages/agent/src/execution/coordinator.ts`, `coordinator-types.ts`, `coordinator-plan.ts` and `coordinator-codec.ts` implement the brain-side batch coordinator over DurableStore and the `BatchExecutor` port.
+- `packages/agent/src/execution/testing/` supplies the reference batch executor, the BATCH-01..03/05..09, REPLAY-01..02 and KILL-BATCH cases, and their registry entries.
+- `packages/agent/src/conformance/registry.ts` and `packages/agent/src/conformance/index.ts` register and expose the cases.
+
+### Why
+
+- A batch's prepare replies, decision and release marks need one durable owner on the coordinating side, so a crash there recovers without rerunning hooks or bodies, and an interrupted preparation replays as it does today.
+
+### Why an extension could not handle it
+
+- The coordinator is a host-neutral execution primitive below extension callbacks.
+
+### Expected merge conflict zones
+
+- LOW: the conformance registry and barrel exports; the coordinator modules are new.
+
+## 2026-11-02 - The agent proxy handles `message_tool_arguments_reset` (senpi#5300)
+
+### What changed
+
+- `packages/agent/src/proxy.ts`: `ProxyAssistantMessageEvent` gains the `message_tool_arguments_reset` record, typed from `AssistantProgress`. `processProxyEvent` moves unchanged in its other cases to the fork-only `packages/agent/src/proxy-event-reducer.ts` (proxy.ts was over the 250-line file ceiling); `streamProxy` imports it from there, and the package's public exports are unchanged.
+- `packages/agent/src/proxy-event-reducer.ts`: `processProxyEvent` replaces the tool call's raw arguments with the record's `rawArgumentPrefix` and re-parses them, so the next `toolcall_delta` extends that prefix. The delta and reset cases share one `setRawArguments` step. The record produces no public event.
+
+### Why
+
+- `packages/agent/src/proxy.ts`: the proxy was the only in-repo consumer that buffers raw tool-call arguments. A reset fell through to `Unhandled proxy event type`, so a following delta at offset 0 carrying the whole prefix was appended to the stale buffer. The call's arguments then parsed from a doubled string (`{"path":"a{"path":"a.ts"}` gave `{ path: "a{" }`).
+
+### Why an extension could not handle it
+
+- `streamProxy` decodes the proxy wire and owns the partial message; extensions see neither the proxy events nor the raw argument buffer.
+
+### Expected merge conflict zones
+
+- MEDIUM: an upstream change to `processProxyEvent` lands in `packages/agent/src/proxy.ts` but the function now lives in `packages/agent/src/proxy-event-reducer.ts`; port it there.
+- LOW: the `ProxyAssistantMessageEvent` union and the `parseStreamingJson`/`ToolCall` imports in `packages/agent/src/proxy.ts`.
+
+## 2026-10-31 - Harness provider requests carry the session cwd (senpi#5257, fixes #5256)
+
+### What changed
+
+- `packages/agent/src/harness/context.ts`: new `withSessionCwd(cwd, context)` / `getSessionCwd(context)` attach and read the session working directory on a context.
+- `packages/agent/src/harness/compaction/compaction.ts`: `createSummaryRequestOptions` adds `cwd` from the request options or the context, so every summary request it builds (history summary, split-turn prefix, branch summary, and the standalone `compact` / `generateSummaryWithUsage` / `generateBranchSummary` helpers) carries it.
+- `packages/agent/src/harness/runtime/drive/structural.ts`: compaction and branch-summary requests run under a context carrying `session.metadata.cwd`.
+- `packages/agent/src/harness/runtime/drive/generation.ts`: assistant turn requests pass `cwd: session.metadata.cwd`.
+
+### Why
+
+- A provider that requires an absolute session cwd (`anthropic-subscription`) rejected every harness compaction, branch summary and turn, because no harness request carried one (#5256, downstream oh-my-openagent#12026).
+
+### Why an extension could not handle it
+
+- The summary request options are built inside the harness; an extension never sees them before the provider rejects the request.
+
+### Expected merge conflict zones
+
+- LOW: `createSummaryRequestOptions` in `compaction.ts`, the summary branch of `performStructuralAttempt` in `structural.ts`, and the `streamSimple` options in `generation.ts`.
+
+## 2026-10-30 - Produce source-bound conformance archives (senpi#5059)
+
+### What changed
+
+- `packages/agent/scripts/pack-conformance-archive.ts` snapshots one selected commit, builds and packs its agent package, and includes the original registry-relative implementation sources with a SHA-256 manifest.
+- The producer loads the packed conformance export and compares its reconstructed manifest with the same commit's source manifest.
+- `packages/agent/scripts/deterministic-tar-gz.ts` writes the archive as a gzip ustar whose bytes depend only on its files (sorted entries, fixed mode/owner/mtime, no gzip timestamp); `Bun.Archive` stamps each entry with the build time, so two builds of one commit differed.
+- The archive regression test checks compressed round-trip bytes, digests, zero entry and gzip timestamps, byte-identical repeat builds, and the existing CONF.bun suite-hash contract.
+
+### Why
+
+- An external host needs both executable conformance cases and the exact source bytes used by the suite-hash contract. A compiled package alone cannot provide the latter.
+
+### Why an extension could not handle it
+
+- The artifact boundary belongs to the engine's package and source registry. A versioned producer keeps external hosts from inventing a separate hash input or mixing source revisions.
+
+### Expected merge conflict zones
+
+- LOW: agent package scripts and development dependencies; generated dependency lockfiles. New producer, test, and documentation files.
+
+## 2026-10-30 - Unprepared scoped ToolHost seam (senpi#5030)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts` passes raw batches and scope through the optional ToolHost before resolution, preparation and hooks; its default adapter calls the existing legacy scheduler.
+- `packages/agent/src/agent.ts` carries the host, scope and receipt callback into each loop configuration.
+- `packages/agent/src/types.ts` exposes the contract and configuration, with definitions in `packages/agent/src/execution/tool-host.ts`.
+
+### Why
+
+- The execution boundary must precede effectful preparation so a later executor can own the complete tool pipeline.
+
+### Why an extension could not handle it
+
+- Extensions receive callbacks after the loop has already resolved and prepared a call.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` batch dispatch and loop initialization; `packages/agent/src/agent.ts` options and loop configuration; `packages/agent/src/types.ts` execution configuration.
+
+## 2026-10-30 - Durable execution endpoint ledger (senpi#5004)
+
+### What changed
+
+- `packages/agent/src/execution/ledger.ts`, `ledger-types.ts`, `ledger-transition.ts`, and `ledger-codec.ts` implement the executor ledger over DurableStore.
+- `packages/agent/src/execution/testing/` supplies LEDGER-01..12 and KILL-LEDGER cases.
+- `packages/agent/src/conformance/registry.ts` and `packages/agent/src/conformance/index.ts` register and expose the portable cases.
+
+### Why
+
+- Execution identity, effect boundaries, terminal ordering and restart outcomes need one durable owner before prepared execution is integrated.
+
+### Why an extension could not handle it
+
+- The ledger is a host-neutral execution primitive below extension callbacks.
+
+### Expected merge conflict zones
+
+- LOW: the conformance registry and barrel exports; the execution modules are new.
+
+## 2026-10-30 - Harness skill loader: ignore files no longer hide symlinked skills (senpi#5069)
+
+### What changed
+
+- `packages/agent/src/harness/skills.ts`: `loadSkillsFromDirInternal` skips the parent's ignore rules for an entry the environment reports as a symlink, and walks a linked directory with a fresh ignore matcher, matching the coding-agent skill walkers (senpi#5060).
+
+### Why
+
+- After senpi#5061 the two loaders disagreed: the coding-agent walkers loaded a git-ignored linked skill, the harness loader still dropped it silently.
+
+### Why an extension could not handle it
+
+- Skill discovery in the harness is a library function with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the directory loop of `loadSkillsFromDirInternal` in `skills.ts`.
+
+## 2026-10-27 - Agent state carries the stable system prefix to the provider context (senpi#4447)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentState.systemPromptStablePrefix` and `AgentContext.systemPromptStablePrefix`.
+- `packages/agent/src/agent.ts`: the initial state and the context snapshot copy it.
+- `packages/agent/src/agent-loop.ts`: `buildProviderContext` passes it to `normalizeContext`.
+
+### Why
+
+- The boundary computed when the system prompt is composed has to reach the provider request with the prompt.
+
+### Why an extension could not handle it
+
+- Provider context assembly in `packages/agent/src/agent-loop.ts` has no extension seam.
+
+### Expected merge conflict zones
+
+- LOW: `AgentState`/`AgentContext` in `packages/agent/src/types.ts`, `createMutableAgentState`/`createContextSnapshot` in `packages/agent/src/agent.ts`, `buildProviderContext` in `packages/agent/src/agent-loop.ts`.
+
+## 2026-10-30 - Keep-alive bytes keep a slow first token alive; keep-alive-only silence is capped (senpi#4608)
+
+### What changed
+
+- `packages/agent/src/stream-keepalive.ts` (new): `createTransportLiveness` records when the provider last reported bytes and when the last assistant event arrived, and judges a fired silence bound: expire it, extend it to one bound after the last byte, or end the request with `StreamKeepAliveTimeoutError` once keep-alives alone exceeded the keep-alive budget.
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` passes `onTransportActivity` to the stream function (chaining a caller's own hook) and hands the liveness to the assistant event reader. When the start or idle bound fires and the provider reported bytes within one full configured bound, the deadline is re-armed instead of ending the request; each assistant event restarts the keep-alive budget. A caller abort past a keep-alive timeout still reads as the abort.
+- `packages/agent/src/types.ts`: `AgentLoopConfig.streamKeepAliveTimeoutMs` (unset or non-positive: keep-alives are unbounded).
+- `packages/agent/src/agent.ts`: `AgentOptions.streamKeepAliveTimeoutMs` and `Agent.streamKeepAliveTimeoutMs`, forwarded into the loop config.
+
+### Why
+
+- The silence bounds counted only public assistant events. With the empty-assistant recovery wrapper holding `start` back until content commits, the start bound is a first-content bound, so a request the provider had accepted and kept alive with SSE `ping` events or `:` comment keep-alives was cut at `streamStartTimeoutMs` (90 s until 2026-09-02, 300 s since) while the model was still producing its first token. The retry re-sent and re-billed the whole prompt, and relays in front of the API had to inject a synthetic content-shaped event to keep slow requests alive.
+
+### Why an extension could not handle it
+
+- The bounds live inside the loop's per-request event reader; no hook sees a request between its start and its first event, and the bytes are only visible to the provider adapter.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` `streamAssistantResponse` stream-function options, `createAssistantEventReader` and `readNextAssistantEvent` signatures and deadline handler.
+- LOW: `types.ts` next to `streamStartTimeoutMs`; `agent.ts` timeout option plumbing.
+
+## 2026-10-30 - Remove redundant compaction type assertions (senpi#4979)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: use the declared `MessageEntry.message` type directly in message extraction, assistant-usage lookup and cut-point token estimation.
+- `packages/agent/src/harness/compaction/utils.ts`: use the discriminant-narrowed tool-call argument type in conversation serialization.
+
+### Why
+
+- `packages/agent/src/harness/compaction/compaction.ts`: the three assertions repeat the `MessageEntry` contract and can conceal future type changes.
+- `packages/agent/src/harness/compaction/utils.ts`: the `toolCall` discriminant already supplies the argument record type; the assertion adds no information.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/compaction/compaction.ts`: these are internal compaction implementation types.
+- `packages/agent/src/harness/compaction/utils.ts`: extensions cannot remove an internal source assertion; emitted runtime behavior is unchanged.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/harness/compaction/compaction.ts`: message extraction, assistant-usage lookup and cut-point token estimation expressions.
+- `packages/agent/src/harness/compaction/utils.ts`: the `toolCall` branch in `serializeConversation`.
+
+## 2026-10-29 - Share tree-sitter runtime initialization (senpi#4748)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts`: share initialization by resolved runtime path independently of parser caching. Serialize each initialization and its grammar loads on one process-global queue that survives cache resets. Discard only failed runtime and grammar loads, checking that the failing promise still owns its cache entry; retain genuinely missing grammars as negative cache entries.
+- `packages/agent/src/harness/utils/read-folders/index.ts` and the read-summary selection receipt refresh the engine source hash and receipt digest only. Historical measurements, measurement commit, language choices, and every receipt assertion remain unchanged; the boundary safety and harness suites requalify this initialization-only change.
+
+### Why
+
+- Concurrent uncached TypeScript and JavaScript loads reinitialized process-global web-tree-sitter state while a grammar was loading, producing an incompatible-language failure. Different injected runtime paths have the same process-global race, and pre-reset failures must not discard newer entries. Missing grammars must not repeat filesystem resolution on every cached read.
+
+### Why an extension could not handle it
+
+- Runtime initialization and parser caching are internal to the read folder engine, before any extension receives a folder.
+
+### Expected merge conflict zones
+
+- LOW: the runtime and grammar caches in `engine.ts`, plus the selection receipt hash binding in `index.ts`.
+
+## 2026-10-27 - Win32 simulation profile for code-level Windows tests (senpi#4510)
+
+### What changed
+
+- `packages/agent/src/testing/win32-sim.ts` (fork-only, test support): drive-letter `\` paths over a backing directory, case-insensitive and case-preserving names, `\\.\pipe\<name>` endpoints, `EBUSY`/`EPERM` with Windows errno values on rename or delete of an open file, and signal-less termination (`win32Kill`: supported signals terminate at once with no handler; others throw `ENOSYS`).
+
+### Why
+
+- `packages/agent/src/testing/win32-sim.ts`: Windows behavior is verified by code-level tests with simulated OS behavior rather than a VM, so every suite needs the same profile.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/testing/win32-sim.ts`: it is test support imported by package test suites, not runtime behavior.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
 ## 2026-10-26 - Thrown provider errors pass the provider error boundary (senpi#4282)
 
 ### What changed

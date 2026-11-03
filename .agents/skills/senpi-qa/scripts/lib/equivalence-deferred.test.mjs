@@ -1,7 +1,7 @@
 // Deferred golden cells: the shipped list stays accountable (owner + issue + due, no stale entry), a DEFERRED cell is
 // never a PASS and never a failure, and every other missing golden or stale entry fails the run.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -9,9 +9,11 @@ import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
 import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-goldens.mjs";
 import {
 	deferredGoldenPath,
+	finishRecord,
 	goldenCellVerdict,
 	staleDeferredEntries,
 	summarizeRun,
+	unrecordedGoldens,
 	validateDeferredList,
 } from "./equivalence-deferred.mjs";
 
@@ -80,6 +82,104 @@ test("a listed cell whose golden exists is stale and fails the run", () => {
 		assert.equal(summarizeRun(passing, [ENTRY], "compare").exitCode, 1);
 		assert.match(summarizeRun(passing, [ENTRY], "compare").line, /1\/1 passed, 0 deferred, 1 failed/);
 	});
+});
+
+function withEnv(patch, body) {
+	const saved = Object.fromEntries(Object.keys(patch).map((key) => [key, process.env[key]]));
+	const apply = (values) => {
+		for (const [key, value] of Object.entries(values)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	};
+	apply(patch);
+	try {
+		return body();
+	} finally {
+		apply(saved);
+	}
+}
+
+test("a SKIPPED case is never PASS, is counted on its own, and does not fail the run (senpi#5265)", () => {
+	const results = [
+		{ id: "E29", pass: false, skipped: "host-capability: missing qemu" },
+		{ id: "E27", pass: true },
+	];
+	assert.deepEqual(summarizeRun(results, [], "compare"), {
+		line: "fused-equivalence-qa compare: 1/2 passed, 0 deferred, 0 failed, 1 skipped",
+		exitCode: 0,
+	});
+	assert.equal(summarizeRun([...results, { id: "E26", pass: false }], [], "compare").exitCode, 1);
+	assert.equal(summarizeRun([results[0]], [], "compare").exitCode, 1, "a run where every case was skipped ran nothing");
+});
+
+test("E29 is SKIPPED naming each missing prerequisite, and required where the host has both (senpi#5265)", () => {
+	const e29 = cases.find((c) => c.id === "E29");
+	const qemu = process.arch === "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64";
+	const bin = mkdtempSync(join(tmpdir(), "eq-qemu-"));
+	try {
+		writeFileSync(join(bin, qemu), "#!/bin/sh\n");
+		chmodSync(join(bin, qemu), 0o755);
+		withEnv({ EQ_GONDOLIN_IMAGE_STORE: undefined, PATH: "/nonexistent" }, () => {
+			const reason = e29.skip();
+			assert.match(reason, /^host-capability: missing EQ_GONDOLIN_IMAGE_STORE/);
+			assert.match(reason, new RegExp(qemu));
+		});
+		withEnv({ EQ_GONDOLIN_IMAGE_STORE: "/images", PATH: "/nonexistent" }, () => {
+			assert.equal(e29.skip(), `host-capability: missing ${qemu} on PATH`);
+		});
+		withEnv({ EQ_GONDOLIN_IMAGE_STORE: undefined, PATH: bin }, () => {
+			assert.match(e29.skip(), /^host-capability: missing EQ_GONDOLIN_IMAGE_STORE[^]*\)$/);
+		});
+		withEnv({ EQ_GONDOLIN_IMAGE_STORE: "/images", PATH: bin }, () => {
+			assert.equal(e29.skip(), undefined);
+			assert.equal(e29.spec().env.GONDOLIN_IMAGE_STORE, "/images");
+		});
+	} finally {
+		rmSync(bin, { recursive: true, force: true });
+	}
+});
+
+test("a record run fails for every golden it did not rewrite unless --leave-unrecorded names it (senpi#5189)", () => {
+	const results = [
+		{ id: "E01", pass: true, written: true },
+		{ id: "E29", pass: false, error: "E29 needs EQ_GONDOLIN_IMAGE_STORE" },
+		{ id: "E30", pass: false, skipped: "no gondolin image store" },
+	];
+	const goldenIds = ["E01", "E02", "E29", "E30"];
+	const unrecorded = unrecordedGoldens({ goldenIds, results });
+	assert.deepEqual(
+		unrecorded.map((line) => line.split(":")[0]),
+		["E02", "E29", "E30"],
+	);
+	const written = [{ id: "E01", pass: true, written: true }];
+	const left = unrecordedGoldens({ goldenIds: ["E01", "E29"], results: written });
+	assert.equal(summarizeRun(written, [], "record", left).exitCode, 1);
+	const named = unrecordedGoldens({ goldenIds: ["E01", "E29"], results: written, leaveUnrecorded: ["E29"] });
+	assert.deepEqual(named, []);
+	assert.equal(summarizeRun(written, [], "record", named).exitCode, 0);
+});
+
+test("a record run's dir keeps its old baseline.json while a golden there is left unrecorded (senpi#5189)", () => {
+	const dir = mkdtempSync(join(tmpdir(), "eq-record-"));
+	try {
+		for (const name of ["E01.json", "E29.json", "baseline.json"]) writeFileSync(join(dir, name), "old\n");
+		const results = [{ id: "E01", pass: true, written: true }];
+		const manifest = { head: "new" };
+
+		const left = finishRecord({ dir, results, leaveUnrecorded: [], manifest });
+		assert.deepEqual(
+			left.map((line) => line.split(":")[0]),
+			["E29"],
+		);
+		assert.equal(readFileSync(join(dir, "baseline.json"), "utf8"), "old\n");
+
+		assert.deepEqual(finishRecord({ dir, results, leaveUnrecorded: ["E29"], manifest }), []);
+		assert.deepEqual(JSON.parse(readFileSync(join(dir, "baseline.json"), "utf8")), manifest);
+		assert.ok(existsSync(join(dir, "E29.json")));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });
 
 test("a missing golden that is not listed fails; a listed one is DEFERRED, never PASS, and does not fail", () => {

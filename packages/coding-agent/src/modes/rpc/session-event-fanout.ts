@@ -1,28 +1,25 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
-import { legacyAttachView, legacyResyncMessage } from "./compact-legacy-view.ts";
-import { type FrozenCheckpoint, RecoveryCheckpoints } from "./compact-recovery-state.ts";
-import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { CompactSelection } from "./compact-negotiation.ts";
+import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
+import { tmpdir } from "node:os";
+import { startRecoveryCleanup } from "./compact-recovery-cleanup.ts";
+import { EventLeases } from "./compact-event-leases.ts";
+import { legacyAttachView } from "./compact-legacy-view.ts";
+import { RecoveryPageRequests } from "./compact-recovery-requests.ts";
+import { RecoveryCheckpoints } from "./compact-recovery-state.ts";
+import { COMPACT_EVENTS_CAPABILITY, MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { ExtensionTransportOwner } from "./extension-owner.ts";
 import { LegacyReplayStore } from "./legacy-replay-store.ts";
-import { resyncCut } from "./legacy-resync-view.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import {
+	type RegisteredConnection,
+	type SessionEventWriterConnection,
+	transportOf,
+} from "./session-event-connection.ts";
+import { admissionOf, SessionRecoveryPins } from "./session-recovery-pins.ts";
+import { closeSocket, queueFailureDetail } from "./socket-closing.ts";
 import { type ShedMode, SocketEventSinkActor } from "./socket-event-fanout.ts";
 import { EVENT_RESYNC_CAPABILITY } from "./socket-peer-recovery.ts";
-
-export type RawWriter = (chunk: string) => void;
-export type BackpressureWaiter = () => Promise<void>;
-
-export interface SessionEventWriterConnection {
-	readonly writeRaw: RawWriter;
-	readonly waitForBackpressure: BackpressureWaiter;
-	/**
-	 * Tears the transport down. Called when this connection's event queue fails
-	 * (overflow, write error): the actor has already stopped delivering records
-	 * AND command responses, so a socket left open would strand the client on a
-	 * connection that can never answer again. Closing it lets the client resync.
-	 */
-	readonly close?: () => void;
-}
 
 const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"agent_start",
@@ -33,18 +30,10 @@ const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"session_lifecycle",
 ]);
 
-type RegisteredConnection = {
-	readonly connection: SessionEventWriterConnection;
-	readonly actor: SocketEventSinkActor;
-	/** This registration's incarnation of the peer: the owner every checkpoint it freezes is bound to. */
-	readonly socketEpoch: string;
-	readonly owner: ExtensionTransportOwner;
-};
-
-/** A checkpoint pinned for one frozen view, released once on that view's end (R3.C1.5). */
-type PinnedRoot = FrozenCheckpoint & { readonly sessionId: string };
-
 export class SessionEventFanout {
+	requiredSessions?: (peer: string) => readonly string[];
+	onSessionForgotten?: (sessionId: string) => void;
+	readonly startupCleanup = compactUpdatesEnabled() ? startRecoveryCleanup(tmpdir()) : undefined;
 	onConnectionClosed?: (id: string) => void;
 	/** Each routing session's acceptance lane; retired when the session is sealed or forgotten. */
 	readonly acceptance = new Map<string, SessionAcceptanceLane>();
@@ -52,6 +41,12 @@ export class SessionEventFanout {
 	readonly replay = new LegacyReplayStore();
 	/** The checkpoint tokens this host froze for its peers' baselines and recoveries (S08a). */
 	readonly checkpoints = new RecoveryCheckpoints();
+	/** The ordinary-event leases of peers that selected compact events (S13); absent with the flag off. */
+	readonly events = compactUpdatesEnabled() ? new EventLeases() : undefined;
+	/** The page route over those tokens and leases (S11b, S13); absent with the flag off, so it answers as before. */
+	readonly pages = compactUpdatesEnabled()
+		? new RecoveryPageRequests(this.checkpoints, undefined, this.events)
+		: undefined;
 	private socketEpochs = 0;
 	/** Today's shed path with the compact-updates flag off; the cut frozen at the shed with it on. */
 	private readonly shedMode: ShedMode = compactUpdatesEnabled() ? "capture" : "drop";
@@ -63,6 +58,18 @@ export class SessionEventFanout {
 	/** Roots an attach baseline still reads; a seal keeps them readable until that view ends (RULING-51 Q2=A). */
 	private readonly attachViews = new Set<FrozenAcceptedRoot>();
 	private readonly registeredCapabilityConnections = new Set<string>();
+	private readonly pins = new SessionRecoveryPins(
+		this.acceptance,
+		this.checkpoints,
+		this.replay,
+		{
+			socketEpoch: (id) => this.connections.get(id)?.socketEpoch,
+			ordinals: (id) => this.connectionSessions.get(id),
+			required: (id) => this.requiredSessions?.(id) ?? [],
+			has: (id, capability) => this.connectionHas(id, capability),
+		},
+		this.shedMode,
+	);
 
 	registerConnection(
 		id: string,
@@ -72,28 +79,37 @@ export class SessionEventFanout {
 		this.unregisterConnection(id);
 		const owner = new ExtensionTransportOwner();
 		const socketEpoch = `socket-${++this.socketEpochs}`;
-		const actor = new SocketEventSinkActor(
+		const Actor = this.pages ? AdmissionRoutingActor : SocketEventSinkActor;
+		const actor = new Actor(
 			connection,
 			(cause) => {
-				if (this.connections.get(id)?.actor === actor) {
+				const current = this.connections.get(id)?.actor === actor;
+				const compact = current && this.connectionHas(id, COMPACT_EVENTS_CAPABILITY);
+				if (current) {
 					owner.retire();
 					this.connections.delete(id);
 					this.connectionCapabilities.delete(id);
 					this.connectionSessions.delete(id);
 					this.registeredCapabilityConnections.delete(id);
+					this.pages?.forgetPeer(socketEpoch);
 					this.checkpoints.forgetPeer(socketEpoch);
+					this.events?.forgetPeer(socketEpoch);
 					this.onConnectionClosed?.(id);
 				}
 				process.stderr.write(
 					`senpi rpc connection ${id} event queue failed; closing: ${cause instanceof Error ? cause.message : String(cause)}\n`,
 				);
-				connection.close?.();
+				void closeSocket(connection, actor, compact, "event_queue_failed", queueFailureDetail(cause));
 			},
 			options.maxQueueBytes,
 			options.stallMs,
 			this.shedMode,
 		);
-		this.connections.set(id, { connection, actor, socketEpoch, owner });
+		if (actor instanceof AdmissionRoutingActor) actor.bind(this.checkpoints, socketEpoch, id);
+		const close: RegisteredConnection["close"] = (code, detail) =>
+			void closeSocket(connection, actor, this.connectionHas(id, COMPACT_EVENTS_CAPABILITY), code, detail);
+		const selection = new CompactSelection();
+		this.connections.set(id, { connection: transportOf(connection), actor, socketEpoch, owner, selection, close });
 		this.connectionCapabilities.set(id, new Set());
 		this.connectionSessions.set(id, new Map());
 	}
@@ -103,7 +119,9 @@ export class SessionEventFanout {
 		if (!registered) return;
 		registered.owner.retire();
 		registered.actor.close();
+		this.pages?.forgetPeer(registered.socketEpoch);
 		this.checkpoints.forgetPeer(registered.socketEpoch);
+		this.events?.forgetPeer(registered.socketEpoch);
 		this.connections.delete(id);
 		this.connectionCapabilities.delete(id);
 		this.connectionSessions.delete(id);
@@ -116,7 +134,7 @@ export class SessionEventFanout {
 	 * baseline barrier before the session is live for it; a repeated hold adds nothing. The attempt dies with a
 	 * detach, the peer, or a replacement (new lane epoch), and releases its checkpoint in every case.
 	 */
-	attachConnectionToSession(id: string, sessionId: string): void {
+	attachConnectionToSession(id: string, sessionId: string, compact = false): void {
 		const registered = this.connections.get(id);
 		if (!registered) return;
 		const sessions = this.connectionSessions.get(id) ?? new Map<string, number>();
@@ -124,67 +142,44 @@ export class SessionEventFanout {
 		const ordinal = ++this.attachOrdinal;
 		sessions.set(sessionId, ordinal);
 		this.connectionSessions.set(id, sessions);
-		const pinned = this.pin(id, [sessionId]);
-		for (const { root } of pinned) this.attachViews.add(root);
+		if (compact) return;
+		const pinned = this.pins.pin(id, [sessionId]);
+		const first = pinned[0];
+		const source = first?.outcome.ok ? first.outcome.value : undefined;
+		if (source) this.attachViews.add(source.root);
 		const release = () => {
-			for (const { root } of pinned) this.attachViews.delete(root);
-			this.unpin(pinned);
+			if (source) this.attachViews.delete(source.root);
+			this.pins.unpin(pinned);
 		};
 		const view = { placeholders: this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY), now: Date.now() };
 		const cursor = this.acceptance.has(sessionId)
-			? legacyAttachView(sessionId, pinned[0], view, this.replay.track(release))
+			? legacyAttachView(sessionId, source, view, this.replay.track(release))
 			: this.replay.freezeAttach(sessionId, { ...view, onRelease: release });
+		// Live while the same attach holds the session and every pinned lane is still the incarnation it was pinned at.
 		registered.actor.installBaseline(
 			cursor,
 			() =>
 				this.connections.get(id)?.actor === registered.actor &&
 				this.connectionSessions.get(id)?.get(sessionId) === ordinal &&
-				pinned.every(({ lane, root }) => lane.sessionEpoch === root.sessionEpoch),
+				pinned.every(({ lane, sessionEpoch }) => lane.sessionEpoch === sessionEpoch),
 		);
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
+		this.pins.retire(id, sessionId);
 		this.connectionSessions.get(id)?.delete(sessionId);
 	}
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		const registered = this.connections.get(id);
 		if (!registered) return;
-		this.connectionCapabilities.set(id, new Set(capabilities));
+		// RULING-81 Q-B: the compact-events opt-in is accepted only behind the engine-socket flag.
+		const accepted = registered.selection.wireCapabilities(capabilities, this.events !== undefined);
+		this.connectionCapabilities.set(id, new Set(accepted));
 		this.registeredCapabilityConnections.add(id);
-		if (capabilities.includes(EVENT_RESYNC_CAPABILITY)) {
-			// Checkpoints frozen at the shed, before the actor awaits its drain (R3.C1.5), as the next generation of each
-			// held admission; released when the recovery ends.
-			registered.actor.enableRecovery((reason, carried = []) => {
-				const capture = this.shedMode === "capture";
-				const attached = this.held(id);
-				const ordinals = new Map(this.connectionSessions.get(id));
-				const pinned = this.pin(id, attached);
-				const roots = new Map(pinned.map((root) => [root.sessionId, root]));
-				const view = {
-					reason,
-					placeholders: this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY),
-					// Capture: closed once the attachment held at the shed is gone (carry 30); drop: today's rule.
-					closedNow: (sessionId: string) =>
-						capture
-							? this.connectionSessions.get(id)?.get(sessionId) !== ordinals.get(sessionId) ||
-								!ordinals.has(sessionId)
-							: !this.holds(id, sessionId),
-					onRelease: () => this.unpin(pinned),
-				};
-				const sessions = capture ? [...new Set([...carried, ...attached])] : attached;
-				return resyncCut(
-					sessions,
-					capture ? () => sessions : () => [...new Set([...sessions, ...this.held(id)])],
-					(sessionId) =>
-						this.acceptance.has(sessionId)
-							? legacyResyncMessage(sessionId, roots.get(sessionId))
-							: Promise.resolve(this.replay.latestMessage(sessionId)),
-					view,
-					this.replay.track,
-				);
-			});
-		} else registered.actor.disableRecovery();
+		if (capabilities.includes(EVENT_RESYNC_CAPABILITY))
+			registered.actor.enableRecovery((reason, carried) => this.pins.resync(id, reason, carried));
+		else registered.actor.disableRecovery();
 	}
 
 	clearConnectionCapabilities(id: string): void {
@@ -229,6 +224,12 @@ export class SessionEventFanout {
 		return this.attachment(id, sessionId);
 	}
 
+	/** The admission (the attach ordinal) through which `id` holds `sessionId` now; undefined when it does not. */
+	admissionOf(id: string, sessionId: string): string | undefined {
+		const ordinal = this.connectionSessions.get(id)?.get(sessionId);
+		return ordinal === undefined ? undefined : admissionOf(ordinal);
+	}
+
 	get(id: string): RegisteredConnection | undefined {
 		return this.connections.get(id);
 	}
@@ -268,7 +269,8 @@ export class SessionEventFanout {
 	deliverToSession(sessionId: string, line: string): void {
 		for (const [id, { actor }] of this.connections) {
 			const held = this.attachment(id, sessionId);
-			if (held) actor.enqueue(line, undefined, undefined, undefined, false, held);
+			if (held || this.requiredSessions?.(id).includes(sessionId))
+				actor.enqueue(line, undefined, undefined, undefined, false, held);
 		}
 	}
 
@@ -277,14 +279,18 @@ export class SessionEventFanout {
 		if (!this.acceptance.has(sessionId)) this.replay.remember(sessionId, value, line, placeholderLine);
 	}
 
+	/**
+	 * A seal or forget ends the routing session for good (its handle is never reissued or re-attached): the lane retires
+	 * (a queued attach view keeps its root) and the session's stream records go on every peer (RULING-56 (2)).
+	 */
 	forgetSession(sessionId: string): void {
+		this.onSessionForgotten?.(sessionId);
+		for (const { actor, socketEpoch } of this.connections.values())
+			if (actor instanceof AdmissionRoutingActor) actor.remember(sessionId, this.checkpoints, socketEpoch);
+		this.checkpoints.forgetSession(sessionId);
 		this.acceptance.get(sessionId)?.retire("close", this.attachViews);
 		this.acceptance.delete(sessionId);
 		this.replay.forget(sessionId);
-	}
-
-	private holds(id: string, sessionId: string): boolean {
-		return this.connectionSessions.get(id)?.has(sessionId) ?? false;
 	}
 
 	/**
@@ -294,32 +300,5 @@ export class SessionEventFanout {
 	private attachment(id: string, sessionId: string): (() => boolean) | undefined {
 		const ordinal = this.connectionSessions.get(id)?.get(sessionId);
 		return ordinal === undefined ? undefined : () => this.connectionSessions.get(id)?.get(sessionId) === ordinal;
-	}
-
-	private held(id: string): readonly string[] {
-		return [...(this.connectionSessions.get(id)?.keys() ?? [])];
-	}
-
-	/** One checkpoint per held lane-owned session, on the admission (the attach ordinal) that holds it for `id`. */
-	private pin(id: string, sessionIds: readonly string[]): readonly PinnedRoot[] {
-		const socketEpoch = this.connections.get(id)?.socketEpoch;
-		return sessionIds.flatMap((sessionId) => {
-			const lane = this.acceptance.get(sessionId);
-			const ordinal = this.connectionSessions.get(id)?.get(sessionId);
-			if (!lane || ordinal === undefined || socketEpoch === undefined) return [];
-			const route = {
-				socketEpoch,
-				admissionId: `attach-${ordinal}`,
-				routeKind: "ordinary" as const,
-				peer: id,
-				sessionId,
-			};
-			const frozen = this.checkpoints.freeze(route, lane);
-			return frozen.ok ? [{ sessionId, ...frozen.value }] : [];
-		});
-	}
-
-	private unpin(pinned: readonly PinnedRoot[]): void {
-		for (const { token } of pinned) this.checkpoints.release(token);
 	}
 }

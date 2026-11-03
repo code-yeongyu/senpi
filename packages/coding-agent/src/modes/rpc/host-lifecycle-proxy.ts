@@ -3,7 +3,7 @@
  * adoption of the public name, and the readiness probes of the private hop. Split out of
  * `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566).
  */
-import { chmod, mkdir, stat, unlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import type { HostAdmission } from "./host-admission.ts";
@@ -15,7 +15,6 @@ import { PublicRpcConnection } from "./rpc-public-auth.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { type ListenerState, MAX_SOCKET_PATH_BYTES, socketEntryListenerState } from "./socket-ownership.ts";
 
-export { adoptPublicSocket } from "./socket-ownership.ts";
 import {
 	authenticateSocket,
 	ensureSocketSecret,
@@ -115,18 +114,20 @@ export async function waitForListener(
 	timeoutMs: number,
 	secret?: Uint8Array,
 	internalKey?: Buffer,
+	/** A coordinated start retries a silent probe on a fresh connection; its launcher decides expiry (senpi#4602). */
+	options: { readonly retrySilent?: boolean } = {},
 ): Promise<void> {
 	const deadline = performance.now() + timeoutMs;
 	while (performance.now() <= deadline) {
 		const probeMs = Math.max(1, Math.min(INTERNAL_READINESS_PROBE_MS, deadline - performance.now()));
 		const probe = await canConnect(socketPath, secret, internalKey, probeMs);
 		if (probe === "ready") return;
-		if (probe === "silent")
+		if (probe === "silent" && !options.retrySilent)
 			throw new Error(
 				`${socketPath}: host accepted the internal hop but did not answer within ${Math.round(probeMs)}ms`,
 			);
 		// A host that answered but could not prove the key will not start proving it: fail now, and say why.
-		if (probe !== "refused") throw new Error(`${socketPath}: ${probe.unproven}`);
+		if (probe !== "refused" && probe !== "silent") throw new Error(`${socketPath}: ${probe.unproven}`);
 		await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`${socketPath}: host did not start listening within ${timeoutMs}ms`);
@@ -206,7 +207,10 @@ export interface PrepareSocketPathHooks {
 	readonly listenerState?: (socketPath: string) => Promise<ListenerState>;
 }
 
-/** One entry's identity including its change time: a rebind at the same inode still moves ctime. */
+/**
+ * One entry's identity including its change time: a rebind at the same inode still moves ctime. Read with `lstat`, so
+ * a symlink is stamped as itself (never as a socket) and the path it names is never consulted (#5314).
+ */
 type EntryStamp = {
 	readonly dev: bigint;
 	readonly ino: bigint;
@@ -216,7 +220,7 @@ type EntryStamp = {
 
 async function stampOf(socketPath: string): Promise<EntryStamp | undefined> {
 	try {
-		const entry = await stat(socketPath, { bigint: true });
+		const entry = await lstat(socketPath, { bigint: true });
 		return { dev: entry.dev, ino: entry.ino, ctimeNs: entry.ctimeNs, socket: entry.isSocket() };
 	} catch (cause) {
 		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
@@ -227,6 +231,15 @@ async function stampOf(socketPath: string): Promise<EntryStamp | undefined> {
 const sameStamp = (a: EntryStamp, b: EntryStamp): boolean =>
 	a.dev === b.dev && a.ino === b.ino && a.ctimeNs === b.ctimeNs;
 
+/**
+ * Frees `socketPath` for this process's bind, removing only a dead socket entry and refusing everything else
+ * (#5314). No portable fd-based check exists for a socket entry: `open()` fails on one (ENXIO on Linux,
+ * EOPNOTSUPP on macOS), `O_PATH` is Linux-only, and there is no unlink-by-fd. So every read is `lstat`, which
+ * never follows a link, and `unlink(2)` removes the name, never a link's target. The entry is re-stamped before
+ * the second reachability probe (which must not be steered through a swapped-in link) and again as the last step
+ * before the unlink; reachability is re-checked after the decision because a socket bound earlier can start
+ * listening without changing identity.
+ */
 export async function prepareSocketPath(socketPath: string, hooks: PrepareSocketPathHooks = {}): Promise<void> {
 	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
 	// A path the kernel would truncate binds a DIFFERENT endpoint than the one every client was
@@ -243,14 +256,23 @@ export async function prepareSocketPath(socketPath: string, hooks: PrepareSocket
 		new Error(`${socketPath}: address already in use by a live server (${evidence}).`);
 	// Linux refuses a connect to a regular file too; never remove what is not a socket.
 	if (!probed.socket) throw inUse("the entry is not a socket");
-	const state = await (hooks.listenerState ?? socketEntryListenerState)(socketPath);
+	const probe = hooks.listenerState ?? socketEntryListenerState;
+	const state = await probe(socketPath);
 	if (state.verdict === "gone") return;
 	if (state.verdict === "live") throw inUse(state.evidence);
 	await hooks.afterStaleProbe?.();
 	// Something may have replaced the entry since the probe; unlink only the entry probed dead.
-	const current = await stampOf(socketPath);
-	if (current === undefined) return;
-	if (!sameStamp(probed, current)) throw inUse("the entry changed after it was probed");
+	const unchanged = async (): Promise<boolean> => {
+		const current = await stampOf(socketPath);
+		if (current === undefined) return false;
+		if (!sameStamp(probed, current)) throw inUse("the entry changed after it was probed");
+		return true;
+	};
+	if (!(await unchanged())) return;
+	const again = await probe(socketPath);
+	if (again.verdict === "gone") return;
+	if (again.verdict === "live") throw inUse(again.evidence);
+	if (!(await unchanged())) return;
 	try {
 		await unlink(socketPath);
 	} catch (cause) {

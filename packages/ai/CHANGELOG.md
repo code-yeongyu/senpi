@@ -12,6 +12,179 @@
 
 ### Removed
 
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- `StreamOptions.sessionAffinityKey`: an opaque routing key that Anthropic Messages sends in the session-affinity header instead of `sessionId` ([#5086](https://github.com/code-yeongyu/senpi/pull/5086))
+
+### Changed
+
+### Fixed
+
+- Sign in with ChatGPT uses a free IPv4 loopback callback port when port 1455 is occupied, keeping the same redirect URI for authorization, code exchange and manual paste ([#5008](https://github.com/code-yeongyu/senpi/pull/5008)).
+- OAuth refresh can use an injected session lock to prevent rotating-token reuse across processes without blocking unrelated accounts.
+- A credential pool's all-blocked refusal reports a rate limit with the time the first account is due back instead of an unclassified error ([#5032](https://github.com/code-yeongyu/senpi/pull/5032))
+
+### Removed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Stored credentials carry an optional `loginId` that each sign-in through `Models.login` writes fresh; a token refresh keeps or drops it and never mints one ([#4430](https://github.com/code-yeongyu/senpi/pull/4430))
+- Provider diagnostic codes `account_pool_blocked` (`rate_limit`) and `account_pool_auth_blocked` (`auth`) for a request a subscription account pool refuses locally (#4676).
+
+### Changed
+
+### Fixed
+
+- A managed account-pool placeholder credential is never sent to a provider's token endpoint; resolving it without an account fails with an auth error instead of a provider 401 ([#4426](https://github.com/code-yeongyu/senpi/pull/4426))
+- The page shown after a provider browser sign-in no longer shows the pi logo; it shows the product set with `setOAuthPageBrand` ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- The ChatGPT sign-in authorize request falls back to the host's brand name as `agent_name_hint` when the caller passes no app name ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- Anthropic sessions whose replayed thinking is bound to a different conversation recover instead of failing every turn: Claude requests replaying signed thinking ask the API to drop a mismatched block, and the 400 is retried once on the same model without the replayed thinking ([#5589](https://github.com/code-yeongyu/senpi/pull/5589))
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- A provider request that fails TLS chain verification now reports the runtime's verification code (for example `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`) as its `network` diagnostic code instead of the SDK's connection error class or no diagnostic ([#5253](https://github.com/code-yeongyu/senpi/pull/5253))
+
+### Fixed
+
+- Sign in with ChatGPT reuses the standalone AI CLI's installation ID and uses the configured app name during registration (part of [#5003](https://github.com/code-yeongyu/senpi/issues/5003)).
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fall back to ambient environment variables when stored Google Vertex location or project is an empty string ([#5135](https://github.com/code-yeongyu/senpi/pull/5135)).
+- A 503 whose error body merely mentions a billing lookup (e.g. "resolve Billing Scope: ... dial tcp: i/o timeout") is no longer classified as a spent account, so the turn retries instead of failing as an account usage limit ([#4632](https://github.com/code-yeongyu/senpi/issues/4632))
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- `OAuthTokenEndpointError` carries the response's OAuth error code (`oauthError`) and whether the adapter decided the endpoint refused the credential (`credentialRefused`); Kimi Code's refresh sets both, so its refusal is read from facts rather than from its message ([#5010](https://github.com/code-yeongyu/senpi/pull/5010))
+- Per-account model catalog for Sign in with ChatGPT accounts, read from the account's `/v1/models` list and refreshed when the active account changes.
+
+### Changed
+
+### Fixed
+
+- SIWC sign-out atomically clears local tokens, revokes renewable sessions with bounded retries, and retains registration metadata. In-flight refresh cannot restore a signed-out slot; discarded rotated tokens are revoked and logout waits for their cleanup. Overlapping logouts keep auth blocked until all finish, and unknown slots or unconfirmed remote revocation return a typed unconfirmed result ([#5025](https://github.com/code-yeongyu/senpi/pull/5025)).
+- Classify Sign in with ChatGPT admission and streaming errors using exact provider codes, preserve direct-admission details, and avoid retrying terminal restrictions or invalid requests.
+- A tool call whose name carries a stray word prefix (`trophy_eval`) runs the one registered tool its `_`-separated suffix names, with the usual `[auto-corrected]` notice; a prefix that is a destructive verb or another tool's name is refused ([#5316](https://github.com/code-yeongyu/senpi/pull/5316))
+
+### Removed
+
+- The unused duplicate credential-pool failover engine (`runSlotFailover`, `PoolFailoverError`, `classifyPoolFailure` in `auth/pool/failover` and `auth/pool/classify`); the coding agent's credential pool was always the engine in use. `DEFAULT_SLOT_BLOCK_MS`, `MAX_SLOT_BLOCK_MS` and the `TURN_RETRY_SUPPRESSION_PREFIX` re-export stay ([#5022](https://github.com/code-yeongyu/senpi/pull/5022), part of [#2304](https://github.com/code-yeongyu/senpi/issues/2304))
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Preserve typed-secret OAuth prompt metadata through the compatibility adapter. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
+### Changed
+
+- A Claude OAuth token given to the `anthropic` provider is refused before any request with `ClaudeOAuthTokenRefusedError`, which points at `/login anthropic-subscription`; Anthropic API keys, `ANTHROPIC_AUTH_TOKEN` headers and workload identity federation are unchanged ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+
+### Fixed
+
+- Signing in to ChatGPT Subscription again as an already-saved account replaces that account instead of adding a duplicate, so sessions stop picking its invalidated old token ([#5009](https://github.com/code-yeongyu/senpi/pull/5009))
+- Avoid mixing strict and non-strict function tools on OpenGateway routes; reject conflicting required-strict tools before sending ([#4821](https://github.com/code-yeongyu/senpi/issues/4821)).
+- Tool argument validation for a discriminated `anyOf`/`oneOf` schema reports only the branch the arguments address, as one actionable line ([#5147](https://github.com/code-yeongyu/senpi/pull/5147)).
+- On OpenAI-compatible routes, tools whose parameters are a union of object shapes now tell the model which fields each shape requires ([#5150](https://github.com/code-yeongyu/senpi/pull/5150))
+
+### Removed
+
+- The Anthropic Messages API no longer takes Claude OAuth tokens (`sk-ant-oat...`) as API keys: the request path that presented senpi as Claude Code (identity betas, `claude-cli/<version>` user agent, Claude Code system block, tool-name mapping) and the `PI_CLAUDE_CODE_VERSION` fingerprint resolver are removed ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Anthropic requests send the cross-session stable part of the system prompt as its own cached block, so a new session reads it from cache even when memory or MCP instructions differ ([#4455](https://github.com/code-yeongyu/senpi/pull/4455))
+
+### Fixed
+
+- A 429 that names its reset as a wall clock with a zone ("resets 12am (Asia/Seoul)") now yields a retry hint ([#5047](https://github.com/code-yeongyu/senpi/pull/5047)).
+
+### Removed
+
+- The built-in Anthropic OAuth (PKCE) login, its copy-code login, its loopback callback listener on port 53692, its token refresh, and `loadAnthropicOAuth` from `@earendil-works/pi-ai/oauth`; Claude subscription sign-in goes through the Claude Code CLI ([#4515](https://github.com/code-yeongyu/senpi/pull/4515))
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- GPT-6.1 Terra (`gpt-6.1-terra`) in the ChatGPT subscription catalog, with a 500k-token context ([#4585](https://github.com/code-yeongyu/senpi/pull/4585))
+
+### Changed
+
+### Fixed
+
+- `describeProviderFailureForUser` rewrites the `Provider is not configured: <id>` failure into a neutral step (connect the provider, or choose another model), and shared account-limit descriptions omit TUI login/model commands. The message itself keeps the sentinel for classifiers ([#4341](https://github.com/code-yeongyu/senpi/pull/4341))
+- `AllSlotsBlockedError` shows its due-back time in local time, followed by the ISO instant, with a wait or sign-in step; `soonestUnblockAt` is unchanged ([#4544](https://github.com/code-yeongyu/senpi/pull/4544))
+- An OpenAI-compatible 429 that names a quota exhaustion only in `error.type` (`exceeded_current_quota_error`, no `error.code`) now classifies as `quota` instead of `unknown`; coarse `type` buckets are still ignored ([#4950](https://github.com/code-yeongyu/senpi/issues/4950))
+
+### Removed
+
 ## [2026.10.27-2] - 2026-10-27
 
 ### Breaking Changes

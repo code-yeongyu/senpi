@@ -1,14 +1,16 @@
 import type { AccountLoginReceipt, Credential } from "@earendil-works/pi-ai";
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
+import { describeAccountBlock } from "../../../credential-account-status.ts";
 import { describeModelBlocks } from "../../../credential-pool/model-scope.ts";
+import { accountLimitsFor, describeAccountLimits } from "../../../subscription-limits/limit-summary.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "../account-display-name.ts";
 import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
-import { emitProviderAccountsChanged } from "./account-events.ts";
 import {
 	ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 	pinProviderAccount,
 	removeProviderAccount,
+	timedBlock,
 	unblockProviderAccount,
 } from "./account-management.ts";
 import { type AccountSlot, type AnthropicSubscriptionCredential, emptyCredential, listAccounts } from "./accounts.ts";
@@ -36,11 +38,8 @@ function asCredential(value: Credential | undefined): AnthropicSubscriptionCrede
 }
 
 function accountStatus(slot: AccountSlot, now: number): string | undefined {
-	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) {
-		const until = new Date(slot.blockedUntil).toISOString();
-		return slot.blockReason === "auth_error" ? `login rejected; re-checked at ${until}` : `blocked until ${until}`;
-	}
-	return undefined;
+	const block = timedBlock(slot, now);
+	return block.blocked ? describeAccountBlock(block) : undefined;
 }
 
 function slotStatus(slot: AccountSlot): string {
@@ -174,6 +173,8 @@ function showAccounts(
 		if (account.name === pinned) states.push("pinned");
 		if (account.name === affinityPick) states.push("affinity pick");
 		lines.push(`  ${states.join(" | ")}`);
+		const limits = accountLimitsFor(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, account.name);
+		lines.push(`    ${describeAccountLimits(limits, Date.now())}`);
 	}
 	const labelFor = (name: string) => accountLabel(accounts.find((account) => account.name === name) ?? { name });
 	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${labelFor(pinned)} (${pinSource.toLowerCase()})`}`);
@@ -199,7 +200,9 @@ async function addAccount(ctx: ExtensionCommandContext, deps: ClaudeAccountComma
 				receipt = committed;
 			},
 		});
-		emitProviderAccountsChanged(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+		// senpi#5116: ModelRuntime.login already emits accounts_changed (with
+		// the "login" remedy); a second emit here sent RPC clients a duplicate
+		// auth_accounts_changed event.
 		ctx.ui.notify("Anthropic Subscription account added.", "info");
 		await promptAccountDisplayName(ctx, receipt);
 	} catch (error) {
@@ -230,8 +233,12 @@ async function removeNamedAccount(
 		return;
 	}
 	try {
-		await removeProviderAccount(ctx.modelRegistry.authStorage, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, name);
-		ctx.ui.notify(`Removed Anthropic Subscription account: ${name}.`, "info");
+		const { notice } = await removeProviderAccount(
+			ctx.modelRegistry.authStorage,
+			ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+			name,
+		);
+		ctx.ui.notify(notice ?? `Removed Anthropic Subscription account: ${name}.`, notice ? "warning" : "info");
 	} catch (error) {
 		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 	}

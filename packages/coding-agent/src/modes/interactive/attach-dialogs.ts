@@ -1,4 +1,4 @@
-import { Container, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Container, Text, type Component, type TUI } from "@earendil-works/pi-tui";
 import type { KeybindingsManager } from "../../core/keybindings.ts";
 import type { RpcExtensionUIRequest, RpcExtensionUIResponse } from "../rpc/rpc-types.ts";
 import { AnswerRefusedError } from "./attach-client.ts";
@@ -6,6 +6,23 @@ import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
+import { theme } from "./theme/theme.ts";
+
+/**
+ * "Requested from <device>" for a dialog raised by a remote device's turn (senpi#5480), read from the
+ * frame's `remoteOrigin`. Absent or malformed means a local turn: no label. The name is wire data, so
+ * control characters are dropped before it reaches the terminal.
+ */
+function remoteOriginLabel(request: object): string | undefined {
+	const origin = "remoteOrigin" in request ? request.remoteOrigin : undefined;
+	if (typeof origin !== "object" || origin === null || !("deviceId" in origin)) return undefined;
+	const name = "deviceName" in origin && typeof origin.deviceName === "string" ? clean(origin.deviceName) : "";
+	const id = typeof origin.deviceId === "string" ? clean(origin.deviceId) : "";
+	const device = name || id;
+	return device ? `Requested from ${device}` : undefined;
+}
+
+const clean = (value: string): string => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
 
 /** Owns only the visible dialog; the endpoint owns its resolution and lifetime. */
 export class AttachDialogs extends Container {
@@ -89,7 +106,17 @@ export class AttachDialogs extends Container {
 				return;
 			}
 			if (this.closed || this.settled.has(request.id)) return;
-			this.report(`${error instanceof Error ? error.message : String(error)}. Answer again.`);
+			this.report(
+				request.method === "input" && request.secret
+					? "Secret answer was not acknowledged. The outcome is unknown; enter a new answer only after checking."
+					: `${error instanceof Error ? error.message : String(error)}. Answer again.`,
+			);
+			if (
+				request.method === "input" &&
+				request.secret &&
+				(!(error instanceof AnswerRefusedError) || Date.now() >= (request.deadlineAtMs ?? 0))
+			)
+				return;
 			this.queue.unshift(request);
 			this.showNext();
 			this.ui.requestRender();
@@ -102,7 +129,18 @@ export class AttachDialogs extends Container {
 		if (!request) return;
 		const finish = (response: RpcExtensionUIResponse) => {
 			if (this.current?.request.id !== request.id) return;
-			this.submit(request, response);
+			this.submit(
+				request,
+				request.method === "input" && request.secret
+					? {
+							...response,
+							secret: true,
+							uiRequestId: request.id,
+							id: crypto.randomUUID(),
+							answerId: crypto.randomUUID(),
+						}
+					: response,
+			);
 		};
 		const cancel = () => finish({ type: "extension_ui_response", id: request.id, cancelled: true });
 		let component: Component & { dispose?: () => void };
@@ -126,12 +164,17 @@ export class AttachDialogs extends Container {
 				);
 				break;
 			case "input":
+				if (request.secret && (request.deadlineAtMs === undefined || request.deadlineAtMs <= Date.now())) {
+					this.settled.add(request.id);
+					this.showNext();
+					return;
+				}
 				component = new ExtensionInputComponent(
 					request.title,
 					request.placeholder,
 					(value) => finish({ type: "extension_ui_response", id: request.id, value }),
 					cancel,
-					{ tui: this.ui, timeout: request.timeout },
+					{ tui: this.ui, timeout: request.timeout, secret: request.secret, deadlineAtMs: request.deadlineAtMs },
 				);
 				break;
 			case "editor":
@@ -168,6 +211,8 @@ export class AttachDialogs extends Container {
 				return;
 		}
 		this.current = { request, component };
+		const origin = remoteOriginLabel(request);
+		if (origin) this.addChild(new Text(theme.fg("warning", origin), 1, 0));
 		this.addChild(component);
 		this.ui.setFocus(component);
 		this.ui.requestRender();

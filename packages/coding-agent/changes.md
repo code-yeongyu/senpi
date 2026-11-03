@@ -1,3 +1,231 @@
+## 2026-11-03 - Loopless worker entry in the compiled binary (senpi#5438)
+
+### What changed
+
+- `packages/coding-agent/package.json` (`build:binary`): `./src/modes/rpc/loopless-worker.ts` joins the `bun build --compile` entry list, next to `./src/modes/rpc/session-worker.ts`, so the compiled binary can start a loopless worker isolate.
+
+### Why
+
+- A loopless worker runs in its own isolate (senpi#5413, brain/hand split); a compiled binary starts isolates only from entries compiled into it.
+
+### Why an extension could not handle it
+
+- The compiled entry list is the build script itself.
+
+### Expected merge conflict zones
+
+- LOW: the `build:binary` entry list, which other worker entries also extend.
+
+## 2026-11-01 - Kill guard judge embedded in the compiled binary (senpi#5349, PR #5354)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `build:binary` adds `./src/core/kill-guard/index.ts` as an explicit `bun build --compile` entry.
+
+### Why
+
+- Codemode workers import the kill guard's judge by URL; in the compiled binary that module has to be an embedded entry under its source path.
+
+### Why an extension could not handle it
+
+- The compile entry list is the package's own build script.
+
+### Expected merge conflict zones
+
+- LOW: the `bun build --compile` entry list in `build:binary`.
+
+## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
+
+### What changed
+
+- Nine `packages/coding-agent/test/` files (hooks redaction/safety, hidden stdout log, stderr guard, job-widget author/view redaction, regressions 3537 and 3674, the Anthropic warning test): the `sk-ant-`, `ghp_`, `github_pat_`, `sk-proj-` and `AKIA` fixtures are joined from a prefix and a body at runtime. The values are byte-identical; tests only.
+
+### Why
+
+- GitGuardian flags credential-shaped literals in a PR's commit range (senpi#5308); building them at runtime closes the class without touching scanner configuration.
+
+### Why an extension could not handle it
+
+- Test sources only; nothing an extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the fixture constants at the top of each test file.
+
+## 2026-10-30 - Shared fixture digests use the production codec (RULING-98, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Generate shared fixture digests through the production catalog codec.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Generate shared fixture digests through the production catalog codec.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Generate shared fixture digests through the production catalog codec.
+
+### Why
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Fixture generator digest calls and shared index assembly.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Fixture generator digest calls and shared index assembly.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Fixture generator digest calls and shared index assembly.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Document guarded private input with a usage example, real CLI QA scenario, and regression coverage for ownership, login, deadlines, teardown and leaks.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-29 - Regenerate the private-descriptor bootstrap launcher (#4859)
+
+### What changed
+
+- `packages/coding-agent/dist/cli.js`: regenerate the tracked launcher through `bun run build`, including the existing source private-descriptor capture and forwarding imports.
+
+### Why
+
+- The tracked launcher must match its compiled source for the committed-dist CI gate.
+
+### Why an extension could not handle it
+
+- The launcher is a generated bootstrap artifact.
+
+### Expected merge conflict zones
+
+- Generated launcher imports and re-execution blocks.
+
+## 2026-10-28 - The coding-agent test run owns a shared source compile cache (senpi#4614)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: adds `globalSetup: ["./test/helpers/source-compile-cache-global-setup.ts"]`, which creates one run-scoped directory, exports it as `SENPI_SOURCE_COMPILE_CACHE` to the workers and the source processes they launch, and removes it at teardown. `NODE_DISABLE_COMPILE_CACHE=1` turns the cache off for a run.
+
+### Why
+
+- senpi#4614: gives the source-loader children of one test run a cache directory that belongs to that run only, so two checkouts running the suite at once never share entries.
+
+### Why an extension could not handle it
+
+- Test-runner configuration; no extension surface exists for it.
+
+### Expected merge conflict zones
+
+- LOW: the `test` block of `packages/coding-agent/vitest.config.ts`.
+
+## 2026-10-29 - Public session-worker-data subpath (senpi#4728, #4775)
+
+### What changed
+
+- `packages/coding-agent/package.json`: export `./session-worker-data` (`dist/modes/rpc/session-worker-data.{js,d.ts}`) so an extension host can provide per-session-Worker data.
+
+### Why
+
+- An extension host needs a private, per-session-Worker channel that it provides before the first session Worker spawns; the API lives in the RPC host, so it needs its own package entry.
+
+### Why an extension could not handle it
+
+- Session Workers are spawned by the host's `SessionWorkerClient`; an extension cannot add data or transfers to their `workerData`.
+
+### Expected merge conflict zones
+
+- LOW: the `exports` map in `packages/coding-agent/package.json`.
+
+## 2026-10-29 - Public `private-fds` subpath (senpi#4771)
+
+### What changed
+
+- `packages/coding-agent/package.json`: exports `./private-fds` (`dist/private-fds.js` and its types), the receiver API for named private descriptors.
+
+### Why
+
+- Extensions that receive a launcher's private channel import `takeInheritedPrivateChannel` and `privateChannelDeclared` from a stable public path instead of an internal module (#4749).
+
+### Why an extension could not handle it
+
+- The export map is package metadata; an extension cannot add an export to the engine package.
+
+### Expected merge conflict zones
+
+- The `exports` map in `packages/coding-agent/package.json`, next to `./pending-input-public`.
+
+## 2026-10-28 - re2js runtime dependency for job widgets (P1b)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new runtime dependency `re2js`, pinned exactly at `2.8.6` (registry integrity `sha512-xLgQil4kIUCrAzVk9fRSkxkFNwmygLFjVxXrLc65aE1F0+Zsb8rxumFBy4XKyvgMCTL6kilDq3EZ0piE2dP/Dg==`), recorded in `bun.lock`, `package-lock.json` and `install-lock/`. It is pure JavaScript with no install scripts and no runtime dependencies, so once the matcher is wired the Node bundle inlines it (checked with the bundle's own esbuild options and `validateExternalImports`: no externals) and the Bun binary compiles it in; no external-package list changes.
+
+### Why
+
+- The job-widgets line matcher needs a linear-time regex engine. The package passed a read-only safety review (MIT, no lifecycle scripts, no network/exec/env access in the shipped build, registry integrity recomputed); 2.8.6 is the newest release with months of exposure, and moves up only through a reviewed bump.
+
+### Why an extension could not handle it
+
+- A builtin's runtime dependency must be declared in the package manifest that ships it.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` map in `packages/coding-agent/package.json`.
+
+## 2026-10-27 - Public engine trust launch contract export (senpi#4525)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new `./engine-trust` export (`dist/engine-trust/index.js`): marker version 1 parse and serialize, `classifyTrustArrival`, `buildTrustLaunchEnvironment`, `applyEngineTrustRestore`, and the adopted-generation record with its daemon hand-off.
+
+### Why
+
+- omo#10762: omo's compiled launcher, senpi's spawners and the desktop app all write the engine trust marker, so its format and the one launch-environment builder live in one exported module (design r13 5.4).
+
+### Why an extension could not handle it
+
+- The writers are separate packages and processes; the contract has to be importable from the senpi package itself.
+
+### Expected merge conflict zones
+
+- LOW: the `exports` map in `packages/coding-agent/package.json`.
+
+## 2026-10-28 - Compile the path identity worker into the binary build (senpi#4391)
+
+### What changed
+
+- `packages/coding-agent/package.json` (`build:binary`): passes `src/core/extensions/builtin/permission-system/path-identity-worker.ts` as an explicit compile entry beside `image-resize-worker.ts`, so the permission system's resolver worker is embedded in the compiled binary at its source path.
+
+### Why
+
+- The permission system starts its path identity resolver from a worker file beside its host module; a binary compiled without that entry has no worker to start.
+
+### Why an extension could not handle it
+
+- The binary compile entry list is package build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `build:binary` script line in `packages/coding-agent/package.json`.
+
 ## 2026-10-26 - Remove the internal-events test alias (senpi#4349, part of #4272)
 
 ### What changed

@@ -69,7 +69,7 @@ it("releases and disarms byte caches after identity capture fails, including rew
 	}
 	lane.applyTranscript(manager.drainTranscript());
 	for (const current of [lane, snapshot(manager)]) {
-		expect(readTranscriptRoot(current.freeze().transcript)).toEqual({
+		expect(await readTranscriptRoot(current.freeze().transcript)).toEqual({
 			ok: false,
 			error: "transcript_file_identity_unavailable",
 		});
@@ -94,7 +94,7 @@ it("ignores a superseded first-flush capture after newSession has flushed", asyn
 	await manager.persistHeaderNow();
 	const lane = snapshot(manager);
 	const before = lane.freeze().transcript;
-	const beforeRead = readTranscriptRoot(before);
+	const beforeRead = await readTranscriptRoot(before);
 	expect(beforeRead.ok && beforeRead.entries.at(-1)).toMatchObject({
 		message: { content: "new lifecycle" },
 	});
@@ -108,8 +108,8 @@ it("ignores a superseded first-flush capture after newSession has flushed", asyn
 		if (transition.kind === "replace") expect(transition.base?.fileIdentity.path).not.toBe(oldFile);
 	}
 	lane.applyTranscript(transitions);
-	expect(readTranscriptRoot(lane.freeze().transcript)).toEqual(beforeRead);
-	expect(readTranscriptRoot(snapshot(manager).freeze().transcript)).toEqual(beforeRead);
+	expect(await readTranscriptRoot(lane.freeze().transcript)).toEqual(beforeRead);
+	expect(await readTranscriptRoot(snapshot(manager).freeze().transcript)).toEqual(beforeRead);
 });
 
 // #4347 / RULING-31(2): the first publication must name the descriptor we wrote, not a later pathname.
@@ -121,7 +121,7 @@ it("R31.2 replacement between create and first publish fails instead of adopting
 	fs.renameSync(`${file}.next`, file);
 	await manager.persistHeaderNow();
 	const lane = snapshot(manager);
-	expect(readTranscriptRoot(lane.freeze().transcript)).toEqual({ ok: false, error: "base_file_replaced" });
+	expect(await readTranscriptRoot(lane.freeze().transcript)).toEqual({ ok: false, error: "base_file_replaced" });
 });
 
 it.each(["header", "atomic replacement"] as const)(
@@ -151,7 +151,7 @@ it.each(["header", "atomic replacement"] as const)(
 			fs.renameSync(`${file}.next`, file);
 		}
 		await manager.persistHeaderNow();
-		expect(readTranscriptRoot(snapshot(manager).freeze().transcript)).toEqual({
+		expect(await readTranscriptRoot(snapshot(manager).freeze().transcript)).toEqual({
 			ok: false,
 			error: "base_file_replaced",
 		});
@@ -173,7 +173,7 @@ it.each(["truncate", "rewrite"] as const)("R31.3 %s after capture is a typed fai
 		lines[1] = JSON.stringify({ ...entry, id: `${entry.id}-rewritten` });
 		fs.writeFileSync(file, `${lines.join("\n")}\n`);
 	}
-	expect(readTranscriptRoot(held.transcript)).toEqual({
+	expect(await readTranscriptRoot(held.transcript)).toEqual({
 		ok: false,
 		error: change === "truncate" ? "base_file_truncated" : "base_fingerprint_mismatch",
 	});
@@ -191,12 +191,12 @@ it("R31.4 snapshot before identity lands serves the bounded tail and then releas
 	expect(held.transcript.base).toBeNull();
 	expect(held.transcript.tail.persistence).toBeNull();
 	expect(held.transcript.tail.retainedBytes).toBeGreaterThan(0);
-	const before = readTranscriptRoot(held.transcript);
+	const before = await readTranscriptRoot(held.transcript);
 	expect(before.ok && before.entries.at(-1)).toMatchObject({ message: { content: "tail before identity" } });
 	await manager.persistHeaderNow();
 	lane.applyTranscript(manager.drainTranscript());
 	expect(held.transcript.tail.retainedBytes).toBe(0);
-	expect(readTranscriptRoot(held.transcript)).toEqual(before);
+	expect(await readTranscriptRoot(held.transcript)).toEqual(before);
 });
 
 // #4347 / RULING-31: append and repeat flush reuse the first descriptor capture.

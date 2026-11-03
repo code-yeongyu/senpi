@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
-import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import { chatgptSubscriptionOAuth } from "../src/auth/oauth/chatgpt-subscription.ts";
 import { cursorOAuth } from "../src/auth/oauth/cursor.ts";
 import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
@@ -22,8 +21,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe("OAuthAuth adapters", () => {
 	it("keeps the extension OAuth barrel free of built-in flow implementations", () => {
-		expect(extensionOAuthCompatibility).not.toHaveProperty("loginAnthropic");
-		expect(extensionOAuthCompatibility).not.toHaveProperty("anthropicOAuth");
+		expect(extensionOAuthCompatibility).not.toHaveProperty("chatgptSubscriptionOAuth");
+		expect(extensionOAuthCompatibility).not.toHaveProperty("cursorOAuth");
 	});
 
 	afterEach(() => {
@@ -32,7 +31,6 @@ describe("OAuthAuth adapters", () => {
 
 	it("identifies only subscription-backed OAuth flows as subscriptions", () => {
 		for (const oauth of [
-			anthropicOAuth,
 			chatgptSubscriptionOAuth,
 			openaiChatGPTOAuth,
 			githubCopilotOAuth,
@@ -43,11 +41,6 @@ describe("OAuthAuth adapters", () => {
 			expect(oauth.isSubscription).toBe(true);
 		}
 		expect(openRouterOAuth.isSubscription).not.toBe(true);
-	});
-
-	it("anthropic toAuth derives the api key from the access token", async () => {
-		const auth = await anthropicOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
-		expect(auth).toEqual({ apiKey: "token" });
 	});
 
 	// Fork contract: `openai` stays API-key only; ChatGPT sign-in is the `chatgpt-subscription` provider.
@@ -96,24 +89,6 @@ describe("OAuthAuth adapters", () => {
 			expires: 0,
 		});
 		expect(individual.baseUrl).toBe("https://api.individual.githubcopilot.com");
-	});
-
-	it("anthropic refresh exchanges the refresh token and returns a typed credential", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async () =>
-				jsonResponse({ access_token: "new-access", refresh_token: "new-refresh", expires_in: 3600 }),
-			),
-		);
-
-		const refreshed = await anthropicOAuth.refresh(
-			{ type: "oauth", access: "old", refresh: "old-r", expires: 0 },
-			neverAbortedSignal,
-		);
-		expect(refreshed.type).toBe("oauth");
-		expect(refreshed.access).toBe("new-access");
-		expect(refreshed.refresh).toBe("new-refresh");
-		expect(refreshed.expires).toBeGreaterThan(Date.now());
 	});
 
 	it("github-copilot refresh preserves the enterprise domain", async () => {

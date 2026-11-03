@@ -1,3 +1,77 @@
+## 2026-11-03 - Shift+Enter inserts a newline in macOS Terminal.app (code-yeongyu/oh-my-openagent#9796, PR #5647)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `normalizeAppleTerminalInput` also rewrites ESC CR (`"\x1b\r"`) to the native Shift+Enter sequence when the session is Apple Terminal and native Shift is pressed; `ProcessTerminal.forwardInputSequence` probes Shift for CR and ESC CR in Apple Terminal and routes both through it. The Windows bare-CR path is unchanged.
+
+### Why
+
+- Terminal.app sends ESC CR for Shift+Return, but the native Shift fallback only handled a bare CR. Legacy key parsing reads ESC CR as `alt+enter`, the macOS default for `app.message.followUp`, so Shift+Enter queued or sent the prompt. Without Shift, ESC CR stays `alt+enter`, so Option-as-Meta Return keeps working.
+
+### Why an extension could not handle it
+
+- Input normalization runs in `ProcessTerminal` before keybinding matching; extensions only see the submitted text.
+
+### Expected merge conflict zones
+
+- LOW: `normalizeAppleTerminalInput` and the constant block near `NATIVE_SHIFT_ENTER_SEQUENCE` in `terminal.ts`; the start of `forwardInputSequence`.
+
+## 2026-11-01 - OSC 7501 Program Status encoder (senpi#5323)
+
+### What changed
+
+- `packages/tui/src/index.ts` exports `encodeProgramStatus` and the `ProgramStatus`, `ProgramStatusState` and `ProgramStatusKind` types from the new fork-only `program-status.ts`. The encoder builds `OSC 7501 ; state=…[:kind=…][:app=…][:msg=<base64>] ST` per revision 0.4 of the proposal: `kind` only with `blocked`, an `app` outside the protocol charset or 32-character limit left out, the message stripped of C0/DEL/C1 controls and bidi or invisible formatting, truncated to 2048 bytes on a UTF-8 boundary, and `undefined` encoded as `state=clear`.
+
+### Why
+
+- Terminals such as herdr-core read a program's state only from OSC 7501, so omo panes there showed as a plain shell. The TUI package already owns the other terminal OSC writes (title, OSC 9;4 progress) and their sanitizing.
+
+### Why an extension could not handle it
+
+- The barrel is the only public import path of the TUI package; the encoder is pure and shared by the coding agent's interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: one export block after `terminal-text.ts` in `packages/tui/src/index.ts`.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/tui/src/components/input.ts`.
+- Add instance-owned masked Input rendering with faithful Unicode/whitespace, control rejection, and complete editing-state disposal.
+- Dispose editing state only for secret inputs; ordinary inputs retain their values and callbacks when reusable controls are removed and re-added during container rebuilds.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-12 - Optional inline emphasis hooks in MarkdownTheme
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts`: `MarkdownTheme` gains optional `strong`, `emphasis`, and `deleted` hooks. Inline `**strong**`, `*em*`, and `~~del~~` tokens use them when present and fall back to `bold`, `italic`, and `strikethrough`. A present hook is also applied inside the surrounding inline style context (heading or `DefaultTextStyle`), so a color it sets wins over that context color; the fallback path renders exactly as before. Headings, blockquotes, table headers, and `DefaultTextStyle` keep using the generic style functions.
+
+### Why
+
+- `packages/tui/src/components/markdown.ts`: themes can color inline emphasis without also recoloring headings and quotes, which wrap their text in the same `bold`/`italic` functions.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/markdown.ts`: inline token rendering is owned by the Markdown component.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/markdown.ts`: the `MarkdownTheme` interface and the `strong`/`em`/`del` cases in `renderInlineTokens`.
+
 ## 2026-10-24 - The VS Code terminal is recognised when TERM_PROGRAM is missing (senpi#2826)
 
 ### What changed
