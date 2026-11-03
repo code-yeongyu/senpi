@@ -11,12 +11,7 @@ import {
 } from "./timeout.ts";
 
 export type { BashTimeoutDefaults, BashToolInputLike } from "./timeout.ts";
-export {
-	applyBashTimeout,
-	BASH_DEFAULT_TIMEOUT_SECONDS,
-	buildBashTimeoutPrompt,
-	resolveBashTimeoutDefaults,
-} from "./timeout.ts";
+export { applyBashTimeout, BASH_DEFAULT_TIMEOUT_SECONDS, resolveBashTimeoutDefaults } from "./timeout.ts";
 
 export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 	const env = typeof process !== "undefined" ? process.env : {};
