@@ -188,12 +188,14 @@ export function holdSessionFile(
 	return { release };
 }
 
-// A finishing move removes the emptied directory, so a writer racing it recreates the directory once.
+// A finishing move removes the emptied directory, so a writer racing it recreates the directory once. The mkdir is
+// inside the retry too: a recursive mkdir that finds the directory just created stats it, and fails with ENOENT when
+// that removal lands in between (senpi#5618).
 function publishHolderRecord(dir: string, record: string, content: string): void {
 	for (let attempt = 0; ; attempt += 1) {
-		mkdirSync(dir, { recursive: true });
 		const temp = `${record}.${randomUUID().slice(0, 8)}.tmp`;
 		try {
+			mkdirSync(dir, { recursive: true });
 			writeFileSync(temp, content);
 			renameSync(temp, record);
 			return;
@@ -220,6 +222,17 @@ export async function liveSessionHolders(
 	}
 }
 
+// A concurrent mover that finishes removes the emptied lock directory. A recursive mkdir that saw the directory
+// exist and stats it after that removal fails with ENOENT (senpi#5618): the directory is merely gone again, so the
+// caller retries the publish, which recreates it. Who moves is still decided by the exclusive lock alone.
+async function createLockDir(dir: string): Promise<void> {
+	try {
+		await mkdir(dir, { recursive: true });
+	} catch (error) {
+		if (errorCode(error) !== "ENOENT") throw error;
+	}
+}
+
 async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): Promise<string> {
 	const mine = identityRecord();
 	const deadline = Date.now() + waitMs;
@@ -230,7 +243,7 @@ async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): 
 		} catch (error) {
 			const code = errorCode(error);
 			if (code === "ENOENT") {
-				await mkdir(dirname(lock), { recursive: true });
+				await createLockDir(dirname(lock));
 				continue;
 			}
 			if (code !== "EEXIST") throw error;
