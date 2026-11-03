@@ -24,6 +24,7 @@ import {
 import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import {
 	type AccountSlot,
+	isForeignAuthBlock,
 	isListedStoredSlot,
 	SENTINEL_OAUTH_FIELDS,
 } from "./extensions/builtin/anthropic-subscription/accounts.ts";
@@ -198,6 +199,8 @@ function storedSlotBlock(provider: string, slot: object, now: number): SlotBlock
 	const blockedUntil = numberField(slot, "blockedUntil");
 	const blockedReason = accountBlockedReason(blockReason);
 	if (blockedReason === "disabled") return { blocked: true, blockedReason };
+	// The Claude lane does not skip a slot for an auth block no Claude CLI verdict backs (senpi#5623).
+	if (normalizeProviderId(provider) === "anthropic-subscription" && isForeignAuthBlock(slot)) return UNBLOCKED;
 	const skipped =
 		normalizeProviderId(provider) === "anthropic-subscription"
 			? isAccountBlocked({ blockedUntil }, now)

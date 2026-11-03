@@ -76,6 +76,14 @@ export class RetryFallbackController {
 		return this.unusable.accountError(provider);
 	}
 
+	accountResetAt(provider: string): number | undefined {
+		return this.unusable.accountResetAt(provider);
+	}
+
+	releaseGuessedAccountHold(provider: string): boolean {
+		return this.unusable.releaseGuessedAccountHold(provider);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.refusedProviders.clear();
@@ -98,7 +106,10 @@ export class RetryFallbackController {
 		return canonical;
 	}
 
-	/** `refusedProvider`: the provider whose request-level refusal is being decided, before the walk records it. */
+	/**
+	 * `refusedProvider`: a provider the failure being decided rules out (a request-level refusal or
+	 * a spent account) before the walk records it.
+	 */
 	canTryFallback(refusedProvider?: string): boolean {
 		return this.nextCandidate(false, false, refusedProvider) !== undefined;
 	}
