@@ -88,6 +88,24 @@ describe("Gate B on the batch coordinator", () => {
 		expect([h.count("hook:g"), h.count("body:g")]).toEqual([1, 1]);
 	});
 
+	it("an expiry the approver reports before the executor's clock sends nothing: the endpoint expires on its own lease", async () => {
+		const h = await batchHarness(adapters());
+		const approver = scriptedConsent();
+		const run = (await h.brain(undefined, "brain", approver.port)).run(
+			batchPlan("gate-b-early-expiry", [["g", "e1", "gated"]]),
+		);
+		await approver.asked;
+		approver.answer("expired");
+		expect((await run).outcomes).toEqual([{ kind: "interrupted", reason: "lease_expired", uncertain: true }]);
+		expect(await h.ledgerState("e1", "g")).toBe("prepared_awaiting_consent");
+		h.advance(120_000);
+		const late = await h
+			.executor("e1")
+			.consent?.({ issuer: "brain", executionId: "g", generation: 1 }, approver.requests[0]?.digest ?? "");
+		expect(late).toMatchObject({ kind: "settled", outcome: { reason: "lease_expired" } });
+		expect(h.count("body:g")).toBe(0);
+	});
+
 	it("an executor with no consent configured never waits: today's freeze path is unchanged", async () => {
 		const h = await batchHarness(adapters());
 		const result = await (await h.brain()).run(batchPlan("no-consent", [["b", "e1"]]));

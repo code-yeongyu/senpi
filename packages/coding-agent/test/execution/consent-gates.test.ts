@@ -100,6 +100,7 @@ describe("Gate B on the prepared executor (cross-machine only)", () => {
 		expect((await x.release("a")).kind).toBe("refused");
 		expect(x.runs).toEqual([]);
 		expect(await x.consent("a", prepared.call.digest)).toEqual({ kind: "prepared" });
+		expect(await x.consent("a", prepared.call.digest)).toEqual({ kind: "prepared" });
 		expect((await x.release("a")).kind).toBe("settled");
 		expect([x.hooks, x.runs]).toEqual([["a"], ['{"path":"notes.md"}']]);
 	});
