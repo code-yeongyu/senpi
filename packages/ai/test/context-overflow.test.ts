@@ -434,8 +434,8 @@ describe("Context overflow error handling", () => {
 		// Xiaomi silently truncates oversized input to fill the context window exactly,
 		// then returns finish_reason "length" with output=0 (no room left to generate).
 		// This is a detectable overflow signal but uses stopReason "length" rather than "error".
-		it("mimo-v2.5-pro - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xiaomi", "mimo-v2.5-pro");
+		it("mimo-v2.6-pro - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xiaomi", "mimo-v2.6-pro");
 			const result = await testContextOverflow(model, process.env.XIAOMI_API_KEY!);
 			logResult(result);
 
@@ -446,8 +446,8 @@ describe("Context overflow error handling", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY)("Xiaomi MiMo Token Plan (CN)", () => {
-		it("mimo-v2.5-pro - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xiaomi-token-plan-cn", "mimo-v2.5-pro");
+		it("mimo-v2.6-pro - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xiaomi-token-plan-cn", "mimo-v2.6-pro");
 			const result = await testContextOverflow(model, process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY!);
 			logResult(result);
 
@@ -458,8 +458,8 @@ describe("Context overflow error handling", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY)("Xiaomi MiMo Token Plan (AMS)", () => {
-		it("mimo-v2.5-pro - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xiaomi-token-plan-ams", "mimo-v2.5-pro");
+		it("mimo-v2.6-pro - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xiaomi-token-plan-ams", "mimo-v2.6-pro");
 			const result = await testContextOverflow(model, process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY!);
 			logResult(result);
 
@@ -470,8 +470,8 @@ describe("Context overflow error handling", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY)("Xiaomi MiMo Token Plan (SGP)", () => {
-		it("mimo-v2.5-pro - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+		it("mimo-v2.6-pro - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xiaomi-token-plan-sgp", "mimo-v2.6-pro");
 			const result = await testContextOverflow(model, process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY!);
 			logResult(result);
 
@@ -576,9 +576,10 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!openRouterApiKey)("OpenRouter", () => {
-		// Anthropic backend
-		it("anthropic/claude-sonnet-4 via OpenRouter - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("openrouter", "anthropic/claude-sonnet-4");
+		// Anthropic backend. Haiku 4.5 keeps the 200k window the retired claude-sonnet-4 had, so the
+		// oversized prompt stays the same size; the 1M-window Sonnet/Opus ids would make it 5x larger.
+		it("anthropic/claude-haiku-4.5 via OpenRouter - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("openrouter", "anthropic/claude-haiku-4.5");
 			const result = await testContextOverflow(model, openRouterApiKey!);
 			logResult(result);
 

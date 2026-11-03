@@ -149,7 +149,13 @@ describe("collapse remediation persistence", () => {
 		const lines = readSessionLines(harness);
 		const entries = readSessionEntries(harness);
 		expect(lines.length).toBe(entries.length);
-		expect(lines.length).toBe(7);
+		// Lifecycle high-water and custody records are independent of TTSR conversation persistence.
+		expect(
+			lines.length -
+				entries.filter(
+					(e) => e.type === "custom" && (e.customType === "session-lifecycle" || e.customType === "work-custody"),
+				).length,
+		).toBe(7);
 		expect(entries.filter((e) => e.type === "custom" && e.customType === "engine-turn-start")).toHaveLength(1);
 		expectTtsrActivation(entries, {
 			owner: "collapse-repetition",
@@ -212,7 +218,9 @@ describe("leakage remediation retry", () => {
 
 		const lines = readSessionLines(harness);
 		const entries = readSessionEntries(harness);
-		expect(lines.length).toBe(5);
+		expect(
+			lines.length - entries.filter((e) => e.type === "custom" && e.customType === "session-lifecycle").length,
+		).toBe(5);
 		expectTtsrActivation(entries, {
 			owner: "control-token-leak",
 			rules: ["control-token-leak"],

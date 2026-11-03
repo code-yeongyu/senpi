@@ -83,7 +83,7 @@ export class FakeShellPromise extends Promise<FakeShellOutput> {
 		return result.stdout.toString();
 	}
 
-	// biome-ignore lint/suspicious/noThenProperty: intentional thenable — Bun's ShellPromise starts the command on its own then()
+	// oxlint-disable-next-line unicorn/no-thenable -- intentional thenable — Bun's ShellPromise starts the command on its own then()
 	override then<TResult1 = FakeShellOutput, TResult2 = never>(
 		onFulfilled?: ((value: FakeShellOutput) => TResult1 | PromiseLike<TResult1>) | null,
 		onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,

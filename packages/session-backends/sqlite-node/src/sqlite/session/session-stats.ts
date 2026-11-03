@@ -24,6 +24,7 @@ function addUsage(left: Usage, right: Usage): Usage {
 			cacheWrite: left.cost.cacheWrite + right.cost.cacheWrite,
 			total: left.cost.total + right.cost.total,
 		},
+		...(left.costUnknown || right.costUnknown ? { costUnknown: true as const } : {}),
 	};
 }
 

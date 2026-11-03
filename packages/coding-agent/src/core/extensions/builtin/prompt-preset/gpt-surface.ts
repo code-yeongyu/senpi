@@ -2,8 +2,8 @@ import type { TerminalOrApp } from "../../../dynamic-prompt/build.ts";
 
 export const GPT_HANDOFF_MOMENTS: Record<TerminalOrApp, string> = {
 	terminal:
-		"the todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message of a turn that did work (a reply that only answers a question is the answer itself); the routing line is not one",
-	app: "the todo list's creation (in the message that creates it or the next one), a todo phase change, a blocker or plan change, the final message of a turn that did work (a reply that only answers a question is the answer itself)",
+		"a multi-task todo list's creation (in the message that creates it, after the routing line, or the next one), a todo phase change, a blocker or plan change, the final message of a turn that changed something (an answer stays an answer, even after tool calls); the routing line is not one",
+	app: "a multi-task todo list's creation (in the message that creates it or the next one), a todo phase change, a blocker or plan change, the final message of a turn that changed something (an answer stays an answer, even after tool calls)",
 };
 
 /** The app surface's claim audit for the GPT cores (senpi#2377), in the one place each core reports on checks. */

@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
-import { readProcessFootprint } from "@code-yeongyu/senpi";
+import {
+	decideKillGuardRequest,
+	KILL_GUARD_MODULE_URL,
+	killGuardProtectedPids,
+	readProcessFootprint,
+} from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
@@ -16,6 +21,7 @@ import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-d
 import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
 import { CellKernelTools } from "./cell-kernel-tools.ts";
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
+import { KernelGlobalsLedger } from "./kernel-globals-ledger.ts";
 import {
 	javaScriptKernelMemory,
 	SessionKernelRegistrations,
@@ -69,6 +75,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	readonly #registrations: SessionKernelRegistrations;
 	#kernelCreations = new Map<EvalLanguage, Promise<EvalKernel>>();
 	#onMessageRefs = new Map<EvalLanguage, (message: KernelToHostMessage) => void>();
+	/** One per language for the manager's life, so an idle-park restart never re-announces an earlier generation. */
+	readonly #ledgers = new Map<EvalLanguage, Promise<KernelGlobalsLedger>>();
 	readonly #cellKernelTools = new CellKernelTools();
 	#context: ExtensionContext | undefined;
 	#generation = 0;
@@ -92,6 +100,12 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			onCall: async (request) => await this.#call(request),
 			onEmit: async () => undefined,
 			onCompletion: async (request) => await dispatchBridgeCompletion(this.#options, request, dispatch),
+			...(this.#options.killGuard === true
+				? {
+						onKillGuardCheck: (request: unknown) =>
+							decideKillGuardRequest(request, { agentPid: process.pid, agentPpid: process.ppid }),
+					}
+				: {}),
 		});
 	}
 
@@ -231,11 +245,21 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	): Promise<{ readonly kernel: EvalKernel; readonly memory: RegisteredKernelSource | undefined }> {
 		if (language === "js") return await this.#createKernel(language, onMessage);
 		let memory: RegisteredKernelSource | undefined;
-		const kernel = await ReplaceableKernel.create(language, async (lifecycle) => {
-			const created = await this.#createKernel(language, onMessage, lifecycle);
-			memory ??= created.memory;
-			return created.kernel;
-		});
+		let ledger = this.#ledgers.get(language);
+		if (ledger === undefined) {
+			ledger = KernelGlobalsLedger.open(this.#options.artifactsDir, language);
+			this.#ledgers.set(language, ledger);
+		}
+		const options = { ledger: await ledger };
+		const kernel = await ReplaceableKernel.create(
+			language,
+			async (lifecycle) => {
+				const created = await this.#createKernel(language, onMessage, lifecycle);
+				memory ??= created.memory;
+				return created.kernel;
+			},
+			options,
+		);
 		return { kernel, memory };
 	}
 
@@ -272,6 +296,9 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
+				...(this.#options.killGuard === true
+					? { killGuard: { moduleUrl: KILL_GUARD_MODULE_URL, agentPid: process.pid } }
+					: {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 			});
@@ -294,6 +321,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			sessionId: this.#options.sessionId,
 			cwd: this.#options.cwd,
 			...(sessionEnv ? { sessionEnv } : {}),
+			...(this.#options.killGuard === true ? { killGuard: { protectedPids: killGuardProtectedPids() } } : {}),
 			connection,
 			onMessage,
 			...lifecycle,

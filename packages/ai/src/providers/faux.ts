@@ -21,6 +21,7 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
+import { enableAssistantCapture } from "../utils/assistant-capture.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { getCurrentSystemPrompt, getCurrentTools } from "../utils/transcript.ts";
@@ -133,6 +134,8 @@ export interface RegisterFauxProviderOptions {
 		pollAfterMs?: number;
 	};
 	tokensPerSecond?: number;
+	/** Headers every scripted response reports through `onResponse` (default none). */
+	responseHeaders?: Record<string, string>;
 	schedulerHook?: () => void | Promise<void>;
 	tokenSize?: {
 		min?: number;
@@ -481,7 +484,11 @@ async function streamWithDeltas(
 				stream.end(aborted);
 				return;
 			}
-			stream.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+			// Faux never parses its generated chunks; only the end installs the arguments.
+			stream.push(
+				{ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } },
+				{ parsedThrough: 0 },
+			);
 		}
 		(partial.content[index] as ToolCall).arguments = block.arguments;
 		stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: { ...partial } });
@@ -503,6 +510,7 @@ async function streamWithDeltas(
 export function createFauxCore(options: RegisterFauxProviderOptions) {
 	const api = options.api ?? randomId(DEFAULT_API);
 	const provider = options.provider ?? DEFAULT_PROVIDER;
+	const responseHeaders = options.responseHeaders ?? {};
 	const minTokenSize = Math.max(
 		1,
 		Math.min(options.tokenSize?.min ?? DEFAULT_MIN_TOKEN_SIZE, options.tokenSize?.max ?? DEFAULT_MAX_TOKEN_SIZE),
@@ -572,6 +580,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 
 	const stream: StreamFunction<string, SimpleStreamOptions> = (requestModel, context, streamOptions) => {
 		const outer = createAssistantMessageEventStream();
+		enableAssistantCapture(outer);
 		const step = pendingResponses.shift();
 		state.callCount++;
 		callLog.push({
@@ -583,7 +592,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 
 		queueMicrotask(async () => {
 			try {
-				await streamOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
+				await streamOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
 				if (!step) {
 					let message = createErrorMessage(
 						new Error("No more faux responses queued"),
@@ -655,11 +664,12 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		fetchOptions?: DeferredFetchOptions,
 	): AssistantMessageEventStream => {
 		const outer = createAssistantMessageEventStream();
+		enableAssistantCapture(outer);
 		state.deferredFetchCount++;
 
 		queueMicrotask(async () => {
 			try {
-				await fetchOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
+				await fetchOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
 				const entry = deferredResponses.get(handle.id);
 				if (
 					!entry ||
@@ -725,7 +735,7 @@ export function createFauxCore(options: RegisterFauxProviderOptions) {
 		state.cancelledDeferred.push(structuredClone(handle));
 		const entry = deferredResponses.get(handle.id);
 		if (entry) entry.cancelled = true;
-		await cancelOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
+		await cancelOptions?.onResponse?.({ status: 200, headers: { ...responseHeaders } }, requestModel);
 	};
 
 	function getModel(): Model<string>;

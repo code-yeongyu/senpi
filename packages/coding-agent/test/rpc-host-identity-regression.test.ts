@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { settledOpportunisticHostGc } from "../src/modes/rpc/host-gc-pass.ts";
 import {
@@ -14,6 +13,7 @@ import {
 	resolveSocketTransportAddress,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
+import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../src/utils/process-identity.ts";
 
 describe("RPC ownership observation", () => {
 	it("does not classify an absent identity on a live pid as gone", async () => {

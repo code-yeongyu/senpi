@@ -59,7 +59,7 @@ describe("warmPromptCache for OpenAI Responses GPT-5.6+", () => {
 		const body = bodies[0];
 		expect(body).toMatchObject({ model: "gpt-6-luna", stream: false, store: false });
 		expect(body?.prompt_cache_options).toEqual({ prewarm: true });
-		expect(body).not.toHaveProperty("prompt_cache_key");
+		expect(body).toHaveProperty("prompt_cache_key", expect.stringMatching(/^.{1,64}$/));
 		expect(body?.reasoning).toMatchObject({ effort: "high" });
 		const input = body?.input as Array<{ role?: string }>;
 		expect(input).toHaveLength(1);

@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, type Message } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { imageContentId } from "../src/core/image-elision-placeholder.ts";
 import { IMAGE_ELISION_PLACEHOLDER } from "../src/core/messages.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
@@ -71,7 +72,10 @@ describe("transport image budget (main loop)", () => {
 		const transported = findSeededMessage(callLog[0].context.messages);
 		expect(transported?.content).toEqual([
 			{ type: "text", text: "seed-note" },
-			{ type: "text", text: IMAGE_ELISION_PLACEHOLDER },
+			{
+				type: "text",
+				text: `${IMAGE_ELISION_PLACEHOLDER} (image ids: ${imageContentId("A".repeat(60))}, ${imageContentId("B".repeat(60))})`,
+			},
 			image("C".repeat(60)),
 		]);
 

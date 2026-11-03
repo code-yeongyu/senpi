@@ -1,0 +1,13 @@
+diff --git a/packages/coding-agent/src/modes/rpc/session-event-fanout.ts b/packages/coding-agent/src/modes/rpc/session-event-fanout.ts
+index e5b3eca6d4..0050d8d7a9 100644
+--- a/packages/coding-agent/src/modes/rpc/session-event-fanout.ts
++++ b/packages/coding-agent/src/modes/rpc/session-event-fanout.ts
+@@ -29,6 +29,8 @@ const BROADCAST_LIFECYCLE_RECORDS = new Set([
+ 	"session_opened",
+ 	"session_closed",
+ 	"session_lifecycle",
++	// MUTATION (P0-05e E30): a tool result is delivered to every connection, the other session's included.
++	"tool_execution_end",
+ ]);
+ 
+ type RegisteredConnection = {

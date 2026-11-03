@@ -3,6 +3,16 @@ import { APP_NAME } from "../config.ts";
 export interface SessionHolder {
 	readonly pid: number;
 	readonly cwd: string | undefined;
+	readonly host_socket?: string;
+	readonly host_instance?: string;
+}
+
+/** Public RPC identity, supplied by the host rather than the client's opaque context. */
+export interface SessionHolderEndpoint {
+	readonly host_socket?: string;
+	readonly host_instance: string;
+	/** The daemon directory of that generation; kept in the holder record only, never reported. */
+	readonly host_daemon_dir?: string;
 }
 
 export class SessionHeldError extends Error {

@@ -88,6 +88,10 @@ describe("ModelRuntime auth options", () => {
 				}),
 				expect.objectContaining({
 					type: "oauth",
+					provider: expect.objectContaining({ id: "github-copilot" }),
+				}),
+				expect.objectContaining({
+					type: "api_key",
 					provider: expect.objectContaining({ id: "anthropic", name: "Anthropic" }),
 				}),
 				expect.objectContaining({
@@ -105,12 +109,13 @@ describe("ModelRuntime auth options", () => {
 		expect(options.some((option) => option.provider.id === "chatgpt-subscription" && option.type === "api_key")).toBe(
 			false,
 		);
+		expect(options.some((option) => option.provider.id === "anthropic" && option.type === "oauth")).toBe(false);
 	});
 
 	it("attaches the provider's active auth status to every method option", async () => {
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory({
-				anthropic: {
+				"github-copilot": {
 					type: "oauth",
 					access: "access",
 					refresh: "refresh",
@@ -120,18 +125,18 @@ describe("ModelRuntime auth options", () => {
 			modelsPath: null,
 		});
 
-		const options = authOptions(runtime).filter((option) => option.provider.id === "anthropic");
+		const options = authOptions(runtime).filter((option) => option.provider.id === "github-copilot");
 		expect(options).toHaveLength(2);
-		expect(await runtime.checkAuth("anthropic")).toMatchObject({ type: "oauth" });
+		expect(await runtime.checkAuth("github-copilot")).toMatchObject({ type: "oauth" });
 	});
 
 	it("distinguishes subscription OAuth from generic OAuth sign-in", async () => {
 		const runtime = await ModelRuntime.create({
 			credentials: AuthStorage.inMemory({
-				anthropic: {
+				"github-copilot": {
 					type: "oauth",
-					access: "anthropic-access",
-					refresh: "anthropic-refresh",
+					access: "copilot-access",
+					refresh: "copilot-refresh",
 					expires: Date.now() + 60 * 60_000,
 				},
 				openrouter: {
@@ -150,8 +155,8 @@ describe("ModelRuntime auth options", () => {
 			modelsPath: null,
 		});
 
-		expect(runtime.isUsingOAuth("anthropic")).toBe(true);
-		expect(runtime.isUsingSubscription("anthropic")).toBe(true);
+		expect(runtime.isUsingOAuth("github-copilot")).toBe(true);
+		expect(runtime.isUsingSubscription("github-copilot")).toBe(true);
 		expect(runtime.isUsingOAuth("openrouter")).toBe(true);
 		expect(runtime.isUsingSubscription("openrouter")).toBe(false);
 		expect(runtime.isUsingOAuth("radius")).toBe(true);

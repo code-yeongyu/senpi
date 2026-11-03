@@ -1,5 +1,172 @@
 # changes
 
+## 2026-11-01 - getShellEnv carries the kill guard's runtime layer (senpi#5349, PR #5358)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` passes `getUserShellEnv()` (the previous `getShellEnv()` body, now also used for the user's own `!` commands) through `withKillGuardRuntime()`. While a session has the kill guard's runtime layer active, that function puts the shim directory first on `PATH`, sets `BASH_ENV` to the wrapper (keeping a user's own `BASH_ENV` in `SENPI_KILL_GUARD_USER_BASH_ENV`), exports the judge variables, and sets `SHLVL=1` when the environment has no usable level. bash skips `BASH_ENV` in a top-level shell whose stdin is a socket (its rshd rule; Node and libuv pipes are sockets) or that sshd started, and an inherited `SHLVL` makes every agent `bash -c` a nested shell. With no active layer the environment is unchanged.
+
+### Why
+
+- PTY bash, the core bash tool and monitors all spawn with `getShellEnv()`. Putting the shims there makes every agent command and its children judge `kill`, `pkill` and `killall` on their real argv.
+
+### Why an extension could not handle it
+
+- The environment is built here before any extension can intervene, and the core bash tool that SDK consumers get never passes through the terminal extension.
+
+### Expected merge conflict zones
+
+- LOW: `getShellEnv()`, the new `getUserShellEnv()` below it, and the new import.
+
+## 2026-11-02 - Order zero-padded and -1 CalVer versions (#5406, PR #5411)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: Senpi CalVer parsing accepts any `-N` revision with N >= 1 (`-1` equals the bare date, `-10` > `-9`) and compares month and day numerically, so `2026.11.02-1`, `2026.11.2-1` and `2026.11.2` are one release. When only one side is CalVer, the semver fallback receives that side in its canonical unpadded form.
+
+### Why
+
+- Release `2026.11.02-1` stamped a zero-padded version with a `-1` suffix. The pattern only accepted `-2` and higher, and semver rejects the padded `02`, so `isNewerPackageVersion` was always false: users on that release were never offered an update, and the self-update tests went red on main.
+
+### Why an extension could not handle it
+
+- Version ordering for the update check and `senpi update` runs in core bootstrap code before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `SENPI_CALVER_PATTERN` and `comparePackageVersions` in `packages/coding-agent/src/utils/version-check.ts`.
+
+## 2026-10-31 - Adopt Windows pipes by mode bits (#5137, PR #5142)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: exports `isFifoMode` and adopts an inherited descriptor when its file-type mode bits are FIFO, instead of `Stats.isFIFO()`, so adoption accepts every pair the parser accepts.
+
+### Why
+
+- On Windows source runtimes `Stats.isFIFO()` is false for real pipes, so a parsed pair was never adopted and the private channel silently stayed down.
+
+### Why an extension could not handle it
+
+- Private channel adoption runs during bootstrap, before extensions load.
+
+### Expected merge conflict zones
+
+- Inherited descriptor type checks.
+
+## 2026-10-29 - Compose and protect inherited pipe pairs (#4859)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: reads the first descriptor and writes the second, retaining partial-write handling and backpressure; destroying the Duplex closes both.
+- `packages/coding-agent/src/utils/private-fd-inherit.ts`: binds the Windows CRT descriptor-to-HANDLE conversion and `SetHandleInformation` synchronously through the existing Bun builtin boundary. Checks that each descriptor is open before touching FFI, even after loader caching, and returns false on loader, conversion or handle-information failures. Rejects null and signed or pointer-width unsigned INVALID_HANDLE_VALUE sentinels before any handle-information call.
+
+### Why
+
+- The Windows pair has two owners to dispose and must not leak into ordinary children.
+
+### Why an extension could not handle it
+
+- These helpers run at process receipt and supply core transport ownership.
+
+### Expected merge conflict zones
+
+- Inherited duplex construction and destruction.
+
+## 2026-10-29 - Shared inherited duplex adoption (senpi#4771)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts` (new): the Node socket / Bun file-stream adoption of an inherited pipe or socket, extracted from `mcp-presenter-bootstrap.ts` so MCP enrollment and named private descriptors share one implementation.
+
+### Why
+
+- One owner for inherited-descriptor adoption instead of two copies (#4749).
+
+### Why an extension could not handle it
+
+- It is used by core startup code before extensions load.
+
+### Expected merge conflict zones
+
+- None expected; new file.
+
+## 2026-10-27 - Bundled bun shims are written per engine trust generation (omo#10762)
+
+### What changed
+
+- `packages/coding-agent/src/utils/bundled-bun.ts`: the shim directory key and the shim bytes come from `bundled-bun-shim.ts`; with no adopted generation both are exactly as before.
+- `packages/coding-agent/src/utils/bundled-bun-shim.ts` (new): POSIX and `.cmd` shim writers. Under an adopted generation a shim sets `NODE_EXTRA_CA_CERTS` and the owned `SSL_CERT_FILE`/`SSL_CERT_DIR` closure only for its own exec, a server launch clears `NODE_USE_SYSTEM_CA` and `BUN_OPTIONS`, a fallback generation prints one degraded-import notice per generation, and an unencodable `.cmd` value yields a shim that exits 78 with the `set-tmpdir` action.
+- `packages/coding-agent/src/engine-trust/actions.ts` (new): the engine trust action catalog (reason or refusal code to action id and text).
+
+### Why
+
+- omo#10762, design r13 5.6 and 6.6: an agent's `bun` must use the engine's trust generation, never Bun's unfiltered system store or the OpenSSL default inputs, and the agent shell itself must never hold the generation.
+
+### Why an extension could not handle it
+
+- The shim directory is appended to the agent shell's PATH by the shell environment builder in `utils/shell.ts`, below the extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `shimFiles` and `materialize` in `bundled-bun.ts`.
+
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard-command.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-18 - `isWSL` recognizes `WSL_INTEROP` and injectable kernel-version paths (Refs senpi#3628)
+
+### What changed
+
+- `packages/coding-agent/src/utils/wsl.ts`: `isWSL` also accepts `WSL_INTEROP` as an env marker and takes an optional `procVersionPath` (default `/proc/version`) so callers and tests can pin the kernel-version file.
+
+### Why
+
+- `packages/coding-agent/src/utils/wsl.ts`: WSL sessions launched with a sanitized environment set `WSL_INTEROP` but not the two markers the helper read, and keybinding defaults could not test the `/proc/version` fallback without a fixture path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/utils/wsl.ts`: clipboard interop and keybinding defaults call this leaf helper directly; extensions have no earlier hook.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/utils/wsl.ts`: the marker list and the optional parameter.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Move the shared PID identity, start-time parsing, liveness and validated signaling implementation unchanged out of the removed app-server directory. Native RPC and terminals remain its owners.
+
+- `packages/coding-agent/src/utils/process-identity.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-09 - Windows tree kills no longer use taskkill /T (senpi#2999 follow-up)
 
 ### What changed

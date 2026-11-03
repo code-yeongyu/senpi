@@ -40,17 +40,16 @@ function generateFireworksModels(
 			`globalThis.fetch = async (input) => {\n` +
 			`  const url = String(input);\n` +
 			`  if (url === "https://models.dev/api.json") return Response.json(catalog);\n` +
-			// The fork's generator also fetches the OpenGateway and NVIDIA NIM catalogs; serve
-			// them empty so a tolerated fetch failure never lands on stderr.
+			// Other provider feeds stay deterministic so their refreshes never land on stderr.
 			`  if (url === "https://models.dev/models.json?type=decision") return Response.json({ "typesafe/jev-latest": { name: "Jev", type: "decision", limit: { context: 64000, output: 0 } } });\n` +
 			`  if (\n` +
 			`    url.startsWith("https://openrouter.ai/api/v1/models") ||\n` +
 			`    url === "https://ai-gateway.vercel.sh/v1/models" ||\n` +
 			`    url === "https://integrate.api.nvidia.com/v1/models"\n` +
 			`  ) return Response.json({ data: [] });\n` +
-			// An empty gateway listing or price table counts as an outage, so serve one retired model and one price.
-			`  if (url === "https://apis.opengateway.ai/v1/models") return Response.json({ data: [{ id: "acme/retired", status: "retired", endpoints: ["chat_completions"] }] });\n` +
-			`  if (url === "https://opengateway.ai/api/model-prices") return Response.json({ "acme/retired": { provider: "acme", modelOwner: "acme", modelName: "retired", inputCostPerToken: 0.000001, outputCostPerToken: 0.000001 } });\n` +
+			// OpenGateway requires a nonempty enriched catalog; this model has built-in metadata.
+			`  if (url === "https://apis.opengateway.ai/v1/models") return Response.json({ data: [{ id: "x-ai/grok-4-1-fast", endpoints: ["chat_completions"] }] });\n` +
+			`  if (url === "https://opengateway.ai/api/model-prices") return Response.json({ "x-ai/grok-4-1-fast": { provider: "x-ai", modelOwner: "x-ai", modelName: "grok-4-1-fast", inputCostPerToken: 0.000001, outputCostPerToken: 0.000001 } });\n` +
 			`  if (url === "https://radius.pi.dev/v1/config") return Response.json({ baseUrl: "https://radius.pi.dev", models: [{ id: "test", name: "Test", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 4096 }] });\n` +
 			`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
 			`};\n`,

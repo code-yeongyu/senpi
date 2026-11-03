@@ -9,6 +9,7 @@ import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-a
 import {
 	dropFailedAssistantTurns,
 	getCurrentSystemMessage,
+	isContextOverflow,
 	normalizeContext,
 	type RetryCallbacks,
 	type RetryPolicy,
@@ -28,6 +29,12 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { estimateContextTokens as estimateProviderContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import {
+	allowOverflowRetry,
+	boundSummarizationInput,
+	SummarizationOverflowExhaustedError,
+	shrinkSummarizationInputForOverflowRetry,
+} from "../extensions/builtin/compaction/overflow-retry.ts";
 import { resolveEffectiveReserveTokens } from "../extensions/builtin/compaction/policy.ts";
 import { withoutServerSearch } from "../extensions/builtin/server-search-fallback.ts";
 import { convertToLlm, isContextExcludedCustomMessage } from "../messages.ts";
@@ -229,9 +236,12 @@ export interface CacheFriendlySummaryOptions {
 
 /**
  * Calculate total context tokens from usage.
- * Uses the native totalTokens field when available, falls back to computing from components.
+ * Prefer request context over cumulative billing; unknown context is estimated from messages.
  */
 export function calculateContextTokens(usage: Usage): number {
+	if (usage.contextUsage !== undefined) {
+		return usage.contextUsage === null ? 0 : usage.contextUsage.input + usage.contextUsage.output;
+	}
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 
@@ -412,6 +422,42 @@ function weightedChars(text: string): number {
 	return chars;
 }
 
+/**
+ * CJK density correction for cut-point budgets (senpi#4617), mirroring the
+ * wire estimate in `extensions/builtin/compaction/overflow-retry.ts`: CJK
+ * text tokenizes far denser than the chars/4 prose heuristic (roughly one
+ * token per 1.5 Korean characters, not four), so the shared estimator
+ * undercounts it by ~3x. Kept local rather than imported so this module
+ * does not widen its existing import cycle with overflow-retry.
+ */
+const CJK_RUN_RE = /[\u1100-\u11FF\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF\u{20000}-\u{2FA1F}]+/gu;
+const CJK_CHAR_WEIGHT = 3;
+
+function cjkExtraChars(text: string): number {
+	let extra = 0;
+	for (const match of text.matchAll(CJK_RUN_RE)) {
+		extra += match[0].length * (CJK_CHAR_WEIGHT - 1);
+	}
+	return extra;
+}
+
+/**
+ * Token estimate used only by the cut-point walks (`findCutPoint` and
+ * `findProjectedCutPoint`, via `keepBudgetTokens`): the shared chars/4
+ * estimate plus the CJK correction over the message's serialized form, so
+ * every content field counts, exactly as the summarizer input sizing does.
+ * Deliberately not `estimateTokens` itself: context usage and compaction
+ * thresholds keep the established heuristic, and only the keep budget —
+ * the quantity the issue shows diverging from wire tokens — gets the
+ * correction.
+ */
+function estimateCutPointTokens(message: AgentMessage): number {
+	const base = estimateTokens(message);
+	const serialized = serializeForEstimate(message);
+	if (serialized === undefined) return base;
+	return base + Math.ceil(cjkExtraChars(serialized) / 4);
+}
+
 function estimateTextAndImageContentChars(content: string | readonly (TextContent | ImageContent)[]): number {
 	if (typeof content === "string") {
 		return weightedChars(content);
@@ -536,7 +582,7 @@ function keepBudgetWeighted(messages: readonly AgentMessage[]): Set<AgentMessage
 }
 
 function keepBudgetTokens(messages: readonly AgentMessage[], weighted: ReadonlySet<AgentMessage>): number {
-	return messages.reduce((sum, message) => (weighted.has(message) ? sum + estimateTokens(message) : sum), 0);
+	return messages.reduce((sum, message) => (weighted.has(message) ? sum + estimateCutPointTokens(message) : sum), 0);
 }
 
 function isTurnStartMessage(message: AgentMessage): boolean {
@@ -1000,6 +1046,8 @@ export function cacheFriendlyContextFits(model: Model<any>, context: TranscriptC
 	);
 }
 
+const SUMMARY_PROMPT_WRAPPERS = "<conversation>\n\n</conversation>\n\n<previous-summary>\n\n</previous-summary>\n\n";
+
 /** Generate or update a conversation summary and return its provider usage. */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
@@ -1050,39 +1098,72 @@ export async function generateSummaryWithUsage(
 		if (customInstructions) basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
-	let promptText = "";
-	if (!sourceContext) {
-		const llmMessages = convertToLlm(transformedSource.messages);
-		const conversationText = serializeConversation(llmMessages);
-		promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-		if (transformedSource.previousSummary) {
-			promptText += `<previous-summary>\n${transformedSource.previousSummary}\n</previous-summary>\n\n`;
-		}
+	// The serialized history is bounded to the window with the builtin compaction's rule (senpi#4032): a history
+	// that is close to the window by construction (an overflow, a required pre-prompt compaction) must not make the
+	// summary request overflow the same window, or the compaction - and with it overflow recovery - never succeeds.
+	const boundsHistory = !sourceContext && model.contextWindow > 0;
+	const promptTokens = Math.ceil(
+		`${SUMMARIZATION_SYSTEM_PROMPT}${basePrompt}${transformedSource.previousSummary ?? ""}${SUMMARY_PROMPT_WRAPPERS}`
+			.length / 4,
+	);
+	// Measured on what is sent (serialization already truncates long tool results), so a fitting request is unchanged.
+	const serializedFits = (messages: AgentMessage[]): boolean =>
+		Math.ceil(serializeConversation(convertToLlm(messages)).length / 4) + promptTokens + maxTokens <=
+		model.contextWindow;
+	let summarizedMessages = transformedSource.messages;
+	if (boundsHistory && !serializedFits(summarizedMessages)) {
+		summarizedMessages = boundSummarizationInput(summarizedMessages, model.contextWindow, promptTokens);
 	}
-	promptText += basePrompt;
+	const overflowStartedAt = Date.now();
+	let overflowAttempts = 0;
+	let response: AssistantMessage;
+	while (true) {
+		let promptText = "";
+		if (!sourceContext) {
+			const llmMessages = convertToLlm(summarizedMessages);
+			const conversationText = serializeConversation(llmMessages);
+			// Bounding drops the oldest history from the summary for good: say so in the request, so the summary records
+			// the gap instead of silently losing it.
+			const omitted = transformedSource.messages.length - summarizedMessages.length;
+			const omittedNote = omitted > 0 ? `<omitted-history messages="${omitted}" />\n` : "";
+			promptText = `<conversation>\n${omittedNote}${conversationText}\n</conversation>\n\n`;
+			if (transformedSource.previousSummary) {
+				promptText += `<previous-summary>\n${transformedSource.previousSummary}\n</previous-summary>\n\n`;
+			}
+		}
+		promptText += basePrompt;
 
-	const completionOptions = createSummarizationOptions(
-		model,
-		maxTokens,
-		apiKey,
-		headers,
-		env,
-		signal,
-		thinkingLevel,
-		extraBody,
-		sessionId,
-		sourceContext ? cacheFriendly?.requestOptions : undefined,
-		sourceContext ? "short" : undefined,
-	);
-	const response = await completeSummarization(
-		model,
-		buildSummarizationContext(promptText, sourceContext),
-		completionOptions,
-		streamFn,
-		retry,
-		callbacks,
-		summarizationMaxDurationMs,
-	);
+		const completionOptions = createSummarizationOptions(
+			model,
+			maxTokens,
+			apiKey,
+			headers,
+			env,
+			signal,
+			thinkingLevel,
+			extraBody,
+			sessionId,
+			sourceContext ? cacheFriendly?.requestOptions : undefined,
+			sourceContext ? "short" : undefined,
+		);
+		response = await completeSummarization(
+			model,
+			buildSummarizationContext(promptText, sourceContext),
+			completionOptions,
+			streamFn,
+			retry,
+			callbacks,
+			summarizationMaxDurationMs,
+		);
+		if (!boundsHistory || !isContextOverflow(response, model.contextWindow)) break;
+		overflowAttempts += 1;
+		const elapsedMs = Date.now() - overflowStartedAt;
+		const shrunk = allowOverflowRetry(overflowAttempts, elapsedMs)
+			? shrinkSummarizationInputForOverflowRetry(summarizedMessages, model.contextWindow, promptTokens)
+			: undefined;
+		if (shrunk === undefined) throw new SummarizationOverflowExhaustedError(overflowAttempts, elapsedMs);
+		summarizedMessages = shrunk;
+	}
 
 	const failure = getSummarizationFailure(response, "Summarization");
 	if (failure) throw new Error(failure);
@@ -1203,13 +1284,13 @@ function findProjectedCutPoint(
 		);
 	if (isRecoveryOmissionSuffix) cutIndex++;
 
+	const startsTurn = isProjectedTurnStart(entries[cutIndex]);
+	const turnStartIndex = startsTurn ? -1 : findProjectedTurnStartIndex(entries, cutIndex, startIndex);
 	while (cutIndex > startIndex) {
 		const previous = entries[cutIndex - 1];
 		if (previous.sourceEntry.type === "compaction" || previous.messages.length > 0) break;
 		cutIndex--;
 	}
-	const startsTurn = isProjectedTurnStart(entries[cutIndex]);
-	const turnStartIndex = startsTurn ? -1 : findProjectedTurnStartIndex(entries, cutIndex, startIndex);
 	return {
 		firstKeptEntryIndex: cutIndex,
 		turnStartIndex,
@@ -1248,7 +1329,7 @@ export function prepareCompaction(
 	let cutPoint = findProjectedCutPoint(projectedEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
 
 	if (forceProgress && cutPoint.firstKeptEntryIndex === boundaryStart) {
-		const nextCutPoint = findProjectedValidCutPoints(projectedEntries, boundaryStart + 1, boundaryEnd)[0];
+		const nextCutPoint = findProjectedValidCutPoints(projectedEntries, boundaryStart, boundaryEnd)[1];
 		if (nextCutPoint !== undefined) {
 			const turnStartIndex = findProjectedTurnStartIndex(projectedEntries, nextCutPoint, boundaryStart);
 			cutPoint = {

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import serviceTierExtension from "../../src/core/extensions/builtin/service-tier.ts";
@@ -31,8 +31,9 @@ describe("/fast per-model service-tier persistence", () => {
 		return join(harness.tempDir, "agent", "settings.json");
 	}
 
-	function readSettings(harness: Harness): Record<string, unknown> {
-		return JSON.parse(readFileSync(settingsPath(harness), "utf-8")) as Record<string, unknown>;
+	function readState(harness: Harness): Record<string, unknown> {
+		const path = join(harness.tempDir, "agent", "state.json");
+		return existsSync(path) ? JSON.parse(readFileSync(path, "utf-8")) : {};
 	}
 
 	async function createCodexHarness(options: Partial<HarnessOptions> = {}): Promise<Harness> {
@@ -51,11 +52,11 @@ describe("/fast per-model service-tier persistence", () => {
 
 	/**
 	 * A restart over the same agent dir: a fresh harness (fresh session, fresh extension
-	 * instance) whose settings.json is the one the previous harness wrote.
+	 * instance) seeded from the previous harness's config and persisted state.
 	 */
 	async function restart(previous: Harness, options: Partial<HarnessOptions> = {}): Promise<Harness> {
 		const harness = await createCodexHarness({
-			settings: readSettings(previous) as HarnessOptions["settings"],
+			settings: { ...JSON.parse(readFileSync(settingsPath(previous), "utf-8")), ...readState(previous) },
 			...options,
 		});
 		await harness.session.bindExtensions({});
@@ -66,13 +67,15 @@ describe("/fast per-model service-tier persistence", () => {
 		// given
 		const harness = await createCodexHarness();
 		await harness.session.bindExtensions({});
+		const configBefore = readFileSync(settingsPath(harness), "utf8");
 
 		// when
 		await harness.session.prompt("/fast on");
 
 		// then
 		expect(harness.session.isFastModeActive()).toBe(true);
-		expect(readSettings(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
+		expect(readState(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
+		expect(readFileSync(settingsPath(harness), "utf8")).toBe(configBefore);
 
 		// when
 		const restarted = await restart(harness);
@@ -98,7 +101,7 @@ describe("/fast per-model service-tier persistence", () => {
 		expect(harness.session.isFastModeActive()).toBe(false);
 		// "auto", never a deleted key: only an explicit value can override an inherited
 		// catalog/global priority tier.
-		expect(readSettings(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
+		expect(readState(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
 
 		// when
 		const restarted = await restart(harness);
@@ -125,7 +128,7 @@ describe("/fast per-model service-tier persistence", () => {
 
 		// then
 		expect(third.session.isFastModeActive()).toBe(false);
-		expect(readSettings(third).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
+		expect(readState(third).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
 
 		// when
 		await third.session.prompt("/fast on");
@@ -133,7 +136,7 @@ describe("/fast per-model service-tier persistence", () => {
 
 		// then
 		expect(fourth.session.isFastModeActive()).toBe(true);
-		expect(readSettings(fourth).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
+		expect(readState(fourth).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
 	});
 
 	it("takes effect on the wire immediately for an in-session /fast off", async () => {
@@ -173,7 +176,7 @@ describe("/fast per-model service-tier persistence", () => {
 		// then
 		expect(notify).toHaveBeenCalledWith(`Fast mode enabled: ${BASE_MODEL_ID}`, "info");
 		expect(harness.session.isFastModeActive()).toBe(true);
-		expect(readSettings(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
+		expect(readState(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
 
 		// when
 		await harness.session.prompt("/fast");
@@ -181,7 +184,7 @@ describe("/fast per-model service-tier persistence", () => {
 		// then
 		expect(notify).toHaveBeenCalledWith(`Fast mode disabled: ${BASE_MODEL_ID}`, "info");
 		expect(harness.session.isFastModeActive()).toBe(false);
-		expect(readSettings(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
+		expect(readState(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
 	});
 
 	it("rejects an unknown argument without writing anything", async () => {
@@ -196,7 +199,7 @@ describe("/fast per-model service-tier persistence", () => {
 		// then
 		expect(notify).toHaveBeenCalledWith("Usage: /fast [on|off]", "error");
 		expect(harness.session.isFastModeActive()).toBe(false);
-		expect(readSettings(harness).modelServiceTiers).toBeUndefined();
+		expect(readState(harness).modelServiceTiers).toBeUndefined();
 	});
 
 	it("offers on and off as argument completions", async () => {
@@ -243,14 +246,14 @@ describe("/fast per-model service-tier persistence", () => {
 
 		// then
 		expect(harness.session.model?.id).toBe(FAST_MODEL_ID);
-		expect(readSettings(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
+		expect(readState(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
 
 		// when
 		await harness.session.prompt("/fast off");
 
 		// then
 		expect(harness.session.model?.id).toBe(BASE_MODEL_ID);
-		expect(readSettings(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
+		expect(readState(harness).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
 	});
 
 	it("lets an explicit auto beat a catalog-inherited priority tier", async () => {
@@ -271,7 +274,7 @@ describe("/fast per-model service-tier persistence", () => {
 		expect(seed.session.isFastModeActive()).toBe(false);
 		const offPayload = { model: BASE_MODEL_ID };
 		expect(await runner.emitBeforeProviderRequest(offPayload)).toBe(offPayload);
-		expect(readSettings(seed).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
+		expect(readState(seed).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
 
 		// control: the same catalog priority stays on the wire without a remembered off
 		const control = await createCodexHarness({
@@ -381,7 +384,7 @@ describe("/fast per-model service-tier persistence", () => {
 
 		// then
 		expect(notify).toHaveBeenCalledWith("Fast mode is fixed by the active model selection's priority tier.", "info");
-		expect(readSettings(harness).modelServiceTiers).toBeUndefined();
+		expect(readState(harness).modelServiceTiers).toBeUndefined();
 		expect(harness.session.isFastModeActive()).toBe(true);
 	});
 
@@ -405,7 +408,7 @@ describe("/fast per-model service-tier persistence", () => {
 
 		// then
 		expect(notify).toHaveBeenCalledWith("Fast mode is fixed by the active model selection's priority tier.", "info");
-		expect(readSettings(harness).modelServiceTiers).toBeUndefined();
+		expect(readState(harness).modelServiceTiers).toBeUndefined();
 		expect(harness.session.isFastModeActive()).toBe(true);
 	});
 
@@ -427,7 +430,7 @@ describe("/fast per-model service-tier persistence", () => {
 
 		// then
 		expect(notify).toHaveBeenCalledWith("Fast mode is only available for ChatGPT Subscription models.", "warning");
-		expect(readSettings(harness).modelServiceTiers).toBeUndefined();
+		expect(readState(harness).modelServiceTiers).toBeUndefined();
 	});
 
 	it("writes only the nested key so a concurrent session's model preference survives", async () => {
@@ -441,7 +444,7 @@ describe("/fast per-model service-tier persistence", () => {
 		await harness.session.prompt("/fast on");
 
 		// then
-		expect(readSettings(harness).modelServiceTiers).toEqual({
+		expect(readState(harness).modelServiceTiers).toEqual({
 			[`${CODEX_PROVIDER}/some-other-model`]: "priority",
 			[BASE_KEY]: "priority",
 		});

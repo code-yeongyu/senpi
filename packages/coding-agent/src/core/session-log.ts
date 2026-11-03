@@ -10,7 +10,7 @@ const DEBUG_PREFIX = `[${APP_NAME}-session]`;
 const BLOCKED_KEY =
 	/^(?:__proto__|constructor|prototype|headers?|env(?:ironment)?|authorization|credential(?:s)?|password|secret|token|api_?key|client_?secret)$/i;
 const ALLOWED_DATA_KEY =
-	/^(?:action|attemptId|disposition|stage|error|mode|count|willRetry|deferAdmission|delivered|restored|cause|accepted|skipped|rejectionCause|reason|durationMs|kind|retryable|phase|op|bytes|generation|requestId|tokens|tokensBefore|tokensAfter|contextWindow|attempt|aborted|sessionId|role|provider|model|source|actor|from|to|duringTurn|persistDefault)$/;
+	/^(?:action|attemptId|disposition|stage|error|mode|count|willRetry|deferAdmission|delivered|restored|cause|accepted|skipped|rejectionCause|reason|durationMs|kind|retryable|phase|op|bytes|generation|requestId|tokens|tokensBefore|tokensAfter|contextWindow|attempt|aborted|sessionId|role|provider|model|source|actor|from|to|duringTurn|persistDefault|extension|handlerEvent|queuedId|ageMs)$/;
 const SENSITIVE_TEXT =
 	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 

@@ -17,6 +17,7 @@ import {
 } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 /**
  * Occupancy contract for the shared multi-session RPC host:
@@ -63,8 +64,7 @@ function createRuntimeFactory(): {
 		const flagValues = new Map<string, boolean | string>();
 		return {
 			session: {
-				sessionManager: options.sessionManager,
-				agentDir: options.agentDir,
+				...fakeSessionBase(options),
 				isFastModeActive: () => false,
 				agent: { state: {} },
 				getContextUsage: () => undefined,

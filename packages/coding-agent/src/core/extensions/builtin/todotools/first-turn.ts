@@ -11,7 +11,7 @@ import { firstTextBlock } from "./todo-ask.ts";
 export const FIRST_TURN_CUSTOM_TYPE = "senpi.todo-first-turn";
 
 export const FIRST_TURN_REMINDER = `<system-reminder>
-This is the first request of the session. Before continuing, call the todo tool with op "init" and a phased list covering the whole request end to end, with only the phases this request needs - a question needs none past answering it. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.
+This is the first request of the session. Before continuing, call the todo tool with op "init" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.
 </system-reminder>`;
 
 /** One-shot, non-interactive runs; the same set `terminal/notify.ts` never wakes. */

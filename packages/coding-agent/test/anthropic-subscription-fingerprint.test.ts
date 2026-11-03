@@ -108,7 +108,7 @@ describe("claude-sdk-oauth config fingerprint stability", () => {
 			"primary",
 		);
 
-		expect(HOST_TOOL_POLICY_FINGERPRINT).toBe("host-tool-denial-v3");
+		expect(HOST_TOOL_POLICY_FINGERPRINT).toBe("host-tool-denial-v4");
 		expect(withDifferentCallbackIdentity.toolsetHash).toBe(policyProbe.toolsetHash);
 	});
 

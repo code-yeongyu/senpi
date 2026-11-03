@@ -9,10 +9,42 @@ import {
 	MODEL_DATA_SCHEMA_VERSION,
 	type ModelDataStructure,
 	readModelDataStructure,
+	stableGeneratedAt,
 	validateModelDataDirectory,
 } from "../scripts/model-data.ts";
 
 const GENERATED_AT = "2026-07-23T10:00:00.000Z";
+
+describe("stableGeneratedAt (idempotent catalog generation)", () => {
+	const structure: ModelDataStructure = { "test-provider": { "chat:model-a": "openai-completions" } };
+	const newer = "2026-10-13T04:00:00.000Z";
+
+	it("keeps the committed generatedAt when the content is unchanged", () => {
+		const committed = createModelDataManifest(structure, {}, GENERATED_AT);
+		const regenerated = createModelDataManifest(structure, {}, newer);
+		expect(stableGeneratedAt(regenerated, committed)).toBe(GENERATED_AT);
+		// regenerate twice with unchanged data -> byte-identical, so the drift check stays green
+		expect(stableGeneratedAt(createModelDataManifest(structure, {}, "2026-10-14T00:00:00.000Z"), committed)).toBe(
+			GENERATED_AT,
+		);
+	});
+
+	it("moves the timestamp when a model is added or removed", () => {
+		const committed = createModelDataManifest(structure, {}, GENERATED_AT);
+		const changed: ModelDataStructure = { "test-provider": { "chat:model-b": "openai-completions" } };
+		expect(stableGeneratedAt(createModelDataManifest(changed, {}, newer), committed)).toBe(newer);
+	});
+
+	it("moves the timestamp when only a model field changes (cost, context, baseUrl)", () => {
+		const committed = createModelDataManifest(structure, { "a.json": "old" }, GENERATED_AT);
+		// same model set, different file contents: the timestamp must move, not stay stale
+		expect(stableGeneratedAt(createModelDataManifest(structure, { "a.json": "new" }, newer), committed)).toBe(newer);
+	});
+
+	it("uses the fresh timestamp when there is no committed manifest", () => {
+		expect(stableGeneratedAt(createModelDataManifest(structure, {}, newer), undefined)).toBe(newer);
+	});
+});
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
@@ -119,6 +151,58 @@ describe("generated model data validation", () => {
 		const fixture = createFixture();
 		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
 		model[field] = value;
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(expectedMessage);
+	});
+
+	it("accepts a dated cost card", () => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		model.cost = {
+			input: 1,
+			output: 2,
+			cacheRead: 0,
+			cacheWrite: 0,
+			effectiveRates: [{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+		};
+		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
+		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).not.toThrow();
+	});
+
+	it.each([
+		["an empty card list", [], "invalid cost.effectiveRates"],
+		[
+			"a local-time start",
+			[{ effectiveFrom: "2026-12-01T00:00:00", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid effectiveFrom",
+		],
+		[
+			"a date-only start",
+			[{ effectiveFrom: "2026-12-01", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid effectiveFrom",
+		],
+		[
+			"a missing rate",
+			[{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0 }],
+			"invalid cacheWrite",
+		],
+		[
+			"a negative rate",
+			[{ effectiveFrom: "2026-12-01T08:00:00Z", input: -2, output: 4, cacheRead: 0, cacheWrite: 0 }],
+			"invalid input",
+		],
+		[
+			"two cards starting together",
+			[
+				{ effectiveFrom: "2026-12-01T08:00:00Z", input: 2, output: 4, cacheRead: 0, cacheWrite: 0 },
+				{ effectiveFrom: "2026-12-01T08:00:00.000Z", input: 3, output: 6, cacheRead: 0, cacheWrite: 0 },
+			],
+			"repeats effectiveFrom",
+		],
+	] as const)("rejects a malformed dated cost card: %s", (_case, effectiveRates, expectedMessage) => {
+		const fixture = createFixture();
+		const model = fixture.values["chat:model-a"] as Record<string, unknown>;
+		model.cost = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, effectiveRates };
 		writeFixtureData(fixture.dataDir, fixture.structure, fixture.values);
 		expect(() => validateModelDataDirectory(fixture.structure, fixture.dataDir)).toThrow(expectedMessage);
 	});

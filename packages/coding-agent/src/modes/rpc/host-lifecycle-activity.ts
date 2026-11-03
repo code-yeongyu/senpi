@@ -5,10 +5,13 @@
  */
 import { type FSWatcher, watch } from "node:fs";
 import { createConnection, Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { type HostLifetimeOwner, hostOwnerGone, readHostOwner, sameHostOwner } from "./host-daemon-state.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
-import { SessionRunActivity } from "./host-run-activity.ts";
+import { holdIdleExitForSettling, SessionRunActivity } from "./host-run-activity.ts";
+import { supervisorLog } from "./host-supervisor-log.ts";
+import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { activeTurnsForIdleDecision, createObserverLink, type ObserverLink } from "./observer-link.ts";
 import { resolveSocketTransportAddress, sendSocketHandshake } from "./socket-transport.ts";
@@ -17,18 +20,27 @@ export interface SupervisorActivityOptions {
 	readonly idleExitMs: number;
 	readonly internalSocket: string;
 	readonly internalSecret?: Buffer;
+	readonly internalKey?: Buffer;
+	/** This generation: a client running in its own host is a dependent, never occupancy (#3272). */
+	readonly instanceId: string;
 	/** The supervisor is leaving: the observer stops reconnecting. */
 	readonly settled: () => boolean;
 	/** Resets owner grace even for activity that starts and ends between lifecycle ticks. */
 	readonly onActivity?: () => void;
 }
 
+/**
+ * The observer's internal handshake bound (senpi#3816 review), the same 5 s the raw connect had: a child that accepts
+ * and never answers fails the open, and the connection is dropped.
+ */
+export const INTERNAL_OBSERVER_HANDSHAKE_MS = 5_000;
+
 export class SupervisorActivity {
 	readonly decider: IdleExitDecider;
 	readonly clients: ClientOccupancy;
-	private readonly runs = new SessionRunActivity();
+	private readonly runs: SessionRunActivity;
 	private readonly observerLink: ObserverLink;
-	private observerSocket: Socket | undefined;
+	private observerSocket: Duplex | undefined;
 	private readonly options: SupervisorActivityOptions;
 
 	constructor(options: SupervisorActivityOptions) {
@@ -37,7 +49,15 @@ export class SupervisorActivity {
 		// during startup asks for the activity snapshot, and a successor's first `open_session` once
 		// failed on a binding read before its initializer ran.
 		this.decider = new IdleExitDecider(options.idleExitMs);
-		this.clients = new ClientOccupancy(() => this.refresh());
+		// A settled session's agent_settled handlers hold idle exit for at most one idle window (omo#11419).
+		this.runs = new SessionRunActivity({
+			settleHoldMs: options.idleExitMs,
+			onSettleHoldExpired: (sessionId, heldMs) =>
+				supervisorLog(
+					`session ${sessionId} settled ${heldMs} ms ago and its agent_settled extension handlers have not finished; idle exit no longer waits for them`,
+				),
+		});
+		this.clients = new ClientOccupancy(() => this.refresh(), options.instanceId);
 		this.observerLink = createObserverLink({
 			open: () => this.connectObserver(),
 			settled: options.settled,
@@ -68,7 +88,7 @@ export class SupervisorActivity {
 		const current = this.current();
 		if (current.connections > 0 || current.activeTurns > 0 || this.clients.unclassifiedCount > 0)
 			this.options.onActivity?.();
-		return this.decider.update(current);
+		return holdIdleExitForSettling(this.decider.update(current), this.runs);
 	}
 
 	/** Owner death never turns an unknown observer snapshot into permission to stop a turn. */
@@ -76,6 +96,7 @@ export class SupervisorActivity {
 		return (
 			this.observerLink.healthy() &&
 			this.runs.busySessions === 0 &&
+			this.runs.settlingSessions === 0 &&
 			this.clients.attachedCount === 0 &&
 			this.clients.unclassifiedCount === 0
 		);
@@ -96,17 +117,30 @@ export class SupervisorActivity {
 			resolveSocketTransportAddress(this.options.internalSocket, process.platform, secret),
 		);
 		if (secret) sendSocketHandshake(next, secret);
-		await waitForConnect(next, 5_000);
-		this.observerSocket = next;
-		attachJsonlLineReader(next, (line) => this.observeHostEvent(line), { maxLineLength: MAX_RPC_LINE_CHARACTERS });
+		let stream: Duplex;
+		try {
+			if (this.options.internalKey)
+				stream = await connectInternalConnection(next, this.options.internalKey, {
+					timeoutMs: INTERNAL_OBSERVER_HANDSHAKE_MS,
+				});
+			else {
+				await waitForConnect(next, 5_000);
+				stream = next;
+			}
+		} catch (cause) {
+			next.destroy();
+			throw cause;
+		}
+		this.observerSocket = stream;
+		attachJsonlLineReader(stream, (line) => this.observeHostEvent(line), { maxLineLength: MAX_RPC_LINE_CHARACTERS });
 		return {
 			onLost: (handler: () => void) => {
 				const lost = () => {
 					handler();
 					this.options.onActivity?.();
 				};
-				next.once("close", lost);
-				next.once("error", lost);
+				stream.once("close", lost);
+				stream.once("error", lost);
 			},
 		};
 	}
@@ -210,7 +244,14 @@ export class SupervisorOwner {
 		if (!this.watcher) await this.reload();
 		const owner = this.owner;
 		const revision = this.revision;
-		if (owner != null && !this.pipe && !this.gone && performance.now() >= this.nextProbeAt) {
+		// Bun can leave the inherited pipe silent after its writer dies (#4845). Reparenting
+		// re-enables the OS-identity check; it never bypasses ownership or the quiet-state gate.
+		if (
+			owner != null &&
+			(!this.pipe || process.ppid !== owner.pid) &&
+			!this.gone &&
+			performance.now() >= this.nextProbeAt
+		) {
 			const gone = await hostOwnerGone(owner);
 			if (this.stopped || revision !== this.revision) return false;
 			this.gone = gone;

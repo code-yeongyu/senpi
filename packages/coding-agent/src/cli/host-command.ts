@@ -24,9 +24,6 @@ import { writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { APP_NAME, getAgentDir } from "../config.ts";
 import { envValue } from "../core/brand.ts";
-import type { ShardKind } from "../modes/rpc/host-daemon-paths.ts";
-import type { HostDecisionPolicy } from "../modes/rpc/host-decision.ts";
-import type { IdleHandoverTerms } from "../modes/rpc/host-handover-request.ts";
 import {
 	DEFAULT_HOST_LAUNCH_SPEC,
 	HostLaunchSpecError,
@@ -40,18 +37,17 @@ import {
 	type HostTarget,
 	runHostRequest,
 } from "../modes/rpc/host-runner.ts";
+import { type ParsedHostArgs, parseHostArgs } from "./host-command-args.ts";
 import { emit } from "./host-emit.ts";
+import { presenterBootstrapStream } from "../modes/rpc/mcp-presenter-bootstrap.ts";
 
-const SUBCOMMANDS = ["ensure", "status", "stop", "handoff", "shard-path", "gc"] as const;
-type HostSubcommand = (typeof SUBCOMMANDS)[number];
-
-const POLICIES = ["upgrade", "fallback", "never"] as const;
+export { parseHostArgs } from "./host-command-args.ts";
 
 const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [options]
 
   ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
   status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
-  stop        [--drain] [--force] [--socket <path>]
+  stop        [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--expected-generation <json>] [--socket <path>]
   handoff     [--launch-spec <file>] [--socket <path>]
               [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
               (--when idle: the running host hands over to THIS runtime at its next safe idle point)
@@ -59,24 +55,10 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
   gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
   session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
 
+  --rpc-key-root <dir>   endpoint credentials only; keeps this client's profile
+  --mcp-presenter-enforcement   ensure/handoff deployment opt-in; default off for a new host
+  --mcp-presenter-fd 4   ensure/handoff private enrollment channel; never enrolls on reuse
   --json   the answer is one JSON line on stdout (always, except shard-path's bare path)`;
-
-interface ParsedHostArgs {
-	readonly subcommand: HostSubcommand;
-	readonly specPath?: string;
-	readonly policy: HostDecisionPolicy;
-	readonly socket?: string;
-	readonly includeWorkers: boolean;
-	readonly all: boolean;
-	readonly drain: boolean;
-	readonly force: boolean;
-	readonly json: boolean;
-	readonly kind?: ShardKind;
-	readonly owner?: string;
-	readonly root?: string;
-	readonly agentDir?: string;
-	readonly handover?: IdleHandoverTerms;
-}
 
 /**
  * Runs one `host` invocation and returns the exit code it means, having written its single JSON
@@ -89,7 +71,14 @@ export async function runHostCommand(args: readonly string[]): Promise<number> {
 		return HOST_EXIT_USAGE;
 	}
 	try {
-		const outcome = await runHostRequest(await hostRequest(parsed));
+		const request = await hostRequest(parsed);
+		const presenterBootstrap =
+			parsed.presenterBootstrapFd === undefined ? undefined : presenterBootstrapStream(parsed.presenterBootstrapFd);
+		const outcome = await runHostRequest(request, {
+			keyRoot: parsed.keyRoot,
+			presenterBootstrap,
+			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
+		}).finally(() => presenterBootstrap?.destroy());
 		if (parsed.subcommand === "shard-path" && !parsed.json) writeSync(1, `${String(outcome.payload.socket)}\n`);
 		else emit(outcome.payload);
 		return outcome.exitCode;
@@ -112,7 +101,15 @@ async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
 		case "status":
 			return { action: "status", target, includeWorkers: parsed.includeWorkers, all: parsed.all };
 		case "stop":
-			return { action: "stop", target, drain: parsed.drain, force: parsed.force };
+			return {
+				action: "stop",
+				target,
+				drain: parsed.drain,
+				force: parsed.force,
+				...(parsed.expectedGeneration !== undefined && { expectedGeneration: parsed.expectedGeneration }),
+				...(parsed.instanceId !== undefined && { instanceId: parsed.instanceId }),
+				...(parsed.waitMs !== undefined && { waitMs: parsed.waitMs }),
+			};
 		case "handoff":
 			return {
 				action: "handoff",
@@ -141,117 +138,6 @@ function launchSpec(specPath: string | undefined): Promise<ResolvedHostLaunchSpe
 /** The endpoint this client would reach: the one it was given, the branded override, or the default. */
 export function resolveHostSocket(explicit: string | undefined, agentDir: string): string {
 	return explicit ?? envValue("RPC_SOCKET") ?? resolve(agentDir, "rpc", "rpc.sock");
-}
-
-/** Parses the command line, or answers with the message that says why it could not. */
-export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string {
-	const [subcommand, ...rest] = args;
-	if (subcommand === undefined || !isSubcommand(subcommand)) {
-		return `Error: unknown host command "${subcommand ?? ""}".`;
-	}
-	let specPath: string | undefined;
-	let policy: HostDecisionPolicy = "upgrade";
-	let socket: string | undefined;
-	let includeWorkers = false;
-	let all = false;
-	let drain = false;
-	let force = false;
-	let json = false;
-	let kind: ShardKind | undefined;
-	let owner: string | undefined;
-	let root: string | undefined;
-	let agentDir: string | undefined;
-	const handover: Record<string, string> = {};
-	for (let index = 0; index < rest.length; index++) {
-		const flag = rest[index];
-		const value = rest[index + 1];
-		if (flag === "--json") {
-			json = true;
-		} else if (flag === "--include-workers") {
-			includeWorkers = true;
-		} else if (flag === "--all" && subcommand === "status") {
-			all = true;
-		} else if (flag === "--kind" && subcommand === "shard-path" && (value === "p" || value === "i")) {
-			kind = value;
-			index++;
-		} else if (flag === "--owner" && subcommand === "shard-path" && value !== undefined) {
-			owner = value;
-			index++;
-		} else if (flag === "--root" && subcommand === "shard-path" && value !== undefined) {
-			root = value;
-			index++;
-		} else if (flag === "--agent-dir" && subcommand === "gc" && value !== undefined) {
-			agentDir = value;
-			index++;
-		} else if (subcommand === "handoff" && value !== undefined && HANDOVER_FLAGS.has(flag ?? "")) {
-			handover[flag ?? ""] = value;
-			index++;
-		} else if (flag === "--drain") {
-			drain = true;
-		} else if (flag === "--force") {
-			force = true;
-		} else if (flag === "--launch-spec" && value !== undefined) {
-			specPath = value;
-			index++;
-		} else if (flag === "--socket" && value !== undefined) {
-			socket = value;
-			index++;
-		} else if (flag === "--policy" && value !== undefined && isPolicy(value)) {
-			policy = value;
-			index++;
-		} else {
-			return `Error: unknown option "${flag}" for "${APP_NAME} host ${subcommand}".`;
-		}
-	}
-	if (subcommand === "shard-path" && (kind === undefined || owner === undefined)) {
-		return `Error: "${APP_NAME} host shard-path" needs --kind <p|i> and --owner <id>.`;
-	}
-	const terms = Object.keys(handover).length === 0 ? undefined : handoverTerms(handover);
-	if (typeof terms === "string") return terms;
-	return {
-		subcommand,
-		...(specPath !== undefined && { specPath }),
-		policy,
-		...(socket !== undefined && { socket }),
-		includeWorkers,
-		all,
-		drain,
-		force,
-		json,
-		...(kind !== undefined && { kind }),
-		...(owner !== undefined && { owner }),
-		...(root !== undefined && { root }),
-		...(agentDir !== undefined && { agentDir }),
-		...(terms !== undefined && { handover: terms }),
-	};
-}
-
-const HANDOVER_FLAGS = new Set(["--when", "--operation", "--if-instance", "--if-generation", "--target-build"]);
-
-/** The conditional handover's terms: all five flags together, or a usage error naming what is wrong. */
-function handoverTerms(flags: Readonly<Record<string, string>>): IdleHandoverTerms | string {
-	const when = flags["--when"];
-	const operationId = flags["--operation"];
-	const ifInstanceId = flags["--if-instance"];
-	const generation = flags["--if-generation"];
-	const targetRuntimeBuildId = flags["--target-build"];
-	if (when !== "idle") return `Error: "${APP_NAME} host handoff" supports only --when idle.`;
-	if (!operationId || !ifInstanceId || !generation || !targetRuntimeBuildId) {
-		return `Error: "${APP_NAME} host handoff --when idle" needs --operation, --if-instance, --if-generation and --target-build.`;
-	}
-	const ifGeneration = Number(generation);
-	if (!/^\d+$/.test(generation) || !Number.isSafeInteger(ifGeneration)) {
-		return `Error: --if-generation must be a non-negative integer.`;
-	}
-	return { operationId, ifInstanceId, ifGeneration, targetRuntimeBuildId };
-}
-
-function isSubcommand(value: string): value is HostSubcommand {
-	return SUBCOMMANDS.includes(value as HostSubcommand);
-}
-
-function isPolicy(value: string): value is HostDecisionPolicy {
-	return POLICIES.includes(value as HostDecisionPolicy);
 }
 
 function assertNever(value: never): never {

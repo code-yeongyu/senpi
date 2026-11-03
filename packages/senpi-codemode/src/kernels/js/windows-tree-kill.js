@@ -7,6 +7,14 @@ import { execFile } from "node:child_process";
 
 const LISTING_TIMEOUT_MS = 5_000;
 const LISTING_MAX_BUFFER = 16 * 1024 * 1024;
+let cleanupExecFile = execFile;
+let initializedCleanup = false;
+
+export function initializeWindowsCleanup(original) {
+	if (initializedCleanup) throw new Error("Windows cleanup already initialized");
+	initializedCleanup = true;
+	cleanupExecFile = original;
+}
 
 const ROWS_SCRIPT = `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID } | ForEach-Object {
 $created = if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { 0 }
@@ -75,7 +83,7 @@ export function windowsTreeKillArgs(rootPid, rows, selfPid = process.pid) {
 
 export function listWindowsRows() {
 	return new Promise((resolve) => {
-		execFile(
+		cleanupExecFile(
 			"powershell.exe",
 			["-NoProfile", "-NonInteractive", "-Command", ROWS_SCRIPT],
 			{ timeout: LISTING_TIMEOUT_MS, maxBuffer: LISTING_MAX_BUFFER, windowsHide: true },
@@ -95,6 +103,6 @@ export async function killWindowsTree(pid, listing = listWindowsRows()) {
 	const args = windowsTreeKillArgs(pid, await listing);
 	if (args.length === 0) return;
 	await new Promise((resolve) => {
-		execFile("taskkill", args, { timeout: LISTING_TIMEOUT_MS, windowsHide: true }, () => resolve());
+		cleanupExecFile("taskkill", args, { timeout: LISTING_TIMEOUT_MS, windowsHide: true }, () => resolve());
 	});
 }

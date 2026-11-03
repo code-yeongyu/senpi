@@ -9,10 +9,11 @@ import {
 	parseOpenAIImageSize,
 } from "@earendil-works/pi-ai/compat";
 import { defineTool, type ExtensionContext } from "../../types.ts";
-import { type ImageGenAuthResolution, resolveImageGenAuth } from "./auth.ts";
+import { type ImageGenAuthResolution, imageGenCandidates, SETUP_REASON } from "./auth.ts";
 import { DEFAULT_IMAGE_MODEL, failure, type GenerateImageDetails, IMAGE_MODEL_NAMES, Params } from "./params.ts";
 import { displayPath, outputFormatOf, resolveTargets, withFormatExtension } from "./paths.ts";
 import { loadMaskImage, loadReferenceImages } from "./reference-images.ts";
+import { exhaustedProvidersMessage, requestImagesAcrossCandidates, skippedProvidersNote } from "./request.ts";
 import { imageGenRegistryOverride, isNativeBypass, NATIVE_BYPASS_MESSAGE } from "./state.ts";
 
 export type { GenerateImageDetails } from "./params.ts";
@@ -125,11 +126,12 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			return failure(NATIVE_BYPASS_MESSAGE, "provider_native_bypass", context);
 		}
 
-		const auth = await resolveImageGenAuth({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
-		if (auth.kind === "none") {
-			return failure(auth.reason, "missing_config", context);
+		const candidates = imageGenCandidates({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+		const firstCandidate = await candidates.next();
+		if (firstCandidate.done) {
+			return failure(SETUP_REASON, "missing_config", context);
 		}
-		const source = sourceLabel(auth);
+		let source = sourceLabel(firstCandidate.value);
 		const parsedSize = parseOpenAIImageSize(size);
 		if (!parsedSize.ok) {
 			return failure(`Error: ${parsedSize.error}`, "invalid_params", { ...context, source });
@@ -166,23 +168,30 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			}
 		}
 
-		const images = await generateImages(
-			synthesizeModel(auth, modelId),
-			{ input: [{ type: "text", text: prompt }, ...references.images] },
-			{
-				...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
-				...(auth.headers === undefined ? {} : { headers: auth.headers }),
-				...(signal === undefined ? {} : { signal }),
-				size,
-				quality,
-				n: requested,
-				...(params.background === undefined ? {} : { background }),
-				outputFormat,
-				...(params.output_compression === undefined ? {} : { outputCompression: params.output_compression }),
-				...(params.moderation === undefined ? {} : { moderation: params.moderation }),
-				...(mask === undefined ? {} : { mask: mask.image }),
-			},
+		const outcome = await requestImagesAcrossCandidates(firstCandidate.value, candidates, (auth) =>
+			generateImages(
+				synthesizeModel(auth, modelId),
+				{ input: [{ type: "text", text: prompt }, ...references.images] },
+				{
+					...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
+					...(auth.headers === undefined ? {} : { headers: auth.headers }),
+					...(signal === undefined ? {} : { signal }),
+					size,
+					quality,
+					n: requested,
+					...(params.background === undefined ? {} : { background }),
+					outputFormat,
+					...(params.output_compression === undefined ? {} : { outputCompression: params.output_compression }),
+					...(params.moderation === undefined ? {} : { moderation: params.moderation }),
+					...(mask === undefined ? {} : { mask: mask.image }),
+				},
+			),
 		);
+		if (outcome.kind === "exhausted") {
+			return failure(exhaustedProvidersMessage(outcome.skipped), "provider_error", { ...context, source });
+		}
+		const { images } = outcome;
+		source = sourceLabel(outcome.auth);
 		if (images.stopReason !== "stop") {
 			const message = images.errorMessage ?? `Image generation ${images.stopReason}.`;
 			return failure(`Error: ${message}`, "provider_error", { ...context, source });
@@ -236,6 +245,7 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 						`Note: the provider returned ${savedFormat} instead of the requested ${outputFormat}; saved with the matching extension.`,
 					]),
 			...(images.background === undefined ? [] : [`Background: ${images.background}`]),
+			...[skippedProvidersNote(outcome.skipped)].flatMap((note) => (note === undefined ? [] : [note])),
 			...revisedPrompts.map((revised) => `Revised prompt: ${revised}`),
 			"The saved file is the deliverable; refer to it by path instead of re-embedding image data.",
 		].join("\n");

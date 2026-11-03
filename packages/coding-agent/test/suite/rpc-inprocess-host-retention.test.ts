@@ -144,6 +144,7 @@ describe("session retention on the in-process runtime", () => {
 			type: "session_parked",
 			sessionId: session.sessionId,
 			sessionPath: session.state.sessionFile,
+			reason: "idle",
 		});
 		expect(rig.records().filter((record) => record.type === "session_closed")).toEqual([]);
 		expect(await rig.list()).toEqual([]);

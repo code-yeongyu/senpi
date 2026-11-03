@@ -1,10 +1,15 @@
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
+import { redactResolvedReferenceData, redactResolvedReferenceValues } from "../../../../config-reference-redaction.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
 import { ToolExecError } from "../errors.ts";
 import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSessionExpiryRetry } from "../health.ts";
 import { runMcpConnectionLifecycleCall } from "../idle.ts";
 import type { McpInvocation, McpInvocationError } from "../invocation.ts";
 import type { McpToolDefinition } from "./register.ts";
+import { mcpRequestOptions } from "../request-origin.ts";
+import { McpMrtrError } from "../modern/errors.ts";
+import { callMcpToolRequest } from "../tool-client.ts";
+import type { McpToolResult } from "../tool-contracts.ts";
 
 export async function callMcpTool(
 	entry: McpToolCatalogEntry,
@@ -17,7 +22,7 @@ export async function callMcpTool(
 	| {
 			kind: "called";
 			entry: McpToolCatalogEntry;
-			result: Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>;
+			result: McpToolResult;
 	  }
 	| { kind: "refused"; error: McpInvocationError }
 > {
@@ -46,19 +51,22 @@ export async function callMcpTool(
 						if (prepared?.kind === "refused") return prepared;
 						if (prepared !== undefined && !prepared.isCurrent()) continue;
 						const current = prepared?.entry ?? entry;
-						const result = await current.connection.client.callTool(
+						const result = await callMcpToolRequest(
+							current.connection.client,
 							{ name: current.tool, arguments: args },
-							undefined,
-							{
+							current.outputSchema,
+							mcpRequestOptions(current.requestOrigin?.(), {
 								onprogress: (progress) => {
-									onUpdate?.({
-										content: [{ type: "text", text: formatProgress(label, progress) }],
-										details: { progress, server: entry.server, tool: entry.tool },
-									});
+									onUpdate?.(
+										redactResolvedReferenceData({
+											content: [{ type: "text", text: formatProgress(label, progress) }],
+											details: { progress, server: entry.server, tool: entry.tool },
+										}),
+									);
 								},
 								signal,
 								timeout: current.requestTimeoutMs,
-							},
+							}),
 						);
 						return { kind: "called" as const, entry: current, result };
 					}
@@ -66,8 +74,9 @@ export async function callMcpTool(
 			}),
 		);
 	} catch (error) {
+		if (error instanceof McpMrtrError) throw error;
 		const label = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-		throw new ToolExecError(`ToolExecError: ${label}`, {
+		throw new ToolExecError(redactResolvedReferenceValues(`ToolExecError: ${label}`), {
 			cause: error,
 			phase: "call",
 			serverName: entry.server,

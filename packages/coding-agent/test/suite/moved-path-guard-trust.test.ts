@@ -10,9 +10,11 @@ import { flushGuardLog, guardLogPath } from "../../src/core/extensions/builtin/m
 import { findMovedPath, resolveMovedPath } from "../../src/core/extensions/builtin/moved-path-guard/resolve.ts";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "../helpers/fake-session-base.ts";
 import {
 	breadcrumbBody,
 	createMovedLayout,
+	DESKTOP_DIR_MODE,
 	HOME_ID,
 	MOVED_SESSIONS,
 	MOVED_WORKTREE,
@@ -92,7 +94,7 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 	it("ignores a breadcrumb planted in a repository that points anywhere else", () => {
 		const moved = layout();
 		const repo = join(moved.home, "repo");
-		mkdirSync(join(repo, "src"), { recursive: true });
+		mkdirSync(join(repo, "src"), { recursive: true, mode: DESKTOP_DIR_MODE });
 		writeBreadcrumb(repo, { ...breadcrumbBody("/etc/somewhere", ["src"]) });
 
 		expect(findMovedPath(join(repo, "src", "x"))).toBeUndefined();
@@ -230,8 +232,7 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 			cwds.push(options.cwd);
 			return {
 				session: {
-					sessionManager: options.sessionManager,
-					agentDir: options.agentDir,
+					...fakeSessionBase(options),
 					extensionRunner: { hasHandlers: () => false, emit: async () => {} },
 					abort: async () => {},
 					abortBash: () => {},

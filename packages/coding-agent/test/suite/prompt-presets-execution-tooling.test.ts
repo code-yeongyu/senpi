@@ -65,6 +65,7 @@ const PRESET_DIALECT: ReadonlyArray<readonly [PromptPresetName, ExecutionTooling
 	["claude-opus-4-7", "claude"],
 	["claude-opus-4-6", "claude"],
 	["claude-opus-4-5", "claude"],
+	["kimi-k3-1", "kimi"],
 	["kimi-k3", "kimi"],
 	["kimi-k2-8", "kimi"],
 	["kimi-k2-7", "kimi"],

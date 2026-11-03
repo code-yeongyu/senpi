@@ -72,14 +72,26 @@ describe("fallback circuit probes and failure classes (senpi#2201 review)", () =
 		expect(breaker(harness).isOpen(primary, now, "sibling")).toBe(opens);
 	});
 
-	it("keeps a 503 Retry-After longer than the cooldown for sibling sessions", async () => {
+	it("keeps a 503 Retry-After open for its own session, but a sibling that never failed keeps its model (senpi#3467)", async () => {
 		const harness = await make();
 		harness.setResponses([failure("HTTP 503: overloaded (retry-after-ms: 600000)"), answer(), answer()]);
 
 		await harness.session.prompt("unavailable for ten minutes");
 		now += 120_000;
+		expect(breaker(harness).isOpen(primary, now, "observer")).toBe(true);
 		const sibling = await make({}, harness);
 		await sibling.session.prompt("the cooldown elapsed, the provider wait did not");
+
+		expect(calledModels(harness)).toEqual(["faux-1", "faux-2", "faux-1"]);
+	});
+
+	it("still moves a sibling off an entry whose account is spent (senpi#3467)", async () => {
+		const harness = await make();
+		harness.setResponses([failure("HTTP 429: quota exceeded"), answer(), answer()]);
+
+		await harness.session.prompt("the account is out of quota");
+		const sibling = await make({}, harness);
+		await sibling.session.prompt("a sibling starts on the spent head");
 
 		expect(calledModels(harness)).toEqual(["faux-1", "faux-2", "faux-2"]);
 	});
@@ -107,16 +119,18 @@ describe("fallback circuit probes and failure classes (senpi#2201 review)", () =
 		expect(breaker(harness).isOpen(primary, now, "sibling")).toBe(false);
 	});
 
-	it("never admits a second live probe while the first is still in flight", async () => {
+	it("a sibling that never failed sends normally while another session holds the probe, and its answer closes the circuit (senpi#3467)", async () => {
 		const harness = await make();
 		const sibling = await make({}, harness);
 		breaker(harness).open(primary, { now, ...window });
 		now = 60_001;
+		let probeHeldDuringSibling: string | undefined;
 		harness.setResponses([
 			async () => {
 				// when: the first probe is still in flight long past one cooldown window
 				now += 60_001;
 				await sibling.session.prompt("the first probe remains in flight");
+				probeHeldDuringSibling = breaker(harness).admit(primary, now, "observer").kind;
 				return answer();
 			},
 			answer(),
@@ -124,7 +138,9 @@ describe("fallback circuit probes and failure classes (senpi#2201 review)", () =
 
 		await harness.session.prompt("slow probe");
 
-		expect(calledModels(harness)).toEqual(["faux-1", "faux-2"]);
+		// then: the sibling keeps its model, and its answer proved the head healthy
+		expect(calledModels(harness)).toEqual(["faux-1", "faux-1"]);
+		expect(probeHeldDuringSibling).toBe("closed");
 	});
 
 	it("aborts a probe that never answers as a provider failure and moves on", async () => {

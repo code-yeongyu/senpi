@@ -1,4 +1,3 @@
-import { type Credential, type CredentialStore, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	type AnthropicSubscriptionCredential,
@@ -6,44 +5,14 @@ import {
 	assertSentinelInvariant,
 	emptyCredential,
 	envSlots,
-	isSentinelSlot,
 	listAccounts,
 	pinAccount,
-	refreshSlot,
 	removeAccount,
 	SENTINEL_OAUTH_FIELDS,
 } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { cliSlot } from "./support/claude-cli-test-slots.ts";
 
-function makeStore(initial?: Credential): CredentialStore & { written: Credential[] } {
-	let current = initial;
-	const written: Credential[] = [];
-	return {
-		written,
-		async read() {
-			return current;
-		},
-		async list() {
-			return current ? [{ providerId: "anthropic-subscription", type: current.type }] : [];
-		},
-		async delete() {
-			current = undefined;
-		},
-		async modify(_provider, fn) {
-			const next = await fn(current);
-			current = next;
-			if (next) written.push(next);
-			return next;
-		},
-	};
-}
-
-const slotA = {
-	name: "default",
-	refresh: "rA",
-	access: "aA",
-	expires: Date.now() + 60_000,
-	source: "login" as const,
-};
+const slotA = cliSlot("default");
 
 describe("account slots", () => {
 	it("creates an empty credential with sentinel top-level fields", () => {
@@ -58,7 +27,7 @@ describe("account slots", () => {
 	it("adds, lists, pins and removes accounts", () => {
 		let cred = emptyCredential();
 		cred = addAccount(cred, slotA);
-		cred = addAccount(cred, { ...slotA, name: "work" });
+		cred = addAccount(cred, cliSlot("work"));
 		expect(listAccounts(cred).map((a) => a.name)).toEqual(["default", "work"]);
 		cred = pinAccount(cred, "work");
 		expect(cred.pinned).toBe("work");
@@ -97,57 +66,12 @@ describe("account slots", () => {
 		expect(JSON.stringify(cred)).not.toContain("tok1");
 	});
 
-	it("refreshSlot updates only its slot under the store lock", async () => {
-		const store = makeStore(addAccount(emptyCredential(), { ...slotA, expires: Date.now() - 1000 }));
-		const signal = new AbortController().signal;
-		let receivedSignal: AbortSignal | undefined;
-		const refresher = async (refresh: string, refreshSignal: AbortSignal) => {
-			receivedSignal = refreshSignal;
-			return {
-				refresh: `${refresh}-new`,
-				access: "aA-new",
-				expires: Date.now() + 120_000,
-			};
-		};
-		const next = await refreshSlot(store, "anthropic-subscription", "default", refresher, signal);
-		const slot = listAccounts(next as AnthropicSubscriptionCredential)[0];
-		expect(receivedSignal).toBe(signal);
-		expect(slot.access).toBe("aA-new");
-		expect(slot.refresh).toBe("rA-new");
-		const stored = (await store.read("anthropic-subscription")) as AnthropicSubscriptionCredential;
-		expect(stored.access).toBe(SENTINEL_OAUTH_FIELDS.access);
-	});
-
-	it("concurrent refreshSlot calls do not double-refresh", async () => {
-		const store = new InMemoryCredentialStore();
-		await store.modify("anthropic-subscription", async () =>
-			addAccount(emptyCredential(), { ...slotA, expires: Date.now() - 1000 }),
-		);
-		let calls = 0;
-		let gate: (() => void) | undefined;
-		const barrier = new Promise<void>((resolve) => {
-			gate = resolve;
-		});
-		const refresher = async (refresh: string) => {
-			calls++;
-			await barrier;
-			return { refresh, access: `a-${calls}`, expires: Date.now() + 60_000 };
-		};
-		const signal = new AbortController().signal;
-		const first = refreshSlot(store, "anthropic-subscription", "default", refresher, signal);
-		const second = refreshSlot(store, "anthropic-subscription", "default", refresher, signal);
-		gate?.();
-		await Promise.all([first, second]);
-		expect(calls).toBe(1);
-	});
-
-	it("never lists a stored slot whose material is the managed sentinel", () => {
-		// The exact shape a shipped bug wrote: a real account plus a generated
-		// `login-N` slot holding the flat sentinel projection.
-		const poisoned: AnthropicSubscriptionCredential = {
+	it("never lists a stored slot that holds tokens, such as one the retired login wrote (senpi#4436)", () => {
+		const stored = {
 			...emptyCredential(),
 			accounts: [
-				{ ...slotA, name: "default" },
+				slotA,
+				{ name: "old", access: "aA", refresh: "rA", expires: 1, source: "login" },
 				{
 					name: "login-2",
 					access: SENTINEL_OAUTH_FIELDS.access,
@@ -156,12 +80,7 @@ describe("account slots", () => {
 					source: "login",
 				},
 			],
-			pinned: "login-2",
-		};
-		expect(isSentinelSlot({ access: SENTINEL_OAUTH_FIELDS.access, refresh: SENTINEL_OAUTH_FIELDS.refresh })).toBe(
-			true,
-		);
-		expect(isSentinelSlot({ access: "aA", refresh: "rA" })).toBe(false);
-		expect(listAccounts(poisoned).map((account) => account.name)).toEqual(["default"]);
+		} as unknown as AnthropicSubscriptionCredential;
+		expect(listAccounts(stored).map((account) => account.name)).toEqual(["default"]);
 	});
 });

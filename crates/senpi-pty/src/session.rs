@@ -1,8 +1,8 @@
+use crate::session_input::PtyInput;
 use crate::session_threads::{spawn_reader, spawn_timeout};
 use crate::signals::{kill_signal, process_group, send_signal, signal_signal};
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::fmt::{Display, Formatter};
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -98,7 +98,7 @@ pub struct PtyExit {
 
 pub struct PtySession {
     master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
-    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    input: Arc<PtyInput>,
     child: Option<Box<dyn Child + Send + Sync>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     reader_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -154,7 +154,7 @@ impl PtySession {
         let finished = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::new(AtomicBool::new(false));
         let timed_out = Arc::new(AtomicBool::new(false));
-        let writer = Arc::new(Mutex::new(Some(writer)));
+        let input = Arc::new(PtyInput::new(writer));
         let user_wrote = Arc::new(AtomicBool::new(false));
 
         // On Windows, portable-pty's ConPTY is created with PSEUDOCONSOLE_INHERIT_CURSOR, so it
@@ -163,7 +163,7 @@ impl PtySession {
         // startup handshake itself (see answer_conpty_cursor_query); the window closes on the first
         // consumer write so later DSR queries pass through to the consumer.
         #[cfg(windows)]
-        let reader_writer = Arc::clone(&writer);
+        let reader_input = Arc::clone(&input);
         #[cfg(windows)]
         let reader_user_wrote = Arc::clone(&user_wrote);
         #[cfg(windows)]
@@ -176,7 +176,7 @@ impl PtySession {
                 chunk,
                 &mut dsr_tail,
                 &mut dsr_answered_initial,
-                &reader_writer,
+                &reader_input,
                 &reader_user_wrote,
             );
             on_chunk(chunk);
@@ -195,7 +195,7 @@ impl PtySession {
 
         Ok(Self {
             master: Arc::new(Mutex::new(Some(pair.master))),
-            writer,
+            input,
             child: Some(child),
             killer,
             reader_thread: Arc::new(Mutex::new(Some(reader_thread))),
@@ -223,16 +223,7 @@ impl PtySession {
         }
         // The first consumer write closes the ConPTY cursor-query auto-answer window.
         self.user_wrote.store(true, Ordering::SeqCst);
-        let mut guard = self
-            .writer
-            .lock()
-            .map_err(|_| PtyError::new("pty writer lock poisoned"))?;
-        let writer = guard
-            .as_mut()
-            .ok_or_else(|| PtyError::new("pty session is closed"))?;
-        writer.write_all(bytes)?;
-        writer.flush()?;
-        Ok(())
+        self.input.send(bytes)
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> PtyResult<()> {
@@ -273,7 +264,7 @@ impl PtySession {
             .ok_or_else(|| PtyError::new("pty session is closed"))?;
         let status = child.wait()?;
         self.finished.store(true, Ordering::SeqCst);
-        drain_output(&self.writer, &self.master, &self.reader_thread);
+        drain_output(&self.input, &self.master, &self.reader_thread);
         let exit = PtyExit {
             exit_code: Some(status.exit_code() as i32),
             cancelled: self.cancelled.load(Ordering::SeqCst) || self.timed_out.load(Ordering::SeqCst),
@@ -295,14 +286,14 @@ impl PtySession {
         let finished = Arc::clone(&self.finished);
         let cancelled = Arc::clone(&self.cancelled);
         let timed_out = Arc::clone(&self.timed_out);
-        let writer = Arc::clone(&self.writer);
+        let input = Arc::clone(&self.input);
         let master = Arc::clone(&self.master);
         let reader_thread = Arc::clone(&self.reader_thread);
 
         Ok(std::thread::spawn(move || {
             let status = child.wait()?;
             finished.store(true, Ordering::SeqCst);
-            drain_output(&writer, &master, &reader_thread);
+            drain_output(&input, &master, &reader_thread);
             Ok(PtyExit {
                 exit_code: Some(status.exit_code() as i32),
                 cancelled: cancelled.load(Ordering::SeqCst) || timed_out.load(Ordering::SeqCst),
@@ -320,7 +311,7 @@ impl PtySession {
 }
 
 fn drain_output(
-    writer: &Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    input: &PtyInput,
     master: &Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     reader_thread: &Arc<Mutex<Option<JoinHandle<()>>>>,
 ) {
@@ -329,9 +320,7 @@ fn drain_output(
             disable_eof_injection(master);
         }
     }
-    if let Ok(mut guard) = writer.lock() {
-        guard.take();
-    }
+    input.close();
     // Drop the PTY master before joining the reader thread. On Windows the ConPTY output pipe
     // never reaches EOF just because the child exited; only closing the pseudo console unblocks the
     // pending read. On POSIX closing the master here is harmless early cleanup.
@@ -382,7 +371,7 @@ fn answer_conpty_cursor_query(
     chunk: &[u8],
     tail: &mut Vec<u8>,
     answered_initial: &mut bool,
-    writer: &Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    input: &PtyInput,
     user_wrote: &Arc<AtomicBool>,
 ) {
     const DSR_CURSOR_QUERY: &[u8] = b"\x1b[6n";
@@ -406,10 +395,5 @@ fn answer_conpty_cursor_query(
         return;
     }
     *answered_initial = true;
-    if let Ok(mut guard) = writer.lock() {
-        if let Some(writer) = guard.as_mut() {
-            let _ = writer.write_all(CPR_RESPONSE);
-            let _ = writer.flush();
-        }
-    }
+    let _ = input.send(CPR_RESPONSE);
 }

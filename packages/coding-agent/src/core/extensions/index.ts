@@ -2,6 +2,13 @@
  * Extension system for lifecycle events and custom tools.
  */
 
+export type {
+	ChildLifecycleReport,
+	DeliveryTicketId,
+	LifecycleApi,
+	ObligationToken,
+	WorkObligations,
+} from "../session-lifecycle-types.ts";
 export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.ts";
 export type { SourceInfo } from "../source-info.ts";
 export type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
@@ -24,6 +31,7 @@ export type {
 	SwitchSessionHandler,
 } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
+export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./secret-input.ts";
 export * from "./session-control-types.ts";
 export type {
 	AfterProviderResponseEvent,
@@ -96,12 +104,14 @@ export type {
 	ExtensionHandler,
 	ExtensionMode,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionUIInputOptions,
 	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
@@ -119,6 +129,7 @@ export type {
 	GrepToolResultEvent,
 	InlineExtension,
 	// Events - Input
+	InputAttribution,
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,
@@ -130,6 +141,7 @@ export type {
 	LsToolResultEvent,
 	MarkdownTransformContext,
 	MarkdownTransformer,
+	McpServersChangeEvent,
 	// Events - Message
 	MessageEndEvent,
 	MessageEndEventResult,
@@ -156,6 +168,7 @@ export type {
 	ReadToolResultEvent,
 	// Commands
 	RegisteredCommand,
+	RegisteredMcpServer,
 	RegisteredTool,
 	ReplacedSessionContext,
 	ResolvedCommand,

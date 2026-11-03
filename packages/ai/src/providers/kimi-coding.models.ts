@@ -58,6 +58,91 @@ const values = {
 			"contextWindow": 1048576,
 			"maxTokens": 131072
 		},
+		// K3.1 Pro ships on Kimi Code as `k3.1-pro` and `k3.1-pro-highspeed`: thinking only (low / high / max), up to
+		// 1048576 context on higher tiers, image and video input. Cost is the equivalent Moonshot API rate (models.dev
+		// moonshotai, published 2026-10-23, checked 2026-10-24), like `k3`, to estimate subscription usage value.
+		// https://www.kimi.com/code/docs/en/kimi-code/models.html (checked 2026-10-24); the API's max_completion_tokens
+		// default is 131072 (https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart, checked 2026-10-24).
+		"chat:k3.1-pro": {
+			"type": "chat",
+			"id": "k3.1-pro",
+			"name": "Kimi K3.1 Pro",
+			"api": "anthropic-messages",
+			"provider": "kimi-coding",
+			"baseUrl": "https://api.kimi.com/coding",
+			"compat": {
+				"allowEmptySignature": true,
+				"forceAdaptiveThinking": true
+			},
+			"reasoning": true,
+			"thinkingLevelMap": {
+				"off": null,
+				"minimal": null,
+				"low": "low",
+				"medium": null,
+				"high": "high",
+				"xhigh": null,
+				"max": "max"
+			},
+			"input": [
+				"text",
+				"image",
+				"video"
+			],
+			"inputLimits": {
+				"images": {
+					"resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+				}
+			},
+			"cost": {
+				"input": 2,
+				"output": 10,
+				"cacheRead": 0.2,
+				"cacheWrite": 2
+			},
+			"contextWindow": 1048576,
+			"maxTokens": 131072
+		},
+		"chat:k3.1-pro-highspeed": {
+			"type": "chat",
+			"id": "k3.1-pro-highspeed",
+			"name": "Kimi K3.1 Pro Highspeed",
+			"api": "anthropic-messages",
+			"provider": "kimi-coding",
+			"baseUrl": "https://api.kimi.com/coding",
+			"compat": {
+				"allowEmptySignature": true,
+				"forceAdaptiveThinking": true
+			},
+			"reasoning": true,
+			"thinkingLevelMap": {
+				"off": null,
+				"minimal": null,
+				"low": "low",
+				"medium": null,
+				"high": "high",
+				"xhigh": null,
+				"max": "max"
+			},
+			"input": [
+				"text",
+				"image",
+				"video"
+			],
+			"inputLimits": {
+				"images": {
+					"resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+				}
+			},
+			"cost": {
+				"input": 4,
+				"output": 20,
+				"cacheRead": 0.2,
+				"cacheWrite": 4
+			},
+			"contextWindow": 1048576,
+			"maxTokens": 131072
+		},
 		"chat:k3-256k": {
 			"type": "chat",
 			"id": "k3-256k",

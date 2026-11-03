@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { canonicalizePath, canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
@@ -234,41 +235,71 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 	}
 }
 
+/** True when `dir` is the user's home or a folder above it: never a project (#2465). */
+function isHomeOrAboveDir(dir: string, homeDir: string): boolean {
+	return dir === homeDir || homeDir.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`);
+}
+
+/** The nearest folder at or above `dir` that holds `.git`, as spelled; undefined outside a repository. */
+function findGitRepoRoot(dir: string): string | undefined {
+	let currentDir = dir;
+	while (!existsSync(join(currentDir, ".git"))) {
+		const parentDir = dirname(currentDir);
+		if (parentDir === currentDir) return undefined;
+		currentDir = parentDir;
+	}
+	return currentDir;
+}
+
+/**
+ * The project `.agents/skills` directories for `cwd`, nearest first: one per folder from cwd up to
+ * the git root (or the filesystem root), stopping below the user's home. Home and every folder
+ * above it are never a project; `~/.agents/skills` is the user's own global skills. The ONE walk
+ * both the trust check and the loader use, over the same spelling and the same git root (#3420
+ * review): paths stay as spelled (resources are compared as strings), and each folder's real path
+ * decides whether it is home or above, so a symlink can't carry the walk past home either way.
+ */
+export function projectAgentsSkillDirs(cwd: string): string[] {
+	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
+	const startDir = resolvePath(cwd);
+	const gitRepoRoot = findGitRepoRoot(startDir);
+	const dirs: string[] = [];
+	let currentDir = startDir;
+	while (!isHomeOrAboveDir(canonicalizePath(currentDir), homeDir)) {
+		dirs.push(join(currentDir, ".agents", "skills"));
+		if (currentDir === gitRepoRoot) break;
+		const parentDir = dirname(currentDir);
+		if (parentDir === currentDir) break;
+		currentDir = parentDir;
+	}
+	return dirs;
+}
+
 /**
  * Returns true when cwd has project-local resources that must be gated by
  * project trust: trust-requiring entries under the project config dir or the
- * legacy cwd/.pi dir (whose resources are also discovered), or .agents/skills in
- * cwd or one of its ancestors. Returns false when no such project resources
- * exist. The user/global ~/.agents/skills directory is always treated as a
- * trusted user resource and is ignored here, even when cwd is $HOME.
+ * legacy cwd/.pi dir (whose resources are also discovered), or a project
+ * `.agents/skills` (`projectAgentsSkillDirs`, the same walk the loader uses).
+ * The user's home and every folder above it are never a project: their config
+ * dirs and .agents/skills are the user's own global resources (#2465).
  */
 export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
-	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
-	let currentDir = canonicalizePath(resolvePath(cwd));
+	const currentDir = canonicalizePath(resolvePath(cwd));
 
-	const configDirs = [join(currentDir, CONFIG_DIR_NAME), join(currentDir, LEGACY_PROJECT_CONFIG_DIR_NAME)];
-	if (
-		configDirs.some((configDir) =>
-			TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry))),
-		)
-	) {
-		return true;
-	}
-	if (projectCodemodeNamesExecutable(join(currentDir, CONFIG_DIR_NAME))) return true;
-
-	while (true) {
-		const agentsSkillsDir = join(currentDir, ".agents", "skills");
-		if (agentsSkillsDir !== userAgentsSkillsDir && existsSync(agentsSkillsDir)) {
+	if (!isHomeOrAboveDir(currentDir, homeDir)) {
+		const configDirs = [join(currentDir, CONFIG_DIR_NAME), join(currentDir, LEGACY_PROJECT_CONFIG_DIR_NAME)];
+		if (
+			configDirs.some((configDir) =>
+				TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry))),
+			)
+		) {
 			return true;
 		}
-
-		const parentDir = dirname(currentDir);
-		if (parentDir === currentDir) {
-			return false;
-		}
-		currentDir = parentDir;
+		if (projectCodemodeNamesExecutable(join(currentDir, CONFIG_DIR_NAME))) return true;
 	}
+
+	return projectAgentsSkillDirs(cwd).some((dir) => existsSync(dir));
 }
 
 export class ProjectTrustStore {
@@ -307,4 +338,91 @@ export class ProjectTrustStore {
 			writeTrustFile(this.trustPath, data);
 		});
 	}
+}
+
+const GITDIR_POINTER = /^gitdir:\s*(.+)$/;
+
+async function readFirstLine(path: string): Promise<string | undefined> {
+	try {
+		return (await readFile(path, "utf-8")).split(/\r?\n/, 1)[0]?.trim() || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+async function realPathOf(path: string): Promise<string | undefined> {
+	try {
+		return await realpath(path);
+	} catch {
+		return undefined;
+	}
+}
+
+async function entryKind(path: string): Promise<"directory" | "file" | undefined> {
+	try {
+		const stats = await stat(path);
+		if (stats.isDirectory()) return "directory";
+		return stats.isFile() ? "file" : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The folder of the repository's main checkout that matches `cwd` inside a linked git worktree, or
+ * undefined when `cwd` is not inside one. A linked worktree is the same repository as its main
+ * checkout, but tools that run one agent per worktree (Orca's `~/orca/workspaces/<repo>/<name>`)
+ * put it outside the main checkout, where no saved decision covers it. Reads the files
+ * `git worktree add` writes, asynchronously, and never spawns git. Accepted only when the admin dir
+ * points back at this `.git` file and the common dir is the main checkout's own `.git` directory;
+ * bare repositories, `--separate-git-dir` clones and submodules have no main checkout to inherit from.
+ * As in git, a worktree folder deleted without `git worktree prune` keeps its admin record, so a folder
+ * recreated at that path with a `.git` file the record points back at is that worktree again.
+ */
+async function linkedWorktreeMainCheckoutDir(cwd: string): Promise<string | undefined> {
+	const dir = (await realPathOf(resolvePath(cwd))) ?? resolvePath(cwd);
+	let checkoutRoot = dir;
+	let markerKind = await entryKind(join(checkoutRoot, ".git"));
+	while (markerKind === undefined) {
+		const parentDir = dirname(checkoutRoot);
+		if (parentDir === checkoutRoot) return undefined;
+		checkoutRoot = parentDir;
+		markerKind = await entryKind(join(checkoutRoot, ".git"));
+	}
+	if (markerKind !== "file") return undefined;
+	const marker = join(checkoutRoot, ".git");
+	const adminTarget = GITDIR_POINTER.exec((await readFirstLine(marker)) ?? "")?.[1]?.trim();
+	if (!adminTarget) return undefined;
+	// Every pointer is resolved against the admin dir's real path, so relative pointers (`git worktree add
+	// --relative-paths`) and the location check below all speak about the same directory.
+	const adminDir = await realPathOf(resolve(checkoutRoot, adminTarget));
+	if (adminDir === undefined) return undefined;
+	const commonDirPointer = await readFirstLine(join(adminDir, "commondir"));
+	const backPointer = await readFirstLine(join(adminDir, "gitdir"));
+	if (commonDirPointer === undefined || backPointer === undefined) return undefined;
+	const markerRealPath = await realPathOf(marker);
+	if (markerRealPath === undefined || (await realPathOf(resolve(adminDir, backPointer))) !== markerRealPath) {
+		return undefined;
+	}
+	const commonDir = await realPathOf(resolve(adminDir, commonDirPointer));
+	if (commonDir === undefined || basename(commonDir) !== ".git") return undefined;
+	// The pointers above only agree with each other; a folder that is not this repository's worktree can carry its own
+	// consistent set. Git keeps a linked worktree's admin dir in `<common dir>/worktrees/`, inside the repository.
+	if (dirname(adminDir) !== join(commonDir, "worktrees")) return undefined;
+	const mainCheckout = dirname(commonDir);
+	const mainMarker = join(mainCheckout, ".git");
+	if ((await entryKind(mainMarker)) !== "directory" || (await realPathOf(mainMarker)) !== commonDir) return undefined;
+	return join(mainCheckout, relative(checkoutRoot, dir));
+}
+
+/**
+ * The saved trust decision for `cwd`: the store's own (the folder or the nearest folder above it),
+ * and only when it has none and `cwd` is inside a linked git worktree, the main checkout's decision
+ * for the matching folder. A decision saved for the worktree or above it always wins.
+ */
+export async function getSavedProjectTrust(store: ProjectTrustStore, cwd: string): Promise<ProjectTrustDecision> {
+	const own = store.get(cwd);
+	if (own !== null) return own;
+	const mainCheckoutDir = await linkedWorktreeMainCheckoutDir(cwd);
+	return mainCheckoutDir === undefined ? null : store.get(mainCheckoutDir);
 }

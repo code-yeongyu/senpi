@@ -16,6 +16,8 @@ import type {
 	SessionBeforeCompactResult,
 } from "../../src/core/extensions/index.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
+import type { HistoryReducer } from "../../src/core/session-history-reduce.ts";
+import { reduceEntries } from "../helpers/reduce-entries.ts";
 
 type Registration = FauxProviderRegistration;
 
@@ -92,6 +94,7 @@ function createHarness(options?: { withAuth?: boolean }): Harness {
 		sessionManager: {
 			getEntries: () => [],
 			getBranch: () => [],
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries([], reducer),
 		} as unknown as ExtensionContext["sessionManager"],
 		modelRegistry,
 		model,
@@ -203,6 +206,7 @@ describe("session_before_compact error surfacing", () => {
 			budgetTokens: 111_616,
 			budgetExceeded: false,
 			candidatesChecked: 0,
+			rejectionCounts: {},
 		});
 	});
 

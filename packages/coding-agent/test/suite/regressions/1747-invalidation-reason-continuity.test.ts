@@ -110,7 +110,11 @@ async function restartAndPrompt(sessionId: string, invalidation?: string): Promi
 		{ type: "session_start", reason: "resume" },
 		eventContext(sessionId, sessionFile, branch),
 	);
-	await streamAnthropicSubscription(model, conversation, { sessionId, streamKind: "main" }).result();
+	await streamAnthropicSubscription(model, conversation, {
+		cwd: process.cwd(),
+		sessionId,
+		streamKind: "main",
+	}).result();
 	return observed;
 }
 

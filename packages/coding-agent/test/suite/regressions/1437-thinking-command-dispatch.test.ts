@@ -41,6 +41,7 @@ type SubmitContext = {
 };
 
 type ThinkingContext = {
+	settingsManager: { setDefaultThinkingLevel: (level: string) => void };
 	session: {
 		thinkingLevel: string;
 		getAvailableThinkingLevels: () => string[];
@@ -91,6 +92,7 @@ function createSubmitContext(): SubmitContext {
 
 function createThinkingContext(levels: string[]): ThinkingContext {
 	const context: ThinkingContext = {
+		settingsManager: { setDefaultThinkingLevel: vi.fn() },
 		session: {
 			thinkingLevel: "medium",
 			getAvailableThinkingLevels: vi.fn(() => levels),
@@ -104,6 +106,9 @@ function createThinkingContext(levels: string[]): ThinkingContext {
 		showThinkingSelector: vi.fn(async () => {}),
 		selectThinkingLevel: vi.fn(),
 	};
+	context.session.setThinkingLevel = vi.fn((level) => {
+		context.session.thinkingLevel = level;
+	});
 	context.selectThinkingLevel = prototype.selectThinkingLevel.bind(context);
 	return context;
 }
@@ -205,7 +210,7 @@ describe("#1437 handleThinkingCommand", () => {
 		expect(context.session.setSessionThinkingLevel).not.toHaveBeenCalled();
 	});
 
-	it("persists through setThinkingLevel only on the explicit default path", () => {
+	it("saves the startup default only on the explicit default path", () => {
 		//#given
 		const context = createThinkingContext(["off", "low", "high"]);
 
@@ -214,6 +219,7 @@ describe("#1437 handleThinkingCommand", () => {
 
 		//#then
 		expect(context.session.setThinkingLevel).toHaveBeenCalledWith("low");
+		expect(context.settingsManager.setDefaultThinkingLevel).toHaveBeenCalledWith("low");
 		expect(context.session.setSessionThinkingLevel).not.toHaveBeenCalled();
 		expect(context.showStatus).toHaveBeenCalledWith("Default thinking level: low");
 	});

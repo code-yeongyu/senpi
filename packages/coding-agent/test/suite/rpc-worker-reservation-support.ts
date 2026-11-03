@@ -28,6 +28,19 @@ export async function reservationPhase<T>(name: string, signal: Promise<T>): Pro
 	}
 }
 
+/**
+ * Names one awaited worker lifecycle event without racing it against a wall clock. A step whose
+ * latency is a real worker isolate's boot or exit grows with host CPU load, so a fixed per-step
+ * deadline fails a correct run on a loaded host (senpi#4688). The step stays bounded by the
+ * product's own deadlines and the caller's test ceiling; an AWAIT line with no DONE names a hang.
+ */
+export async function reservationStep<T>(name: string, signal: Promise<T>): Promise<T> {
+	process.stderr.write(`RESERVATION_AWAIT ${name}\n`);
+	const result = await signal;
+	process.stderr.write(`RESERVATION_DONE ${name}\n`);
+	return result;
+}
+
 /** Real workers and production routing; only the observation sink is in memory. */
 export function reservationHost(
 	cwd: string,
@@ -96,7 +109,7 @@ export function reservationHost(
 		},
 		async dispose() {
 			for (const worker of workers) worker.quarantine();
-			await reservationPhase("cleanup-native-exits", Promise.all([...workers].map((worker) => worker.exited)));
+			await reservationStep("cleanup-native-exits", Promise.all([...workers].map((worker) => worker.exited)));
 			await router.dispose();
 			for (const peer of peers) writer.unregisterConnection(peer);
 		},

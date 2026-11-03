@@ -2,9 +2,27 @@ import {
 	SUMMARIZATION_MAX_DURATION_CAP_MS,
 	SUMMARIZATION_TOTAL_BUDGET_MS,
 } from "../../core/compaction/stream-watchdog.ts";
+import { ABORT_DEFAULT_GRACE_MS, isAbortGraceInRange } from "./abort-grace.ts";
 
 /** How long any request waits for the host's answer - for an open, for its `queued` acknowledgement. */
 export const REQUEST_DEADLINE_MS = 30_000;
+
+/**
+ * How long one request may wait for its answer before the client gives up. An awaited abort answers only
+ * after the turn stopped or its `graceMs` ran out (up to 60 s), so its wait is that grace plus the
+ * ordinary allowance; every other command keeps the plain request deadline. A `graceMs` the host would
+ * refuse (out of range, fractional, NaN, Infinity) gets the plain deadline too: the host answers it at once
+ * with `invalid_argument`, and the client must still be listening for that refusal.
+ */
+export function requestDeadlineMs(command: {
+	readonly type: string;
+	readonly awaitIdle?: unknown;
+	readonly graceMs?: unknown;
+}): number {
+	if (command.type !== "abort" || command.awaitIdle !== true) return REQUEST_DEADLINE_MS;
+	if (command.graceMs === undefined) return ABORT_DEFAULT_GRACE_MS + REQUEST_DEADLINE_MS;
+	return isAbortGraceInRange(command.graceMs) ? command.graceMs + REQUEST_DEADLINE_MS : REQUEST_DEADLINE_MS;
+}
 
 /** Remote compaction may exhaust its budget before a local summary uses its maximum override. */
 export const PROMPT_COMPACTION_DEADLINE_MS =
@@ -42,6 +60,16 @@ export function openStalledMessage(position: unknown): string {
 	return `open_session was accepted by the host${queued} but not answered within ${minutes} minutes`;
 }
 
+/** A request the host did not answer within its deadline: the host is not responding on this connection. */
+export class RpcRequestTimeoutError extends Error {
+	readonly code = "rpc_request_timeout" as const;
+
+	constructor(message: string) {
+		super(message);
+		this.name = "RpcRequestTimeoutError";
+	}
+}
+
 export interface RequestDeadline {
 	/** Restarts the wait with a new budget and the message it fails with. */
 	extend(ms: number, message: () => string): void;
@@ -49,11 +77,11 @@ export interface RequestDeadline {
 }
 
 export function armRequestDeadline(ms: number, message: () => string, expire: (error: Error) => void): RequestDeadline {
-	let timer = setTimeout(() => expire(new Error(message())), ms);
+	let timer = setTimeout(() => expire(new RpcRequestTimeoutError(message())), ms);
 	return {
 		extend(nextMs, nextMessage) {
 			clearTimeout(timer);
-			timer = setTimeout(() => expire(new Error(nextMessage())), nextMs);
+			timer = setTimeout(() => expire(new RpcRequestTimeoutError(nextMessage())), nextMs);
 		},
 		clear() {
 			clearTimeout(timer);

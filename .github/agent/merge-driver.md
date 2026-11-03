@@ -4,7 +4,7 @@
 
 - Preserve every released fork CalVer section byte-for-byte in package `CHANGELOG.md` files.
 - Preserve exactly one top-level `[Unreleased]` section per package. Translate adopted upstream release notes into
-  that section; never insert upstream SemVer headings into the fork's released history.
+  package changelog blocks in `changes/unreleased/<pr>.md`; never insert upstream SemVer headings into released history.
 - Treat generated dependency locks as integrity artifacts: every external npm entry must retain its `resolved`
   tarball URL and `integrity` hash, and generators must produce identical hashes on consecutive runs.
 
@@ -145,8 +145,10 @@ merge commit, or add a follow-up commit `sync: record upstream pin <short-sha>`.
 
 ### 4. Audit the changelog
 
-Run `/cl` by following `.github/agent/commands/cl.md`. Add missing `## [Unreleased]` entries
-to the affected packages' `CHANGELOG.md` files. Commit changelog updates as
+Run `/cl` by following `.github/agent/commands/cl.md`. Add missing entries as affected-package
+`CHANGELOG.md` blocks in `changes/unreleased/<pr>.md`, not directly in `[Unreleased]`.
+Convert any direct additions with `node scripts/sync-changes-fragments.mjs from-diff --base origin/main --pr <n>`.
+Commit the fragment as
 `docs(changelog): audit upstream <short-sha>`.
 
 ### 5. Hands-on QA

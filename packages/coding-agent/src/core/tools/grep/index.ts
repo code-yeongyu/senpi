@@ -35,9 +35,8 @@ const grepSchema = Type.Object({
 export type GrepToolInput = Static<typeof grepSchema>;
 export const grepToolSystemPromptContribution = {
 	snippet: "Search file contents (regex/literal) across paths with structured results; respects .gitignore",
-	guidelines: [
-		"Use tool.grep for content search instead of rg/grep in a shell; paginate with skip and narrow with glob/path when a page is full",
-	],
+	// The eval-only grep guideline (system-prompt.ts getEvalOnlyGrepGuideline) carries the pagination rule once.
+	guidelines: [] as string[],
 };
 export interface GrepToolDetails {
 	version: 1;
@@ -83,7 +82,9 @@ export function createGrepToolDefinition(
 	if (options && "operations" in options)
 		throw new TypeError("GrepToolOptions.operations is deprecated and no longer supported; removed next release");
 	return {
+		...(options?.filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "grep",
+		workspaceEffect: "read",
 		label: "grep",
 		exposure: "eval",
 		description:

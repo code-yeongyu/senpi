@@ -3,17 +3,21 @@ import type {
 	ProviderDiagnosticCategory,
 	ProviderDiagnosticEvidence,
 } from "../provider-diagnostic.ts";
+import { siwcErrorForCode } from "./provider-diagnostic-carrier.ts";
 
 /** Serialized UTF-8 budget for one emitted diagnostic. */
 export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
 
 /**
  * Closed allowlist of provider error tokens and the family each one proves.
- * Exact tokens only: Anthropic `error.type` values and OpenAI-compatible
- * `error.code` values. `billing_error` proves a billing failure, not quota
- * exhaustion, so it stays `unknown`.
+ * Exact tokens only: Anthropic `error.type` values, OpenAI-compatible
+ * `error.code` values, and the precise OpenAI-compatible `error.type` values
+ * that stand in for a missing code (`exceeded_current_quota_error`, senpi#4950).
+ * `billing_error` proves a billing failure, not quota exhaustion, so it stays `unknown`.
  */
 export function categoryForProviderCode(code: string): ProviderDiagnosticCategory | undefined {
+	const siwc = siwcErrorForCode(code);
+	if (siwc !== undefined) return siwc.category;
 	switch (code) {
 		case "authentication_error":
 		case "invalid_api_key":
@@ -22,6 +26,9 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 		case "rate_limit_exceeded":
 			return "rate_limit";
 		case "insufficient_quota":
+		case "exceeded_current_quota_error":
+		case "usage_limit_reached":
+		case "usage_not_included":
 			return "quota";
 		case "context_length_exceeded":
 			return "context_limit";
@@ -40,8 +47,55 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 	}
 }
 
+/**
+ * TLS chain-verification failures the runtime puts on a handshake error: the server's chain does not
+ * reach a trusted root, or ends in a self-signed certificate (senpi#5244). A hostname mismatch
+ * (`ERR_TLS_CERT_ALTNAME_INVALID`) and an expired certificate (`CERT_HAS_EXPIRED`) are other failures.
+ */
+const TLS_CHAIN_VERIFICATION_CODES: ReadonlySet<string> = new Set([
+	"UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+	"UNABLE_TO_GET_ISSUER_CERT",
+	"UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+	"SELF_SIGNED_CERT_IN_CHAIN",
+	"DEPTH_ZERO_SELF_SIGNED_CERT",
+	"CERT_UNTRUSTED",
+]);
+
+export function isTlsChainVerificationCode(code: string): boolean {
+	return TLS_CHAIN_VERIFICATION_CODES.has(code);
+}
+
+/**
+ * Closed allowlist of transport failures: Node `errno` / undici `code` names, TLS chain-verification
+ * codes, and the provider SDKs' connection error class names (`APIConnectionError`,
+ * `APIConnectionTimeoutError`). Read only from the error chain's `code` and `name` fields, never from
+ * message text.
+ */
+export function categoryForTransportCode(code: string): ProviderDiagnosticCategory | undefined {
+	switch (code) {
+		case "ECONNRESET":
+		case "ECONNREFUSED":
+		case "ETIMEDOUT":
+		case "ENOTFOUND":
+		case "EAI_AGAIN":
+		case "EPIPE":
+		case "UND_ERR_SOCKET":
+		case "UND_ERR_CONNECT_TIMEOUT":
+		case "UND_ERR_HEADERS_TIMEOUT":
+		case "UND_ERR_BODY_TIMEOUT":
+		case "UND_ERR_CLOSED":
+		case "APIConnectionError":
+		case "APIConnectionTimeoutError":
+			return "network";
+		default:
+			return isTlsChainVerificationCode(code) ? "network" : undefined;
+	}
+}
+
 /** The HTTP status a recognized token may arrive with; anything else is contradictory evidence. */
 export function isProviderCodeStatusCompatible(code: string, status: number): boolean {
+	const siwc = siwcErrorForCode(code);
+	if (siwc !== undefined) return status === siwc.status;
 	switch (code) {
 		case "authentication_error":
 		case "invalid_api_key":
@@ -49,6 +103,9 @@ export function isProviderCodeStatusCompatible(code: string, status: number): bo
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
 		case "insufficient_quota":
+		case "exceeded_current_quota_error":
+		case "usage_limit_reached":
+		case "usage_not_included":
 			return status === 429;
 		case "context_length_exceeded":
 		case "invalid_request_error":
@@ -66,6 +123,27 @@ export function isProviderCodeStatusCompatible(code: string, status: number): bo
 		default:
 			return false;
 	}
+}
+
+/**
+ * A provider error type outside the allowlist that is still safe to show: lowercase words joined by
+ * `_` or `.` (`invalid_prompt`, `response.failed`). Digits, capitals and dashes are refused, so key
+ * material never passes as a code. It only ever names an `unknown` failure, with no status beside it.
+ */
+const OPAQUE_PROVIDER_CODE = /^[a-z]+(?:[_.][a-z]+)*$/;
+const OPAQUE_PROVIDER_CODE_MAX_LENGTH = 64;
+
+export function isOpaqueProviderCode(code: string): boolean {
+	return (
+		code.length <= OPAQUE_PROVIDER_CODE_MAX_LENGTH &&
+		OPAQUE_PROVIDER_CODE.test(code) &&
+		categoryForProviderCode(code) === undefined
+	);
+}
+
+/** A reset instant (epoch ms) a limit diagnostic may carry: an integer between 2000 and 2100. */
+export function isProviderDiagnosticResetsAt(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value) && value > 946_684_800_000 && value < 4_102_444_800_000;
 }
 
 /** Status-only family. 402/403/429 alone cannot tell quota, auth and rate limit apart. */
@@ -88,6 +166,7 @@ export function isProviderDiagnosticCategory(value: unknown): value is ProviderD
 		case "context_limit":
 		case "invalid_request":
 		case "provider_unavailable":
+		case "network":
 		case "unknown":
 			return true;
 		default:
@@ -101,10 +180,15 @@ export function buildProviderDiagnostic(input: {
 	httpStatus?: number;
 	code?: string;
 	evidence: ProviderDiagnosticEvidence;
+	resetsAt?: number;
+	route?: "siwc";
 }): ProviderDiagnostic | undefined {
 	const diagnostic: ProviderDiagnostic = { category: input.category, evidence: input.evidence };
 	if (input.httpStatus !== undefined) diagnostic.httpStatus = input.httpStatus;
 	if (input.code !== undefined) diagnostic.code = input.code;
+	if (input.route !== undefined) diagnostic.route = input.route;
+	if (input.resetsAt !== undefined && (input.category === "quota" || input.category === "rate_limit"))
+		diagnostic.resetsAt = input.resetsAt;
 	const size = new TextEncoder().encode(JSON.stringify(diagnostic)).length;
 	return size <= PROVIDER_DIAGNOSTIC_MAX_BYTES ? diagnostic : undefined;
 }

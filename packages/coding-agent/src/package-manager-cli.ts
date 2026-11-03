@@ -14,7 +14,8 @@ import chalk from "chalk";
 import lockfile from "proper-lockfile";
 // BETA(omo-local-update): removable beta import - delete with src/beta/omo-local-update.ts
 import { runOmoLocalUpdateBeta } from "./beta/omo-local-update.ts";
-import { CONFIG_IMPORT_PI_ARGV, CONFIG_IMPORT_PI_USAGE, runConfigImportPi } from "./cli/config-import-pi.ts";
+import { CONFIG_IMPORT_PI_ARGV, runConfigImportPi } from "./cli/config-import-pi.ts";
+import { CONFIG_COMMAND_USAGE, printConfigCommandHelp } from "./cli/config-command-help.ts";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
@@ -33,6 +34,7 @@ import {
 } from "./config.ts";
 import { brandProfile } from "./core/brand.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
+import { type HeldFileLock, lockWithLossHandling } from "./core/file-lock.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -178,9 +180,9 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		throw new Error(`Invalid managed release version: ${version}`);
 	}
 
-	let releaseLock: () => Promise<void>;
+	let updateLock: HeldFileLock;
 	try {
-		releaseLock = await lockfile.lock(join(managedRoot, "update"), { realpath: false });
+		updateLock = await lockWithLossHandling(join(managedRoot, "update"), { realpath: false });
 	} catch (error: unknown) {
 		if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
 			throw new Error("Another managed Pi update is already running.");
@@ -202,6 +204,7 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		const releaseDir = join(releasesRoot, version);
 		if (existsSync(releaseDir)) {
 			verifyManagedRelease(releaseDir, version);
+			updateLock.assertHeld();
 			activateManagedRelease(managedRoot, version);
 			return;
 		}
@@ -217,11 +220,13 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 
 		await runManagedNpmCi(stageDir);
 		verifyManagedRelease(stageDir, version);
+		updateLock.assertHeld();
 		renameSync(stageDir, releaseDir);
+		updateLock.assertHeld();
 		activateManagedRelease(managedRoot, version);
 	} finally {
 		if (stageDir) rmSync(stageDir, { force: true, recursive: true });
-		await releaseLock();
+		await updateLock.release();
 	}
 }
 
@@ -280,29 +285,6 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "list":
 			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
-}
-
-const CONFIG_COMMAND_USAGE = `${APP_NAME} config [-l] [--approve|--no-approve]`;
-
-function printConfigCommandHelp(): void {
-	console.log(`${chalk.bold("Usage:")}
-  ${CONFIG_COMMAND_USAGE}
-
-Open the resource configuration TUI to enable or disable package resources.
-Without -l, starts in global settings (~/${CONFIG_DIR_NAME}/agent/settings.json).
-Press Tab in the TUI to switch between global and project-local modes.
-
-Options:
-  -l, --local       Edit project overrides (${CONFIG_DIR_NAME}/settings.json)
-  -a, --approve     Trust project-local files for this command with -l
-  -na, --no-approve Ignore project-local files for this command with -l
-
-  ${CONFIG_IMPORT_PI_USAGE}
-
-Copy config files you edited in ~/.pi/agent after its one-time copy into ~/${CONFIG_DIR_NAME}/agent,
-saving each replaced file as <file>.bak-<time> first. Without file names, imports every edited file.
-~/.pi/agent itself is only read.
-`);
 }
 
 function printPackageCommandHelp(command: PackageCommand): void {

@@ -2,6 +2,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
 import compactionExtension from "../../../src/core/extensions/builtin/compaction/index.ts";
+import { flushCompactionLogs } from "../../../src/core/extensions/builtin/compaction/log.ts";
 import { describeUsageLimitMessage, usageLimitScope } from "../../../src/core/retry-fallback/usage-limit.ts";
 import { createAssistantRenderDescriptors } from "../../../src/modes/interactive/components/assistant-render-descriptors.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
@@ -12,11 +13,14 @@ import { createHarness, type Harness } from "../harness.ts";
 
 const accountLimit =
 	'429 {"error":{"type":"rate_limit_error","message":"You have hit your session limit; resets 11pm"}}';
+// Serialized records carry timestamps and ids whose digits can contain "429"; match the raw payload itself.
+const rawAccountPayload = /429 \{|rate_limit_error/;
 
 describe("#3131 spent account", () => {
 	const harnesses: Harness[] = [];
-	afterEach(() => {
-		for (const harness of harnesses.splice(0)) harness.cleanup();
+	afterEach(async () => {
+		await flushCompactionLogs();
+		for (const harness of harnesses.splice(0)) await harness.cleanup();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
@@ -59,10 +63,10 @@ describe("#3131 spent account", () => {
 		expect(published.message).toMatchObject({
 			errorCause: { type: "usage_limit", scope: "account" },
 		});
-		for (const part of ["faux", "resets 11pm", "/model", "retry.fallbackChains"]) {
-			expect(published.message.errorMessage).toContain(part);
-		}
+		// #4329: pin the actionable config key, not the surrounding prose.
+		expect(published.message.errorMessage).toContain("retry.fallbackChains");
 		expect(published.message.errorMessage).not.toMatch(/429|rate_limit_error/);
+		expect(published.message.errorMessage).toContain("11pm");
 		// The original provider payload stays available to engine diagnostics.
 		expect(harness.session.state.messages.findLast((message) => message.role === "assistant")).toMatchObject({
 			errorMessage: accountLimit,
@@ -165,14 +169,13 @@ describe("#3131 spent account", () => {
 			harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 			const callsBefore = harness.faux.getCallLog().length;
 			// when
-			await expect(harness.session.compact()).rejects.toThrow(
-				"The faux account usage limit has been reached (resets 11pm).",
-			);
+			await expect(harness.session.compact()).rejects.toMatchObject({
+				name: "CompactionExecutionError",
+				aborted: false,
+			});
 			// then
 			expect(harness.faux.getCallLog()).toHaveLength(callsBefore);
-			expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toContain(
-				"The faux account usage limit has been reached (resets 11pm). Switch to another provider with /model",
-			);
+			expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toContain("retry.fallbackChains");
 		},
 	);
 
@@ -277,7 +280,8 @@ describe("#3131 spent account", () => {
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["primary", "sibling"]);
 	});
 
-	it("keeps builtin compaction on a healthy session model despite a core compaction override", async () => {
+	// #830 reversed this contract: a configured summary model serves healthy sessions too.
+	it("uses the core compaction override for builtin compaction on a healthy session", async () => {
 		const harness = await createHarness({
 			models: [{ id: "primary" }, { id: "cheap" }],
 			settings: { compaction: { keepRecentTokens: 1, model: "other/cheap" } },
@@ -298,7 +302,7 @@ describe("#3131 spent account", () => {
 			},
 		]);
 		await harness.session.compact();
-		expect(requests).toEqual(["faux/primary"]);
+		expect(requests).toEqual(["other/cheap"]);
 	});
 
 	it("skips an authenticated summary alternate whose context window cannot fit the input", async () => {
@@ -343,9 +347,9 @@ describe("#3131 spent account", () => {
 		await harness.session.prompt("first attempt");
 		const callsBefore = harness.faux.getCallLog().length;
 		// when
-		await expect(harness.session.prompt("try again")).rejects.toThrow(
-			"The faux account usage limit has been reached",
-		);
+		await expect(harness.session.prompt("try again")).rejects.toMatchObject({
+			name: "AccountUsageLimitError",
+		});
 		// then
 		expect(harness.faux.getCallLog()).toHaveLength(callsBefore);
 	});
@@ -402,7 +406,8 @@ describe("#3131 spent account", () => {
 		// then
 		expect(exitCode).toBe(1);
 		const output = stderr.mock.calls.flat().join("\n");
-		expect(output).toContain("The faux account usage limit has been reached (resets 11pm).");
+		expect(output).toContain("retry.fallbackChains");
+		expect(output).toContain("11pm");
 		expect(output).not.toContain("429");
 		expect(output).not.toContain("rate_limit_error");
 		const internal = harness.session.state.messages.findLast((message) => message.role === "assistant");
@@ -414,9 +419,8 @@ describe("#3131 spent account", () => {
 			hideThinkingBlock: false,
 			hasToolCalls: false,
 		});
-		expect(restored.find((descriptor) => descriptor.kind === "error-text")?.text).toContain(
-			"The faux account usage limit has been reached (resets 11pm).",
-		);
+		expect(restored.find((descriptor) => descriptor.kind === "error-text")?.text).toContain("11pm");
+		expect(restored.find((descriptor) => descriptor.kind === "error-text")?.text).toContain("/model");
 		expect(JSON.stringify(restored)).not.toContain("429");
 		const published = harness.eventsOfType("message_end").find((event) => event.message.role === "assistant");
 		if (published?.message.role !== "assistant") throw new Error("missing published assistant fixture");
@@ -447,7 +451,7 @@ describe("#3131 spent account", () => {
 					]),
 				},
 			});
-			expect(JSON.stringify(history)).not.toMatch(/429|rate_limit_error/);
+			expect(JSON.stringify(history)).not.toMatch(rawAccountPayload);
 			const appendedEntries = harness.eventsOfType("entry_appended");
 			const unsubscribeEntries = harness.session.subscribe((event) => {
 				if (event.type === "entry_appended") appendedEntries.push(event);
@@ -467,13 +471,13 @@ describe("#3131 spent account", () => {
 			expect(appended).toMatchObject({
 				entry: { message: { errorCause: { type: "usage_limit", scope: "account" } } },
 			});
-			expect(JSON.stringify(appended)).not.toMatch(/429|rate_limit_error/);
+			expect(JSON.stringify(appended)).not.toMatch(rawAccountPayload);
 			for (const command of ["get_entries", "get_tree"]) {
 				await handler.handleInputLine(JSON.stringify({ type: command, id: command }));
 				const response = records.find((record) => record.id === command);
 				expect(response).toMatchObject({ success: true });
 				expect(JSON.stringify(response)).toContain('"scope":"account"');
-				expect(JSON.stringify(response)).not.toMatch(/429|rate_limit_error/);
+				expect(JSON.stringify(response)).not.toMatch(rawAccountPayload);
 			}
 			expect(harness.sessionManager.getEntry("raw-account-copy")).toMatchObject({
 				message: { errorMessage: accountLimit },

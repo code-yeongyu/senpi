@@ -59,8 +59,9 @@ const VENICE_ACCEPTED_REQUEST_FIELDS = new Set([
 
 async function capturePayload(
 	options: { reasoning?: "high"; maxTokens?: number } = {},
+	modelId = "zai-org-glm-5-2",
 ): Promise<Record<string, unknown>> {
-	const model = getModel("venice", "zai-org-glm-5-2");
+	const model = getModel("venice", modelId as "zai-org-glm-5-2");
 	let payload: Record<string, unknown> | undefined;
 
 	await streamSimple(
@@ -142,6 +143,31 @@ describe("Venice models", () => {
 			expect(sent.length).toBeGreaterThan(0);
 			expect(sent.filter((key) => !VENICE_ACCEPTED_REQUEST_FIELDS.has(key))).toEqual([]);
 		}
+	});
+
+	// senpi#3308: the deepseek-v4 catalog models sent DeepSeek's native `thinking` object, which Venice
+	// rejects as an unrecognized key, so every request to them failed with 400.
+	it("keeps every reasoning model's request inside Venice's schema, thinking on and off", async () => {
+		const reasoningModels = builtinModels()
+			.getModels("venice")
+			.filter((model) => model.reasoning);
+		expect(reasoningModels.some((model) => model.id.includes("deepseek-v4"))).toBe(true);
+		for (const model of reasoningModels) {
+			for (const options of [{}, { reasoning: "high" as const }]) {
+				const payload = await capturePayload(options, model.id);
+				const rejected = Object.keys(payload).filter(
+					(key) => payload[key] !== undefined && !VENICE_ACCEPTED_REQUEST_FIELDS.has(key),
+				);
+				expect(rejected, `${model.id} ${JSON.stringify(options)}`).toEqual([]);
+			}
+		}
+	});
+
+	it("drives a Venice deepseek model's thinking through reasoning_effort", async () => {
+		const payload = await capturePayload({ reasoning: "high" }, "deepseek-v4-1-flash");
+
+		expect(payload.thinking).toBeUndefined();
+		expect(payload.reasoning_effort).toBe("high");
 	});
 
 	it("drives thinking through reasoning_effort", async () => {

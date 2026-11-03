@@ -162,7 +162,7 @@ describe("Claude SDK OAuth bootstrap classification", () => {
 			],
 		};
 
-		await streamAnthropicSubscription(model, context, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...mainOptions(sessionId) }).result();
 
 		expect(observed).toContainEqual(expect.objectContaining({ kind: "bootstrap", reason: "registry_miss" }));
 	});
@@ -179,7 +179,7 @@ describe("Claude SDK OAuth bootstrap classification", () => {
 			],
 		};
 
-		await streamAnthropicSubscription(model, context, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...mainOptions(sessionId) }).result();
 
 		expect(observed).toContainEqual(expect.objectContaining({ kind: "flatten", reason: "registry_miss" }));
 	});

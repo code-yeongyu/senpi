@@ -16,6 +16,7 @@ import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { QuietStartup } from "../src/core/settings-manager.ts";
+import { warnIfLargeSkillCatalog } from "../src/core/skills-prompt.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode, showsStartupDetails, showsStartupHeader } from "../src/modes/interactive/interactive-mode.ts";
@@ -919,6 +920,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 		toolOutputExpanded?: boolean;
 		cwd?: string;
 		contextFiles?: Array<{ path: string; content?: string }>;
+		contextDiagnostics?: Array<{ type: "warning"; message: string; path?: string }>;
 		systemPromptSource?: { path: string };
 		appendSystemPromptSources?: Array<{ path: string }>;
 		extensions?: ExtensionFixture[];
@@ -946,7 +948,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 				},
 				resourceLoader: {
 					getPathMetadata: () => new Map(),
-					getAgentsFiles: () => ({ agentsFiles: options.contextFiles ?? [] }),
+					getAgentsFiles: () => ({
+						agentsFiles: options.contextFiles ?? [],
+						diagnostics: options.contextDiagnostics ?? [],
+					}),
 					getSystemPromptSource: () => options.systemPromptSource,
 					getAppendSystemPromptSources: () => options.appendSystemPromptSources ?? [],
 					getSkills: () => ({
@@ -1675,6 +1680,55 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).toContain("Skill conflicts");
 		expect(output).toContain(theme.getBgAnsi("customMessageBg"));
 		expect(output).not.toContain("[Skills]");
+	});
+
+	test("shows context size warnings in the resource notices on quiet startup", () => {
+		// Given
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			contextDiagnostics: [{ type: "warning", message: "context budget exceeded", path: "/tmp/AGENTS.md" }],
+		});
+		// When
+		Reflect.get(InteractiveMode.prototype, "showLoadedResources").call(fakeThis, {
+			force: false,
+			showDiagnosticsWhenQuiet: true,
+		});
+		// Then
+		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain("Context size limits");
+	});
+
+	test("shows skill budget warnings as size notices rather than skill conflicts", () => {
+		// Given
+		const diagnostics = warnIfLargeSkillCatalog(
+			Array.from({ length: 101 }, (_, index) => ({
+				name: `skill-${index}`,
+				description: "Synthetic QA skill.",
+				filePath: `/skills/skill-${index}/SKILL.md`,
+				baseDir: `/skills/skill-${index}`,
+				disableModelInvocation: false,
+				sourceInfo: {
+					path: `/skills/skill-${index}/SKILL.md`,
+					source: "local",
+					scope: "user",
+					origin: "top-level",
+				},
+			})),
+		);
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			toolOutputExpanded: true,
+			skillDiagnostics: diagnostics,
+		});
+		// When
+		Reflect.get(InteractiveMode.prototype, "showLoadedResources").call(fakeThis, {
+			force: false,
+			showDiagnosticsWhenQuiet: true,
+		});
+		// Then
+		const output = renderAll(fakeThis.loadedResourcesContainer);
+		expect(output).toContain("Context size limits");
+		expect(output).not.toContain("Skill conflicts");
+		expect(output).not.toContain("Conflicting or invalid loaded resources");
 	});
 
 	test("formats builtin synthetic extension paths with readable builtin labels", () => {

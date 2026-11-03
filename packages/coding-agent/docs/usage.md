@@ -41,7 +41,6 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | Command | Description |
 |---------|-------------|
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
-| [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
 | `/model` | Switch this session's model; Ctrl+S in the picker, or `/model <id> --default`, also makes it the startup default |
 | `/thinking [level]` | Set the thinking level for this session (`/thinking high`), or open the picker with no argument; Ctrl+S in the picker saves it as the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
@@ -233,11 +232,25 @@ cat README.md | senpi -p "Summarize this text"
 | `-c`, `--continue` | Continue the most recent session |
 | `-r`, `--resume` | Browse and select a session |
 | `--session <path\|id>` | Use a specific session file or partial UUID |
+| `--spawned-by <json>` | Set parent, root, and task ancestry on a fresh standalone session |
 | `--fork <path\|id>` | Fork a session file or partial UUID into a new session |
 | `--rebind <path\|id>` | Move a session of this repository, recorded at another path (moved or re-cloned), into this directory and continue it |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode; do not save |
 | `--name <name>`, `-n <name>` | Set session display name at startup |
+
+To start a standalone child session, pass one JSON object:
+
+```bash
+senpi --mode rpc --spawned-by '{"parentSessionId":"parent","rootSessionId":"root","taskId":"task"}'
+```
+
+All three fields must be non-empty strings; malformed input exits before runtime creation.
+The ancestry is stored in the session header, so `get_state.lifecycle.role` is `child` before
+the first prompt. A fresh session created with `--session-id` also accepts it. Resuming an
+existing ID preserves its header and warns that the flag is ignored. The flag is likewise
+ignored with a warning with `--session`, `--resume`, `--continue`, `--rebind`, or `--fork`.
+Without the flag, new sessions and ordinary forks start as roots.
 
 ### Tool Options
 
@@ -253,6 +266,8 @@ Built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
 #### `grep` tool contract
 
 Use `tool.grep({ pattern, path, glob, ignoreCase, literal, context, before, after, mode, limit, skip, timeoutMs, hidden, gitignore })` inside eval. `pattern` is required; `path` accepts a file, directory, array, or a `<file>:L1-L2` selector. `glob` accepts positive patterns and `!` exclusions. `mode` is `content` (default), `count`, or `files`; `limit` and `skip` paginate file results. `before`/`after` override `context`.
+
+Find files by name with `tool.glob({ pattern, path, limit })` inside eval, for example `tool.glob({ pattern: "**/*.ts", path: "src" })`. It returns matching paths relative to `path`, respects `.gitignore`, and is never offered as a top-level tool.
 
 Content output uses `path` blocks with `N: match` and `N- context` rows, followed by a footer such as `[grep: matches=2 files=2 searched=42 elapsedMs=8 engine=native nextSkip=none]`. The footer is always present. Tool results include `details` v1 with structured matches, file counts, scan status, and pagination metadata.
 

@@ -166,8 +166,13 @@ describe("StdinBuffer", () => {
 			// the bytes further apart than the timeout, ESC is flushed alone and the
 			// host sees Escape (interrupt) instead of Alt+Enter. This locks in the
 			// behavior so the configurable timeout in ProcessTerminal stays honest.
+			buffer = new StdinBuffer({ timeout: 10, escapeTimeout: 10 });
+			emittedSequences = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
 			processInput("\x1b");
-			await wait(20); // buffer timeout is 10ms in beforeEach
+			await wait(20); // > 10ms configured escapeTimeout
 			processInput("\r");
 
 			assert.deepStrictEqual(emittedSequences, ["\x1b", "\r"]);
@@ -190,7 +195,7 @@ describe("StdinBuffer", () => {
 		});
 
 		it("does not apply the sequence timeout to a lone ESC", async () => {
-			buffer = new StdinBuffer({ timeout: 100 });
+			buffer = new StdinBuffer({ timeout: 100, escapeTimeout: 10 });
 			emittedSequences = [];
 			buffer.on("data", (sequence) => {
 				emittedSequences.push(sequence);
@@ -215,6 +220,60 @@ describe("StdinBuffer", () => {
 			delayedBuffer.process("<65;48;39M");
 			assert.deepStrictEqual(delayedSequences, ["\x1b[<65;48;39M"]);
 			delayedBuffer.destroy();
+		});
+	});
+
+	describe("Escape window decided by arrival gaps (#3628)", () => {
+		// Alt+<key> arrives as ESC + key. Terminals on WSL and multiplexer relays can
+		// deliver the two bytes as separate reads; whether they merge into one
+		// alt-key sequence must be decided by the observed arrival gap, not by
+		// whether the flush timer callback happened to run first (a stalled event
+		// loop can deliver timers late).
+		let clockNow: number;
+		let gapBuffer: StdinBuffer;
+		let gapSequences: string[];
+
+		beforeEach(() => {
+			clockNow = 1_000;
+			gapBuffer = new StdinBuffer({ escapeTimeout: 50, now: () => clockNow });
+			gapSequences = [];
+			gapBuffer.on("data", (sequence) => {
+				gapSequences.push(sequence);
+			});
+		});
+
+		it("merges ESC and a printable key arriving within the escape window", () => {
+			gapBuffer.process("\x1b");
+			clockNow += 30;
+			gapBuffer.process("q");
+
+			assert.deepStrictEqual(gapSequences, ["\x1bq"]);
+			assert.equal(matchesKey(gapSequences[0] ?? "", "alt+q"), true);
+		});
+
+		it("releases a stale lone ESC when the next key arrives after the escape window", () => {
+			gapBuffer.process("\x1b");
+			clockNow += 100;
+			gapBuffer.process("q");
+
+			assert.deepStrictEqual(gapSequences, ["\x1b", "q"]);
+			assert.equal(matchesKey(gapSequences[0] ?? "", "escape"), true);
+		});
+
+		it("keeps the default escape window at the standard 50ms for split Alt delivery", () => {
+			const defaults = new StdinBuffer({ now: () => clockNow });
+			const seen: string[] = [];
+			defaults.on("data", (sequence) => {
+				seen.push(sequence);
+			});
+
+			defaults.process("\x1b");
+			clockNow += 30;
+			defaults.process("q");
+
+			assert.deepStrictEqual(seen, ["\x1bq"]);
+			assert.equal(matchesKey(seen[0] ?? "", "alt+q"), true);
+			defaults.destroy();
 		});
 	});
 
@@ -404,16 +463,21 @@ describe("StdinBuffer", () => {
 		});
 
 		it("should handle lone escape character with timeout", async () => {
+			buffer = new StdinBuffer({ timeout: 10, escapeTimeout: 10 });
+			emittedSequences = [];
+			buffer.on("data", (sequence) => {
+				emittedSequences.push(sequence);
+			});
 			processInput("\x1b");
 			assert.deepStrictEqual(emittedSequences, []);
 
-			// After timeout, should emit
+			// After the configured escape timeout, should emit
 			await wait(15);
 			assert.deepStrictEqual(emittedSequences, ["\x1b"]);
 		});
 
-		it("flushes a lone escape promptly with the longer default sequence timeout", async () => {
-			const defaultBuffer = new StdinBuffer();
+		it("flushes a lone escape promptly with a configured short escape timeout", async () => {
+			const defaultBuffer = new StdinBuffer({ escapeTimeout: 10 });
 			const defaultSequences: string[] = [];
 			defaultBuffer.on("data", (sequence) => defaultSequences.push(sequence));
 

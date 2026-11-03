@@ -8,15 +8,24 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 
 export async function availableModelsData(session: AgentSession): Promise<{ models: readonly object[] }> {
-	const models = await session.modelRegistry.modelRuntime.getAvailable();
+	const registry = session.modelRegistry;
+	const models = await registry.modelRuntime.getAvailable();
 	return {
-		models: models.map((model) => ({
-			...model,
-			supportedThinkingLevels: getSupportedThinkingLevels(model),
-			supportsAssistantPrefill: modelSupportsAssistantPrefill(model, {
-				thinkingEnabled: session.thinkingLevel !== "off",
-			}),
-		})),
+		models: models.map((model) => {
+			// A models.json or extension definition can declare the priority pairing without putting it on
+			// the Model object; clients must see the values the session itself acts on (#3666).
+			const serviceTier = registry.getServiceTier(model);
+			const upstreamModelId = registry.getUpstreamModelId(model);
+			return {
+				...model,
+				...(serviceTier === undefined ? {} : { serviceTier }),
+				...(upstreamModelId === undefined ? {} : { upstreamModelId }),
+				supportedThinkingLevels: getSupportedThinkingLevels(model),
+				supportsAssistantPrefill: modelSupportsAssistantPrefill(model, {
+					thinkingEnabled: session.thinkingLevel !== "off",
+				}),
+			};
+		}),
 	};
 }
 

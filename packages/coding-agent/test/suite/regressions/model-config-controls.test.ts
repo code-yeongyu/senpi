@@ -8,6 +8,11 @@ import { ModelRegistry } from "../../../src/core/model-registry.ts";
 import { getModelNarrowingPatterns, resolveModelScope } from "../../../src/core/model-resolver.ts";
 import { createAgentSession } from "../../../src/core/sdk.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
+import { builtinChatModelId } from "../../support/catalog-ids.ts";
+
+// A built-in OpenAI model the catalog ships today: an override target a regen cannot remove (senpi#1955).
+const OPENAI_TARGET = builtinChatModelId("openai", (model) => model.id.startsWith("gpt-"));
+const ANTHROPIC_FAVORITE = builtinChatModelId("anthropic", (model) => model.id.startsWith("claude-"));
 
 function registerOpenAiModels(registry: ModelRegistry, ids: string[]): void {
 	registry.registerProvider("openai", {
@@ -233,7 +238,7 @@ describe("model configuration controls", () => {
 					providers: {
 						openai: {
 							modelOverrides: {
-								"gpt-5.4": {
+								[OPENAI_TARGET]: {
 									reasoning: true,
 									thinkingLevelMapMode: "replace",
 									thinkingLevelMap: {
@@ -257,7 +262,7 @@ describe("model configuration controls", () => {
 		);
 
 		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
-		const model = registry.find("openai", "gpt-5.4");
+		const model = registry.find("openai", OPENAI_TARGET);
 
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low"]);
@@ -303,7 +308,7 @@ describe("model configuration controls", () => {
 					providers: {
 						openai: {
 							modelOverrides: {
-								"gpt-5.4": {
+								[OPENAI_TARGET]: {
 									promptPreset: "kimi-k2-6",
 								},
 							},
@@ -317,7 +322,7 @@ describe("model configuration controls", () => {
 		);
 
 		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
-		const model = registry.find("openai", "gpt-5.4");
+		const model = registry.find("openai", OPENAI_TARGET);
 
 		expect(model).toBeDefined();
 		expect((model as { promptPreset?: string }).promptPreset).toBe("kimi-k2-6");
@@ -330,7 +335,7 @@ describe("model configuration controls", () => {
 		});
 		const modelRegistry = ModelRegistry.inMemory(authStorage);
 		const settingsManager = SettingsManager.inMemory({
-			favoriteModels: ["anthropic/claude-sonnet-4-5", "openai/gpt-5.4"],
+			favoriteModels: [`anthropic/${ANTHROPIC_FAVORITE}`, `openai/${OPENAI_TARGET}`],
 		});
 		const { session } = await createAgentSession({
 			cwd: tempDir,
@@ -341,24 +346,24 @@ describe("model configuration controls", () => {
 
 		expect(session.scopedModels).toEqual([]);
 		expect(session.favoriteModels.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`)).toEqual([
-			"anthropic/claude-sonnet-4-5",
-			"openai/gpt-5.4",
+			`anthropic/${ANTHROPIC_FAVORITE}`,
+			`openai/${OPENAI_TARGET}`,
 		]);
 
 		const firstCycle = await session.cycleModel();
 		expect(firstCycle?.model.provider).toBe("anthropic");
-		expect(firstCycle?.model.id).toBe("claude-sonnet-4-5");
+		expect(firstCycle?.model.id).toBe(ANTHROPIC_FAVORITE);
 		const secondCycle = await session.cycleModel();
 		expect(secondCycle?.model.provider).toBe("openai");
-		expect(secondCycle?.model.id).toBe("gpt-5.4");
+		expect(secondCycle?.model.id).toBe(OPENAI_TARGET);
 
-		settingsManager.setFavoriteModels(["anthropic/claude-sonnet-4-5"]);
+		settingsManager.setFavoriteModels([`anthropic/${ANTHROPIC_FAVORITE}`]);
 		await settingsManager.flush();
 		await session.reload();
 
 		expect(session.scopedModels).toEqual([]);
 		expect(session.favoriteModels.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`)).toEqual([
-			"anthropic/claude-sonnet-4-5",
+			`anthropic/${ANTHROPIC_FAVORITE}`,
 		]);
 		expect(await session.cycleModel()).toBeUndefined();
 	});

@@ -20,7 +20,7 @@ Make runtime2 the sole public harness implementation, delete runtime1 and its ob
 3. **Remove runtime1-only public members.** Delete `before_resume`, `BeforeResumePrepared`, `resumeData`, `systemPromptOverride`, and stable hook-ID routing. Add the approved `before_drive` and `transform_context` shapes. Update telemetry schema source and regenerate its document. Do not implement `starting` or acceptance behavior here.
 4. **Switch the factory.** Add `packages/agent/src/harness/runtime2/index.ts`, point `agent-harness.ts` at it, and add a constructor-selection regression. Verify the experimental coding-agent worker still creates the harness, subscribes to events, and closes it.
 5. **Delete runtime1 source and tests** listed below.
-6. **Update `[Unreleased]` on `main` or a pull-request branch** for the public breaking removals and temporarily incomplete factory. Repository policy forbids changelog edits on `dev`, so WP00 records but does not perform that release-facing step here.
+6. **Add package changelog blocks in `changes/unreleased/<pr>.md` on the pull-request branch** for the public breaking removals and temporarily incomplete factory. The release cut compiles them; WP00 records but does not perform that release-facing step here.
 7. Run the retained tests and checks. Fix every failure; do not restore compatibility shims.
 
 ## Delete

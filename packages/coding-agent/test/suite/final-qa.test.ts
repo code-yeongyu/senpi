@@ -6,6 +6,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONFIG_DIR_NAME } from "../../src/config.ts";
+import { approvedStorePath } from "../../src/core/extensions/builtin/permission-system/storage.ts";
 import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
@@ -76,10 +77,19 @@ function createMockUI(selections: (string | undefined)[], inputValue?: string) {
 	};
 }
 
-async function writeSettings(harness: Harness, permissionConfig: Record<string, unknown>): Promise<void> {
+// Without a preset the session runs under the full-access default, where a configured ask never
+// prompts (senpi#2465); scenarios about prompting name a prompting preset.
+async function writeSettings(
+	harness: Harness,
+	permissionConfig: Record<string, unknown>,
+	permissionPreset?: string,
+): Promise<void> {
 	const piDir = path.join(harness.tempDir, CONFIG_DIR_NAME);
 	fs.mkdirSync(piDir, { recursive: true });
-	fs.writeFileSync(path.join(piDir, "settings.json"), JSON.stringify({ permission: permissionConfig }, null, 3));
+	fs.writeFileSync(
+		path.join(piDir, "settings.json"),
+		JSON.stringify({ permission: permissionConfig, ...(permissionPreset ? { permissionPreset } : {}) }, null, 3),
+	);
 }
 
 function getMessageFromEnd(harness: Harness, offsetFromEnd: number) {
@@ -157,8 +167,8 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 		});
 	});
 
-	describe("Scenario 3: ask mode with Allow always persists to JSONL", () => {
-		it("prompts user in ask mode, Allow always persists rule to permissions-approved.jsonl", async () => {
+	describe("Scenario 3: ask mode with Allow always persists to the approved store", () => {
+		it("prompts user in ask mode, Allow always persists the rule to the agent-dir approved store", async () => {
 			const executedCommands: string[] = [];
 			const permissionSystemExtension = await loadPermissionSystemExtension();
 			const uiContext = createMockUI(["Allow always"]);
@@ -168,7 +178,7 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 			});
 			harnesses.push(harness);
 
-			await writeSettings(harness, { bash: "ask" });
+			await writeSettings(harness, { bash: "ask" }, "ask");
 			await harness.session.bindExtensions({ uiContext });
 
 			harness.setResponses([
@@ -183,8 +193,14 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 
 			await harness.session.reload();
 
-			const permissionsPath = path.join(harness.tempDir, CONFIG_DIR_NAME, "permissions-approved.jsonl");
+			// Approvals live in the agent-dir store, outside the project the agent can write (senpi#2465);
+			// the old project-local file is never written.
+			const permissionsPath = approvedStorePath(
+				harness.getExtensionRunner().createContext().agentDir,
+				harness.tempDir,
+			);
 			expect(fs.existsSync(permissionsPath)).toBe(true);
+			expect(fs.existsSync(path.join(harness.tempDir, CONFIG_DIR_NAME, "permissions-approved.jsonl"))).toBe(false);
 
 			const content = fs.readFileSync(permissionsPath, "utf-8");
 			const lines = content.trim().split("\n").filter(Boolean);
@@ -208,7 +224,7 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 			});
 			harnesses.push(harness);
 
-			await writeSettings(harness, { bash: "ask" });
+			await writeSettings(harness, { bash: "ask" }, "ask");
 			await harness.session.bindExtensions({ uiContext });
 
 			harness.setResponses([
@@ -238,7 +254,7 @@ describe("F3 Final QA - Permission System End-to-End", () => {
 			});
 			harnesses.push(harness);
 
-			await writeSettings(harness, { bash: "ask" });
+			await writeSettings(harness, { bash: "ask" }, "ask");
 			await harness.session.bindExtensions({});
 
 			harness.setResponses([

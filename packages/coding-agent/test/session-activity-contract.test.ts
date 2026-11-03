@@ -64,6 +64,44 @@ describe("session activity contract", () => {
 
 		expect(tracker.hasActive).toBe(true);
 	});
+
+	test("counts child work separately when legacy background publishers remain active", () => {
+		// Given a legacy background publisher with no kind.
+		const tracker = new WakeSourceTracker();
+		tracker.observe({ source: "terminal-monitors", activeCount: 3 });
+
+		// When a child publisher reports live work.
+		tracker.observe({ source: "senpi-task", activeCount: 2, kind: "children" });
+
+		// Then both kinds retain their own obligation counts.
+		expect(tracker.activeCounts).toEqual({ children: 2, background: 3 });
+	});
+
+	test("replaces the previous kind count when a source changes ownership", () => {
+		// Given a source whose work belongs to children.
+		const tracker = new WakeSourceTracker();
+		tracker.observe({ source: "delivery", activeCount: 2, kind: "children" });
+
+		// When the publisher replaces it with background work.
+		tracker.observe({ source: "delivery", activeCount: 1, kind: "background" });
+
+		// Then the old child count cannot linger.
+		expect(tracker.activeCounts).toEqual({ children: 0, background: 1 });
+	});
+
+	test("removes a child count when its source drains", () => {
+		// Given a child source alongside a live background source.
+		const tracker = new WakeSourceTracker();
+		tracker.observe({ source: "senpi-task", activeCount: 2, kind: "children" });
+		tracker.observe({ source: "terminal-monitors", activeCount: 1 });
+
+		// When all child work finishes.
+		tracker.observe({ source: "senpi-task", activeCount: 0, kind: "children" });
+
+		// Then background custody alone keeps the session busy.
+		expect(tracker.activeCounts).toEqual({ children: 0, background: 1 });
+		expect(tracker.hasActive).toBe(true);
+	});
 });
 
 describe("supervised host exit classification", () => {

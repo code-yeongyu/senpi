@@ -13,7 +13,7 @@ import {
 	uuidv7,
 } from "@earendil-works/pi-ai";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
-import { type Context, getTelemetryContext } from "../context.ts";
+import { type Context, getSessionCwd, getTelemetryContext } from "../context.ts";
 import { convertToLlm, createBranchSummaryMessage, createCompactionSummaryMessage } from "../messages.ts";
 import { buildContextEntries, sessionEntryToContextMessages } from "../session/context.ts";
 import type { CompactionEntry, Entry, JsonValue } from "../session/types.ts";
@@ -77,7 +77,7 @@ function extractFileOperations(
 }
 function getMessageFromEntry(entry: Entry): AgentMessage | undefined {
 	if (entry.type === "message") {
-		return entry.message as AgentMessage;
+		return entry.message;
 	}
 	if (entry.type === "branch_summary") {
 		return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
@@ -116,8 +116,11 @@ export type SummaryRequest = (
 ) => Promise<AssistantMessage>;
 
 export function createSummaryRequestOptions(options: SimpleStreamOptions, context: Context): SimpleStreamOptions {
+	// Providers such as anthropic-subscription reject a request without the absolute session cwd (#5256).
+	const cwd = options.cwd ?? getSessionCwd(context);
 	return {
 		...options,
+		...(cwd === undefined ? {} : { cwd }),
 		signal: context.abortSignal,
 		telemetryContext: getTelemetryContext(context),
 		cacheRetention: "none",
@@ -163,6 +166,9 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 
 /** Calculate total context tokens from provider usage. */
 export function calculateContextTokens(usage: Usage): number {
+	if (usage.contextUsage !== undefined) {
+		return usage.contextUsage === null ? 0 : usage.contextUsage.input + usage.contextUsage.output;
+	}
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 function getAssistantUsage(msg: AgentMessage): Usage | undefined {
@@ -185,7 +191,7 @@ export function getLastAssistantUsage(entries: Entry[]): Usage | undefined {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		if (entry.type === "message") {
-			const usage = getAssistantUsage(entry.message as AgentMessage);
+			const usage = getAssistantUsage(entry.message);
 			if (usage) return usage;
 		}
 	}
@@ -395,7 +401,7 @@ export function findCutPoint(
 	for (let i = endIndex - 1; i >= startIndex; i--) {
 		const entry = entries[i];
 		if (entry.type !== "message") continue;
-		const messageTokens = estimateTokens(entry.message as AgentMessage);
+		const messageTokens = estimateTokens(entry.message);
 		accumulatedTokens += messageTokens;
 		if (accumulatedTokens >= keepRecentTokens) {
 			let foundCutPoint = false;

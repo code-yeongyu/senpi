@@ -6,6 +6,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
+import { annotateShellTrust, type ShellTrust } from "../../engine-trust/shell-trust.ts";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
 	getShellConfig,
@@ -19,6 +20,7 @@ import {
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { modelOnlyText } from "./model-only-text.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
+import { SecretOutputRedactor } from "./secret-output-redactor.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
@@ -48,7 +50,7 @@ const bashSchema = Type.Object({
 
 export const bashToolSystemPromptContribution = {
 	snippet: "Execute bash commands (ls, rg, find, etc.)",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	guidelines: ["PI_* env vars = current model + session details."],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -73,6 +75,7 @@ export type BashToolOutput = Static<typeof bashOutputSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	trust?: ShellTrust;
 }
 
 /**
@@ -92,10 +95,11 @@ export interface BashOperations {
 		command: string,
 		cwd: string,
 		options: {
-			onData: (data: Buffer) => void;
+			onData: (data: Buffer, stream?: "stdout" | "stderr") => void;
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
+			redactSecretsInOutput?: boolean;
 		},
 	) => Promise<{ exitCode: number | null }>;
 }
@@ -142,10 +146,13 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			};
 
 			try {
-				const handleData = (data: Buffer) => {
+				const handleData = (data: Buffer, stream: "stdout" | "stderr") => {
 					if (hasStreamCallbackError) return;
 					try {
-						const callbackResult = (onData as (data: Buffer) => unknown)(data);
+						const callbackResult = (onData as (data: Buffer, stream: "stdout" | "stderr") => unknown)(
+							data,
+							stream,
+						);
 						if (callbackResult && typeof (callbackResult as { then?: unknown }).then === "function") {
 							void Promise.resolve(callbackResult).catch((error) => {
 								if (!hasStreamCallbackError) {
@@ -169,8 +176,8 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 					}, timeoutMs);
 				}
 				// Stream stdout and stderr.
-				child.stdout?.on("data", handleData);
-				child.stderr?.on("data", handleData);
+				child.stdout?.on("data", (data: Buffer) => handleData(data, "stdout"));
+				child.stderr?.on("data", (data: Buffer) => handleData(data, "stderr"));
 				// Handle abort signal by killing the entire process tree.
 				if (signal) {
 					if (signal.aborted) onAbort();
@@ -264,12 +271,15 @@ function resolveSpawnContext(
 		}
 		if (ctx.thinkingLevel) env.PI_REASONING_LEVEL = ctx.thinkingLevel;
 		if (ctx.browserEngine) env.OMO_BROWSER_ENGINE = ctx.browserEngine;
+		Object.assign(env, ctx.sessionEnv);
 	}
 	const baseContext: BashSpawnContext = { command, cwd, env };
 	return spawnHook ? spawnHook(baseContext) : baseContext;
 }
 
 export interface BashToolOptions {
+	/** Redact credential-shaped output before streaming or spilling. Default: false. */
+	redactSecretsInOutput?: boolean;
 	/** Custom operations for command execution. Default: local shell */
 	operations?: BashOperations;
 	/** Command prefix prepended to every command (for example shell setup commands) */
@@ -308,6 +318,7 @@ export function createShellToolDefinition(
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
 	return {
+		...(options?.operations !== undefined || spawnHook !== undefined ? { serverPinned: true } : {}),
 		name: config.name,
 		label: config.label,
 		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
@@ -332,6 +343,10 @@ export function createShellToolDefinition(
 				ctx,
 			);
 			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
+			const streams =
+				options?.redactSecretsInOutput === true
+					? new Map<string, { redactor: SecretOutputRedactor; decoder: TextDecoder }>()
+					: undefined;
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -384,9 +399,16 @@ export function createShellToolDefinition(
 				onUpdate({ content: [], details: undefined });
 			}
 
-			const handleData = (data: Buffer) => {
+			const handleData = (data: Buffer, stream = "stdout") => {
 				if (!acceptingOutput) return;
-				output.append(data);
+				if (streams) {
+					let state = streams.get(stream);
+					if (!state) {
+						state = { redactor: new SecretOutputRedactor(), decoder: new TextDecoder() };
+						streams.set(stream, state);
+					}
+					output.appendText(state.redactor.push(state.decoder.decode(data, { stream: true })));
+				} else output.append(data);
 				scheduleOutputUpdate();
 			};
 
@@ -397,6 +419,12 @@ export function createShellToolDefinition(
 				let hasPrimaryError = false;
 				let snapshot: Awaited<ReturnType<OutputAccumulator["snapshot"]>> | undefined;
 				try {
+					if (streams) {
+						for (const { redactor, decoder } of streams.values()) {
+							output.appendText(redactor.push(decoder.decode()) + redactor.finish());
+						}
+						updateDirty = true;
+					}
 					output.finish();
 					emitOutputUpdate();
 					snapshot = output.snapshot({ persistIfTruncated: true });
@@ -468,6 +496,7 @@ export function createShellToolDefinition(
 				try {
 					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
 						onData: handleData,
+						redactSecretsInOutput: options?.redactSecretsInOutput === true,
 						signal,
 						timeout,
 						env: spawnContext.env,
@@ -513,10 +542,19 @@ export function createShellToolDefinition(
 					wall_time_seconds: wallTimeSeconds,
 				};
 				if (exitCode !== 0) {
+					const text = appendStatus(outputText, `Command exited with code ${exitCode}`);
+					// The engine trust annotation (omo#10762) rides only on error results, so the success
+					// `outputSchema` (and the prompt bytes it costs) stays unchanged.
+					const annotation = annotateShellTrust({ exitCode, output: fullOutput.content });
+					if (annotation === undefined) {
+						return { content: [{ type: "text", text }], details, structuredContent, isError: true };
+					}
 					return {
-						content: [{ type: "text", text: appendStatus(outputText, `Command exited with code ${exitCode}`) }],
-						details,
-						structuredContent,
+						content: [
+							{ type: "text", text: annotation.text === undefined ? text : `${text}\n\n${annotation.text}` },
+						],
+						details: { ...details, trust: annotation.trust },
+						structuredContent: { ...structuredContent, trust: annotation.trust },
 						isError: true,
 					};
 				}

@@ -117,5 +117,8 @@ export function savedReduction(h: Harness) {
 		: createContextReductionState();
 }
 export function reductionBytes(value: unknown) {
-	return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+	// The stable-prefix hint moves with the frontier like a cache breakpoint does; it is not
+	// transcript content and never part of the cached prefix (senpi#3242).
+	const content = JSON.stringify(value, (key, field) => (key === "promptCacheBreakpoint" ? undefined : field));
+	return createHash("sha256").update(content).digest("hex");
 }

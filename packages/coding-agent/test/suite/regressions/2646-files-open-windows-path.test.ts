@@ -25,7 +25,10 @@ function vscodeLikeExec(command: string, args: string[]): ExecResult {
 	return { stdout: "", stderr: gotoWithDrive ? `${GOTO_USAGE_ERROR}\n` : "", code: 0, killed: false };
 }
 
-async function pressEnterOnFile(exec: (command: string, args: string[]) => ExecResult) {
+async function pressEnterOnFile(
+	exec: (command: string, args: string[]) => ExecResult,
+	options: { readonly windowOnlyBranch?: boolean } = {},
+) {
 	let handler: Handler | undefined;
 	const execCalls: string[][] = [];
 	const notices: Array<{ message: string; level: string }> = [];
@@ -54,7 +57,8 @@ async function pressEnterOnFile(exec: (command: string, args: string[]) => ExecR
 	const ctx = {
 		hasUI: true,
 		cwd: "C:\\Users\\me",
-		sessionManager: { getBranch: () => branch },
+		// A compacted session answers getBranch() from its latest window only; the tool call lies before it.
+		sessionManager: { getBranch: () => (options.windowOnlyBranch ? [] : branch), getFullBranch: () => branch },
 		ui: {
 			notify: (message: string, level: string) => notices.push({ message, level }),
 			custom: async (
@@ -76,6 +80,13 @@ async function pressEnterOnFile(exec: (command: string, args: string[]) => ExecR
 }
 
 describe("/files opens the selected file in VS Code (senpi#2646)", () => {
+	it("lists a file the session touched before its latest compaction (senpi#3519)", async () => {
+		setPlatform("win32");
+		const { execCalls } = await pressEnterOnFile(vscodeLikeExec, { windowOnlyBranch: true });
+
+		expect(execCalls).toEqual([["cmd", "/d", "/s", "/c", `code "${FILE}"`]]);
+	});
+
 	it("opens a drive-letter path on Windows without --goto", async () => {
 		setPlatform("win32");
 		const { execCalls, notices } = await pressEnterOnFile(vscodeLikeExec);

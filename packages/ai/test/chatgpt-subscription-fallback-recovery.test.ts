@@ -5,7 +5,7 @@ import {
 	resetChatGptSubscriptionWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { AssistantMessage, Context, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const FALLBACK_COOLDOWN_MS = 60_000;
@@ -168,8 +168,66 @@ function installTransportHarness(): { connections: () => number; fetches: () => 
 	};
 }
 
-async function runSession(sessionId: string): Promise<void> {
-	await streamOpenAICodexResponses(model, normalizeContext(context), {
+type RequestPlan = "complete" | "drop-mid-stream";
+
+/** Each WebSocket request follows the next plan: complete, or stream two events and close 1006 (senpi#3442). */
+function installMidStreamDropHarness(plans: readonly RequestPlan[]): {
+	connections: () => number;
+	fetches: () => number;
+} {
+	const transport = installTransportHarness();
+	let connectionCount = 0;
+	let requestCount = 0;
+
+	class DroppingWebSocket {
+		readyState = 1;
+		private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+		constructor() {
+			connectionCount++;
+			queueMicrotask(() => this.dispatch("open", {}));
+		}
+
+		addEventListener(type: string, listener: (event: unknown) => void): void {
+			const listeners = this.listeners.get(type) ?? new Set<(event: unknown) => void>();
+			listeners.add(listener);
+			this.listeners.set(type, listeners);
+		}
+
+		removeEventListener(type: string, listener: (event: unknown) => void): void {
+			this.listeners.get(type)?.delete(listener);
+		}
+
+		send(): void {
+			const plan = plans[requestCount++] ?? "complete";
+			const events = completedWebSocketEvents();
+			queueMicrotask(() => {
+				for (const event of plan === "drop-mid-stream" ? events.slice(0, 2) : events) {
+					this.dispatch("message", { data: JSON.stringify(event) });
+				}
+				if (plan === "drop-mid-stream") {
+					queueMicrotask(() => this.close(1006, "Connection ended"));
+				}
+			});
+		}
+
+		close(code = 1000, reason = "test cleanup"): void {
+			if (this.readyState === 3) return;
+			this.readyState = 3;
+			this.dispatch("close", { code, reason, wasClean: code === 1000 });
+		}
+
+		private dispatch(type: string, event: unknown): void {
+			for (const listener of this.listeners.get(type) ?? []) listener(event);
+		}
+	}
+
+	vi.stubGlobal("WebSocket", DroppingWebSocket);
+	return { connections: () => connectionCount, fetches: transport.fetches };
+}
+
+async function runSession(sessionId: string): Promise<AssistantMessage> {
+	return streamOpenAICodexResponses(model, normalizeContext(context), {
 		apiKey: mockToken(),
 		sessionId,
 		transport: "auto",
@@ -205,6 +263,47 @@ describe("OpenAI Codex WebSocket fallback recovery", () => {
 
 		expect(transport.connections()).toBe(2);
 		expect(transport.fetches()).toBe(2);
+	});
+
+	// senpi#3442: upstream Codex retries a dropped stream on a fresh WebSocket and
+	// falls back to HTTPS only after its retry budget (core/src/responses_retry.rs).
+	it("retries the request after one mid-stream drop on a fresh WebSocket, not SSE", async () => {
+		const transport = installMidStreamDropHarness(["drop-mid-stream", "complete"]);
+
+		const dropped = await runSession("mid-stream-drop");
+		expect(dropped.stopReason).toBe("error");
+		expect(dropped.errorMessage).toBe("WebSocket closed 1006 Connection ended");
+
+		const retried = await runSession("mid-stream-drop");
+		expect(retried.stopReason).toBe("stop");
+		expect(transport.connections()).toBe(2);
+		expect(transport.fetches()).toBe(0);
+		expect(getChatGptSubscriptionWebSocketDebugStats("mid-stream-drop")).toMatchObject({
+			websocketFailures: 1,
+			sseFallbacks: 0,
+		});
+	});
+
+	it("falls back to SSE after two consecutive mid-stream drops, and a completed response resets the count", async () => {
+		const transport = installMidStreamDropHarness([
+			"drop-mid-stream",
+			"complete",
+			"drop-mid-stream",
+			"drop-mid-stream",
+		]);
+
+		expect((await runSession("repeated-drops")).stopReason).toBe("error");
+		expect((await runSession("repeated-drops")).stopReason).toBe("stop");
+		expect((await runSession("repeated-drops")).stopReason).toBe("error");
+		expect(transport.fetches()).toBe(0);
+		expect((await runSession("repeated-drops")).stopReason).toBe("error");
+		// Every drop retires its socket; the completed request parked its socket and request 3 reused it.
+		expect(transport.connections()).toBe(3);
+
+		const afterTwoDrops = await runSession("repeated-drops");
+		expect(afterTwoDrops.stopReason).toBe("stop");
+		expect(transport.connections()).toBe(3);
+		expect(transport.fetches()).toBe(1);
 	});
 
 	it("recovers WebSocket immediately after production cleanup", async () => {

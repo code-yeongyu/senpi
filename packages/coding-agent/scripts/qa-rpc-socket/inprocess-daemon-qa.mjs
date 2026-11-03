@@ -24,7 +24,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { startFakeModelServer, writeMockModelsJson } from "../qa-app-server/lib/env.mjs";
+import { startFakeModelServer, writeMockModelsJson } from "../qa-shared/lib/env.mjs";
 import { resolveGenerations } from "./lib/compiled-generations.mjs";
 import { createDaemonSandbox } from "./lib/daemon-sandbox.mjs";
 import { sessionDriver } from "./lib/daemon-sessions.mjs";

@@ -33,11 +33,15 @@ export function limitGitHubCopilotTools<T>(
 	provider: ProviderId,
 	tools: T[] | undefined,
 	toolChoice?: unknown,
+	priorityNames?: readonly string[],
 ): { tools: T[] | undefined; omittedCount: number } {
 	if (provider !== "github-copilot" || tools === undefined || tools.length <= GITHUB_COPILOT_TOOL_LIMIT) {
 		return { tools, omittedCount: 0 };
 	}
 	const forcedName = selectedToolName(toolChoice);
+	if (priorityNames !== undefined) {
+		return limitByPriority(tools, forcedName, priorityNames);
+	}
 	const forcedIndex = forcedName === undefined ? -1 : tools.findIndex((tool) => toolName(tool) === forcedName);
 	if (forcedIndex >= GITHUB_COPILOT_TOOL_LIMIT) {
 		const forcedTool = tools[forcedIndex];
@@ -50,6 +54,32 @@ export function limitGitHubCopilotTools<T>(
 	}
 	return {
 		tools: tools.slice(0, GITHUB_COPILOT_TOOL_LIMIT),
+		omittedCount: tools.length - GITHUB_COPILOT_TOOL_LIMIT,
+	};
+}
+
+// The wire order can differ from registration order (Responses sorts tools by name for cache stability), so the
+// survivors are chosen by the caller's registration order and then kept in their wire order.
+function limitByPriority<T>(
+	tools: T[],
+	forcedName: string | undefined,
+	priorityNames: readonly string[],
+): { tools: T[]; omittedCount: number } {
+	const rank = new Map(priorityNames.map((name, index) => [name, index]));
+	const rankOf = (tool: T, index: number): number => {
+		const name = toolName(tool);
+		if (name !== undefined && name === forcedName) return -1;
+		return rank.get(name ?? "") ?? priorityNames.length + index;
+	};
+	const kept = new Set(
+		tools
+			.map((tool, index) => ({ index, rank: rankOf(tool, index) }))
+			.sort((a, b) => a.rank - b.rank)
+			.slice(0, GITHUB_COPILOT_TOOL_LIMIT)
+			.map((entry) => entry.index),
+	);
+	return {
+		tools: tools.filter((_, index) => kept.has(index)),
 		omittedCount: tools.length - GITHUB_COPILOT_TOOL_LIMIT,
 	};
 }

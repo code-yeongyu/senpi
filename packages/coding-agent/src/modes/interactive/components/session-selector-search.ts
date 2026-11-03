@@ -1,5 +1,5 @@
 import { fuzzyMatchLower } from "@earendil-works/pi-tui";
-import type { SessionInfo } from "../../../core/session-manager.ts";
+import { type SessionInfo, sessionFileNameId } from "../../../core/session-manager.ts";
 
 export type SortMode = "threaded" | "recent" | "relevance";
 
@@ -41,7 +41,10 @@ const searchTextCache = new WeakMap<SessionInfo, SessionSearchText>();
 function getSessionSearchText(session: SessionInfo): SessionSearchText {
 	const cached = searchTextCache.get(session);
 	if (cached) return cached;
-	const text = `${session.id} ${session.name ?? ""} ${session.allMessagesText} ${session.cwd}`;
+	// A resume hint can print the id the file name carries when the header records another (oh-my-openagent#7471).
+	const fileNameId = sessionFileNameId(session.path);
+	const ids = fileNameId === undefined || fileNameId === session.id ? session.id : `${session.id} ${fileNameId}`;
+	const text = `${ids} ${session.name ?? ""} ${session.allMessagesText} ${session.cwd}`;
 	const entry: SessionSearchText = { text, lower: text.toLowerCase() };
 	searchTextCache.set(session, entry);
 	return entry;

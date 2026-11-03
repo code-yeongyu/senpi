@@ -16,6 +16,10 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { builtinChatAndImageModelId } from "./support/catalog-ids.ts";
+
+// An OpenRouter id the catalog ships as both a chat and an image model, picked so a regen cannot remove it (senpi#1955).
+const CHAT_AND_IMAGE_ID = builtinChatAndImageModelId("openrouter");
 
 function imageModel(provider: string, id: string): ImageModel<"test-images"> {
 	return {
@@ -96,8 +100,8 @@ describe("ModelRuntime image generation", () => {
 		expect(images.length).toBeGreaterThan(0);
 		expect(runtime.getModels("openrouter").every((model) => isModelType(model, "chat"))).toBe(true);
 		expect(runtime.getModelOfType("image", "openrouter", images[0].id)).toBe(images[0]);
-		expect(runtime.getModel("openrouter", "google/gemini-3-pro-image")?.api).toBe("openai-completions");
-		expect(runtime.getModelOfType("image", "openrouter", "google/gemini-3-pro-image")?.type).toBe("image");
+		expect(runtime.getModel("openrouter", CHAT_AND_IMAGE_ID)?.api).toBe("openai-completions");
+		expect(runtime.getModelOfType("image", "openrouter", CHAT_AND_IMAGE_ID)?.type).toBe("image");
 		const classifiers = runtime.getModelsOfType("classifier", "openrouter");
 		expect(runtime.getAllModels("openrouter").length).toBe(
 			runtime.getModels("openrouter").length + images.length + classifiers.length,
@@ -290,7 +294,7 @@ describe("ModelRuntime image generation", () => {
 					headers: { "X-Title": "pi" },
 					modelOverrides: {
 						"openrouter/auto": { name: "Auto (renamed)" },
-						"google/gemini-3-pro-image": { headers: { "X-Chat-Only": "yes" } },
+						[CHAT_AND_IMAGE_ID]: { headers: { "X-Chat-Only": "yes" } },
 					},
 				},
 			},
@@ -302,8 +306,8 @@ describe("ModelRuntime image generation", () => {
 
 		// Auth is provider-scoped: the same key serves chat and image models.
 		await runtime.setRuntimeApiKey("openrouter", "sk-or");
-		const chat = runtime.getModel("openrouter", "google/gemini-3-pro-image")!;
-		const image = runtime.getModelOfType("image", "openrouter", "google/gemini-3-pro-image")!;
+		const chat = runtime.getModel("openrouter", CHAT_AND_IMAGE_ID)!;
+		const image = runtime.getModelOfType("image", "openrouter", CHAT_AND_IMAGE_ID)!;
 		const chatAuth = await runtime.getAuth(chat);
 		const imageAuth = await runtime.getAuth(image);
 		expect(imageAuth?.auth.apiKey).toBe("sk-or");

@@ -10,7 +10,7 @@ import { BASETEN_LIVE_TEST_FLAG, getLiveEnvApiKey, QWEN_TOKEN_PLAN_LIVE_TEST_FLA
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
-const [chatgptSubscriptionToken] = await Promise.all([resolveApiKey("chatgpt-subscription")]);
+const chatgptSubscriptionToken = await resolveApiKey("chatgpt-subscription");
 const anthropicOAuthToken = getLiveEnvApiKey("ANTHROPIC_OAUTH_TOKEN", "PI_ENABLE_ANTHROPIC_OAUTH_LIVE");
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -219,7 +219,7 @@ describe("AI Providers Abort Tests", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_API_KEY)("Xiaomi MiMo (API billing) Provider Abort", () => {
-		const llm = getModel("xiaomi", "mimo-v2.5-pro");
+		const llm = getModel("xiaomi", "mimo-v2.6-pro");
 
 		it("should abort mid-stream", { retry: 3 }, async () => {
 			await testAbortSignal(llm);
@@ -231,7 +231,7 @@ describe("AI Providers Abort Tests", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY)("Xiaomi MiMo Token Plan (CN) Provider Abort", () => {
-		const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.5-pro");
+		const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.6-pro");
 
 		it("should abort mid-stream", { retry: 3 }, async () => {
 			await testAbortSignal(llm);
@@ -243,7 +243,7 @@ describe("AI Providers Abort Tests", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY)("Xiaomi MiMo Token Plan (AMS) Provider Abort", () => {
-		const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.5-pro");
+		const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.6-pro");
 
 		it("should abort mid-stream", { retry: 3 }, async () => {
 			await testAbortSignal(llm);
@@ -255,7 +255,7 @@ describe("AI Providers Abort Tests", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY)("Xiaomi MiMo Token Plan (SGP) Provider Abort", () => {
-		const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+		const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.6-pro");
 
 		it("should abort mid-stream", { retry: 3 }, async () => {
 			await testAbortSignal(llm);

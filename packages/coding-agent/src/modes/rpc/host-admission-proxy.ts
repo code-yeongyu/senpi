@@ -1,14 +1,23 @@
 import type { Socket } from "node:net";
+import type { Duplex, Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { type HostAdmission, hostStoppingResponse } from "./host-admission.ts";
 import { MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
+import type { PublicRpcConnection } from "./rpc-public-auth.ts";
 
 /**
  * Requests are size-bounded; each direction awaits downstream socket backpressure.
  * Opens remain concurrent with control commands. Stop refuses every pending open,
  * while other commands retain their wire order and child-owned semantics.
  */
-export function proxyWithAdmission(client: Socket, internal: Socket | undefined, admission: HostAdmission): void {
+export function proxyWithAdmission(
+	client: Socket,
+	internal: Duplex | undefined,
+	admission: HostAdmission,
+	auth?: PublicRpcConnection,
+): void {
+	const reply = (chunk: string | Buffer): Promise<void> =>
+		write(client, auth ? auth.response(chunk.toString()) : chunk);
 	const pending: unknown[] = [];
 	const refused = new Set<unknown>();
 	let protocols = 0;
@@ -21,8 +30,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 		const ids = pending.splice(0);
 		for (const id of ids) refused.add(id);
 		try {
-			for (const id of ids)
-				await write(client, serializeJsonLine(hostStoppingResponse(id, "open_session", admission)));
+			for (const id of ids) await reply(serializeJsonLine(hostStoppingResponse(id, "open_session", admission)));
 		} catch {
 			fail();
 		}
@@ -48,10 +56,9 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 		});
 
 	async function requests(): Promise<void> {
-		for await (const line of lines(client, MAX_RPC_LINE_CHARACTERS)) {
+		for await (const line of lines(auth?.input ?? client, MAX_RPC_LINE_CHARACTERS)) {
 			if (line === undefined) {
-				await write(
-					client,
+				await reply(
 					serializeJsonLine({
 						type: "response",
 						command: "parse",
@@ -63,8 +70,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 			}
 			const request = record(line);
 			if (admission.stopping && request?.type === "get_protocol_info") {
-				await write(
-					client,
+				await reply(
 					serializeJsonLine({
 						id: request.id,
 						type: "response",
@@ -74,8 +80,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 					}),
 				);
 			} else if (admission.stopping && (request?.type === "open_session" || !internal)) {
-				await write(
-					client,
+				await reply(
 					serializeJsonLine(hostStoppingResponse(request?.id, String(request?.type ?? "parse"), admission)),
 				);
 			} else if (internal) {
@@ -88,7 +93,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 		internal?.end();
 	}
 
-	async function responses(source: Socket): Promise<void> {
+	async function responses(source: Duplex): Promise<void> {
 		// Keep complete records together so local refusals cannot split a streaming delta.
 		// After admission, ordinary traffic stays as raw bytes with one write per chunk.
 		let fragments: Buffer[] = [];
@@ -99,7 +104,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 				continue;
 			}
 			const complete = chunk.subarray(0, newline + 1);
-			if (pending.length === 0 && protocols === 0 && refused.size === 0) {
+			if (!auth && pending.length === 0 && protocols === 0 && refused.size === 0) {
 				// Queue the entire record batch synchronously, without copying split buffers.
 				client.cork();
 				let written: Promise<void>;
@@ -112,11 +117,11 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 				await written;
 			} else {
 				const batch = fragments.length > 0 ? Buffer.concat([...fragments, complete]) : complete;
-				await write(client, filterReplies(batch));
+				await reply(filterReplies(batch));
 			}
 			fragments = newline + 1 < chunk.length ? [chunk.subarray(newline + 1)] : [];
 		}
-		if (fragments.length > 0) await write(client, filterReplies(Buffer.concat(fragments)));
+		if (fragments.length > 0) await reply(filterReplies(Buffer.concat(fragments)));
 		await refusals;
 		client.end(() => client.destroy());
 	}
@@ -158,14 +163,14 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 	}
 }
 
-async function write(socket: Socket, line: string | Buffer): Promise<void> {
+async function write(socket: Duplex, line: string | Buffer): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		socket.write(line, (error) => (error ? reject(error) : resolve()));
 	});
 }
 
 /** Strict LF and incremental UTF-8; an oversized input is discarded through its next LF. */
-async function* lines(socket: Socket, limit: number): AsyncGenerator<string | undefined> {
+async function* lines(socket: Readable, limit: number): AsyncGenerator<string | undefined> {
 	const decoder = new StringDecoder("utf8");
 	let buffer = "";
 	let discarding = false;

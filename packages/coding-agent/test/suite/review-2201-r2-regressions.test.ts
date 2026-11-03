@@ -35,10 +35,13 @@ it("retains live agent-directory sharing when another directory is created befor
 		fauxAssistantMessage("sibling"),
 	]);
 	await first.session.prompt("open the primary after another agent directory was initialized");
+	// The live directory's store is still the one sessions share: it holds the open circuit.
+	expect(fallbackCircuitsFor(join(first.tempDir, "agent")).isOpen(primary, 0, "observer")).toBe(true);
 	const sibling = await createHarness({ siblingOf: first, fallbackNow: () => 0, settings });
 	harnesses.push(sibling);
-	await sibling.session.prompt("the primary must still be shared and open");
-	expect(first.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-2"]);
+	await sibling.session.prompt("the primary is shared and open, but this sibling never failed on it");
+	// A bare overload is the failing session's view: the sibling keeps its model (senpi#3467).
+	expect(first.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-1"]);
 });
 
 it("does not let a released old token release a later probe by the same owner", () => {

@@ -114,7 +114,11 @@ describe("configuration_update follows the catalog capability flag (senpi#2094)"
 		const branch = harness.sessionManager.getBranch();
 		const compactionIndex = branch.findIndex((entry) => entry.type === "compaction");
 		expect(compactionIndex).toBeGreaterThan(-1);
-		const afterCompaction = branch.slice(compactionIndex + 1);
+		// Session lifecycle records are bookkeeping: a manual compaction is session work, so its end writes the settled
+		// record after it (senpi#4120). Only the configuration entries are this test's subject.
+		const afterCompaction = branch
+			.slice(compactionIndex + 1)
+			.filter((entry) => entry.type !== "custom" || entry.customType !== "session-lifecycle");
 		expect(afterCompaction.map((entry) => entry.type)).toEqual(["configuration_update"]);
 		expect(configurationUpdateEfforts(harness).at(-1)).toBe("high");
 	});

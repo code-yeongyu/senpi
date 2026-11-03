@@ -9,6 +9,7 @@ import {
 	normalizeContext,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
+import { deriveOpenAIPromptCacheKey } from "@earendil-works/pi-ai/api/openai-prompt-cache";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { convertToLlm } from "../../../messages.ts";
@@ -75,6 +76,7 @@ export const SENPI_COMPACTION_EVENT = "senpi:compaction";
 
 export type OpenAiRemoteCompactionRequest = {
 	body: OpenAiCompactBody;
+	sessionId?: string;
 	inputItemCount: number;
 	tokensBefore: number;
 };
@@ -185,7 +187,7 @@ export function createOpenAiRemoteCompactionRequest(options: {
 	branchEntries: SessionEntry[];
 	messages?: AgentMessage[];
 	tokensBefore: number;
-	promptCacheKey?: string;
+	sessionId?: string;
 	serviceTier?: ServiceTier;
 }): OpenAiRemoteCompactionRequest | undefined {
 	if (!isOpenAiRemoteCompactionModel(options.model)) return undefined;
@@ -194,11 +196,15 @@ export function createOpenAiRemoteCompactionRequest(options: {
 		: convertBranchEntries(options.branchEntries, options.model);
 	if (input.length === 0) return undefined;
 	return {
+		sessionId: options.sessionId,
 		body: {
 			model: options.model.id,
 			input,
 			...(options.systemPrompt ? { instructions: options.systemPrompt } : {}),
-			...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
+			prompt_cache_key: deriveOpenAIPromptCacheKey(
+				options.model.id,
+				normalizeContext({ systemPrompt: options.systemPrompt, messages: [] }),
+			),
 			...(options.serviceTier ? { service_tier: options.serviceTier } : {}),
 		},
 		inputItemCount: input.length,
@@ -290,7 +296,6 @@ export function createOpenAiResponsesStreamCompactionPayload(
 		...payload,
 		model: request.body.model,
 		input: [...leadingPromptMessages(payload.input), ...createOpenAiResponsesStreamCompactionInput(request)],
-		...(request.body.prompt_cache_key ? { prompt_cache_key: request.body.prompt_cache_key } : {}),
 		...(request.body.service_tier ? { service_tier: request.body.service_tier } : {}),
 	};
 }
@@ -392,7 +397,7 @@ async function runOpenAiResponsesStreamCompaction(options: {
 				}
 				return transformedPayload;
 			},
-			sessionId: options.request.body.prompt_cache_key,
+			sessionId: options.request.sessionId,
 			signal: options.signal,
 			transport: "websocket",
 		},
@@ -607,7 +612,7 @@ export async function runOpenAiRemoteCompaction(
 		branchEntries: event.branchEntries,
 		messages: providerRequest?.messages,
 		tokensBefore: event.preparation.tokensBefore,
-		promptCacheKey: ctx.sessionManager.getSessionId(),
+		sessionId: ctx.sessionManager.getSessionId(),
 		serviceTier,
 	});
 	if (!request) {
@@ -652,7 +657,7 @@ export async function runOpenAiRemoteCompaction(
 	const requestHeaders = createOpenAiRemoteCompactionHeaders(
 		requestModel,
 		{ ...auth, headers: transformedHeaders },
-		request.body.prompt_cache_key,
+		request.sessionId,
 	);
 	if (!requestHeaders) {
 		emit?.({

@@ -9,14 +9,11 @@ export const TERMINAL_INPUT_TOOL = "bash_input";
 export const TERMINAL_RESIZE_TOOL = "bash_resize";
 export const TERMINAL_MONITOR_TOOL = "monitor";
 
-/** Companion tools that must never dangle without a live PTY `bash`. */
-export const TERMINAL_COMPANION_TOOLS = [
-	TERMINAL_OUTPUT_TOOL,
-	TERMINAL_KILL_TOOL,
-	TERMINAL_INPUT_TOOL,
-	TERMINAL_RESIZE_TOOL,
-	TERMINAL_MONITOR_TOOL,
-] as const;
+/**
+ * Companion tools kept active beside the PTY `bash`. `bash_input` and `bash_resize` are not listed:
+ * they are search-exposed and activate on their first by-name call (senpi#4446).
+ */
+export const TERMINAL_COMPANION_TOOLS = [TERMINAL_OUTPUT_TOOL, TERMINAL_KILL_TOOL, TERMINAL_MONITOR_TOOL] as const;
 
 export const DEFAULT_COLS = 120;
 export const DEFAULT_ROWS = 40;
@@ -55,20 +52,30 @@ export const KILLED_SESSION_EXIT_GRACE_MS = 5000;
  */
 export const DURABLE_MONITOR_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 /**
- * Per-monitor rolling fire budget: one durable command watch may deliver at most this many
- * matched line events inside any FIRE_BUDGET_WINDOW_MS window before the registry auto-mutes
- * it. The session-global wake budget only counts consecutive line-only wakes on an idle
- * session, so a busy session needs this per-monitor backstop against a runaway watch.
+ * Width of a durable command watch's rolling fire window: the persisted count of matched lines it
+ * delivered inside the current window. It is a statistic only; nothing mutes on it.
  */
-export const DEFAULT_DURABLE_MONITOR_FIRE_BUDGET = 200;
-/** Width of the rolling fire-budget window: the budget replenishes after this span elapses. */
 export const FIRE_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
- * The ONE summary emitted when the fire budget mutes a watch. Machine-consumed: the monitor
- * notifier exempts exactly this summary from its completion handling, so the mute must not
- * clear the session-global wake streak.
+ * Wake pacing of a persistent command watch: at most this many wakes an hour on average, with a
+ * burst of the same size. Lines matched between wakes are batched into the next one, never dropped.
  */
-export const FIRE_BUDGET_AUTO_MUTE_SUMMARY = `auto-muted: fire budget (${DEFAULT_DURABLE_MONITOR_FIRE_BUDGET}/24h) reached; rearm to resume`;
+export const DEFAULT_MONITOR_WAKES_PER_HOUR = 12;
+/** Runaway guard: a persistent command watch matching more lines than this in each minute... */
+export const DEFAULT_MONITOR_RUNAWAY_LINES_PER_MINUTE = 120;
+/** ...for this many consecutive minutes is paused with a visible notice until it is re-armed. */
+export const DEFAULT_MONITOR_RUNAWAY_MINUTES = 5;
+/** One per-monitor overflow file grows to this size before it rotates to a single `.1` copy. */
+export const MONITOR_OVERFLOW_FILE_MAX_BYTES = 4 * 1024 * 1024;
+/**
+ * Machine-consumed prefix of the runaway-guard pause summary: the monitor notifier treats a summary
+ * that starts with it as a pause, not a completion, so it must not clear the session wake streak.
+ */
+export const RUNAWAY_PAUSE_SUMMARY_PREFIX = "paused: runaway output";
+
+export function runawayPauseSummary(bashId: string, linesPerMinute: number, minutes: number): string {
+	return `${RUNAWAY_PAUSE_SUMMARY_PREFIX} (more than ${linesPerMinute} matched lines a minute for ${minutes} minute${minutes === 1 ? "" : "s"}); later lines stay in bash_output. Resume with monitor({ action: "rearm", bash_id: "${bashId}" }).`;
+}
 
 /**
  * Non-interactive environment for foreground one-shot commands (codex-style):

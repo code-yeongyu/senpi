@@ -1,14 +1,16 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { z } from "zod";
 import { parseArgs } from "../../src/cli/args.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import {
 	CHILD_REAPER_ENV,
+	CHILD_REAPER_IDLE_TICK_MS,
 	createChildReaper,
 	resolveChildReaperConfig,
+	scheduleChildReaper,
 	startHostChildReaper,
 } from "../../src/modes/rpc/child-reaper.ts";
 import { loadChildReaperSyscalls } from "../../src/modes/rpc/child-reaper-syscalls.ts";
@@ -201,3 +203,31 @@ it("reaps the children a terminated worker orphaned, and leaves them when disabl
 	expect(disabled.after).toBe(disabled.before);
 	expect(disabled.after).toBeGreaterThan(0);
 }, 120_000);
+
+it("looks for children every 5 s while the host has none, and every second while it has some (senpi#3747)", async () => {
+	vi.useFakeTimers();
+	let ticks = 0;
+	let children = 0;
+	const reaper = {
+		tick: () => {
+			ticks += 1;
+		},
+		waitingPids: [],
+		get childCount() {
+			return children;
+		},
+	};
+	const stop = scheduleChildReaper(reaper, 1_000);
+	try {
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(ticks).toBe(10_000 / CHILD_REAPER_IDLE_TICK_MS);
+		children = 1;
+		await vi.advanceTimersByTimeAsync(CHILD_REAPER_IDLE_TICK_MS);
+		ticks = 0;
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(ticks).toBe(5);
+	} finally {
+		stop();
+		vi.useRealTimers();
+	}
+});

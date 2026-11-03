@@ -4,7 +4,7 @@
  *
  * Boots a host the way the daemon runs (`--mode rpc --multi-session --listen
  * unix://...`, whose default session runtime is in-process), points it at the
- * fake model server from `scripts/qa-app-server/lib/env.mjs` through a generated
+ * fake model server from `scripts/qa-shared/lib/env.mjs` through a generated
  * `models.json`, and drives two cells over ONE socket connection:
  *
  *   (i)   SCALE       open `--sessions` sessions, then `list_sessions
@@ -33,8 +33,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { cleanupAllAndWait, installCleanupHooks, startFakeModelServer, writeMockModelsJson } from "../qa-app-server/lib/env.mjs";
-import { trackChild } from "../qa-app-server/lib/cleanup.mjs";
+import { cleanupAllAndWait, installCleanupHooks, startFakeModelServer, writeMockModelsJson } from "../qa-shared/lib/env.mjs";
+import { trackChild } from "../qa-shared/lib/cleanup.mjs";
 import { parseArgs, resolveSessionRuntime } from "../../src/cli/args.ts";
 import { connectJsonlSocket } from "./lib/jsonl-socket.mjs";
 

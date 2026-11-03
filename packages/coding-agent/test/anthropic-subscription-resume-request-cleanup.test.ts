@@ -180,12 +180,17 @@ describe("Claude SDK OAuth resumed query survives completed-request cleanup", ()
 
 		// Given a session whose resident entry retired while its binding survived, so the
 		// next turn takes the resume path and carries the request's abort signal
-		await streamAnthropicSubscription(model, { messages: [first] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [first] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		closeSession(sessionId, "idle_ttl");
 
 		const completedRequest = new AbortController();
 		const resumedTurn: Context = { messages: [first, assistant("answer-1", 2), second] };
 		await streamAnthropicSubscription(model, resumedTurn, {
+			cwd: process.cwd(),
 			...mainOptions(sessionId),
 			signal: completedRequest.signal,
 		}).result();
@@ -201,7 +206,7 @@ describe("Claude SDK OAuth resumed query survives completed-request cleanup", ()
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [first, assistant("answer-1", 2), second, assistant("answer-2", 4), third] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(2);

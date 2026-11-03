@@ -1,12 +1,16 @@
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
 import { createInterface } from "node:readline";
+import { signalSpawnedChild } from "../../../../utils/child-signal.ts";
 import { GrepEngineError } from "../engine.ts";
+import { commandLineOverflow } from "./argv.ts";
 import { parseRgEvent, type RgEvent } from "./json-rows.ts";
 
 export interface RgEngineOptions {
 	/** Process and clock seams keep cancellation and ordered-deadline tests event-driven. */
 	spawn?: (command: string, args: string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
 	now?: () => number;
+	/** Batches per-file arguments under this many command-line characters instead of the platform budget. */
+	batchBudget?: number;
 }
 
 export type RgRun = (
@@ -56,6 +60,12 @@ export function createRgRunner({
 }): RgRun {
 	return async (args, cwd, onEvent, input) => {
 		check();
+		const overflow = commandLineOverflow(args);
+		if (overflow)
+			throw new GrepEngineError(
+				"ENGINE_UNAVAILABLE",
+				`Cannot run ripgrep: ${overflow}. Search fewer paths at once.`,
+			);
 		return new Promise<Buffer>((resolveRun, reject) => {
 			const child = launch(executable, args, { cwd, stdio: "pipe" });
 			const chunks: Buffer[] = [];
@@ -63,7 +73,7 @@ export function createRgRunner({
 			let failure: Error | undefined;
 			let timedOut = false;
 			const stop = () => {
-				if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+				if (child.exitCode === null && child.signalCode === null) signalSpawnedChild(child, "SIGTERM");
 			};
 			const onAbort = () => {
 				stop();

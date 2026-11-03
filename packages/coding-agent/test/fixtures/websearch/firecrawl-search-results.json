@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "id": "fc-search-fixture-0001",
+  "data": {
+    "web": [
+      {
+        "title": "TypeScript 4.9 Release Notes",
+        "url": "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+        "description": "The satisfies operator validates an expression against a type without widening it.",
+        "position": 1
+      },
+      {
+        "title": "Satisfies operator reference",
+        "url": "https://developer.example.com/typescript/satisfies",
+        "snippet": "Snippet-shaped result without a description.",
+        "position": 2
+      },
+      {
+        "title": "Recorded markdown-only result",
+        "url": "https://blog.example.com/satisfies-walkthrough",
+        "markdown": "# Walkthrough\n\nA markdown body stands in for the snippet when no description is returned.",
+        "position": 3
+      },
+      {
+        "url": "https://untitled.example.com/satisfies",
+        "description": "A result without a title keeps its URL as the title.",
+        "position": 4
+      },
+      {
+        "title": "Result without a URL is dropped",
+        "description": "Firecrawl occasionally returns a placeholder row; it cannot be linked.",
+        "position": 5
+      }
+    ]
+  }
+}

@@ -401,8 +401,12 @@ describe("Classic single-session RPC characterization pins (todo 2)", () => {
 				// MUTATION: inject a top-level sessionId key into the first emitted line
 				// at the write boundary (the same array writeRawStdout pushes to).
 				const cleanLines = [...rpcIo.outputLines];
-				const firstRecord = JSON.parse(cleanLines[0]!) as ParsedOutputLine;
-				rpcIo.outputLines[0] = `${JSON.stringify({ ...firstRecord, sessionId: "sess-mutation" })}\n`;
+				const [firstLine = "", ...remainingLines] = cleanLines[0]!.split("\n");
+				const firstRecord = JSON.parse(firstLine) as ParsedOutputLine;
+				rpcIo.outputLines[0] = [
+					JSON.stringify({ ...firstRecord, sessionId: "sess-mutation" }),
+					...remainingLines,
+				].join("\n");
 
 				// The REAL pin assertion must now throw on the mutated captured lines.
 				expect(() => assertNoSessionIdTagging("mutated prompt flow")).toThrow(/sessionId/);

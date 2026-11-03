@@ -34,35 +34,37 @@ type EventTranscriptEntry =
 	| { type: string };
 
 function retryTranscript(events: Harness["events"]): EventTranscriptEntry[] {
-	return events.map((event) => {
-		switch (event.type) {
-			case "message_start":
-			case "message_end":
-				return { type: event.type, role: event.message.role };
-			case "message_update":
-				return { type: event.type, update: event.assistantMessageEvent.type };
-			case "agent_end":
-				return { type: event.type, willRetry: event.willRetry };
-			case "auto_retry_start":
-				return {
-					type: event.type,
-					attempt: event.attempt,
-					maxAttempts: event.maxAttempts,
-					// Jitter normalizes to the exponential floor for deterministic comparison.
-					delayMs: Math.floor(event.delayMs),
-					errorMessage: event.errorMessage,
-				};
-			case "auto_retry_end":
-				return {
-					type: event.type,
-					success: event.success,
-					attempt: event.attempt,
-					...(event.finalError === undefined ? {} : { finalError: event.finalError }),
-				};
-			default:
-				return { type: event.type };
-		}
-	});
+	return events
+		.filter((event) => event.type !== "session_lifecycle")
+		.map((event) => {
+			switch (event.type) {
+				case "message_start":
+				case "message_end":
+					return { type: event.type, role: event.message.role };
+				case "message_update":
+					return { type: event.type, update: event.assistantMessageEvent.type };
+				case "agent_end":
+					return { type: event.type, willRetry: event.willRetry };
+				case "auto_retry_start":
+					return {
+						type: event.type,
+						attempt: event.attempt,
+						maxAttempts: event.maxAttempts,
+						// Jitter normalizes to the exponential floor for deterministic comparison.
+						delayMs: Math.floor(event.delayMs),
+						errorMessage: event.errorMessage,
+					};
+				case "auto_retry_end":
+					return {
+						type: event.type,
+						success: event.success,
+						attempt: event.attempt,
+						...(event.finalError === undefined ? {} : { finalError: event.finalError }),
+					};
+				default:
+					return { type: event.type };
+			}
+		});
 }
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {

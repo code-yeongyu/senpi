@@ -25,7 +25,8 @@ if (mode === "owner") {
 	});
 	const watch = fs.watch;
 	mock.method(fs, "watch", (...args: Parameters<typeof fs.watch>) => {
-		if (String(args[0]) === generationDir) {
+		// senpi#3747: the generation's drain-request watch shares this directory; only the owner watch is under test.
+		if (String(args[0]) === generationDir && !new Error().stack?.includes("watchDrainRequest")) {
 			process.send?.({ type: "watch" });
 			if (watchMode === "throw") throw Object.assign(new Error("watch capacity exhausted"), { code: "ENOSPC" });
 		}

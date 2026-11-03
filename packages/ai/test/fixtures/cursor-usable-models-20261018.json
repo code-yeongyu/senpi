@@ -1,0 +1,2360 @@
+{
+	"capturedAt": "2026-10-18",
+	"source": "GetUsableModels (live Cursor subscription); serverWindow from the first conversation checkpoint tokenDetails.maxTokens",
+	"models": [
+		{
+			"id": "claude-4-sonnet",
+			"name": "Claude Sonnet 4",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4-sonnet-thinking",
+			"name": "Claude Sonnet 4 Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.5-opus-high",
+			"name": "Claude Opus 4.5",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.5-opus-high-thinking",
+			"name": "Claude Opus 4.5 Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.5-sonnet",
+			"name": "Claude Sonnet 4.5",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.5-sonnet-thinking",
+			"name": "Claude Sonnet 4.5 Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.6-opus-high",
+			"name": "Claude Opus 4.6 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.6-opus-high-thinking",
+			"name": "Claude Opus 4.6 1M Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.6-opus-max",
+			"name": "Claude Opus 4.6 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.6-opus-max-thinking",
+			"name": "Claude Opus 4.6 1M Max Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.6-sonnet-medium",
+			"name": "Claude Sonnet 4.6 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-4.6-sonnet-medium-thinking",
+			"name": "Claude Sonnet 4.6 1M Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-high",
+			"name": "Claude Fable 5.1 1M (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-low",
+			"name": "Claude Fable 5.1 1M Low (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-max",
+			"name": "Claude Fable 5.1 1M Max (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-medium",
+			"name": "Claude Fable 5.1 1M Medium (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-high",
+			"name": "Claude Fable 5.1 1M Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-low",
+			"name": "Claude Fable 5.1 1M Low Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-max",
+			"name": "Claude Fable 5.1 1M Max Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-medium",
+			"name": "Claude Fable 5.1 1M Medium Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-xhigh",
+			"name": "Claude Fable 5.1 1M Extra High Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-xhigh",
+			"name": "Claude Fable 5.1 1M Extra High (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-high",
+			"name": "Claude Fable 5 1M (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-low",
+			"name": "Claude Fable 5 1M Low (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-max",
+			"name": "Claude Fable 5 1M Max (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-medium",
+			"name": "Claude Fable 5 1M Medium (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-thinking-high",
+			"name": "Claude Fable 5 1M Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-thinking-low",
+			"name": "Claude Fable 5 1M Low Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-thinking-max",
+			"name": "Claude Fable 5 1M Max Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-thinking-medium",
+			"name": "Claude Fable 5 1M Medium Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-thinking-xhigh",
+			"name": "Claude Fable 5 1M Extra High Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-xhigh",
+			"name": "Claude Fable 5 1M Extra High (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-high",
+			"name": "Claude Haiku 5.5  High No Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-low",
+			"name": "Claude Haiku 5.5  Low No Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-max",
+			"name": "Claude Haiku 5.5  Max No Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-medium",
+			"name": "Claude Haiku 5.5  Medium No Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-thinking-high",
+			"name": "Claude Haiku 5.5  High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-thinking-low",
+			"name": "Claude Haiku 5.5  Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-thinking-max",
+			"name": "Claude Haiku 5.5  Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-thinking-medium",
+			"name": "Claude Haiku 5.5  Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-thinking-xhigh",
+			"name": "Claude Haiku 5.5  Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-haiku-5-5-xhigh",
+			"name": "Claude Haiku 5.5  Extra High No Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-high",
+			"name": "Claude Opus 4.7 1M High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-high-fast",
+			"name": "Claude Opus 4.7 1M High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-low",
+			"name": "Claude Opus 4.7 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-low-fast",
+			"name": "Claude Opus 4.7 1M Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-max",
+			"name": "Claude Opus 4.7 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-max-fast",
+			"name": "Claude Opus 4.7 1M Max Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-medium",
+			"name": "Claude Opus 4.7 1M Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-medium-fast",
+			"name": "Claude Opus 4.7 1M Medium Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-thinking-high",
+			"name": "Claude Opus 4.7 1M High Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-thinking-high-fast",
+			"name": "Claude Opus 4.7 1M High Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-thinking-low",
+			"name": "Claude Opus 4.7 1M Low Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-thinking-low-fast",
+			"name": "Claude Opus 4.7 1M Low Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-thinking-max",
+			"name": "Claude Opus 4.7 1M Max Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-thinking-max-fast",
+			"name": "Claude Opus 4.7 1M Max Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-thinking-medium",
+			"name": "Claude Opus 4.7 1M Medium Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-thinking-medium-fast",
+			"name": "Claude Opus 4.7 1M Medium Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-thinking-xhigh",
+			"name": "Claude Opus 4.7 1M Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-thinking-xhigh-fast",
+			"name": "Claude Opus 4.7 1M Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-7-xhigh",
+			"name": "Claude Opus 4.7 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-7-xhigh-fast",
+			"name": "Claude Opus 4.7 1M Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-high",
+			"name": "Claude Opus 4.8 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-high-fast",
+			"name": "Claude Opus 4.8 1M Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-low",
+			"name": "Claude Opus 4.8 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-low-fast",
+			"name": "Claude Opus 4.8 1M Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-max",
+			"name": "Claude Opus 4.8 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-max-fast",
+			"name": "Claude Opus 4.8 1M Max Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-medium",
+			"name": "Claude Opus 4.8 1M Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-medium-fast",
+			"name": "Claude Opus 4.8 1M Medium Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-thinking-high",
+			"name": "Claude Opus 4.8 1M Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-thinking-high-fast",
+			"name": "Claude Opus 4.8 1M Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-thinking-low",
+			"name": "Claude Opus 4.8 1M Low Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-thinking-low-fast",
+			"name": "Claude Opus 4.8 1M Low Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-thinking-max",
+			"name": "Claude Opus 4.8 1M Max Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-thinking-max-fast",
+			"name": "Claude Opus 4.8 1M Max Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-thinking-medium",
+			"name": "Claude Opus 4.8 1M Medium Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-thinking-medium-fast",
+			"name": "Claude Opus 4.8 1M Medium Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-thinking-xhigh",
+			"name": "Claude Opus 4.8 1M Extra High Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-thinking-xhigh-fast",
+			"name": "Claude Opus 4.8 1M Extra High Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-4-8-xhigh",
+			"name": "Claude Opus 4.8 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-4-8-xhigh-fast",
+			"name": "Claude Opus 4.8 1M Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-high",
+			"name": "Claude Opus 5.5 1M High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-high-fast",
+			"name": "Claude Opus 5.5 1M High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-low",
+			"name": "Claude Opus 5.5 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-low-fast",
+			"name": "Claude Opus 5.5 1M Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-max",
+			"name": "Claude Opus 5.5 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-max-fast",
+			"name": "Claude Opus 5.5 1M Max Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-medium",
+			"name": "Claude Opus 5.5 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-medium-fast",
+			"name": "Claude Opus 5.5 1M Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-xhigh",
+			"name": "Claude Opus 5.5 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-xhigh-fast",
+			"name": "Claude Opus 5.5 1M Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-high",
+			"name": "Claude Opus 5 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-high-fast",
+			"name": "Claude Opus 5 1M Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-low",
+			"name": "Claude Opus 5 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-low-fast",
+			"name": "Claude Opus 5 1M Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-medium",
+			"name": "Claude Opus 5 1M Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-medium-fast",
+			"name": "Claude Opus 5 1M Medium Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-thinking-high",
+			"name": "Claude Opus 5 1M Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-thinking-high-fast",
+			"name": "Claude Opus 5 1M Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-thinking-low",
+			"name": "Claude Opus 5 1M Low Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-thinking-low-fast",
+			"name": "Claude Opus 5 1M Low Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-thinking-max",
+			"name": "Claude Opus 5 1M Max Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-thinking-max-fast",
+			"name": "Claude Opus 5 1M Max Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-thinking-medium",
+			"name": "Claude Opus 5 1M Medium Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-thinking-medium-fast",
+			"name": "Claude Opus 5 1M Medium Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-thinking-xhigh",
+			"name": "Claude Opus 5 1M Extra High Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-thinking-xhigh-fast",
+			"name": "Claude Opus 5 1M Extra High Thinking Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-sonnet-5-5-high",
+			"name": "Claude Sonnet 5.5  High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-5-low",
+			"name": "Claude Sonnet 5.5  Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-5-max",
+			"name": "Claude Sonnet 5.5  Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-5-medium",
+			"name": "Claude Sonnet 5.5  Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-5-xhigh",
+			"name": "Claude Sonnet 5.5  Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-high",
+			"name": "Claude Sonnet 5 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-low",
+			"name": "Claude Sonnet 5 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-max",
+			"name": "Claude Sonnet 5 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-medium",
+			"name": "Claude Sonnet 5 1M Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-thinking-high",
+			"name": "Claude Sonnet 5 1M Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-thinking-low",
+			"name": "Claude Sonnet 5 1M Low Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-thinking-max",
+			"name": "Claude Sonnet 5 1M Max Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-thinking-medium",
+			"name": "Claude Sonnet 5 1M Medium Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-thinking-xhigh",
+			"name": "Claude Sonnet 5 1M Extra High Thinking",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-sonnet-5-xhigh",
+			"name": "Claude Sonnet 5 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "composer-2.5",
+			"name": "Composer 2.5",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "composer-2.5-fast",
+			"name": "Composer 2.5 Fast",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.5-high",
+			"name": "Grok 4.5",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.5-high-fast",
+			"name": "Grok 4.5 Fast",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.5-low",
+			"name": "Grok 4.5 Low",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.5-low-fast",
+			"name": "Grok 4.5 Low Fast",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.5-medium",
+			"name": "Grok 4.5 Medium",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.5-medium-fast",
+			"name": "Grok 4.5 Medium Fast",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.6-high",
+			"name": "Grok 4.6",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.6-high-fast",
+			"name": "Grok 4.6 Fast",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.6-low",
+			"name": "Grok 4.6 Low",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.6-low-fast",
+			"name": "Grok 4.6 Low Fast",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.6-medium",
+			"name": "Grok 4.6 Medium",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.6-medium-fast",
+			"name": "Grok 4.6 Medium Fast",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.6-xhigh",
+			"name": "Grok 4.6 Extra High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "cursor-grok-4.6-xhigh-fast",
+			"name": "Grok 4.6 Extra High Fast",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "default",
+			"name": "Auto",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3-flash",
+			"name": "Gemini 3 Flash",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.1-pro",
+			"name": "Gemini 3.1 Pro",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.5-flash",
+			"name": "Gemini 3.5 Flash",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.6-flash-high",
+			"name": "Gemini 3.6 Flash",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.6-flash-low",
+			"name": "Gemini 3.6 Flash Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.6-flash-medium",
+			"name": "Gemini 3.6 Flash Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.6-flash-minimal",
+			"name": "Gemini 3.6 Flash Minimal",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.7-flash-high",
+			"name": "Gemini 3.7 Flash",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.7-flash-low",
+			"name": "Gemini 3.7 Flash Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.7-flash-medium",
+			"name": "Gemini 3.7 Flash Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.8-flash-high",
+			"name": "Gemini 3.8 Flash High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.8-flash-low",
+			"name": "Gemini 3.8 Flash Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.8-flash-medium",
+			"name": "Gemini 3.8 Flash Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-4-argon-high",
+			"name": "Gemini 4 Argon High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-4-argon-low",
+			"name": "Gemini 4 Argon Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-4-argon-medium",
+			"name": "Gemini 4 Argon Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "glm-5.2-high",
+			"name": "GLM 5.2",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "glm-5.2-max",
+			"name": "GLM 5.2 Max",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5-mini",
+			"name": "GPT-5 Mini",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.1",
+			"name": "GPT-5.1",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.1-high",
+			"name": "GPT-5.1 High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.1-low",
+			"name": "GPT-5.1 Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.2",
+			"name": "GPT-5.2",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.2-fast",
+			"name": "GPT-5.2 Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.2-high",
+			"name": "GPT-5.2 High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.2-high-fast",
+			"name": "GPT-5.2 High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.2-low",
+			"name": "GPT-5.2 Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.2-low-fast",
+			"name": "GPT-5.2 Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.2-xhigh",
+			"name": "GPT-5.2 Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.2-xhigh-fast",
+			"name": "GPT-5.2 Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.3-codex",
+			"name": "Codex 5.3",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.3-codex-fast",
+			"name": "Codex 5.3 Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.3-codex-high",
+			"name": "Codex 5.3 High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.3-codex-high-fast",
+			"name": "Codex 5.3 High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.3-codex-low",
+			"name": "Codex 5.3 Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.3-codex-low-fast",
+			"name": "Codex 5.3 Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.3-codex-xhigh",
+			"name": "Codex 5.3 Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.3-codex-xhigh-fast",
+			"name": "Codex 5.3 Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-high",
+			"name": "GPT-5.4 1M High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-high-fast",
+			"name": "GPT-5.4 High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-low",
+			"name": "GPT-5.4 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-medium",
+			"name": "GPT-5.4 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-medium-fast",
+			"name": "GPT-5.4 Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-mini-high",
+			"name": "GPT-5.4 Mini High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-mini-low",
+			"name": "GPT-5.4 Mini Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-mini-medium",
+			"name": "GPT-5.4 Mini",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-mini-none",
+			"name": "GPT-5.4 Mini None",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-mini-xhigh",
+			"name": "GPT-5.4 Mini Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-nano-high",
+			"name": "GPT-5.4 Nano High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-nano-low",
+			"name": "GPT-5.4 Nano Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-nano-medium",
+			"name": "GPT-5.4 Nano",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-nano-none",
+			"name": "GPT-5.4 Nano None",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-nano-xhigh",
+			"name": "GPT-5.4 Nano Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-xhigh",
+			"name": "GPT-5.4 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.4-xhigh-fast",
+			"name": "GPT-5.4 Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-extra-high",
+			"name": "GPT-5.5 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-extra-high-fast",
+			"name": "GPT-5.5 Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-high",
+			"name": "GPT-5.5 1M High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-high-fast",
+			"name": "GPT-5.5 High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-low",
+			"name": "GPT-5.5 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-low-fast",
+			"name": "GPT-5.5 Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-medium",
+			"name": "GPT-5.5 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-medium-fast",
+			"name": "GPT-5.5 Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-none",
+			"name": "GPT-5.5 1M None",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.5-none-fast",
+			"name": "GPT-5.5 None Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-high",
+			"name": "GPT-5.6 Luna 1M High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-high-fast",
+			"name": "GPT-5.6 Luna 1M High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-low",
+			"name": "GPT-5.6 Luna 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-low-fast",
+			"name": "GPT-5.6 Luna 1M Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-max",
+			"name": "GPT-5.6 Luna 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-max-fast",
+			"name": "GPT-5.6 Luna 1M Max Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-medium",
+			"name": "GPT-5.6 Luna 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-medium-fast",
+			"name": "GPT-5.6 Luna 1M Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-none",
+			"name": "GPT-5.6 Luna 1M None",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-none-fast",
+			"name": "GPT-5.6 Luna 1M None Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-xhigh",
+			"name": "GPT-5.6 Luna 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-luna-xhigh-fast",
+			"name": "GPT-5.6 Luna 1M Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-high",
+			"name": "GPT-5.6 Sol 1M High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-high-fast",
+			"name": "GPT-5.6 Sol 1M High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-low",
+			"name": "GPT-5.6 Sol 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-low-fast",
+			"name": "GPT-5.6 Sol 1M Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-max",
+			"name": "GPT-5.6 Sol 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-max-fast",
+			"name": "GPT-5.6 Sol 1M Max Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-medium",
+			"name": "GPT-5.6 Sol 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-medium-fast",
+			"name": "GPT-5.6 Sol 1M Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-none",
+			"name": "GPT-5.6 Sol 1M None",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-none-fast",
+			"name": "GPT-5.6 Sol 1M None Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-xhigh",
+			"name": "GPT-5.6 Sol 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-sol-xhigh-fast",
+			"name": "GPT-5.6 Sol 1M Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-high",
+			"name": "GPT-5.6 Terra 1M High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-high-fast",
+			"name": "GPT-5.6 Terra 1M High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-low",
+			"name": "GPT-5.6 Terra 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-low-fast",
+			"name": "GPT-5.6 Terra 1M Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-max",
+			"name": "GPT-5.6 Terra 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-max-fast",
+			"name": "GPT-5.6 Terra 1M Max Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-medium",
+			"name": "GPT-5.6 Terra 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-medium-fast",
+			"name": "GPT-5.6 Terra 1M Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-none",
+			"name": "GPT-5.6 Terra 1M None",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-none-fast",
+			"name": "GPT-5.6 Terra 1M None Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-xhigh",
+			"name": "GPT-5.6 Terra 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gpt-5.6-terra-xhigh-fast",
+			"name": "GPT-5.6 Terra 1M Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-high",
+			"name": "Grok 4.7  High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-high-fast",
+			"name": "Grok 4.7  High Fast​​",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-low",
+			"name": "Grok 4.7  Low",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-low-fast",
+			"name": "Grok 4.7  Low Fast​​",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-medium",
+			"name": "Grok 4.7  Medium",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-medium-fast",
+			"name": "Grok 4.7  Medium Fast​​",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-xhigh",
+			"name": "Grok 4.7  Extra High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-xhigh-fast",
+			"name": "Grok 4.7  Extra High Fast​​",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "kimi-k2.7-code",
+			"name": "Kimi K2.7 Code",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "kimi-k3-high",
+			"name": "Kimi K3 High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "kimi-k3-low",
+			"name": "Kimi K3 Low",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "kimi-k3-max",
+			"name": "Kimi K3",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-high",
+			"name": "Muse Spark 1.3 1M",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-low",
+			"name": "Muse Spark 1.3 1M Low",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-max",
+			"name": "Muse Spark 1.3 1M Max",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-medium",
+			"name": "Muse Spark 1.3 1M Medium",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-minimal",
+			"name": "Muse Spark 1.3 1M Minimal",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-xhigh",
+			"name": "Muse Spark 1.3 1M Extra High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-wonder-1.0-high",
+			"name": "Muse Wonder  High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-wonder-1.0-low",
+			"name": "Muse Wonder  Low",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-wonder-1.0-max",
+			"name": "Muse Wonder  Max",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-wonder-1.0-medium",
+			"name": "Muse Wonder  Medium",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-wonder-1.0-minimal",
+			"name": "Muse Wonder  Minimal",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-wonder-1.0-xhigh",
+			"name": "Muse Wonder  Extra High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		}
+	],
+	"serverWindow": {
+		"claude-opus-5-5": 300000,
+		"claude-fable-5-1": 300000,
+		"claude-sonnet-5-5": 300000,
+		"claude-haiku-5-5": 300000,
+		"grok-4.7": 256000,
+		"gemini-4-argon": 200000,
+		"gemini-3.8-flash": 200000,
+		"muse-wonder-1.0": 300000,
+		"muse-spark-1.3": 300000,
+		"default": 256000
+	}
+}

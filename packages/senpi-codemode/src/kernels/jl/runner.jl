@@ -161,13 +161,20 @@ function senpi_json_parse(input::AbstractString)
     parsed_result
 end
 
-function senpi_emit(frame)
+function senpi_emit_line(line::String)
     lock(senpi_write_lock) do
-        println(SENPI_ORIGINAL_STDOUT, senpi_json(frame))
+        println(SENPI_ORIGINAL_STDOUT, line)
         flush(SENPI_ORIGINAL_STDOUT)
     end
     nothing
 end
+
+senpi_emit(frame) = senpi_emit_line(senpi_json(frame))
+
+# Startup frames are constant: writing them pre-encoded keeps the generic encoder
+# from running (and specializing) in every fresh or replacement interpreter.
+const SENPI_HOST_INIT_FRAME = "{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"host-init\"}}"
+const SENPI_READY_FRAME = "{\"type\":\"ready\",\"memoryGlobals\":true}"
 
 function senpi_emit_stream(stream::String, bytes::Vector{UInt8})
     senpi_current_cell === nothing && return nothing
@@ -356,9 +363,9 @@ while !eof(SENPI_ORIGINAL_STDIN)
         message isa AbstractDict || error("Bridge frame must be an object")
         kind = get(message, "type", nothing)
         if kind == "init"
-            senpi_emit(Dict("type" => "status", "event" => Dict("op" => "kernel-startup", "stage" => "host-init")))
+            senpi_emit_line(SENPI_HOST_INIT_FRAME)
             senpi_set_connection(get(message, "connection", nothing))
-            senpi_emit(Dict("type" => "ready", "memoryGlobals" => true))
+            senpi_emit_line(SENPI_READY_FRAME)
         elseif kind == "run"
             global senpi_memory_cell = nothing
             senpi_run_cell(message)

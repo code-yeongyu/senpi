@@ -22,6 +22,7 @@ export type Goal = {
 	timeUsedSeconds: number;
 	consecutiveContinuations?: number;
 	unattendedContinuations?: number;
+	noProgressContinuations?: number;
 	lastContinuationSignature?: string;
 	/** Durable claim for a stopped continuation; cleared by input, resume, or a delivered continuation. */
 	continuationStoppedAt?: number;

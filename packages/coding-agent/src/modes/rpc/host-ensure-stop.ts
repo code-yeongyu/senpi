@@ -11,7 +11,7 @@ import {
 	processIsLive,
 	processMatchesPidFile,
 	readProcessStartTime,
-} from "../app-server/daemon/process.ts";
+} from "../../utils/process-identity.ts";
 import { noteEscalatedStop } from "./host-child-exit.ts";
 import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";

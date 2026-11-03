@@ -34,6 +34,24 @@ function appendContentBlocks(blocks: ContentBlockParam[], content: string | read
  */
 export const CONVERSATION_HISTORY_CLOSER = "\n</conversation_history>";
 
+/**
+ * The current turn's tool images go after the history closer, past the cache breakpoint, so the history bytes stay the
+ * same when the turn ends and these images are no longer sent (senpi#5275).
+ */
+const CURRENT_TURN_IMAGES_OPENER = "\n<current_turn_tool_images>\n";
+const CURRENT_TURN_IMAGES_CLOSER = "\n</current_turn_tool_images>";
+
+export const RESPOND_TO_USER_INSTRUCTION =
+	'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
+
+/**
+ * A replay that ends with tool results (a model switch or fallback mid-turn) has no new user message. Saying "the
+ * user message below" there made the model read the last tool output, often images it generated itself, as something
+ * the user had just sent (senpi#2768).
+ */
+export const CONTINUE_TURN_INSTRUCTION =
+	'The above is the conversation history so far, provided as context. There is no new user message: the last entries are results of tool calls you made in your current turn, not anything the user sent. Continue that turn as the assistant. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
+
 export type PromptBlockOptions = {
 	/**
 	 * Mark the last history text block as a prompt-cache breakpoint with this lifetime. History only grows by
@@ -67,6 +85,8 @@ export function buildPromptBlocks(
 	const finalMessage = context.messages.at(-1);
 	const finalUserMessage = finalMessage?.role === "user" ? finalMessage : undefined;
 	const history = finalUserMessage ? context.messages.slice(0, -1) : context.messages;
+	// No new user message and the history ends with tool results: a model switch or fallback inside a turn.
+	const continuesTurn = !finalUserMessage && history.at(-1)?.role === "toolResult";
 
 	if (history.length > 0) {
 		const historyStart = blocks.length;
@@ -77,11 +97,13 @@ export function buildPromptBlocks(
 			hasPreviousTurn = true;
 		};
 
-		const replayedImages = replayHistoryImages(history, (name) => mapPiToolNameToSdk(name, customToolNameToSdk));
+		const replayedImages = replayHistoryImages(history, (name) => mapPiToolNameToSdk(name, customToolNameToSdk), {
+			inProgressTurn: continuesTurn,
+		});
 		for (const [index, message] of history.entries()) {
 			if (message.role === "user") {
 				pushPrefix("USER:");
-				if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
+				if (!appendContentBlocks(blocks, replayedImages.history.get(index) ?? message.content))
 					pushText("(see attached image)");
 				continue;
 			}
@@ -95,11 +117,16 @@ export function buildPromptBlocks(
 			pushPrefix(
 				`TOOL RESULT (historical ${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):`,
 			);
-			if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
+			if (!appendContentBlocks(blocks, replayedImages.history.get(index) ?? message.content))
 				pushText("(see attached image)");
 		}
 		if (options.cacheBreakpoint !== undefined) markCacheBreakpoint(blocks, historyStart, options.cacheBreakpoint);
 		pushText(CONVERSATION_HISTORY_CLOSER);
+		if (replayedImages.currentTurn.length > 0) {
+			pushText(CURRENT_TURN_IMAGES_OPENER);
+			appendContentBlocks(blocks, replayedImages.currentTurn);
+			pushText(CURRENT_TURN_IMAGES_CLOSER);
+		}
 	}
 
 	if (toolWatchNote?.trim()) {
@@ -108,7 +135,9 @@ export function buildPromptBlocks(
 		pushText("\n</recovered_tool_results>");
 	}
 	pushText(
-		'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.',
+		history.at(-1)?.role === "toolResult" && !finalUserMessage
+			? CONTINUE_TURN_INSTRUCTION
+			: RESPOND_TO_USER_INSTRUCTION,
 	);
 	if (finalUserMessage && !appendContentBlocks(blocks, finalUserMessage.content)) pushText("(see attached image)");
 	return blocks;

@@ -2,8 +2,8 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
-import { errorCode, type LockProbes } from "./extensions/builtin/terminal/lease-file.ts";
-import { liveSessionHolders, type SessionHolder } from "./session-holders.ts";
+import { errorCode } from "./extensions/builtin/terminal/lease-file.ts";
+import { liveSessionHolders, type SessionHolder, type SessionHolderProbes } from "./session-holders.ts";
 import { parseEntryLine } from "./session-record.ts";
 
 /** Read only the header, asynchronously: checking admission must not load or mutate a transcript. */
@@ -35,7 +35,7 @@ async function sessionIdFromFile(sessionFile: string): Promise<string | undefine
 export async function foreignSessionHolders(
 	sessionFile: string | undefined,
 	sessionId?: string,
-	probes?: LockProbes,
+	probes?: SessionHolderProbes,
 ): Promise<SessionHolder[]> {
 	if (sessionFile === undefined) return [];
 	const path = resolveMovedPath(sessionFile);

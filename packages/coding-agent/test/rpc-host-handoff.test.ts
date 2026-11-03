@@ -2,16 +2,12 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	processStartTimeMs,
-	readProcessStartTime,
-	sameProcessStartMs,
-} from "../src/modes/app-server/daemon/process.ts";
 import { parseJson, readFileOrUndefined } from "../src/modes/rpc/host-daemon-state.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { signalGeneration, stopHost } from "../src/modes/rpc/host-stop.ts";
+import { processStartTimeMs, readProcessStartTime, sameProcessStartMs } from "../src/utils/process-identity.ts";
 import {
 	GENERATION_HOST_ARGS,
 	type GenerationScratch,
@@ -200,11 +196,27 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		await watcher.waitForClose(90_000);
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
 
-		const linesBefore = await jsonlLines(sessionPath);
-		const reopened = await next.request({ id: "reopen-2", type: "open_session", cwd: qa.cwd, sessionPath });
-		expect(reopened).toMatchObject({ success: true, command: "open_session" });
-		const linesAfter = await jsonlLines(sessionPath);
-		expect(linesAfter.length).toBeGreaterThanOrEqual(linesBefore.length);
+		// Whoever reopened it - the successor's auto-reopen (senpi#3282) or this client winning the
+		// path - the session is reachable by path on the successor: a manual reopen either attaches
+		// to the reopened session or opens it itself. Poll until the predecessor has released the
+		// path claim and the reopen succeeds (no fixed sleeps).
+		let reopened: WireRecord = {};
+		const reopenDeadline = Date.now() + 120_000;
+		for (;;) {
+			reopened = await next.request({ id: "reopen-2", type: "open_session", cwd: qa.cwd, sessionPath });
+			if (reopened.success === true) break;
+			if (Date.now() >= reopenDeadline) break;
+			await new Promise((resolve) => setTimeout(resolve, 250));
+		}
+		expect(reopened, `the session is not reachable on the successor: ${JSON.stringify(reopened)}`).toMatchObject({
+			command: "open_session",
+			success: true,
+		});
+		// The transcript survives the handoff and the reopen intact: every line is a whole JSON
+		// record (a single writer; a second one would have left a torn line). Reopens in the new
+		// generation with an intact JSONL (changes.md).
+		const lines = await jsonlLines(sessionPath);
+		expect(lines.length).toBeGreaterThan(0);
 	}, 180_000);
 
 	it("drains the running generation on request and exits once its sessions park", async () => {

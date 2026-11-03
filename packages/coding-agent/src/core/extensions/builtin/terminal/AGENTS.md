@@ -14,8 +14,14 @@ terminal/
 ├── pty.lazy.ts          # Deferred import of @earendil-works/pi-pty / @xterm/headless
 ├── runtime-session.ts   # TerminalRuntimeSession: one live PTY
 ├── session-bundle.ts    # TerminalSessionBundle: reload parking/claiming across extension generations
-├── monitor-registry.ts  # MonitorRegistry: registered watches over session output
-├── monitor-notify.ts    # Event → notification delivery (283 LOC, largest non-tool file)
+├── monitor-registry.ts  # MonitorRegistry: coordinator over the sources (snapshot, pause/rearm, one emit sink)
+├── monitor-types.ts     # Monitor events, snapshot entry, mon_ ids, the record contract + source host hooks
+├── command-monitor-source.ts # Command watches: PTY output lines, filter, durable fire window + runaway guard
+├── file-monitor-source.ts    # File watches: registration, check loop, settle/stop, parking
+├── file-monitor-{record,guard,registration,check}.ts # File record shape, deadline-raced registration window,
+│                         target identity proof, one check pass
+├── monitor-notify.ts    # Event → notification delivery: coalescing, per-monitor wake pacing (token bucket), overflow spill
+├── monitor-overflow-file.ts # Per-monitor overflow file (<terminal dir>/overflow/<mon_id>.log, rotates once at 4 MiB)
 ├── monitor-status*.ts   # Footer status text + 1s unref'd ticker
 ├── notify.ts            # TerminalNotifier
 ├── output-format.ts     # Output shaping/sanitization
@@ -82,6 +88,8 @@ terminal/
 - **Never kill an unconfirmed pid.** `orphan-reaper.ts` kills only when boot, start instant and a content marker (`SENPI_MONITOR_ID`) all match; unverifiable is reported and left running, and win32 never kills.
 - **Write on transition only.** `TerminalManifestWriter` persists lifecycle transitions (register, settle, pause/resume, background start/exit, shutdown) plus debounced checkpoints — never per output line, never a runtime handle. `adoptRestored` deliberately does not write; the restored entry reaches disk on the next real transition.
 - **`pause`/`resume`/`rearm` resolve RUNTIME ids only.** `MonitorRegistry` keys records by `bash_N`/`watch_N`, so handing it a stable `mon_` id silently no-ops. A restore must re-apply a persisted mute with the FRESH runtime id it just allocated (`reapplyPersistedMute`); resolve a caller-supplied id through `resolveTerminalId` first.
+
+- **A busy watch is paced, never muted.** A persistent command watch wakes at most `terminal.monitorWakesPerHour` (default 12, or its `wakes_per_hour`) times an hour on average; lines matched in between batch into the next wake and lines over the batch cap go to its overflow file, which the wake names. Only the runaway guard (`terminal.monitorRunawayLinesPerMinute` lines a minute for `terminal.monitorRunawayMinutes` minutes in a row) pauses one, with a visible summary that names the rearm call. Never reintroduce a line-count mute.
 
 ## ANTI-PATTERNS
 

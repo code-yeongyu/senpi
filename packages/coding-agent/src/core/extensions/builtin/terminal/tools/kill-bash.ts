@@ -35,14 +35,15 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 				const terminalCount = ctx.manager.size;
 				const monitorIds = (ctx.monitorRegistry?.snapshot() ?? []).map((entry) => entry.monitorId);
 				const fileCount = (await ctx.monitorRegistry?.stopAllFiles()) ?? 0;
+				const rpcCount = ctx.monitorRegistry?.stopAllRpc() ?? 0;
 				await ctx.manager.teardown();
 				for (const monitorId of monitorIds) await dropStateDir(monitorId);
-				return textResult(`Killed ${terminalCount + fileCount} session(s).`);
+				return textResult(`Killed ${terminalCount + fileCount + rpcCount} session(s).`);
 			}
 			if (!input.bash_id) return errorResult("Provide `bash_id` or set `all:true`.");
 			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);
 			const monitorId = input.bash_id.startsWith("mon_") ? input.bash_id : ctx.manager.monitorIdOf?.(sessionId);
-			if (await ctx.monitorRegistry?.stopFile(sessionId)) {
+			if ((await ctx.monitorRegistry?.stopFile(sessionId)) || ctx.monitorRegistry?.stopRpc(sessionId)) {
 				await dropStateDir(monitorId);
 				return textResult(`Killed ${input.bash_id}.`);
 			}

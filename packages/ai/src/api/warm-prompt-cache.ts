@@ -1,6 +1,7 @@
 import type { Context, Model, ProviderHeaders, SimpleStreamOptions, Usage } from "../types.ts";
+import { withGzipRequestBodies } from "../utils/gzip-request-body.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
-import { isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
+import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
 import type { AnthropicOptions } from "./anthropic-messages.ts";
 import { isOpenAIResponsesPromptCacheModel } from "./openai-responses-prompt-cache.ts";
 import { getPromptCacheWarmer } from "./prompt-cache-warmers.ts";
@@ -75,7 +76,9 @@ export async function warmPromptCache(
 		apiKey: options.apiKey ?? null,
 		baseURL: anthropicModel.baseUrl,
 		dangerouslyAllowBrowser: true,
-		fetch: options.fetch,
+		fetch: getAnthropicCompat(anthropicModel).supportsGzipRequestBody
+			? withGzipRequestBodies(options.fetch)
+			: options.fetch,
 		defaultHeaders: { ...anthropicModel.headers, ...headers },
 	});
 	let params = buildAnthropicWarmPromptCacheParams(anthropicModel, context, options as AnthropicOptions);

@@ -12,9 +12,9 @@ export type ModelChangeSource =
 	| "cycle"
 	/** A terminal session's control endpoint `set_model`. */
 	| "control"
-	/** An RPC client's `set_model`, `cycle_model` or `set_fast_mode`. */
+	/** An RPC client's `set_model`, `cycle_model`, `set_fast_mode` or `set_thinking_level`. */
 	| "rpc"
-	/** An app-server thread setting. */
+	/** A historical thread setting from the retired app-server compatibility mode. */
 	| "app-server"
 	/** An extension's `setModel` / `setSessionModel`; `actor` is the extension path. */
 	| "extension"
@@ -34,12 +34,18 @@ export interface ModelChangeOrigin {
 	readonly source: ModelChangeSource;
 	/** Who issued it, where known: an extension path, an RPC client, the picker that was used. */
 	readonly actor?: string;
+	/** The RPC `effectId` of the model or thinking-level request; stamped on its transcript change entry. */
+	readonly effectId?: string;
 }
 
 export const SDK_MODEL_CHANGE: ModelChangeOrigin = { source: "sdk" };
 
 export function heldSwitchOrigin(first: ModelChangeOrigin): ModelChangeOrigin {
-	return { source: "held-switch", actor: first.actor === undefined ? first.source : `${first.source}:${first.actor}` };
+	return {
+		source: "held-switch",
+		actor: first.actor === undefined ? first.source : `${first.source}:${first.actor}`,
+		...(first.effectId === undefined ? {} : { effectId: first.effectId }),
+	};
 }
 
 export function modelChangeLogFields(input: {

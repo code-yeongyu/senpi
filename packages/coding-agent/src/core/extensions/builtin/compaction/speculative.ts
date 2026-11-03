@@ -33,7 +33,7 @@ import {
 } from "../../../compaction/warm-anchor.ts";
 import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../../credential-pool/failover.ts";
 import { convertToLlm } from "../../../messages.ts";
-import type { ModelRegistry } from "../../../model-registry.ts";
+import type { ModelRegistry, ResolvedRequestAuth } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage, ProviderRequestPreparation } from "../../types.ts";
 import { pruneToolResults } from "./emergency-prune.ts";
@@ -76,6 +76,8 @@ const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
 type CompactionProgressCallback = (delta: string) => void;
 
 export interface SpeculativeCompactionContext {
+	/** Absolute session directory; subprocess-backed providers (Claude SDK) refuse a summary request without it. */
+	cwd: string;
 	model: Model<any> | undefined;
 	sessionManager: ReadonlySessionManager;
 	modelRegistry?: ModelRegistry;
@@ -84,6 +86,7 @@ export interface SpeculativeCompactionContext {
 	getCompactionModel?(): Model<any> | undefined;
 	getMessageRevision(): number;
 	getSystemPrompt?(): string;
+	getSystemPromptStablePrefix?(): string | undefined;
 	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
 	isIdle?(): boolean;
 	applyCompaction(
@@ -109,6 +112,8 @@ export interface SpeculativeCompactionSnapshot {
 	customInstructions?: string;
 	/** Agent system prompt; used to make the summarization request look like normal agent traffic. */
 	systemPrompt?: string;
+	/** The turn's stable prefix of `systemPrompt`, so the summary request splits it like the turn (senpi#4447). */
+	systemPromptStablePrefix?: string;
 	/** Agent tool definitions; forwarded so the request shape matches normal agent traffic. */
 	tools?: Tool[];
 }
@@ -255,6 +260,7 @@ export function createSpeculativeCompactionSnapshot(
 		branchEntries,
 		promptVariant: getPromptVariant({ reason: "extension", preparation }),
 		systemPrompt: context.getSystemPrompt?.(),
+		systemPromptStablePrefix: context.getSystemPromptStablePrefix?.(),
 	};
 }
 
@@ -273,18 +279,27 @@ export async function runExtensionCompaction(
 	onProgress?: CompactionProgressCallback,
 ): Promise<CompactionResult | undefined> {
 	if (signal?.aborted) return undefined;
-	const selectedModel = context.getCompactionModel?.() ?? snapshot.model;
-	const selectedSnapshot =
-		selectedModel === snapshot.model
-			? snapshot
-			: { ...snapshot, model: selectedModel, contextWindow: selectedModel.contextWindow };
-	const auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
-	if (signal?.aborted) return undefined;
 	// A provider is authenticated for summarization by a resolved key, a credential
 	// request header, or ambient request-time auth. The ambient marker comes from the
 	// same provider resolution normal turns use; an unconfigured keyed provider still
 	// has none of these and is rejected before a request.
-	if (!auth?.ok || !(auth.apiKey || hasCredentialHeaders(auth.headers) || auth.ambient)) {
+	const authenticated = (resolved: ResolvedRequestAuth | undefined): boolean =>
+		resolved?.ok === true && Boolean(resolved.apiKey || hasCredentialHeaders(resolved.headers) || resolved.ambient);
+	let selectedModel = context.getCompactionModel?.() ?? snapshot.model;
+	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+	if (signal?.aborted) return undefined;
+	// A configured summary model whose credentials could not be confirmed earlier (#830) must not
+	// disable compaction: without credentials at request time, summarize on the session model.
+	if (selectedModel !== snapshot.model && !authenticated(auth)) {
+		selectedModel = snapshot.model;
+		auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+		if (signal?.aborted) return undefined;
+	}
+	const selectedSnapshot =
+		selectedModel === snapshot.model
+			? snapshot
+			: { ...snapshot, model: selectedModel, contextWindow: selectedModel.contextWindow };
+	if (!auth?.ok || !authenticated(auth)) {
 		const detail = auth && !auth.ok ? auth.error : `no credentials resolved for provider "${selectedModel.provider}"`;
 		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);
 	}
@@ -369,7 +384,7 @@ export async function runExtensionCompaction(
 						attempt &&
 						isAssistantMessage(attempt) &&
 						attempt.stopReason === "error" &&
-						!isContextOverflow(attempt, snapshot.contextWindow)
+						!isContextOverflow(attempt, requestSnapshot.contextWindow)
 					) {
 						const failureKind = summaryRequestFailureKind(attempt);
 						throw new SummaryRequestError(
@@ -395,11 +410,11 @@ export async function runExtensionCompaction(
 		}
 		if (!response) return undefined;
 
-		if (isAssistantMessage(response) && isContextOverflow(response, snapshot.contextWindow)) {
+		if (isAssistantMessage(response) && isContextOverflow(response, requestSnapshot.contextWindow)) {
 			overflowAttempts++;
 			const elapsedMs = Date.now() - overflowRetryStartMs;
 			const retryMessages = allowOverflowRetry(overflowAttempts, elapsedMs)
-				? shrinkSummarizationInputForOverflowRetry(messages, snapshot.contextWindow, promptTokens)
+				? shrinkSummarizationInputForOverflowRetry(messages, requestSnapshot.contextWindow, promptTokens)
 				: undefined;
 			if (!retryMessages) {
 				throw new SummarizationOverflowExhaustedError(overflowAttempts, elapsedMs);

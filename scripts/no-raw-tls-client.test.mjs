@@ -43,8 +43,8 @@ const ALLOWLIST = [
 
 const OFFENDER_GUIDANCE = [
 	"Shipped source must not gain raw TLS/HTTPS client calls.",
-	"Bun 1.4.2 is pinned (senpi#3078) and carries CVE-2026-48618: its TLS hostname",
-	"check accepts look-alike-dot hosts. We are safe only because every shipped",
+	"Bun before 1.4.3 carries CVE-2026-48618 (senpi#3078), and users may still run it:",
+	"its TLS hostname check accepts look-alike-dot hosts. We are safe only because every shipped",
 	"outbound TLS path reaches its host through a URL parse - new URL() normalizes",
 	"the dots, and APIs like https.get(urlString)/http2.connect(authority) parse",
 	"their argument. If this call's host provably does the same, or is a literal,",
@@ -53,7 +53,7 @@ const OFFENDER_GUIDANCE = [
 	"Otherwise route the request through fetch(), which parses the URL.",
 ].join("\n");
 
-describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)", () => {
+describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun before 1.4.3)", () => {
 	it("catches sampled client patterns, module forms and bindings, with line numbers", () => {
 		const samples = [
 			['module access: import from "node:tls"', 'import { connect } from "node:tls";'],
@@ -230,7 +230,9 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 		});
 	});
 
-	it("holds: shipped production source has no raw TLS client calls outside the pinned allowlist", () => {
+	// A whole-tree AST scan (~3,200 files, ~7 s on a loaded host): its own budget instead of bun test's 5 s default,
+	// which `node --test` (the CI runner) never applied.
+	it("holds: shipped production source has no raw TLS client calls outside the pinned allowlist", { timeout: 60_000 }, () => {
 		const files = collectShippedSourceFiles();
 		assert.ok(files.length > 100, "scanner lost sight of the monorepo");
 		const scan = files.map((relativePath) => ({

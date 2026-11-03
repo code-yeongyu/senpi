@@ -24,12 +24,20 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import { join } from "node:path";
 import {
 	processIsLive,
+	processIsRunning,
 	processStartTimeMs,
 	readProcessStartTime,
 	sameProcessStartMs,
-} from "../app-server/daemon/process.ts";
-import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
+} from "../../utils/process-identity.ts";
+import {
+	createHostDaemonPaths,
+	generationPaths,
+	HOST_DAEMON_DIR_ENV,
+	type HostDaemonDirectory,
+	hostDaemonDirectoryPaths,
+} from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
+import { generationHeartbeatStopped } from "./host-stalled-evidence.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** How long a client should wait before retrying a path another generation still holds. */
@@ -37,6 +45,7 @@ export const SESSION_PATH_RETRY_AFTER_MS = 2_000;
 
 export interface SessionPathOwner {
 	readonly instanceId: string;
+	readonly host_socket?: string;
 	readonly pid: number;
 	readonly processStartTime: string | null;
 	readonly sessionPath: string;
@@ -79,6 +88,7 @@ export function createEndpointReservations(host: {
 	readonly socket: string | undefined;
 	readonly instanceId: string;
 	readonly onFailure?: (message: string) => void;
+	readonly publicSocket?: string;
 }): SessionPathReservations | undefined {
 	const told = process.env[HOST_DAEMON_DIR_ENV];
 	const dir =
@@ -91,6 +101,7 @@ export function createEndpointReservations(host: {
 	return createSessionPathReservations({
 		daemonDir: dir,
 		instanceId: host.instanceId,
+		...(host.publicSocket === undefined ? {} : { publicSocket: host.publicSocket }),
 		...(host.onFailure ? { onFailure: host.onFailure } : {}),
 	});
 }
@@ -100,6 +111,7 @@ export function createSessionPathReservations(options: {
 	readonly daemonDir: string;
 	readonly instanceId: string;
 	readonly pid?: number;
+	readonly publicSocket?: string;
 	readonly onFailure?: (message: string) => void;
 }): SessionPathReservations {
 	const paths = hostDaemonDirectoryPaths(options.daemonDir);
@@ -115,6 +127,7 @@ export function createSessionPathReservations(options: {
 	const publish = async (sessionPath: string, attached: boolean, stillHeld?: () => boolean): Promise<void> => {
 		const owner: SessionPathOwner = {
 			instanceId: options.instanceId,
+			...(options.publicSocket === undefined ? {} : { host_socket: options.publicSocket }),
 			pid,
 			processStartTime: await startTime,
 			sessionPath,
@@ -191,8 +204,26 @@ export function createSessionPathReservations(options: {
 		async claim(sessionPath: string, attached = true): Promise<SessionPathOwner | undefined> {
 			const existing = await readOwner(reservationFile(dir, sessionPath));
 			if (existing && existing.pid !== pid) {
-				const standing = await standingOwner(existing, paths.pointerFile);
-				if (standing) return standing;
+				const verdict = await standingOwner(existing, paths);
+				if (verdict.kind === "stands") return verdict.owner;
+				const fenced =
+					verdict.kind === "released" ||
+					// Documented lazy boundary (AGENTS.md: inline dynamic imports only at documented lazy boundaries): the
+					// lifecycle supervisor imports this module, and the fence module (whose writers read it synchronously)
+					// must stay out of the supervisor's startup graph (test/supervisor-import-graph.test.ts). Only a takeover
+					// of an unprovable claim reaches it.
+					(await import("../../core/session-write-fence.ts")
+						.then(({ advanceSessionFence }) => advanceSessionFence(sessionPath))
+						.then(
+							() => true,
+							(cause: unknown) => {
+								report(
+									`session file ${sessionPath} could not be fenced for a takeover (${errorMessage(cause)})`,
+								);
+								return false;
+							},
+						));
+				if (!fenced) return { ...existing, current: false };
 			}
 			try {
 				await publish(sessionPath, attached);
@@ -246,11 +277,39 @@ export async function readSessionPathClaims(dir: string): Promise<readonly Sessi
  * writing the file. A superseded owner that published `attached: false` is draining (or should
  * be), so its claim is released rather than obeyed. A claim without the flag predates it and is
  * honored, so a running older generation is never reclaimed from.
+ *
+ * A superseded owner whose identity cannot be PROVEN - no start time was recorded, or none can be read
+ * now - needs one more piece of evidence before it may block an open (#3652). On Windows a terminated
+ * generation leaves its claim behind and the OS hands its pid to an unrelated process; without a
+ * readable start time that stranger would hold the session file for as long as it runs. So such a
+ * claim stands only while its generation still heartbeats: a heartbeat older than the stall-refusal
+ * window is the same "died without cleaning up" verdict `hostLoopStalled` already reaches. A live
+ * host whose probe is merely starved (#1609) keeps heartbeating and keeps its claim; a claim with no
+ * heartbeat at all (an unsupervised or older host) keeps the previous benefit of the doubt.
  */
-async function standingOwner(owner: SessionPathOwner, pointerFile: string): Promise<SessionPathOwner | undefined> {
-	if (!(await claimOwnerIsLive(owner))) return undefined;
-	const current = (await currentInstanceId(pointerFile)) === owner.instanceId;
-	return current || owner.attached !== false ? { ...owner, current } : undefined;
+async function standingOwner(owner: SessionPathOwner, paths: HostDaemonDirectory): Promise<ClaimVerdict> {
+	const identity = await claimOwnerIdentity(owner);
+	if (identity === "gone") return { kind: "released" };
+	const current = (await currentInstanceId(paths.pointerFile)) === owner.instanceId;
+	if (!current && identity === "unproven" && (await heartbeatStopped(paths, owner.instanceId)))
+		return { kind: "presumed_done" };
+	return current || owner.attached !== false ? { kind: "stands", owner: { ...owner, current } } : { kind: "released" };
+}
+
+/**
+ * `presumed_done`: the owner may still be alive (a frozen loop or a sleeping machine also stops the heartbeat), so the
+ * takeover must fence it out of the session file first.
+ */
+type ClaimVerdict =
+	| { readonly kind: "stands"; readonly owner: SessionPathOwner }
+	| { readonly kind: "released" }
+	| { readonly kind: "presumed_done" };
+
+/** Whether the owner's generation left a heartbeat that is older than a stalled host could explain. */
+async function heartbeatStopped(paths: HostDaemonDirectory, instanceId: string): Promise<boolean> {
+	// A claim file is untrusted input: an instance id that is not a plain directory name names no generation.
+	if (instanceId === "" || instanceId === "." || instanceId === ".." || /[\\/]/.test(instanceId)) return false;
+	return generationHeartbeatStopped(generationPaths(paths, instanceId));
 }
 
 /** The generation the pointer names, or nothing when no pointer describes this endpoint. */
@@ -268,13 +327,14 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { instanceId, pid, processStartTime, sessionPath, attached } = parsed as Record<string, unknown>;
+	const { instanceId, pid, processStartTime, sessionPath, attached, host_socket } = parsed as Record<string, unknown>;
 	if (typeof instanceId !== "string" || typeof pid !== "number" || typeof sessionPath !== "string") return undefined;
 	return {
 		instanceId,
 		pid,
 		processStartTime: typeof processStartTime === "string" ? processStartTime : null,
 		sessionPath,
+		...(typeof host_socket === "string" ? { host_socket } : {}),
 		...(typeof attached === "boolean" ? { attached } : {}),
 	};
 }
@@ -284,15 +344,25 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
  * what separates "that host is still writing" from "the OS handed its pid to something else".
  */
 export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean> {
-	if (!processIsLive(owner.pid)) return false;
+	return (await claimOwnerIdentity(owner)) !== "gone";
+}
+
+/**
+ * `proven`: the pid runs and its start time matches the claim. `gone`: the pid is dead, or runs with a
+ * different start time. `unproven`: the pid runs but no start time was recorded or none can be read.
+ */
+export async function claimOwnerIdentity(owner: SessionPathOwner): Promise<"proven" | "gone" | "unproven"> {
+	// An exited, unreaped owner (state Z) makes no more writes: the claim is gone (senpi#4119).
+	if (!processIsRunning(owner.pid)) return "gone";
 	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
 	if (recorded === undefined) {
 		logUnknownHostIdentity("session-path-claim", owner.pid);
-		return true;
+		return "unproven";
 	}
 	const current = await readProcessStartTime(owner.pid).catch(() => undefined);
 	const observed = current === undefined ? undefined : processStartTimeMs(current);
-	return observed === undefined || sameProcessStartMs(recorded, observed);
+	if (observed === undefined) return "unproven";
+	return sameProcessStartMs(recorded, observed) ? "proven" : "gone";
 }
 
 function errorMessage(cause: unknown): string {

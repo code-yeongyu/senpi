@@ -1,7 +1,9 @@
+import { annotateShellTrust } from "../../../../engine-trust/shell-trust.ts";
 import type { ExtensionContext } from "../../types.ts";
+import { withTerminalContext } from "./context-lifetime.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
 import type { NotifyMode } from "./settings.ts";
+import type { TerminalExitView } from "./tools/context.ts";
 import { describeExit } from "./tools/spawn.ts";
 
 /** Modes that never wake the agent: one-shot, non-interactive runs. */
@@ -51,7 +53,7 @@ export function getTerminalNotificationDelivery(
 	};
 }
 
-function buildNotice(id: string, runtime: TerminalRuntimeSession): string {
+function buildNotice(id: string, runtime: TerminalExitView, trustText: string | undefined): string {
 	const status = describeExit(runtime) ?? "exited";
 	const code = runtime.exitResult?.exitCode;
 	const codeText = code === null || code === undefined ? "" : ` (exit code ${code})`;
@@ -65,7 +67,8 @@ function buildNotice(id: string, runtime: TerminalRuntimeSession): string {
 			: "";
 		tailSection = `\nFinal output:\n${shown}${note}`;
 	}
-	return `<system-reminder>Background terminal session ${id} finished: ${status}${codeText}.${tailSection}</system-reminder>`;
+	const trustSection = trustText === undefined ? "" : `\n${trustText}`;
+	return `<system-reminder>Background terminal session ${id} finished: ${status}${codeText}.${tailSection}${trustSection}</system-reminder>`;
 }
 
 /**
@@ -78,17 +81,35 @@ function buildNotice(id: string, runtime: TerminalRuntimeSession): string {
 export class TerminalNotifier {
 	private readonly notified = new Set<string>();
 	private readonly deps: TerminalNotifierDeps;
+	private retired = false;
 
 	constructor(deps: TerminalNotifierDeps) {
 		this.deps = deps;
 	}
 
-	notifyCompletion(id: string, runtime: TerminalRuntimeSession): void {
-		if (this.notified.has(id)) return;
+	notifyCompletion(id: string, runtime: TerminalExitView): void {
+		if (this.retired || this.notified.has(id)) return;
+		withTerminalContext(
+			() => this.deliverCompletion(id, runtime),
+			() => {
+				this.retired = true;
+				this.notified.clear();
+			},
+		);
+	}
+
+	private deliverCompletion(id: string, runtime: TerminalExitView): void {
 		const delivery = getTerminalNotificationDelivery(this.deps);
 		if (!delivery) return;
 
 		this.notified.add(id);
-		delivery.send(buildNotice(id, runtime));
+		const annotation = annotateShellTrust({
+			exitCode: runtime.exitResult?.exitCode ?? null,
+			output: runtime.fullOutput(),
+		});
+		delivery.send(
+			buildNotice(id, runtime, annotation?.text),
+			annotation === undefined ? undefined : { details: { trust: annotation.trust } },
+		);
 	}
 }

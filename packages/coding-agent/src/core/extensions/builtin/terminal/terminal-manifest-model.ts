@@ -16,8 +16,14 @@ export const TERMINAL_MANIFEST_CHECKPOINT_DEBOUNCE_MS = 30_000;
  */
 export { DURABLE_MONITOR_EXPIRY_MS } from "./shared.ts";
 export type TerminalManifestSession = Pick<SessionManager, "getSessionDir" | "getSessionId">;
-export type MonitorRuntimeKind = "command" | "file";
-export type MonitorDurabilityClass = "ephemeral" | "restartable-command" | "checkpointed-file";
+export type MonitorRuntimeKind = "command" | "file" | "rpc";
+export type MonitorDurabilityClass = "ephemeral" | "restartable-command" | "checkpointed-file" | "checkpointed-rpc";
+
+/** Rpc-monitor checkpoint: each endpoint's host identity and each watched session's last status. */
+export interface TerminalManifestRpcCheckpoint {
+	readonly hosts: Readonly<Record<string, { readonly instanceId: string; readonly generation: string }>>;
+	readonly statuses: Readonly<Record<string, string>>;
+}
 /**
  * File-monitor checkpoint persisted by the writer: the registry's live identity tuple. `digest`
  * is required — without it a same-size, same-mtime rewrite is undetectable across a restart.
@@ -42,8 +48,17 @@ export interface ManifestMonitor {
 	readonly path?: string;
 	readonly event?: "create" | "modify";
 	readonly filter?: string;
+	/** Command watch whose output lines are a person's words; absent on older entries. */
+	readonly humanInput?: boolean;
+	/** Per-monitor wake-rate override of a persistent command watch; absent uses the setting. */
+	readonly wakesPerHour?: number;
 	readonly cwd?: string;
 	readonly approvedParent?: string;
+	/** Rpc watches: the target as written, the record kinds reported and dropped. */
+	readonly target?: string;
+	readonly events?: "all" | readonly string[];
+	readonly exclude?: readonly string[];
+	readonly rpcCheckpoint?: TerminalManifestRpcCheckpoint;
 	readonly createdAt: number;
 	readonly expiresAt: number | null;
 	readonly persistent: boolean;
@@ -78,6 +93,8 @@ export interface CommandMonitorSpec {
 	readonly description: string;
 	readonly command: string;
 	readonly filter?: string;
+	readonly humanInput?: boolean;
+	readonly wakesPerHour?: number;
 	readonly cwd?: string;
 	readonly persistent: boolean;
 }
@@ -93,7 +110,18 @@ export interface FileMonitorSpec {
 	/** Persistent file watches are the durable `checkpointed-file` class; one-shot ones stay ephemeral. */
 	readonly persistent: boolean;
 }
-export type MonitorSpec = CommandMonitorSpec | FileMonitorSpec;
+
+export interface RpcMonitorSpec {
+	readonly kind: "rpc";
+	readonly description: string;
+	readonly target: string;
+	readonly events?: "all" | readonly string[];
+	readonly exclude?: readonly string[];
+	readonly filter?: string;
+	/** Persistent rpc watches are the durable `checkpointed-rpc` class. */
+	readonly persistent: boolean;
+}
+export type MonitorSpec = CommandMonitorSpec | FileMonitorSpec | RpcMonitorSpec;
 
 export interface MonitorRegistration {
 	readonly monitorId: string;

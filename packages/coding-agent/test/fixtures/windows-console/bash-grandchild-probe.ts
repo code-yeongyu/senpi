@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalBashOperations } from "../../../src/core/tools/bash.ts";
 import { getShellConfig } from "../../../src/utils/shell.ts";
+import { windowsTreeKillArgs } from "../../../../../scripts/windows-process-tree.mjs";
 
 const PID_FILE_DEADLINE_MS = 30_000;
 const shape = process.argv[2] ?? "";
@@ -34,7 +35,8 @@ function attachment(pid: number): unknown {
 }
 
 function killTree(pid: number): void {
-	spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+	const args = windowsTreeKillArgs(pid);
+	if (args.length > 0) spawnSync("taskkill.exe", args, { stdio: "ignore", windowsHide: true });
 }
 
 async function waitForFile(path: string): Promise<string> {

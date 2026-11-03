@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readProcessStartMs } from "../../../src/core/extensions/builtin/terminal/process-start-probe.ts";
 import { liveSessionHolders } from "../../../src/core/session-holders.ts";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { createSessionPathReservations } from "../../../src/modes/rpc/host-reservations.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 

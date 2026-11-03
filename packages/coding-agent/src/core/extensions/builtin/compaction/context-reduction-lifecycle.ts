@@ -79,7 +79,13 @@ export function registerContextReductionLifecycle(
 		if (request.leaf && !ctx.sessionManager.getBranch().some((entry) => entry.id === request.leaf)) return;
 		const before = JSON.stringify(snapshotReductionState(state));
 		const usage = event.message.usage;
-		recordReductionUsage(state, request, usage.input + usage.cacheRead + usage.cacheWrite);
+		recordReductionUsage(
+			state,
+			request,
+			usage.contextUsage === undefined
+				? usage.input + usage.cacheRead + usage.cacheWrite
+				: (usage.contextUsage?.input ?? 0),
+		);
 		pending = undefined;
 		persist(before);
 	});

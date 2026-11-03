@@ -29,7 +29,7 @@ const FAST_MODEL_ID = `${BASE_MODEL_ID}-fast`;
 
 /**
  * The request tier is a SESSION property, not an extension feature: an embedded/SDK session that
- * loads no builtin extensions (a delegated child, an app-server host) must still send the tier a
+ * loads no builtin extensions (for example, a delegated child) must still send the tier a
  * `-fast` catalog variant or session fast mode asks for. Every session here is extension-less.
  */
 describe("createAgentSession request service tier without extensions", () => {
@@ -224,7 +224,7 @@ describe("createAgentSession request service tier without extensions", () => {
 			);
 			const result = await stream.result();
 
-			// Then: the catalog ID never leaks onto the wire, and Sol uses the published 6x multiplier.
+			// Then: the catalog ID never leaks onto the wire, and Sol uses the published 8x included-usage multiplier.
 			expect(result.stopReason, result.errorMessage).toBe("stop");
 			expect(session.serviceTier).toBe("ultrafast");
 			expect(session.thinkingLevel).toBe("xhigh");
@@ -234,8 +234,8 @@ describe("createAgentSession request service tier without extensions", () => {
 				reasoning: { effort: "xhigh" },
 			});
 			expect(headers?.get("x-codex-routing-hint")).toBe("model=gpt-6.1-sol;tier=ultrafast");
-			expect(result.usage.cost.input).toBeCloseTo(1.2);
-			expect(result.usage.cost.output).toBeCloseTo(0.06);
+			expect(result.usage.cost.input).toBeCloseTo(1.6);
+			expect(result.usage.cost.output).toBeCloseTo(0.08);
 		} finally {
 			session.dispose();
 		}

@@ -1,5 +1,5 @@
 import type { Api, Model, PromptCacheLifetime, ProviderEnv } from "@earendil-works/pi-ai";
-import { resolvePromptCacheLifetime } from "@earendil-works/pi-ai";
+import { costCardAt, resolvePromptCacheLifetime } from "@earendil-works/pi-ai";
 import type { TokenUsageSnapshot } from "./types.ts";
 
 /** Custom session-entry type carrying the cache-warm continuation story. */
@@ -154,9 +154,10 @@ export function estimateCacheWarmMetrics(
 	}
 	const ttlSeconds = lifetime?.kind === "ttl" ? lifetime.ttlSeconds : undefined;
 	if (ttlSeconds === undefined && cachedTokens === 0) return undefined;
+	const rates = model === undefined ? undefined : costCardAt(model.cost, Date.now());
 	const estimatedSavedUsd =
-		model !== undefined && cachedTokens > 0
-			? (Math.max(0, model.cost.input - model.cost.cacheRead) * cachedTokens) / TOKENS_PER_PRICE_UNIT
+		rates !== undefined && cachedTokens > 0
+			? (Math.max(0, rates.input - rates.cacheRead) * cachedTokens) / TOKENS_PER_PRICE_UNIT
 			: undefined;
 	return {
 		cachedTokens,

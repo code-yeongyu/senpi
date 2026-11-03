@@ -62,6 +62,15 @@ export type ContinuityObservation = {
 	collapsedDirectives?: number;
 	/** Where a `disabled`/`resume_mode_off` setting came from, so the notice can name it. */
 	settingSource?: ResumeModeSource;
+	/**
+	 * Short digest of the serving account, never its name: lets a quota cascade be attributed
+	 * to seats without reading credentials (oh-my-openagent#10304).
+	 */
+	seat?: string;
+	/** The attempt runs on a different seat than the lineage's last one: its prompt cache is cold. */
+	seatChanged?: boolean;
+	/** senpi#1975: first diverged field path behind an assistant_rewritten decision. Paths only, never values. */
+	divergedPath?: string;
 };
 
 export type ContinuityObservabilityBoundary = {
@@ -217,7 +226,9 @@ export function observeSessionSyncDecision(input: {
 	senpiSessionId: string;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	divergedPath?: string;
 }): ContinuityObservation {
+	const diverged = input.divergedPath === undefined ? {} : { divergedPath: input.divergedPath };
 	if (input.kind === "incremental") {
 		return { kind: "delta", reason: "prefix_matched", deltaMessages: input.deltaMessages };
 	}
@@ -228,6 +239,7 @@ export function observeSessionSyncDecision(input: {
 			kind: "fork",
 			reason: retainedCause ?? (input.reason === undefined ? "branch_resume" : sanitizeReason(input.reason)),
 			deltaMessages: input.deltaMessages,
+			...diverged,
 		};
 	}
 	// Peek, not consume: the staged observation is emitted only when the
@@ -241,6 +253,7 @@ export function observeSessionSyncDecision(input: {
 		deltaMessages: input.deltaMessages,
 		...(input.payloadBytes !== undefined ? { payloadBytes: input.payloadBytes } : {}),
 		...(input.collapsedDirectives !== undefined ? { collapsedDirectives: input.collapsedDirectives } : {}),
+		...diverged,
 	};
 }
 
@@ -280,6 +293,9 @@ export function emitContinuityObservation(
 		reason: observation.reason,
 		...(observation.deltaMessages === undefined ? {} : { count: observation.deltaMessages }),
 		...(observation.settingSource === undefined ? {} : { settingSource: observation.settingSource }),
+		...(observation.seat === undefined ? {} : { seat: observation.seat }),
+		...(observation.seatChanged === undefined ? {} : { seatChanged: observation.seatChanged }),
+		...(observation.divergedPath === undefined ? {} : { divergedPath: observation.divergedPath }),
 		...(sessionId === undefined ? {} : { sessionId }),
 	});
 }

@@ -8,6 +8,7 @@ import { observeProcessStderrWrites } from "./stderr-observer.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
 import { queryTmuxCursorPosition } from "./tmux-cursor-query.ts";
 import type { TmuxExecFile } from "./tmux-image-probe.ts";
+import { isWslSession } from "./wsl-session.ts";
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -257,23 +258,27 @@ export interface ProcessTerminalOptions {
 	observeExternalStderrWrites?: (listener: () => void) => () => void;
 }
 
-const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
-const DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100;
+const DEFAULT_ESCAPE_TIMEOUT_MS = 50;
+const DEFAULT_REMOTE_ESCAPE_TIMEOUT_MS = 100;
 const DEFAULT_BURST_WINDOW_MS = 20;
 const DEFAULT_SSH_BURST_WINDOW_MS = 100;
 
 /**
  * Resolve how long to wait for the rest of an escape sequence before
  * dispatching a lone ESC as the Escape key. Legacy Alt+key input is ESC plus
- * another byte, so high-latency transports need a longer reassembly window.
+ * another byte, so high-latency transports (SSH, the WSL interop pipe) need a
+ * longer reassembly window.
  */
-export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+export function resolveEscapeTimeoutMs(
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): number {
 	const configured = Number(env.PI_TUI_ESC_TIMEOUT);
 	if (Number.isFinite(configured) && configured > 0) {
 		return configured;
 	}
-	if (env.SSH_CONNECTION || env.SSH_TTY) {
-		return DEFAULT_SSH_ESCAPE_TIMEOUT_MS;
+	if (env.SSH_CONNECTION || env.SSH_TTY || isWslSession(env, platform)) {
+		return DEFAULT_REMOTE_ESCAPE_TIMEOUT_MS;
 	}
 	return DEFAULT_ESCAPE_TIMEOUT_MS;
 }

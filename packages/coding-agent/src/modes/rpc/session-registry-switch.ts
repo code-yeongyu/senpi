@@ -4,6 +4,8 @@
  * resolving against the entry's CURRENT runtime rather than the one built at `open_session`.
  */
 import { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { ClientAdmissions } from "./client-admissions.ts";
+import { EffectLedger } from "./effect-ledger.ts";
 import type { PreparableRuntimeFactory } from "./host-warm.ts";
 import { type RpcSessionEntry, RpcSessionRegistryError, type SessionRuntime } from "./session-registry-types.ts";
 
@@ -36,6 +38,8 @@ export function createEntrySwitchSession(
 				runtime.launchProfile,
 			);
 			replacement.setRebindSession(entry.rebindSession);
+			ClientAdmissions.sealQueuedOnReplace(replacement);
+			EffectLedger.sealOnReplace(replacement);
 			runtime.releaseSessionHold();
 			entry.runtime = replacement;
 			syncRuntimeMetadata();

@@ -92,14 +92,15 @@ describe("credential pool state sidecar", () => {
 		expect(second).toBeUndefined();
 	});
 
-	test("an auth block never leases a probe; only re-login clears it", async () => {
+	test("an auth block leases one probe once its re-probe time passes (senpi#3264)", async () => {
 		await repository.mutateSlotState("openai", "api", "work", () => ({
 			blockedUntil: NOW - 1_000,
 			blockReason: "auth_error",
 		}));
 
 		const lease = await acquireHalfOpenLease(repository, "openai", "api", "work", { now: NOW });
-		expect(lease).toBeUndefined();
+		expect(lease).toBeDefined();
+		expect(await acquireHalfOpenLease(repository, "openai", "api", "work", { now: NOW })).toBeUndefined();
 	});
 
 	test("two custom agent directories give ModelRuntime isolated repositories", async () => {

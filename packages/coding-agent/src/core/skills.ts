@@ -1,12 +1,26 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { homedir } from "node:os";
+import { existsSync, readdirSync, realpathSync, type Stats, statSync } from "fs";
 import ignore from "ignore";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
-import { readSkillMarkdownSource, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
+import {
+	authorizeSkillPath,
+	BlockedSkillLinkError,
+	buildSkillAllowedSet,
+	insideSkillRoot,
+	readSkillFileCheckedSync,
+	type SkillAllowedSet,
+	type SkillProvenance,
+	skillProjectRoot,
+} from "./skill-access.ts";
+import { addIgnoreRules, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
+import { readUserSkillSource } from "./skill-source-cache.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+
+export { formatSkillsForPrompt } from "./skills-prompt.ts";
 
 /** Max name length per spec */
 const MAX_NAME_LENGTH = 64;
@@ -14,55 +28,10 @@ const MAX_NAME_LENGTH = 64;
 /** Max description length per spec */
 const MAX_DESCRIPTION_LENGTH = 1024;
 
-const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
-
 type IgnoreMatcher = ReturnType<typeof ignore>;
 
 function toPosixPath(p: string): string {
 	return p.split(sep).join("/");
-}
-
-function prefixIgnorePattern(line: string, prefix: string): string | null {
-	const trimmed = line.trim();
-	if (!trimmed) return null;
-	if (trimmed.startsWith("#") && !trimmed.startsWith("\\#")) return null;
-
-	let pattern = line;
-	let negated = false;
-
-	if (pattern.startsWith("!")) {
-		negated = true;
-		pattern = pattern.slice(1);
-	} else if (pattern.startsWith("\\!")) {
-		pattern = pattern.slice(1);
-	}
-
-	if (pattern.startsWith("/")) {
-		pattern = pattern.slice(1);
-	}
-
-	const prefixed = prefix ? `${prefix}${pattern}` : pattern;
-	return negated ? `!${prefixed}` : prefixed;
-}
-
-function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
-	const relativeDir = relative(rootDir, dir);
-	const prefix = relativeDir ? `${toPosixPath(relativeDir)}/` : "";
-
-	for (const filename of IGNORE_FILE_NAMES) {
-		const ignorePath = join(dir, filename);
-		if (!existsSync(ignorePath)) continue;
-		try {
-			const content = readFileSync(ignorePath, "utf-8");
-			const patterns = content
-				.split(/\r?\n/)
-				.map((line) => prefixIgnorePattern(line, prefix))
-				.filter((line): line is string => Boolean(line));
-			if (patterns.length > 0) {
-				ig.add(patterns);
-			}
-		} catch {}
-	}
 }
 
 export interface SkillFrontmatter {
@@ -85,6 +54,9 @@ export interface Skill {
 	argumentHint?: string;
 	/** `requires-arguments` frontmatter; defaults to true when a hint is declared, else false. */
 	requiresArguments?: boolean;
+	/** Root authority is retained for invocation and sidecar reads. */
+	provenance?: SkillProvenance;
+	allowedSet?: SkillAllowedSet;
 }
 
 export interface LoadSkillsResult {
@@ -138,6 +110,8 @@ export interface LoadSkillsFromDirOptions {
 	dir: string;
 	/** Source identifier for these skills */
 	source: string;
+	provenance?: SkillProvenance;
+	allowedSet?: SkillAllowedSet;
 }
 
 function createSkillSourceInfo(filePath: string, baseDir: string, source: string): SourceInfo {
@@ -174,7 +148,12 @@ function createSkillSourceInfo(filePath: string, baseDir: string, source: string
  */
 export function loadSkillsFromDir(options: LoadSkillsFromDirOptions): LoadSkillsResult {
 	const { dir, source } = options;
-	return loadSkillsFromDirInternal(dir, source, true);
+	const provenance = options.provenance ?? {
+		kind: source === "project" ? "project-auto" : "user",
+		selectedRoot: dir,
+		projectRoot: skillProjectRoot(dir),
+	};
+	return loadSkillsFromDirInternal(dir, source, true, undefined, undefined, provenance, options.allowedSet);
 }
 
 function loadSkillsFromDirInternal(
@@ -183,6 +162,9 @@ function loadSkillsFromDirInternal(
 	includeRootFiles: boolean,
 	ignoreMatcher?: IgnoreMatcher,
 	rootDir?: string,
+	provenance?: SkillProvenance,
+	allowedSet?: SkillAllowedSet,
+	ancestry: ReadonlySet<string> = new Set(),
 ): LoadSkillsResult {
 	const skills: Skill[] = [];
 	const diagnostics: ResourceDiagnostic[] = [];
@@ -190,13 +172,24 @@ function loadSkillsFromDirInternal(
 	if (!existsSync(dir)) {
 		return { skills, diagnostics };
 	}
+	let canonical: string;
+	try {
+		authorizeSkillPath(dir, provenance, allowedSet, true);
+		canonical = realpathSync.native(dir);
+	} catch (error) {
+		if (error instanceof BlockedSkillLinkError) return { skills, diagnostics: [error.diagnostic] };
+		canonical = resolve(dir);
+	}
+	if (ancestry.has(canonical)) return { skills, diagnostics };
+	const descendants = new Set(ancestry);
+	descendants.add(canonical);
 
 	const root = rootDir ?? dir;
 	const ig = ignoreMatcher ?? ignore();
-	addIgnoreRules(ig, dir, root);
 
 	try {
 		const entries = readdirSync(dir, { withFileTypes: true });
+		addIgnoreRules(ig, dir, root, entries);
 
 		for (const entry of entries) {
 			if (entry.name !== "SKILL.md") {
@@ -219,7 +212,7 @@ function loadSkillsFromDirInternal(
 				continue;
 			}
 
-			const result = loadSkillFromFile(fullPath, source);
+			const result = loadSkillFromFile(fullPath, source, provenance, allowedSet);
 			if (result.skill) {
 				skills.push(result.skill);
 			}
@@ -237,7 +230,8 @@ function loadSkillsFromDirInternal(
 			// For symlinks, check if they point to a directory and follow them
 			let isDirectory = entry.isDirectory();
 			let isFile = entry.isFile();
-			if (entry.isSymbolicLink()) {
+			const isLink = entry.isSymbolicLink();
+			if (isLink) {
 				try {
 					const stats = statSync(fullPath);
 					isDirectory = stats.isDirectory();
@@ -248,14 +242,26 @@ function loadSkillsFromDirInternal(
 				}
 			}
 
+			// A linked entry belongs to another tree: the ignore files above it do not hide it, and a linked
+			// directory gets its own ignore context, as in collectSkillEntries (senpi#5060, senpi#5069).
+			const linkedDirectory = isLink && isDirectory;
 			const relPath = toPosixPath(relative(root, fullPath));
 			const ignorePath = isDirectory ? `${relPath}/` : relPath;
-			if (ig.ignores(ignorePath)) {
+			if (!isLink && ig.ignores(ignorePath)) {
 				continue;
 			}
 
 			if (isDirectory) {
-				const subResult = loadSkillsFromDirInternal(fullPath, source, false, ig, root);
+				const subResult = loadSkillsFromDirInternal(
+					fullPath,
+					source,
+					false,
+					linkedDirectory ? ignore() : ig,
+					root,
+					provenance,
+					allowedSet,
+					descendants,
+				);
 				skills.push(...subResult.skills);
 				diagnostics.push(...subResult.diagnostics);
 				continue;
@@ -265,7 +271,7 @@ function loadSkillsFromDirInternal(
 				continue;
 			}
 
-			const result = loadSkillFromFile(fullPath, source);
+			const result = loadSkillFromFile(fullPath, source, provenance, allowedSet);
 			if (result.skill) {
 				skills.push(result.skill);
 			}
@@ -279,14 +285,21 @@ function loadSkillsFromDirInternal(
 function loadSkillFromFile(
 	filePath: string,
 	source: string,
+	provenance?: SkillProvenance,
+	allowedSet?: SkillAllowedSet,
+	stats?: Stats,
 ): { skill: Skill | null; diagnostics: ResourceDiagnostic[] } {
 	const diagnostics: ResourceDiagnostic[] = [];
 	const isDeclaredSkill = basename(filePath) === "SKILL.md";
 
 	let rawContent: string;
 	try {
-		rawContent = readSkillMarkdownSource(filePath);
+		rawContent =
+			provenance === undefined || provenance.kind === "user"
+				? readUserSkillSource(filePath, stats ?? statSync(filePath))
+				: readSkillFileCheckedSync(filePath, provenance, allowedSet);
 	} catch (error) {
+		if (error instanceof BlockedSkillLinkError) return { skill: null, diagnostics: [error.diagnostic] };
 		const message = error instanceof Error ? error.message : "failed to read skill file";
 		diagnostics.push({ type: "warning", message, path: filePath });
 		return { skill: null, diagnostics };
@@ -339,6 +352,8 @@ function loadSkillFromFile(
 	return {
 		skill: {
 			name,
+			provenance,
+			allowedSet,
 			description,
 			filePath,
 			baseDir: skillDir,
@@ -351,77 +366,6 @@ function loadSkillFromFile(
 	};
 }
 
-/**
- * Format skills for inclusion in a system prompt.
- * Uses XML format per Agent Skills standard.
- * See: https://agentskills.io/integrate-skills
- *
- * Skills with disableModelInvocation=true are excluded from the prompt
- * (they can only be invoked explicitly via /skill:name commands).
- */
-// Skill roots share long absolute prefixes across every skill under them; rendering
-// that prefix per skill bills it once per skill. The roots table pays it once per
-// distinct root and each location becomes a short alias/relative path. A one-line
-// rule tells the model to expand aliases by joining them back to the root.
-// `fileReadTool` lets a bash-only tool set still load skills: the loading rule names
-// the tool the session actually has.
-export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "bash" = "read"): string {
-	const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
-
-	if (visibleSkills.length === 0) {
-		return "";
-	}
-
-	const rootByPath = new Map<string, string>();
-	for (const skill of visibleSkills) {
-		const dir = skill.filePath.split("/").slice(0, -2).join("/"); // parent of <name>/SKILL.md
-		if (!rootByPath.has(dir)) rootByPath.set(dir, `r${rootByPath.size}`);
-	}
-
-	const lines = [
-		"\n\nThe following skills provide specialized instructions for specific tasks.",
-		fileReadTool === "read"
-			? "Use the read tool to load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason."
-			: "Use bash to load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason.",
-		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
-		"",
-		"<skill_roots>",
-	];
-	for (const [dir, alias] of rootByPath) {
-		lines.push(`  <${alias}>${escapeXml(dir)}</${alias}>`);
-	}
-	lines.push(
-		"</skill_roots>",
-		"A location's `rN/` prefix expands to the matching root above.",
-		"",
-		"<available_skills>",
-	);
-
-	for (const skill of visibleSkills) {
-		const dir = skill.filePath.split("/").slice(0, -2).join("/");
-		const alias = rootByPath.get(dir);
-		const relative = skill.filePath.startsWith(`${dir}/`) ? skill.filePath.slice(dir.length + 1) : skill.filePath;
-		lines.push("  <skill>");
-		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
-		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
-		lines.push(`    <location>${escapeXml(`${alias}/${relative}`)}</location>`);
-		lines.push("  </skill>");
-	}
-
-	lines.push("</available_skills>");
-
-	return lines.join("\n");
-}
-
-function escapeXml(str: string): string {
-	return str
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&apos;");
-}
-
 export interface LoadSkillsOptions {
 	/** Working directory for project-local skills. */
 	cwd: string;
@@ -431,6 +375,8 @@ export interface LoadSkillsOptions {
 	skillPaths: string[];
 	/** Include default skills directories. */
 	includeDefaults: boolean;
+	provenanceByPath?: ReadonlyMap<string, SkillProvenance>;
+	userSkillRoots?: readonly string[];
 }
 
 /**
@@ -443,6 +389,22 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	// Resolve agentDir - if not provided, use default from config
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(agentDir ?? getAgentDir());
+	const projectRoot = skillProjectRoot(resolvedCwd);
+	const projectSkillsPath = resolve(resolvedCwd, CONFIG_DIR_NAME, "skills");
+	const allowedSet = buildSkillAllowedSet([
+		join(resolvedAgentDir, "skills"),
+		join(homedir(), ".agents", "skills"),
+		...(options.userSkillRoots ?? []),
+		...skillPaths
+			.map((path) => resolvePath(path, resolvedCwd, { trim: true }))
+			.filter((path) => {
+				const provenance = options.provenanceByPath?.get(path);
+				return (
+					provenance?.kind === "user" ||
+					(provenance === undefined && (includeDefaults || !insideSkillRoot(path, projectSkillsPath)))
+				);
+			}),
+	]);
 
 	const skillMap = new Map<string, Skill>();
 	const realPathSet = new Set<string>();
@@ -481,8 +443,29 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	}
 
 	if (includeDefaults) {
-		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
-		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", true));
+		const userRoot = join(resolvedAgentDir, "skills");
+		addSkills(
+			loadSkillsFromDirInternal(
+				userRoot,
+				"user",
+				true,
+				undefined,
+				undefined,
+				{ kind: "user", selectedRoot: userRoot },
+				allowedSet,
+			),
+		);
+		addSkills(
+			loadSkillsFromDirInternal(
+				projectSkillsPath,
+				"project",
+				true,
+				undefined,
+				undefined,
+				{ kind: "project-auto", selectedRoot: projectSkillsPath, projectRoot },
+				allowedSet,
+			),
+		);
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");
@@ -507,18 +490,27 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 
 	for (const rawPath of skillPaths) {
 		const resolvedPath = resolvePath(rawPath, resolvedCwd, { trim: true });
-		if (!existsSync(resolvedPath)) {
+		let stats: Stats;
+		try {
+			stats = statSync(resolvedPath);
+		} catch {
 			allDiagnostics.push({ type: "warning", message: "skill path does not exist", path: resolvedPath });
 			continue;
 		}
 
 		try {
-			const stats = statSync(resolvedPath);
 			const source = getSource(resolvedPath);
+			const provenance = options.provenanceByPath?.get(resolvedPath) ?? {
+				kind: source === "project" ? ("project-auto" as const) : ("user" as const),
+				selectedRoot: resolvedPath,
+				projectRoot,
+			};
 			if (stats.isDirectory()) {
-				addSkills(loadSkillsFromDirInternal(resolvedPath, source, true));
+				addSkills(
+					loadSkillsFromDirInternal(resolvedPath, source, true, undefined, undefined, provenance, allowedSet),
+				);
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
-				const result = loadSkillFromFile(resolvedPath, source);
+				const result = loadSkillFromFile(resolvedPath, source, provenance, allowedSet, stats);
 				if (result.skill) {
 					addSkills({ skills: [result.skill], diagnostics: result.diagnostics });
 				} else {
@@ -537,4 +529,23 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 		skills: Array.from(skillMap.values()),
 		diagnostics: [...allDiagnostics, ...collisionDiagnostics],
 	};
+}
+
+/**
+ * Warnings for skill folders an ignore file hid from discovery (senpi#5060). A folder whose name a loaded
+ * skill already carries is skipped: another root supplied that skill, so nothing is missing.
+ */
+export function ignoredSkillDiagnostics(
+	ignoredSkillFiles: readonly string[],
+	loadedSkills: readonly Skill[],
+): ResourceDiagnostic[] {
+	const loadedNames = new Set(loadedSkills.map((skill) => skill.name));
+	return ignoredSkillFiles
+		.filter((skillFile) => !loadedNames.has(basename(dirname(skillFile))))
+		.map((skillFile) => ({
+			type: "warning",
+			category: "skill-ignored",
+			path: skillFile,
+			message: `Skill not loaded: ${dirname(skillFile)} is listed in an ignore file (.gitignore, .ignore or .fdignore) of the folder above it. Remove that entry to load the skill; to keep git ignoring it, list it in .git/info/exclude instead.`,
+		}));
 }

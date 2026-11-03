@@ -231,7 +231,7 @@ function buildRestorationContent(options: PreparePendingPayloadOptions, items: R
 	const files = items.filter((item) => item.type === "file");
 	const skills = items.filter((item) => item.type === "skill");
 	const lines = [
-		"[Restored context after compaction — files and skills from before compaction]",
+		"[Restored context after compaction - files and skills from before compaction]",
 		`reason: ${options.reason}`,
 		`compactionEntryId: ${options.compactionEntryId}`,
 		"",

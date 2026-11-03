@@ -1,7 +1,14 @@
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import {
+	buildDeadlineStopNotice,
+	type DeadlineStopData,
+	deadlineStopPendingSinceLastTurn,
+	TURN_DEADLINE_ENTRY_TYPE,
+} from "../../../turn-deadline.ts";
+import { noticeEntryRenderer } from "../../notice/index.ts";
+import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { isSameGoalCacheWarmCard, renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
@@ -10,16 +17,20 @@ import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
+import { goalLifecycleChanged, registerGoalLifecycleCollector } from "./lifecycle-facts.ts";
 import { GOAL_STALE_STOP_NOTICE, isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
+import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
+import { markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
-import { TodoOwedBackstop } from "./todo-owed-backstop.ts";
+import { TodoOwedBackstop, type TodoOwedOutcome } from "./todo-owed-backstop.ts";
 import { registerGoalTools } from "./tool-registration.ts";
+import { collectTurnEndLivenessInput, reportTurnEndLiveness } from "./turn-end-liveness-report.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
@@ -34,6 +45,14 @@ type AgentGoalAccounting = {
 };
 
 export default function goalExtension(pi: ExtensionAPI): void {
+	// A user Stop pauses the goal with the session; a plain interrupt keeps blocking it (senpi#3811).
+	async function pauseOrBlockOnUserAbort(ctx: ExtensionContext, goalId: string): Promise<Goal> {
+		if (stopHoldLive(ctx)) {
+			markStopPaused(pi, goalId);
+			return updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
+		}
+		return updateGoal(goalStoreRef(ctx), { status: "blocked", reason: "user interrupted the turn" }, "model");
+	}
 	let agentTurnInProgress = false;
 	let staleGoalReminderSentThisTurn = false;
 	let agentGoalAccounting: AgentGoalAccounting | null = null;
@@ -41,6 +60,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let completedThisTurnGoalId: string | null = null;
 	let continuationPending = false;
 	let activeContext: ExtensionContext | undefined;
+	let lastAgentEnd: AgentEndEvent | undefined;
+	let lastTodoOutcome: TodoOwedOutcome | undefined;
+	let retireLifecycleCollector: (() => void) | undefined;
 	const turnUsage = new TurnUsageTracker();
 	// No stale-ctx swallow here: GoalWaitTicker retires itself on a stale render
 	// (a ticker that keeps ticking against a retired ctx freezes the footer
@@ -56,6 +78,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		},
 		goalWaitTicker,
 	);
+	registerGoalFireNowRequest(pi, () => monitorContinuation.fireNow());
 	const todoOwedBackstop = new TodoOwedBackstop(pi);
 	const directInputLifecycle = new GoalDirectInputLifecycle({
 		monitor: monitorContinuation,
@@ -73,6 +96,14 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer(GOAL_CACHE_WARMUP_ENTRY_TYPE, renderGoalCacheWarmupEntry, {
 		replaces: isSameGoalCacheWarmCard,
 	});
+	pi.registerEntryRenderer(
+		TURN_DEADLINE_ENTRY_TYPE,
+		noticeEntryRenderer((entry) => {
+			const data = (entry as { data?: DeadlineStopData }).data;
+			if (data === undefined) return undefined;
+			return { title: "turn stopped on a deadline", why: buildDeadlineStopNotice(data) };
+		}),
+	);
 	registerGoalTools(pi, {
 		goalStoreRef: (ctx) => buildGoalStoreRef(ctx.sessionManager, ctx.cwd),
 		accountCurrentAgentTurn,
@@ -124,8 +155,32 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}) ?? (() => {});
 
 	pi.on("session_start", async (event, ctx) => {
+		ctx.ui.setStatus("todo-waiting", undefined);
 		activeContext = ctx;
 		monitorContinuation.start(ctx);
+		retireLifecycleCollector?.();
+		retireLifecycleCollector = registerGoalLifecycleCollector(
+			ctx.sessionManager,
+			async (restoredEnd, changedGoal) => {
+				const goal = changedGoal === undefined ? await readGoal(goalStoreRef(ctx)) : changedGoal;
+				const end = lastAgentEnd ?? restoredEnd;
+				return {
+					goal,
+					...(lastTodoOutcome === undefined ? {} : { todoOutcome: lastTodoOutcome }),
+					...(end
+						? {
+								input: collectTurnEndLivenessInput(ctx, end, {
+									goal,
+									todoOutcome: lastTodoOutcome,
+									deadlineStop: deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined,
+									continuationPending,
+									monitor: monitorContinuation,
+								}),
+							}
+						: {}),
+				};
+			},
+		);
 		directInputLifecycle.reset();
 		todoOwedBackstop.resetChain();
 		const ref = goalStoreRef(ctx);
@@ -183,7 +238,16 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("session_tree", async () => {
+	pi.on("held_wakes_released", async (event, ctx) => {
+		if (!event.sources.goal) return;
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal?.status !== "active") return;
+		monitorContinuation.noteContinuationStarted();
+		await queueGoalContinuationForCurrentSession(pi, ctx, goal);
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
+		ctx.ui.setStatus("todo-waiting", undefined);
 		todoOwedBackstop.resetChain();
 	});
 
@@ -212,6 +276,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
+		lastAgentEnd = undefined;
+		lastTodoOutcome = undefined;
+		ctx.ui.setStatus("todo-waiting", undefined);
 		const continuationStarted = continuationPending;
 		continuationPending = false;
 		if (continuationStarted) monitorContinuation.noteContinuationStarted();
@@ -250,12 +317,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		agentTurnInProgress = false;
 		blockedThisTurnGoalId = null;
 		completedThisTurnGoalId = null;
+		if (goal?.status === "paused" && !stopHoldLive(ctx) && pausedByStop(ctx, goal.id)) {
+			markStopResumed(pi, goal.id);
+			goal = await updateGoal(goalStoreRef(ctx), { status: "active" }, "user");
+		}
 		if (event.aborted === true && event.abortSource === "user" && goal?.status === "active") {
-			goal = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "user interrupted the turn" },
-				"model",
-			);
+			goal = await pauseOrBlockOnUserAbort(ctx, goal.id);
 		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
@@ -268,12 +335,25 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			goal = continuationGoal;
 			syncContinuationGoal(ctx, goal);
 		}
-		todoOwedBackstop.afterAgentEnd({
-			ctx,
-			event,
+		const deadlineStop = deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined;
+		const todoOutcome = deadlineStop
+			? undefined
+			: todoOwedBackstop.afterAgentEnd({
+					ctx,
+					event,
+					goal,
+					continuationPending,
+					hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
+					wakeSourceNames: monitorContinuation.liveWakeSources(),
+				});
+		lastAgentEnd = event;
+		lastTodoOutcome = todoOutcome;
+		reportTurnEndLiveness(pi, ctx, event, {
 			goal,
+			todoOutcome,
+			deadlineStop,
 			continuationPending,
-			hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
+			monitor: monitorContinuation,
 		});
 	});
 
@@ -288,17 +368,14 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		if (goal?.status !== "active") return;
 		const accounted = await accountCurrentAgentTurn(ctx, "active");
 		if (accounted?.status === "active") {
-			const blocked = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "user interrupted the turn" },
-				"model",
-			);
+			const stopped = await pauseOrBlockOnUserAbort(ctx, accounted.id);
 			clearAgentGoalAccounting();
-			refreshGoalUiBestEffort(ctx, blocked);
+			refreshGoalUiBestEffort(ctx, stopped);
 		}
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		retireLifecycleCollector?.();
 		activeContext = undefined;
 		unsubscribeGoalStoreChanged();
 		if (agentGoalAccounting !== null) {
@@ -408,6 +485,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 
 	function refreshGoalUi(ctx: ExtensionContext, goal: Goal | null): void {
 		monitorContinuation.syncGoal(goal);
+		goalLifecycleChanged(ctx.sessionManager, goal);
 		const accounting = agentGoalAccounting;
 		if (ctx.hasUI && goal?.status === "active" && accounting?.goalId === goal.id) {
 			goalTicker.sync(ctx, goal, accounting.measuredFromMilliseconds);

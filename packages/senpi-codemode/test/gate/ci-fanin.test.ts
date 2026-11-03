@@ -28,12 +28,16 @@ it.skipIf(process.platform === "win32").each(["success", "failure", "cancelled"]
 		expect(parsed.exitCode, parsed.stderr).toBe(0);
 		const job: unknown = JSON.parse(parsed.stdout);
 		if (!Check(jobSchema, job)) throw new TypeError("Invalid fan-in job");
-		const step = job.steps.find((candidate) => candidate.run?.includes("join(needs.*.result"));
+		// The gate verifies the needs context through scripts/ci-platform-scope.mjs (senpi#3957).
+		const step = job.steps.find((candidate) => candidate.run?.includes("ci-platform-scope.mjs verify"));
 		if (!step?.run) throw new TypeError("Missing executable fan-in step");
-		const results = job.needs.map((name) => (name === "codemode-gate" ? result : "success"));
-		const script = step.run.replace(/\$\{\{\s*join\(needs\.\*\.result,\s*' '\)\s*\}\}/u, results.join(" "));
+		const needs = Object.fromEntries(
+			job.needs.map((name) => [name, { result: name === "codemode-gate" ? result : "success" }]),
+		);
+		// A full run (every main push) is the strictest case: no job may be skipped.
+		const script = step.run.replace(/\$\{\{\s*needs\.platform-scope\.outputs\.full\s*\}\}/u, "true");
 		// When: the workflow runner executes the actual gate with that needs context.
-		const run = await runProcess(["bash", "-c", script], root);
+		const run = await runProcess(["env", `NEEDS_JSON=${JSON.stringify(needs)}`, "bash", "-c", script], root);
 		// Then: failure and cancellation cannot produce the required green merge status.
 		expect(run.exitCode).toBe(result === "success" ? 0 : 1);
 	},
