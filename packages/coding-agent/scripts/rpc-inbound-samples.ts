@@ -183,6 +183,7 @@ export const RPC_INBOUND_SAMPLES = {
 	get_provider_accounts: { type: "get_provider_accounts", provider: PROVIDER },
 	account_pin: { type: "account_pin", provider: PROVIDER, name: null },
 	account_remove: { type: "account_remove", provider: PROVIDER, name: ACCOUNT },
+	account_reset: { type: "account_reset", provider: PROVIDER, name: ACCOUNT },
 	account_order: { type: "account_order", provider: PROVIDER, names: null },
 	test_provider_account: { type: "test_provider_account", provider: PROVIDER, name: ACCOUNT },
 	set_client_info: { type: "set_client_info", width: 80 },

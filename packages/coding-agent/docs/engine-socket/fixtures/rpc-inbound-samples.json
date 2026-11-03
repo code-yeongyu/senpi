@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "71d6846585dffea212d60019e24296f5cd2882c0e8ff54b4d6e40cef3945b80a",
+	"methodClassesDigest": "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 115,
+	"methodCount": 116,
 	"methods": [
 		{
 			"method": "abort",
@@ -79,6 +79,17 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "account_remove",
+				"provider": "rpc-sample-provider",
+				"name": "rpc-sample-account"
+			}
+		},
+		{
+			"method": "account_reset",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "account_reset",
 				"provider": "rpc-sample-provider",
 				"name": "rpc-sample-account"
 			}
