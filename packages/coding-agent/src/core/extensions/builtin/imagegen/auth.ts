@@ -4,9 +4,8 @@ import type {
 	CredentialResolver,
 	ProviderCredential,
 } from "../../../runtime/credential-resolver.ts";
-import { credentialParts, isPlaceholderKey, nonEmpty, OPENAI_BASE_URL } from "./credentials.ts";
-import { resolveConfiguredOpenAi } from "./openai-auth.ts";
-import { startOpenTimer } from "../../../open-timing.ts";
+import { credentialParts, isPlaceholderKey, nonEmpty, OPENAI_BASE_URL, sameBaseUrl } from "./credentials.ts";
+import { configuredOpenAiTier, resolveConfiguredOpenAi } from "./openai-auth.ts";
 
 export type ImageGenAuthModel = CredentialModel;
 
@@ -112,9 +111,7 @@ export async function* imageGenCandidates<TModel extends ImageGenAuthModel>(
 ): AsyncGenerator<ImageGenCandidate> {
 	const registry = deps.modelRegistry;
 	const env = deps.env ?? process.env;
-	const timer = startOpenTimer("imagegen-auth");
 	const openai = await resolveConfiguredOpenAi(registry);
-	timer.mark("configured_openai");
 	if (openai?.tier === "store") {
 		yield { ...openai.resolution, fallthrough: false };
 		return;
@@ -143,7 +140,6 @@ export async function* imageGenCandidates<TModel extends ImageGenAuthModel>(
 		const model = groups.get(providerId);
 		if (!model) continue;
 		const gateway = await resolveGateway(providerId, model, registry);
-		timer.mark(`gateway:${providerId}`);
 		if (gateway) yield { ...gateway, fallthrough: true };
 	}
 
@@ -157,6 +153,70 @@ export async function* imageGenCandidates<TModel extends ImageGenAuthModel>(
 			fallthrough: false,
 		};
 	}
+}
+
+export type ImageGenAvailability =
+	| Pick<ImageGenResolvedAuth, "kind" | "provenance" | "providerId">
+	| { kind: "none"; reason: string };
+
+function storedPlaceholderKey(stored: unknown): boolean {
+	return (
+		typeof stored === "object" &&
+		stored !== null &&
+		"type" in stored &&
+		stored.type === "api_key" &&
+		"key" in stored &&
+		typeof stored.key === "string" &&
+		isPlaceholderKey(stored.key)
+	);
+}
+
+/**
+ * Whether image generation has a source, in the precedence `imageGenCandidates` uses, read from
+ * configuration only (senpi#5707). Session open and every request ask this, so it never resolves a
+ * key: a `!command` key helper, an OAuth refresh or a token mint runs when the tool actually sends
+ * a request, where `imageGenCandidates` still falls through a source that fails. A registry that
+ * cannot report provider auth status statically is resolved as before.
+ */
+export async function imageGenAvailability<TModel extends ImageGenAuthModel>(
+	deps: ResolveImageGenAuthDeps<TModel>,
+): Promise<ImageGenAvailability> {
+	const registry = deps.modelRegistry;
+	const authStatus = registry.getProviderAuthStatus;
+	if (authStatus === undefined) {
+		const auth = await resolveImageGenAuth(deps);
+		return auth.kind === "none"
+			? auth
+			: { kind: auth.kind, provenance: auth.provenance, providerId: auth.providerId };
+	}
+	const keyed = (providerId: string): boolean => {
+		const status = authStatus.call(registry, providerId);
+		return (
+			status.configured && status.ambient !== true && !storedPlaceholderKey(registry.authStorage.get(providerId))
+		);
+	};
+	const openAiKind = (baseUrl: string) => (sameBaseUrl(baseUrl, OPENAI_BASE_URL) ? "native-openai" : "gateway");
+	const env = deps.env ?? process.env;
+	const openai = configuredOpenAiTier(registry);
+	if (openai?.tier === "store" && keyed("openai")) {
+		return { kind: openAiKind(openai.baseUrl), provenance: "store", providerId: "openai" };
+	}
+	const groups = groupGatewayModels(registry.getAll());
+	const pinnedProvider = nonEmpty(env.PI_IMAGE_GEN_PROVIDER);
+	if (pinnedProvider !== undefined && groups.has(pinnedProvider) && keyed(pinnedProvider)) {
+		return { kind: "gateway", provenance: "provider-config", providerId: pinnedProvider };
+	}
+	if (openai !== undefined && keyed("openai")) {
+		return { kind: openAiKind(openai.baseUrl), provenance: openai.tier, providerId: "openai" };
+	}
+	const gateway = [...groups.keys()]
+		.filter((providerId) => providerId !== pinnedProvider)
+		.sort(compareProviderIds)
+		.find(keyed);
+	if (gateway !== undefined) return { kind: "gateway", provenance: "provider-config", providerId: gateway };
+	const envApiKey = nonEmpty(env.OPENAI_API_KEY);
+	if (envApiKey && !isPlaceholderKey(envApiKey)) return { kind: "native-openai", provenance: "env" };
+	return { kind: "none", reason: SETUP_REASON };
 }
 
 export async function resolveImageGenAuth<TModel extends ImageGenAuthModel>(

@@ -19,6 +19,7 @@ export interface ProviderCredential {
 export interface ProviderAuthStatus {
 	configured: boolean;
 	source?: string;
+	ambient?: boolean;
 }
 
 /**
