@@ -387,7 +387,7 @@ describe("Claude SDK OAuth session registry", () => {
 
 	it("keeps recently completed entries out of the LRU victim slot", () => {
 		let now = 0;
-		overrideSessionRegistryBoundary({ now: () => now, queryFactory: () => fakeQuery() });
+		overrideSessionRegistryBoundary({ now: () => now, queryFactory: () => fakeQuery(), maxIdleEntries: () => 32 });
 		const registry = new AnthropicSubscriptionSessionRegistry();
 		const recentlyUsed = registry.getOrCreate(input("recent"));
 		transitionSessionState(recentlyUsed, "IDLE_SYNCED");
@@ -442,7 +442,7 @@ describe("Claude SDK OAuth session registry", () => {
 
 	it("enforces the 32-entry cap by evicting the oldest idle or tainted entry", () => {
 		let now = 0;
-		overrideSessionRegistryBoundary({ now: () => now, queryFactory: () => fakeQuery() });
+		overrideSessionRegistryBoundary({ now: () => now, queryFactory: () => fakeQuery(), maxIdleEntries: () => 32 });
 		const registry = new AnthropicSubscriptionSessionRegistry();
 		for (let index = 0; index < 32; index++) {
 			const entry = registry.getOrCreate(input(`session-${index}`));
@@ -460,7 +460,7 @@ describe("Claude SDK OAuth session registry", () => {
 
 	it("never evicts an active turn when an older evictable entry exists", () => {
 		let now = 0;
-		overrideSessionRegistryBoundary({ now: () => now, queryFactory: () => fakeQuery() });
+		overrideSessionRegistryBoundary({ now: () => now, queryFactory: () => fakeQuery(), maxIdleEntries: () => 32 });
 		const registry = new AnthropicSubscriptionSessionRegistry();
 		const active = registry.getOrCreate(input("active"));
 		transitionSessionState(active, "IDLE_SYNCED");

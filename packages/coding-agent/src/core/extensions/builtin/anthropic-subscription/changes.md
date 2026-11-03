@@ -1,3 +1,26 @@
+## 2026-11-03 - Finished child sessions release their resident Claude Code process, and idle residents are capped (senpi#5689)
+
+### What changed
+
+- `session-registry-wiring.ts`: a new `agent_settled` handler releases the resident entry of a child session, meaning a session whose header carries `spawnedBy` execution ancestry. `parentSession` fork provenance does not count. The binding is kept first, so a revived child reattaches with `resume` instead of flattening.
+- `session-registry.ts`: `releaseWhenIdle(sessionId, reason)` closes an idle entry now (cause `child_settled`). An entry with a turn in flight gets a zero idle TTL (`releaseOnIdle`), so the generation-fenced reaper closes it right after that turn goes idle. A new admission before that fires keeps the warm process.
+- `session-registry.ts`: idle resident entries are capped per process at `SESSION_REGISTRY_MAX_IDLE_ENTRIES = 8`, overridable with `SENPI_CLAUDE_SDK_OAUTH_MAX_IDLE_SESSIONS`; values below 1 or non-numeric values use the default. On every admission and whenever a turn settles, the least-recently-used idle entries beyond the cap close with cause `idle_cap`. Entries that are in use (any state other than `IDLE_SYNCED`/`TAINTED`, or with an active turn) are never evicted and never counted. The 32-entry hard limit is unchanged.
+- `session-reaper.ts`: a reap candidate may carry its own idle TTL.
+- `session-observability.ts`: `idle_cap` and `child_settled` join the close-cause vocabulary.
+
+### Why
+
+- Every session kept its resident process until it had been idle for 30 minutes, including short-lived task children. A fan-out of about 20 children therefore held about 20 Claude Code processes, several GB, for up to 30 minutes after they finished. Main sessions keep the 30-minute TTL and warm `delta` turns. Only the idle cap can retire one early, and its next turn reattaches with `resume`.
+
+### Why an extension could not handle it
+
+- This is the builtin's own resident registry and lifecycle wiring.
+
+### Expected merge conflict zones
+
+- MEDIUM: `getOrCreate`, `recordUse` and `evictExpired` in `session-registry.ts`, and the reaper `candidate`/`fire` pair.
+- LOW: the end of `registerSessionRegistry` in `session-registry-wiring.ts`; the reason lists in `session-observability.ts`.
+
 ## 2026-11-03 - A thinking block bound to a different conversation is a typed invalid_request failure (senpi#5587)
 
 ### What changed

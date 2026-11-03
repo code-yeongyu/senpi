@@ -17,6 +17,15 @@ import {
 
 export const SESSION_REGISTRY_IDLE_TTL_MS = 30 * 60_000;
 export const SESSION_REGISTRY_MAX_ENTRIES = 32;
+/** Idle resident processes one senpi process keeps; in-use entries never count against it (senpi#5689). */
+export const SESSION_REGISTRY_MAX_IDLE_ENTRIES = 8;
+export const SESSION_REGISTRY_MAX_IDLE_ENV = "SENPI_CLAUDE_SDK_OAUTH_MAX_IDLE_SESSIONS";
+
+export function resolveMaxIdleEntries(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env[SESSION_REGISTRY_MAX_IDLE_ENV]?.trim();
+	const parsed = raw && /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+	return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : SESSION_REGISTRY_MAX_IDLE_ENTRIES;
+}
 
 export interface SessionInputController extends AsyncIterable<SDKUserMessage> {
 	push(message: SDKUserMessage): void;
@@ -57,6 +66,7 @@ export type SessionRegistryBoundary = {
 	now: () => number;
 	queryFactory: SdkQuery;
 	scheduleReap: (callback: () => void, delayMs: number) => SessionRegistryReapHandle;
+	maxIdleEntries: () => number;
 };
 
 const defaultSessionRegistryBoundary: SessionRegistryBoundary = {
@@ -66,6 +76,7 @@ const defaultSessionRegistryBoundary: SessionRegistryBoundary = {
 		const timer = setTimeout(callback, delayMs);
 		return { cancel: () => clearTimeout(timer), unref: () => timer.unref() };
 	},
+	maxIdleEntries: () => resolveMaxIdleEntries(),
 };
 let activeSessionRegistryBoundary = defaultSessionRegistryBoundary;
 
@@ -107,6 +118,11 @@ export interface AnthropicSubscriptionSessionEntry {
 	lastUsedAt: number;
 	/** Digest of the access token the resident subprocess was spawned with. */
 	credentialDigest?: string;
+	/**
+	 * Close cause once the entry is idle, set when its session's run settled and it should not stay
+	 * resident (a finished child, senpi#5689). The entry then has a zero idle TTL instead of 30 minutes.
+	 */
+	releaseOnIdle?: string;
 }
 
 export interface CreateSessionRegistryEntryInput {
@@ -153,6 +169,10 @@ function evictable(entry: AnthropicSubscriptionSessionEntry): boolean {
 	return (entry.state === "IDLE_SYNCED" || entry.state === "TAINTED") && entry.activeTurn === null;
 }
 
+function idleTtlMs(entry: AnthropicSubscriptionSessionEntry): number {
+	return entry.releaseOnIdle === undefined ? SESSION_REGISTRY_IDLE_TTL_MS : 0;
+}
+
 export class AnthropicSubscriptionSessionRegistry {
 	private readonly entries = new Map<string, AnthropicSubscriptionSessionEntry>();
 	/**
@@ -171,9 +191,10 @@ export class AnthropicSubscriptionSessionRegistry {
 		candidate: (senpiSessionId, generation) => {
 			const entry = this.entries.get(senpiSessionId);
 			if (!entry || entry.generation !== generation || !evictable(entry)) return undefined;
-			return { generation: entry.generation, lastUsedAt: entry.lastUsedAt };
+			return { generation: entry.generation, lastUsedAt: entry.lastUsedAt, idleTtlMs: idleTtlMs(entry) };
 		},
-		expire: (senpiSessionId) => this.closeSession(senpiSessionId, "idle_ttl"),
+		expire: (senpiSessionId) =>
+			this.closeSession(senpiSessionId, this.entries.get(senpiSessionId)?.releaseOnIdle ?? "idle_ttl"),
 	});
 
 	get size(): number {
@@ -189,12 +210,16 @@ export class AnthropicSubscriptionSessionRegistry {
 		if (existing) {
 			const now = activeSessionRegistryBoundary.now();
 			if (!evictable(existing) || now - existing.lastUsedAt < SESSION_REGISTRY_IDLE_TTL_MS) {
+				// A new turn before a pending release fires keeps the warm process; the run's own settle
+				// releases it again.
+				existing.releaseOnIdle = undefined;
 				this.touch(existing);
 				return existing;
 			}
 			this.closeSession(existing.senpiSessionId, "idle_ttl");
 		}
 		this.evictExpired();
+		this.trimIdle();
 		this.ensureCapacity();
 		const now = activeSessionRegistryBoundary.now();
 		const generation = ++this.generationCounter;
@@ -271,6 +296,17 @@ export class AnthropicSubscriptionSessionRegistry {
 		}
 	}
 
+	/**
+	 * Retire the entry's resident process as soon as it is idle: now when it already is, otherwise
+	 * through the generation-fenced reaper right after its in-flight turn goes idle. Never cuts a turn.
+	 */
+	releaseWhenIdle(senpiSessionId: string, reason: string): void {
+		const entry = this.entries.get(senpiSessionId);
+		if (!entry) return;
+		entry.releaseOnIdle = reason;
+		if (evictable(entry)) this.closeSession(senpiSessionId, reason);
+	}
+
 	isCurrentGeneration(senpiSessionId: string, generation: number): boolean {
 		return this.entries.get(senpiSessionId)?.generation === generation;
 	}
@@ -278,8 +314,8 @@ export class AnthropicSubscriptionSessionRegistry {
 	evictExpired(): void {
 		const now = activeSessionRegistryBoundary.now();
 		for (const entry of [...this.entries.values()]) {
-			if (evictable(entry) && now - entry.lastUsedAt >= SESSION_REGISTRY_IDLE_TTL_MS) {
-				this.closeSession(entry.senpiSessionId, "idle_ttl");
+			if (evictable(entry) && now - entry.lastUsedAt >= idleTtlMs(entry)) {
+				this.closeSession(entry.senpiSessionId, entry.releaseOnIdle ?? "idle_ttl");
 			}
 		}
 	}
@@ -288,7 +324,24 @@ export class AnthropicSubscriptionSessionRegistry {
 		if (this.entries.get(entry.senpiSessionId) !== entry) return;
 		entry.lastUsedAt = activeSessionRegistryBoundary.now();
 		this.reaper.cancel(entry.senpiSessionId, entry.generation);
-		if (scheduleReap) this.reaper.arm(entry.senpiSessionId, entry.generation);
+		if (!scheduleReap) return;
+		this.reaper.arm(entry.senpiSessionId, entry.generation, idleTtlMs(entry));
+		this.trimIdle(entry);
+	}
+
+	/**
+	 * Close least-recently-used idle entries beyond the idle cap; in-use entries are never candidates.
+	 * `settling` is the entry whose turn just cleared: the pump moves it to IDLE_SYNCED right after,
+	 * so it counts as idle here but is never the victim.
+	 */
+	private trimIdle(settling?: AnthropicSubscriptionSessionEntry): void {
+		const idle = [...this.entries.values()]
+			.filter((entry) => entry !== settling && evictable(entry))
+			.sort((left, right) => left.lastUsedAt - right.lastUsedAt);
+		const settlingCounts =
+			settling !== undefined && (evictable(settling) || settling.state === "TURN_RESULT_SEEN") ? 1 : 0;
+		const excess = idle.length + settlingCounts - activeSessionRegistryBoundary.maxIdleEntries();
+		for (const entry of idle.slice(0, Math.max(0, excess))) this.closeSession(entry.senpiSessionId, "idle_cap");
 	}
 
 	private ensureCapacity(): void {
@@ -313,6 +366,10 @@ export function getSession(senpiSessionId: string): AnthropicSubscriptionSession
 
 export function closeSession(senpiSessionId: string, reason: string): void {
 	sessionRegistry.closeSession(senpiSessionId, reason);
+}
+
+export function releaseSessionWhenIdle(senpiSessionId: string, reason: string): void {
+	sessionRegistry.releaseWhenIdle(senpiSessionId, reason);
 }
 
 export function isIdleExpired(entry: Pick<AnthropicSubscriptionSessionEntry, "lastUsedAt">): boolean {
