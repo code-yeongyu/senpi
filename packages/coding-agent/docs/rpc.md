@@ -425,7 +425,7 @@ Set the order, or clear it with `names: null`:
 
 #### account_reset
 
-Unblock one account using its immutable name:
+Unblock one account using its immutable name. Hosts that answer it advertise `account_reset` in `get_protocol_info`.
 
 ```json
 {"id": "reset1", "type": "account_reset", "provider": "openai", "name": "work"}
@@ -452,7 +452,7 @@ health stores are written sequentially, not as a cross-file transaction.
 `RpcClient.resetProviderAccount(provider, name)` awaits acknowledgement and rejects
 with `RpcCommandError` on failure.
 
-This command is additive. Older hosts reject it as unknown; the typed client rejects
+This command is additive. Older hosts do not advertise `account_reset` and reject it as unknown; the typed client rejects
 that response rather than reporting success. Existing account listings without
 optional block reason or expiry fields remain readable.
 
