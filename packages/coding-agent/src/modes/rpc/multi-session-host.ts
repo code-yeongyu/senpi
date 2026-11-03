@@ -63,6 +63,7 @@ import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 import { McpPresenterControl } from "./mcp-presenter-control.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
+import type { HeadlessPresence } from "../headless/presence.ts";
 
 export interface MultiSessionHostOptions {
 	/** Host deployment policy; never derived from client capabilities or project settings. */
@@ -88,6 +89,8 @@ export interface MultiSessionHostOptions {
 	 * an explicit `false` is honored) and never exits for being empty.
 	 */
 	sessionOwner?: "client" | "machine";
+	/** Set only by a headless host with a presence binding (`modes/headless`): rows and opens carry presence. */
+	sessionPresence?: HeadlessPresence;
 }
 
 export {
