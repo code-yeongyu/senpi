@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-11-03 - Format with bun fmt instead of oxfmt (senpi#5573)
+
+### What changed
+
+- `package.json`: `fmt` and `fmt:check` run `node scripts/bun-fmt.mjs` (`bun fmt --no-script`, with `--check` for the gate) in place of `oxfmt`; the `oxfmt` devDependency is removed.
+
+### Why
+
+- Bun 1.4.4, already pinned in CI, formats with the same `.oxfmtrc.json` and produced byte-identical output on all 7,965 files, 2.4x faster (senpi#5572).
+
+### Why an extension could not handle it
+
+- Repository scripts and dev dependencies are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the `fmt` / `fmt:check` script lines and the devDependencies block of the root `package.json`.
+
 ## 2026-10-31 - Drop findSlot from knip's pre-existing unused exports (part of senpi#4600)
 
 ### What changed
