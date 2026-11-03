@@ -55,7 +55,7 @@ function isReply(record: object): record is { type: "response"; id?: unknown; co
  * The typed answer that replaces a reply that could not be written (senpi#5702): same `id` and `command`, so the caller
  * is answered instead of waiting for a line that never comes.
  */
-export function unwritableReply(record: { id?: unknown; command?: unknown }, cause: unknown): object {
+function unwritableReply(record: { id?: unknown; command?: unknown }, cause: unknown): object {
 	const command = typeof record.command === "string" ? record.command : "unknown";
 	return {
 		...(typeof record.id === "string" || typeof record.id === "number" ? { id: record.id } : {}),
