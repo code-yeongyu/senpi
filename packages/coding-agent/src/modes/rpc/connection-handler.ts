@@ -37,6 +37,7 @@ import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
+import { CredentialAccountNotFoundError, resetCredentialAccount } from "../../core/credential-account-reset.ts";
 import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
@@ -790,6 +791,10 @@ export function createRpcConnectionHandler(
 				method: "setTitle",
 				title,
 			} as RpcExtensionUIRequest);
+		},
+
+		setProgramStatus(): void {
+			// OSC 7501 is a terminal report; an RPC session owns no terminal, so it sends no frame.
 		},
 
 		async custom() {
@@ -2171,7 +2176,9 @@ export function createRpcConnectionHandler(
 						...(origin === undefined ? {} : { origin }),
 					};
 				});
-				return success(id, "get_auth_providers", { providers });
+				// Read after the rows: building them re-reads a store that failed to load (#4413).
+				const storeError = modelRegistry.authStorage.getLoadError();
+				return success(id, "get_auth_providers", { providers, ...(storeError ? { storeError } : {}) });
 			}
 
 			case "login_start": {
@@ -2257,6 +2264,26 @@ export function createRpcConnectionHandler(
 						return error(id, "test_provider_account", testError.code);
 					throw testError;
 				}
+			}
+
+			case "account_reset": {
+				if (typeof command.provider !== "string" || typeof command.name !== "string") {
+					return error(id, "account_reset", "provider and name must be strings", "invalid_argument");
+				}
+				try {
+					await resetCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
+				} catch (resetError: unknown) {
+					if (resetError instanceof CredentialAccountNotFoundError) {
+						return error(
+							id,
+							"account_reset",
+							"Provider account not found. Refresh the account list.",
+							resetError.code,
+						);
+					}
+					return error(id, "account_reset", "Could not reset this account. Try again.", "account_reset_failed");
+				}
+				return success(id, "account_reset");
 			}
 
 			case "account_order": {

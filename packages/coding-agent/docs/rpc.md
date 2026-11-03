@@ -423,6 +423,39 @@ Set the order, or clear it with `names: null`:
 
 `names` may name a subset; accounts it leaves out come after it. The command fails without changing anything when a name is not one of the provider's accounts, appears twice, or the list is empty, and when the provider has no stored credential (the order is kept beside the pin in `auth.json`). Removing an account drops it from the order. Success emits `auth_accounts_changed`. Only account names cross RPC, never credential material.
 
+#### account_reset
+
+Unblock one account using its immutable name:
+
+```json
+{"id": "reset1", "type": "account_reset", "provider": "openai", "name": "work"}
+```
+
+```json
+{"id": "reset1", "type": "response", "command": "account_reset", "success": true}
+```
+
+The response is correlated by `id` and sent only after the engine operation settles.
+Success reuses `auth_accounts_changed { provider }`; reread `get_provider_accounts` for
+the authoritative state. This uses the same full reset as `/account <provider> reset <name>`:
+the named account's pool sidecar health, provider-stored `blockReason`, `blockedUntil`,
+`modelBlocks` and `slotState` are cleared. Credentials, names, display names, pins,
+ordering and all unrelated accounts are preserved. Stored and environment account
+selectors match the listing. It clears local health state, not a provider limit or
+rejected sign-in; the next request may block the account again.
+
+An unknown name returns `success: false` with `errorCode: "account_not_found"` and
+does not mutate accounts or publish a change notice. Invalid selector types return
+`invalid_argument`. A failed write returns `account_reset_failed` with a credential-free
+message, never a success notice. The two
+health stores are written sequentially, not as a cross-file transaction.
+`RpcClient.resetProviderAccount(provider, name)` awaits acknowledgement and rejects
+with `RpcCommandError` on failure.
+
+This command is additive. Older hosts reject it as unknown; the typed client rejects
+that response rather than reporting success. Existing account listings without
+optional block reason or expiry fields remain readable.
+
 #### test_provider_account
 
 Re-run the sign-in connection test on one Claude subscription account, for example to retry a failed `check`. Hosts that answer it advertise `provider_account_test` in `get_protocol_info`.
@@ -2555,6 +2588,11 @@ Auto-generated session titles are on by default only for interactive launches. A
 keeps the host-wide default (`--auto-title-sessions` or the `auto_title_sessions` client capability). Probe
 `auto_title_per_session` in `get_protocol_info` before relying on the field; an older host ignores it. A non-boolean is
 refused with `invalid_launch_profile`. Sessions resumed with existing context messages are never retitled.
+
+The title is generated as part of the settle of the prompt's run: the title request follows that run's last model
+request, and its `session_info_changed` is emitted after the run's `agent_end` and before its `agent_settled` and
+`agent_idle`, so it precedes anything a client or a background job does once the session is idle. A run that is aborted
+(Esc, Stop, `abort`) is not titled; the next prompt's run titles the session instead.
 
 `--auto-title-sessions` still opts every session on that host into titling when `auto_title` is omitted. It is
 deprecated for multi-session hosts — prefer per-session `open_session.auto_title` so two clients on one daemon do not collide
@@ -5862,6 +5900,13 @@ A turn consists of one assistant response plus any resulting tool calls and resu
 
 Emitted when a message begins and completes. The `message` field contains an `AgentMessage`.
 
+An assistant message's `diagnostics` also carries recovery notices. For
+`claude_sdk_oauth_long_context_fallback`, `details.contextWindow` is `200000`
+and `details.message` is displayable notice text. Render it as a muted notice
+for that turn, alongside any session-continuity notice, rather than as an error.
+The fallback applies only to that request; it does not change the selected
+model or its default 1M window. Saved assistant messages retain the diagnostic.
+
 ```json
 {"type": "message_start", "message": {...}}
 {"type": "message_end", "message": {...}}
@@ -6301,6 +6346,8 @@ A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"gl
 ```
 
 A provider holds logins of one kind. If it had an OAuth login, the key replaces it: `auth.json` is backed up first, and the response `data` is `{replaced: "oauth", backupPath?}`, where `backupPath` is absent when the credential store is not a file (a failed backup fails the login instead). A key added over another key has no `data`.
+
+When `auth.json` exists but cannot be loaded, `get_auth_providers` `data` also carries `storeError` `{kind, reason}`. `kind` is `malformed_json` (not valid JSON), `invalid_format` (the document is not a JSON object), `unreadable` (the file cannot be read, for example a permission error) or `write_back_failed` (the file was read, but saving its repaired or migrated copy failed; the sign-ins it read stay configured and writes are not refused for this kind). `reason` is a short message that never includes the file's path or contents. While `storeError` has any other kind, a stored sign-in reads as unconfigured because it could not be read, not because it is missing (a store that loaded earlier in the process keeps its last loaded sign-ins). Every write, such as `login_api_key`, a login, or `logout`, fails and leaves the file unchanged. A client should say the sign-in store could not be read and ask the user to repair or move `auth.json`. The next `get_auth_providers` after the file becomes readable no longer has `storeError`. A store that is only locked by another writer is not a `storeError`.
 
 `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a literal key the app stored when it is at least 12 characters long. OAuth rows, `!command` and `$ENV` references, and short keys have none.
 
