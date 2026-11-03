@@ -1,5 +1,6 @@
 import { CharCode, FixedRing, isAsciiWhitespace, type ScalarEntry } from "../stream-utils.ts";
 import type { DetectorMatch } from "../types.ts";
+import { ParagraphNovelty } from "./collapse-novelty.ts";
 import { isAsciiAlphanumeric, isBoxDrawing } from "./collapse-scalars.ts";
 
 export const PARAGRAPH_MIN_CHARS = 64;
@@ -37,6 +38,8 @@ export interface ParagraphRepeatState {
 	wordChars: number;
 	startOffset: number;
 	retained: string;
+	readonly novelty: ParagraphNovelty;
+	lastNovelOffset: number;
 }
 
 export function createParagraphRepeatState(): ParagraphRepeatState {
@@ -55,6 +58,8 @@ export function createParagraphRepeatState(): ParagraphRepeatState {
 		wordChars: 0,
 		startOffset: 0,
 		retained: "",
+		novelty: new ParagraphNovelty(),
+		lastNovelOffset: -1,
 	};
 }
 
@@ -71,6 +76,7 @@ function completeParagraph(state: ParagraphRepeatState): DetectorMatch | null {
 		text: state.retained.length > 0 ? state.retained : undefined,
 	};
 	const eligible = state.length >= PARAGRAPH_MIN_CHARS && state.wordChars >= PARAGRAPH_MIN_WORD_CHARS;
+	if (state.novelty.observe(state.retained)) state.lastNovelOffset = state.startOffset;
 	state.hashA = HASH_A_OFFSET;
 	state.hashB = HASH_B_OFFSET;
 	state.length = 0;
@@ -78,17 +84,20 @@ function completeParagraph(state: ParagraphRepeatState): DetectorMatch | null {
 	state.startOffset = 0;
 	state.retained = "";
 	if (!eligible) return null;
-	// Oldest -> newest, so `first` is the earliest occurrence and `second` the first repeat.
-	let occurrences = 1;
-	let first: ParagraphEntry | undefined;
-	let second: ParagraphEntry | undefined;
-	for (let back = state.ring.size - 1; back >= 0; back--) {
+	// A loop writes nothing new between its repeats. Only the occurrences after the message last wrote a new
+	// paragraph count, plus the one occurrence just before it that they repeat: a template restated under a new
+	// recipient line each time starts over at every recipient (omo#12213). `chain` runs newest -> oldest, so its
+	// last entry is the repeated occurrence and the one before it the first repeat.
+	const chain: ParagraphEntry[] = [];
+	for (let back = 0; back < state.ring.size; back++) {
 		const previous = state.ring.getBack(back);
 		if (previous === undefined || !isSameParagraph(previous, paragraph)) continue;
-		occurrences += 1;
-		if (first === undefined) first = previous;
-		else if (second === undefined) second = previous;
+		chain.push(previous);
+		if (previous.startOffset <= state.lastNovelOffset) break;
 	}
+	const occurrences = chain.length + 1;
+	const first = chain[chain.length - 1];
+	const second = chain[chain.length - 2];
 	state.ring.push(paragraph);
 	if (occurrences < PARAGRAPH_REPEAT_THRESHOLD || first === undefined || second === undefined) return null;
 	return {
