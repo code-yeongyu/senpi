@@ -42,6 +42,13 @@ export interface OutstandingCall {
 	readonly progress: ValueRef | null;
 	readonly result: ValueRef | null;
 	readonly outcome: CallOutcome | null;
+	/**
+	 * #5348 (RULING-123 C3.4): present while another call of this call's own message holds the same `toolCallId`. The
+	 * per-id records that move a call (execution, hook, carrier) name only the `toolCallId`, so the reducer picked one
+	 * of those calls by order: the call itself and its announcement are exact, but its phase, start, hook, progress,
+	 * result, outcome, carrier and nested calls may belong to the other one. Absent on every other call.
+	 */
+	readonly callUnknown?: true;
 }
 
 /** The persisted form a settled toolResult row carries once its call retired (R3.C3.3, RULING-13 Q2/Q5). */
@@ -60,6 +67,8 @@ export interface CallProjection {
 	readonly startSequence: number | null;
 	readonly startedAtMs: number | null;
 	readonly outcome: CallOutcome | null;
+	/** The retired call's `callUnknown` mark (#5348): its outcome, carrier and nested calls were attributed by order. */
+	readonly callUnknown?: true;
 	/**
 	 * `omitted` counts completed children a projecting path left out (RULING-49). It is 0 whenever paging is complete:
 	 * the settled store pages every completed child instead of capping it (RULING-60 Q3, RULING-67 (1)), and no producer
@@ -128,6 +137,7 @@ export function runtimeItemKey(scope: CallScope, creationSequence: number, k: nu
  * `calls` entry and its settled projection carry: opaque, fixed for the call's lifetime, and never reused in the session
  * (it embeds the epoch and the creation sequence, so it alone is unique, even when providers reuse a `toolCallId`).
  * `callUnknown`: the host changed no call with this record, so it cannot vouch for one (RULING-122's fail-safe rule).
+ * The snapshot rows of calls sharing a `toolCallId` inside their message carry it too (`OutstandingCall.callUnknown`).
  */
 export type CallIdentity = { readonly runtimeItemKey: string } | { readonly callUnknown: true };
 

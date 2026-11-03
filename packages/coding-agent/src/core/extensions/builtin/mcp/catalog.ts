@@ -9,10 +9,10 @@ import { collectAllPages } from "./expose/pagination.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import type { McpEnsureFreshAuth } from "./health.ts";
 import type { McpInvocationResolver } from "./invocation.ts";
-import type { McpRequestOrigin } from "./request-origin.ts";
+import type { McpRequestOriginFor } from "./request-origin.ts";
 
 export interface McpToolCatalogEntry {
-	requestOrigin?: () => McpRequestOrigin | undefined;
+	requestOrigin?: McpRequestOriginFor;
 	server: string;
 	tool: string;
 	schema: ListedTool["inputSchema"];
