@@ -13,6 +13,7 @@ const SDK_KIND_DIAGNOSTICS: Partial<
 	Record<SdkErrorKind, { readonly category: ProviderDiagnosticCategory; readonly code: string }>
 > = {
 	auth_error: { category: "auth", code: "authentication_error" },
+	login_unreadable: { category: "auth", code: "authentication_error" },
 	rate_limit: { category: "rate_limit", code: "rate_limit_error" },
 	overloaded: { category: "provider_unavailable", code: "overloaded_error" },
 	billing: { category: "unknown", code: "billing_error" },
