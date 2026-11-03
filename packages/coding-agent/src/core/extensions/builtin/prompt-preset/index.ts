@@ -1,4 +1,4 @@
-import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
+import type { BuildDynamicSystemPromptOptions, FullToolPrompt } from "../../../dynamic-prompt/build.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type {
 	BeforeAgentStartEvent,
@@ -8,7 +8,8 @@ import type {
 	ExtensionHandler,
 	ModelSelectEvent,
 } from "../../types.ts";
-import { resolvePreset, resolvePresetName } from "./presets.ts";
+import { resolveActivePresetName } from "./active-preset.ts";
+import { resolvePreset } from "./presets.ts";
 import { loadPromptPresetSettings } from "./settings.ts";
 
 interface SystemPromptOptionsLike {
@@ -16,6 +17,7 @@ interface SystemPromptOptionsLike {
 	selectedTools?: string[];
 	toolSnippets?: Record<string, string>;
 	promptGuidelines?: string[];
+	fullToolPrompt?: FullToolPrompt;
 	contextFiles?: Array<{ path: string; content: string }>;
 	skills?: BuildDynamicSystemPromptOptions["skills"];
 	surface?: BuildDynamicSystemPromptOptions["surface"];
@@ -35,6 +37,7 @@ function eventOptionsToBuilderInput(
 		selectedTools: options.selectedTools,
 		toolSnippets: options.toolSnippets,
 		promptGuidelines: options.promptGuidelines,
+		fullToolPrompt: options.fullToolPrompt,
 		contextFiles: options.contextFiles,
 		skills: options.skills,
 		surface: options.surface,
@@ -46,14 +49,7 @@ function getSettings(ctx: ExtensionContext): ReturnType<typeof loadPromptPresetS
 }
 
 function getPresetName(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): string | undefined {
-	const model = event?.model ?? ctx.model;
-	if (!model) {
-		return undefined;
-	}
-	if (hasUserSystemPrompt(ctx.getSystemPromptOptions?.())) {
-		return undefined;
-	}
-	return resolvePresetName(model, getSettings(ctx));
+	return resolveActivePresetName(ctx, event?.model ?? ctx.model);
 }
 
 function hasUserSystemPrompt(options: SystemPromptOptionsLike | undefined): boolean {

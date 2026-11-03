@@ -3906,7 +3906,8 @@
          "path": "out/x1.txt",
          "text": "x1\n",
          "barrier": "veto-1"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        },
        {
         "type": "toolCall",
@@ -3916,7 +3917,8 @@
          "path": "out/x2.txt",
          "text": "x2\n",
          "barrier": "veto-2"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:1"
        },
        {
         "type": "toolCall",
@@ -3926,7 +3928,8 @@
          "path": "out/x3.txt",
          "text": "x3\n",
          "barrier": "veto-3"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:2"
        }
       ],
       "api": "openai-completions",
@@ -3977,7 +3980,8 @@
       "details": {},
       "isError": true,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -3997,7 +4001,8 @@
       "details": {},
       "isError": true,
       "timestamp": "<ts:message.timestamp:4>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:1"
     },
     {
      "type": "message",
@@ -4017,7 +4022,8 @@
       "details": {},
       "isError": true,
       "timestamp": "<ts:message.timestamp:5>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:2"
     },
     {
      "type": "custom",
