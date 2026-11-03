@@ -311,7 +311,8 @@ export function createShellToolDefinition(
 			onUpdate?,
 			ctx?: ExtensionContext,
 		) {
-			await machine.begin("process.exec", { command, timeout }, signal);
+			const admitted = machine.begin("process.exec", { command, timeout }, signal);
+			if (admitted !== undefined) await admitted;
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(
 				resolvedCommand,

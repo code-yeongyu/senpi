@@ -167,7 +167,8 @@ export function createEditToolDefinition(
 		prepareArguments: prepareEditArguments,
 		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionContext) {
 			const { path, edits } = validateEditInput(input);
-			await machine.begin("files.edit", { path, edits }, signal);
+			const admitted = machine.begin("files.edit", { path, edits }, signal);
+			if (admitted !== undefined) await admitted;
 			const ops = options?.operations ?? machineEditOperations(machine, signal);
 			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
 

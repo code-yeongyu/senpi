@@ -104,7 +104,8 @@ export function createLsToolDefinition(
 
 				(async () => {
 					try {
-						await machine.begin("files.list", { path, limit }, signal);
+						const admitted = machine.begin("files.list", { path, limit }, signal);
+						if (admitted !== undefined) await admitted;
 						const ops = options?.operations ?? machineLsOperations(machine, signal);
 						const dirPath = resolveToCwd(path || ".", ctx?.cwd || cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;

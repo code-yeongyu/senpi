@@ -80,7 +80,8 @@ export function createWriteToolDefinition(
 			_onUpdate?,
 			ctx?: ExtensionContext,
 		) {
-			await machine.begin("files.write", { path, content }, signal);
+			const admitted = machine.begin("files.write", { path, content }, signal);
+			if (admitted !== undefined) await admitted;
 			const ops = options?.operations ?? machineWriteOperations(machine, signal);
 			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
 			const dir = dirname(absolutePath);

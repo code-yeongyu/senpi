@@ -133,7 +133,8 @@ export function createReadToolDefinition(
 
 					(async () => {
 						try {
-							await machine.begin("files.read", { path, offset, limit }, signal);
+							const admitted = machine.begin("files.read", { path, offset, limit }, signal);
+							if (admitted !== undefined) await admitted;
 							if (aborted) return;
 							const ops = customOps ?? machineReadOperations(machine, signal);
 							const absolutePath = await resolveReadPathAsync(path, ctx?.cwd || cwd);

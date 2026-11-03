@@ -103,7 +103,8 @@ export function createGrepToolDefinition(
 		async execute(_id, input, signal, _update, ctx) {
 			const started = Date.now();
 			if (!input.pattern) throw new Error("Pattern must not be empty");
-			await machine.begin("files.grep", input, signal);
+			const admitted = machine.begin("files.grep", input, signal);
+			if (admitted !== undefined) await admitted;
 			const requested = input.path === undefined ? ["."] : Array.isArray(input.path) ? input.path : [input.path];
 			if (!requested.length || requested.some((p) => typeof p !== "string" || !p.length))
 				throw new Error("path must be a non-empty string or array of non-empty strings");

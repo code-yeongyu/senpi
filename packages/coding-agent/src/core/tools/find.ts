@@ -115,7 +115,8 @@ export function createFindToolDefinition(
 
 				(async () => {
 					try {
-						await machine.begin("files.glob", { pattern, path: searchDir, limit }, signal);
+						const admitted = machine.begin("files.glob", { pattern, path: searchDir, limit }, signal);
+						if (admitted !== undefined) await admitted;
 						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd || cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						const ops = customOps ?? defaultFindOperations;

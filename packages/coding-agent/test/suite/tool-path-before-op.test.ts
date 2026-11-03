@@ -10,6 +10,9 @@ import { createAllToolDefinitions } from "../../src/core/tools/index.ts";
 
 type Call = { op: OpName; args: unknown };
 
+// The tools fall back to their factory cwd and skip session metadata when no extension context is passed.
+const NO_CONTEXT = undefined as never;
+
 function recordingPolicy(decide: (op: OpName) => PolicyDecision): { calls: Call[]; policy: PolicyHooks } {
 	const calls: Call[] = [];
 	return {
@@ -39,16 +42,16 @@ describe("tool path beforeOp (senpi#5592)", () => {
 		const { calls, policy } = recordingPolicy(() => ({ allow: true }));
 		const tools = createAllToolDefinitions(dir, { machinePolicy: policy });
 
-		await tools.read.execute("r", { path: "note.txt" }, undefined, undefined, undefined);
-		await tools.write.execute("w", { path: "new.txt", content: "fresh\n" }, undefined, undefined, undefined);
+		await tools.read.execute("r", { path: "note.txt" }, undefined, undefined, NO_CONTEXT);
+		await tools.write.execute("w", { path: "new.txt", content: "fresh\n" }, undefined, undefined, NO_CONTEXT);
 		await tools.edit.execute(
 			"e",
 			{ path: "note.txt", edits: [{ oldText: "alpha", newText: "beta" }] },
 			undefined,
 			undefined,
-			undefined,
+			NO_CONTEXT,
 		);
-		await tools.bash.execute("b", { command: "printf ran > ran.txt" }, undefined, undefined, undefined);
+		await tools.bash.execute("b", { command: "printf ran > ran.txt" }, undefined, undefined, NO_CONTEXT);
 
 		expect(calls.map((call) => call.op)).toEqual(["files.read", "files.write", "files.edit", "process.exec"]);
 		expect(readFileSync(join(dir, "new.txt"), "utf8")).toBe("fresh\n");
@@ -60,11 +63,11 @@ describe("tool path beforeOp (senpi#5592)", () => {
 		const { calls, policy } = recordingPolicy(() => ({ allow: false, reason: "denied by test policy" }));
 		const tools = createAllToolDefinitions(dir, { machinePolicy: policy });
 
-		await expect(tools.read.execute("r", { path: "note.txt" }, undefined, undefined, undefined)).rejects.toThrow(
+		await expect(tools.read.execute("r", { path: "note.txt" }, undefined, undefined, NO_CONTEXT)).rejects.toThrow(
 			"denied by test policy",
 		);
 		await expect(
-			tools.write.execute("w", { path: "new.txt", content: "fresh\n" }, undefined, undefined, undefined),
+			tools.write.execute("w", { path: "new.txt", content: "fresh\n" }, undefined, undefined, NO_CONTEXT),
 		).rejects.toThrow("denied by test policy");
 		await expect(
 			tools.edit.execute(
@@ -72,11 +75,11 @@ describe("tool path beforeOp (senpi#5592)", () => {
 				{ path: "note.txt", edits: [{ oldText: "alpha", newText: "beta" }] },
 				undefined,
 				undefined,
-				undefined,
+				NO_CONTEXT,
 			),
 		).rejects.toThrow("denied by test policy");
 		await expect(
-			tools.bash.execute("b", { command: "printf ran > ran.txt" }, undefined, undefined, undefined),
+			tools.bash.execute("b", { command: "printf ran > ran.txt" }, undefined, undefined, NO_CONTEXT),
 		).rejects.toThrow("denied by test policy");
 
 		expect(calls).toHaveLength(4);

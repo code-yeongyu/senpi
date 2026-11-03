@@ -44,10 +44,11 @@ export function defaultLocalMachineOps(): MachineOps {
 export interface ToolMachine {
 	readonly ops: MachineOps;
 	/**
-	 * Runs `PolicyHooks.beforeOp` once for one tool call and returns the context its sub-operations use (which carries
-	 * no second gate). A denial throws `Error(reason)` before any effect.
+	 * Runs `PolicyHooks.beforeOp` once for one tool call; a denial rejects with `Error(reason)` before any effect.
+	 * Without a `beforeOp` it returns undefined synchronously, so a tool that awaits only a returned promise keeps
+	 * its exact pre-layer timing (bash emits its first partial update before any await).
 	 */
-	begin(op: OpName, args: unknown, signal: AbortSignal | undefined): Promise<OpContext>;
+	begin(op: OpName, args: unknown, signal: AbortSignal | undefined): Promise<void> | undefined;
 	/** Context for a sub-operation inside a call `begin` already admitted. */
 	context(signal: AbortSignal | undefined, pathLock?: "caller"): OpContext;
 }
@@ -70,14 +71,13 @@ export function createToolMachine(options?: { ops?: MachineOps; policy?: PolicyH
 		get ops() {
 			return resolveOps();
 		},
-		async begin(op, args, signal) {
-			const beforeOp = options?.policy?.beforeOp;
-			const ctx = context(signal);
-			if (beforeOp !== undefined) {
-				const decision = await beforeOp(op, args, { ...ctx, policy: options?.policy ?? {} });
+		begin(op, args, signal) {
+			const policy = options?.policy;
+			const beforeOp = policy?.beforeOp;
+			if (beforeOp === undefined) return undefined;
+			return beforeOp(op, args, { ...context(signal), policy: policy ?? {} }).then((decision) => {
 				if (!decision.allow) throw new Error(decision.reason);
-			}
-			return ctx;
+			});
 		},
 		context,
 	};
