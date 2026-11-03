@@ -1,4 +1,6 @@
 import assert from "node:assert";
+import { once } from "node:events";
+import { Writable } from "node:stream";
 import { describe, it } from "node:test";
 import { ProcessTerminal } from "../src/terminal.ts";
 
@@ -10,7 +12,11 @@ interface GuardHarness {
 	cleanup(): void;
 }
 
-function setupGuardHarness(options?: { withHandler?: boolean; handler?: (text: string) => void }): GuardHarness {
+function setupGuardHarness(options?: {
+	withHandler?: boolean;
+	handler?: (text: string) => void;
+	write?: (text: string, callback?: (error?: Error | null) => void) => boolean;
+}): GuardHarness {
 	const writes: string[] = [];
 	const hidden: string[] = [];
 	const previousWrite = process.stdout.write;
@@ -24,8 +30,16 @@ function setupGuardHarness(options?: { withHandler?: boolean; handler?: (text: s
 	}
 	process.env.PI_TUI_KEYBOARD_PROTOCOL = "0";
 
-	const stubbedWrite = ((chunk: string | Uint8Array) => {
-		writes.push(String(chunk));
+	const stubbedWrite = ((
+		chunk: string | Uint8Array,
+		encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+		callback?: (error?: Error | null) => void,
+	) => {
+		const text = String(chunk);
+		writes.push(text);
+		const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+		if (options?.write) return options.write(text, cb);
+		cb?.(null);
 		return true;
 	}) as typeof process.stdout.write;
 	process.stdout.write = stubbedWrite;
@@ -65,6 +79,136 @@ function setupGuardHarness(options?: { withHandler?: boolean; handler?: (text: s
 }
 
 describe("ProcessTerminal external stdout guard", () => {
+	for (const payload of ["", "a", "ab", "abc", "h\u00e9llo\n\u4e16\u754c"]) {
+		for (const buffer of [false, true]) {
+			it(`delivers clipboard writes for ${JSON.stringify(payload)} as ${buffer ? "Buffer" : "string"}`, () => {
+				const harness = setupGuardHarness();
+				try {
+					harness.terminal.start(
+						() => {},
+						() => {},
+					);
+					harness.writes.length = 0;
+					const frame = `\x1b]52;c;${Buffer.from(payload).toString("base64")}\x07`;
+
+					process.stdout.write(buffer ? Buffer.from(frame) : frame);
+
+					assert.deepEqual(harness.writes, [frame]);
+					assert.deepEqual(harness.hidden, []);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		}
+	}
+
+	for (const text of [
+		"visible\x1b]52;c;YQ==\x07",
+		"\x1b]52;c;YQ==\x07visible",
+		"\x1b]52;c;YQ==\x07\n",
+		"\x1b]52;c;?\x07",
+		"\x1b]52;c;YQ==",
+		"\x1b]52;c;not base64\x07",
+		"ordinary external stdout\n",
+	]) {
+		it(`hides non-clipboard-only output ${JSON.stringify(text)}`, () => {
+			const harness = setupGuardHarness();
+			try {
+				harness.terminal.start(
+					() => {},
+					() => {},
+				);
+				harness.writes.length = 0;
+
+				process.stdout.write(text);
+
+				assert.deepEqual(harness.writes, []);
+				assert.deepEqual(harness.hidden, [text]);
+			} finally {
+				harness.cleanup();
+			}
+		});
+	}
+
+	for (const encoding of [undefined, "utf8"] as const) {
+		it(`preserves clipboard writer completion and backpressure with encoding ${encoding}`, async () => {
+			const frame = "\x1b]52;c;YQ==\x07";
+			let complete: ((error?: Error | null) => void) | undefined;
+			const sink = new Writable({
+				highWaterMark: 1,
+				write(chunk, _encoding, callback) {
+					if (String(chunk) === frame) complete = callback;
+					else callback();
+				},
+			});
+			const harness = setupGuardHarness({ write: (text, cb) => sink.write(text, cb) });
+			try {
+				harness.terminal.start(
+					() => {},
+					() => {},
+				);
+				let acknowledged = false;
+				const drained = once(sink, "drain", { signal: AbortSignal.timeout(1000) }).then(
+					(events) => events,
+					(error: unknown) => error,
+				);
+				const callback = (error?: Error | null) => {
+					assert.ifError(error);
+					acknowledged = true;
+				};
+
+				const accepted = encoding
+					? process.stdout.write(frame, encoding, callback)
+					: process.stdout.write(frame, callback);
+
+				assert.equal(accepted, false);
+				assert.equal(acknowledged, false);
+				assert.ok(complete);
+				complete();
+				assert.deepEqual(await drained, []);
+				assert.equal(acknowledged, true);
+			} finally {
+				harness.cleanup();
+				sink.destroy();
+			}
+		});
+	}
+
+	it("delivers the underlying clipboard writer error without an early success callback", async () => {
+		const frame = "\x1b]52;c;YQ==\x07";
+		const failure = new Error("clipboard stream failed");
+		let complete: ((error?: Error | null) => void) | undefined;
+		const sink = new Writable({
+			write(chunk, _encoding, callback) {
+				if (String(chunk) === frame) complete = callback;
+				else callback();
+			},
+		});
+		const harness = setupGuardHarness({ write: (text, cb) => sink.write(text, cb) });
+		try {
+			harness.terminal.start(
+				() => {},
+				() => {},
+			);
+			const errors = once(sink, "error", { signal: AbortSignal.timeout(1000) }).then(
+				(events) => events,
+				(error: unknown) => error,
+			);
+			const acknowledgments: (Error | null | undefined)[] = [];
+
+			process.stdout.write(frame, (error) => acknowledgments.push(error));
+
+			assert.deepEqual(acknowledgments, []);
+			assert.ok(complete);
+			complete(failure);
+			assert.deepEqual(await errors, [failure]);
+			assert.deepEqual(acknowledgments, [failure]);
+		} finally {
+			harness.cleanup();
+			sink.destroy();
+		}
+	});
+
 	it("hides external stdout writes while started and forwards them to the handler", () => {
 		const harness = setupGuardHarness();
 		try {
