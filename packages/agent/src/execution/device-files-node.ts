@@ -1,5 +1,5 @@
-import type { Stats } from "node:fs";
-import { lstat, mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { type FileHandle, lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DeviceFileError, type DeviceFiles, type DeviceFileStat, FILE_CHANNEL_MAX_BYTES } from "./device-files.ts";
 
@@ -9,7 +9,7 @@ function deviceError(error: unknown, path: string): DeviceFileError {
 	const message = error instanceof Error ? error.message : String(error);
 	if (code === "ENOENT") return new DeviceFileError("not_found", path);
 	if (code === "EEXIST") return new DeviceFileError("exists", path);
-	if (code === "EISDIR" || code === "ENOTDIR") return new DeviceFileError("not_a_file", path);
+	if (code === "EISDIR" || code === "ENOTDIR" || code === "ENXIO") return new DeviceFileError("not_a_file", path);
 	if (code === "ABORT_ERR") return new DeviceFileError("aborted", path);
 	return new DeviceFileError("io", message);
 }
@@ -23,11 +23,25 @@ async function guarded<T>(path: string, signal: AbortSignal | undefined, run: ()
 	}
 }
 
-/** Reads at most the channel limit: a file that grows past it while being read is refused, never shipped in full. */
-async function readBounded(path: string, signal: AbortSignal | undefined): Promise<Uint8Array> {
-	const handle = await open(path, "r");
+/**
+ * Opens a regular file only. The open never blocks (a named pipe with no peer would hold it, and a worker thread,
+ * forever), and the type is checked on the opened descriptor, so nothing can swap the path in between.
+ */
+async function openRegular(path: string, flags: number): Promise<FileHandle> {
+	const handle = await open(path, flags | constants.O_NONBLOCK, 0o666);
 	try {
 		if (!(await handle.stat()).isFile()) throw new DeviceFileError("not_a_file", path);
+		return handle;
+	} catch (error) {
+		await handle.close();
+		throw error;
+	}
+}
+
+/** Reads at most the channel limit: a file that grows past it while being read is refused, never shipped in full. */
+async function readBounded(path: string, signal: AbortSignal | undefined): Promise<Uint8Array> {
+	const handle = await openRegular(path, constants.O_RDONLY);
+	try {
 		const chunks: Uint8Array[] = [];
 		let total = 0;
 		for (;;) {
@@ -68,7 +82,15 @@ export function localDeviceFiles(): DeviceFiles {
 			guarded(path, options?.signal, async () => {
 				if (data.byteLength > FILE_CHANNEL_MAX_BYTES) throw new DeviceFileError("too_large", path);
 				await mkdir(dirname(path), { recursive: true });
-				await writeFile(path, data, { flag: options?.exclusive ? "wx" : "w" });
+				const handle = await openRegular(
+					path,
+					constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (options?.exclusive ? constants.O_EXCL : 0),
+				);
+				try {
+					await handle.writeFile(data);
+				} finally {
+					await handle.close();
+				}
 			}),
 		list: (path, options) => guarded(path, options?.signal, () => readdir(path)),
 		stat: (path, options) => guarded(path, options?.signal, async () => statOf(await lstat(path))),

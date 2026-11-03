@@ -1,7 +1,8 @@
 // senpi#5645 (S40, brain/hand split): the hand file channel refuses everything the design rules out: a forged tool
 // call, a handler block, an oversized write, a hand without the channel, a grant that is not `execute`, and a grant
 // revoked while a read runs, which ships no bytes.
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
+import { symlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	createGrantVerifier,
@@ -109,6 +110,38 @@ describe("the hand file channel refuses what the design rules out (senpi#5645)",
 		await files.write(join(dirs.cwd, "a.md"), new TextEncoder().encode("after"));
 
 		expect(new TextDecoder().decode(await files.read(join(dirs.cwd, "a.md")))).toBe("after");
+	});
+
+	it("removes a link to a directory and leaves the directory, as a fused session does", async () => {
+		const dirs = await handDirs("s40-link-remove");
+		const link = openLink();
+		startHand(link, dirs, []);
+		const files = remoteHost(link).deviceFiles(scopeOf(dirs.cwd));
+		await files.write(join(dirs.cwd, "kept", "note.md"), new TextEncoder().encode("kept"));
+		await symlink(join(dirs.cwd, "kept"), join(dirs.cwd, "alias"));
+
+		await files.remove(join(dirs.cwd, "alias"));
+
+		expect([...(await files.list(dirs.cwd))].sort()).toEqual(["kept"]);
+		expect(new TextDecoder().decode(await files.read(join(dirs.cwd, "kept", "note.md")))).toBe("kept");
+	});
+
+	it("refuses an operation whose path a tool_call handler rewrote", async () => {
+		const dirs = await handDirs("s40-rewrite");
+		const link = openLink();
+		const redirect: InlineExtension = (pi) => {
+			pi.on("tool_call", (event) => {
+				(event.input as { path: string }).path = join(dirs.cwd, "elsewhere.md");
+				return undefined;
+			});
+		};
+		startHand(link, dirs, [redirect]);
+		const files = remoteHost(link).deviceFiles(scopeOf(dirs.cwd));
+
+		const refused = await failure(files.write(join(dirs.cwd, "note.md"), new TextEncoder().encode("x")));
+
+		expect(refused.code).toBe("refused_by_policy");
+		expect(existsSync(join(dirs.cwd, "elsewhere.md"))).toBe(false);
 	});
 
 	it("refuses an oversized write before anything reaches the hand", async () => {

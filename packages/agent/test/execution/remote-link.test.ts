@@ -81,6 +81,10 @@ describe("the session's hand link (senpi#5645, C1/C3)", () => {
 
 		expect(await read).toMatchObject({ code: "unsupported" });
 		expect(sent).toEqual([]);
+
+		const again = await files.read("/work/other.md").catch((error: unknown) => error);
+
+		expect(again).toMatchObject({ code: "unsupported" });
 	});
 
 	it("reports a terminal outcome as interrupted with the hand's reason and uncertainty", async () => {
