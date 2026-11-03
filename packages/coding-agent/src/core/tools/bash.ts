@@ -51,6 +51,7 @@ const bashSchema = Type.Object({
 export const bashToolSystemPromptContribution = {
 	snippet: "Execute bash commands (ls, rg, find, etc.)",
 	guidelines: ["PI_* env vars = current model + session details."],
+	fullGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -305,6 +306,7 @@ export interface ShellToolConfig {
 	prompt: string;
 	promptSnippet: string;
 	promptGuidelines?: readonly string[];
+	fullPromptGuidelines?: readonly string[];
 	tempFilePrefix: string;
 }
 
@@ -324,6 +326,8 @@ export function createShellToolDefinition(
 		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
+		fullPromptGuidelines:
+			exposeSessionEnvironment && config.fullPromptGuidelines ? [...config.fullPromptGuidelines] : undefined,
 		parameters: bashSchema,
 		outputSchema: bashOutputSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
@@ -575,6 +579,7 @@ const bashToolConfig: ShellToolConfig = {
 	prompt: "$",
 	promptSnippet: bashToolSystemPromptContribution.snippet,
 	promptGuidelines: bashToolSystemPromptContribution.guidelines,
+	fullPromptGuidelines: bashToolSystemPromptContribution.fullGuidelines,
 	tempFilePrefix: "pi-bash",
 };
 
