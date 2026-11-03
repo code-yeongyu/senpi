@@ -2,7 +2,7 @@ import type { StoreValue, WakeEvent, WakeOutbox, WakeReceipt } from "@earendil-w
 import type { TerminalNotifierDeps } from "../extensions/builtin/terminal/notify.ts";
 import { toStoreValue } from "./executor-freeze.ts";
 
-export const TERMINAL_WAKE_SOURCE = "terminal";
+const TERMINAL_WAKE_SOURCE = "terminal";
 
 type SendMessage = TerminalNotifierDeps["sendMessage"];
 type Message = Parameters<SendMessage>[0];

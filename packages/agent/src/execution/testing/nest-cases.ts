@@ -9,7 +9,7 @@ import { batchHarness } from "./batch-harness.ts";
 type NestCase = CaseImplementation<BatchCaseAdapters>;
 
 /** The harness clock starts at 101; the parent was admitted then with a 60 s lease and a budget of 10. */
-export const NEST_ADMITTED_AT = 101;
+const NEST_ADMITTED_AT = 101;
 const LEASE_MS = 60_000;
 
 export const nestParent: NestedParent = {
