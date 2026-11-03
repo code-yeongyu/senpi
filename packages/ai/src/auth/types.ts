@@ -257,6 +257,8 @@ export interface ApiKeyAuth {
 
 /** App-supplied context for `Models.login`. */
 export interface LoginOptions {
+	/** Configured product display name, consistent across installations of this app. */
+	appName?: string;
 	/**
 	 * The explicitly selected saved account for reauthorization. Omit when adding
 	 * an account; callers must not infer this from the provider's active credential.

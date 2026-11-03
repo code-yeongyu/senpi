@@ -19,12 +19,12 @@ import type {
 	ProviderAuthInteraction,
 } from "../types.ts";
 import { createOpenAIIdTokenVerifier, type OpenAIIdTokenDependencies } from "./openai-id-token.ts";
+import { getWireIdentity } from "../../wire-identity.ts";
 import { generatePKCE } from "./pkce.ts";
 
 // Only first-time registration uses this entrypoint; returning accounts keep their issued ID.
 const DYNAMIC_CLIENT_ID = "dynamic_agent_client";
-const AGENT_NAME_HINT = "Pi";
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AUTHORIZE_URL = "https://auth.openai.com/api/accounts/authorize";
 const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
 const DISCOVERY_URL = "https://auth.openai.com/.well-known/openid-configuration";
@@ -434,7 +434,7 @@ async function loginOpenAIChatGPT(
 		if (existing.idToken) authorizationUrl.searchParams.set("id_token_hint", existing.idToken);
 		if (existing.email) authorizationUrl.searchParams.set("login_hint", existing.email);
 	} else {
-		authorizationUrl.searchParams.set("agent_name_hint", AGENT_NAME_HINT);
+		authorizationUrl.searchParams.set("agent_name_hint", options?.appName ?? getWireIdentity());
 	}
 	if (consentClientId) {
 		authorizationUrl.searchParams.set("client_id", consentClientId);
