@@ -792,6 +792,10 @@ export function createRpcConnectionHandler(
 			} as RpcExtensionUIRequest);
 		},
 
+		setProgramStatus(): void {
+			// OSC 7501 is a terminal report; an RPC session owns no terminal, so it sends no frame.
+		},
+
 		async custom() {
 			// Custom UI cannot be rendered in RPC mode. By default this returns
 			// undefined synchronously with NO wire message — byte-identical to the
@@ -2171,7 +2175,9 @@ export function createRpcConnectionHandler(
 						...(origin === undefined ? {} : { origin }),
 					};
 				});
-				return success(id, "get_auth_providers", { providers });
+				// Read after the rows: building them re-reads a store that failed to load (#4413).
+				const storeError = modelRegistry.authStorage.getLoadError();
+				return success(id, "get_auth_providers", { providers, ...(storeError ? { storeError } : {}) });
 			}
 
 			case "login_start": {
