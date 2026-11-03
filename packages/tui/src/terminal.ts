@@ -458,7 +458,7 @@ export class ProcessTerminal implements Terminal {
 			const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
 			const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(encoding);
 			if (/^\x1b]52;c;(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?\x07(?![\s\S])/.test(text)) {
-				return rawWrite(chunk, encoding, cb);
+				return rawWrite(text, cb);
 			}
 			if (!handler || this.forwardingExternalWrite) {
 				this.noteExternalWrite();

@@ -15,7 +15,7 @@ interface GuardHarness {
 function setupGuardHarness(options?: {
 	withHandler?: boolean;
 	handler?: (text: string) => void;
-	write?: (text: string, callback?: (error?: Error | null) => void) => boolean;
+	write?: (text: string, callback?: (error?: Error | null) => void, encoding?: BufferEncoding) => boolean;
 }): GuardHarness {
 	const writes: string[] = [];
 	const hidden: string[] = [];
@@ -38,7 +38,8 @@ function setupGuardHarness(options?: {
 		const text = String(chunk);
 		writes.push(text);
 		const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
-		if (options?.write) return options.write(text, cb);
+		const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
+		if (options?.write) return options.write(text, cb, encoding);
 		cb?.(null);
 		return true;
 	}) as typeof process.stdout.write;
@@ -79,6 +80,37 @@ function setupGuardHarness(options?: {
 }
 
 describe("ProcessTerminal external stdout guard", () => {
+	for (const encoding of ["base64", "utf16le"] as const) {
+		it(`emits the checked clipboard bytes with caller encoding ${encoding}`, () => {
+			const frame = "\x1b]52;c;YQ==\x07";
+			const chunks: Buffer[] = [];
+			const sink = new Writable({
+				write(chunk, _encoding, callback) {
+					chunks.push(Buffer.from(chunk));
+					callback();
+				},
+			});
+			const harness = setupGuardHarness({
+				write: (text, cb, writeEncoding) => sink.write(text, writeEncoding ?? "utf8", cb),
+			});
+			try {
+				harness.terminal.start(
+					() => {},
+					() => {},
+				);
+				chunks.length = 0;
+
+				process.stdout.write(frame, encoding);
+
+				assert.deepEqual(Buffer.concat(chunks), Buffer.from(frame, "utf8"));
+				assert.deepEqual(harness.hidden, []);
+			} finally {
+				harness.cleanup();
+				sink.destroy();
+			}
+		});
+	}
+
 	for (const payload of ["", "a", "ab", "abc", "h\u00e9llo\n\u4e16\u754c"]) {
 		for (const buffer of [false, true]) {
 			it(`delivers clipboard writes for ${JSON.stringify(payload)} as ${buffer ? "Buffer" : "string"}`, () => {
