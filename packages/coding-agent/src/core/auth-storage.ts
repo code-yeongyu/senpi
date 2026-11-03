@@ -823,6 +823,15 @@ export class AuthStorage implements CredentialStore {
 	 * points shows it once (senpi#3486). With `persistSeen`, the notices are also recorded as seen, so
 	 * the next launch stays quiet until the problem changes; a run nobody reads (RPC) leaves them pending.
 	 */
+	/**
+	 * Finishes what only an async load can do before the notices are read: the first load is synchronous, and the
+	 * Claude CLI account records it cannot touch are settled by the next async read (senpi#5594), which may re-link an
+	 * account the synchronous load still lists as signed out. A read that fails is recorded as on every other read.
+	 */
+	async settleLoad(): Promise<void> {
+		await this.readLatestData();
+	}
+
 	takePendingNotices(options: { persistSeen: boolean }): ReadonlyArray<AuthNotice> {
 		const taken = this.pendingNotices().filter((notice) => !this.takenNotices.has(notice.id));
 		for (const notice of taken) this.takenNotices.add(notice.id);
