@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AccountSlot, ClaudeCliAccountSlot } from "./accounts.ts";
 import { accountDirFor, isValidAccountDirId } from "./claude-cli-account-dir.ts";
@@ -10,9 +10,9 @@ import { accountDirFor, isValidAccountDirId } from "./claude-cli-account-dir.ts"
  * logins are then referenced by nothing. The record lives inside the dir, so removing the dir (sign-out, a cancelled
  * login, a re-login retiring its old dir) removes the record with it.
  */
-export const ACCOUNT_LINK_FILE = ".senpi-account.json";
+const ACCOUNT_LINK_FILE = ".senpi-account.json";
 
-export type AccountDirLink = {
+type AccountDirLink = {
 	readonly dirId: string;
 	readonly name: string;
 	readonly signedInAt: number;
@@ -23,13 +23,13 @@ function linkPath(agentDir: string, dirId: string): string {
 	return join(accountDirFor(agentDir, dirId), ACCOUNT_LINK_FILE);
 }
 
-export function writeAccountLink(agentDir: string, link: AccountDirLink): void {
+export async function writeAccountLink(agentDir: string, link: AccountDirLink): Promise<void> {
 	const record = {
 		name: link.name,
 		signedInAt: link.signedInAt,
 		...(link.displayName === undefined ? {} : { displayName: link.displayName }),
 	};
-	writeFileSync(linkPath(agentDir, link.dirId), `${JSON.stringify(record)}\n`, { mode: 0o600 });
+	await writeFile(linkPath(agentDir, link.dirId), `${JSON.stringify(record)}\n`, { mode: 0o600 });
 }
 
 function parseLink(dirId: string, text: string): AccountDirLink | undefined {
@@ -40,9 +40,9 @@ function parseLink(dirId: string, text: string): AccountDirLink | undefined {
 	return { dirId, name, signedInAt, ...(typeof displayName === "string" ? { displayName } : {}) };
 }
 
-function readLink(agentDir: string, dirId: string): AccountDirLink | undefined {
+async function readLink(agentDir: string, dirId: string): Promise<AccountDirLink | undefined> {
 	try {
-		return parseLink(dirId, readFileSync(linkPath(agentDir, dirId), "utf8"));
+		return parseLink(dirId, await readFile(linkPath(agentDir, dirId), "utf8"));
 	} catch {
 		return undefined;
 	}
@@ -54,17 +54,17 @@ function readLink(agentDir: string, dirId: string): AccountDirLink | undefined {
  * re-link restores the name the user chose, not the one a stale writer still holds. A slot without a recorded dir
  * (signed out, never signed in on this engine) has nothing to rewrite.
  */
-export function renameAccountLink(agentDir: string, slot: AccountSlot | undefined): void {
+export async function renameAccountLink(agentDir: string, slot: AccountSlot | undefined): Promise<void> {
 	if (slot?.store !== "claude-cli" || !isValidAccountDirId(slot.dirId)) return;
-	const link = readLink(agentDir, slot.dirId);
+	const link = await readLink(agentDir, slot.dirId);
 	if (link === undefined || link.name !== slot.name) return;
 	const { displayName: _previous, ...rest } = link;
-	writeAccountLink(agentDir, slot.displayName === undefined ? rest : { ...rest, displayName: slot.displayName });
+	await writeAccountLink(agentDir, slot.displayName === undefined ? rest : { ...rest, displayName: slot.displayName });
 }
 
-function isAccountDir(path: string): boolean {
+async function isAccountDir(path: string): Promise<boolean> {
 	try {
-		return lstatSync(path).isDirectory();
+		return (await lstat(path)).isDirectory();
 	} catch {
 		return false;
 	}
@@ -76,39 +76,43 @@ function isAccountDir(path: string): boolean {
  * healthy slot whose dir is a real dir is recorded; a signed-out slot owns no login yet. Returns the accounts whose
  * record could not be written, so the caller can report them.
  */
-export function backfillAccountLinks(agentDir: string, accounts: readonly AccountSlot[]): string[] {
-	return accounts.flatMap((slot) => {
-		if (slot.store !== "claude-cli" || slot.signInRequired !== undefined || !isValidAccountDirId(slot.dirId))
-			return [];
-		if (!isAccountDir(accountDirFor(agentDir, slot.dirId)) || readLink(agentDir, slot.dirId) !== undefined) return [];
-		try {
-			writeAccountLink(agentDir, {
-				dirId: slot.dirId,
-				name: slot.name,
-				signedInAt: slot.signedInAt ?? 0,
-				...(slot.displayName === undefined ? {} : { displayName: slot.displayName }),
-			});
-			return [];
-		} catch {
-			return [slot.name];
-		}
-	});
+export async function backfillAccountLinks(agentDir: string, accounts: readonly AccountSlot[]): Promise<string[]> {
+	const unrecorded = await Promise.all(
+		accounts.map(async (slot) => {
+			if (slot.store !== "claude-cli" || slot.signInRequired !== undefined || !isValidAccountDirId(slot.dirId))
+				return [];
+			if (!(await isAccountDir(accountDirFor(agentDir, slot.dirId)))) return [];
+			if ((await readLink(agentDir, slot.dirId)) !== undefined) return [];
+			try {
+				await writeAccountLink(agentDir, {
+					dirId: slot.dirId,
+					name: slot.name,
+					signedInAt: slot.signedInAt ?? 0,
+					...(slot.displayName === undefined ? {} : { displayName: slot.displayName }),
+				});
+				return [];
+			} catch {
+				return [slot.name];
+			}
+		}),
+	);
+	return unrecorded.flat();
 }
 
-export function readAccountLinks(agentDir: string): AccountDirLink[] {
+async function readAccountLinks(agentDir: string): Promise<AccountDirLink[]> {
 	let dirIds: string[];
 	try {
-		dirIds = readdirSync(join(agentDir, "anthropic-subscription-claude"));
+		dirIds = await readdir(join(agentDir, "anthropic-subscription-claude"));
 	} catch {
 		return [];
 	}
-	return dirIds
-		.filter(isValidAccountDirId)
-		.sort()
-		.flatMap((dirId) => {
-			const link = readLink(agentDir, dirId);
-			return link === undefined ? [] : [link];
-		});
+	const links = await Promise.all(
+		dirIds
+			.filter(isValidAccountDirId)
+			.sort()
+			.map((dirId) => readLink(agentDir, dirId)),
+	);
+	return links.flatMap((link) => (link === undefined ? [] : [link]));
 }
 
 function newestUnreferenced(
@@ -146,15 +150,34 @@ function relinkedSlot(slot: AccountSlot | undefined, link: AccountDirLink): Clau
  * references takes back its account. A slot of that name that must sign in again points at the dir again and keeps
  * its model blocks; a missing account is appended. The display name comes from the record, which every rename
  * rewrites, so a stale writer's older label never wins. A healthy slot of that name already signed in
- * elsewhere keeps its dir. Of several dirs recording one name, the newest sign-in wins.
+ * elsewhere keeps its dir. Of several dirs recording one name, the newest sign-in wins. Returns `accounts` itself
+ * when nothing was re-linked, so the caller writes nothing.
  */
-export function relinkAccountDirs(accounts: readonly AccountSlot[], links: readonly AccountDirLink[]): AccountSlot[] {
+function relinkAccountDirs(accounts: AccountSlot[], links: readonly AccountDirLink[]): AccountSlot[] {
 	const pending = newestUnreferenced(links, accounts);
+	let changed = false;
 	const relinked = accounts.map((slot) => {
 		const link = pending.get(slot.name);
 		if (link === undefined) return slot;
 		pending.delete(slot.name);
-		return slot.store === "claude-cli" && slot.signInRequired === undefined ? slot : relinkedSlot(slot, link);
+		if (slot.store === "claude-cli" && slot.signInRequired === undefined) return slot;
+		changed = true;
+		return relinkedSlot(slot, link);
 	});
+	if (!changed && pending.size === 0) return accounts;
 	return [...relinked, ...[...pending.values()].map((link) => relinkedSlot(undefined, link))];
+}
+
+/**
+ * Undoes a stale writer's drop (senpi#5594). Only an engine from before senpi#4436 writes a token slot, and the load
+ * seam signs every such slot out as `legacy_sign_in_retired`; while one is left, the dirs that write left unreferenced
+ * take their accounts back. The marker is in auth.json, so the re-link still runs when the load that signed the slots
+ * out could not read the account dirs (the synchronous first load) or the process stopped before it did. Without that
+ * marker nothing is read and nothing is re-linked, so an account removed on purpose is never resurrected.
+ */
+export async function relinkAfterStaleWrite(agentDir: string, accounts: AccountSlot[]): Promise<AccountSlot[]> {
+	const signedOut = accounts.some(
+		(slot) => slot.store === "claude-cli" && slot.signInRequired === "legacy_sign_in_retired",
+	);
+	return signedOut ? relinkAccountDirs(accounts, await readAccountLinks(agentDir)) : accounts;
 }

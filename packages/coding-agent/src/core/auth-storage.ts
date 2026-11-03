@@ -40,7 +40,7 @@ import { stripBom } from "../utils/text.ts";
 import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
 import {
 	backfillAccountLinks,
-	readAccountLinks,
+	relinkAfterStaleWrite,
 } from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
 import {
 	resolveReadOnlyCredential,
@@ -107,6 +107,12 @@ export type AuthNotice = {
  * Nothing is changed: which credential pays stays the user's choice, so the notice names the
  * unused login, where it still is, and the action that switches to it.
  */
+/** A store whose Claude CLI account records the next async load settles (senpi#5594). */
+function hasClaudeCliAccounts(data: AuthStorageData): boolean {
+	const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
+	return subscription?.accounts?.some((slot) => slot.store === "claude-cli") === true;
+}
+
 function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
 	const notices: AuthNotice[] = [];
 	for (const [provider, credential] of Object.entries(data)) {
@@ -577,28 +583,12 @@ export class AuthStorage implements CredentialStore {
 		}
 		const repaired = repairPoisonedPoolSlots(parseAuthDocument(content) as AuthStorageData);
 		const migrated = migrateLegacyProviderKeys(repaired.data);
-		const authPath = this.authPath;
-		const moved = signOutLegacyClaudeLogins(migrated.data, () =>
-			authPath ? readAccountLinks(dirname(authPath)) : [],
-		);
+		const moved = signOutLegacyClaudeLogins(migrated.data);
 		if (moved.skipped && !this.reportedMigrationSkips.has(moved.skipped)) {
 			this.reportedMigrationSkips.add(moved.skipped);
 			this.recordError(
 				new Error(
 					`A Claude login in auth.json was left unchanged because ${moved.skipped}. Claude logins from the old sign-in are no longer used; sign in again with Claude: run /login anthropic-subscription.`,
-				),
-			);
-		}
-		const subscription = moved.data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as
-			| AnthropicSubscriptionCredential
-			| undefined;
-		const unrecorded = authPath ? backfillAccountLinks(dirname(authPath), subscription?.accounts ?? []) : [];
-		const unrecordedReason = `Claude account dir records could not be written for: ${unrecorded.join(", ")}`;
-		if (unrecorded.length > 0 && !this.reportedMigrationSkips.has(unrecordedReason)) {
-			this.reportedMigrationSkips.add(unrecordedReason);
-			this.recordError(
-				new Error(
-					`${unrecordedReason}. If another OmO session running an older version rewrites auth.json, these accounts may need to sign in again; check that their account dirs under anthropic-subscription-claude are writable.`,
 				),
 			);
 		}
@@ -608,6 +598,32 @@ export class AuthStorage implements CredentialStore {
 			repaired: repaired.repaired,
 			migrated: migrated.migrated || moved.migrated,
 		};
+	}
+
+	/**
+	 * The Claude CLI account dir records (senpi#5594), read and written asynchronously inside the held store lock of an
+	 * async load: accounts a stale writer dropped take their recorded dirs back, and every signed-in account without a
+	 * record gets one. Returns `data` itself when no slot changed, so the load writes nothing.
+	 */
+	private async settleAccountLinks(data: AuthStorageData): Promise<AuthStorageData> {
+		const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
+		if (!this.authPath || subscription?.accounts === undefined) return data;
+		const agentDir = dirname(this.authPath);
+		const accounts = await relinkAfterStaleWrite(agentDir, subscription.accounts);
+		const unrecorded = await backfillAccountLinks(agentDir, accounts);
+		const unrecordedReason = `Claude account dir records could not be written for: ${unrecorded.join(", ")}`;
+		if (unrecorded.length > 0 && !this.reportedMigrationSkips.has(unrecordedReason)) {
+			this.reportedMigrationSkips.add(unrecordedReason);
+			this.recordError(
+				new Error(
+					`${unrecordedReason}. If another OmO session running an older version rewrites auth.json, these accounts may need to sign in again; check that their account dirs under anthropic-subscription-claude are writable.`,
+				),
+			);
+		}
+		if (accounts === subscription.accounts) return data;
+		const next: AuthStorageData = { ...data, [ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: { ...subscription, accounts } };
+		this.notices = [...unusedLoginNotices(next), ...signInRequiredNotices(next)];
+		return next;
 	}
 
 	private recordError(error: unknown): void {
@@ -673,8 +689,11 @@ export class AuthStorage implements CredentialStore {
 				// A written repair or migration invalidates the revision read before
 				// it; leaving it unset makes the next reader re-read instead of
 				// trusting a stale stamp.
+				// Claude CLI account records are settled by the next async load (senpi#5594): leave the revision unset for it.
 				revision =
-					parsed.repaired || parsed.migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+					parsed.repaired || parsed.migrated || !this.authPath || hasClaudeCliAccounts(parsed.data)
+						? undefined
+						: getFileContentRevision(this.authPath);
 				if (parsed.migrated) this.backupAuthFile(current);
 				return parsed.repaired || parsed.migrated
 					? { result: undefined, next: JSON.stringify(parsed.data, null, 2) }
@@ -947,14 +966,16 @@ export class AuthStorage implements CredentialStore {
 			return await this.storage.withLockAsync(async (content) => {
 				const parsed = this.parseStorageContent(content);
 				load.parsed = true;
-				load.writeBack = parsed.repaired || parsed.migrated;
+				const data = await this.settleAccountLinks(parsed.data);
+				const migrated = parsed.migrated || data !== parsed.data;
+				load.writeBack = parsed.repaired || migrated;
 				const revision =
-					parsed.repaired || parsed.migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
-				this.updateReadState(parsed.data, revision);
-				if (parsed.migrated) this.backupAuthFile(content);
-				return parsed.repaired || parsed.migrated
-					? { result: parsed.data, next: JSON.stringify(parsed.data, null, 2) }
-					: { result: parsed.data };
+					parsed.repaired || migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+				this.updateReadState(data, revision);
+				if (migrated) this.backupAuthFile(content);
+				return parsed.repaired || migrated
+					? { result: data, next: JSON.stringify(data, null, 2) }
+					: { result: data };
 			}, options);
 		} catch (error) {
 			throw failureAfterRead(error, load);

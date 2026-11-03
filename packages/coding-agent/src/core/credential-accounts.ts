@@ -370,7 +370,7 @@ export async function renameCredentialAccount(
 			throw new Error(`Stored provider account not found: ${name}`);
 		}
 		const renamed = renameSlotDisplayName(current, name, displayName);
-		renameAccountLink(
+		await renameAccountLink(
 			claudeCliAgentDir(storage),
 			(renamed.accounts as AccountSlot[] | undefined)?.find((slot) => slot.name === name),
 		);

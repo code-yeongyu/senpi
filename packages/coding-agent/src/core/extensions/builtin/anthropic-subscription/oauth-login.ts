@@ -403,7 +403,7 @@ export function createOAuthConfig(deps: {
 				});
 				const slot = claimed.slot;
 				if (slot === undefined) throw new Error("Claude sign-in could not store its account");
-				writeAccountLink(agentDir(), { dirId, name, signedInAt, displayName: slot.displayName });
+				await writeAccountLink(agentDir(), { dirId, name, signedInAt, displayName: slot.displayName });
 				cancelled();
 				const model = connectionTestModel(cli.defaultModel?.());
 				callbacks.onProgress?.(`Testing the account with one turn on ${model}...`);

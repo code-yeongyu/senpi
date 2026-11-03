@@ -31,7 +31,7 @@ describe("senpi#5594 the account dir record follows a rename", () => {
 		await renameCredentialAccount(storage, SCRIPTED_PROVIDER, "second", "Work laptop");
 		writeStale(authPath, staleEntry("default"));
 
-		const second = loaded(authPath).find((slot) => slot.name === "second");
+		const second = (await loaded(authPath)).find((slot) => slot.name === "second");
 
 		expect(second).toMatchObject({ dirId: signedIn[1]?.dirId, displayName: "Work laptop" });
 		expect(second?.signInRequired).toBeUndefined();
@@ -44,7 +44,7 @@ describe("senpi#5594 the account dir record follows a rename", () => {
 		await renameCredentialAccount(storage, SCRIPTED_PROVIDER, "default", null);
 		writeStale(authPath, staleEntry({ name: "default", displayName: "Old" }, { name: "second", displayName: "Old" }));
 
-		const accounts = loaded(authPath);
+		const accounts = await loaded(authPath);
 
 		expect(accounts.map((slot) => [slot.name, slot.displayName])).toEqual([
 			["default", undefined],
@@ -73,7 +73,7 @@ describe("senpi#5594 concurrent writers and a re-login keep both accounts", () =
 			}),
 		]);
 
-		const accounts = loaded(authPath);
+		const accounts = await loaded(authPath);
 		const newDefault = accounts.find((slot) => slot.name === "default");
 		expect(accounts.map((slot) => slot.name)).toEqual(["default", "second"]);
 		expect(newDefault?.dirId).not.toBe(oldDefault?.dirId);
@@ -86,7 +86,7 @@ describe("senpi#5594 concurrent writers and a re-login keep both accounts", () =
 		});
 
 		writeStale(authPath, staleEntry("default"));
-		expect(loaded(authPath).map((slot) => [slot.name, slot.dirId, slot.signInRequired])).toEqual([
+		expect((await loaded(authPath)).map((slot) => [slot.name, slot.dirId, slot.signInRequired])).toEqual([
 			["default", newDefault?.dirId, undefined],
 			["second", second?.dirId, undefined],
 		]);

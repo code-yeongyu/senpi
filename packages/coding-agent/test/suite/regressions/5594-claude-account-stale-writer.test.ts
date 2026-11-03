@@ -20,7 +20,7 @@ describe("senpi#5594 a stale pre-#4436 writer does not lose signed-in Claude acc
 		const { agentDir, authPath, signedIn } = await twoSignedInAccounts();
 		writeStale(authPath, staleEntry("default"));
 
-		const accounts = loaded(authPath);
+		const accounts = await loaded(authPath);
 
 		expect(accounts.map((slot) => [slot.name, slot.dirId, slot.signInRequired])).toEqual(
 			signedIn.map((slot) => [slot.name, slot.dirId, undefined]),
@@ -34,7 +34,7 @@ describe("senpi#5594 a stale pre-#4436 writer does not lose signed-in Claude acc
 		const { authPath, signedIn } = await twoSignedInAccounts();
 		writeStale(authPath, staleEntry("default", "account-2"));
 
-		const accounts = loaded(authPath);
+		const accounts = await loaded(authPath);
 
 		expect(accounts.map((slot) => slot.name)).toEqual(["default", "account-2", "second"]);
 		expect(accounts[0]?.dirId).toBe(signedIn[0]?.dirId);
@@ -49,21 +49,21 @@ describe("senpi#5594 a stale pre-#4436 writer does not lose signed-in Claude acc
 		writeFileSync(join(accountDirFor(agentDir, older), ".senpi-account.json"), '{"name":"default","signedInAt":0}');
 		writeStale(authPath, staleEntry("default"));
 
-		const accounts = loaded(authPath);
+		const accounts = await loaded(authPath);
 		const bytes = readFileSync(authPath, "utf8");
 
 		expect(accounts.find((slot) => slot.name === "default")?.dirId).toBe(signedIn[0]?.dirId);
-		expect(loaded(authPath)).toEqual(accounts);
+		expect(await loaded(authPath)).toEqual(accounts);
 		expect(readFileSync(authPath, "utf8")).toBe(bytes);
 	});
 
 	it("accounts signed in before dir records existed get one at load, so a later stale write still re-links them", async () => {
 		const { agentDir, authPath, signedIn } = await twoSignedInAccounts();
 		for (const slot of signedIn) rmSync(join(accountDirFor(agentDir, slot.dirId), ".senpi-account.json"));
-		loaded(authPath);
+		await loaded(authPath);
 		writeStale(authPath, staleEntry("default"));
 
-		expect(loaded(authPath).map((slot) => [slot.name, slot.dirId, slot.signInRequired])).toEqual(
+		expect((await loaded(authPath)).map((slot) => [slot.name, slot.dirId, slot.signInRequired])).toEqual(
 			signedIn.map((slot) => [slot.name, slot.dirId, undefined]),
 		);
 	});
@@ -72,6 +72,6 @@ describe("senpi#5594 a stale pre-#4436 writer does not lose signed-in Claude acc
 		const { authPath, signedIn } = await twoSignedInAccounts();
 		writeStale(authPath, { ...staleEntry(), accounts: signedIn.slice(0, 1) });
 
-		expect(loaded(authPath).map((slot) => slot.name)).toEqual(["default"]);
+		expect((await loaded(authPath)).map((slot) => slot.name)).toEqual(["default"]);
 	});
 });

@@ -65,6 +65,9 @@ export function writeStale(authPath: string, entry: unknown): void {
 	writeFileSync(authPath, JSON.stringify({ ...data, [SCRIPTED_PROVIDER]: entry }, null, 2), { mode: 0o600 });
 }
 
-export function loaded(authPath: string): ClaudeCliAccountSlot[] {
-	return storedAccounts(AuthStorage.create(authPath));
+/** A fresh process loading auth.json: the account records are settled by its first async read (senpi#5594). */
+export async function loaded(authPath: string): Promise<ClaudeCliAccountSlot[]> {
+	const storage = AuthStorage.create(authPath);
+	await storage.read(SCRIPTED_PROVIDER);
+	return storedAccounts(storage);
 }
