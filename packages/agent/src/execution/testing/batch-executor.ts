@@ -15,7 +15,7 @@ const BATCH_TOOLS: Readonly<Record<string, StoppedReply["kind"]>> = { deny: "blo
  * Tools whose body needs consent (design 5.6.1). `gated`'s shim changes the call, so its frozen call always differs
  * from the raw one; `ask`'s shim keeps it, so a Gate A approval of the raw digest also covers the frozen call.
  */
-export const CONSENT_TOOLS: ReadonlySet<string> = new Set(["gated", "ask"]);
+const CONSENT_TOOLS: ReadonlySet<string> = new Set(["gated", "ask"]);
 const frozenDigestOf = (name: string, requestDigest: string): string =>
 	name === "ask" ? requestDigest : `${requestDigest}:frozen`;
 
