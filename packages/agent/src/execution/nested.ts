@@ -1,5 +1,6 @@
 import type { DurableStore, StoreValue } from "../durable/store.ts";
 import type { AdmissionLine } from "../durable/store-admission.ts";
+import { canonicalJson } from "./canonical-json.ts";
 import { decodeNestedRecord } from "./nested-codec.ts";
 import {
 	type ActivityRefusal,
@@ -58,17 +59,6 @@ export const nestedChildId = (parent: string, childRequestId: string): string =>
 
 const validAmount = (value: number): boolean => Number.isFinite(value) && value >= 0;
 
-/** JSON with object keys sorted, so two records with the same fields compare equal whatever their key order. */
-function canonical(value: unknown): string {
-	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-	if (value !== null && typeof value === "object")
-		return `{${Object.keys(value)
-			.sort()
-			.map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`)
-			.join(",")}}`;
-	return JSON.stringify(value);
-}
-
 function refused(reason: NestedRefusal): NestedAdmission {
 	return { kind: "refused", reason };
 }
@@ -110,7 +100,7 @@ export function createNestedAdmission(options: NestedAdmissionOptions): NestedAd
 				)
 					throw new Error(`nested parent ${parent.executionId} has a non-finite number`);
 				if (record !== undefined)
-					return canonical(record.parent) === canonical(parent)
+					return canonicalJson(record.parent) === canonicalJson(parent)
 						? ({ kind: "opened" } as const)
 						: ({ kind: "refused", reason: "conflicting_parent" } as const);
 				const expiresAt = Math.min(parent.leaseUntil, parent.admittedAt + NESTED_LIFETIME_MS);
@@ -150,8 +140,8 @@ export function createNestedAdmission(options: NestedAdmissionOptions): NestedAd
 				if (record === undefined) return { kind: "refused", reason: "unknown_parent" } as const;
 				const existing = record.activities[activity.activityId];
 				if (existing !== undefined)
-					return canonical({ ...existing, debited: 0, ended: false }) ===
-						canonical({ ...activity, debited: 0, ended: false })
+					return canonicalJson({ ...existing, debited: 0, ended: false }) ===
+						canonicalJson({ ...activity, debited: 0, ended: false })
 						? ({ kind: "registered" } as const)
 						: ({ kind: "refused", reason: "conflicting_activity" } as const);
 				if (!live(record) || clock() > record.expiresAt)

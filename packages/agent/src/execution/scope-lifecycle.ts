@@ -1,5 +1,6 @@
 import type { DurableStore, StoreValue } from "../durable/store.ts";
 import type { AdmissionLine } from "../durable/store-admission.ts";
+import { canonicalJson } from "./canonical-json.ts";
 
 /** What an endpoint owns for one scope (design 5.6.6). */
 export type ScopeBinding = {
@@ -23,6 +24,18 @@ export type ScopeRecord = {
 };
 
 export type ScopeRefusal = "unknown_scope" | "not_issuer" | "closed" | "live_resources" | "conflicting_scope";
+
+/** A call for a scope that is unknown or closed: it never runs. */
+export class ScopeUnavailableError extends Error {
+	readonly scope: string;
+	readonly reason: "unknown_scope" | "closed";
+	constructor(scope: string, reason: "unknown_scope" | "closed") {
+		super(`scope ${scope} is not open: ${reason}`);
+		this.name = "ScopeUnavailableError";
+		this.scope = scope;
+		this.reason = reason;
+	}
+}
 
 export interface ScopeLifecycleOptions {
 	readonly store: DurableStore;
@@ -49,7 +62,7 @@ export interface ScopeLifecycle {
 	): Promise<
 		{ readonly kind: "committed"; readonly seq: number } | { readonly kind: "refused"; readonly reason: ScopeRefusal }
 	>;
-	/** Runs `run` after every lifecycle event of the scope submitted before it has committed. */
+	/** Runs `run` after every lifecycle event of the scope submitted before it has committed; throws ScopeUnavailableError for a closed or unknown scope. */
 	call<T>(scope: string, run: () => Promise<T>): Promise<T>;
 	hold(scope: string, resource: string, kind: string): Promise<void>;
 	release(scope: string, resource: string): Promise<void>;
@@ -106,47 +119,68 @@ export function createScopeLifecycle(options: ScopeLifecycleOptions): ScopeLifec
 	};
 	const update = <T>(scope: string, decide: (record: ScopeRecord | undefined) => Promise<T>): Promise<T> =>
 		admission.admit(async () => decide(await read(scope)));
-	/** Per scope, the last admitted lifecycle event: a later call or event waits for it. */
+	/** Per scope, the last admitted lifecycle event or close: a later call, event or close waits for it. */
 	const tails = new Map<string, Promise<unknown>>();
 	const after = <T>(scope: string, step: () => Promise<T>): Promise<T> => {
 		const run = (tails.get(scope) ?? Promise.resolve()).then(step, step);
-		tails.set(
-			scope,
-			run.catch(() => undefined),
-		);
+		const settled = run.catch(() => undefined);
+		tails.set(scope, settled);
+		void settled.then(() => {
+			if (tails.get(scope) === settled) tails.delete(scope);
+		});
 		return run;
 	};
-	const touch = (scope: string) =>
+	const touch = (scope: string): Promise<ScopeRecord["state"] | undefined> =>
 		update(scope, async (record) => {
-			if (record?.state !== "open") return;
+			if (record?.state !== "open") return record?.state;
 			await write({ ...record, lastActiveAt: clock() }, "active", null);
+			return "open";
 		});
 
-	const closeNow = async (record: ScopeRecord, terminate?: (resource: string) => Promise<StoreValue>) => {
-		let current = record;
-		for (const resource of Object.keys(record.resources)) {
-			if (current.outcomes[resource] !== undefined) continue;
-			if (terminate === undefined) throw new Error(`forced close of ${record.binding.scope} needs a terminate port`);
-			const outcome = await terminate(resource);
-			current = await update(record.binding.scope, async (latest) => {
-				if (latest === undefined) throw new Error(`scope ${record.binding.scope} vanished`);
-				const next = { ...latest, outcomes: { ...latest.outcomes, [resource]: outcome } };
-				await write(next, "outcome", resource);
-				return next;
+	type CloseStep =
+		| { readonly kind: "closed" }
+		| { readonly kind: "refused"; readonly reason: ScopeRefusal }
+		| { readonly kind: "terminate"; readonly pending: readonly string[] };
+	/**
+	 * Closes from the record as it is inside the admission line, so a resource held after any earlier read is seen: an
+	 * unforced close with a live resource is refused; a forced one terminates each resource without an outcome, writes
+	 * the outcome, and looks again until none is left.
+	 */
+	const finishClose = async (
+		scope: string,
+		force: boolean,
+		terminate?: (resource: string) => Promise<StoreValue>,
+	): Promise<{ readonly kind: "closed" } | { readonly kind: "refused"; readonly reason: ScopeRefusal }> => {
+		for (;;) {
+			const step = await update(scope, async (latest): Promise<CloseStep> => {
+				if (latest === undefined) return { kind: "refused", reason: "unknown_scope" };
+				if (latest.state === "closed") return { kind: "closed" };
+				const pending = Object.keys(latest.resources).filter((resource) => latest.outcomes[resource] === undefined);
+				if (pending.length > 0 && !force) return { kind: "refused", reason: "live_resources" };
+				if (pending.length > 0) return { kind: "terminate", pending };
+				await write({ ...latest, state: "closed", resources: {} }, "close", null);
+				return { kind: "closed" };
 			});
+			if (step.kind !== "terminate") return step;
+			if (terminate === undefined) throw new Error(`forced close of ${scope} needs a terminate port`);
+			for (const resource of step.pending) {
+				const outcome = await terminate(resource);
+				await update(scope, async (latest) => {
+					if (latest === undefined || latest.state === "closed" || latest.outcomes[resource] !== undefined) return;
+					await write({ ...latest, outcomes: { ...latest.outcomes, [resource]: outcome } }, "outcome", resource);
+				});
+			}
 		}
-		await update(record.binding.scope, async (latest) => {
-			if (latest === undefined || latest.state === "closed") return;
-			await write({ ...latest, state: "closed", resources: {} }, "close", null);
-		});
 	};
 
 	return {
 		read,
 		open: (binding) =>
 			update(binding.scope, async (record) => {
+				if (!Number.isFinite(binding.generation))
+					throw new Error(`scope ${binding.scope} has a non-finite generation`);
 				if (record !== undefined)
-					return JSON.stringify(record.binding) === JSON.stringify(binding) && record.state === "open"
+					return canonicalJson(record.binding) === canonicalJson(binding) && record.state === "open"
 						? ({ kind: "opened" } as const)
 						: ({ kind: "refused", reason: "conflicting_scope" } as const);
 				await write(
@@ -177,12 +211,15 @@ export function createScopeLifecycle(options: ScopeLifecycleOptions): ScopeLifec
 			}),
 		call: (scope, run) =>
 			(tails.get(scope) ?? Promise.resolve()).then(async () => {
-				await touch(scope);
+				const state = await touch(scope);
+				if (state !== "open")
+					throw new ScopeUnavailableError(scope, state === undefined ? "unknown_scope" : "closed");
 				return run();
 			}),
 		hold: (scope, resource, kind) =>
 			update(scope, async (record) => {
-				if (record?.state !== "open") throw new Error(`scope ${scope} is not open`);
+				if (record?.state !== "open")
+					throw new ScopeUnavailableError(scope, record === undefined ? "unknown_scope" : "closed");
 				await write(
 					{ ...record, lastActiveAt: clock(), resources: { ...record.resources, [resource]: kind } },
 					"hold",
@@ -195,24 +232,29 @@ export function createScopeLifecycle(options: ScopeLifecycleOptions): ScopeLifec
 				const { [resource]: _released, ...resources } = record.resources;
 				await write({ ...record, lastActiveAt: clock(), resources }, "release", resource);
 			}),
-		close: async (actor, scope, closeOptions = {}) => {
-			const record = await read(scope);
-			if (record === undefined) return { kind: "refused", reason: "unknown_scope" };
-			if (record.binding.issuer !== actor) return { kind: "refused", reason: "not_issuer" };
-			if (record.state === "closed") return { kind: "closed" };
-			if (Object.keys(record.resources).length > 0 && closeOptions.force !== true)
-				return { kind: "refused", reason: "live_resources" };
-			await closeNow(record, closeOptions.terminate);
-			return { kind: "closed" };
-		},
+		close: (actor, scope, closeOptions = {}) =>
+			after(scope, async () => {
+				const record = await read(scope);
+				if (record === undefined) return { kind: "refused", reason: "unknown_scope" } as const;
+				if (record.binding.issuer !== actor) return { kind: "refused", reason: "not_issuer" } as const;
+				return finishClose(scope, closeOptions.force === true, closeOptions.terminate);
+			}),
 		sweepIdle: async () => {
 			const closed: string[] = [];
 			for (const { data } of await store.scanDocuments(PREFIX)) {
-				const record = decode(data);
-				if (record.state !== "open" || Object.keys(record.resources).length > 0) continue;
-				if (clock() - record.lastActiveAt <= idleTtlMs) continue;
-				await closeNow(record);
-				closed.push(record.binding.scope);
+				const candidate = decode(data);
+				const scope = candidate.binding.scope;
+				if (candidate.state !== "open" || Object.keys(candidate.resources).length > 0) continue;
+				if (clock() - candidate.lastActiveAt <= idleTtlMs) continue;
+				const done = await after(scope, () =>
+					update(scope, async (latest) => {
+						if (latest?.state !== "open" || Object.keys(latest.resources).length > 0) return false;
+						if (clock() - latest.lastActiveAt <= idleTtlMs) return false;
+						await write({ ...latest, state: "closed" }, "close", null);
+						return true;
+					}),
+				);
+				if (done) closed.push(scope);
 			}
 			return closed;
 		},
