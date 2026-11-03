@@ -10,6 +10,7 @@ import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
+import { executionCallKey } from "../../core/session-call-keys.ts";
 import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { getDefaultSessionDir, type SessionManager } from "../../core/session-manager.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
@@ -180,11 +181,13 @@ class WorkerEventWriter extends SessionEventWriter {
 			const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
 			epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
 			const recovery = recoveryCarrier(record);
+			const callKey = executionCallKey(record);
 			const canonical = carriedCanonical(record);
 			const order = ordered
 				? {
 						...stamp.stamp(recovery, canonical, record),
 						recovery,
+						...(callKey ? { callKey } : {}),
 						...(canonical ? { canonical } : {}),
 						...(carriedRefusal(record) ? { canonicalRefused: true as const } : {}),
 						...(replaced

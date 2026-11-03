@@ -7976,7 +7976,8 @@
         "name": "eq_shim",
         "arguments": {
          "legacy": "42"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -8027,7 +8028,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -8043,7 +8045,8 @@
         "name": "eq_shim",
         "arguments": {
          "value": 7
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:4>:0"
        }
       ],
       "api": "openai-completions",
@@ -8094,7 +8097,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:5>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:4>:0"
     },
     {
      "type": "message",
@@ -8110,7 +8114,8 @@
         "name": "eq_shim",
         "arguments": {
          "value": "bad"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:5>:0"
        }
       ],
       "api": "openai-completions",
@@ -8161,7 +8166,8 @@
       "details": {},
       "isError": true,
       "timestamp": "<ts:message.timestamp:7>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:5>:0"
     },
     {
      "type": "message",
