@@ -162,9 +162,6 @@ async function startHost() {
 	await mkdir(cwd);
 	await mkdir(agentDir, { mode: 0o700 });
 	for (const name of ["SENPI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) vi.stubEnv(name, agentDir);
-	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
-		vi.stubEnv(name, undefined);
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", undefined);
 	vi.stubEnv("SENPI_RPC_KEY_ROOT", agentDir);
 	const faux = fauxProvider({ models: [{ id: "faux-1", reasoning: false, contextWindow: 128_000 }] });
 	const writer = new SessionEventWriter(() => {});
@@ -299,8 +296,12 @@ async function declare(peer: Peer, granted: readonly string[], principal: object
 	return peer.send({ type: "declare_delegation", principal, granted });
 }
 
-// The lane environment may turn on heap-snapshot memory reports; X14's corpus expects them off.
+// vitest restores stubbed env before every test (`unstubEnvs`), so the host behaviour this suite compares against X14
+// is pinned per test: attach grace (not SENPI_RPC_REQUIRE_ATTACH), no ambient socket, memory reports off.
 beforeEach(() => {
+	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
+		vi.stubEnv(name, undefined);
+	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", undefined);
 	for (const brand of ["SENPI", "OMO", "PI"])
 		for (const name of ["MEMORY_REPORT", "MEMORY_REPORT_SNAPSHOT"]) vi.stubEnv(`${brand}_${name}`, "0");
 });
@@ -334,24 +335,28 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		for (const type of VALIDATOR_REFUSED)
 			expect(validateRpcInboundRecord({ ...(await recordFor(type)), id: "x" }).ok, type).toBe(false);
 		for (const type of types) {
-			const expected = signature(await sendFor(local, type, await recordFor(type)), type, host.scratch);
+			// A refused record never reaches a session, so it reuses the record the local connection ran; only a dispatched
+			// one gets a fresh session. Grant sets run one after another: device-wide writers (credentials, settings) share
+			// state across sessions, so running them concurrently would compare contention, not delegation.
+			const shared = await recordFor(type);
+			const required = requirement(type, shared);
+			const expected = signature(await sendFor(local, type, shared), type, host.scratch);
 			for (const { granted, peer } of delegated) {
-				const record = await recordFor(type);
-				const required = requirement(type, record);
-				const answer = await sendFor(peer, type, record);
+				const refusal = required === "self" || granted.has(required.needs) ? undefined : required;
+				const answer = await sendFor(peer, type, refusal === undefined ? await recordFor(type) : shared);
 				const label = `${type} on [${[...granted].join(",")}]`;
-				if (required === "self" || granted.has(required.needs)) {
+				if (refusal === undefined) {
 					const actual = signature(answer, type, host.scratch);
 					if (actual !== expected) mismatches.push(`${label}: ran as ${actual}, local ${expected}`);
 				} else if (
 					answer === undefined ||
 					answer.success !== false ||
 					answer.command !== type ||
-					answer.errorCode !== required.refusal ||
-					(answer.errorData as WireRecord | undefined)?.class !== required.needs
+					answer.errorCode !== refusal.refusal ||
+					(answer.errorData as WireRecord | undefined)?.class !== refusal.needs
 				) {
 					mismatches.push(
-						`${label}: expected ${required.refusal}(${required.needs}), got ${JSON.stringify(answer)}`,
+						`${label}: expected ${refusal.refusal}(${refusal.needs}), got ${JSON.stringify(answer)}`,
 					);
 				}
 			}
