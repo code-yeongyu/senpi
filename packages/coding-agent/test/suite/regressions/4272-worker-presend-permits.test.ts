@@ -6,10 +6,12 @@ import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-
 import {
 	HostPermits,
 	hostWorkerPermits,
+	PERMIT_BLOCK_BYTES,
 	PERMIT_TAG,
 	WORKER_CONTROL_SLOTS,
 	PERMIT_WORD,
 	WORKER_PERMIT_BYTES,
+	WorkerPermitGate,
 	WorkerPermitLedger,
 } from "../../../src/modes/rpc/session-worker-permits.ts";
 import { EVENT_SAFETY_MS, within, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
@@ -35,9 +37,9 @@ async function workerWaiting(block: SharedArrayBuffer, ms = EVENT_SAFETY_MS): Pr
 }
 
 /** A real isolate asking one permit block; its typed outcome and its exit code, each awaited under a deadline. */
-function gateIsolate(block: SharedArrayBuffer, timeoutMs: number) {
+function gateIsolate(block: SharedArrayBuffer, timeoutMs: number, window?: SharedArrayBuffer) {
 	const isolate = new Worker(new URL("./4272-worker-permit-gate-support.ts", import.meta.url), {
-		workerData: { block, timeoutMs },
+		workerData: { block, timeoutMs, window },
 	});
 	isolates.add(isolate);
 	const answer = new Promise<{ outcome: string; built: number }>((resolve) => isolate.once("message", resolve));
@@ -106,7 +108,7 @@ it("S12b X04: one worker never holds two frames: a permit is granted again only 
 
 // RULING-63 Q3 conditions (2) + (4): a looped, bounded wait ends typed and the isolate never built its payload.
 it("S12b RULING-63 Q3 (4): a host that never grants leaves the worker with a typed timeout and no payload built", async () => {
-	const { answer, exit } = gateIsolate(new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT), 200);
+	const { answer, exit } = gateIsolate(new SharedArrayBuffer(PERMIT_BLOCK_BYTES), 200);
 	expect(await answer()).toEqual({ outcome: "timeout", built: 0 });
 	expect(await exit()).toBe(0);
 }, 600_000);
@@ -139,6 +141,47 @@ it("S12b RULING-63 Q3 (3): a worker blocked on a permit wakes and exits cleanly 
 	expect(await answer()).toEqual({ outcome: "closed", built: 0 });
 	expect(await exit()).toBe(0);
 }, 600_000);
+
+// RULING-63 Q3a: the worker never attaches a block whose layout differs from the host's (an old 3-word block).
+it("S12b RULING-63 Q3a: the worker gate refuses a permit block of any other size than the shared layout", () => {
+	expect(() => new WorkerPermitGate(new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT), 0)).toThrow(
+		`expected ${PERMIT_BLOCK_BYTES}`,
+	);
+	expect(new HostPermits(new WorkerPermitLedger()).block.byteLength).toBe(PERMIT_BLOCK_BYTES);
+});
+
+// #5591: the isolate decides to wait, then the host signals, then the isolate's wait starts. The signal must still end
+// that wait; a close the wait cannot see left the worker parked until its own deadline.
+it.each([
+	{
+		signal: "close",
+		send: ({ permits }: ReturnType<typeof exhausted>) => permits.close(),
+		outcome: { outcome: "closed", built: 0 },
+	},
+	{
+		signal: "grant",
+		send: ({ ledger }: ReturnType<typeof exhausted>) => ledger.release(),
+		outcome: { outcome: "granted", built: 1 },
+	},
+])(
+	"S12b RULING-63 Q3 (3) #5591: a $signal that lands between the isolate's last check and its wait still ends the wait",
+	async ({ send, outcome }) => {
+		const exhaustedBlock = exhausted();
+		const window = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+		const word = new Int32Array(window);
+		const { answer, exit } = gateIsolate(exhaustedBlock.permits.block, EVENT_SAFETY_MS, window);
+		const atWait = Atomics.waitAsync(word, 0, 0, EVENT_SAFETY_MS);
+		if (atWait.async) await within("the isolate at its wait", atWait.value);
+		expect(Atomics.load(word, 0), "the isolate holds at its wait call").toBe(1);
+		send(exhaustedBlock);
+		Atomics.store(word, 0, 2);
+		Atomics.notify(word, 0);
+		expect(await answer()).toEqual(outcome);
+		expect(await exit()).toBe(0);
+		exhaustedBlock.permits.close();
+	},
+	600_000,
+);
 
 it("S12b RULING-63 Q3 (3): a worker blocked on a permit ends when it is terminated (the host dying)", async () => {
 	const { permits } = exhausted();
