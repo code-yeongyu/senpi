@@ -72,6 +72,21 @@ export {
 	type RemoteTerminalReason,
 	type RemoteToolResult,
 } from "./execution/remote-protocol.ts";
+export {
+	createModelPlaneClient,
+	decodeModelPlaneRequest,
+	MODEL_PLANE,
+	type ModelPlaneRequest,
+	serveModelPlane,
+} from "./execution/plane-model.ts";
+export {
+	decodePlaneMessage,
+	encodePlaneMessage,
+	type NestedRequest,
+	type PlaneHandler,
+	type PlaneMessage,
+	PlaneRefusedError,
+} from "./execution/plane.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
