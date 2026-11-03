@@ -103,7 +103,7 @@ import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import { ServedCredentials } from "./served-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
-import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
+import { limitAccountOf, subscriptionLimits, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
 	createVirtualModel,
 	findLatestResponse,
@@ -867,7 +867,6 @@ export class ModelRuntime implements Models {
 		if (!sources) return undefined;
 		const { rotation } = await this.loadCredentialPool();
 		const { rememberedHeadroomAccount, selectSessionSlot } = await import("./credential-pool/session-slot.ts");
-		const { subscriptionLimits } = await import("./subscription-limits/limit-store.ts");
 		const slots = await rotation.listRotationSlots(sources, {
 			acquireLeases: false,
 			modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
