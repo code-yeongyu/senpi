@@ -1,12 +1,14 @@
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import type { CanonicalControl } from "./compact-canonical-pairing.ts";
+import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
-import type { SessionEventWriterConnection } from "./session-event-fanout.ts";
+import type { SessionEventWriterConnection } from "./session-event-connection.ts";
 import type { RpcRecord } from "./session-event-writer-compaction.ts";
 import { acceptActors, SessionEventWriterLanes, settleActors } from "./session-event-writer-lanes.ts";
+import { closeSocket, type SocketClosingCode } from "./socket-closing.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 /** Connection registration, capabilities, security presentations and per-session delivery settings. */
@@ -169,6 +171,21 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	setSessionKind(sessionId: string, kind: SessionKind): void {
 		if (kind === "worker") this.workerSessions.add(sessionId);
 		else this.workerSessions.delete(sessionId);
+	}
+
+	/**
+	 * RULING-124: the host's own close of connection `id` (shutdown, handoff). A peer that selected compact events receives
+	 * `socket_closing` first and `close(true)` must then flush before it closes; every other peer gets `close(false)` at
+	 * once, exactly as before.
+	 */
+	closeConnection(id: string, code: SocketClosingCode, close: (announced: boolean) => void): Promise<void> {
+		const registered = this.fanout.get(id);
+		const compact = registered !== undefined && this.fanout.connectionHas(id, COMPACT_EVENTS_CAPABILITY);
+		if (registered === undefined) {
+			close(false);
+			return Promise.resolve();
+		}
+		return closeSocket({ ...registered.connection, close: () => close(compact) }, registered.actor, compact, code);
 	}
 
 	/** Drain just this connection before closing it after its last handoff park. */
