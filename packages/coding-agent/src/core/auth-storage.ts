@@ -107,6 +107,13 @@ export type AuthNotice = {
  * Nothing is changed: which credential pays stays the user's choice, so the notice names the
  * unused login, where it still is, and the action that switches to it.
  */
+/** The identity of a failed load, so one failure both a sync and an async read hit is recorded once (senpi#5594). */
+function loadFailureKey(error: unknown): string | undefined {
+	if (error instanceof CredentialStoreBusyError) return "busy";
+	const loadError = describeAuthStoreLoadFailure(error);
+	return loadError === undefined ? undefined : `${loadError.kind}:${loadError.reason}`;
+}
+
 /** A store whose Claude CLI account records the next async load settles (senpi#5594). */
 function hasClaudeCliAccounts(data: AuthStorageData): boolean {
 	const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
@@ -517,6 +524,7 @@ export class AuthStorage implements CredentialStore {
 	private dataLoaded = false;
 	private dataFromBusyRead = false;
 	private loadError: AuthStoreLoadError | undefined;
+	private recordedLoadFailure: string | undefined;
 
 	private constructor(storage: AuthStorageBackend, authPath?: string) {
 		this.storage = storage;
@@ -700,6 +708,7 @@ export class AuthStorage implements CredentialStore {
 					: { result: undefined };
 			});
 			this.updateReadState(data, revision);
+			this.recordedLoadFailure = undefined;
 			return "loaded";
 		} catch (rawError) {
 			const error = failureAfterRead(rawError, load);
@@ -751,7 +760,16 @@ export class AuthStorage implements CredentialStore {
 		if (loadError) this.loadError = loadError;
 		if (repeated) return false;
 		this.recordError(error);
+		this.recordedLoadFailure = loadFailureKey(error);
 		return true;
+	}
+
+	/** An async read's failure, unless the same failure is already recorded since the store last loaded. */
+	private recordAsyncLoadFailure(error: unknown): void {
+		const key = loadFailureKey(error);
+		if (key !== undefined && key === this.recordedLoadFailure) return;
+		this.recordedLoadFailure = key;
+		this.recordError(error);
 	}
 
 	/**
@@ -829,6 +847,8 @@ export class AuthStorage implements CredentialStore {
 	 * account the synchronous load still lists as signed out. A read that fails is recorded as on every other read.
 	 */
 	async settleLoad(): Promise<void> {
+		// A store that never loaded has nothing to settle, and waiting out a held lock would stall startup.
+		if (this.loadError !== undefined || this.dataFromBusyRead) return;
 		await this.readLatestData();
 	}
 
@@ -962,7 +982,9 @@ export class AuthStorage implements CredentialStore {
 
 	private async reloadFromStorageAsync(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		try {
-			return await this.reloadLockedAsync(options);
+			const data = await this.reloadLockedAsync(options);
+			this.recordedLoadFailure = undefined;
+			return data;
 		} catch (error) {
 			if (!options?.signal?.aborted) this.loadError = describeAuthStoreLoadFailure(error) ?? this.loadError;
 			throw error;
@@ -998,7 +1020,7 @@ export class AuthStorage implements CredentialStore {
 				return await this.reloadFromStorageAsync(options);
 			} catch (error) {
 				options?.signal?.throwIfAborted();
-				this.recordError(error);
+				this.recordAsyncLoadFailure(error);
 				this.noteBusyFallback(error);
 				return this.readState.data;
 			}
@@ -1019,7 +1041,7 @@ export class AuthStorage implements CredentialStore {
 					if (this.readState.reload === reload) this.readState.reload = undefined;
 				},
 				(error: unknown) => {
-					if (!controller.signal.aborted) this.recordError(error);
+					if (!controller.signal.aborted) this.recordAsyncLoadFailure(error);
 					if (this.readState.reload === reload) this.readState.reload = undefined;
 				},
 			);

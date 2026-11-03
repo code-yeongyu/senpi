@@ -403,7 +403,15 @@ export function createOAuthConfig(deps: {
 				});
 				const slot = claimed.slot;
 				if (slot === undefined) throw new Error("Claude sign-in could not store its account");
-				await writeAccountLink(agentDir(), { dirId, name, signedInAt, displayName: slot.displayName });
+				// The record only lets a later stale write be undone: a failed write keeps the sign-in, and the next load's
+				// backfill writes the record again (senpi#5594).
+				await writeAccountLink(agentDir(), { dirId, name, signedInAt, displayName: slot.displayName }).catch(
+					(error: unknown) => {
+						callbacks.onProgress?.(
+							`Signed in, but the account dir record could not be written (${error instanceof Error ? error.message : String(error)}); the next start writes it again`,
+						);
+					},
+				);
 				cancelled();
 				const model = connectionTestModel(cli.defaultModel?.());
 				callbacks.onProgress?.(`Testing the account with one turn on ${model}...`);

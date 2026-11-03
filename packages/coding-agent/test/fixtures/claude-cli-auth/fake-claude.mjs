@@ -4,7 +4,8 @@
 // given (argv, the names of its environment, the configured dir, stdin) to FAKE_CLAUDE_RECORD.
 // FAKE_CLAUDE_MODE picks the scenario. No network, no credential store.
 import { spawnSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "login-paste";
@@ -88,6 +89,9 @@ process.stdout.write("Paste code here if prompted > ");
 if (mode === "login-hang") {
 	setInterval(() => {}, 1 << 30);
 } else if (mode.startsWith("login-auto") || mode === "login-exit1-success") {
+	// FAKE_CLAUDE_BLOCK_ACCOUNT_RECORD occupies the account dir's record path, so senpi's record write fails.
+	if (process.env.FAKE_CLAUDE_BLOCK_ACCOUNT_RECORD && process.env.CLAUDE_CONFIG_DIR)
+		mkdirSync(join(process.env.CLAUDE_CONFIG_DIR, ".senpi-account.json"));
 	process.stdout.write(successOutput);
 	process.exit(mode === "login-exit1-success" ? 1 : 0);
 } else if (mode === "login-org-denied") {
