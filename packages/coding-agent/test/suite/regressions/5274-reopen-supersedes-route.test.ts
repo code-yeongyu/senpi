@@ -2,7 +2,7 @@ import { join } from "node:path";
 import * as fs from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { ADMISSION_LIMITS } from "../../../src/modes/rpc/compact-admissions.ts";
-import { type RawClient, statusHost } from "../rpc-session-status-support.ts";
+import { type RawClient, receiptLeases, statusHost } from "../rpc-session-status-support.ts";
 
 vi.mock("node:fs/promises", { spy: true });
 const actual = await vi.importActual<typeof fs>("node:fs/promises");
@@ -99,8 +99,11 @@ it("RULING-117 the 128th distinct session on one socket is refused admission_lim
 	const peer = host.client("peer");
 	const distinct = ADMISSION_LIMITS.entries - 1;
 	for (let n = 0; n < distinct; n++) {
+		const before = peer.inbox.length;
 		const opened = await open(peer, host.cwd, `distinct-${n}.jsonl`, `distinct-${n}`);
 		if (opened.success !== true) expect(opened, `distinct ${n}`).toMatchObject({ success: true });
+		await host.writer.flush();
+		await receiptLeases(peer, String(opened.sessionId), before);
 	}
 	expect(await open(peer, host.cwd, "one-too-many.jsonl", "one-too-many")).toMatchObject({
 		success: false,

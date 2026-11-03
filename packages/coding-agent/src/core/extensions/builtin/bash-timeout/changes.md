@@ -3,6 +3,24 @@
 Injects the default `timeout` into every `bash` call and appends the "Bash Tool Timeout Policy"
 section to the system prompt.
 
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/bash-timeout/index.ts`, `packages/coding-agent/src/core/extensions/builtin/bash-timeout/timeout.ts`: the `## Bash Tool Timeout Policy` section and `buildBashTimeoutPrompt` are removed, and `index.ts` no longer re-exports `BASH_MAX_TIMEOUT_SECONDS` (its only importers read it from `timeout.ts`); the extension keeps applying the default timeout on `tool_call`, and the terminal section states the facts. `scripts/sync-builtin-extensions.mjs` now lists bash-timeout under `MANUAL_PACKAGES`, so a re-sync from upstream cannot bring the removed section back.
+
+### Why
+
+- senpi#5335: the section restated the terminal section and the bash schema.
+
+### Why an extension could not handle it
+
+- The section was this extension's own prompt contribution.
+
+### Expected merge conflict zones
+
+- LOW: the removed `before_agent_start` handler and prompt builder.
+
 ## 2026-10-31 - The timeout policy names the reachable bash call shape (senpi#5140)
 
 ### What changed
