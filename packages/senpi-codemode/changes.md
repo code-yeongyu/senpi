@@ -1,3 +1,109 @@
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: the per-dialect batching guideline is removed (each dialect's description already carries it) and the remaining guideline keeps only the kernel memory notice rule.
+- Terse pass: the kernel memory notice guideline in `packages/senpi-codemode/src/prompt/eval-prompt.ts` is shortened.
+
+### Why
+
+- senpi#5335: the batching guideline and the reset rule restated the eval description.
+
+### Why an extension could not handle it
+
+- The eval tool definition owns its guidelines.
+
+### Expected merge conflict zones
+
+- LOW: `promptGuidelines` in `buildEvalPrompt`.
+
+## 2026-10-31 - eval infers an omitted run language when it is unambiguous (senpi#5154)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-language-inference.ts` (new): `inferEvalLanguage` fills an omitted run language with the only enabled kernel, or, when exactly js and py are enabled, with `classifyEvalCode`: a strong marker of one language (py: `def name(`, a plain `import x` / `from x import y` line; js: `await` on a call, a template literal, `JSON.`/`Object.`/`Array.`, `const`/`let`, `=>`, `console.log(`, ESM imports) and no strong or weak signal of the other. `print(` is no signal, since the prelude gives both runtimes `print`. Any conflict fills nothing.
+- `packages/senpi-codemode/src/tool/eval-argument-validator.ts`: the eval validator fills the language before its missing-field check, records the fill as `language_inferred`, and drops a caller-sent `language_inferred`. An explicit language is never changed. A filled call that still fails validation reports the caller's own arguments.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `parseEvalRequest` applies the same inference for direct callers and carries `language_inferred` on the run request; a `language_inferred` argument counts only on an object the validator filled.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: a run whose language was inferred leads its result with `language_inferred: <lang> (<basis>)`.
+
+### Why
+
+- senpi#5154: a run call that omitted language always failed with the teaching error, even when the kernel could not be anything else, and a weaker tool-calling model could repeat that omission many times.
+
+### Expected merge conflict zones
+
+- LOW: the language checks in `parseEvalRequest`, the validator closure from senpi#5150, and `execute` in `createEvalTool`.
+
+## 2026-10-30 - Restore Windows Python startup assets and builtin helpers (senpi#4955, senpi#5048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/path_identity_windows.py`: rebuild only Python lexical functions with private globals, retaining native builtin helpers directly and preserving function defaults.
+- `.github/workflows/ci.yml`: copy every Python runtime sibling into the isolated compiled Python host, rather than copying only `prelude.py`.
+- `packages/senpi-codemode/test/py-canonical-parity.test.ts`: simulate a builtin `ntpath.normpath` and poison module attributes after capture.
+- `packages/senpi-codemode/test/py-packaged-assets.test.ts`: compare the actual CI sidecar copy selection with the runtime Python asset set.
+
+### Why
+
+- CPython's builtin `ntpath.normpath` has no `__code__`. The isolated CI host also omitted the permission bridge and path-identity siblings required by the prelude.
+
+### Why an extension could not handle it
+
+- Permission identity capture runs before user cells, and the isolated host's runtime files are selected by CI before startup.
+
+### Expected merge conflict zones
+
+- LOW: Windows lexical-helper capture and the isolated Python host copy step.
+
+## 2026-10-31 - A mistyped detached cell id names the one close known id (senpi#5153)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`: `EvalCellNotFoundError` takes an optional suggestion; the unknown-id lookup behind `peek`, `stop` and `waitForTerminal` compares the requested id with every live, interrupting and retained settled id and appends `did you mean "<id>"?` when exactly one is within a quarter of the id's length in edit distance (at least one edit). No close id or a tie leaves the message byte-identical; `errorCode` stays `eval_cell_not_found`.
+- `packages/senpi-codemode/test/eval-cell-id-suggestion.test.ts`: match on a settled cell (peek), match on a live cell (stop), no match, and an ambiguous tie.
+
+### Why
+
+- Cell ids are long opaque strings; a weaker tool-calling model often drops or swaps a character when copying one and then repeats the same wrong id.
+
+## 2026-10-31 - eval validates a run call's missing fields first (senpi#5138)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-argument-validator.ts` (new): `registerEvalArgumentValidator` registers the eval schema's argument validator. A run call (`action` omitted or `"run"`) missing `language`, `code` or `summary` (absent, null, or a blank summary) fails with one `required` error per missing field, in that order, carrying the eval teaching text (`language` names the enabled languages). Every other call goes through the generic `validateToolArguments` path and its coercion unchanged; when that fails, the generic path's own error is rethrown, so the message (including its `Received arguments` block) is exactly what the schema gets without a registered validator.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `evalRunFieldRequiredMessage` is the single source of the three run-field teaching errors, shared by validation and `parseEvalRequest`.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: `createEvalTool` registers the validator for its schema.
+
+### Why
+
+- senpi#5138: a run call missing `language` got the generic anyOf dump (every branch's failure), and the eval-specific error in `parseEvalRequest` was never reached because validation failed first.
+
+### Expected merge conflict zones
+
+- LOW: one import and one call in `createEvalTool`.
+
+## 2026-10-29 - Preserve executable group-signal detection while ignoring inert shell text (senpi#3019)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/group-signal-notice.js`: blank quoted literals, comments and inert heredoc text before scanning, while preserving executable command substitutions and shell scripts. Substitution boundaries skip shell comments and distinguish case-pattern closers from the substitution's closing parenthesis. Honor escaped ANSI-C quotes and share a finite work and nesting budget; conservatively apply the existing raw patterns when a limit is reached.
+- `packages/senpi-codemode/test/group-signal-notice.test.ts`: retain the quoted-text and executable-substitution cases and cover nested case patterns, ANSI-C quoting, hostile nesting, repeated scan work, oversized text and unclosed substitutions. Keep group-signal notices after exhausted masking, including long heredocs and all three raw patterns.
+- `packages/senpi-codemode/test/gate/allowlist.json`: register the corresponding additive detector contracts under `senpi#3019`.
+
+### Why
+
+- `packages/senpi-codemode/src/kernels/js/group-signal-notice.js`: regex-only scanning warned about inert quoted text. Quote masking must preserve executable substitutions and ANSI-C quote boundaries without letting deeply nested or repeatedly scanned text exhaust the worker's stack or work budget. Exhaustion must not hide a real group signal that the existing raw patterns identify.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/kernels/js/group-signal-notice.js`: the eval worker's spawner wrappers classify the command before running it; extensions cannot replace this internal detector.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/kernels/js/group-signal-notice.js`: substitution boundaries, quote-blanking helpers and shared advisory scan limits.
+- `packages/senpi-codemode/test/group-signal-notice.test.ts`: detector table cases.
+- `packages/senpi-codemode/test/gate/allowlist.json`: the `senpi#3019` contract block.
+
 ## 2026-10-29 - Eval-kernel WebKit Bun.WebViews are served from the main thread (senpi#4794)
 
 ### What changed

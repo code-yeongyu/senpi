@@ -1,3 +1,138 @@
+## 2026-10-31 - Extension event placement for a runtime without a session (senpi#5250)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: exported `EXTENSION_EVENT_PLACEMENT` (`runtime` / `loop` / `split` for every `ExtensionEvent["type"]`, compile-checked exhaustive) and `ExtensionEventPlacement`; when the runner has no session manager, `emit()`, `emitContext()`, `emitBeforeProviderRequest()`, `emitBeforeProviderHeaders()`, `emitBoundary()`, `emitSessionMove()` and `emitModelSelect()` run no `loop` handler and return their no-handler result (a private `dropsLoopEvent()` reads the placement).
+
+### Why
+
+- A runtime with no session (brain/hand split, senpi#5231) delivers its own events and must not run loop handlers it has no loop for.
+
+### Why an extension could not handle it
+
+- Event dispatch is the runner's; an extension cannot stop the runner from calling other extensions' handlers.
+
+### Expected merge conflict zones
+
+- LOW: the type block after `RunnerEmitEvent`, the first lines of `emit()`, and the handler reads in `emitBoundary`, `emitSessionMove`, `emitModelSelect`, `emitContext`, `emitBeforeProviderRequest` and `emitBeforeProviderHeaders` in `packages/coding-agent/src/core/extensions/runner.ts`.
+
+## 2026-10-31 - Runner UI through a runtime UI broker (senpi#5237)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `setUiBroker(broker)` routes `getUIContext()`, `hasUI()` and `ctx.ui` through a `RuntimeUiBroker`'s attached presenter, wrapped by the existing UI-prompt wrapper so `ui_prompt_start` and `ui_prompt_end` still fire; with no presenter the UI is the unbound `noOpUIContext`, which is now exported. With no broker set the runner reads its own bound UI as before.
+
+### Why
+
+- A runtime with no session (brain/hand split, senpi#5228) runs tools that ask humans questions, and has no session UI to bind.
+
+### Why an extension could not handle it
+
+- The runner owns the UI context every extension handler receives as `ctx.ui`; an extension cannot replace it for other extensions.
+
+### Expected merge conflict zones
+
+- LOW: the `uiContext` field block, `setUIContext()`, `getUIContext()`, `hasUI()` and the `ui` getter in `createContext()` of `packages/coding-agent/src/core/extensions/runner.ts`; the `noOpUIContext` declaration.
+
+## 2026-10-31 - Extension context without a session (senpi#5230)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds `ExtensionRuntimeContext`, the members of `ExtensionContext` a runtime serves without a session. `ExtensionContext` is unchanged.
+- `packages/coding-agent/src/core/extensions/runner.ts` accepts an `undefined` session manager. Contexts of such a runner have no `sessionManager` or `goalStoreFile`, every other loop-side member throws `<member> is loop-side and not bound`, and `getActiveTools()` returns an empty list. A runner with a session manager is unchanged.
+
+### Why
+
+- A tool host without an agent loop or a session (brain/hand split, senpi#4360) has to give its extensions a context, run wrapped extension tools and run resource discovery without a synthetic transcript.
+
+### Why an extension could not handle it
+
+- The extension context is built by the runner before any extension code runs.
+
+### Expected merge conflict zones
+
+- LOW: the `./types.ts` import block and `createContext`'s end in `packages/coding-agent/src/core/extensions/runner.ts`; the end of the `ExtensionContext` interface in `packages/coding-agent/src/core/extensions/types.ts`.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/core/extensions/index.ts`, `packages/coding-agent/src/core/extensions/runner.ts`, `packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/secret-input.ts`.
+- Expose ExtensionUIInputOptions and the secretInput descriptor, preserve the headless UI singleton, use typed refusal, and omit private prompt labels from lifecycle events.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-27 - before_agent_start results say whether their prompt change is stable or volatile (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartEventResult.systemPromptCache` (`"stable" | "volatile"`; builtins default to stable, other extensions to volatile) and `ExtensionContext.getSystemPromptStablePrefix()` / `ExtensionContextActions.getSystemPromptStablePrefix`, so an extension that builds its own request from `getSystemPrompt()` splits it like the turn.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: per-prompt UserPromptSubmit system messages are `systemPromptCache: "volatile"`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` tracks the stable prefix (the prompt up to the first volatile change, shrunk when a later handler rewrites it) and returns it as `systemPromptStablePrefix`; the extension context exposes the session's current prefix through `getSystemPromptStablePrefix`.
+
+### Why
+
+- Only the extension knows whether its addition changes between sessions; the runner is where the composed prompt is known.
+
+### Why an extension could not handle it
+
+- The composition loop lives in `packages/coding-agent/src/core/extensions/runner.ts`.
+
+### Expected merge conflict zones
+
+- LOW: `BeforeAgentStartEventResult` in `packages/coding-agent/src/core/extensions/types.ts` and the `systemPrompt` branch of the `dispatch:` loop in `packages/coding-agent/src/core/extensions/runner.ts`.
+
+## 2026-10-27 - before_agent_start handlers can run last; MCP instructions close the system prompt (senpi#4448)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartHandlerOptions.runLast` and `Extension.runLastHandlers`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `pi.on("before_agent_start", handler, { runLast: true })` records the handler in `runLastHandlers`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` dispatches every handler registered without `runLast` in load order, then other extensions' run-last handlers, then builtin run-last handlers, each in load order (`beforeAgentStartDispatchOrder`), on real turns and previews.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the MCP `before_agent_start` handler registers with `runLast`.
+- `packages/coding-agent/test/mcp/instructions-last.test.ts`: require deferred fixture attachment to settle before composing real turns or previews; a cold SDK import must not turn an ignored readiness timeout into a prompt-ordering failure.
+
+### Why
+
+- MCP instructions were appended when the MCP builtin's handler ran, so additions from extensions that load after the builtins (a memory block) landed behind them. MCP instructions change with the connected server set and must be the last system-prompt block so everything before them stays a stable cache prefix.
+
+### Why an extension could not handle it
+
+- Dispatch order is owned by `packages/coding-agent/src/core/extensions/runner.ts`; an extension cannot run after extensions that load after it.
+
+### Expected merge conflict zones
+
+- LOW: `BeforeAgentStartHandlerOptions` in `packages/coding-agent/src/core/extensions/types.ts`, the `on()` registration in `packages/coding-agent/src/core/extensions/loader.ts`, and the `dispatch:` loop in `packages/coding-agent/src/core/extensions/runner.ts`.
+
+## 2026-10-27 - A yielded settle handler is released quietly (senpi#4420, oh-my-openagent#11419)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/handler-budget.ts`: `HandlerStopVerdict` gains `yielded`; `HeldHandlerWaits.release(scope, verdict)` passes the verdict to the held wait, which logs it as stage `released`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `releaseHeldHandlers(turn, verdict)` forwards the verdict; a `yielded` stop emits no extension error, and the deadline/Esc release text is now "handler released when the turn was stopped" (it said "turn deadline" for Esc and for any release).
+
+### Why
+
+- A person moving on from a settled run is not a failure: it must not reach the TUI as a red error line or RPC clients as `extension_error`, and "turn deadline" must not appear when no deadline fired.
+
+### Why an extension could not handle it
+
+- The host's handler budget and its error reporting are core.
+
+### Expected merge conflict zones
+
+- LOW: `HeldHandlerWaits` and `HandlerStopVerdict` in `handler-budget.ts`; `reportStoppedHandler` and `releaseHeldHandlers` in `runner.ts`.
+
 ## 2026-10-29 - ctx.afterSessionStart publishes recovered work after startup (senpi#4827)
 
 ### What changed

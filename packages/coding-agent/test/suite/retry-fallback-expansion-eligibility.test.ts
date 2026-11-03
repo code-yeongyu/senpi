@@ -61,8 +61,8 @@ describe("bare expansion eligibility gate", () => {
 	});
 
 	it("keeps an eligible OAuth provider while the exact Cursor provider stays out of bare expansion by policy", () => {
-		// cursor (the exact denylisted provider id) never enters bare expansion even with an
-		// OAuth credential; cursor-cli-oauth is a different provider id and is NOT denylisted.
+		// cursor is not one of Anthropic's first-party providers, so it never enters bare
+		// expansion of a Claude family, even with an OAuth credential.
 		const withCursor = [...catalog, model("cursor", OPUS5)];
 		const chains = canonicalizeFallbackChains(BARE_CHAINS, lookup(withCursor, ["anthropic-subscription", "cursor"]));
 

@@ -9,7 +9,10 @@ type StructuredFailure = (cause: unknown) => void;
 
 export class StructuredLaneUnavailableError extends Error {
 	constructor() {
-		super("Structured lane unavailable: Agent was constructed outside the session layer");
+		super(
+			"Structured lane unavailable: Agent was constructed outside the session layer; construct the session via the " +
+				"session layer, or turn the engine-socket compact-updates flag off",
+		);
 		this.name = "StructuredLaneUnavailableError";
 	}
 }
@@ -44,6 +47,11 @@ export class StructuredSessionLane {
 
 	get active(): boolean {
 		return this.listeners.size > 0;
+	}
+
+	/** Whether this session's Agent was built with the internal channel, so `subscribe` can succeed. */
+	get available(): boolean {
+		return this.#channel !== undefined;
 	}
 
 	/** `failed` hears a record this lane could not build; that record is skipped, never the event's legacy delivery. */

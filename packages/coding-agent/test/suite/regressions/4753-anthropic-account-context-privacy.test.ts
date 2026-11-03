@@ -12,19 +12,12 @@ import {
 	resetContinuityObservabilityBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-observability.ts";
 import { withAuthGuidance } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const attempt: AuthenticatedAttemptInput = {
 	accountName: "john-smith",
-	accounts: [
-		{
-			name: "john-smith",
-			source: "login",
-			access: "synthetic-access",
-			refresh: "synthetic-refresh",
-			expires: 1_900_000_000_000,
-		},
-	],
-	authLane: "oauth-slots",
+	accounts: [cliSlot("john-smith")],
+	authLane: "claude-cli",
 	options: {},
 };
 

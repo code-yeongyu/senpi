@@ -1,3 +1,62 @@
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: the Claude routing rule drops the "nearly free / stale assumption" aside, and both dialects drop "A result that hides a failed item or a truncated tail is not evidence" (the eval description states it).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts`: `GLM5_TUNING` drops the waitForAnswer parenthetical the ask_user_question schema states.
+- Terse pass: the Claude dialect of `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts` and `GLM5_TUNING` in `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts` render the terse wording (Kimi dialect unchanged).
+
+### Why
+
+- senpi#5335.
+
+### Why an extension could not handle it
+
+- These are preset modules.
+
+### Expected merge conflict zones
+
+- LOW: the touched directive strings.
+
+## 2026-11-02 - gpt-6-astra core: terse, no Verification, tool list or file-operations block (senpi#5390)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: `## Verification` removed; `stop-checks` in `## Stop Goal` names the checks up front, runs them once and never re-verifies verified results. `## File operations` and the tool list leave the core; `## Tool Guidelines` stays. `## Writing` is codex's gpt-6-astra "Writing style" verbatim. `root-cause` opens `## Scope and Recovery`. Tool-bound rules carry `requiresTool` and render only when the session has the tool. Every other directive is restated tersely. o200k 4,355 -> 3,674 on a real first-turn tool set.
+
+### Why
+
+Q (2026-11-02) asked to replace the Astra prompt after comparing it with the Codex CLI request for the same model: drop the blocks that cost tokens without earning them, take Codex's writing section, and steer the model to diagnose root causes.
+
+### Why an extension could not handle it
+
+This is the preset's own core text.
+
+### Expected merge conflict zones
+
+`gpt-6-astra.ts` rule constants and `buildGpt6AstraCore`; the `gpt-6-astra:*` hashes in `test/suite/prompt-presets-native-baseline.json`.
+
+## 2026-10-31 - DeepSeek V4.1 Flash full-core rewrite (senpi#5195, fixes #5194)
+
+### What changed
+
+- `deepseek-v4-1-flash.ts`: the preset passes `corePrompt` instead of rendering the shared core. The core states every fork contract once in a compressed register (RFC 2119 keywords, a `<critical>` block for the hard limits): routing line and binding stop condition on terminal, the app/chat variants through `terminalOrApp`, `buildHandoffSection` (its language rule kept; chat keeps `CHAT_REPLY_RULE`), `buildTestDisciplineSection`, `APP_UNRUN_CHECK_RULE`, and the claude-dialect execution tooling. The OmO voice of the shared core is kept (senior-engineer bar, scope fidelity, opinions, the user's call is final, no hedging); the identity names the model. The git-commit hard limit is dropped at the owner's request, and the unread-code/unrun-command hard limit is kept.
+- `DEEPSEEK_V41_FLASH_RULES` (new typed rule data): `injected-directive-authority`, `settled-reading`, `missing-info`, `todo-discipline` carry the V4 Flash-line repairs from `deepseek-v4.ts` in compressed form (`carriedFrom`); `background-wait` is new. `todo-discipline` renders only with `todo`, `background-wait` only with `task`. The Pro-only `reasoning-aim` is not carried.
+- `test/suite/prompt-presets-deepseek-v4-1-flash.test.ts`: the no-V4-rule pin is replaced by rule-table checks (each rule once, in its owning section; tool-bound rules gated; every V4 Flash-line repair carried, no Pro-only one). `prompt-presets-native-baseline.json`: the six `deepseek-v4-1-flash:*` hashes are recaptured; no other hash changes.
+- Size (o200k, 11 tools / no tools): terminal 2167 -> 1982 / 1782 -> 1507, app 2184 -> 2011 / 1799 -> 1536, chat 1987 -> 1825 / 1602 -> 1350.
+
+### Why
+
+- The owner asked for V4.1 to be tuned rather than left on the shared core, with the V4 repairs carried over and oh-my-pi's compressed register and `<critical>` tags as the style reference. DeepSeek's own harness tells the model to end its turn when only waiting on background work remains, and DeepSeek tuned V4.1-Flash-1017 for that harness (api-docs.deepseek.com/updates, 2026-10-17); `background-wait` adopts that stance. The 2026-09-11 decision (no V4 rules on a re-trained model) is reversed by the owner; the behavior change is unmeasured on live V4.1 traces.
+
+### Why an extension could not handle it
+
+- Preset prompts are builtin extension code.
+
+### Expected merge conflict zones
+
+- LOW: `deepseek-v4-1-flash.ts` (whole file), the `deepseek-v4-1-flash:*` lines of the native baseline.
+
 ## 2026-10-24 - Kimi K3.1 prompt preset, copied from K3 (senpi#4184)
 
 ### What changed

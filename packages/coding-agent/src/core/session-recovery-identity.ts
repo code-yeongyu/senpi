@@ -1,6 +1,19 @@
 import { randomUUID } from "node:crypto";
 
-/** The recovery identity of one session record; never a property on the record, so no byte changes (R3.C1.2). */
+/**
+ * The recovery identity of one session record. It is never a property on the record a session produces, so every
+ * legacy record, and every record with the compact-updates flag off, keeps its bytes (R3.C1.2). One exception
+ * (RULING-120, senpi#5331): with the flag on, the RPC host stamps the copy it sends a `compact_events` peer of a live
+ * `message_end` (`messageId`, `terminalSequence`), `entry_appended` (`owningMessageId`) and `transcript_write_failed`
+ * (`messageId`) with the ids the settled store recorded for that message, so that peer can join the live record to its
+ * settled `message-<terminalSequence>` and `join-<n>` rows across a reconnect or recovery cut. The ids are opaque,
+ * stable for the message's lifetime and never reused in the session; nothing else carries them. The same copy of a live
+ * call record (`toolcall_*` updates, `tool_execution_*`, `tool_hook_status`) carries the `runtimeItemKey` of the call
+ * the host changed with it, or `callUnknown: true` when it changed none (RULING-123, senpi#5346): that key comes from
+ * the calls component (`compact-call-model.ts`), not from this carrier. Calls that share one `toolCallId` inside one
+ * assistant message are told apart only by order, so their snapshot `calls` and settled rows carry `callUnknown: true`
+ * too (senpi#5348): the calls table's own mark, never a confident attribution that can be swapped.
+ */
 export interface RecoveryCarrier {
 	readonly messageId: string;
 	/** Host-issued nonce, internal to the producer/lane handshake; never serialized with a public record. */

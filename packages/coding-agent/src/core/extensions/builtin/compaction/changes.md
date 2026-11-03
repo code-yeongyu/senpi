@@ -1,3 +1,40 @@
+## 2026-10-27 - Compaction authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`, `compaction/openai-remote.ts`, `compaction/index.ts`: `getApiKeyAndHeaders` receives `{ sessionId: sessionManager.getSessionId() }`; the remote-compaction context type accepts the option.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller; the fix is passing its session to the registry.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call lines.
+
+## 2026-10-27 - Compaction summary requests split the system prompt like the turn (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`, `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: speculative and core-route summary snapshots record `ctx.getSystemPromptStablePrefix()` next to `systemPrompt`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: the summary request passes it as `systemPromptStablePrefix` when it sends the agent's own prompt.
+
+### Why
+
+- A summary request meant to reuse the turn's cached prefix must send the same system blocks and breakpoint as the turn.
+
+### Why an extension could not handle it
+
+- These are the compaction builtin's own request builders.
+
+### Expected merge conflict zones
+
+- LOW: the snapshot objects in `speculative.ts` and `index.ts`, the request context in `speculative-summary.ts`.
+
 ## 2026-10-26 - Terminal summarizer failures degrade on every compaction kind (senpi#4340)
 
 ### What changed

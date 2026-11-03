@@ -1,5 +1,6 @@
 import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { DEFAULT_MAX_DETACHED_CELLS, DEFAULT_RUN_BUDGET_SECONDS } from "../config/settings.ts";
+import { pinnedDisplayPath } from "../extension/host-facts.ts";
 import type { EvalRuntimeInfo } from "../tool/types.ts";
 import { EVAL_PROMPT_TEMPLATE } from "./eval-prompt-template.ts";
 
@@ -29,7 +30,7 @@ export interface EvalPromptOptions {
 	readonly hostLine?: string;
 	/** Identity of the in-process js kernel; a bun runtime swaps the Node.js worker line for the Bun one. */
 	readonly jsRuntime?: EvalRuntimeInfo;
-	/** Absolute path of the active bun-1-4 skill; rendered as a MUST READ pointer only on a bun kernel. */
+	/** Absolute path of the active bun skill; rendered as a MUST READ pointer only on a bun kernel. */
 	readonly bunSkillPath?: string;
 	/** Kill deadline for a cell's own execution time, as configured; the description states it. */
 	readonly runBudgetSeconds?: number;
@@ -105,7 +106,8 @@ export function buildEvalPrompt(
 		hostLine: options.hostLine ?? "",
 		jsBun: options.jsRuntime?.name === "bun",
 		jsVersion: options.jsRuntime?.version ?? "",
-		bunSkillPath: options.bunSkillPath ?? "",
+		// pinnedDisplayPath: the test-only checkout pin (senpi#5067); the path itself unless SENPI_TEST_WORKSTATION pins it.
+		bunSkillPath: options.bunSkillPath === undefined ? "" : pinnedDisplayPath(options.bunSkillPath),
 		runBudgetSeconds: String(options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS),
 		maxDetachedCells: String(options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS),
 		kernelPreludeDocs: (options.kernelPreludes ?? []).map((prelude) => prelude.documentation).join("\n"),
@@ -117,32 +119,10 @@ export function buildEvalPrompt(
 	return {
 		description,
 		promptSnippet: "Run one incremental code cell in a persistent language kernel.",
-		promptGuidelines: [
-			style === "gpt" && context.monitor === true ? GPT_MONITOR_BATCHING_GUIDELINE : BATCHING_GUIDELINES[style],
-			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
-		],
+		// Batching guidance lives in the per-style description above; the guideline keeps only what no schema states.
+		promptGuidelines: ["Bracketed kernel memory notice in eval result names biggest globals -> drop unneeded ones."],
 	};
 }
-
-/**
- * System-prompt guideline per emphasis dialect. The default dialect carries
- * maximum emphasis so unmapped models still batch through eval; the others are
- * tuned to what steers that family reliably. The GPT line routes waits to the
- * subscription when `monitor` is reachable, because a GPT model that reads
- * "long cells detach" as the way to wait awaits a `--watch` inside a cell.
- */
-const GPT_MONITOR_BATCHING_GUIDELINE =
-	"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.";
-
-const BATCHING_GUIDELINES: Record<EvalEmphasisStyle, string> = {
-	default:
-		"Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
-	claude:
-		"Prefer eval for a step's independent calls: one cell runs them together and keeps every failure in its result.",
-	codex: "Route a step's independent calls through one eval cell and inspect every result; a direct tool call is right when one call is sufficient.",
-	gpt: "Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on their own and notify on completion, so do not poll.",
-	kimi: "Put a step's independent calls into one eval cell with parallel(thunks) and keep every failed item in the result.",
-};
 
 function renderTemplate(template: string, context: Context): string {
 	let index = 0;

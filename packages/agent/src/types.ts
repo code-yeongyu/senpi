@@ -18,6 +18,16 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
+import type { ExecutionPipelineWitness, ExecutionScope, ToolHost } from "./execution/tool-host.ts";
+
+export type {
+	ExecutionPipelineWitness,
+	ExecutionScope,
+	ToolHost,
+	ToolHostCall,
+	ToolHostOptions,
+	ToolHostResult,
+} from "./execution/tool-host.ts";
 
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
@@ -378,6 +388,10 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Default: "parallel"
 	 */
 	toolExecution?: ToolExecutionMode;
+	/** Unprepared batch boundary. Omitted selects the existing in-process legacy scheduler. */
+	toolHost?: ToolHost;
+	executionScope?: ExecutionScope;
+	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => Promise<void> | void;
 
 	/**
 	 * Optional migration guidance for tool names intentionally removed by an extension.
@@ -466,6 +480,11 @@ export interface AgentState {
 	 * `content` or `sections` still apply on top of it.
 	 */
 	systemPrompt: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions; see
+	 * {@link AgentContext.systemPromptStablePrefix} (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
@@ -598,6 +617,13 @@ export interface AgentContext {
 	 * `normalizeContext()`. Upstream-built contexts carry the prompt in transcript system messages.
 	 */
 	systemPrompt?: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions, followed by content that is not
+	 * (memory, MCP instructions). Providers with block-level prompt caching put the system breakpoint at
+	 * its end so another session can read it from cache. Ignored unless `systemPrompt` starts with it
+	 * (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for execution in this run. */

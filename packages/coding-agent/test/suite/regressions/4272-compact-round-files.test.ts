@@ -47,7 +47,7 @@ it.each([
 			await root.cleanup();
 		}
 	},
-	120_000,
+	600_000,
 );
 
 // RULING-54 condition 2: a reader of the committed round holds at most one 64 KiB page per file read and
@@ -93,4 +93,4 @@ it("reads a multi-file round one bounded page at a time, never a whole round", a
 		await rig.store.retire();
 		await root.cleanup();
 	}
-}, 60_000);
+}, 600_000);

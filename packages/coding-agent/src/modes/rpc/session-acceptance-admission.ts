@@ -2,7 +2,27 @@ import { randomUUID } from "node:crypto";
 import { correlatedRecord } from "./client-message-events.ts";
 import type { CallFold } from "./compact-call-fold.ts";
 import { CALL_ONLY_RECORDS, CALL_RECORDS } from "./compact-call-model.ts";
+import { COMPONENT_RECORDS } from "./compact-current-components.ts";
 import type { CompactLaneCurrent } from "./compact-lane-current.ts";
+
+/** Recovery kinds take a sequence; responses and every other record keep FIFO order with none. */
+export const SEQUENCED: ReadonlySet<string> = new Set([
+	"agent_start",
+	"agent_end",
+	"turn_start",
+	"turn_end",
+	"message_start",
+	"message_update",
+	"message_end",
+	"tool_execution_start",
+	"tool_execution_update",
+	"tool_execution_end",
+	"entry_appended",
+	"session_abort",
+	"transcript_write_failed",
+	...COMPONENT_RECORDS,
+	...CALL_RECORDS,
+]);
 
 /** Where the lane stands, or where an admitted record lands: its sequence and the turn it belongs to. */
 export interface LanePlace {
@@ -38,18 +58,19 @@ function turnScoped(type: string, record: object): boolean {
  * The calls component folds first, at the sequence and turn this record would take: an ignored call-only record
  * changes no component, takes no sequence, mints no turn, commits no correlation and publishes no root
  * (RULING-13 Q9), so the lane commits nothing before it decides. Returns the place the record takes, or undefined
- * when it is ignored.
+ * when it is ignored. `folds` false: the record was refused at the protocol depth limit and folds no call.
  */
 export function admitRecord(
 	current: CompactLaneCurrent,
 	record: object,
 	type: string,
 	at: LanePlace,
+	folds = true,
 ): AdmittedRecord | undefined {
 	const mintsTurn = type === "turn_start" || (at.turnId === null && turnScoped(type, record));
 	const turnId = mintsTurn ? randomUUID() : at.turnId;
 	const next = at.sequence + 1;
-	const call = CALL_RECORDS.has(type) ? current.foldCall(record, next, turnId) : undefined;
+	const call = folds && CALL_RECORDS.has(type) ? current.foldCall(record, next, turnId) : undefined;
 	if (call && !call.changed && CALL_ONLY_RECORDS.has(type)) return undefined;
 	return { sequence: next, turnId, call };
 }

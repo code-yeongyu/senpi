@@ -3,6 +3,7 @@ import type {
 	ProviderDiagnosticCategory,
 	ProviderDiagnosticEvidence,
 } from "../provider-diagnostic.ts";
+import { siwcErrorForCode } from "./provider-diagnostic-carrier.ts";
 
 /** Serialized UTF-8 budget for one emitted diagnostic. */
 export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
@@ -15,12 +16,18 @@ export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
  * `billing_error` proves a billing failure, not quota exhaustion, so it stays `unknown`.
  */
 export function categoryForProviderCode(code: string): ProviderDiagnosticCategory | undefined {
+	const siwc = siwcErrorForCode(code);
+	if (siwc !== undefined) return siwc.category;
 	switch (code) {
+		// `account_pool_auth_blocked`: a subscription account pool that refused the request locally because every account needs a new login.
 		case "authentication_error":
 		case "invalid_api_key":
+		case "account_pool_auth_blocked":
 			return "auth";
+		// `account_pool_blocked`: a subscription account pool that refused the request locally until its soonest reset (senpi#4672).
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
+		case "account_pool_blocked":
 			return "rate_limit";
 		case "insufficient_quota":
 		case "exceeded_current_quota_error":
@@ -45,9 +52,28 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 }
 
 /**
- * Closed allowlist of transport failures: Node `errno` / undici `code` names, and the provider SDKs'
- * connection error class names (`APIConnectionError`, `APIConnectionTimeoutError`). Read only from the
- * error chain's `code` and `name` fields, never from message text.
+ * TLS chain-verification failures the runtime puts on a handshake error: the server's chain does not
+ * reach a trusted root, or ends in a self-signed certificate (senpi#5244). A hostname mismatch
+ * (`ERR_TLS_CERT_ALTNAME_INVALID`) and an expired certificate (`CERT_HAS_EXPIRED`) are other failures.
+ */
+const TLS_CHAIN_VERIFICATION_CODES: ReadonlySet<string> = new Set([
+	"UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+	"UNABLE_TO_GET_ISSUER_CERT",
+	"UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+	"SELF_SIGNED_CERT_IN_CHAIN",
+	"DEPTH_ZERO_SELF_SIGNED_CERT",
+	"CERT_UNTRUSTED",
+]);
+
+export function isTlsChainVerificationCode(code: string): boolean {
+	return TLS_CHAIN_VERIFICATION_CODES.has(code);
+}
+
+/**
+ * Closed allowlist of transport failures: Node `errno` / undici `code` names, TLS chain-verification
+ * codes, and the provider SDKs' connection error class names (`APIConnectionError`,
+ * `APIConnectionTimeoutError`). Read only from the error chain's `code` and `name` fields, never from
+ * message text.
  */
 export function categoryForTransportCode(code: string): ProviderDiagnosticCategory | undefined {
 	switch (code) {
@@ -66,12 +92,14 @@ export function categoryForTransportCode(code: string): ProviderDiagnosticCatego
 		case "APIConnectionTimeoutError":
 			return "network";
 		default:
-			return undefined;
+			return isTlsChainVerificationCode(code) ? "network" : undefined;
 	}
 }
 
 /** The HTTP status a recognized token may arrive with; anything else is contradictory evidence. */
 export function isProviderCodeStatusCompatible(code: string, status: number): boolean {
+	const siwc = siwcErrorForCode(code);
+	if (siwc !== undefined) return status === siwc.status;
 	switch (code) {
 		case "authentication_error":
 		case "invalid_api_key":
@@ -157,10 +185,12 @@ export function buildProviderDiagnostic(input: {
 	code?: string;
 	evidence: ProviderDiagnosticEvidence;
 	resetsAt?: number;
+	route?: "siwc";
 }): ProviderDiagnostic | undefined {
 	const diagnostic: ProviderDiagnostic = { category: input.category, evidence: input.evidence };
 	if (input.httpStatus !== undefined) diagnostic.httpStatus = input.httpStatus;
 	if (input.code !== undefined) diagnostic.code = input.code;
+	if (input.route !== undefined) diagnostic.route = input.route;
 	if (input.resetsAt !== undefined && (input.category === "quota" || input.category === "rate_limit"))
 		diagnostic.resetsAt = input.resetsAt;
 	const size = new TextEncoder().encode(JSON.stringify(diagnostic)).length;

@@ -73,3 +73,52 @@ export type {
 	TransportSide,
 } from "../transport/transport.ts";
 export { TransportClosedError } from "../transport/transport.ts";
+export { createExecutionLedger } from "../execution/ledger.ts";
+export type { ExecutionLedger } from "../execution/ledger.ts";
+export type {
+	ExecutionAdmission,
+	ExecutionCommand,
+	ExecutionEntry,
+	ExecutionEvent,
+	ExecutionKey,
+	ExecutionOutcome,
+	ExecutionProgress,
+	FrozenCall,
+	LedgerReply,
+} from "../execution/ledger-types.ts";
+export { LEDGER_CASES } from "../execution/testing/ledger-cases.ts";
+export { KILL_LEDGER_CASES, KILL_LEDGER_DECLARATIONS } from "../execution/testing/kill-ledger.ts";
+export { FAULT_HAND_CASES } from "../execution/testing/fault-hand-cases.ts";
+export type { HandCaseAdapters } from "../execution/testing/hand-harness.ts";
+export type { KillHandDeclaration } from "../execution/testing/kill-hand.ts";
+export { KILL_HAND_CASES, KILL_HAND_DECLARATIONS } from "../execution/testing/kill-hand.ts";
+export { MULTI_HAND_CASES } from "../execution/testing/multi-hand-cases.ts";
+export type { KillLedgerDeclaration } from "../execution/testing/kill-ledger.ts";
+export type { BatchCoordinator, BatchCoordinatorOptions } from "../execution/coordinator.ts";
+export { BatchManifestConflictError, createBatchCoordinator } from "../execution/coordinator.ts";
+export { interruptedReplayText } from "../execution/coordinator-plan.ts";
+export type {
+	BatchCallPlan,
+	BatchDecision,
+	BatchExecutor,
+	BatchManifest,
+	BatchPlan,
+	BatchRecord,
+	BatchResult,
+	CallOutcome,
+	ExecutionRef,
+	ManifestCall,
+	PrepareReply,
+	PrepareRequest,
+	SettleReply,
+} from "../execution/coordinator-types.ts";
+export { BATCH_CASES } from "../execution/testing/batch-cases.ts";
+export type {
+	BatchCaseAdapters,
+	BatchExecutorConformanceAdapter,
+	ExecutorOpenOptions,
+	PausePoint,
+} from "../execution/testing/batch-executor.ts";
+export { referenceBatchExecutor } from "../execution/testing/batch-executor.ts";
+export type { KillBatchDeclaration } from "../execution/testing/kill-batch.ts";
+export { KILL_BATCH_CASES, KILL_BATCH_DECLARATIONS } from "../execution/testing/kill-batch.ts";

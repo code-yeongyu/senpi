@@ -33,6 +33,7 @@ import { hostWatchdogBinding, internalHostTransport } from "./host-internal-tran
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
+import { closeHostConnections, type HostConnection } from "./host-shutdown-connections.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
@@ -57,6 +58,7 @@ import {
 } from "./socket-ownership.ts";
 import { formatSocketAddress, listen, resolveSocketPath } from "./host-socket-bind.ts";
 import { socketSink } from "./socket-sink.ts";
+import type { SocketClosingCode } from "./socket-closing.ts";
 import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./socket-transport.ts";
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 import { McpPresenterControl } from "./mcp-presenter-control.ts";
@@ -78,6 +80,14 @@ export interface MultiSessionHostOptions {
 	toolRuntime?: ToolRuntimeKind;
 	/** Test seam: defaults to the real shared-session binding. */
 	createBinding?: RpcBindingFactory;
+	/**
+	 * Who owns the sessions this host serves. Absent or `"client"` is today's host: a session ends when its
+	 * last client leaves unless that client opened it with `retain_on_disconnect`, and an empty host exits
+	 * after its empty-exit window. `"machine"` (the headless engine, `modes/headless`) keeps every session
+	 * it opens through a client disconnect (an `open_session` with no `retain_on_disconnect` is retained;
+	 * an explicit `false` is honored) and never exits for being empty.
+	 */
+	sessionOwner?: "client" | "machine";
 }
 
 export {
@@ -97,13 +107,6 @@ const WINDOWS_SHUTDOWN_HARD_EXIT_MS = 2_000;
  * hold every session file it served for as long as one close stays wedged.
  */
 const WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS = 10_000;
-
-interface Connection {
-	readonly id: string;
-	readonly sink: RpcConnectionSink;
-	readonly detach: () => void;
-	readonly close: () => void;
-}
 
 /**
  * Socket agent events are delivered only to connections attached to their
@@ -137,7 +140,11 @@ export function createHostCore(
 	hooks: HostCoreHooks = {},
 ) {
 	if (options.mcpPresenterEnforcement === true) writer.enableMcpPresenters();
-	const policy = resolveHostIdlePolicy(process.env, idle);
+	const machineOwned = options.sessionOwner === "machine";
+	const policy = resolveHostIdlePolicy(
+		process.env,
+		machineOwned ? { ...idle, emptyExitMs: Number.POSITIVE_INFINITY } : idle,
+	);
 	const endpointSocket = publicEndpointSocket(options);
 	const pathReservations = createEndpointReservations({
 		agentDir: options.agentDir,
@@ -215,10 +222,8 @@ export function createHostCore(
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(line);
-		} catch (cause) {
-			await writer.enqueueControl(
-				parseError(writer.mcpPresenters ? "Invalid command" : `Failed to parse command: ${errorMessage(cause)}`),
-			);
+		} catch {
+			await writer.enqueueControl(parseError("Failed to parse command: invalid JSON"));
 			return;
 		}
 		if (writer.handleMcpForm(parsed)) return;
@@ -228,7 +233,12 @@ export function createHostCore(
 			await writer.enqueueControl(parseError(shapeError));
 			return;
 		}
-		const response = await gate.dispatch(parsed as RpcCommand);
+		const command = parsed as RpcCommand;
+		const response = await gate.dispatch(
+			machineOwned && command.type === "open_session" && command.retain_on_disconnect === undefined
+				? { ...command, retain_on_disconnect: true }
+				: command,
+		);
 		if (response) await writer.enqueueControl(response);
 	};
 	return { router, handle, handover: gate.handover, handoverAnswered: () => gate.answered() };
@@ -286,7 +296,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 async function runSocketHost(options: MultiSessionHostOptions, socketPath: string): Promise<never> {
 	await prepareSocketPath(socketPath);
 	const writer = new SessionEventWriter(() => {});
-	const connections = new Map<string, Connection>();
+	const connections = new Map<string, HostConnection>();
 	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a
 	// connection that has only sent observing reads (`status`) is not occupancy.
 	const occupancy = new ClientOccupancy(() => {}, hostInstanceId());
@@ -330,7 +340,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				await Promise.all(
 					ids.map(async (id) => {
 						await writer.flushConnection(id);
-						connections.get(id)?.close();
+						await connections.get(id)?.close("host_handoff");
 					}),
 				);
 			},
@@ -477,7 +487,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					process.stderr.write(`senpi rpc connection ${id} release failed: ${errorMessage(cause)}\n`);
 				});
 			};
-			connections.set(id, { id, sink, detach, close: () => socket.destroy() });
+			// An announced close half-closes so `socket_closing` is flushed first (SOCKET_CUT_GRACE_MS bounds it).
+			const close = (code: SocketClosingCode) =>
+				writer.closeConnection(id, code, (announced) => (announced ? sink.close?.() : socket.destroy()));
+			connections.set(id, { id, sink, socket, detach, close });
 			socket.once("close", detach);
 			socket.once("error", () => detach());
 		};
@@ -494,6 +507,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const shutdown = async (exitCode = 0, watchdogCleanup?: Promise<void>): Promise<never> => {
 		if (shuttingDown) process.exit(exitCode);
 		shuttingDown = true;
+		const startedAt = Date.now();
 		observers.stop();
 		handover?.dispose();
 		presenterControl?.dispose();
@@ -511,11 +525,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			await (process.platform === "win32"
 				? Promise.race([router.dispose(), delay(WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS)])
 				: router.dispose());
-			await writer.flush();
-			for (const connection of connections.values()) {
-				connection.detach();
-				connection.close();
-			}
+			const open = [...connections.values()];
+			const cancelForce = await closeHostConnections(open, (id) => writer.flushConnection(id), startedAt, hostLog);
 			// libuv unlinks the bound NAME when the listening handle closes - which
 			// would delete a newer host's entry renamed over this path. Shield the
 			// current entry for the close, then let the ownership check decide.
@@ -524,6 +535,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					? Promise.race([closeServer(server), delay(WINDOWS_SHUTDOWN_HARD_EXIT_MS)])
 					: closeServer(server),
 			);
+			cancelForce();
 			// Ownership-checked: unlink only the entry THIS process bound. After a
 			// takeover renamed a newer host's socket over the same path, the
 			// identity no longer matches and the replacement stays published.

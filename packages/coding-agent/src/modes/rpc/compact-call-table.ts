@@ -13,6 +13,7 @@ interface Entry {
 }
 const turnKey = (turnId: string, toolCallId: string) => `${turnId}\u0000${toolCallId}`;
 const messageKey = (messageId: string, contentIndex: number) => `${messageId}#${contentIndex}`;
+const sharedKey = (messageId: string, toolCallId: string) => `${messageId}\u0000${toolCallId}`;
 
 /**
  * The resident side of the calls component (S06 design section 2): the live entries, four indexes, the owned slot
@@ -28,6 +29,7 @@ export class CompactCallTable {
 	private readonly byMessage = new Map<string, string>();
 	private readonly byId = new Map<string, string[]>();
 	private readonly children = new Map<string, Set<string>>();
+	private readonly shared = new Set<string>();
 	private slotBytes = 0;
 	private headerBytes = 0;
 	readonly counters = { replacements: 0, progressReplacements: 0, unknown: 0, late: 0, collisions: 0, reused: 0 };
@@ -81,6 +83,16 @@ export class CompactCallTable {
 		return oldest?.call;
 	}
 
+	/**
+	 * RULING-123, C3.4: whether another call of `call`'s own message took the same toolCallId. An execution or hook
+	 * record names only the toolCallId, so it cannot say which of those calls it is about. The mark lasts while any call
+	 * of that message and id is live, so a later record is not attributed by elimination either.
+	 */
+	sharesIdInMessage(call: OutstandingCall): boolean {
+		const { owningMessageId, toolCallId } = call;
+		return owningMessageId !== null && toolCallId !== null && this.shared.has(sharedKey(owningMessageId, toolCallId));
+	}
+
 	*ofTurn(turnId: string): Iterable<OutstandingCall> {
 		for (const { call } of this.entries.values()) if (call.turnId === turnId) yield call;
 	}
@@ -94,8 +106,10 @@ export class CompactCallTable {
 		return keys.flatMap((key) => this.get(key) ?? []);
 	}
 
+	/** Measured before owning: a value the engine cannot serialize (too deep) throws with nothing owned yet (RULING-59). */
 	own(value: unknown): Slot {
-		return { ref: this.values.own(value), bytes: Buffer.byteLength(JSON.stringify(value) ?? "") };
+		const bytes = Buffer.byteLength(JSON.stringify(value) ?? "");
+		return { ref: this.values.own(value), bytes };
 	}
 
 	/** X07 `slotBytes` counts one copy per slot: the replaced value's bytes leave with it. */
@@ -113,16 +127,35 @@ export class CompactCallTable {
 
 	private readonly slotBytesOf = new WeakMap<ValueRef, number>();
 
-	/** Publishes a created or changed call at its creation ordinal and refreshes every index it is reachable by. */
-	put(call: OutstandingCall, creation: { readonly sequence: number; readonly k: number }): void {
+	/**
+	 * Publishes a created or changed call at its creation ordinal and refreshes every index it is reachable by. The
+	 * stored header carries `callUnknown: true` exactly while `sharesIdInMessage` holds for it (#5348), so the snapshot
+	 * row, the in-process view and the settled projection all state the mark this table keeps; the first call to share
+	 * an id with another of its message republishes the others marked.
+	 */
+	put(input: OutstandingCall, creation: { readonly sequence: number; readonly k: number }): void {
 		const order = callOrder(creation.sequence, creation.k);
+		const call = marked(input, this.willShare(input));
+		// Measured before anything changes, so a header the engine cannot serialize leaves the table as it was.
+		const bytes = headerBytes(call);
 		const previous = this.entries.get(call.runtimeItemKey)?.call;
 		if (previous) this.unindex(previous);
 		this.root = this.roots.set(this.root, order, call);
 		this.counters.replacements++;
-		this.headerBytes += headerBytes(call) - (previous ? headerBytes(previous) : 0);
+		this.headerBytes += bytes - (previous ? headerBytes(previous) : 0);
 		this.entries.set(call.runtimeItemKey, { call, order });
 		this.index(call);
+		if (call.callUnknown && call.owningMessageId !== null && call.toolCallId !== null)
+			for (const peer of this.inMessage(call.owningMessageId, call.toolCallId).map((key) => this.get(key)))
+				if (peer && !peer.callUnknown) this.put(peer, creationOf(peer));
+	}
+
+	/** Whether `call`, once put, shares its toolCallId inside its message: the mark is set, or another live call has it. */
+	private willShare(call: OutstandingCall): boolean {
+		const { owningMessageId, toolCallId, runtimeItemKey } = call;
+		if (owningMessageId === null || !toolCallId) return false;
+		if (this.shared.has(sharedKey(owningMessageId, toolCallId))) return true;
+		return this.inMessage(owningMessageId, toolCallId).some((key) => key !== runtimeItemKey);
 	}
 
 	remove(key: string): void {
@@ -136,6 +169,9 @@ export class CompactCallTable {
 			}
 		this.headerBytes -= headerBytes(entry.call);
 		this.entries.delete(key);
+		const { owningMessageId, toolCallId } = entry.call;
+		if (owningMessageId !== null && toolCallId && !this.inMessage(owningMessageId, toolCallId).length)
+			this.shared.delete(sharedKey(owningMessageId, toolCallId));
 		this.root = this.roots.set(this.root, entry.order, undefined);
 		this.counters.replacements++;
 	}
@@ -186,6 +222,8 @@ export class CompactCallTable {
 				this.byTurn.set(slot, call.runtimeItemKey);
 			const keys = this.byId.get(call.toolCallId) ?? [];
 			if (!keys.includes(call.runtimeItemKey)) this.byId.set(call.toolCallId, [...keys, call.runtimeItemKey]);
+			if (call.owningMessageId !== null && call.callUnknown)
+				this.shared.add(sharedKey(call.owningMessageId, call.toolCallId));
 		}
 		if (call.owningMessageId !== null && call.contentIndex !== null)
 			this.byMessage.set(messageKey(call.owningMessageId, call.contentIndex), call.runtimeItemKey);
@@ -194,6 +232,11 @@ export class CompactCallTable {
 			siblings.add(call.runtimeItemKey);
 			this.children.set(call.parentKey, siblings);
 		}
+	}
+
+	/** The live calls of one message under one toolCallId. */
+	private inMessage(messageId: string, toolCallId: string): readonly string[] {
+		return (this.byId.get(toolCallId) ?? []).filter((key) => this.get(key)?.owningMessageId === messageId);
 	}
 
 	private unindex(call: OutstandingCall): void {
@@ -214,6 +257,11 @@ export class CompactCallTable {
 			if (siblings?.size === 0) this.children.delete(call.parentKey);
 		}
 	}
+}
+
+function marked(call: OutstandingCall, ambiguous: boolean): OutstandingCall {
+	const { callUnknown: _mark, ...header } = call;
+	return ambiguous ? { ...header, callUnknown: true } : header;
 }
 
 function headerBytes(call: OutstandingCall): number {

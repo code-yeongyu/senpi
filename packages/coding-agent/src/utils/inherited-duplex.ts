@@ -1,17 +1,25 @@
-import { createReadStream, fstatSync, write } from "node:fs";
+import { closeSync, createReadStream, fstatSync, write } from "node:fs";
 import { Socket } from "node:net";
 import { Duplex } from "node:stream";
 
+/** Windows can report FIFO mode bits while Stats.isFIFO() returns false, so pipes are recognised by mode. */
+export function isFifoMode(mode: number): boolean {
+	return (mode & 0o170000) === 0o010000;
+}
+
 /** One stream owns a verified inherited pipe/socket, including Bun's file-stream adoption path. */
-export function inheritedDuplex(fd: number): Duplex | undefined {
+export function inheritedDuplex(fd: number | readonly [number, number]): Duplex | undefined {
+	const readFd = typeof fd === "number" ? fd : fd[0];
+	const writeFd = typeof fd === "number" ? fd : fd[1];
 	try {
-		const stat = fstatSync(fd);
-		if (!stat.isSocket() && !stat.isFIFO()) return undefined;
-		if (stat.isSocket() && !process.versions.bun) return new Socket({ fd, readable: true, writable: true });
+		const stat = fstatSync(readFd);
+		if (!stat.isSocket() && !isFifoMode(stat.mode)) return undefined;
+		if (typeof fd === "number" && stat.isSocket() && !process.versions.bun)
+			return new Socket({ fd, readable: true, writable: true });
 	} catch {
 		return undefined;
 	}
-	const input = createReadStream("", { fd, autoClose: true });
+	const input = createReadStream("", { fd: readFd, autoClose: true });
 	const stream = new Duplex({
 		read() {
 			input.resume();
@@ -19,7 +27,7 @@ export function inheritedDuplex(fd: number): Duplex | undefined {
 		write(chunk: Buffer, _encoding, done) {
 			if (chunk.length === 0) return done();
 			const send = (offset: number) => {
-				write(fd, chunk, offset, chunk.length - offset, null, (error, count) => {
+				write(writeFd, chunk, offset, chunk.length - offset, null, (error, count) => {
 					if (error) done(error);
 					else if (count === 0) done(new Error("private_channel_write_failed"));
 					else if (offset + count === chunk.length) done();
@@ -29,6 +37,7 @@ export function inheritedDuplex(fd: number): Duplex | undefined {
 			send(0);
 		},
 		destroy(error, done) {
+			if (writeFd !== readFd) closeSync(writeFd);
 			if (input.closed) done(error);
 			else {
 				input.once("close", () => done(error));

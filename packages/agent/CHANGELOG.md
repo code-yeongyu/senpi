@@ -12,6 +12,115 @@
 
 ### Removed
 
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Added a `block` event to the execution ledger: an executor records a preparation that ended without a frozen call as a durable `blocked` outcome, so a re-sent prepare after a restart gets the stored reply ([#5428](https://github.com/code-yeongyu/senpi/pull/5428)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Produce conformance candidate archives containing a packed agent export and its same-commit implementation sources ([#5059](https://github.com/code-yeongyu/senpi/pull/5059)).
+
+### Changed
+
+### Fixed
+
+- Harness compaction, branch-summary and turn requests now carry the session working directory, so providers that require it (such as Anthropic Subscription) no longer reject them ([#5257](https://github.com/code-yeongyu/senpi/pull/5257))
+- `streamProxy` accepts `message_tool_arguments_reset`: it replaces the tool call's raw arguments, so a delta at offset 0 carrying the whole prefix no longer doubles them ([#5300](https://github.com/code-yeongyu/senpi/issues/5300))
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Added an unprepared, scoped ToolHost batch boundary with the existing in-process scheduler as its default ([#5030](https://github.com/code-yeongyu/senpi/pull/5030)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Added an execution ledger with durable endpoint transitions, lease and restart recovery, and portable ledger conformance cases ([#5004](https://github.com/code-yeongyu/senpi/pull/5004)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Compaction relies on declared message and tool-call argument types instead of redundant assertions; runtime behavior is unchanged ([#4979](https://github.com/code-yeongyu/senpi/pull/4979)).
+
+### Fixed
+
+### Removed
+
 ## [2026.10.30-1] - 2026-10-30
 
 ### Breaking Changes

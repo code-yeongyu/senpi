@@ -1,3 +1,120 @@
+## 2026-11-03 - Replayed thinking bound to a different conversation no longer wedges a session (senpi#5587)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` takes a `replay` argument; a Claude request with thinking on that replays signed thinking sends `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` plus the `thinking-binding-controls-2026-08-01` beta on every thinking branch, not only the `supportsMidConvoEffort` one, unless betas are suppressed or the transport refused the control. A budget-thinking request whose final tool-use turn lost its thinking degrades thinking as a foreign turn does. `stream()` builds every attempt from the context with rejected turns stripped, rebuilds once without the binding when a transport refuses it, and on exactly the "bound to a different conversation" 400 rebuilds once on the same model without the replayed signed thinking, records an `anthropic_thinking_binding_recovery` diagnostic and a request-shape log line; a second identical refusal ends the turn with one actionable error carrying the provider diagnostic.
+- `packages/ai/src/api/anthropic-thinking-binding.ts` (new): the error matchers, the Claude-only binding rule, `bindReplayedThinking`, the per-session memory of rejected turns and refused bindings (cleared at session teardown) and the unrecoverable-error builder.
+- `packages/ai/src/api/anthropic-request-shape-log.ts`: `logAnthropicRecovery` writes one record per rebuilt request to the debug request-shape log.
+
+### Why
+
+- The binding policy was gated on a per-model compat flag set for a handful of catalog entries, so custom and gateway Claude entries, the plain adaptive and budget branches and beta-suppressed configurations replayed signed thinking with no policy. A block minted under another prefix then failed every request of the session, because the block is stored in history; nothing recognised the 400 (the unsigned-thinking matcher predates the backticked message).
+
+### Why an extension could not handle it
+
+- The request body, its betas and the retry around the SDK call are built inside the provider adapter; an extension's payload hook runs after `buildParams` and cannot rebuild a rejected request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `buildParams` (the `thinkingBinding` beta shape and the budget-thinking degrade condition) and the `createRequest`/retry block in `stream()` of `anthropic-messages.ts`.
+- LOW: the new module and the appended function in `anthropic-request-shape-log.ts`.
+
+## 2026-10-30 - Preserve SIWC admission and stream failures (part of #5003)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts` preserves direct-admission detail bodies, attaches SIWC diagnostics before HTTP retries, and names unsupported parameters.
+- `packages/ai/src/api/openai-responses-shared.ts` preserves structured stream error codes and parameters and requires `response.completed` on SIWC routes.
+
+### Why
+
+- `packages/ai/src/api/openai-responses.ts` previously lost direct-admission bodies and retried terminal account restrictions.
+- `packages/ai/src/api/openai-responses-shared.ts` previously collapsed structured failures into prose and accepted incomplete SIWC responses.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-responses.ts` owns the SDK request and retry boundary before extension delivery.
+- `packages/ai/src/api/openai-responses-shared.ts` owns the Responses event decoder before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-responses.ts`: client construction, request retries, and error formatting.
+- `packages/ai/src/api/openai-responses-shared.ts`: terminal and error event branches.
+
+## 2026-10-31 - The Claude Code OAuth impersonation request path is removed; sk-ant-oat tokens are refused (senpi#5131)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the `isOAuthToken` branch of `createClient` is gone, and with it the Bearer auth for `sk-ant-oat` keys, the `claude-code-20250219` / `oauth-2025-04-20` identity betas, the `user-agent: claude-cli/<version>` and `x-app: cli` headers, the `claudeCodeVersion` constant, the `claude_code_version_too_old` retry (`retryWithNewerClaudeCode`, `noteTooOldClaudeCode`), the `"You are Claude Code, Anthropic's official CLI for Claude."` system block, and the Claude Code tool-name mapping (`claudeCodeTools`, `toClaudeCodeName`, `fromClaudeCodeName`) that `buildParams`, `getBetaFeatures`, `convertMessages`, `convertToolResult`, `convertTools`, `collectProviderNativeToolPairing` and the stream reader threaded through an `isOAuthToken` parameter. `createClient` returns the client. A new pre-flight `assertNotClaudeOAuthToken`, next to `assertRequestAuth` in both `stream` and `streamSimple`, throws the exported `ClaudeOAuthTokenRefusedError` (`code: "claude_oauth_token_refused"`, `provider`, `modelId`; `isClaudeOAuthTokenRefusedError` narrows it) before any client is constructed; its message names `/login anthropic-subscription`, `CLAUDE_CODE_OAUTH_TOKEN` and `anthropic-subscription/<model>`. The system block holds a cache checkpoint only when a system prompt exists.
+
+### Why
+
+- senpi#5131, owner ruling 2026-10-31: senpi must not send a Claude subscription token to the Messages API while presenting itself as Claude Code. #3315 moved subscriptions to the Agent SDK lane and #4515 deleted the PKCE login, but a token placed in `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, an `anthropic` API-key credential or a `models.json` `apiKey` still took this path. The refusal replaces a silent `401` from the API with the action the user needs.
+
+### Why an extension could not handle it
+
+- The client construction, headers and request body of the builtin `anthropic-messages` API are pi-ai's own; an extension cannot remove a header branch from them.
+
+### Expected merge conflict zones
+
+- HIGH: upstream still carries the OAuth stealth branch (`createClient`, `buildParams`, `convertMessages`, `convertTools`). Keep every `isOAuthToken` parameter and Claude Code mapping deleted; keep `assertNotClaudeOAuthToken` beside `assertRequestAuth`.
+
+## 2026-10-30 - Request-level strict tool sampling (senpi#4821)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: `convertTools` resolves function-tool strictness before serialization. With `mixedStrictTools: false`, a non-strict function tool downgrades every function tool; a required-strict tool instead fails before sending and names both conflicting tools. Grammar tools are excluded.
+
+### Why
+
+- `packages/ai/src/api/openai-completions.ts`: OpenGateway rejects requests mixing strict and non-strict function tools. Per-tool schema fallback left strict siblings enabled.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts`: the adapter owns strict-schema conversion and the final wire tool definitions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts` `convertTools`.
+
+## 2026-10-27 - Anthropic sends the cross-session stable system prefix as its own cached block (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` builds `params.system` through `anthropicSystemTextBlocks`, passing the leading system message's `stablePrefix`.
+- `packages/ai/src/api/anthropic-system-blocks.ts`: new. When the rendered prompt still starts with the recorded stable prefix it goes out as two text blocks whose concatenation is the prompt; the stable block carries the system `cache_control`, the tail none, so the breakpoint count is unchanged. A prompt that no longer starts with it (a later `context_with_system` rewrite) goes out as one block.
+
+### Why
+
+- One system block with one breakpoint missed whenever any byte of a volatile tail (memory, MCP instructions) differed between sessions, so a new session read only the tools prefix and re-wrote the ~20k-token stable prompt.
+
+### Why an extension could not handle it
+
+- System block construction and breakpoint placement happen inside `packages/ai/src/api/anthropic-messages.ts` after every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `params.system` assignment in `buildParams` in `packages/ai/src/api/anthropic-messages.ts`.
+
+## 2026-10-30 - Anthropic SSE reports transport activity (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `iterateSseMessages` calls an `onBytes` callback for every non-empty body chunk, before parsing, so `ping` events and `:` comments count; `iterateAnthropicEvents` and the stream pass `options.onTransportActivity` into it.
+- `packages/ai/src/api/simple-options.ts`: `buildBaseOptions` forwards `onTransportActivity`.
+
+### Why
+
+- Keep-alives are dropped by the SSE parser (comments) or the event filter (`ping`), so the agent loop could not see that an accepted request was still alive while the model thought before its first token.
+
+### Why an extension could not handle it
+
+- The SSE reader is internal to the adapter.
+
+### Expected merge conflict zones
+
+- LOW: `iterateSseMessages` read loop and signature; `iterateAnthropicEvents` call site; `buildBaseOptions` field list.
+
 ## 2026-10-26 - The remaining provider families capture block seeds at emission (senpi#4285, part of #4272)
 
 ### What changed

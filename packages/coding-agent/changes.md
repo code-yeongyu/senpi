@@ -1,3 +1,123 @@
+## 2026-11-01 - Kill guard judge embedded in the compiled binary (senpi#5349, PR #5354)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `build:binary` adds `./src/core/kill-guard/index.ts` as an explicit `bun build --compile` entry.
+
+### Why
+
+- Codemode workers import the kill guard's judge by URL; in the compiled binary that module has to be an embedded entry under its source path.
+
+### Why an extension could not handle it
+
+- The compile entry list is the package's own build script.
+
+### Expected merge conflict zones
+
+- LOW: the `bun build --compile` entry list in `build:binary`.
+
+## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
+
+### What changed
+
+- Nine `packages/coding-agent/test/` files (hooks redaction/safety, hidden stdout log, stderr guard, job-widget author/view redaction, regressions 3537 and 3674, the Anthropic warning test): the `sk-ant-`, `ghp_`, `github_pat_`, `sk-proj-` and `AKIA` fixtures are joined from a prefix and a body at runtime. The values are byte-identical; tests only.
+
+### Why
+
+- GitGuardian flags credential-shaped literals in a PR's commit range (senpi#5308); building them at runtime closes the class without touching scanner configuration.
+
+### Why an extension could not handle it
+
+- Test sources only; nothing an extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the fixture constants at the top of each test file.
+
+## 2026-10-30 - Shared fixture digests use the production codec (RULING-98, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Generate shared fixture digests through the production catalog codec.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Generate shared fixture digests through the production catalog codec.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Generate shared fixture digests through the production catalog codec.
+
+### Why
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Fixture generator digest calls and shared index assembly.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Fixture generator digest calls and shared index assembly.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Fixture generator digest calls and shared index assembly.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Document guarded private input with a usage example, real CLI QA scenario, and regression coverage for ownership, login, deadlines, teardown and leaks.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-29 - Regenerate the private-descriptor bootstrap launcher (#4859)
+
+### What changed
+
+- `packages/coding-agent/dist/cli.js`: regenerate the tracked launcher through `bun run build`, including the existing source private-descriptor capture and forwarding imports.
+
+### Why
+
+- The tracked launcher must match its compiled source for the committed-dist CI gate.
+
+### Why an extension could not handle it
+
+- The launcher is a generated bootstrap artifact.
+
+### Expected merge conflict zones
+
+- Generated launcher imports and re-execution blocks.
+
+## 2026-10-28 - The coding-agent test run owns a shared source compile cache (senpi#4614)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: adds `globalSetup: ["./test/helpers/source-compile-cache-global-setup.ts"]`, which creates one run-scoped directory, exports it as `SENPI_SOURCE_COMPILE_CACHE` to the workers and the source processes they launch, and removes it at teardown. `NODE_DISABLE_COMPILE_CACHE=1` turns the cache off for a run.
+
+### Why
+
+- senpi#4614: gives the source-loader children of one test run a cache directory that belongs to that run only, so two checkouts running the suite at once never share entries.
+
+### Why an extension could not handle it
+
+- Test-runner configuration; no extension surface exists for it.
+
+### Expected merge conflict zones
+
+- LOW: the `test` block of `packages/coding-agent/vitest.config.ts`.
+
 ## 2026-10-29 - Public session-worker-data subpath (senpi#4728, #4775)
 
 ### What changed

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -84,6 +84,63 @@ describe("source compile cache global setup", () => {
 		teardown?.();
 		expect(process.env[SOURCE_COMPILE_CACHE_ENV]).toBeUndefined();
 		expect(existsSync(directory ?? "")).toBe(false);
+	});
+
+	// Stands in for the detached source processes of a run flushing Node's compile cache while the run tears
+	// down: each writes entries the way Node persists them (create a temporary file, rename it over the
+	// entry) without pause, and stops at the first write that finds the directory gone. Eight writers keep
+	// the directory from ever being empty while an in-place delete walks it, so that delete fails every
+	// time instead of by chance.
+	const CACHE_WRITERS = 8;
+	const CACHE_WRITER = [
+		'const { mkdirSync, renameSync, writeFileSync } = require("node:fs");',
+		'const { join } = require("node:path");',
+		'const tagged = join(process.argv[1], "v-test");',
+		"mkdirSync(tagged, { recursive: true });",
+		"for (let entry = 0; ; entry += 1) {",
+		'\tconst target = join(tagged, process.pid + "-" + entry.toString(16));',
+		"\ttry {",
+		'\t\twriteFileSync(target + ".tmp", "cache", { flag: "wx" });',
+		'\t\trenameSync(target + ".tmp", target);',
+		'\t} catch (error) { process.stdout.write("stopped " + error.code + "\\n"); process.exit(0); }',
+		'\tif (entry === 0) process.stdout.write("writing\\n");',
+		"}",
+	].join("\n");
+
+	function startCacheWriter(directory: string): Promise<{ child: ChildProcess; stopped: Promise<string> }> {
+		const child = spawn(process.execPath, ["-e", CACHE_WRITER, directory], { stdio: ["ignore", "pipe", "inherit"] });
+		let output = "";
+		const stopped = new Promise<string>((resolve, reject) => {
+			child.once("error", reject);
+			child.once("exit", () => resolve(output));
+		});
+		return new Promise((resolve, reject) => {
+			child.stdout.on("data", (chunk: Buffer) => {
+				output += chunk.toString();
+				if (output.startsWith("writing")) resolve({ child, stopped });
+			});
+			child.once("exit", () => reject(new Error(`cache writer exited before writing: ${output}`)));
+		});
+	}
+
+	test("removes the run directory while source processes are still writing their compile cache", async () => {
+		delete process.env[SOURCE_COMPILE_CACHE_ENV];
+		const teardown = setupSourceCompileCache();
+		const directory = process.env[SOURCE_COMPILE_CACHE_ENV] ?? "";
+		const writers = await Promise.all(Array.from({ length: CACHE_WRITERS }, () => startCacheWriter(directory)));
+
+		try {
+			expect(() => teardown?.()).not.toThrow();
+		} catch (error) {
+			for (const writer of writers) writer.child.kill();
+			throw error;
+		}
+
+		for (const output of await Promise.all(writers.map((writer) => writer.stopped))) {
+			expect(output).toContain("stopped ENOENT");
+		}
+		expect(existsSync(directory)).toBe(false);
+		expect(existsSync(`${directory}-removing`)).toBe(false);
 	});
 
 	test("keeps a directory the caller already named", () => {

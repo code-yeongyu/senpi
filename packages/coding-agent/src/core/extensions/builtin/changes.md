@@ -1,3 +1,76 @@
+## 2026-10-27 - look_at authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/look-at/runner.ts`: `getApiKeyAndHeaders` receives the session id.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call.
+
+## 2026-11-01 - service-tier shares the -fast pairing rule with the fallback controller (senpi#5312)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: `findBaseModel` / `findFastModel` and the compatibility check move to `core/fast-model-pair.ts` and are imported; behavior is unchanged.
+
+### Why
+
+- The fallback controller needs the same pairing to let a `-fast`-keyed chain govern the base model the extension swapped in; one definition keeps the two from drifting.
+
+### Why an extension could not handle it
+
+- The controller is core; the rule had to live in a module both sides import.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the removed helper block near the top of `service-tier.ts`.
+
+## 2026-10-30 - Fallback display comment follows first-party bare expansion (senpi#5050)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/model-fallback/settings.ts`: the `displayLookup` comment now says a bare default expands across the vendor's first-party providers. No behavior change.
+
+### Why
+
+- The comment described the removed every-provider expansion.
+
+### Why an extension could not handle it
+
+- Comment-only edit to an existing builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the `displayLookup` doc comment.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`.
+- The built-in OAuth interaction maps typed secret prompts to guarded input only on capable host contexts, preserving legacy calls on older hosts.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
 ## 2026-10-29 - Job widgets: review follow-ups to P1, P3 and P4
 
 ### What changed
