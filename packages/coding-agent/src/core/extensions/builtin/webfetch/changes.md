@@ -2,6 +2,24 @@
 
 Vendored from [`code-yeongyu/pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) (see `external-versions.json`).
 
+## 2026-11-03 - Full webfetch guidelines for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts`: the three pre-#5342 guidelines as `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the tool definition's prompt fields.
+
 ## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
 
 ### What changed
