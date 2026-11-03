@@ -122,6 +122,7 @@ export class UnusableEntries {
 		if (!this.isProviderSpent(provider) || this.accountResetAt(provider) !== undefined) return false;
 		this.cooldowns.clear(accountKey(provider));
 		this.accountErrors.delete(provider);
+		this.clearFamilyHolds(provider);
 		return true;
 	}
 

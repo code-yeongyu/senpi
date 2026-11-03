@@ -7,6 +7,10 @@ const START = Date.UTC(2026, 10, 3, 0, 24);
 const WEEKLY =
 	'429 {"type":"error","error":{"type":"rate_limit_error","message":"Weekly usage limit reached. Resets at 2026-11-03T02:40:02Z"}}';
 
+// The same limit with no stated reset: its hold length is a guess a user turn may drop (senpi#5568).
+const WEEKLY_GUESSED =
+	'429 {"type":"error","error":{"type":"rate_limit_error","message":"Weekly usage limit reached."}}';
+
 describe("#5596 a limit that names no model family probes another family once", () => {
 	const harnesses: Harness[] = [];
 	afterEach(async () => {
@@ -87,6 +91,22 @@ describe("#5596 a limit that names no model family probes another family once", 
 		await harness.session.prompt("goal continuation", { source: "extension" });
 
 		expect(harness.faux.getCallLog()).toHaveLength(2);
+	});
+
+	it("lets automated turns run again once a user turn released the widened hold", async () => {
+		const { harness, tick } = await session();
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: WEEKLY_GUESSED }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: WEEKLY_GUESSED }),
+			fauxAssistantMessage("served for the user"),
+			fauxAssistantMessage("served for the loop"),
+		]);
+		await harness.session.prompt("first");
+		tick(60_000);
+		await harness.session.prompt("user retry");
+		await harness.session.prompt("goal continuation", { source: "extension" });
+
+		expect(harness.faux.getCallLog()).toHaveLength(4);
 	});
 
 	it("widens to the account only when the other family is limited too, naming both", async () => {
