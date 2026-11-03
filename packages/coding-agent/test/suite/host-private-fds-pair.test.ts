@@ -415,7 +415,9 @@ describe.skipIf(process.platform !== "win32")("compiled Bun Windows pair", () =>
 				if (child.exitCode === null && child.signalCode === null) child.kill();
 			}
 		} finally {
-			await rm(root, { recursive: true, force: true });
+			// #5671: the hop exits on its grandchild's exit event, and Windows keeps private-pair.exe locked until that
+			// grandchild (another instance of the same image) has fully terminated, so the unlink can briefly see EBUSY.
+			await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 		}
 	}, 150_000);
 });
