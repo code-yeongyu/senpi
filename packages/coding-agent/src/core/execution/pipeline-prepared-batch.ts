@@ -96,7 +96,7 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 	const endpoint: BatchExecutor = {
 		prepare: async (ref) => {
 			const call = callOf(ref.executionId);
-			if (signal?.aborted) return { kind: "batch_abort" };
+			if (signal?.aborted && started.size > 0) return { kind: "batch_abort" };
 			const tool = call.incomplete === true ? undefined : await base.resolve(call, context);
 			resolved.set(call.id, tool);
 			if (tool !== undefined && tool.name !== call.name) renamed.set(call.id, { ...call, name: tool.name });

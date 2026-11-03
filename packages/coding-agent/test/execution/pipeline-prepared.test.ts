@@ -180,6 +180,28 @@ describe("the prepared pipeline equals today's scheduler (S18b)", () => {
 		);
 	});
 
+	it.each([
+		["parallel", "echo"],
+		["sequential", "serial"],
+	])("answers a %s batch aborted before it starts 'Operation aborted', as today", async (_mode, name) => {
+		const abortOnToolUse: ExtensionFactory = (pi) => {
+			pi.on("message_end", (event, ctx) => {
+				const message = event.message as { role: string; stopReason?: string };
+				if (message.role === "assistant" && message.stopReason === "toolUse") ctx.abort();
+			});
+		};
+
+		const { legacy } = await same(
+			[
+				[name, { n: 1 }],
+				[name, { n: 2 }],
+			],
+			[abortOnToolUse],
+		);
+
+		expect(legacy.events.filter((line) => line.startsWith("tool_execution_start")).length).toBeGreaterThan(0);
+	});
+
 	it("refuses a batch that repeats a call ID instead of silently running one call twice", async () => {
 		const prepared = await turn(
 			"prepared",
