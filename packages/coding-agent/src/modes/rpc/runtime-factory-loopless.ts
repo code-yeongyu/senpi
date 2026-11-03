@@ -5,6 +5,7 @@ import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
+import { toolInfoOf } from "../../core/tool-info.ts";
 import { childModuleRoots } from "../../core/tool-dispatch/offload.ts";
 import { createToolChildRuntime } from "../../core/tool-dispatch/tool-child-runtime.ts";
 import { builtInExtensions } from "../../extensions/index.ts";
@@ -14,8 +15,10 @@ import {
 	isLooplessExecuteGranted,
 	type LooplessExecuteGrant,
 	LooplessExecuteRefusedError,
+	looplessGrantRunsToolHandlers,
 } from "./loopless-execute-grant.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
+import { extensionToolHandlers } from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
 
 /**
@@ -34,11 +37,10 @@ export interface LooplessRuntime {
 	 * Runs one tool call: argument preparation and schema validation as the loop does, then the tool. An unknown
 	 * name is refused before anything runs; invalid arguments and a failing tool come back as an `isError` result.
 	 *
-	 * It does NOT run the extensions' `tool_call`/`tool_result` handlers (permission checks among them): where those
-	 * run for a call that reaches a tool-execution-only process is decided by the remote tool executor that calls
-	 * this runtime, including forwarding a two-sided extension's handlers to the process that owns the session.
-	 * Until that executor exists, a runtime refuses every call unless it was built with a grant from the closed
-	 * allowlist in `loopless-execute-grant.ts` (the in-process test harness only).
+	 * A runtime refuses every call unless it was built with a grant from the closed allowlist in
+	 * `loopless-execute-grant.ts`. With the remote tool executor's grant every call runs this runtime's extensions'
+	 * `tool_call` handlers (permission checks among them; a block or a throw stops the call) and `tool_result`
+	 * handlers; the in-process test harness's grant runs the tool alone.
 	 */
 	execute(name: string, toolCallId: string, params: unknown, signal?: AbortSignal): Promise<AgentToolResult<unknown>>;
 	/** Marks its extension contexts stale, then closes the tool work and the tool child it still runs. */
@@ -162,6 +164,14 @@ export function createLooplessRuntimeFactory(
 			...looplessToolFilters(parsed, services.settingsManager),
 		});
 		toolNames = () => [...registry.toolRegistry.keys()];
+		const getLoadedHookSources = services.resourceLoader.getLoadedHookSources?.bind(services.resourceLoader);
+		runtime.extensionRunner.bindSessionlessFacts({
+			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
+			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
+		});
+		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
+			? extensionToolHandlers(runtime.extensionRunner)
+			: undefined;
 		execute = (name, toolCallId, params, signal) => {
 			if (!isLooplessExecuteGranted(local.executeGrant))
 				return Promise.reject(
@@ -171,11 +181,15 @@ export function createLooplessRuntimeFactory(
 				);
 			const tool = registry.toolRegistry.get(name);
 			if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
-			return runLooplessToolCall(tool, {
-				toolCallId,
-				params,
-				...(signal ? { signal } : {}),
-			});
+			return runLooplessToolCall(
+				tool,
+				{
+					toolCallId,
+					params,
+					...(signal ? { signal } : {}),
+				},
+				toolHandlers,
+			);
 		};
 		return {
 			cwd: services.cwd,

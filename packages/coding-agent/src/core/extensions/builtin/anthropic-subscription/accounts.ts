@@ -21,6 +21,7 @@ export type EnvAccountSlot = SlotBlockState & {
 	displayName?: string;
 	store?: undefined;
 	dirId?: never;
+	authVerdict?: never;
 	refresh: string;
 	access: string;
 	expires: number;
@@ -58,6 +59,8 @@ export type ClaudeCliAccountSlot = SlotBlockState & {
 	profile?: ClaudeCliAccountProfile;
 	check?: ClaudeCliAccountCheck;
 	signInRequired?: "legacy_sign_in_retired";
+	/** Set with an `auth_error` block this engine reached about the sign-in in `dirId` (senpi#5623). */
+	authVerdict?: ClaudeCliAuthVerdict;
 	/** A CLI slot never holds token material; declared so reads on an `AccountSlot` see `undefined`, not a missing field. */
 	access?: never;
 	refresh?: never;
@@ -65,6 +68,34 @@ export type ClaudeCliAccountSlot = SlotBlockState & {
 };
 
 export type AccountSlot = EnvAccountSlot | ClaudeCliAccountSlot;
+
+/** The sign-in an `auth_error` block on a Claude CLI slot is about: its account dir and the block's `blockedAt`. */
+export type ClaudeCliAuthVerdict = { readonly dirId: string; readonly at: number };
+
+/**
+ * Whether a Claude CLI slot carries an `auth_error` block that no Claude CLI verdict backs (senpi#5623). An engine from
+ * before #4436 lists the slot, finds no token in it, and writes `blockReason`/`blockedUntil`/`blockedAt` onto it
+ * without contacting Claude; such a block says nothing about the login in the slot's dir. Takes `object`: the generic
+ * listing passes raw pool slots.
+ */
+export function isForeignAuthBlock(slot: object): boolean {
+	const fields = slot as {
+		store?: unknown;
+		blockReason?: unknown;
+		dirId?: unknown;
+		blockedAt?: unknown;
+		authVerdict?: unknown;
+	};
+	if (fields.store !== "claude-cli" || fields.blockReason !== "auth_error") return false;
+	const verdict = fields.authVerdict as Partial<ClaudeCliAuthVerdict> | undefined;
+	return verdict?.dirId !== fields.dirId || verdict?.at !== fields.blockedAt;
+}
+
+function withoutForeignAuthBlock(slot: AccountSlot): AccountSlot {
+	if (!isForeignAuthBlock(slot)) return slot;
+	const { blockedUntil: _until, blockReason: _reason, blockedAt: _at, authVerdict: _verdict, ...rest } = slot;
+	return rest;
+}
 
 /** Narrows a slot to an env token account; a claude CLI slot's login lives in the CLI's own store. */
 export function isEnvSlot(slot: AccountSlot): slot is EnvAccountSlot {
@@ -113,7 +144,7 @@ export function listAccounts(
 	credential: AnthropicSubscriptionCredential,
 	env?: (name: string) => string | undefined,
 ): AccountSlot[] {
-	const slots: AccountSlot[] = storedSlots(credential).filter(isListedStoredSlot);
+	const slots: AccountSlot[] = storedSlots(credential).filter(isListedStoredSlot).map(withoutForeignAuthBlock);
 	if (env) {
 		const state = credential.slotState ?? {};
 		for (const slot of envSlots(env)) {

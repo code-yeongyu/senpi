@@ -43,6 +43,8 @@ interface InvocationScope {
 	readonly configuration: string;
 	readonly contextRequired: boolean;
 	readonly sessionManager?: object;
+	/** Another session this binding serves as one of its execution scopes (brain/hand S16c). */
+	readonly servesSession?: (sessionManager: object | undefined) => boolean;
 	readonly isCurrent: () => boolean;
 	readonly ready: () => Promise<void>;
 	readonly current: (tool: string) => McpToolCatalogEntry | undefined;
@@ -81,7 +83,10 @@ export function createMcpInvocationResolver(scope: InvocationScope): McpInvocati
 			const ctx = invocation?.context;
 			if (
 				scope.contextRequired &&
-				(ctx === undefined || (scope.sessionManager !== undefined && ctx.sessionManager !== scope.sessionManager))
+				(ctx === undefined ||
+					(scope.sessionManager !== undefined &&
+						ctx.sessionManager !== scope.sessionManager &&
+						scope.servesSession?.(ctx.sessionManager) !== true))
 			) {
 				return refuse("unavailable", "MCP invocation does not belong to this session.");
 			}
