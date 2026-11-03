@@ -19,7 +19,7 @@ export const linkTo =
 	(wake: WakeEvent): Promise<WakeReceipt> =>
 		inbox.receive(hand, wake);
 
-export async function wakePair(h: BatchHarness): Promise<{ outbox: WakeOutbox; inbox: WakeInbox }> {
+async function wakePair(h: BatchHarness): Promise<{ outbox: WakeOutbox; inbox: WakeInbox }> {
 	return { outbox: await h.wakeOutbox("e1"), inbox: await h.wakeInbox(scopeOwner) };
 }
 
