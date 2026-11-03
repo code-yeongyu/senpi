@@ -68,6 +68,11 @@ export class RetryFallbackController {
 		return this.lastExhaustedChainKey;
 	}
 
+	/** The weekly-limit family hold on `model`, while it lasts (senpi#5596). */
+	heldFamily(model: Model<Api>): { readonly family: string; readonly errorMessage: string } | undefined {
+		return this.unusable.heldFamily(model);
+	}
+
 	/** The families a no-family limit was confirmed on before it held the whole provider (senpi#5596). */
 	widenedFamiliesOf(provider: string): readonly string[] | undefined {
 		return this.unusable.widenedFamiliesOf(provider);

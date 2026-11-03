@@ -47,6 +47,26 @@ describe("#5596 a limit that names no model family probes another family once", 
 		]);
 	});
 
+	it("never lets an automated loop hammer the held family when no other family can probe", async () => {
+		let now = 0;
+		const harness = await createHarness({
+			models: [{ id: "claude-fable-5-1" }],
+			fallbackNow: () => now,
+			fallbackWallNow: () => START + now,
+			settings: { compaction: { enabled: false }, retry: { enabled: true, maxRetries: 0 } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: WEEKLY })]);
+		await harness.session.prompt("first");
+
+		now += 60_000;
+		const refusal = harness.session.prompt("goal continuation", { source: "extension" });
+
+		await expect(refusal).rejects.toMatchObject({ name: "AccountUsageLimitError" });
+		await expect(refusal).rejects.toThrow(/fable/);
+		expect(harness.faux.getCallLog()).toHaveLength(1);
+	});
+
 	it("widens to the account only when the other family is limited too, naming both", async () => {
 		const { harness, tick } = await session();
 		harness.setResponses([

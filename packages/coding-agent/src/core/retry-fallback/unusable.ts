@@ -12,7 +12,7 @@ const WEEKLY_LIMIT = /\bweekly\b[^.]*\blimit\b/i;
 const MODEL_FAMILY = /(?:^|[^a-z])(opus|sonnet|haiku|fable|mythos)(?:[^a-z]|$)/i;
 
 /** The model family a model id belongs to, when it names one. */
-export function modelFamilyOf(modelId: string): string | undefined {
+function modelFamilyOf(modelId: string): string | undefined {
 	return MODEL_FAMILY.exec(modelId)?.[1]?.toLowerCase();
 }
 
@@ -37,6 +37,7 @@ export class UnusableEntries {
 	/** Providers whose limit named no family: the family it hit, awaiting one request on another family. */
 	private readonly pendingProbes = new Map<string, string>();
 	private readonly widenedFamilies = new Map<string, readonly string[]>();
+	private readonly familyErrors = new Map<string, string>();
 
 	constructor(cooldowns: SelectorCooldowns) {
 		this.cooldowns = cooldowns;
@@ -59,6 +60,7 @@ export class UnusableEntries {
 			if (held === undefined || held === family) {
 				this.pendingProbes.set(model.provider, family);
 				this.cooldowns.note(familyKey(model.provider, family), failure);
+				this.familyErrors.set(familyKey(model.provider, family), failure.errorMessage);
 				return undefined;
 			}
 			this.pendingProbes.delete(model.provider);
@@ -83,6 +85,15 @@ export class UnusableEntries {
 		if (held === undefined || family === undefined || family === held) return undefined;
 		this.pendingProbes.delete(model.provider);
 		return { provider: model.provider, heldFamily: held, probeFamily: family, outcome: "served" };
+	}
+
+	/** The weekly-limit family hold on `model`, while it lasts (senpi#5596). */
+	heldFamily(model: Model<Api>): { readonly family: string; readonly errorMessage: string } | undefined {
+		const family = modelFamilyOf(model.id);
+		if (family === undefined) return undefined;
+		const key = familyKey(model.provider, family);
+		const errorMessage = this.familyErrors.get(key);
+		return errorMessage !== undefined && this.cooldowns.isSuppressed(key) ? { family, errorMessage } : undefined;
 	}
 
 	/** The two families a no-family limit was confirmed on before it widened to the account. */
