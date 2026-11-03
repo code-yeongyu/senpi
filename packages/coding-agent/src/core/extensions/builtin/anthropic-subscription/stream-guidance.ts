@@ -6,6 +6,7 @@ import { ClassifiedSdkError } from "./failover.ts";
 import {
 	allAccountsBlockedGuidance,
 	claudeCodeVersionFloorGuidance,
+	exhaustedPoolGuidance,
 	sdkErrorGuidance,
 	singleAccountUnavailableGuidance,
 	switchAccountLine,
@@ -18,7 +19,7 @@ export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCo
 	if (error instanceof AllAccountsBlockedError) {
 		const guidance =
 			error.unavailableAccount === undefined
-				? allAccountsBlockedGuidance(error.soonestUnblockAt, error.blockReason)
+				? allAccountsBlockedGuidance(error.soonestUnblockAt, error.blockReason, error.accounts)
 				: singleAccountUnavailableGuidance(error.unavailableAccount, error.soonestUnblockAt, error.blockReason);
 		// The model-limit sentence is how the fallback chain learns the limit binds this model only (senpi#5007).
 		return error.limitedModel === undefined
@@ -37,7 +38,9 @@ export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCo
 		guidance = `${selected} ${action}`;
 	}
 	const versionGuidance = claudeCodeVersionFloorGuidance(message, ran);
-	const hints = [guidance, versionGuidance].filter((hint): hint is string => hint !== undefined);
+	const pool = error instanceof ClassifiedSdkError ? error.poolState : undefined;
+	const poolGuidance = pool && exhaustedPoolGuidance(pool.soonestUnblockAt, pool.accounts);
+	const hints = [guidance, versionGuidance, poolGuidance].filter((hint): hint is string => hint !== undefined);
 	return hints.length > 0 ? `${message}\n${hints.join("\n")}` : message;
 }
 
