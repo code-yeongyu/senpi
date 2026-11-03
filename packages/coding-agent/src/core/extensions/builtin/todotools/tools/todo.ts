@@ -290,6 +290,7 @@ function getTextContent(result: AgentToolResult<TodoToolDetails>): string {
 export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): void {
 	const tool: ToolDefinition<typeof TODO_PARAMS_SCHEMA, TodoToolDetails, unknown> = {
 		name: "todo",
+		runs: "brain",
 		workspaceEffect: "read",
 		label: "Todo",
 		description: TODO_TOOL_DESCRIPTION,
