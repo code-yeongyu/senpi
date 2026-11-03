@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { resolveBashTimeoutDefaults } from "../bash-timeout/timeout.ts";
 import { isEvalOnlyRouting } from "../eval-only-routing.ts";
+import { activeSharedSections } from "../prompt-preset/active-preset.ts";
 import {
 	buildToolContext,
 	bundleSinks,
@@ -257,11 +258,12 @@ function registerTerminal(pi: ExtensionAPI, options: TerminalExtensionOptions): 
 
 	pi.on(
 		"before_agent_start",
-		async (event) => {
+		async (event, ctx) => {
 			return {
 				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({
 					evalOnly: isEvalOnlyRouting(pi),
 					ptyBash: !state.steppedAside,
+					sharedSections: activeSharedSections(ctx),
 					foregroundWindowSeconds: resolveForegroundWindowSeconds(process.env),
 					defaultTimeoutSeconds: resolveBashTimeoutDefaults(process.env).defaultSeconds,
 				})}`,
