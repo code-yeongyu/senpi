@@ -14,13 +14,16 @@ import { isBillingErrorMessage } from "./billing.ts";
 export type UsageLimitScope = "model" | "account";
 
 export class AccountUsageLimitError extends Error {
-	constructor(provider: string, raw = "usage limit reached", resetsAt?: number) {
+	constructor(provider: string, raw = "usage limit reached", resetsAt?: number, families?: readonly string[]) {
+		const message = describeProviderFailureForUser(raw, {
+			model: provider,
+			usageLimit: "account",
+			...(resetsAt === undefined ? {} : { resetsAt: formatResetTime(resetsAt) }),
+		});
 		super(
-			describeProviderFailureForUser(raw, {
-				model: provider,
-				usageLimit: "account",
-				...(resetsAt === undefined ? {} : { resetsAt: formatResetTime(resetsAt) }),
-			}),
+			families === undefined || families.length === 0
+				? message
+				: `${message} The limit named no model family; it was confirmed on ${families.join(" and ")}.`,
 		);
 		this.name = "AccountUsageLimitError";
 	}

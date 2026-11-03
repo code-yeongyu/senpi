@@ -4,7 +4,8 @@ import { createHarness, type Harness } from "../harness.ts";
 
 const START = Date.UTC(2026, 10, 3, 0, 24);
 // A weekly limit worded without the model family it binds.
-const WEEKLY = '429 {"type":"error","error":{"type":"rate_limit_error","message":"Weekly usage limit reached. Resets at 2026-11-03T02:40:02Z"}}';
+const WEEKLY =
+	'429 {"type":"error","error":{"type":"rate_limit_error","message":"Weekly usage limit reached. Resets at 2026-11-03T02:40:02Z"}}';
 
 describe("#5596 a limit that names no model family probes another family once", () => {
 	const harnesses: Harness[] = [];
@@ -20,7 +21,11 @@ describe("#5596 a limit that names no model family probes another family once", 
 			fallbackWallNow: () => START + now,
 			settings: {
 				compaction: { enabled: false },
-				retry: { enabled: true, maxRetries: 0, fallbackChains: { "faux/claude-fable-5-1": ["faux/claude-opus-5-5"] } },
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					fallbackChains: { "faux/claude-fable-5-1": ["faux/claude-opus-5-5"] },
+				},
 			},
 		});
 		harnesses.push(harness);

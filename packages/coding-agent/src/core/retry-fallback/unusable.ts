@@ -7,6 +7,8 @@ import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
 import { isBillingErrorMessage } from "./billing.ts";
 import { usageLimitScope } from "./usage-limit.ts";
 
+// A weekly window binds the account (seven_day) or one family (seven_day_opus/...); the text alone cannot tell.
+const WEEKLY_LIMIT = /\bweekly\b[^.]*\blimit\b/i;
 const MODEL_FAMILY = /(?:^|[^a-z])(opus|sonnet|haiku|fable|mythos)(?:[^a-z]|$)/i;
 
 /** The model family a model id belongs to, when it names one. */
@@ -49,6 +51,7 @@ export class UnusableEntries {
 			scope === "account" &&
 			family !== undefined &&
 			failure.errorMessage !== undefined &&
+			WEEKLY_LIMIT.test(failure.errorMessage) &&
 			!isBillingErrorMessage(failure.errorMessage) &&
 			rateLimitModelFamily(failure.errorMessage) === undefined
 		) {

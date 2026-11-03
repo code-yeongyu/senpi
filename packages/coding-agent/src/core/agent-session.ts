@@ -761,6 +761,14 @@ export type AgentSessionEvent =
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
 	| {
+			/** A limit that named no model family was checked on another family once (senpi#5596). */
+			type: "usage_limit_scope_probe";
+			provider: string;
+			heldFamily: string;
+			probeFamily: string;
+			outcome: "served" | "widened";
+	  }
+	| {
 			type: "retry_fallback_reverted";
 			from: string;
 			to: string;
@@ -2244,6 +2252,7 @@ export class AgentSession {
 			sessionModel.provider,
 			this._retryFallback.accountError(sessionModel.provider),
 			this._retryFallback.accountResetAt(sessionModel.provider),
+			this._retryFallback.widenedFamiliesOf(sessionModel.provider),
 		);
 	}
 
@@ -6133,6 +6142,7 @@ export class AgentSession {
 							model.provider,
 							errorMessage,
 							this._retryFallback.accountResetAt(model.provider),
+							this._retryFallback.widenedFamiliesOf(model.provider),
 						);
 					}
 				}
