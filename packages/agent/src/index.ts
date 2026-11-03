@@ -42,6 +42,30 @@ export * from "./agent.ts";
 export * from "./agent-loop.ts";
 export { createInternalAgentChannel, type InternalAgentChannel, type OrderedAgentRecord } from "./internal-events.ts";
 export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
+export {
+	createRemoteExecutor,
+	type HandCall,
+	type HandScope,
+	type OpenHandScope,
+	type RemoteExecutor,
+	type RemoteExecutorOptions,
+} from "./execution/remote-executor.ts";
+export {
+	decodeRemoteMessage,
+	encodeRemoteMessage,
+	type RemoteAbort,
+	type RemoteHandMessage,
+	type RemoteInvoke,
+	type RemoteRefused,
+	type RemoteSettled,
+	RemoteProtocolError,
+	type RemoteToolResult,
+} from "./execution/remote-protocol.ts";
+export { createRemoteToolHost, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
+export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
+export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
+export { createReliableTransport, type ReliableTransportOptions } from "./transport/reliable-transport.ts";
+export type { Transport, TransportClock, TransportFrame, TransportSide } from "./transport/transport.ts";
 export * from "./harness/agent-harness.ts";
 export {
 	type BranchPreparation,

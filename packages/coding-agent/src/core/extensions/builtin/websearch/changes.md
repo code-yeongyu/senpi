@@ -1,3 +1,23 @@
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/tool.ts`: the cite guideline is exported as `WEB_SEARCH_CITE_GUIDELINE`.
+- `packages/coding-agent/src/core/extensions/builtin/websearch/index.ts`: with server search live, `## Web Search` reads "web_search is the provider's server-side search: use it when current information is needed and cite the returned URLs in the final answer." and the cite guideline bullet is removed from the prompt; the failed-search fallback text and bullet are unchanged.
+- Terse pass: `packages/coding-agent/src/core/extensions/builtin/websearch/index.ts` and `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/tool.ts` shorten the server-search line and the cite guideline.
+
+### Why
+
+- senpi#5335: the server-search routing line and the cite rule had separate homes.
+
+### Why an extension could not handle it
+
+- This extension owns the `## Web Search` section.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` handler.
+
 ## 2026-11-02 - Public web aggregate joins the web search providers (senpi#5485, PR #5494)
 
 ### What changed
