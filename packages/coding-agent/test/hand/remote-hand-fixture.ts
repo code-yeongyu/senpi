@@ -30,9 +30,12 @@ import type { CliRuntimeConfiguration } from "../../src/main.ts";
 import { createLooplessHandScopes } from "../../src/modes/rpc/remote-executor-scope.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
+const faults: unknown[] = [];
 
 export async function cleanupHands(): Promise<void> {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+	const reported = faults.splice(0);
+	if (reported.length > 0) throw new Error(`hand faults: ${reported.map(String).join("; ")}`);
 }
 
 function side(): TransportSide {
@@ -99,7 +102,12 @@ export function startHand(
 }
 
 export function startHandOn(link: { readonly hand: Transport }, openScope: OpenHandScope): RemoteExecutor {
-	const executor = createRemoteExecutor({ transport: link.hand, openScope });
+	const executor = createRemoteExecutor({
+		authority: { kind: "self" },
+		transport: link.hand,
+		openScope,
+		onFault: (error) => faults.push(error),
+	});
 	cleanups.push(() => executor.close());
 	return executor;
 }
@@ -170,7 +178,11 @@ export async function runTurn(options: {
 }
 
 export function remoteHost(link: { readonly brain: TransportSide }, sessionRef?: string) {
-	return createRemoteToolHost({ transport: link.brain, ...(sessionRef === undefined ? {} : { sessionRef }) });
+	return createRemoteToolHost({
+		transport: link.brain,
+		placement: "split-local",
+		...(sessionRef === undefined ? {} : { sessionRef }),
+	});
 }
 
 export function toolResultTexts(agent: Agent): string[] {

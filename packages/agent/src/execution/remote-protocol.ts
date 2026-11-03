@@ -9,7 +9,27 @@ import type { ExecutionScope } from "./tool-host.ts";
  * The hand receives the model's raw call (name and arguments, before preparation, validation and hooks) and runs all of
  * those steps itself. `sessionRef` is what the session chose to say about itself: the hand passes it to nothing.
  */
-export type RemoteHandMessage = RemoteInvoke | RemoteAbort | RemoteSettled | RemoteRefused;
+export type RemoteHandMessage =
+	| RemoteInvoke
+	| RemoteAbort
+	| RemoteAck
+	| RemoteSettled
+	| RemoteTerminal
+	| RemoteRefused
+	| RemoteHello;
+
+/** The lane a hand announces itself on; execution scope lanes carry everything else. */
+export const HAND_CONTROL_LANE = "hand.control";
+
+/**
+ * A hand with a durable record announces itself when it (re)starts, after re-sending the outcomes the session has not
+ * acknowledged. The session then re-sends every call still waiting: the record answers a call it already holds, and
+ * runs only a call whose admission never became durable (nothing of it ran).
+ */
+export interface RemoteHello {
+	readonly kind: "hello";
+	readonly instance: string;
+}
 
 export interface RemoteInvoke {
 	readonly kind: "invoke";
@@ -28,6 +48,27 @@ export interface RemoteInvoke {
 export interface RemoteAbort {
 	readonly kind: "abort";
 	readonly executionId: string;
+}
+
+/** The session has its outcome: the hand may forget it (a later replay is `result_expired`). */
+export interface RemoteAck {
+	readonly kind: "ack";
+	readonly executionId: string;
+}
+
+/** The reasons a call can end on a hand without a tool result (the endpoint state machine's terminal reasons). */
+export type RemoteTerminalReason = "cancelled" | "lease_expired" | "hand_restarted" | "uncertain";
+
+/**
+ * The call ended without a tool result, for example because the hand restarted while it ran. `uncertain` says its
+ * effects may have happened; `hooksRan` says its `tool_call` handlers may have run. It is never run again.
+ */
+export interface RemoteTerminal {
+	readonly kind: "terminal";
+	readonly executionId: string;
+	readonly reason: RemoteTerminalReason;
+	readonly uncertain: boolean;
+	readonly hooksRan: boolean;
 }
 
 /** The call ran to an outcome on the hand (an `isError` result included: a blocked, invalid or failing call). */
@@ -61,6 +102,7 @@ export class RemoteProtocolError extends Error {
 	}
 }
 
+const TERMINAL_REASONS: readonly RemoteTerminalReason[] = ["cancelled", "lease_expired", "hand_restarted", "uncertain"];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -78,6 +120,10 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 		value = JSON.parse(decoder.decode(payload));
 	} catch {
 		throw new RemoteProtocolError("payload is not JSON");
+	}
+	if (isRecord(value) && value.kind === "hello") {
+		if (!isString(value.instance)) throw new RemoteProtocolError("malformed hello");
+		return { kind: "hello", instance: value.instance };
 	}
 	if (!isRecord(value) || !isString(value.executionId)) throw new RemoteProtocolError("no execution ID");
 	switch (value.kind) {
@@ -100,6 +146,16 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 		}
 		case "abort":
 			return value as unknown as RemoteAbort;
+		case "ack":
+			return value as unknown as RemoteAck;
+		case "terminal":
+			if (
+				!TERMINAL_REASONS.includes(value.reason as RemoteTerminalReason) ||
+				typeof value.uncertain !== "boolean" ||
+				typeof value.hooksRan !== "boolean"
+			)
+				throw new RemoteProtocolError("malformed terminal outcome");
+			return value as unknown as RemoteTerminal;
 		case "settled": {
 			const result = value.result;
 			if (!isRecord(result) || !Array.isArray(result.content) || typeof result.isError !== "boolean")

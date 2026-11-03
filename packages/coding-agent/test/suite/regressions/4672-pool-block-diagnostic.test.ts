@@ -5,7 +5,11 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { providerFailureOf } from "../../../src/core/provider-failure.ts";
-import { AllAccountsBlockedError } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	AllAccountsBlockedError,
+	selectAccount,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { classifySdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import { ClassifiedSdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
 import {
@@ -49,9 +53,33 @@ async function failedTurn(error: unknown) {
 
 afterEach(() => resetSdkBoundary());
 
+/** A pool every remaining account of which waits on a rate limit until SOONEST (senpi#3975). */
+function rateLimitedPool(): AllAccountsBlockedError {
+	return new AllAccountsBlockedError(SOONEST, undefined, undefined, undefined, [], SOONEST);
+}
+
+function account(name: string, index: number, blockedUntil: number, blockReason: string): AccountSlot {
+	return {
+		name,
+		source: "login",
+		store: "claude-cli",
+		dirId: index.toString(16).padStart(32, "0"),
+		blockedUntil,
+		blockReason,
+	};
+}
+
+function refusalOf(accounts: readonly AccountSlot[], now: number): unknown {
+	try {
+		return selectAccount(accounts, { now, model: model.id });
+	} catch (error) {
+		return error;
+	}
+}
+
 describe("a refused account pool is a classified failure (senpi#4672)", () => {
 	it("reports a pool waiting on a limit as rate_limit with the soonest retry", async () => {
-		const failure = await failedTurn(new AllAccountsBlockedError(SOONEST));
+		const failure = await failedTurn(rateLimitedPool());
 
 		expect(failure?.category).not.toBe("unknown");
 		expect(failure).toMatchObject({ category: "rate_limit", code: "account_pool_blocked", resetsAt: SOONEST });
@@ -59,7 +87,7 @@ describe("a refused account pool is a classified failure (senpi#4672)", () => {
 
 	it("finds a pool refusal carried as the cause of a wrapping failure", async () => {
 		const wrapped = new Error("rate_limit", {
-			cause: new Error("context", { cause: new AllAccountsBlockedError(SOONEST) }),
+			cause: new Error("context", { cause: rateLimitedPool() }),
 		});
 
 		expect(await failedTurn(wrapped)).toMatchObject({
@@ -67,6 +95,42 @@ describe("a refused account pool is a classified failure (senpi#4672)", () => {
 			code: "account_pool_blocked",
 			resetsAt: SOONEST,
 		});
+	});
+
+	it("does not report a pool held by billing or an unknown block as a rate limit (senpi#3975)", async () => {
+		const billing = refusalOf([account("a", 0, SOONEST, "billing"), account("b", 1, SOONEST, "billing")], 0);
+		const unknown = new AllAccountsBlockedError(SOONEST);
+
+		for (const refusal of [billing, unknown]) {
+			const failure = await failedTurn(refusal);
+			expect(failure?.code).toBeUndefined();
+			expect(failure?.category ?? "unknown").toBe("unknown");
+		}
+	});
+
+	it("parks a pool of one rate-limited and one billing account only until the limited one resets (senpi#3975)", async () => {
+		const now = SOONEST - 60 * 60_000;
+		const limitedUntil = SOONEST;
+		const billingProbe = now + 60_000;
+		const accounts = [
+			account("limited", 0, limitedUntil, "rate_limit"),
+			account("billed", 1, billingProbe, "billing"),
+		];
+		const refusal = refusalOf(accounts, now);
+		overrideSdkBoundary({ query: failingQuery(refusal) });
+		const message = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
+
+		expect(providerFailureOf([message])).toMatchObject({
+			category: "rate_limit",
+			code: "account_pool_blocked",
+			resetsAt: limitedUntil,
+		});
+		expect(message.errorMessage).toContain(`billed: billing until ${new Date(billingProbe).toISOString()}`);
+		const afterReset = refusalOf(
+			[account("limited", 0, limitedUntil, "rate_limit"), account("billed", 1, limitedUntil + 60_000, "billing")],
+			limitedUntil + 1,
+		);
+		expect(afterReset).toMatchObject({ name: "limited" });
 	});
 
 	it("reports a pool where every account needs a new login as auth", async () => {
