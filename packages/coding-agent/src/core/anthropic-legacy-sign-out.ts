@@ -7,6 +7,10 @@ import {
 	SENTINEL_OAUTH_FIELDS,
 } from "./extensions/builtin/anthropic-subscription/accounts.ts";
 import { newAccountDirId } from "./extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
+import {
+	type AccountDirLink,
+	relinkAccountDirs,
+} from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
 
 type AuthStorageData = Record<string, Credential>;
 type Slot = Record<string, unknown>;
@@ -70,7 +74,10 @@ function isRetiredLoginSlot(slot: Slot): boolean {
 	return slot.store === undefined && (slot.source === "login" || slot.source === "import");
 }
 
-function signOutSubscription(stored: unknown): { entry: unknown; changed: boolean } | string {
+function signOutSubscription(
+	stored: unknown,
+	accountLinks: () => readonly AccountDirLink[],
+): { entry: unknown; changed: boolean } | string {
 	if (stored === undefined) return { entry: stored, changed: false };
 	if (!isPlainObject(stored)) return "the anthropic-subscription entry is not an object";
 	if (stored.accounts !== undefined && !isSlotList(stored.accounts)) {
@@ -82,7 +89,10 @@ function signOutSubscription(stored: unknown): { entry: unknown; changed: boolea
 	}
 	if (!accounts.some(isRetiredLoginSlot)) return { entry: stored, changed: false };
 	const signedOut = accounts.map((slot) => (isRetiredLoginSlot(slot) ? signedOutSlot(slot) : (slot as AccountSlot)));
-	return { entry: { ...stored, ...SENTINEL_OAUTH_FIELDS, accounts: signedOut }, changed: true };
+	// Only an engine from before senpi#4436 writes a token slot, so its write may have dropped Claude CLI slots: every
+	// signed-in account dir it left unreferenced takes its account back (senpi#5594).
+	const relinked = relinkAccountDirs(signedOut, accountLinks());
+	return { entry: { ...stored, ...SENTINEL_OAUTH_FIELDS, accounts: relinked }, changed: true };
 }
 
 function signOutAnthropic(stored: unknown): { entry: unknown; changed: boolean } | string {
@@ -92,10 +102,10 @@ function signOutAnthropic(stored: unknown): { entry: unknown; changed: boolean }
 	return { entry: remainingApiKeyEntry(keySlots, stored.pinned), changed: true };
 }
 
-function signOut(data: AuthStorageData): LegacySignOutResult {
+function signOut(data: AuthStorageData, accountLinks: () => readonly AccountDirLink[]): LegacySignOutResult {
 	const skipped: string[] = [];
 	let next: AuthStorageData = data;
-	const subscription = signOutSubscription(data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]);
+	const subscription = signOutSubscription(data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID], accountLinks);
 	if (typeof subscription === "string") skipped.push(subscription);
 	else if (subscription.changed) {
 		next = { ...next, [ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: subscription.entry as Credential };
@@ -120,12 +130,17 @@ function signOut(data: AuthStorageData): LegacySignOutResult {
  * - an `anthropic-subscription` slot holding a token (`source` login or import) becomes a Claude CLI slot that must
  *   sign in again, under the same name, display name and model blocks, so the pin and order still name it;
  * - the OAuth part of an `anthropic` entry is dropped; its API-key slots stay as an API-key credential;
- * - env slots and Claude CLI slots are untouched, and a store with nothing left to sign out is returned as is.
+ * - env slots and Claude CLI slots are untouched, and a store with nothing left to sign out is returned as is;
+ * - a token slot can only come from an engine from before senpi#4436 writing over the Claude CLI slots, so each
+ *   signed-in account dir in `accountLinks` that no slot references is re-linked to its account (senpi#5594).
  * An entry it cannot parse is left exactly as stored and explained in `skipped`; it never throws.
  */
-export function signOutLegacyClaudeLogins(data: AuthStorageData): LegacySignOutResult {
+export function signOutLegacyClaudeLogins(
+	data: AuthStorageData,
+	accountLinks: () => readonly AccountDirLink[] = () => [],
+): LegacySignOutResult {
 	try {
-		return signOut(data);
+		return signOut(data, accountLinks);
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
 		return { data, migrated: false, skipped: `it could not be read (${reason})` };

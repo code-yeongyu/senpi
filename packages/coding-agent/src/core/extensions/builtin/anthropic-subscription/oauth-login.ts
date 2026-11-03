@@ -36,6 +36,7 @@ import {
 	type ClaudeCliLoginResult,
 	startClaudeCliLogin,
 } from "./claude-cli-auth.ts";
+import { writeAccountLink } from "./claude-cli-account-link.ts";
 import { type ClaudeCliAuthStatus, logoutClaudeCli, readClaudeCliAuthStatus } from "./claude-cli-auth-status.ts";
 import {
 	type ClaudeCliConnectionTestInput,
@@ -402,6 +403,7 @@ export function createOAuthConfig(deps: {
 				});
 				const slot = claimed.slot;
 				if (slot === undefined) throw new Error("Claude sign-in could not store its account");
+				writeAccountLink(agentDir(), { dirId, name, signedInAt });
 				cancelled();
 				const model = connectionTestModel(cli.defaultModel?.());
 				callbacks.onProgress?.(`Testing the account with one turn on ${model}...`);

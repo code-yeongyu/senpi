@@ -38,6 +38,7 @@ import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
+import { readAccountLinks } from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
 import {
 	resolveReadOnlyCredential,
 	resolveStoredCredential,
@@ -573,7 +574,10 @@ export class AuthStorage implements CredentialStore {
 		}
 		const repaired = repairPoisonedPoolSlots(parseAuthDocument(content) as AuthStorageData);
 		const migrated = migrateLegacyProviderKeys(repaired.data);
-		const moved = signOutLegacyClaudeLogins(migrated.data);
+		const authPath = this.authPath;
+		const moved = signOutLegacyClaudeLogins(migrated.data, () =>
+			authPath ? readAccountLinks(dirname(authPath)) : [],
+		);
 		if (moved.skipped && !this.reportedMigrationSkips.has(moved.skipped)) {
 			this.reportedMigrationSkips.add(moved.skipped);
 			this.recordError(
