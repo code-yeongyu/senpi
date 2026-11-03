@@ -1,3 +1,182 @@
+## 2026-11-03 - A host signal between a permit worker's checks and its wait no longer leaves it parked (senpi#5591)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-permits.ts`: the permit block gains a fourth word, `wake`, a count only the host adds to on every signal (grant, deny, close), and the one word `WorkerPermitGate.acquire` waits on. Each pass of the wait loop reads `wake` before its other checks and waits on that value, so a signal published after the checks changes the waited word and the wait returns at once. `PERMIT_BLOCK_BYTES` is the block size, derived from `PERMIT_WORD`; `WorkerPermitGate` refuses a block of any other size, so host and worker never run with different layouts (RULING-63 Q3a).
+
+### Why
+
+- The worker waited on `credit`, which a close does not change. A close published after the worker's last check and before its `Atomics.wait` started notified nobody, and the wait then compared an unchanged `credit` and slept until its own deadline (300 s in the acceptance test, the control timeout in production), so a closing worker was held for the whole deadline (senpi#5591). A test now holds the isolate at its wait call, sends the close (and a grant) into that window, and only then lets the wait start.
+
+### Why an extension could not handle it
+
+- The permit block and its wait loop are engine internals of the session worker transfer path; no extension sees or owns them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-worker-permits.ts` (`PERMIT_WORD`, `HostPermits.signal`, `WorkerPermitGate`) only; fork-only file.
+
+## 2026-11-02 - A hand's scopes on loopless runtimes, with tool handlers on every call (senpi#5483)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loopless-execute-grant.ts`: a second closed-allowlist caller, `remote-tool-executor` (`grantLooplessExecuteToRemoteExecutor()`); `looplessGrantRunsToolHandlers()` tells whether calls made with a grant run the tool handlers. The check in `execute()` is unchanged.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-call.ts`: with handlers, a call runs the `tool_call` handlers after argument validation (a block, an abort or a throw stops it before the tool runs), the tool, then the `tool_result` handlers, applying their override as a session does.
+- `packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts` is new: the runtime's own extension runner's `tool_call`/`tool_result` emission.
+- `packages/coding-agent/src/modes/rpc/runtime-factory-loopless.ts`: runs those handlers for the remote executor's grant, and binds `getAllTools` and the loader's hook sources on its runner.
+- `packages/coding-agent/src/modes/rpc/remote-executor-scope.ts` is new: `createLooplessHandScopes(configuration)` opens one loopless runtime per scope with the remote executor's grant, cwd = the scope's absolute root.
+
+### Why
+
+- Closes the remote executor's side of the obligation recorded on senpi#5413: no untrusted call reaches a loopless runtime's tools past its permission checks.
+
+### Why an extension could not handle it
+
+- The loopless runtime and its execute guard are the RPC host's.
+
+### Expected merge conflict zones
+
+- LOW: new files; the `execute` closure in `runtime-factory-loopless.ts`.
+
+## 2026-11-02 - Loopless workers share the per-process worker cap (senpi#5438)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/worker-capacity.ts` is new: `WorkerCapacity`, the process's shared worker budget; each pool registers the count of workers it holds.
+- `packages/coding-agent/src/modes/rpc/loopless-worker-pool.ts`, `loopless-worker-client.ts`, `loopless-worker-protocol.ts` and `loopless-worker.ts` are new: the pool admits loopless workers against the shared cap (`too_many_sessions` before a worker starts), the client and isolate start a `LooplessRuntime` and close it.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: optional `capacity`; with it the registry registers its open count there and admits against the shared total. Without it nothing changes.
+- `packages/coding-agent/package.json` (`build:binary`), `scripts/build-binaries.sh` and `packages/coding-agent/scripts/qa-rpc-socket/lib/compiled-generations.mjs` add `./src/modes/rpc/loopless-worker.ts` to the compiled entry list.
+
+### Why
+
+- One hand process may serve many sessions; its worker cap (`SESSION_WORKER_LIMITS.workers`) must hold across all of them, whatever kind of worker each session uses (brain/hand split, senpi#5413).
+
+### Why an extension could not handle it
+
+- Worker admission and isolate start-up belong to the RPC host, which runs before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `WorkerSessionRegistryOptions` property list, the registry constructor and the `size` field passed to `openWorkerSession`; the compiled entry lists.
+
+## 2026-11-02 - A machine-owned multi-session host for the headless engine (S23, senpi#5418)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `MultiSessionHostOptions.sessionOwner?: "client" | "machine"`. When absent or `"client"`, the host is unchanged. In `createHostCore`, a `"machine"`-owned host forces an infinite empty-exit window, so it never exits for being empty. It also dispatches an `open_session` that carries no `retain_on_disconnect` as `retain_on_disconnect: true`, so every session it opens outlives its client; an explicit `false` is honored.
+
+### Why
+
+- A headless engine owns its sessions and their loops: a client that leaves must not end a session or a running turn, and the engine must stay up with no sessions (senpi#5418).
+
+### Why an extension could not handle it
+
+- Session retention and the empty-exit window are RPC host internals that no extension reaches.
+
+### Expected merge conflict zones
+
+- LOW: the policy line and the dispatch line in `createHostCore`.
+
+## 2026-11-02 - The calls table adopts the producer's call keys (RULING-127, senpi#5374)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-session-calls.ts`: a block call is created with `blockCallKey(messageId, contentIndex)`, an execution start adopts the key its producer carried, and the host mints `<sessionEpoch>:<sequence>.<k>` only for a call with neither. A block, whether its `toolcall_start` streams or it appears only in the terminal (`announce`), joins the oldest bridge-started call of its id in the turn and keeps that call's first key. An execution start joins only a block of its own turn, so a block an earlier turn left unstarted never takes a later turn's start.
+- `packages/coding-agent/src/modes/rpc/compact-call-model.ts`: `FRESH_CALL`, the header a new call starts from, moved here from `compact-session-calls.ts` unchanged (that file stays under its size ceiling); the `CallIdentity` contract names the producer's key as the source.
+- `packages/coding-agent/src/modes/rpc/compact-call-table.ts`: `bridgeStarted(turnId, id)`, the oldest unowned top-level call of an id in a turn. The creation ordinal is the one a key was first put at (`reput`), no longer parsed from the key; `creationOf` is removed.
+- `packages/coding-agent/src/modes/rpc/compact-call-fold.ts`, `compact-session-state.ts`, `compact-lane-current.ts`, `session-acceptance-admission.ts`, `session-acceptance-lane.ts`: `accept` takes the record's carried execution key and passes it to `executionStart`.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`, `session-worker.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`: the key travels out of band, in process from the record's carrier and across a worker as the output frame's `callKey`, never as a record field.
+
+### Why
+
+- RULING-127 (a)/(b): core mints per toolCall block and the host adopts, so the persisted key equals the live and snapshot key; the first key a call carries is its key forever.
+
+### Why an extension could not handle it
+
+- The calls component and the worker frame are RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `create`/`toolStart`/`announce`/`executionStart` in `compact-session-calls.ts`, `put` in `compact-call-table.ts`, the `accept`/`admitRecord`/`foldCall`/`acceptCall`/`foldCallRecord` signatures, the worker output frame.
+
+## 2026-11-02 - Compact snapshot rows of a toolCallId reused within one message are marked callUnknown (RULING-123 C3.4, senpi#5348)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-call-table.ts`: `put` stores a call's header with `callUnknown: true` exactly while `sharesIdInMessage` holds for it, and the first call to share an id with another of its message republishes those others marked; `index` records the shared mark from that header, so the snapshot rows and the live-record stamp read one mark.
+- `packages/coding-agent/src/modes/rpc/compact-call-model.ts`: `OutstandingCall.callUnknown` and `CallProjection.callUnknown`, documented as the fields a reader must not trust as that call's own (phase, start, hook, progress, result, outcome, carrier, nested calls).
+- `packages/coding-agent/src/modes/rpc/compact-settled-messages.ts`: a toolResult terminal row whose retired call is marked carries `callUnknown: true` beside its `runtimeItemKey`.
+- `packages/coding-agent/src/modes/rpc/compact-settled-rows.ts` (new): the settled row model (`TerminalRow`, `OwnerRow`, `StoredOwner`, `SettledMember`, `SettledReader`, `isProjection`) moved out of `compact-settled-messages.ts` unchanged except for the new field; `compact-catalog-families.ts`, `compact-catalog-settled.ts` and `compact-catalog-source.ts` import it from there.
+
+### Why
+
+- RULING-123 C3.4: the reducer settles two calls sharing one `toolCallId` inside one message oldest-open-first. Since #5346 their live execution and hook records say `callUnknown`, but the recovery snapshot still paged the order-picked execution state, outcome and carrier as each call's fact, so a consumer joining against it could show the two calls' states swapped. Same fail-safe as RULING-122/123: a row the engine cannot vouch for says so.
+
+### Why an extension could not handle it
+
+- The calls component, the settled store and the recovery catalog are RPC host internals.
+
+### Expected merge conflict zones
+
+- LOW: `put`/`index` in `compact-call-table.ts`, the `TerminalRow` construction in `CompactSettledMessages.end`, the imports of the three catalog modules.
+
+## 2026-11-01 - RPC sessions ignore `setProgramStatus` (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/core/runtime/ui-broker.ts` implement `setProgramStatus` as a no-op. No `extension_ui_request` method is added to the wire.
+
+### Why
+
+- OSC 7501 is a terminal report and an RPC session owns no terminal. A new wire method would reach clients whose request schema is closed (the desktop app decodes an unknown method as an unknown event and shows a warning row), with nothing for them to do with it.
+
+### Why an extension could not handle it
+
+- The RPC UI context is core.
+
+### Expected merge conflict zones
+
+- LOW: the `setTitle` neighbourhood in `connection-handler.ts` and `ui-broker.ts`.
+
+## 2026-10-29 - Structured RPC reset for one account (desktop#4203)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts` and `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`: add `account_reset { provider, name }` and its correlated success response.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: await the existing full engine reset, map unknown names to `account_not_found`, validate selector types, return credential-free failures, and reuse the existing post-write account-change event.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: add `resetProviderAccount`, rejecting failed acknowledgements with `RpcCommandError`.
+
+### Why
+
+- Part of sisyphuslabs/omo-desktop-app#4203 (U1): clients need to reset one named account through an acknowledged engine operation without deleting credentials or changing other accounts.
+
+### Why an extension could not handle it
+
+- The structured RPC command union, response union, dispatcher and typed client are protocol-owned surfaces.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: credential-account imports and account mutation cases.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: provider-account command, response and client methods.
+
+## 2026-10-26 - Context-window fallback diagnostics carry displayable notice text (senpi#4065)
+
+### What changed
+
+- Assistant diagnostics forwarded by the existing message events now carry `details.message` for `claude_sdk_oauth_long_context_fallback`, beside `details.contextWindow`. `docs/rpc.md` documents the muted recovery-notice contract and saved-message behavior.
+
+### Why
+
+- A diagnostic type alone required every client to invent its own notice copy. The producer supplies renderable text shared with the TUI.
+
+### Why an extension could not handle it
+
+- The builtin provider owns this diagnostic and the documented RPC contract.
+
+### Expected merge conflict zones
+
+- LOW: `docs/rpc.md` message event reference. No RPC event transport changes.
+
 ## 2026-11-02 - A loopless session-worker runtime (senpi#5436)
 
 ### What changed

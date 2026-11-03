@@ -1,3 +1,57 @@
+## 2026-11-02 - One tool-catalog projection for hand/fused parity (S22, senpi#5419)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/tool-catalog.ts` (new): `toolCatalog` projects each tool as a caller sees it (name, description, parameter schema and the normalized search exposure), in catalog order. `handToolCatalog` applies it to a hand runtime's definitions. Nothing in the product imports it yet; `test/hand/catalog-parity.test.ts` requires the hand's catalog to equal the fused engine's for the same configuration.
+
+### Why
+
+- A hand must expose exactly the tools the fused engine exposes, or callers see a different tool set depending on placement (senpi#5419).
+
+### Why an extension could not handle it
+
+- It compares the core runtime's tool registry across two runtime compositions.
+
+### Expected merge conflict zones
+
+- LOW: new directory.
+
+## 2026-11-02 - The headless engine's host options and endpoint (S23, senpi#5418)
+
+### What changed
+
+- `packages/coding-agent/src/modes/headless/headless-host.ts` (new): `headlessHostOptions` sets `sessionOwner: "machine"` and the engine's own endpoint, `<agentDir>/rpc/headless.sock` (a named pipe on Windows), apart from the shared host's `rpc.sock`. It also exports `headlessSocketPath`, `headlessEndpoint` and `runHeadlessHost`. No CLI flag or entry point selects it yet.
+
+### Why
+
+- It is the headless engine's composition of the host and its endpoint, built before the flag that selects it (senpi#5418).
+
+### Why an extension could not handle it
+
+- It configures the RPC host itself.
+
+### Expected merge conflict zones
+
+- LOW: new directory.
+
+## 2026-11-01 - Export `ProgramStatus` (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports the `ProgramStatus` type used by `ctx.ui.setProgramStatus`.
+
+### Why
+
+- Extensions type the status they pass to the new UI method from the public package.
+
+### Why an extension could not handle it
+
+- The package's public type surface is defined only here.
+
+### Expected merge conflict zones
+
+- LOW: one name in the extension type export list.
+
 ## 2026-10-30 - Print mode lists the primary failure first on exhaustion (senpi#4084)
 
 ### What changed
