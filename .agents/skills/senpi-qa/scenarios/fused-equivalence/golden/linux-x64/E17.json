@@ -9308,7 +9308,8 @@
          "path": "out/client.txt",
          "text": "call_by_client\n",
          "barrier": "open-call_by_client"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -9364,7 +9365,7 @@
         {
          "kind": "question",
          "originSessionId": "<uuid:1>",
-         "requestId": "<uuid:3>",
+         "requestId": "<uuid:4>",
          "revision": 1,
          "since": "<ts:human.since:1>"
         }
@@ -9406,7 +9407,7 @@
         {
          "kind": "question",
          "originSessionId": "<uuid:1>",
-         "requestId": "<uuid:3>",
+         "requestId": "<uuid:4>",
          "revision": 1,
          "since": "<ts:human.since:2>"
         }
@@ -9477,7 +9478,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -9495,7 +9497,8 @@
          "path": "out/other.txt",
          "text": "call_by_other\n",
          "barrier": "open-call_by_other"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:5>:0"
        }
       ],
       "api": "openai-completions",
@@ -9551,7 +9554,7 @@
         {
          "kind": "question",
          "originSessionId": "<uuid:1>",
-         "requestId": "<uuid:4>",
+         "requestId": "<uuid:6>",
          "revision": 1,
          "since": "<ts:human.since:3>"
         }
@@ -9593,7 +9596,7 @@
         {
          "kind": "question",
          "originSessionId": "<uuid:1>",
-         "requestId": "<uuid:4>",
+         "requestId": "<uuid:6>",
          "revision": 1,
          "since": "<ts:human.since:4>"
         }
@@ -9664,7 +9667,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:5>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:5>:0"
     },
     {
      "type": "message",

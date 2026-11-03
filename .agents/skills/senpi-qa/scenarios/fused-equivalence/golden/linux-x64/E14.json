@@ -4809,7 +4809,8 @@
          "path": "out/killed.txt",
          "text": "call_killed\n",
          "barrier": "kill-1"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -5059,7 +5060,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:3>",
+      "runId": "<uuid:4>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -5177,7 +5178,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:3>",
+      "runId": "<uuid:4>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -5234,7 +5235,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:1",
-      "runId": "<uuid:3>",
+      "runId": "<uuid:4>",
       "waitingOn": {
        "children": 0,
        "background": [],

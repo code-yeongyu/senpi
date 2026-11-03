@@ -4137,7 +4137,8 @@
         "name": "eq_lazy",
         "arguments": {
          "value": "on"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -4188,7 +4189,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",

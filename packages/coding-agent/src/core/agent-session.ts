@@ -115,6 +115,7 @@ import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
+import { BridgedCallKeys } from "./session-call-keys.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
 import {
@@ -152,7 +153,7 @@ import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
-import type { DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, FullToolPrompt } from "./dynamic-prompt/build.ts";
 import {
 	type BuildDynamicSystemPromptOptions,
 	buildDynamicSystemPrompt,
@@ -1479,6 +1480,8 @@ export class AgentSession {
 	private readonly _writtenTicketEntries = new Map<string, string>();
 	/** How many sends that joined each ticket's queued message are still in flight. */
 	private readonly _carrierJoiners = new Map<string, number>();
+	/** Call keys minted with a bridge-started call's execution start (RULING-127 (b), senpi#5374). */
+	private readonly _bridgedCallKeys = new BridgedCallKeys();
 	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
@@ -1791,6 +1794,7 @@ export class AgentSession {
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
+	private _toolFullPromptGuidelines: Map<string, string[]> = new Map();
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
@@ -4092,6 +4096,7 @@ export class AgentSession {
 			}
 		}
 		this._recoveryIdentity?.hint(event, consumedEntry);
+		this._bridgedCallKeys.observe(event);
 		this._emit(carryRecovery(event, sessionEvent), event);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
@@ -4133,6 +4138,7 @@ export class AgentSession {
 					entryId = this.sessionManager.appendOwnedMessage(event.message, {
 						inputSource: this._userInputSources.get(event.message),
 						recoveryOwner: recoveryCarrier(event),
+						...(event.message.role === "assistant" ? { bridgedCalls: this._bridgedCallKeys.take() } : {}),
 					});
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
@@ -5720,8 +5726,11 @@ export class AgentSession {
 		];
 		const toolSnippets: Record<string, string> = {};
 		const promptGuidelines: string[] = [];
+		// What the full shared sections list (senpi#5665): every snippet, and each tool's full guidelines.
+		const fullToolPrompt: FullToolPrompt = { toolSnippets: {}, promptGuidelines: [] };
 		for (const name of contributingToolNames) {
 			const snippet = this._toolPromptSnippets.get(name);
+			if (snippet) fullToolPrompt.toolSnippets[name] = snippet;
 			// A model-facing tool whose schema description the model already reads gets no snippet line;
 			// withheld eval-only tools keep theirs (senpi#5335).
 			const describedToModel =
@@ -5734,6 +5743,8 @@ export class AgentSession {
 			if (toolGuidelines) {
 				promptGuidelines.push(...toolGuidelines);
 			}
+			const fullGuidelines = this._toolFullPromptGuidelines.get(name) ?? toolGuidelines;
+			if (fullGuidelines) fullToolPrompt.promptGuidelines.push(...fullGuidelines);
 		}
 
 		const loadedSkills = this._resourceLoader.getSkills().skills;
@@ -5748,6 +5759,7 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			fullToolPrompt,
 			surface: this._promptSurface ?? resolvePromptSurface(process.env),
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
@@ -12339,6 +12351,15 @@ export class AgentSession {
 				})
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
+		this._toolFullPromptGuidelines = new Map(
+			Array.from(definitionRegistry.values())
+				.map(({ definition }) =>
+					definition.fullPromptGuidelines === undefined
+						? undefined
+						: ([definition.name, this._normalizePromptGuidelines(definition.fullPromptGuidelines)] as const),
+				)
+				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
+		);
 		const wrappedExtensionTools = registry.extensionTools;
 		this._toolRegistry = registry.toolRegistry;
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
@@ -14338,7 +14359,7 @@ export class AgentSession {
 		// Re-chain parentIds to form a linear sequence
 		let prevId: string | null = null;
 		for (const entry of branchEntries) {
-			const linear = { ...entry, parentId: prevId };
+			const linear = { ...this.sessionManager.persistedEntry(entry), parentId: prevId };
 			lines.push(JSON.stringify(linear));
 			prevId = entry.id;
 		}

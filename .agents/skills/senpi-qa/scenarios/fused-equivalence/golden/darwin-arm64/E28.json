@@ -4258,7 +4258,8 @@
         "name": "bash",
         "arguments": {
          "command": "printf 'inside\\n' > out/inside.txt; { printf 'x' > .env; } 2>/dev/null; rc=$?; printf 'inside=%s denied-rc=%s\\n' \"$(cat out/inside.txt)\" \"$rc\""
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -4308,7 +4309,8 @@
       ],
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",

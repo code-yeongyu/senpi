@@ -1,11 +1,11 @@
 {
  "repo": {
-  "head": "c432eea2a06d9556e947f747607ca1d40ca54629",
+  "head": "39eb164be5681ad97179f08180650aca9e6efaf8",
   "dirty": false
  },
  "platform": "darwin-arm64",
  "runtimes": {
-  "harness": "node@26.12.0",
+  "harness": "node@24.22.0",
   "child": "bun@1.4.4"
  },
  "hashes": {
@@ -15,7 +15,7 @@
   "cases": "sha256:ca4b96a7ac956e725e9dfcbb58d1b6ec057012828b6ee1105b3b122f37e46b92",
   "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --cases E01,E02,E03,E04,E05,E06,E07,E08,E09,E10,E11,E14,E15,E16,E17,E18,E19,E20,E25,E26,E27,E28,E30 --leave-unrecorded E12,E13,E29 --repeat 3 --pipeline legacy --placement fused --evidence lcgold-rec3",
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --repeat 3 --pipeline legacy --placement fused --evidence eq5692-darwin-rec2",
  "hostPin": {
   "cpuModel": "Apple EQ-Synthetic CPU",
   "cores": 997,
