@@ -72,6 +72,28 @@ const twoSidedMarks: ExtensionFactory = (pi) => {
 	});
 };
 
+/** Two-sided, with a `runs: "hand"` tool hook between two undeclared ones; each mark names the copy that ran it. */
+const mixedSides =
+	(copy: string): ExtensionFactory =>
+	(pi) => {
+		const markAs = (name: string) => (event: { input: unknown }) => {
+			const input = event.input as Record<string, unknown>;
+			input.order = [...(Array.isArray(input.order) ? input.order : []), `${name}@${copy}`];
+			return undefined;
+		};
+		pi.on("turn_start", () => undefined);
+		pi.on("tool_call", markAs("first"));
+		pi.on("tool_call", markAs("declared"), { runs: "hand" });
+		pi.on("tool_call", markAs("second"));
+		pi.registerTool({
+			name: "note",
+			label: "note",
+			description: "note echoes its input",
+			parameters: Type.Object({}, { additionalProperties: true }),
+			execute: async (_id, params) => ({ content: [{ type: "text", text: JSON.stringify(params) }], details: {} }),
+		});
+	};
+
 async function resultsOf(
 	placement: "fused" | "split-local",
 	calls: readonly [string, JsonObject][],
@@ -133,6 +155,14 @@ describe("a two-sided extension on a split session behaves as fused (S29)", () =
 
 		expect(await resultsOf("split-local", calls, factories)).toEqual(fused);
 		expect(fused).toEqual(['ok {"n":1,"order":["before","two-sided","after"]} after turn 1']);
+	});
+
+	it("forwards each undeclared handler and keeps a declared hand handler on the hand, in order", async () => {
+		const calls: [string, JsonObject][] = [["note", { n: 1 }]];
+
+		const split = await resultsOf("split-local", calls, [mixedSides("hand")], [mixedSides("loop")]);
+
+		expect(split).toEqual(['ok {"n":1,"order":["first@loop","declared@hand","second@loop"]}']);
 	});
 
 	it("fails the call closed when a forwarded preflight throws, as fused does", async () => {
