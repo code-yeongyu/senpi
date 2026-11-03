@@ -8107,6 +8107,7 @@ export class AgentSession {
 					(lifecycle) => this._emit(lifecycle),
 					(run) => {
 						this._agentEventQueue = this._agentEventQueue.then(run, run);
+						void this._agentEventQueue.catch(() => {});
 					},
 				),
 			holdInterruptedRun: () => {
