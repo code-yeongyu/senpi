@@ -1,3 +1,24 @@
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: `## Persistent terminal sessions` is rewritten shorter and now owns the bash timeout facts (kill deadline, default timeout, foreground auto-detach window) from the removed timeout policy section; every monitor branch keeps its own call shape, the git-fetch baseline recipe example is dropped, and `TerminalPromptOptions` gains `foregroundWindowSeconds` / `defaultTimeoutSeconds`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: passes the resolved foreground window and default timeout to the section.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: the PI_* guideline reads "PI_* environment variables carry the current model and session details."
+- Terse pass: `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts` and the PI_* guideline in `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` render the terse wording with every call shape unchanged.
+
+### Why
+
+- senpi#5335: the section was the largest prose block and repeated the monitor schema; the timeout policy section restated two of its facts.
+
+### Why an extension could not handle it
+
+- This extension owns the terminal prompt section.
+
+### Expected merge conflict zones
+
+- LOW: `buildTerminalPromptSection` body and its `before_agent_start` call.
+
 ## 2026-10-29 - Terminal examples match monitor validation and bash capabilities (senpi#4792)
 
 ### What changed

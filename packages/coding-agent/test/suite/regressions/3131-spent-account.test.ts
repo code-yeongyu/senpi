@@ -251,7 +251,8 @@ describe("#3131 spent account", () => {
 		await harness.session.prompt("first attempt");
 		for (const elapsed of [windowMs / 2, windowMs - 1]) {
 			now = elapsed;
-			await expect(harness.session.prompt("still waiting")).rejects.toThrow();
+			// An automated turn: a turn the user starts re-probes a guessed hold (#5568).
+			await expect(harness.session.prompt("still waiting", { source: "extension" })).rejects.toThrow();
 			expect(harness.faux.getCallLog()).toHaveLength(1);
 		}
 		now = windowMs + 1;
