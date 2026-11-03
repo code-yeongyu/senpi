@@ -102,6 +102,7 @@ import { type ProviderOrigin, providerOriginOf } from "./provider-origin.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import { ServedCredentials } from "./served-credentials.ts";
+import { startOpenTimer } from "./open-timing.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
@@ -827,7 +828,9 @@ export class ModelRuntime implements Models {
 		overrides: ModelRuntimeAuthOverrides = {},
 	): Promise<AuthResult | undefined> {
 		if (typeof providerOrModel === "string") return this.models.getAuth(providerOrModel, overrides);
+		const timer = startOpenTimer(`auth:${providerOrModel.provider}`);
 		const resolution = await this.models.getAuth(providerOrModel, overrides);
+		timer.mark("provider_auth");
 		if (!resolution) return undefined;
 		const configuredHeaders = await resolveConfiguredModelHeaders(
 			providerOrModel,
@@ -835,6 +838,7 @@ export class ModelRuntime implements Models {
 			this.extensionProviders.get(providerOrModel.provider),
 			{ ...(resolution.env ?? {}), ...(overrides.env ?? {}) },
 		);
+		timer.mark("configured_headers");
 		return {
 			...resolution,
 			auth: {

@@ -2338,6 +2338,7 @@ export class ExtensionRunner {
 	async emitModelSelect(event: ModelSelectEvent): Promise<ModelSelectEventResult | undefined> {
 		if (this.dropsLoopEvent("model_select")) return undefined;
 		let result: ModelSelectEventResult | undefined;
+		const timer = startOpenTimer("model_select");
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("model_select");
@@ -2350,6 +2351,7 @@ export class ExtensionRunner {
 					// (prompt-preset) rebuild from the post-swap tools in the same emission.
 					const liveEvent: ModelSelectEvent = { ...event, systemPromptOptions: this.getSystemPromptOptionsFn() };
 					const handlerResult = await handler(liveEvent, this.createContext(ext.path));
+					timer.mark(basename(ext.path));
 					if (handlerResult) {
 						const nextResult = handlerResult as ModelSelectEventResult;
 						if (nextResult.systemPrompt !== undefined || nextResult.systemPromptName !== undefined) {
@@ -2704,6 +2706,7 @@ export class ExtensionRunner {
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
 		let stableLength = systemPrompt.length;
+		const timer = startOpenTimer(options.preview === true ? "before_agent_start:preview" : "before_agent_start");
 
 		dispatch: for (const { ext, handlers } of beforeAgentStartDispatchOrder(this.extensions)) {
 			for (const handler of handlers) {
@@ -2732,6 +2735,7 @@ export class ExtensionRunner {
 					};
 					const promptBefore = currentSystemPrompt;
 					const handlerResult = await handler(event, ctx);
+					timer.mark(basename(ext.path));
 					let parts: readonly DynamicSystemPromptPart[] | undefined;
 
 					if (handlerResult) {

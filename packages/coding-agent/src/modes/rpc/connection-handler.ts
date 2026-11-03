@@ -4,6 +4,7 @@ import {
 	toolRuntimeCapabilities,
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
@@ -1163,8 +1164,11 @@ export function createRpcConnectionHandler(
 			);
 			return;
 		}
+		const timer = startOpenTimer("rebind");
 		await refresh;
+		timer.mark("bind_extensions");
 		await ClientAdmissions.forSession(session).ready;
+		timer.mark("client_admissions");
 		// The open-time readers above (receipt seals, extension starts) read the full history; an idle
 		// session lets it go now instead of holding it until its first turn settles (senpi#3519).
 		session.releaseSettledSessionMemory();

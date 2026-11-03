@@ -6,6 +6,7 @@ import type {
 } from "../../../runtime/credential-resolver.ts";
 import { credentialParts, isPlaceholderKey, nonEmpty, OPENAI_BASE_URL } from "./credentials.ts";
 import { resolveConfiguredOpenAi } from "./openai-auth.ts";
+import { startOpenTimer } from "../../../open-timing.ts";
 
 export type ImageGenAuthModel = CredentialModel;
 
@@ -111,7 +112,9 @@ export async function* imageGenCandidates<TModel extends ImageGenAuthModel>(
 ): AsyncGenerator<ImageGenCandidate> {
 	const registry = deps.modelRegistry;
 	const env = deps.env ?? process.env;
+	const timer = startOpenTimer("imagegen-auth");
 	const openai = await resolveConfiguredOpenAi(registry);
+	timer.mark("configured_openai");
 	if (openai?.tier === "store") {
 		yield { ...openai.resolution, fallthrough: false };
 		return;
@@ -140,6 +143,7 @@ export async function* imageGenCandidates<TModel extends ImageGenAuthModel>(
 		const model = groups.get(providerId);
 		if (!model) continue;
 		const gateway = await resolveGateway(providerId, model, registry);
+		timer.mark(`gateway:${providerId}`);
 		if (gateway) yield { ...gateway, fallthrough: true };
 	}
 
