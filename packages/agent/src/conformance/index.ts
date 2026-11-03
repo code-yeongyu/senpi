@@ -123,6 +123,14 @@ export { createNestedAdmission } from "../execution/nested.ts";
 export { NEST_CASES } from "../execution/testing/nest-cases.ts";
 export { CANCEL_CASES } from "../execution/testing/cancel-cases.ts";
 export { KILL_NEST_CASES } from "../execution/testing/kill-nest.ts";
+export type { WakeInbox, WakeInboxOptions } from "../execution/wake-inbox.ts";
+export { createWakeInbox } from "../execution/wake-inbox.ts";
+export type { WakeOutbox, WakeOutboxOptions } from "../execution/wake-outbox.ts";
+export { createWakeOutbox } from "../execution/wake-outbox.ts";
+export type { WakeEvent, WakeReceipt } from "../execution/wake-types.ts";
+export { WAKE_RETENTION_MS } from "../execution/wake-types.ts";
+export { WAKE_EXEC_CASES } from "../execution/testing/wake-exec-cases.ts";
+export { KILL_WAKEX_CASES } from "../execution/testing/kill-wakex.ts";
 export type {
 	BatchCaseAdapters,
 	BatchExecutorConformanceAdapter,
