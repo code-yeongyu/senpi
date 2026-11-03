@@ -31,7 +31,7 @@ export function createLooplessHandScopes(
 		return {
 			run: (call) =>
 				runtime.definitions.has(call.name)
-					? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal)
+					? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested)
 					: Promise.resolve(notFound(call.name)),
 			isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
 			dispose: () => runtime.dispose(),

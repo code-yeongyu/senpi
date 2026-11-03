@@ -137,6 +137,7 @@ import type {
 	UserBashEventResult,
 } from "./types.ts";
 import { type ExtensionRuntimeContext, RUNTIME_EXTENSION_PATH } from "./types.ts";
+import { type ToolEventDispatchOptions, twoSidedExtensions } from "./two-sided-forwarding.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -1163,6 +1164,16 @@ export class ExtensionRunner {
 
 	hasUI(): boolean {
 		return this.currentUIContext() !== noOpUIContext;
+	}
+
+	/** Whether the extension loaded at `path` has handlers for `event` (a forwarded event's target, S29). */
+	extensionHandles(path: string, event: ExtensionEvent["type"]): boolean {
+		return (this.extensions.find((ext) => ext.path === path)?.handlers.get(event)?.length ?? 0) > 0;
+	}
+
+	/** The extensions whose undeclared registrations span loop events and tool events (S29). */
+	twoSidedExtensionPaths(): Set<string> {
+		return twoSidedExtensions(this.extensions);
 	}
 
 	getExtensionPaths(): string[] {
@@ -2418,11 +2429,21 @@ export class ExtensionRunner {
 		});
 	}
 
-	async emitToolResult(event: ToolResultEvent): Promise<ToolResultEventResult | undefined> {
+	async emitToolResult(
+		event: ToolResultEvent,
+		options: ToolEventDispatchOptions = {},
+	): Promise<ToolResultEventResult | undefined> {
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_result")) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_result")) {
+			if (options.only !== undefined && ext.path !== options.only) continue;
+			const forward = options.forward?.extensions.has(ext.path) === true ? options.forward : undefined;
+			const handlers: EventHandlerFn[] = forward
+				? own.length > 0
+					? [() => forward.toolResult(ext.path, currentEvent)]
+					: []
+				: own;
 			for (const handler of handlers) {
 				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PostToolUse",
@@ -2490,10 +2511,20 @@ export class ExtensionRunner {
 		};
 	}
 
-	async emitToolCall(event: ToolCallEvent): Promise<ToolCallEventResult | undefined> {
+	async emitToolCall(
+		event: ToolCallEvent,
+		options: ToolEventDispatchOptions = {},
+	): Promise<ToolCallEventResult | undefined> {
 		let result: ToolCallEventResult | undefined;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_call")) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_call")) {
+			if (options.only !== undefined && ext.path !== options.only) continue;
+			const forward = options.forward?.extensions.has(ext.path) === true ? options.forward : undefined;
+			const handlers: EventHandlerFn[] = forward
+				? own.length > 0
+					? [() => forward.toolCall(ext.path, event)]
+					: []
+				: own;
 			for (const handler of handlers) {
 				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PreToolUse",
