@@ -1550,6 +1550,7 @@
         // Bundled as separate entries or started by path (build-coding-agent-bundle.mjs, worker URLs, child spawns).
         "src/modes/rpc/host-supervisor-entry.ts",
         "src/modes/rpc/session-worker.ts",
+        "src/modes/rpc/loopless-worker.ts",
         "src/modes/rpc/host-lifecycle.ts",
         "src/modes/rpc/tool-child/module-job-worker.ts",
         "src/tool-child-main.ts",
