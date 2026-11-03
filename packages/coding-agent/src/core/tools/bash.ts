@@ -6,6 +6,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
+import { annotateShellTrust, type ShellTrust } from "../../engine-trust/shell-trust.ts";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
 	getShellConfig,
@@ -49,7 +50,8 @@ const bashSchema = Type.Object({
 
 export const bashToolSystemPromptContribution = {
 	snippet: "Execute bash commands (ls, rg, find, etc.)",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	guidelines: ["PI_* env vars = current model + session details."],
+	fullGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -74,6 +76,7 @@ export type BashToolOutput = Static<typeof bashOutputSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	trust?: ShellTrust;
 }
 
 /**
@@ -303,6 +306,7 @@ export interface ShellToolConfig {
 	prompt: string;
 	promptSnippet: string;
 	promptGuidelines?: readonly string[];
+	fullPromptGuidelines?: readonly string[];
 	tempFilePrefix: string;
 }
 
@@ -322,6 +326,8 @@ export function createShellToolDefinition(
 		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
+		fullPromptGuidelines:
+			exposeSessionEnvironment && config.fullPromptGuidelines ? [...config.fullPromptGuidelines] : undefined,
 		parameters: bashSchema,
 		outputSchema: bashOutputSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
@@ -540,10 +546,19 @@ export function createShellToolDefinition(
 					wall_time_seconds: wallTimeSeconds,
 				};
 				if (exitCode !== 0) {
+					const text = appendStatus(outputText, `Command exited with code ${exitCode}`);
+					// The engine trust annotation (omo#10762) rides only on error results, so the success
+					// `outputSchema` (and the prompt bytes it costs) stays unchanged.
+					const annotation = annotateShellTrust({ exitCode, output: fullOutput.content });
+					if (annotation === undefined) {
+						return { content: [{ type: "text", text }], details, structuredContent, isError: true };
+					}
 					return {
-						content: [{ type: "text", text: appendStatus(outputText, `Command exited with code ${exitCode}`) }],
-						details,
-						structuredContent,
+						content: [
+							{ type: "text", text: annotation.text === undefined ? text : `${text}\n\n${annotation.text}` },
+						],
+						details: { ...details, trust: annotation.trust },
+						structuredContent: { ...structuredContent, trust: annotation.trust },
 						isError: true,
 					};
 				}
@@ -564,6 +579,7 @@ const bashToolConfig: ShellToolConfig = {
 	prompt: "$",
 	promptSnippet: bashToolSystemPromptContribution.snippet,
 	promptGuidelines: bashToolSystemPromptContribution.guidelines,
+	fullPromptGuidelines: bashToolSystemPromptContribution.fullGuidelines,
 	tempFilePrefix: "pi-bash",
 };
 

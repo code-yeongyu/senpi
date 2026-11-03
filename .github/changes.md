@@ -1,3 +1,57 @@
+## 2026-11-01 - Provision QEMU and a gondolin image store so EQ E29 runs in the Fused EQ job (senpi#5265)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job enables KVM when the runner exposes `/dev/kvm`, installs QEMU, caches a gondolin image store, pulls `alpine-base:latest` into it with the repository's gondolin CLI, smoke-tests one micro-VM, and exports `EQ_GONDOLIN_IMAGE_STORE` before the EQ compare.
+
+### Why
+
+- E29 starts the unmodified gondolin example's micro-VM offline from a pre-pulled image store; without QEMU and the store the case could not run on CI, so main's Fused EQ job stayed red and the steps after it never ran.
+
+### Why an extension could not handle it
+
+- The runner's system packages and job environment are set up by the workflow before any senpi process or extension starts.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's steps before `EQ compare against the B0 goldens`.
+
+## 2026-11-01 - Run the Windows pair inheritance proof (#5267)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Windows RPC job's pair-proof step also runs `host-private-fds-pair-inherit.test.ts`, which proves from inside an ordinary child that adopted pair handles are absent while an inheritable control is visible.
+
+### Why
+
+- The effect of clearing the inherit flag on adopted pipe-pair handles needs a real windows-latest kernel to observe.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- The Windows RPC job's test steps.
+
+## 2026-10-31 - WebView suite skips are allowed by test name per platform (senpi#4917)
+
+### What changed
+
+- `.github/workflows/ci.yml`: both "Require the WebView suites to have executed" steps (the `webview-kernel` matrix and `macos-combined`) replace the numeric skip budget (`win32 ? 1 : 0`) with an allowlist of full test names per platform: off macOS, the two macOS-only WebKit backend tests; on Windows, also the hung-Chrome resilience test. Any skip not on the list fails the step and is printed as an error; `passed < 10` and `failed !== 0` still fail it.
+
+### Why
+
+- senpi#4917: main added a macOS-only `describe.skipIf` block with two tests to `js-kernel-webview.test.ts`, so the Linux job reported `passed=18 failed=0 skipped=2` and Windows `passed=17 failed=0 skipped=3` and both failed on the budget although every test passed. A count cannot tell an expected platform skip from a new one; names can.
+
+### Why an extension could not handle it
+
+- The check is a CI workflow step; no extension runs in it.
+
+### Expected merge conflict zones
+
+- LOW: the two "Require the WebView suites to have executed" steps in `.github/workflows/ci.yml`.
+
 ## 2026-10-31 - List stream-keepalive.ts in the loop-core closure (senpi#5259)
 
 ### What changed

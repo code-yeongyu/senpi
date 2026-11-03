@@ -36,6 +36,7 @@ import {
 	type Component,
 	Container,
 	decodeKittyPrintable,
+	encodeProgramStatus,
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
@@ -43,6 +44,7 @@ import {
 	Markdown,
 	matchesKey,
 	outerKittyGraphicsMode,
+	type ProgramStatus,
 	SelectList,
 	Spacer,
 	sanitizeTerminalLabel,
@@ -97,6 +99,8 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { subscribeProviderAccountEvents } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { formatAccountFailoverNotice } from "./account-failover-notice.ts";
 import {
 	askUserAnswerDisplayText,
 	formatUserMessage,
@@ -146,6 +150,7 @@ import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
 import { failureAlreadyDescribed, headNoticeShownElsewhere } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
+import { describeFallbackExhaustion } from "../../core/retry-fallback/exhaustion.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
@@ -302,6 +307,7 @@ import {
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
+import { interactiveErrorText } from "./required-compaction-wording.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
@@ -1037,6 +1043,9 @@ export class InteractiveMode {
 	private hookStatusIntervalId: NodeJS.Timeout | undefined = undefined;
 	private activeToolTerminalTitle: string | undefined = undefined;
 	private extensionTerminalTitle: string | undefined = undefined;
+	/** The OSC 7501 report last written while a status is active; undefined once cleared. */
+	private programStatusSequence: string | undefined = undefined;
+	private programStatusClosed = false;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -1856,6 +1865,15 @@ export class InteractiveMode {
 
 	private updateTerminalTitle(): void {
 		this.applyTerminalTitle();
+	}
+
+	private setProgramStatus(status: ProgramStatus | undefined): void {
+		if (this.programStatusClosed) return;
+		const sequence = encodeProgramStatus(status, APP_COMMAND);
+		if (status === undefined ? this.programStatusSequence === undefined : sequence === this.programStatusSequence)
+			return;
+		this.programStatusSequence = status === undefined ? undefined : sequence;
+		if (process.stdout.isTTY) this.ui.terminal.write(sequence);
 	}
 
 	/**
@@ -3110,7 +3128,9 @@ export class InteractiveMode {
 			if (opts.signal?.aborted) return undefined as T;
 			return await show();
 		}
-		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
+		// A dialog about a tool call is a permission request (ExtensionUIDialogOptions.toolCallId).
+		const kind = opts?.toolCallId === undefined ? {} : { kind: "permission" as const };
+		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id, ...kind });
 		try {
 			return await show();
 		} finally {
@@ -3803,6 +3823,7 @@ export class InteractiveMode {
 				this.extensionTerminalTitle = title;
 				this.applyTerminalTitle();
 			},
+			setProgramStatus: (status) => this.setProgramStatus(status),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => insertProgrammaticComposerInput(this.editor, `\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
@@ -5962,19 +5983,23 @@ export class InteractiveMode {
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
 
-			case "retry_fallback_exhausted":
-				if (isRetryableProviderError(event.lastError)) {
+			case "retry_fallback_exhausted": {
+				// A walk that started on another failure must lead with it, not the last rung's (senpi#4084).
+				const startedElsewhere = (event.failures?.length ?? 0) > 1;
+				if (isRetryableProviderError(event.lastError) && !startedElsewhere) {
 					this.getProviderErrors().finish(event.lastError);
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 					break;
 				}
+				if (isRetryableProviderError(event.lastError)) this.getProviderErrors().clear();
 				this.showNoticeBox({
 					title: `✕ Fallback chain exhausted · ${event.chainKey}`,
 					tone: "error",
-					why: event.lastError,
+					why: describeFallbackExhaustion(event),
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
+			}
 
 			case "server_fallback_aborted":
 				this.showNoticeBox({
@@ -7064,6 +7089,12 @@ export class InteractiveMode {
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 
+		this.signalCleanupHandlers.push(
+			subscribeProviderAccountEvents((event) => {
+				if (event.type === "failover") this.showStatus(formatAccountFailoverNotice(event));
+			}),
+		);
+
 		// Surface Inspector rejections that the early bootstrap seam recovered before this
 		// handler (and the TUI warning surface) existed.
 		if (consumeEarlyInspectorVmImportRecoveries() > 0) {
@@ -7364,7 +7395,11 @@ export class InteractiveMode {
 		}
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(
-			new ThemedText(() => theme.fg("error", `Error: ${sanitizeTuiErrorMessage(errorMessage)}`), 1, 0),
+			new ThemedText(
+				() => theme.fg("error", `Error: ${sanitizeTuiErrorMessage(interactiveErrorText(errorMessage))}`),
+				1,
+				0,
+			),
 		);
 		this.ui.requestRender();
 	}
@@ -10402,6 +10437,9 @@ export class InteractiveMode {
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
+		// The terminal drops working/blocked records only when the process exits; clear before handing it back.
+		this.setProgramStatus(undefined);
+		this.programStatusClosed = true;
 		this.clearStatusIndicator();
 		this.clearPendingTools();
 		this.stopChatToolAnimations();
