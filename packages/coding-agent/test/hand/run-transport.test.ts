@@ -27,11 +27,13 @@ describe("the transport guards of a run (senpi#5645)", () => {
 			].sort(),
 		);
 		expect([env.GIT_CONFIG_NOSYSTEM, env.GIT_CONFIG_GLOBAL]).toEqual(["1", "/dev/null"]);
+		expect(argv.slice(PREFIX.length, PREFIX.length + 3)).toEqual(["-c", "core.hooksPath=/dev/null", "push"]);
 	});
 
 	it("isolates a local ls-remote's config without a receive-pack", () => {
 		const { argv, env } = transportFor([...PREFIX, "ls-remote", "file:///m.git", "refs/heads/main"], {}, source);
 		expect([receivePack(argv), env.GIT_CONFIG_GLOBAL]).toEqual([[], "/dev/null"]);
+		expect(argv.slice(PREFIX.length, PREFIX.length + 3)).toEqual(["-c", "core.hooksPath=/dev/null", "ls-remote"]);
 	});
 
 	it("forbids local transports on remote runs, after the hand's own protocol setting so they win", () => {
@@ -41,6 +43,7 @@ describe("the transport guards of a run (senpi#5645)", () => {
 		]) {
 			const { argv, env } = transportFor([...PREFIX, ...sub], {}, []);
 			const guards = argv.slice(PREFIX.length, PREFIX.length + 6);
+			expect(argv).not.toContain("core.hooksPath=/dev/null");
 			expect([guards, receivePack(argv), env.GIT_CONFIG_GLOBAL]).toEqual([
 				["-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never"],
 				[],

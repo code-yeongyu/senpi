@@ -277,17 +277,17 @@ describe.skipIf(process.platform === "win32")("a local url is a path under the h
 	it.each([
 		{
 			name: "a clone --bare",
-			make: (dir: string) => execFileSync("git", ["clone", "-q", "--bare", mirror, dir]),
+			make: (dir: string) => execFileSync("git", ["clone", "-q", "--bare", committed(), dir]),
 			gitDir: (dir: string) => dir,
 		},
 		{
 			name: "a clone --mirror",
-			make: (dir: string) => execFileSync("git", ["clone", "-q", "--mirror", mirror, dir]),
+			make: (dir: string) => execFileSync("git", ["clone", "-q", "--mirror", committed(), dir]),
 			gitDir: (dir: string) => dir,
 		},
 		{
 			name: "a working clone",
-			make: (dir: string) => execFileSync("git", ["clone", "-q", mirror, dir]),
+			make: (dir: string) => execFileSync("git", ["clone", "-q", committed(), dir]),
 			gitDir: (dir: string) => join(dir, ".git"),
 		},
 	])("allows $name target when the policy permits, judging its git dir", async ({ make, gitDir }) => {

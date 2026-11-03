@@ -17,6 +17,9 @@ const HARDENED_RECEIVE_PACK = [
 	"receive-pack",
 ].join(" ");
 
+/** A LOCAL run runs no client hook either (pre-push, reference-transaction): the hand, not the repo, decides what executes. */
+const CLIENT_LOCAL_GUARDS = ["-c", "core.hooksPath=/dev/null"];
+
 /** A REMOTE run may not fall back to a local transport through insteadOf, pushInsteadOf or a remote name (V6). */
 const REMOTE_GUARDS = [
 	"-c",
@@ -52,7 +55,7 @@ export function transportFor(
 	if (local) {
 		const pushed = sub === "push" ? [`--receive-pack=${HARDENED_RECEIVE_PACK}`] : [];
 		return {
-			argv: [...argv.slice(0, at + 1), ...pushed, ...argv.slice(at + 1)],
+			argv: [...argv.slice(0, at), ...CLIENT_LOCAL_GUARDS, argv[at] ?? "", ...pushed, ...argv.slice(at + 1)],
 			env: { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
 			local: true,
 		};
