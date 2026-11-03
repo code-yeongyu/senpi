@@ -59,6 +59,12 @@ export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
 export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
 
 /**
+ * HOST capability: a connection that proved the launch key can `declare_delegation`, and the host then enforces its own
+ * method-class table on every record of that connection before dispatch; `classify_record` answers (senpi#5632).
+ */
+export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
+
+/**
  * Advertised by a multi-session host that answers `detach_connection`: it drops every attachment the
  * asking connection holds and replies only once that is done, so a short-lived client can return knowing
  * no other connection will still see it attached (senpi#3238).
