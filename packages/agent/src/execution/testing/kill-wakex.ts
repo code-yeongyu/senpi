@@ -79,7 +79,7 @@ const beforeAckRecord: KillWakeCase = async (adapters) => {
 
 /**
  * KILL-WAKEX-06: the brain dies after the loop took a wake, before recording it: the restart hands the same wake (same
- * id) over again, so the loop deduplicates by id; nothing is lost.
+ * id) over again, so the loop's consumer must be idempotent by event id; nothing is lost.
  */
 const beforeTakeRecord: KillWakeCase = async (adapters) => {
 	const h = await batchHarness(adapters);

@@ -25,7 +25,7 @@ export async function wakePair(h: BatchHarness): Promise<{ outbox: WakeOutbox; i
 
 export const ids = (wakes: readonly WakeEvent[]): string[] => wakes.map((wake) => wake.eventId);
 
-/** WAKE-EXEC-01: a wake is committed on the hand, committed on the brain, acked, and taken by the loop once. */
+/** WAKEX-01: a wake is committed on the hand, committed on the brain, acked, and taken by the loop once. */
 const delivery: WakeCase = async (adapters) => {
 	const h = await batchHarness(adapters);
 	const { outbox, inbox } = await wakePair(h);
@@ -39,7 +39,7 @@ const delivery: WakeCase = async (adapters) => {
 	expectEqual(await inbox.drain(async () => {}), 0, "and never again");
 };
 
-/** WAKE-EXEC-02: a wake whose ack was lost is re-offered and deduplicated by its event id, then acked again. */
+/** WAKEX-02: a wake whose ack was lost is re-offered and deduplicated by its event id, then acked again. */
 const dedup: WakeCase = async (adapters) => {
 	const h = await batchHarness(adapters);
 	const { outbox, inbox } = await wakePair(h);
@@ -51,7 +51,7 @@ const dedup: WakeCase = async (adapters) => {
 	expectEqual(ids((await inbox.read()).pending), [wake.eventId], "one wake on the brain");
 };
 
-/** WAKE-EXEC-03: wakes offered while the link is down are re-offered on reconnect, in offer order. */
+/** WAKEX-03: wakes offered while the link is down are re-offered on reconnect, in offer order. */
 const reconnect: WakeCase = async (adapters) => {
 	const h = await batchHarness(adapters);
 	const { outbox, inbox } = await wakePair(h);
@@ -61,7 +61,7 @@ const reconnect: WakeCase = async (adapters) => {
 	expectEqual(ids((await inbox.read()).pending), ids(offered), "in offer order");
 };
 
-/** WAKE-EXEC-04: a wake from a hand not bound to the scope, or for a scope the brain does not own, commits nothing. */
+/** WAKEX-04: a wake from a hand not bound to the scope, or for a scope the brain does not own, commits nothing. */
 const binding: WakeCase = async (adapters) => {
 	const h = await batchHarness(adapters);
 	const { outbox, inbox } = await wakePair(h);
@@ -78,11 +78,26 @@ const binding: WakeCase = async (adapters) => {
 		"a scope this brain does not own",
 	);
 	expectEqual(await inbox.read(), { seen: {}, pending: [], closed: {} }, "nothing committed");
-	await outbox.reoffer(async (sent) => inbox.receive("e2", sent));
+	await outbox.receipt({ kind: "refused", eventId: wake.eventId, reason: "not_scope_hand" });
+	await outbox.receipt({ kind: "refused", eventId: foreign.eventId, reason: "unknown_scope" });
 	expectEqual(ids(await outbox.pending()), [wake.eventId, foreign.eventId], "a refusal is never an ack");
+	let resent = 0;
+	expectEqual(
+		await outbox.reoffer(async (sent) => {
+			resent += 1;
+			return inbox.receive("e2", sent);
+		}),
+		0,
+		"a wake refused for good is never re-offered",
+	);
+	expectEqual(resent, 0, "nothing sent");
+	await outbox.closeScope("s");
+	await outbox.closeScope("elsewhere");
+	h.advance(WAKE_RETENTION_MS + 1);
+	expectEqual((await outbox.sweep()).length, 2, "refused wakes still expire with their scope");
 };
 
-/** WAKE-EXEC-05: an un-acked wake outlives its scope by the retention, then is dropped with a logged wake_expired. */
+/** WAKEX-05: an un-acked wake outlives its scope by the retention, then is dropped with a logged wake_expired. */
 const retention: WakeCase = async (adapters) => {
 	const h = await batchHarness(adapters);
 	const outbox = await h.wakeOutbox("e1");
@@ -98,10 +113,58 @@ const retention: WakeCase = async (adapters) => {
 	expectEqual(logged, [{ reason: "wake_expired", eventId: wake.eventId, scope: "s" }], "logged as wake_expired");
 };
 
+/**
+ * WAKEX-06: the brain closes a scope: a re-offer of a committed wake is a duplicate within the retention, a new wake
+ * for it is refused scope_closed, and once the retention passed the seen ids are dropped but a late re-offer is still
+ * refused, never committed twice.
+ */
+const brainRetention: WakeCase = async (adapters) => {
+	const h = await batchHarness(adapters);
+	const { outbox, inbox } = await wakePair(h);
+	const wake = await outbox.offer(wakeOf(1));
+	expectEqual(await inbox.receive("e1", wake), { kind: "ack", eventId: wake.eventId, duplicate: false }, "committed");
+	await inbox.closeScope("s");
+	expectEqual(await inbox.receive("e1", wake), { kind: "ack", eventId: wake.eventId, duplicate: true }, "a duplicate");
+	const late = await outbox.offer(wakeOf(2));
+	expectEqual(
+		await inbox.receive("e1", late),
+		{ kind: "refused", eventId: late.eventId, reason: "scope_closed" },
+		"a new wake for a closed scope",
+	);
+	expectEqual(await inbox.sweep(), [], "kept for the whole retention");
+	h.advance(WAKE_RETENTION_MS + 1);
+	expectEqual(await inbox.sweep(), ["s"], "the seen ids are dropped after it");
+	expectEqual(
+		await inbox.receive("e1", wake),
+		{ kind: "refused", eventId: wake.eventId, reason: "scope_closed" },
+		"a late re-offer is refused, never committed again",
+	);
+	expectEqual(ids((await inbox.read()).pending), [wake.eventId], "one wake on the brain");
+	expectEqual(await inbox.sweep(), [], "a scope is dropped once");
+};
+
+/** WAKEX-07: two drains at once hand each wake to the loop exactly once. */
+const concurrentDrains: WakeCase = async (adapters) => {
+	const h = await batchHarness(adapters);
+	const { outbox, inbox } = await wakePair(h);
+	await outbox.offer(wakeOf(1));
+	await outbox.offer(wakeOf(2));
+	await outbox.reoffer(linkTo(inbox));
+	const taken: string[] = [];
+	const consume = async (wake: WakeEvent): Promise<void> => {
+		taken.push(wake.eventId);
+	};
+	const [first, second] = await Promise.all([inbox.drain(consume), inbox.drain(consume)]);
+	expectEqual(first + second, 2, "two wakes taken in all");
+	expectEqual(new Set(taken).size === taken.length && taken.length === 2, true, "each wake once");
+};
+
 export const WAKE_EXEC_CASES: ReadonlyMap<string, WakeCase> = new Map([
-	["WAKE-EXEC-01", delivery],
-	["WAKE-EXEC-02", dedup],
-	["WAKE-EXEC-03", reconnect],
-	["WAKE-EXEC-04", binding],
-	["WAKE-EXEC-05", retention],
+	["WAKEX-01", delivery],
+	["WAKEX-02", dedup],
+	["WAKEX-03", reconnect],
+	["WAKEX-04", binding],
+	["WAKEX-05", retention],
+	["WAKEX-06", brainRetention],
+	["WAKEX-07", concurrentDrains],
 ]);

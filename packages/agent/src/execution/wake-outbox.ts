@@ -15,9 +15,9 @@ export interface WakeOutboxOptions {
 export interface WakeOutbox {
 	/** Commits the wake and returns it; the caller sends it (or a later `reoffer` does). */
 	offer(wake: Omit<WakeEvent, "eventId">): Promise<WakeEvent>;
-	/** Sends every un-acked wake in offer order (on reconnect); a refused or failed send leaves it pending. */
+	/** Sends every un-acked wake in offer order (on reconnect) but those refused for good; a failed send leaves it pending. */
 	reoffer(send: (wake: WakeEvent) => Promise<WakeReceipt>): Promise<number>;
-	/** Applies one brain answer: an ack removes the wake; a refusal keeps it for retention. Idempotent. */
+	/** Applies one brain answer: an ack removes the wake; a refusal keeps it for retention and stops its re-offers. Idempotent. */
 	receipt(receipt: WakeReceipt): Promise<void>;
 	/** The scope closed: its un-acked wakes are kept until `closedAt + WAKE_RETENTION_MS`. */
 	closeScope(scope: string): Promise<void>;
@@ -27,14 +27,19 @@ export interface WakeOutbox {
 }
 
 const KIND = "execution.wake-outbox";
-const EMPTY: WakeOutboxRecord = { pending: [], closed: {} };
+const EMPTY: WakeOutboxRecord = { pending: [], refused: {}, closed: {} };
 
 export const isStoreObject = (value: StoreValue | undefined): value is { readonly [key: string]: StoreValue } =>
 	value !== null && typeof value === "object" && !Array.isArray(value);
 
 function decode(value: StoreValue | undefined): WakeOutboxRecord {
 	if (value === undefined) return EMPTY;
-	if (isStoreObject(value) && Array.isArray(value.pending) && isStoreObject(value.closed))
+	if (
+		isStoreObject(value) &&
+		Array.isArray(value.pending) &&
+		isStoreObject(value.refused) &&
+		isStoreObject(value.closed)
+	)
 		return value as WakeOutboxRecord;
 	throw new Error("corrupt wake outbox record");
 }
@@ -65,9 +70,19 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 
 	const receipt = (answer: WakeReceipt): Promise<void> =>
 		update(async (record) => {
-			if (answer.kind !== "ack" || !record.pending.some((wake) => wake.eventId === answer.eventId)) return;
+			if (!record.pending.some((wake) => wake.eventId === answer.eventId)) return;
+			if (answer.kind === "refused") {
+				if (record.refused[answer.eventId] === answer.reason) return;
+				await write(
+					{ ...record, refused: { ...record.refused, [answer.eventId]: answer.reason } },
+					"refused",
+					answer.eventId,
+				);
+				return;
+			}
 			const pending = record.pending.filter((wake) => wake.eventId !== answer.eventId);
-			await write({ ...record, pending }, "ack", answer.eventId);
+			const { [answer.eventId]: _settled, ...refused } = record.refused;
+			await write({ ...record, pending, refused }, "ack", answer.eventId);
 		});
 
 	return {
@@ -79,7 +94,9 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 			}),
 		reoffer: async (send) => {
 			let sent = 0;
-			for (const wake of (await read()).pending) {
+			const record = await read();
+			for (const wake of record.pending) {
+				if (record.refused[wake.eventId] !== undefined) continue;
 				await receipt(await send(wake));
 				sent += 1;
 			}
@@ -100,8 +117,11 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 				});
 				if (expired.length === 0) return [];
 				const gone = new Set(expired.map((wake) => wake.eventId));
+				const refused = Object.fromEntries(
+					Object.entries(record.refused).filter(([eventId]) => !gone.has(eventId)),
+				);
 				await write(
-					{ ...record, pending: record.pending.filter((wake) => !gone.has(wake.eventId)) },
+					{ ...record, pending: record.pending.filter((wake) => !gone.has(wake.eventId)), refused },
 					"sweep",
 					null,
 					expired.map((wake) => ({ reason: "wake_expired", eventId: wake.eventId, scope: wake.scope })),
