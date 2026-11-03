@@ -22,10 +22,10 @@ describe("the run allowlist accepts every call shape the memory component makes 
 		["config set", ["config", "--local", "user.name", "Someone"]],
 		["config unset", ["config", "--local", "--unset-all", "omo.sync.binding"]],
 		["config key case", ["config", "--local", "--get", "USER.EMAIL"]],
-		["log with a -c key", ["-c", "log.showRoot=false", "log", "--format=%H"]],
-		["literal pathspecs", ["--literal-pathspecs", "ls-files", "--", "a b.md"]],
+		["log with a -c key", ["-c", "log.showRoot=false", "log", "--format=%x1e%H%x1f%s%x1f%b%x1f%an%x1f%ae%x1f%cI"]],
+		["literal pathspecs", ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", "a b.md"]],
 		["remote", ["remote", "-v"]],
-		["ls-remote file", ["ls-remote", "file:///tmp/bare.git"]],
+		["ls-remote file", ["ls-remote", "file:///tmp/bare.git", "refs/heads/main"]],
 		["commit-tree", ["commit-tree", "abc", "-p", "def", "-F", "-"]],
 		["hash-object with filters off", ["hash-object", "-w", "--no-filters", "--stdin"]],
 		["hash-object for a path", ["hash-object", "--path=notes/a.md", "--stdin"]],
@@ -120,11 +120,11 @@ describe("the run allowlist refuses everything else (senpi#5645)", () => {
 
 describe("the handlers see exactly the command that runs (senpi#5645)", () => {
 	it("renders the final argv POSIX-quoted, so an argument with spaces stays one argument", () => {
-		const result = plan("git", ["--literal-pathspecs", "ls-files", "--", "a b.md; rm -rf x"]);
+		const result = plan("git", ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", "a b.md; rm -rf x"]);
 		if (!result.ok) throw new Error(result.reason);
 
 		expect(renderCommand(result.exe, result.argv)).toBe(
-			"git -c core.fsmonitor=false -c protocol.file.allow=always --literal-pathspecs ls-files -- 'a b.md; rm -rf x'",
+			"git -c core.fsmonitor=false -c protocol.file.allow=always --literal-pathspecs ls-files --stage -z -- 'a b.md; rm -rf x'",
 		);
 	});
 });

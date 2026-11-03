@@ -10,7 +10,7 @@ import {
 import { type Flock, holdActivityLock } from "./hand-activity-lock.ts";
 import type { HandFileGuards } from "./hand-file-ops.ts";
 import { type HandRunContext, planRun, renderCommand } from "./hand-run-allowlist.ts";
-import { confinedIndexFile, gitIsSupported, runDirectory, worktreeTarget } from "./hand-run-checks.ts";
+import { confinePaths, confinedIndexFile, gitIsSupported, runDirectory } from "./hand-run-checks.ts";
 
 export interface RunArgs {
 	readonly exe: string;
@@ -73,12 +73,14 @@ export async function runOnHand(
 	if (plan.exe === "git") {
 		if (!(await gitIsSupported(env))) throw new DeviceFileError("unsupported", "git 2.29 or newer is required");
 		if (env.GIT_INDEX_FILE !== undefined) env.GIT_INDEX_FILE = await confinedIndexFile(env.GIT_INDEX_FILE, cwd, env);
-		const worktree = await worktreeTarget(plan.argv, cwd, env);
-		const target =
-			worktree === undefined
-				? undefined
-				: await deps.guards.filesystemPolicy()?.({ operation: "write", canonicalPath: worktree, toolName: "bash" });
-		if (target !== undefined && !target.allow) throw new DeviceFileError("refused_by_policy", target.reason);
+		for (const worktree of await confinePaths(plan.paths, cwd, env)) {
+			const decision = await deps.guards.filesystemPolicy()?.({
+				operation: "write",
+				canonicalPath: worktree,
+				toolName: "bash",
+			});
+			if (decision !== undefined && !decision.allow) throw new DeviceFileError("refused_by_policy", decision.reason);
+		}
 	}
 	const hold = args.activityLock === true && plan.exe === "git" ? await holdActivityLock(cwd, deps.flock) : undefined;
 	try {

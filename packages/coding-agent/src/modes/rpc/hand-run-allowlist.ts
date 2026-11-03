@@ -5,7 +5,7 @@
  * are the scan's result and are covered by a behavioral test, not compared with themselves.
  */
 
-import { FLAGS, VALUE_FLAGS } from "./hand-run-grammar.ts";
+import { matchShape, type TypedPath } from "./hand-run-grammar.ts";
 
 export interface RunRequest {
 	readonly exe: string;
@@ -21,7 +21,14 @@ export interface HandRunContext {
 }
 
 export type RunPlan =
-	| { readonly ok: true; readonly exe: "git" | "lsof"; readonly argv: string[]; readonly env: Record<string, string> }
+	| {
+			readonly ok: true;
+			readonly exe: "git" | "lsof";
+			readonly argv: string[];
+			readonly env: Record<string, string>;
+			/** Path arguments the hand confines on the device before spawning (none for lsof). */
+			readonly paths: readonly TypedPath[];
+	  }
 	| { readonly ok: false; readonly reason: string };
 
 const HAND_GIT_PREFIX = ["-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always"];
@@ -100,82 +107,20 @@ const CONFIG_KEYS = keySet([
 	"omo.sync.space",
 ]);
 
-function flagsAllowed(sub: string, rest: readonly string[]): string | undefined {
-	const declared = FLAGS[sub] ?? { exact: [], prefixes: [] };
-	for (let index = 0; index < rest.length; index++) {
-		const arg = rest[index] ?? "";
-		if (arg === "--") return undefined;
-		if (!arg.startsWith("-")) continue;
-		if (sub === "log" && /^-\d+$/.test(arg)) continue;
-		if (declared.exact.includes(arg)) {
-			if (VALUE_FLAGS.has(arg)) index++;
-			continue;
-		}
-		if (declared.prefixes.some((prefix) => arg.startsWith(prefix))) continue;
-		return arg;
+/** The typed path arguments of an admitted git call, or a refusal naming what is not admitted. */
+function subcommandArgs(sub: string, rest: readonly string[]): readonly TypedPath[] | string {
+	if (sub === "config") {
+		const [scope, first, second, extra] = rest;
+		if (scope !== "--local" || first === undefined || extra !== undefined) return "config shape";
+		const key = first === "--get" || first === "--unset-all" ? second : first;
+		if (key === undefined || (first !== "--get" && first !== "--unset-all" && (second ?? "-").startsWith("-")))
+			return "config shape";
+		return CONFIG_KEYS.has(configKey(key)) ? [] : `config key ${key}`;
 	}
-	return undefined;
+	return matchShape(sub, rest) ?? `${sub} shape`;
 }
 
-/** `<tree> [-p <parent>]* -F -`: the message always comes from stdin, never from a file. */
-function commitTreeShape(rest: readonly string[]): string | undefined {
-	const [tree, ...tail] = rest;
-	if (tree === undefined || tree.startsWith("-") || !equal(tail.slice(-2), ["-F", "-"])) return "commit-tree shape";
-	const parents = tail.slice(0, -2);
-	for (let index = 0; index < parents.length; index += 2)
-		if (parents[index] !== "-p" || (parents[index + 1] ?? "-").startsWith("-")) return "commit-tree shape";
-	return undefined;
-}
-
-/** `[-w] --no-filters --stdin` or `[-w] --path=<p> --stdin`: content from stdin only, never a file argument. */
-function hashObjectShape(rest: readonly string[]): string | undefined {
-	const body = rest[0] === "-w" ? rest.slice(1) : rest;
-	const filters = body[0] === "--no-filters" || (body[0] ?? "").startsWith("--path=");
-	return body.length === 2 && filters && body[1] === "--stdin" ? undefined : "hash-object shape";
-}
-
-function worktreeShape(rest: readonly string[]): string | undefined {
-	const [action, ...args] = rest;
-	if (action === "prune" && args.length === 0) return undefined;
-	if (action === "list" && equal(args, ["--porcelain"])) return undefined;
-	if (action === "add" && args.length === 4 && args[0] === "-b" && args.slice(1).every((arg) => !arg.startsWith("-")))
-		return undefined;
-	const removed = args[0] === "--force" ? args.slice(1) : args;
-	if (action === "remove" && removed.length === 1 && !(removed[0] ?? "-").startsWith("-")) return undefined;
-	return "worktree shape";
-}
-
-const equal = (left: readonly string[], right: readonly string[]): boolean =>
-	left.length === right.length && left.every((value, index) => value === right[index]);
-
-function subcommandArgs(sub: string, rest: readonly string[]): string | undefined {
-	switch (sub) {
-		case "config": {
-			const [scope, first, second, extra] = rest;
-			if (scope !== "--local" || first === undefined || extra !== undefined) return "config shape";
-			const key = first === "--get" || first === "--unset-all" ? second : first;
-			if (key === undefined || (first !== "--get" && first !== "--unset-all" && second === undefined))
-				return "config shape";
-			return CONFIG_KEYS.has(configKey(key)) ? undefined : `config key ${key}`;
-		}
-		case "maintenance":
-			return equal(rest, ["run", "--task=loose-objects", "--quiet"]) ? undefined : "maintenance shape";
-		case "remote":
-			return equal(rest, ["-v"]) ? undefined : "remote shape";
-	}
-	if (sub === "worktree") return worktreeShape(rest);
-	if (sub === "commit-tree") return commitTreeShape(rest);
-	if (sub === "hash-object") return hashObjectShape(rest);
-	if (sub === "init")
-		return rest.includes("--template=") && rest.every((arg) => arg === "--template=" || !arg.startsWith("-"))
-			? undefined
-			: "init shape";
-	const flag = flagsAllowed(sub, rest);
-	if (flag !== undefined) return flag;
-	return rest.some((arg) => /^(ext|fd)::/i.test(arg)) ? "transport url" : undefined;
-}
-
-function planGit(argv: readonly string[]): string[] | string {
+function planGit(argv: readonly string[]): { argv: string[]; paths: readonly TypedPath[] } | string {
 	let index = 0;
 	while (argv[index]?.startsWith("-")) {
 		const arg = argv[index] ?? "";
@@ -191,9 +136,12 @@ function planGit(argv: readonly string[]): string[] | string {
 	}
 	const sub = argv[index];
 	if (sub === undefined || !SUBCOMMANDS.has(sub)) return `subcommand ${sub ?? "(none)"}`;
-	const refusal = subcommandArgs(sub, argv.slice(index + 1));
-	return refusal === undefined ? [...HAND_GIT_PREFIX, ...argv] : refusal;
+	const paths = subcommandArgs(sub, argv.slice(index + 1));
+	return typeof paths === "string" ? paths : { argv: [...HAND_GIT_PREFIX, ...argv], paths };
 }
+
+const equal = (args: readonly string[], expected: readonly string[]): boolean =>
+	args.length === expected.length && args.every((arg, index) => arg === expected[index]);
 
 function planLsof(argv: readonly string[], uid: number): string[] | string {
 	const holders = argv.length === 3 && argv[0] === "-t" && argv[1] === "--" && (argv[2] ?? "").length > 0;
@@ -245,7 +193,9 @@ export function planRun(request: RunRequest, context: HandRunContext): RunPlan {
 				? planLsof(request.argv, context.uid)
 				: `executable ${request.exe}`;
 	if (typeof planned === "string") return { ok: false, reason: `not in the run allowlist: ${planned}` };
-	return { ok: true, exe: request.exe === "git" ? "git" : "lsof", argv: planned, env };
+	return Array.isArray(planned)
+		? { ok: true, exe: "lsof", argv: planned, env, paths: [] }
+		: { ok: true, exe: "git", argv: planned.argv, env, paths: planned.paths };
 }
 
 const SAFE = /^[A-Za-z0-9@%+=:,./_-]+$/;

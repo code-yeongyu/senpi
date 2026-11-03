@@ -44,7 +44,11 @@ describe("the run operation on a hand (senpi#5645)", () => {
 		const read = await files.run({ exe: "git", argv: ["config", "--local", "--get", "omo.agentId"], cwd: repo });
 		const bare = join(cwd, "mirror.git");
 		execFileSync("git", ["init", "--bare", "-q", bare]);
-		const remote = await files.run({ exe: "git", argv: ["ls-remote", `file://${bare}`], cwd: repo });
+		const remote = await files.run({
+			exe: "git",
+			argv: ["ls-remote", `file://${bare}`, "refs/heads/main"],
+			cwd: repo,
+		});
 
 		expect([init.code, text(read.stdout), remote.code]).toEqual([0, "agent-1", 0]);
 		expect(existsSync(join(repo, ".git", "hooks", "pre-commit.sample"))).toBe(false);
@@ -84,13 +88,13 @@ describe("the run operation on a hand (senpi#5645)", () => {
 
 		const listed = await files.run({
 			exe: "git",
-			argv: ["--literal-pathspecs", "ls-files", "--", "a b; touch x"],
+			argv: ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", "a b; touch x"],
 			cwd: repo,
 		});
 
 		expect(listed.code).toBe(0);
 		expect(commands.at(-1)).toBe(
-			"git -c core.fsmonitor=false -c protocol.file.allow=always --literal-pathspecs ls-files -- 'a b; touch x'",
+			"git -c core.fsmonitor=false -c protocol.file.allow=always --literal-pathspecs ls-files --stage -z -- 'a b; touch x'",
 		);
 		expect(existsSync(join(repo, "x"))).toBe(false);
 	});
@@ -115,7 +119,9 @@ describe("the run operation on a hand (senpi#5645)", () => {
 				new TextEncoder().encode(`[core]\n\tsshCommand = touch ${marker}\n`),
 			),
 		);
-		await code(files.run({ exe: "git", argv: ["ls-remote", "ssh://example.invalid/x"], cwd: repo }));
+		await code(
+			files.run({ exe: "git", argv: ["ls-remote", "ssh://example.invalid/x", "refs/heads/main"], cwd: repo }),
+		);
 
 		expect(write).toBe("refused_by_policy");
 		expect(existsSync(marker)).toBe(false);

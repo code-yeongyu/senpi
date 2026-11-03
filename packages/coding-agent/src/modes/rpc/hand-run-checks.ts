@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DeviceFileError } from "@earendil-works/pi-agent-core";
 import { canonicalizeFilesystemPath } from "../../core/tools/filesystem-policy.ts";
+import type { TypedPath } from "./hand-run-grammar.ts";
 
 const MIN_GIT: readonly [number, number] = [2, 29];
 
@@ -48,42 +49,56 @@ const inside = (path: string, dir: string): boolean => path === dir || path.star
  */
 export async function confinedIndexFile(value: string, cwd: string, env: Record<string, string>): Promise<string> {
 	if (!isAbsolute(value)) throw new DeviceFileError("refused_by_policy", "GIT_INDEX_FILE must be absolute");
-	const [gitDir, commonDir] = (await git(["rev-parse", "--absolute-git-dir", "--git-common-dir"], cwd, env))
-		.trim()
-		.split("\n");
-	if (gitDir === undefined || commonDir === undefined)
-		throw new DeviceFileError("refused_by_policy", "GIT_INDEX_FILE: no repository at cwd");
-	const dirs = await Promise.all([gitDir, resolve(cwd, commonDir)].map((dir) => canonicalizeFilesystemPath(dir)));
+	const dirs = await gitDirs(cwd, env);
 	const parent = await canonicalizeFilesystemPath(dirname(value));
 	if (!dirs.some((dir) => inside(parent, dir)))
 		throw new DeviceFileError("refused_by_policy", "GIT_INDEX_FILE is outside the repository's git directory");
 	return join(parent, basename(value));
 }
 
-/**
- * `worktree add`/`remove` write or delete a whole tree at their path argument (v2.5): it must lie outside the
- * repository's git directories (a worktree in `.git/hooks` would install hooks), and the caller checks it as a write.
- */
-export async function worktreeTarget(
-	argv: readonly string[],
-	cwd: string,
-	env: Record<string, string>,
-): Promise<string | undefined> {
-	const at = argv.indexOf("worktree");
-	const action = argv[at + 1];
-	if (at < 0 || (action !== "add" && action !== "remove")) return undefined;
-	const raw = action === "add" ? argv[at + 4] : argv[argv.length - 1];
-	if (raw === undefined) throw new DeviceFileError("refused_by_policy", "worktree path");
-	const target = resolve(cwd, raw);
-	const parent = await canonicalizeFilesystemPath(dirname(target));
+async function gitDirs(cwd: string, env: Record<string, string>): Promise<readonly string[]> {
 	const [gitDir, commonDir] = (await git(["rev-parse", "--absolute-git-dir", "--git-common-dir"], cwd, env))
 		.trim()
 		.split("\n");
-	const dirs = await Promise.all(
-		[gitDir ?? cwd, resolve(cwd, commonDir ?? ".")].map((dir) => canonicalizeFilesystemPath(dir)),
+	if (gitDir === undefined || commonDir === undefined)
+		throw new DeviceFileError("refused_by_policy", "no repository at cwd");
+	return Promise.all([gitDir, resolve(cwd, commonDir)].map((dir) => canonicalizeFilesystemPath(dir)));
+}
+
+/** The canonical location of `raw` (resolved against `cwd`); a symlink as the LAST component is refused, never followed. */
+async function canonicalTarget(raw: string, cwd: string): Promise<string> {
+	const target = resolve(cwd, raw);
+	const entry = await lstat(target).catch(() => undefined);
+	if (entry?.isSymbolicLink() === true) throw new DeviceFileError("refused_by_policy", `symlink: ${raw}`);
+	return join(await canonicalizeFilesystemPath(dirname(target)), basename(target));
+}
+
+/**
+ * Confines the typed path arguments of a planned git call (v2.6). A `path` must lie inside the worktree or the git
+ * directory; a `worktree` (add/remove) must lie outside the git directories, where a worktree would install hooks, and is
+ * returned for the caller's write-policy check.
+ */
+export async function confinePaths(
+	paths: readonly TypedPath[],
+	cwd: string,
+	env: Record<string, string>,
+): Promise<readonly string[]> {
+	if (paths.length === 0) return [];
+	const dirs = await gitDirs(cwd, env);
+	const top = await git(["rev-parse", "--show-toplevel"], cwd, env).then(
+		(output) => canonicalizeFilesystemPath(output.trim()),
+		() => undefined,
 	);
-	const canonical = join(parent, basename(target));
-	if (dirs.some((dir) => inside(canonical, dir) || inside(dir, canonical)))
-		throw new DeviceFileError("refused_by_policy", "worktree path is inside the repository's git directory");
-	return canonical;
+	const worktrees: string[] = [];
+	for (const { kind, value } of paths) {
+		const canonical = await canonicalTarget(value, cwd);
+		const inGitDir = dirs.some((dir) => inside(canonical, dir) || (kind === "worktree" && inside(dir, canonical)));
+		if (kind === "worktree") {
+			if (inGitDir)
+				throw new DeviceFileError("refused_by_policy", "worktree path is inside the repository's git directory");
+			worktrees.push(canonical);
+		} else if (!inGitDir && (top === undefined || !inside(canonical, top)))
+			throw new DeviceFileError("refused_by_policy", `path outside the repository: ${value}`);
+	}
+	return worktrees;
 }
