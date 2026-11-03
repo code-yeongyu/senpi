@@ -32,7 +32,9 @@ let processMachineOps: MachineOps | undefined;
 function defaultLocalMachineOps(): MachineOps {
 	processMachineOps ??= createLocalMachineOps({
 		holder: createInProcessHolderLink(),
-		killProcessTree,
+		// A call, not the bare reference: the session-path audit (no-sync-in-session-path) follows calls only, and the
+		// Windows kill path behind it (`taskkill` via spawnSync) must stay visible to its ledger.
+		killProcessTree: (pid) => killProcessTree(pid),
 		resolveFd: () => ensureTool("fd"),
 	});
 	return processMachineOps;

@@ -1,5 +1,6 @@
-import { createTerminalSession, type TerminalSession, TerminalScreen } from "@earendil-works/pi-pty";
+import type { TerminalSession, TerminalScreen } from "@earendil-works/pi-pty";
 import type { HeldExit, HeldTerminal, HolderLink, HolderSpawnRequest } from "./holder-link.ts";
+import { loadPty } from "./pty.lazy.ts";
 
 const SCREEN_SCROLLBACK = 1000;
 
@@ -11,13 +12,13 @@ class InProcessTerminal implements HeldTerminal {
 	private exit: HeldExit | undefined;
 	private readonly exitWaiters = new Set<(exit: HeldExit) => void>();
 
-	constructor(id: string, session: TerminalSession, cols: number, rows: number) {
+	constructor(id: string, session: TerminalSession, screenModel: TerminalScreen) {
 		const pid = session.pid;
 		if (pid === undefined) throw new Error("terminal session started without a pid");
 		this.id = id;
 		this.pid = pid;
 		this.session = session;
-		this.screenModel = new TerminalScreen({ cols, rows, scrollback: SCREEN_SCROLLBACK });
+		this.screenModel = screenModel;
 		session.onData((chunk) => {
 			void this.screenModel.feed(chunk);
 		});
@@ -75,11 +76,14 @@ class InProcessTerminal implements HeldTerminal {
 /**
  * A holder link whose terminals live in this process, over the existing pty package (native PTY, Bun terminal or
  * pipe fallback). Stand-in for the separate holder process: terminals end when this process ends.
+ *
+ * pi-pty loads on the first spawn (`./pty.lazy.ts`), so importing this module keeps `@xterm/headless` off the graph.
  */
 export function createInProcessHolderLink(): HolderLink {
 	const live = new Set<InProcessTerminal>();
 	return {
 		async spawn(req: HolderSpawnRequest): Promise<HeldTerminal> {
+			const { createTerminalSession, TerminalScreen } = await loadPty();
 			const session = createTerminalSession({
 				command: req.command,
 				args: req.args,
@@ -88,7 +92,8 @@ export function createInProcessHolderLink(): HolderLink {
 				cols: req.cols,
 				rows: req.rows,
 			});
-			const terminal = new InProcessTerminal(req.id, session, req.cols, req.rows);
+			const screen = new TerminalScreen({ cols: req.cols, rows: req.rows, scrollback: SCREEN_SCROLLBACK });
+			const terminal = new InProcessTerminal(req.id, session, screen);
 			live.add(terminal);
 			terminal.onExit(() => live.delete(terminal));
 			return terminal;
