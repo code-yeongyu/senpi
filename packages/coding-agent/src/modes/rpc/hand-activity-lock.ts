@@ -12,7 +12,7 @@ import { DeviceFileError } from "@earendil-works/pi-agent-core";
  */
 
 export const GIT_ACTIVITY_LOCK_NAME = "git-activity.flock";
-export const GIT_ACTIVITY_SHARED_WAIT_MS = 10_000;
+const GIT_ACTIVITY_SHARED_WAIT_MS = 10_000;
 const RETRY_MS = 5;
 const LOCK_SH = 1;
 const LOCK_NB = 4;
@@ -26,7 +26,7 @@ export type FlockClass = "busy" | "no-lock" | "failed";
  * The kernel-lock ruling: only EWOULDBLOCK/EAGAIN is busy (retried); ENOLCK, EOPNOTSUPP and ENOSYS mean no lock is
  * possible here and the run falls back to the pre-lock behaviour; anything else is a typed failure, never idle.
  */
-export function classifyFlockErrno(errno: number): FlockClass {
+function classifyFlockErrno(errno: number): FlockClass {
 	const { EAGAIN, EWOULDBLOCK, ENOLCK, EOPNOTSUPP, ENOSYS } = osConstants.errno;
 	if (errno === EAGAIN || errno === EWOULDBLOCK) return "busy";
 	if (errno === ENOLCK || errno === EOPNOTSUPP || errno === ENOSYS) return "no-lock";
@@ -34,7 +34,7 @@ export function classifyFlockErrno(errno: number): FlockClass {
 }
 
 /** `<root>/agents/<id>/repo` -> `<root>/agents/<id>/runtime/locks`; any other directory has no activity lock. */
-export function identityLocksDir(repoDir: string): string | undefined {
+function identityLocksDir(repoDir: string): string | undefined {
 	const repo = resolve(repoDir);
 	if (basename(repo) !== "repo" || basename(dirname(dirname(repo))) !== "agents") return undefined;
 	return join(dirname(repo), "runtime", "locks");

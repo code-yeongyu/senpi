@@ -29,7 +29,7 @@ export interface RunOutcome {
 	readonly stderr: string;
 }
 
-export const RUN_TIMEOUT_CAP_MS = 300_000;
+const RUN_TIMEOUT_CAP_MS = 300_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 10_000;
 
