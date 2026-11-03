@@ -12,7 +12,6 @@ export type Kind =
 	| "refpat"
 	| "branch"
 	| "refspec"
-	| "url"
 	| "msg"
 	| "count"
 	| "mode"
@@ -60,23 +59,41 @@ const blobref = (value: string): boolean => {
 };
 const filesystem = (value: string): boolean => value.length > 0 && !NUL.test(value) && !/^[-:]/.test(value);
 
-/** A url git reaches over the network: ssh, https, or the scp form `user@host:path`. */
-function remote(value: string): boolean {
-	return (
-		/^(?:https|ssh):\/\/[^\s\0]+$/.test(value) ||
-		/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:(?!\/\/)[A-Za-z0-9._/~-]+$/.test(value)
-	);
+function scheme(value: string): string | undefined {
+	return /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(value)?.[1]?.toLowerCase();
 }
 
-/** The filesystem path a local url names (`file:///abs`, or a bare absolute or relative path), else undefined. */
+/** git's url_is_local_not_ssh: no colon, a slash before the first colon, or a DOS drive prefix means a local path. */
+function urlIsLocal(value: string): boolean {
+	const colon = value.indexOf(":");
+	const slash = value.indexOf("/");
+	return colon < 0 || (slash >= 0 && slash < colon) || /^[A-Za-z]:[\\/]/.test(value);
+}
+
+/** A transport git refuses here: NUL, whitespace, an option-like value, or a `<helper>::<address>` remote helper. */
+const unsafeUrl = (value: string): boolean =>
+	value.length === 0 || NUL.test(value) || /\s/.test(value) || value.startsWith("-") || value.includes("::");
+
+/** A url git reaches over the network: ssh, https, or the scp form `host:path` (git classifies it as ssh). */
+function remote(value: string): boolean {
+	if (unsafeUrl(value)) return false;
+	const named = scheme(value);
+	if (named !== undefined) return named === "https" || named === "ssh";
+	return !urlIsLocal(value);
+}
+
+/** The filesystem path a local url names (`file:///abs`, or a path git treats as local), else undefined. */
 export function localUrlPath(value: string): string | undefined {
-	if (NUL.test(value) || /^(?:ext|fd)::/i.test(value)) return undefined;
-	if (value.startsWith("file://")) {
-		const rest = value.slice("file://".length);
-		return rest.startsWith("/") && !rest.includes("?") && !rest.includes("#") ? decodeURIComponent(rest) : undefined;
+	if (unsafeUrl(value)) return undefined;
+	const named = scheme(value);
+	if (named === undefined) return urlIsLocal(value) ? value : undefined;
+	const rest = value.slice("file://".length);
+	if (named !== "file" || !rest.startsWith("/") || /[?#]/.test(rest)) return undefined;
+	try {
+		return decodeURIComponent(rest);
+	} catch {
+		return undefined;
 	}
-	if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || value.startsWith("-")) return undefined;
-	return value.length > 0 ? value : undefined;
 }
 
 const KINDS: Readonly<Record<Kind, (value: string) => boolean>> = {
@@ -89,9 +106,6 @@ const KINDS: Readonly<Record<Kind, (value: string) => boolean>> = {
 	refpat: (value) => /^refs\/[A-Za-z0-9._/-]+\*?$/.test(value) && !value.includes(".."),
 	branch: (value) => /^(?![-./])[A-Za-z0-9._/-]+$/.test(value) && !value.includes(".."),
 	refspec: (value) => /^[A-Za-z0-9._/]+(?:-[A-Za-z0-9._/]+)*:[A-Za-z0-9._/-]+$/.test(value) && !value.includes(".."),
-	url: (value) =>
-		/^(?:https:\/\/|ssh:\/\/|file:\/\/\/)[^\s\0]+$/.test(value) ||
-		/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+$/.test(value),
 	msg: (value) => !NUL.test(value),
 	count: (value) => /^\d{1,9}$/.test(value),
 	mode: (value) => /^(?:100644|100755|120000|160000)$/.test(value),
@@ -242,9 +256,12 @@ function match(
 	if (arg === undefined) return false;
 	const value = "prefix" in item ? (arg.startsWith(item.prefix) ? arg.slice(item.prefix.length) : undefined) : arg;
 	if (value === undefined || !KINDS[item.kind](value)) return false;
-	const local = (item.kind === "source" || item.kind === "target") && !remote(value);
-	const typed = item.kind === "path" || item.kind === "worktree" || local;
-	if (typed) paths.push({ kind: item.kind === "path" || item.kind === "worktree" ? item.kind : item.kind, value });
+	const kind = item.kind;
+	const typed =
+		kind === "path" ||
+		kind === "worktree" ||
+		((kind === "source" || kind === "target") && localUrlPath(value) !== undefined);
+	if (typed) paths.push({ kind, value });
 	if (next(at + 1)) return true;
 	if (typed) paths.pop();
 	return false;

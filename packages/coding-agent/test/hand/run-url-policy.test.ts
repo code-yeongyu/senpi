@@ -1,12 +1,13 @@
 // senpi#5645 (S40 PR 2, design v2.7): a local url in a url slot is a filesystem path under the hand's policy, not a free
 // string: ls-remote reads it, push writes it, and the policy decides; a remote url never reaches the policy.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DeviceFileError } from "@earendil-works/pi-agent-core";
 import { afterAll, describe, expect, it } from "vitest";
 import type { HandFileGuards } from "../../src/modes/rpc/hand-file-ops.ts";
+import { planRun } from "../../src/modes/rpc/hand-run-allowlist.ts";
 import { runOnHand } from "../../src/modes/rpc/hand-run-ops.ts";
 
 const root = mkdtempSync(join(tmpdir(), "senpi-run-url-"));
@@ -52,16 +53,14 @@ async function run(
 	}
 }
 
-const etc = realpathSync("/etc");
 const isRepoDir = (asked: Asked): boolean => asked.canonicalPath === realpathSync(repo);
 
 describe.skipIf(process.platform === "win32")("a local url is a path under the hand's policy (senpi#5645)", () => {
-	it("refuses ls-remote file:///etc when the policy denies the read, and asks the policy as a READ", async () => {
-		const { result, asked } = await run(["ls-remote", "file:///etc", "refs/heads/main"], (a) => isRepoDir(a));
+	it("refuses ls-remote file:///etc outright: git would enter no repository there, so the policy is never asked", async () => {
+		const { result, asked } = await run(["ls-remote", "file:///etc", "refs/heads/main"], () => true);
 		expect(result).toBe("refused_by_policy");
-		expect(asked.filter((a) => !isRepoDir(a))).toEqual([{ operation: "read", canonicalPath: etc }]);
+		expect(asked.filter((a) => !isRepoDir(a))).toEqual([]);
 	});
-
 	it("lets ls-remote reach a local mirror when the policy permits the read", async () => {
 		const { result, asked } = await run(["ls-remote", `file://${mirror}`, "refs/heads/main"], () => true);
 		expect(result).toBe("ran");
@@ -79,5 +78,59 @@ describe.skipIf(process.platform === "win32")("a local url is a path under the h
 		const ext = await run(["ls-remote", "ext::sh -c touch% /tmp/x", "refs/heads/main"], () => true);
 		expect(remote.asked.filter((a) => !isRepoDir(a))).toEqual([]);
 		expect(ext.result).toBe("refused_by_policy");
+	});
+	it.each([
+		{
+			name: "a P.git symlink",
+			url: () => `file://${join(root, "linked")}`,
+			make: () => symlinkSync(mirror, join(root, "linked.git")),
+		},
+		{
+			name: "a P/.git gitfile pointing outside",
+			url: () => `file://${join(root, "gitfile")}`,
+			make: () => {
+				mkdirSync(join(root, "gitfile"));
+				writeFileSync(join(root, "gitfile", ".git"), `gitdir: ${mirror}\n`);
+			},
+		},
+		{
+			name: "a P.git/.git variant",
+			url: () => `file://${join(root, "variant")}`,
+			make: () => {
+				mkdirSync(join(root, "variant.git"));
+				symlinkSync(mirror, join(root, "variant.git", ".git"));
+			},
+		},
+	])("judges $name at the git dir git enters, and refuses it when the policy denies", async ({ url, make }) => {
+		make();
+		const read = await run(["ls-remote", url(), "refs/heads/main"], (a) => isRepoDir(a));
+		const write = await run(["push", "--quiet", url(), "main:main"], (a) => isRepoDir(a));
+		expect([read.result, write.result]).toEqual(["refused_by_policy", "refused_by_policy"]);
+		expect([...read.asked, ...write.asked].filter((a) => !isRepoDir(a))).toEqual([
+			{ operation: "read", canonicalPath: realpathSync(mirror) },
+			{ operation: "write", canonicalPath: realpathSync(mirror) },
+		]);
+	});
+
+	it("refuses a local url that names no repository", async () => {
+		const { result, asked } = await run(
+			["ls-remote", `file://${join(root, "nothing")}`, "refs/heads/main"],
+			() => true,
+		);
+		expect(result).toBe("refused_by_policy");
+		expect(asked.filter((a) => !isRepoDir(a))).toEqual([]);
+	});
+
+	it("classifies urls as git does: a malformed %-escape is a typed refusal, and 1host:path is ssh", () => {
+		const plan = (url: string) =>
+			planRun({ exe: "git", argv: ["ls-remote", url, "refs/heads/main"], env: {} }, context);
+		const malformed = plan("file:///%zz");
+		const scp = plan("1host:path");
+		const local = plan("./mirror.git");
+		expect([malformed.ok, scp.ok && scp.paths.length, local.ok && local.paths.map((p) => p.kind)]).toEqual([
+			false,
+			0,
+			["source"],
+		]);
 	});
 });

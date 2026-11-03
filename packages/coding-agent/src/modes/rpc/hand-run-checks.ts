@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, stat } from "node:fs/promises";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DeviceFileError } from "@earendil-works/pi-agent-core";
 import { canonicalizeFilesystemPath } from "../../core/tools/filesystem-policy.ts";
@@ -79,6 +79,36 @@ export interface PolicyTarget {
 	readonly canonicalPath: string;
 }
 
+async function isGitDir(dir: string): Promise<boolean> {
+	const [head, objects, refs] = await Promise.all(
+		["HEAD", "objects", "refs"].map((entry) => stat(join(dir, entry)).catch(() => undefined)),
+	);
+	return head?.isFile() === true && objects?.isDirectory() === true && refs?.isDirectory() === true;
+}
+
+/** The directory a `.git` FILE points at (`gitdir: <path>`, relative to the file), resolved through every symlink. */
+async function gitfileTarget(file: string): Promise<string | undefined> {
+	const match = /^gitdir: (.+)$/m.exec(await readFile(file, "utf8").catch(() => ""));
+	return match?.[1] === undefined
+		? undefined
+		: realpath(resolve(dirname(file), match[1].trim())).catch(() => undefined);
+}
+
+/**
+ * The git directory git itself enters for a local repository path (enter_repo): the first of `P/.git`, `P`, `P.git/.git`
+ * and `P.git` that exists, resolved through every symlink, a `.git` file followed to its `gitdir:` target.
+ */
+async function enterRepo(path: string): Promise<string | undefined> {
+	for (const suffix of ["/.git", "", ".git/.git", ".git"]) {
+		const real = await realpath(path + suffix).catch(() => undefined);
+		const entry = real === undefined ? undefined : await stat(real).catch(() => undefined);
+		if (real === undefined || entry === undefined) continue;
+		const dir = entry.isFile() ? await gitfileTarget(real) : real;
+		if (dir !== undefined && (await isGitDir(dir))) return dir;
+	}
+	return undefined;
+}
+
 /**
  * Confines the typed path arguments of a planned git call (v2.6/v2.7). A `path` must lie inside the worktree or the git
  * directory. A `worktree` (add/remove) must lie outside the git directories, where a worktree would install hooks, and is a
@@ -100,9 +130,9 @@ export async function confinePaths(
 	for (const { kind, value } of paths) {
 		if (kind === "source" || kind === "target") {
 			const local = localUrlPath(value);
-			if (local === undefined) throw new DeviceFileError("refused_by_policy", `url: ${value}`);
-			const canonicalPath = await canonicalizeFilesystemPath(resolve(cwd, local));
-			targets.push({ operation: kind === "source" ? "read" : "write", canonicalPath });
+			const gitDir = local === undefined ? undefined : await enterRepo(resolve(cwd, local));
+			if (gitDir === undefined) throw new DeviceFileError("refused_by_policy", `no repository at ${value}`);
+			targets.push({ operation: kind === "source" ? "read" : "write", canonicalPath: gitDir });
 			continue;
 		}
 		const canonical = await canonicalTarget(value, cwd);

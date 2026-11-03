@@ -20,7 +20,6 @@ const SAMPLE: Readonly<Record<Kind, string>> = {
 	refpat: "refs/heads/x*",
 	branch: "b",
 	refspec: "main:main",
-	url: "https://example.invalid/r",
 	msg: "m",
 	count: "1",
 	mode: "100644",
@@ -105,7 +104,7 @@ describe("every admitted shape types every argument (senpi#5645)", () => {
 			const refusals: string[] = [];
 			for (const slot of slots.filter((s) => FILESYSTEM.includes(s.kind))) {
 				if (slot.kind === "source" || slot.kind === "target") {
-					const planned = plan([sub, ...args.map((arg, i) => (i === slot.at ? `file://${outside}` : arg))]);
+					const planned = plan([sub, ...args.map((arg, i) => (i === slot.at ? `file://${repo}` : arg))]);
 					if (!planned.ok) throw new Error(planned.reason);
 					const targets = await confinePaths(planned.paths, repo, {});
 					expect(targets.map((target) => target.operation)).toEqual([slot.kind === "source" ? "read" : "write"]);
