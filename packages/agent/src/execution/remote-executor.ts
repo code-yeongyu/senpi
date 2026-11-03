@@ -8,6 +8,7 @@ import {
 	type RemoteInvoke,
 	toRemoteToolResult,
 } from "./remote-protocol.ts";
+import { authorize, type HandAuthority } from "./grant-verify.ts";
 import type { HandLedger } from "./remote-hand-ledger.ts";
 import type { ExecutionScope } from "./tool-host.ts";
 
@@ -35,8 +36,13 @@ export type OpenHandScope = (scope: ExecutionScope) => Promise<HandScope>;
 export interface RemoteExecutorOptions {
 	/** The hand's end of the link; lanes are execution scope IDs. */
 	readonly transport: Transport;
-	/** Opens a scope lazily on its first call, bound to the scope's root. */
+	/** Opens a scope lazily on its first call, bound to the scope's root (the canonical one a peer's grant check resolved). */
 	readonly openScope: OpenHandScope;
+	/**
+	 * Whose calls this executor runs. A peer's call is checked against its grant before anything of it is recorded or
+	 * opened, and a replaced grant snapshot re-checks every running call, aborting the ones it no longer allows (S27b).
+	 */
+	readonly authority: HandAuthority;
 	/**
 	 * The hand's durable record of its calls. With it, a call is recorded as dispatched before it runs, a restarted hand
 	 * answers its interrupted calls `hand_restarted` without running them again, and a re-delivered invoke gets the
@@ -76,12 +82,19 @@ interface ScopeState {
  * passed on: the hand keys on the scope and does not know the session (R16).
  */
 export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExecutor {
-	const { transport, openScope, ledger } = options;
+	const { transport, openScope, ledger, authority } = options;
 	const scopes = new Map<string, ScopeState>();
 	const accepted: string[] = [];
 	const seen = new Set<string>();
-	const running = new Map<string, AbortController>();
+	const running = new Map<string, { readonly controller: AbortController; readonly root: string }>();
 	let closed = false;
+	const stopWatching =
+		authority.kind === "peer"
+			? authority.verifier.onReplace(() => {
+					for (const { controller, root } of running.values())
+						if (!authority.verifier.verify(authority.peer, root).ok) controller.abort();
+				})
+			: () => {};
 
 	const reply = (lane: string, message: RemoteHandMessage): void => {
 		void transport.send(lane, encodeRemoteMessage(message)).catch(() => undefined);
@@ -102,10 +115,12 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 	const invoke = async (lane: string, call: RemoteInvoke): Promise<void> => {
 		if (closed) return refuse(lane, call.executionId, "hand_closed");
 		if (lane !== call.scope.id) return refuse(lane, call.executionId, "scope_lane_mismatch");
+		const verdict = authorize(authority, call.scope.root);
+		if (!verdict.ok) return refuse(lane, call.executionId, verdict.reason);
 		if (ledger === undefined && seen.has(call.executionId))
 			return refuse(lane, call.executionId, "duplicate_execution");
 		seen.add(call.executionId);
-		const state = stateOf(call.scope);
+		const state = stateOf({ id: call.scope.id, root: verdict.root });
 		if (typeof state === "string") return refuse(lane, call.executionId, state);
 		let scope: HandScope;
 		try {
@@ -121,7 +136,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		}
 		accepted.push(call.executionId);
 		const controller = new AbortController();
-		running.set(call.executionId, controller);
+		running.set(call.executionId, { controller, root: verdict.root });
 		const sequential = scope.isSequential(call.name);
 		const dependencies = sequential
 			? [...(state.lastSequential ? [state.lastSequential] : []), ...state.wave]
@@ -132,6 +147,10 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 			await Promise.allSettled(dependencies);
 			let result: AgentToolResult<unknown>;
 			try {
+				// The grant must still hold when the call starts: a snapshot installed while it waited (scope opening,
+				// durable admission, earlier calls of its scope) may have revoked it, and then the tool never runs.
+				if (controller.signal.aborted || !authorize(authority, call.scope.root).ok)
+					throw new Error("The call's grant was revoked before it ran");
 				result = await scope.run({
 					toolCallId: call.toolCallId,
 					name: call.name,
@@ -180,7 +199,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		}
 		try {
 			if (message.kind === "invoke") await invoke(frame.lane, message);
-			else if (message.kind === "abort") running.get(message.executionId)?.abort();
+			else if (message.kind === "abort") running.get(message.executionId)?.controller.abort();
 			else if (message.kind === "ack") await ledger?.ack(message.executionId);
 		} catch (error) {
 			options.onFault(error);
@@ -192,7 +211,8 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		ready,
 		async close() {
 			closed = true;
-			for (const controller of running.values()) controller.abort();
+			stopWatching();
+			for (const { controller } of running.values()) controller.abort();
 			const opened = await Promise.allSettled([...scopes.values()].map((state) => state.opened));
 			scopes.clear();
 			await Promise.allSettled(
