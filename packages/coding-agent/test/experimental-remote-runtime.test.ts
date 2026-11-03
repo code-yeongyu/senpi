@@ -877,20 +877,31 @@ describe("experimental durable server composition", () => {
 		expect(workerPid).toEqual(expect.any(Number));
 		if (workerPid === undefined) throw new Error("The first server did not start a worker");
 
-		const replacement = await startServer({ ...sessionWorkerModel, directory });
-		servers.add(replacement);
-		await first.closed;
-		expect(replacement.workerPids.get("demo-1")).toBe(workerPid);
+		const workerChild = children.get(workerPid);
+		// The worker applies disconnect notices only after the SIGUSR2 below. If an assertion fails first,
+		// stop the worker here so it never outlives the test body holding a notice nobody will release.
+		try {
+			const replacement = await startServer({ ...sessionWorkerModel, directory });
+			servers.add(replacement);
+			await first.closed;
+			expect(replacement.workerPids.get("demo-1")).toBe(workerPid);
 
-		const processExited = whenChildExited(children.get(workerPid));
-		const workerDropped = whenWorkerPids(replacement, (pids) => !pids.has("demo-1"));
-		process.kill(workerPid, "SIGUSR2");
-		await workerDropped;
-		await processExited;
-		// This worker is not the replacement's child: the server drops it from `workerPids` on the
-		// coordinator's disconnect notice, which can arrive before the OS has reaped the process.
-		await waitForProcessGone(workerPid);
-		expect(processExists(workerPid)).toBe(false);
+			const processExited = whenChildExited(workerChild);
+			const workerDropped = whenWorkerPids(replacement, (pids) => !pids.has("demo-1"));
+			process.kill(workerPid, "SIGUSR2");
+			await workerDropped;
+			await processExited;
+			// This worker is not the replacement's child: the server drops it from `workerPids` on the
+			// coordinator's disconnect notice, which can arrive before the OS has reaped the process.
+			await waitForProcessGone(workerPid);
+			expect(processExists(workerPid)).toBe(false);
+		} finally {
+			if (workerChild !== undefined && workerChild.exitCode === null && workerChild.signalCode === null) {
+				const stopped = whenChildExited(workerChild);
+				workerChild.kill("SIGKILL");
+				await stopped;
+			}
+		}
 	});
 
 	test("restores tracked sessions that are outside the replacement catalog", async () => {
