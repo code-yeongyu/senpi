@@ -1,5 +1,6 @@
 import { BATCH_REGISTRY } from "../execution/testing/batch-registry.ts";
 import { LEDGER_REGISTRY } from "../execution/testing/ledger-registry.ts";
+import { LIFECYCLE_REGISTRY } from "../execution/testing/lifecycle-registry.ts";
 import { NEST_REGISTRY } from "../execution/testing/nest-registry.ts";
 import { WAKE_EXEC_REGISTRY } from "../execution/testing/wake-registry.ts";
 import { SEQ_REGISTRY } from "../execution/testing/seq-registry.ts";
@@ -66,6 +67,7 @@ export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 	...SEQ_REGISTRY,
 	...NEST_REGISTRY,
 	...WAKE_EXEC_REGISTRY,
+	...LIFECYCLE_REGISTRY,
 	storeCase(
 		"STORE-01",
 		STORE_CASES_IMPL,

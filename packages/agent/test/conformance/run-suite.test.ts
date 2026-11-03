@@ -21,6 +21,9 @@ import { CANCEL_CASES } from "../../src/execution/testing/cancel-cases.ts";
 import { KILL_NEST_CASES } from "../../src/execution/testing/kill-nest.ts";
 import { WAKE_EXEC_CASES } from "../../src/execution/testing/wake-exec-cases.ts";
 import { KILL_WAKEX_CASES } from "../../src/execution/testing/kill-wakex.ts";
+import { LIFECYCLE_CASES } from "../../src/execution/testing/lifecycle-cases.ts";
+import { SCOPE_CASES } from "../../src/execution/testing/scope-cases.ts";
+import { MULTI_LIFECYCLE_CASES } from "../../src/execution/testing/multi-lifecycle-cases.ts";
 import { KILL_LEDGER_CASES } from "../../src/execution/testing/kill-ledger.ts";
 import { LEDGER_CASES } from "../../src/execution/testing/ledger-cases.ts";
 import { FAULT_TRANSPORT_CASES } from "../../src/transport/testing/fault-cases.ts";
@@ -144,10 +147,13 @@ describe("the ./conformance export", () => {
 			"KILL_WAKE_CASES",
 			"KILL_WAKE_DECLARATIONS",
 			"LEDGER_CASES",
+			"LIFECYCLE_CASES",
 			"MULTI_CASES",
 			"MULTI_HOST_CASES",
+			"MULTI_LIFECYCLE_CASES",
 			"MULTI_SEQ_CASES",
 			"NEST_CASES",
+			"SCOPE_CASES",
 			"SEQ_CASES",
 			"STORE_CASES",
 			"TRANSPORT_CASES",
@@ -164,6 +170,7 @@ describe("the ./conformance export", () => {
 			"createManualTimers",
 			"createNestedAdmission",
 			"createReliableTransport",
+			"createScopeLifecycle",
 			"createSequentialCoordinator",
 			"createWakeHost",
 			"createWakeInbox",
@@ -201,6 +208,9 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...KILL_NEST_CASES,
 	...WAKE_EXEC_CASES,
 	...KILL_WAKEX_CASES,
+	...LIFECYCLE_CASES,
+	...SCOPE_CASES,
+	...MULTI_LIFECYCLE_CASES,
 	...MULTI_SEQ_CASES,
 	...STORE_CASES,
 	...KILL_STORE_CASES,

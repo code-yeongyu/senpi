@@ -126,6 +126,11 @@ export type { WakeEvent, WakeReceipt } from "../execution/wake-types.ts";
 export { WAKE_RETENTION_MS } from "../execution/wake-types.ts";
 export { WAKE_EXEC_CASES } from "../execution/testing/wake-exec-cases.ts";
 export { KILL_WAKEX_CASES } from "../execution/testing/kill-wakex.ts";
+export type { ScopeBinding, ScopeLifecycle, ScopeLifecycleOptions, ScopeRecord } from "../execution/scope-lifecycle.ts";
+export { createScopeLifecycle } from "../execution/scope-lifecycle.ts";
+export { LIFECYCLE_CASES } from "../execution/testing/lifecycle-cases.ts";
+export { SCOPE_CASES } from "../execution/testing/scope-cases.ts";
+export { MULTI_LIFECYCLE_CASES } from "../execution/testing/multi-lifecycle-cases.ts";
 export type {
 	BatchCaseAdapters,
 	BatchExecutorConformanceAdapter,
