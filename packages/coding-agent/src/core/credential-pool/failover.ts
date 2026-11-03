@@ -283,7 +283,11 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 				const refusal =
 					lastError === undefined || lastOriginal === undefined
 						? noSlotsError(slots, now())
-						: new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt });
+						: new CredentialFailoverError(
+								lastError.action,
+								lastOriginal,
+								retryAt === undefined ? {} : { retryAt },
+							);
 				throw limitedRetryAt === undefined
 					? refusal
 					: attachProviderDiagnostic(refusal, credentialPoolBlockedDiagnostic(limitedRetryAt));

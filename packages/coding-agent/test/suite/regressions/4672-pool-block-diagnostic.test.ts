@@ -112,7 +112,10 @@ describe("a refused account pool is a classified failure (senpi#4672)", () => {
 		const now = SOONEST - 60 * 60_000;
 		const limitedUntil = SOONEST;
 		const billingProbe = now + 60_000;
-		const accounts = [account("limited", 0, limitedUntil, "rate_limit"), account("billed", 1, billingProbe, "billing")];
+		const accounts = [
+			account("limited", 0, limitedUntil, "rate_limit"),
+			account("billed", 1, billingProbe, "billing"),
+		];
 		const refusal = refusalOf(accounts, now);
 		overrideSdkBoundary({ query: failingQuery(refusal) });
 		const message = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
