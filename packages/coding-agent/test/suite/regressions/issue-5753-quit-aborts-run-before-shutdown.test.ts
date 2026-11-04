@@ -13,7 +13,7 @@ import { goalStoreRef } from "../../../src/core/extensions/builtin/goal/store-re
 import { createHarness, getAssistantTexts } from "../harness.ts";
 import { reservationStep } from "../rpc-worker-reservation-support.ts";
 
-// Quitting the TUI mid-turn disposed the runtime while its run was still active: `session_shutdown` tore down
+// senpi#5753: quitting the TUI mid-turn disposed the runtime while its run was still active: `session_shutdown` tore down
 // extension resources under a running tool, the tool failed, and the dying process sent the failure to the
 // model in one more provider request (and an active goal kept queueing continuations). A quit must end the run
 // before extensions shut down, the way a session replacement already does.
@@ -138,4 +138,51 @@ it("quitting while a goal's turn runs stops the goal like an interrupt, so the n
 	await reservationStep("goal-quit-turn-settled", turn);
 
 	expect((await readGoal(ref))?.status).toBe("blocked");
+});
+
+it("a turn an extension holds cannot delay quit past the quit budget (#3711)", async () => {
+	const toolStarted = Promise.withResolvers<void>();
+	const slowTool: AgentTool = {
+		name: "slow",
+		label: "Slow",
+		description: "Runs until aborted",
+		parameters: Type.Object({}),
+		execute: async (_toolCallId, _params, signal) => {
+			toolStarted.resolve();
+			return await new Promise<never>((_resolve, reject) => {
+				signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+			});
+		},
+	};
+	const held = Promise.withResolvers<void>();
+	const h = await createHarness({
+		tools: [slowTool],
+		settings: { sessionShutdownQuitBudgetMs: 200 },
+		extensionFactories: [
+			(pi) => {
+				pi.on("tool_execution_end", async () => {
+					await held.promise;
+				});
+			},
+		],
+	});
+	cleanups.push(h.cleanup);
+	cleanups.push(() => held.resolve());
+	h.setResponses([fauxAssistantMessage([fauxToolCall("slow", {})], { stopReason: "toolUse" })]);
+	const services: AgentSessionServices = {
+		cwd: h.tempDir,
+		agentDir: h.tempDir,
+		authStorage: h.authStorage,
+		modelRegistry: h.modelRegistry,
+		modelRuntime: h.session.modelRuntime,
+		settingsManager: h.settingsManager,
+		resourceLoader: h.session.resourceLoader,
+		diagnostics: [],
+	};
+	const runtime = new AgentSessionRuntime(h.session, services, async () => {
+		throw new Error("no replacement in this test");
+	});
+	void h.session.prompt("work").catch(() => {});
+	await toolStarted.promise;
+	await reservationStep("held-turn-quit-within-budget", runtime.dispose({ processExit: true, endActiveRun: true }));
 });
