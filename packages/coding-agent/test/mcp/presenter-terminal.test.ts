@@ -170,12 +170,28 @@ const REVOCATIONS: ReadonlyArray<{
 	},
 ];
 
+/** The terminal binding's next holder change: the revocation itself, observed before any later form can fall back. */
+function nextHolderChange(t: Terminal): Promise<void> {
+	const subscribe = t.local.binding.subscribe;
+	if (!subscribe) throw new Error("Missing binding subscription");
+	const changed = Promise.withResolvers<void>();
+	const timer = setTimeout(() => changed.reject(new Error("holder change deadline")), 10_000);
+	const unsubscribe = subscribe(() => {
+		clearTimeout(timer);
+		unsubscribe();
+		changed.resolve();
+	});
+	return changed.promise;
+}
+
 it.each(REVOCATIONS)("$name revokes the desktop's grant: the next form reaches only the terminal", async (row) => {
 	const t = await terminal();
 	const desktop = await t.client();
 	expect((await t.enrollDesktop(desktop)).acquired).toMatchObject({ type: "mcp_presenter_acquired" });
 
+	const revoked = nextHolderChange(t);
 	await row.revoke(t, desktop);
+	await revoked;
 	const outcome = await t.present(EMPTY_FORM);
 	// A request to a holder is written before the terminal answers, so it precedes this reply on the same socket.
 	if (row.open) await desktop.request({ type: "mcp_presenter_context", sessionId: t.sessionId });
