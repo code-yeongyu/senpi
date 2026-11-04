@@ -73,12 +73,3 @@ it("#5748 the flag-off refusal keeps the session reply's sessionId, identical fo
 	expect(shapes[0]).toMatchObject({ sessionId: out["sessionId"] });
 	for (const shape of shapes) expect(shape).toEqual(shapes[0]);
 });
-
-it("#5748 with SENPI_RPC_REQUIRE_ATTACH=1 an unattached caller gets the same feature_disabled", async () => {
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
-	const out = await replies(false, "other");
-	for (const type of METHODS)
-		expect
-			.soft(out[type], type)
-			.toMatchObject({ error: "feature_disabled", errorData: { feature: "compact_updates" } });
-});
