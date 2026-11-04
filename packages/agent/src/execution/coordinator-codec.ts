@@ -1,5 +1,12 @@
 import type { StoreValue } from "../durable/store.ts";
-import type { BatchManifest, BatchRecord, CallOutcome, ManifestCall, PrepareReply } from "./coordinator-types.ts";
+import type {
+	BatchManifest,
+	BatchRecord,
+	CallOutcome,
+	ConsentRecord,
+	ManifestCall,
+	PrepareReply,
+} from "./coordinator-types.ts";
 
 type StoreObject = { readonly [key: string]: StoreValue };
 
@@ -48,6 +55,7 @@ function prepareReply(value: StoreValue | undefined): value is PrepareReply {
 	if (!object(value)) return false;
 	switch (value.kind) {
 		case "prepared":
+		case "prepared_awaiting_consent":
 			return typeof value.frozenDigest === "string";
 		case "blocked":
 			return value.result !== undefined;
@@ -76,11 +84,24 @@ function callOutcome(value: StoreValue | undefined): value is CallOutcome {
 	}
 }
 
+function consentRecord(value: StoreValue | undefined): value is ConsentRecord {
+	return (
+		object(value) &&
+		(value.gate === "raw" || value.gate === "frozen") &&
+		typeof value.digest === "string" &&
+		(value.answer === "approved" || value.answer === "denied" || value.answer === "expired")
+	);
+}
+
 function record(value: StoreValue): value is BatchRecord {
 	if (!object(value) || !manifest(value.manifest)) return false;
 	const size = value.manifest.calls.length;
-	const { prepares, released, outcomes, decision } = value;
+	const { prepares, released, outcomes, decision, consents } = value;
 	return (
+		(consents === undefined ||
+			(Array.isArray(consents) &&
+				consents.length === size &&
+				consents.every((entry) => entry === null || consentRecord(entry)))) &&
 		(decision === null || decision === "RELEASE" || decision === "ABORT") &&
 		Array.isArray(prepares) &&
 		prepares.length === size &&

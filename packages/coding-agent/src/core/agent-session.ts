@@ -305,6 +305,7 @@ import {
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
 import { lifecycleEditLeaf } from "./lifecycle-edit-leaf.ts";
+import { LifecycleEventSequencer } from "./lifecycle-event-sequencer.ts";
 import { LifecycleSessionBinding } from "./lifecycle-session-binding.ts";
 import {
 	isManualContinueSubmission,
@@ -1443,6 +1444,7 @@ export class AgentSession {
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private readonly _structuredLane: StructuredSessionLane;
 	private _agentEventQueue: Promise<void> = Promise.resolve();
+	private readonly _lifecycleEvents = new LifecycleEventSequencer<AgentSessionEvent>();
 	/**
 	 * Exact message objects whose message_end persistence is still queued.
 	 * Agent core appends messages to agent.state.messages before emitting
@@ -3581,100 +3583,108 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
-		this._recoveryIdentity?.observe(event);
-		if (event.type === "agent_start") {
-			this._lifecycleBinding.startRun();
-			this._requestSelectedModel = undefined;
-		}
-		// Bind now: the core can start another run before this event's asynchronous delivery.
-		const queuedEvent =
-			event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
-		// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
-		if (event.type === "agent_end") {
-			this._lifecycleBinding.bindTurnEnd(event);
-			// Freeze before async delivery or a queued run can replace the dispatched selection.
-			if (this._requestSelectedModel) this._endSelectedModels.set(event, this._requestSelectedModel);
-		}
-		this._lifecycleBinding.controller.observeActivity(event);
-		if (event.type === "message_start") {
-			try {
-				const entryId = this._lifecycleBinding.consume(event.message);
-				if (entryId) this._emitEntryAppended(entryId);
-			} catch (error) {
-				this._transcriptWriteFailures.record(event.message, error);
+		let queuedEvent: AgentEvent = event;
+		let pendingMessage: AgentMessage | undefined;
+		// Lifecycle events this event raises are delivered just before it, in the same queue (LifecycleEventSequencer).
+		const heldLifecycle = this._lifecycleEvents.hold(() => {
+			this._recoveryIdentity?.observe(event);
+			if (event.type === "agent_start") {
+				this._lifecycleBinding.startRun();
+				this._requestSelectedModel = undefined;
 			}
-		}
-		this._runContinuations.observe(event);
-		// Record the calls a tool made through ctx.executeTool() and their usage on its result message,
-		// synchronously so the message carries them before any listener or persistence sees it.
-		if (this._nestedToolCalls) {
-			if (event.type === "message_start" && event.message.role === "toolResult") {
-				const message = event.message;
-				const summary = this._nestedToolCalls.takeRecord(message.toolCallId);
-				if (summary?.calls) message.nestedCalls = summary.calls;
-				if (summary?.usage) {
-					message.usage = message.usage ? combineUsage(message.usage, summary.usage) : summary.usage;
+			// Bind now: the core can start another run before this event's asynchronous delivery.
+			const bound =
+				event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
+			queuedEvent = bound;
+			// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
+			if (event.type === "agent_end") {
+				this._lifecycleBinding.bindTurnEnd(event);
+				// Freeze before async delivery or a queued run can replace the dispatched selection.
+				if (this._requestSelectedModel) this._endSelectedModels.set(event, this._requestSelectedModel);
+			}
+			this._lifecycleBinding.controller.observeActivity(event);
+			if (event.type === "message_start") {
+				try {
+					const entryId = this._lifecycleBinding.consume(event.message);
+					if (entryId) this._emitEntryAppended(entryId);
+				} catch (error) {
+					this._transcriptWriteFailures.record(event.message, error);
 				}
-			} else if (event.type === "agent_end") {
-				this._nestedToolCalls.clear();
 			}
-		}
-
-		// Agent core drains native steer/follow-up queues immediately after its
-		// final agent_end. This subscriber intentionally processes its own event
-		// queue asynchronously, so a later recovery rejection cannot abort that
-		// drain in time. agent_end itself is still an awaited synchronous boundary
-		// before that drain: transfer every required overflow or threshold
-		// compaction to AgentSession, retaining queues until recovery is accepted.
-		if (event.type === "agent_end") {
-			const lastAssistant = this._findLastAssistantInMessages(event.messages);
-			const requiredAutoCompaction = lastAssistant
-				? this._getRequiredAutoCompactionReason(lastAssistant)
-				: undefined;
-			// A retry owns the queue the same way: the retry handler drops the failed
-			// assistant from agent state, so the core's post-run check would otherwise
-			// see a user tail and drain queued steering into the doomed retry request.
-			const willRetry = this._willRetryAfterAgentEnd(event.messages);
-			if (requiredAutoCompaction || willRetry) {
-				this.agent.suppressQueuedMessageDrain();
+			this._runContinuations.observe(event);
+			// Record the calls a tool made through ctx.executeTool() and their usage on its result message,
+			// synchronously so the message carries them before any listener or persistence sees it.
+			if (this._nestedToolCalls) {
+				if (event.type === "message_start" && event.message.role === "toolResult") {
+					const message = event.message;
+					const summary = this._nestedToolCalls.takeRecord(message.toolCallId);
+					if (summary?.calls) message.nestedCalls = summary.calls;
+					if (summary?.usage) {
+						message.usage = message.usage ? combineUsage(message.usage, summary.usage) : summary.usage;
+					}
+				} else if (event.type === "agent_end") {
+					this._nestedToolCalls.clear();
+				}
 			}
-			// The barrier belongs to the armed turn: it ends here, before the core drains any follow-up.
-			if (!willRetry) this._toolBarrier.clear();
-			// agent_before_settle (D-15) decides the post-run queue: it continues first (queued follow-ups
-			// wait until that continuation would stop) or keeps input it cannot run. Input its handlers queue
-			// must not start an agent-core drain run before the boundary commits.
-			if (this._extensionRunner.hasHandlers("agent_before_settle")) {
-				this.agent.suppressQueuedMessageDrain();
+
+			// Agent core drains native steer/follow-up queues immediately after its
+			// final agent_end. This subscriber intentionally processes its own event
+			// queue asynchronously, so a later recovery rejection cannot abort that
+			// drain in time. agent_end itself is still an awaited synchronous boundary
+			// before that drain: transfer every required overflow or threshold
+			// compaction to AgentSession, retaining queues until recovery is accepted.
+			if (event.type === "agent_end") {
+				const lastAssistant = this._findLastAssistantInMessages(event.messages);
+				const requiredAutoCompaction = lastAssistant
+					? this._getRequiredAutoCompactionReason(lastAssistant)
+					: undefined;
+				// A retry owns the queue the same way: the retry handler drops the failed
+				// assistant from agent state, so the core's post-run check would otherwise
+				// see a user tail and drain queued steering into the doomed retry request.
+				const willRetry = this._willRetryAfterAgentEnd(event.messages);
+				if (requiredAutoCompaction || willRetry) {
+					this.agent.suppressQueuedMessageDrain();
+				}
+				// The barrier belongs to the armed turn: it ends here, before the core drains any follow-up.
+				if (!willRetry) this._toolBarrier.clear();
+				// agent_before_settle (D-15) decides the post-run queue: it continues first (queued follow-ups
+				// wait until that continuation would stop) or keeps input it cannot run. Input its handlers queue
+				// must not start an agent-core drain run before the boundary commits.
+				if (this._extensionRunner.hasHandlers("agent_before_settle")) {
+					this.agent.suppressQueuedMessageDrain();
+				}
 			}
-		}
 
-		// Create retry promise synchronously before queueing async processing.
-		// Agent.emit() calls this handler synchronously, and prompt() calls waitForRetry()
-		// as soon as agent.prompt() resolves. If _retryPromise is created only inside
-		// _processAgentEvent, slow earlier queued events can delay agent_end processing
-		// and waitForRetry() can miss the in-flight retry.
-		this._createRetryPromiseForAgentEnd(event);
+			// Create retry promise synchronously before queueing async processing.
+			// Agent.emit() calls this handler synchronously, and prompt() calls waitForRetry()
+			// as soon as agent.prompt() resolves. If _retryPromise is created only inside
+			// _processAgentEvent, slow earlier queued events can delay agent_end processing
+			// and waitForRetry() can miss the in-flight retry.
+			this._createRetryPromiseForAgentEnd(event);
 
-		// The message object is already in agent.state.messages when message_end
-		// fires; track its exact identity until this event's queued processing
-		// settles so compaction can distinguish pending persistence from stale state.
-		if (event.type === "message_end" && event.message.role === "assistant") {
-			this._emitServerFallbackAborted(event.message);
-		}
+			// The message object is already in agent.state.messages when message_end
+			// fires; track its exact identity until this event's queued processing
+			// settles so compaction can distinguish pending persistence from stale state.
+			if (event.type === "message_end" && event.message.role === "assistant") {
+				this._emitServerFallbackAborted(event.message);
+			}
 
-		const pendingMessage = event.type === "message_end" ? event.message : undefined;
-		if (pendingMessage !== undefined) {
-			this._messageEndsAwaitingPersistence.add(pendingMessage);
-		}
+			pendingMessage = event.type === "message_end" ? event.message : undefined;
+			if (pendingMessage !== undefined) {
+				this._messageEndsAwaitingPersistence.add(pendingMessage);
+			}
+		}, (held) => this._emit(held));
+		const pendingEnd = pendingMessage;
 
-		const processing = this._agentEventQueue.then(
-			() => this._processAgentEvent(queuedEvent, signal),
-			() => this._processAgentEvent(queuedEvent, signal),
-		);
+		const deliverThenProcess = (): Promise<void> => {
+			this._lifecycleEvents.release(heldLifecycle, (held) => this._emit(held));
+			return this._processAgentEvent(queuedEvent, signal);
+		};
+		const processing = this._agentEventQueue.then(deliverThenProcess, deliverThenProcess);
 		this._agentEventQueue =
-			pendingMessage !== undefined
+			pendingEnd !== undefined
 				? processing.finally(() => {
-						this._messageEndsAwaitingPersistence.delete(pendingMessage);
+						this._messageEndsAwaitingPersistence.delete(pendingEnd);
 					})
 				: processing;
 
@@ -3682,8 +3692,8 @@ export class AgentSession {
 		// by finally() above. The originating prompt observes the stored admission
 		// error after the queue settles; no rejection should become unhandled.
 		const settled = this._agentEventQueue.catch(() => {});
-		if (pendingMessage !== undefined) {
-			this._messageEndPersistence.set(pendingMessage, settled);
+		if (pendingEnd !== undefined) {
+			this._messageEndPersistence.set(pendingEnd, settled);
 		}
 	};
 
@@ -8117,7 +8127,15 @@ export class AgentSession {
 				this._emitEntryAppended(id);
 				return id;
 			},
-			emit: (event) => this._emit(event),
+			emit: (event) =>
+				this._lifecycleEvents.emit(
+					event,
+					(lifecycle) => this._emit(lifecycle),
+					(run) => {
+						this._agentEventQueue = this._agentEventQueue.then(run, run);
+						void this._agentEventQueue.catch(() => {});
+					},
+				),
 			holdInterruptedRun: () => {
 				this._holdForInterruptedRun({ triggerTurn: true });
 			},
