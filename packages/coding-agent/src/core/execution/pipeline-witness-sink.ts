@@ -9,7 +9,15 @@ export type ExecutionPipelineWitnessSink = (witness: ExecutionPipelineWitness) =
  */
 function createWitnessFileSink(path: string): ExecutionPipelineWitnessSink {
 	return (witness) => {
-		appendFileSync(path, `${JSON.stringify({ pipeline: witness.pipeline, toolCallId: witness.toolCallId })}\n`);
+		try {
+			appendFileSync(path, `${JSON.stringify({ pipeline: witness.pipeline, toolCallId: witness.toolCallId })}\n`);
+		} catch (error) {
+			// A receipt is metadata: a sink that cannot write reports a witness error and never fails the tool batch.
+			process.emitWarning(
+				`execution-pipeline witness not written to ${path}: ${error instanceof Error ? error.message : String(error)}`,
+				"ExecutionPipelineWitnessWarning",
+			);
+		}
 	};
 }
 

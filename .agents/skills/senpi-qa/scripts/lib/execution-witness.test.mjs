@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { collectors } from "../../scenarios/fused-equivalence/cases/support/collectors.mjs";
-import { readWitness } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+import { readWitness, toolCallCount, witnessMatches } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
 
 test("older execution-pipeline entries never change O7 or its parent chain", () => {
 	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
@@ -46,6 +46,23 @@ test("the witness is read from the session's sink file, one JSON line per call",
 		});
 		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n{"pipeline":"legacy","toolCallId":"two"}\n');
 		assert.equal(readWitness(witnessFile).pipeline, "mixed");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a run with tool calls must have its witness from the sink, whatever the pipeline", () => {
+	const noSeam = { pipeline: "legacy", source: "no-seam", calls: [] };
+	assert.equal(witnessMatches({ ...noSeam, toolCalls: 2 }, "legacy"), false);
+	assert.equal(witnessMatches({ ...noSeam, toolCalls: 2 }, "default"), false);
+	assert.equal(witnessMatches({ ...noSeam, toolCalls: 0 }, "default"), true);
+	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "legacy"), true);
+	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "prepared"), false);
+	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
+	try {
+		const sessionFile = join(dir, "session.jsonl");
+		writeFileSync(sessionFile, [{ type: "message", message: { role: "assistant" } }, { type: "message", message: { role: "toolResult" } }, { type: "message", message: { role: "toolResult" } }].map((entry) => JSON.stringify(entry)).join("\n"));
+		assert.equal(toolCallCount(sessionFile), 2);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

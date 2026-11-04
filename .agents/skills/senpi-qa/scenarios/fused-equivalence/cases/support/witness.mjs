@@ -35,6 +35,18 @@ export function readWitness(witnessFile) {
 	return { pipeline: kinds.size === 1 ? [...kinds][0] : "mixed", source: "sink", calls };
 }
 
+/** The tool results a run's session recorded: a run with any must have its witness from the sink. */
+export function toolCallCount(sessionFile) {
+	const entries = sessionFile && existsSync(sessionFile) ? readJsonl(readFileSync(sessionFile, "utf8")) : [];
+	return entries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult").length;
+}
+
+/** A run's witness is right when it names the requested pipeline and, if the run made tool calls, came from the sink. */
+export function witnessMatches(witness, requested) {
+	if (witness.pipeline !== expectedWitness(requested)) return false;
+	return witness.toolCalls === 0 || witness.source === "sink";
+}
+
 /** The pipeline a `--pipeline` request must be witnessed as: `default` is legacy until the default flips (S21a). */
 export function expectedWitness(requested) {
 	if (requested === "legacy" || requested === "default") return "legacy";

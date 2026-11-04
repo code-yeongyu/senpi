@@ -24,7 +24,12 @@ import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-gold
 import { startCaseRun } from "../../scenarios/fused-equivalence/cases/support/case-run.mjs";
 import { baselineManifest, goldenDir, observe } from "../../scenarios/fused-equivalence/cases/support/observe.mjs";
 import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
-import { expectedWitness, readWitness } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+import {
+	expectedWitness,
+	readWitness,
+	toolCallCount,
+	witnessMatches,
+} from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
 import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
 import {
@@ -100,8 +105,8 @@ async function runCaseWithWitness(testCase, { pipeline, surface }, witnessFile) 
 		...(pipeline === "default" ? {} : { SENPI_EXECUTION_PIPELINE: pipeline }),
 	};
 	if (surface === "tui") {
-		const { observations } = await runTuiCase(testCase, env);
-		return { observations, witness: readWitness(witnessFile) };
+		const { observations, sessionFile } = await runTuiCase(testCase, env);
+		return { observations, witness: { ...readWitness(witnessFile), toolCalls: toolCallCount(sessionFile) } };
 	}
 	const spec = typeof testCase.spec === "function" ? testCase.spec() : testCase.spec;
 	const run = await startCaseRun({ ...spec, label: testCase.id.toLowerCase(), env: { ...spec.env, ...env } });
@@ -111,7 +116,10 @@ async function runCaseWithWitness(testCase, { pipeline, surface }, witnessFile) 
 			surface === "headless"
 				? testCase.observables.filter((id) => id === "O7" || id === "O8")
 				: testCase.observables;
-		return { observations: observe(run, observables), witness: readWitness(witnessFile) };
+		return {
+			observations: observe(run, observables),
+			witness: { ...readWitness(witnessFile), toolCalls: toolCallCount(run.sessionFile) },
+		};
 	} finally {
 		await run.stop();
 		run.box.cleanup();
@@ -186,7 +194,7 @@ async function main() {
 			const first = runs[0].observations;
 			result.repeatDiffs = runs.slice(1).flatMap((other) => diffNormalized(first, other.observations));
 			result.witness = runs[0].witness;
-			result.witnessOk = runs.every((r) => r.witness.pipeline === expectedWitness(options.pipeline));
+			result.witnessOk = runs.every((r) => witnessMatches(r.witness, options.pipeline));
 			if (options.mode === "record") {
 				// A golden is written only from runs that agreed with each other: a nondeterministic case is a FAIL, never a golden.
 				if (result.repeatDiffs.length === 0) {
