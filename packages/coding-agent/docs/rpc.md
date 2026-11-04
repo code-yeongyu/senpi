@@ -2611,7 +2611,10 @@ sessions"). The host decides this when it reads the line, so a connection that e
 leaves that session retained too. Like any retained session it is still closed by an explicit `close_session`, parked
 by the idle-eviction window, and recorded at park for the next host generation, which reopens it on startup, so a
 parked session survives into the next generation. `attach_session` never turns retention on: attaching over a delegated
-connection to a session that is not retained leaves it closing with its last attachment. A connection that never
+connection to a session that is not retained leaves it closing with its last attachment. One consequence to know: a
+delegated `open_session` by `sessionPath` (which needs `device_admin`) that lands on a session already live and opened by
+someone else joins it as an attach that asks for retention, so it turns retention on for that live session and every
+client of it, the same as a local `open_session` that passed `retain_on_disconnect: true` would. A connection that never
 declares keeps the ordinary rule: closed with its last connection unless `open_session` asked for
 `retain_on_disconnect: true`.
 
