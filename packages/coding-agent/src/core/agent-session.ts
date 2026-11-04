@@ -5877,6 +5877,9 @@ export class AgentSession {
 		this._standingRecovery = undefined;
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
 		if (barrierError !== undefined) throw new Error(barrierError);
+		// A steer naming a turn that is not running is refused before a run hold or a command can take it (senpi#5776).
+		const staleTurn = turnConflict(options?.expectedTurnId, this.currentTurnId);
+		if (staleTurn !== undefined) throw staleTurn;
 		if (isHumanInput(options) && options?.humanInputReported !== true) this._humanInputAdmitted(promptKind(options));
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
@@ -5889,6 +5892,8 @@ export class AgentSession {
 		try {
 			const origin = options?.inputOrigin ?? inputOriginOf(options?.source);
 			if (origin === "person" && this._runHolds.inheritedOwner() !== undefined) {
+				// A held input is delivered into a later turn, which a steer that names its turn must never reach.
+				if (options?.expectedTurnId !== undefined) throw new TurnConflictError(this.currentTurnId);
 				// A run-owned pause holds every person input before anything runs, a "." or a command included (senpi#3811).
 				this._holdForRun(text, options);
 				hold.accepted();

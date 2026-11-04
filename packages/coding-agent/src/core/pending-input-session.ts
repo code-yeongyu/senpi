@@ -111,8 +111,9 @@ export class SessionPendingInputs {
 	 * same input is answered from the record (`replayed`) and enqueues nothing.
 	 */
 	/**
-	 * `refusal` is read in the same synchronous step as `enqueue`: an input it refuses is never enqueued, its admission
-	 * is cancelled in the same transaction (`turn_conflict`), and the refusal is thrown.
+	 * `refusal` is read before the input is recorded (a refusal there records nothing) and again in the same synchronous
+	 * step as `enqueue`. A turn that ended while the record was written makes the second read refuse: the record is
+	 * cancelled `turn_conflict`, which a later submit under the same id replaces, and the refusal is thrown.
 	 */
 	async admit(
 		input: IdentifiedInput,
@@ -121,6 +122,8 @@ export class SessionPendingInputs {
 	): Promise<PendingInputOperationResult | undefined> {
 		const store = await this.store();
 		return store.transaction(async (tx) => {
+			const early = refusal?.();
+			if (early !== undefined) throw early;
 			const result = await tx.submit({
 				clientMessageId: input.clientMessageId,
 				fingerprint: admissionFingerprint(input),

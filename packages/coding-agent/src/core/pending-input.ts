@@ -24,7 +24,9 @@ export function reducePendingInput(current: PendingInput | undefined, event: Pen
 }
 
 function submit(current: PendingInput | undefined, event: SubmitEvent): PendingInputDecision {
-	if (current !== undefined) {
+	// A steer refused for its turn was never queued, so its id carries no delivery to replay (senpi#5776).
+	const neverQueued = current?.phase === "removed" && current.removedBy === "turn_conflict";
+	if (current !== undefined && !neverQueued) {
 		if (current.fingerprint !== event.fingerprint) {
 			return { next: current, result: answer(current, "client_message_id_conflict"), effects: [] };
 		}
