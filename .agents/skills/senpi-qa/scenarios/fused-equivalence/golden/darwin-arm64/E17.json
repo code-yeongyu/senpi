@@ -4573,43 +4573,6 @@
       "sessionId": "<id:1>"
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:14>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:7>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      },
-      "sessionId": "<id:1>"
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -4706,6 +4669,43 @@
          "endedAt": "<ts:timing.endedAt:2>"
         }
        }
+      },
+      "sessionId": "<id:1>"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:14>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:7>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
       },
       "sessionId": "<id:1>"
      },
@@ -5893,43 +5893,6 @@
       "sessionId": "<id:1>"
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 4,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:11>",
-       "role": "root",
-       "rootSessionId": "<uuid:14>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 4
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:15>",
-        "since": "<ts:activity.since:5>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:11>"
-      },
-      "sessionId": "<id:1>"
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -6026,6 +5989,43 @@
          "endedAt": "<ts:timing.endedAt:5>"
         }
        }
+      },
+      "sessionId": "<id:1>"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 4,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:11>",
+       "role": "root",
+       "rootSessionId": "<uuid:14>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 4
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:15>",
+        "since": "<ts:activity.since:5>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:11>"
       },
       "sessionId": "<id:1>"
      },
