@@ -22,8 +22,9 @@ export interface McpPresenterControlStart {
 }
 
 /**
- * Starts the management endpoint of an enforced host launched with the inherited fd-4 bootstrap. Otherwise the
- * bootstrap is destroyed and no control exists. A failed start leaves the host without a presenter.
+ * Starts the management endpoint of an enforced host that can introduce a principal: through the inherited fd-4
+ * bootstrap, an injected account authority, or both (senpi#4249). Otherwise the bootstrap is destroyed and no
+ * control exists. A failed start leaves the host without a presenter.
  */
 export async function startMcpPresenterControl(
 	writer: SessionEventWriter,
@@ -33,8 +34,8 @@ export async function startMcpPresenterControl(
 		readonly account?: PresenterAccountAuthority | undefined;
 	},
 ): Promise<McpPresenterControlStart | undefined> {
-	const { bootstrap } = options;
-	if (options.enforcement !== true || !bootstrap) {
+	const { bootstrap, account } = options;
+	if (options.enforcement !== true || (!bootstrap && !account)) {
 		bootstrap?.destroy();
 		return undefined;
 	}
@@ -42,12 +43,12 @@ export async function startMcpPresenterControl(
 	let control: McpPresenterControl | undefined;
 	try {
 		if (process.platform !== "win32") dir = await mkdtemp(join(tmpdir(), "senpi-presenter-"));
-		control = new McpPresenterControl(writer, dir ? join(dir, "control.sock") : presenterPipePath());
+		control = new McpPresenterControl(writer, dir ? join(dir, "control.sock") : presenterPipePath(), account);
 		await control.listen();
-		control.bootstrap(bootstrap);
+		if (bootstrap) control.bootstrap(bootstrap);
 		return { control, ...(dir && { dir }) };
 	} catch {
-		bootstrap.destroy();
+		bootstrap?.destroy();
 		control?.dispose();
 		if (dir) await rm(dir, { recursive: true, force: true });
 		return undefined;

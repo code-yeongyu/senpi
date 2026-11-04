@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import type { Duplex } from "node:stream";
 import { isRecord } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
+import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import type { McpPresenterAuthority, McpPresenterRegistration } from "./mcp-presenter-authority.ts";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
@@ -28,10 +29,12 @@ export class McpPresenterControl {
 	private readonly server: Server;
 	readonly path: string;
 
-	constructor(writer: SessionEventWriter, path: string) {
+	constructor(writer: SessionEventWriter, path: string, account?: PresenterAccountAuthority) {
 		this.writer = writer;
 		this.authority = writer.enableMcpPresenters();
 		this.path = path;
+		// Only an endpoint that can enroll a same-account presenter is discoverable (senpi#4249).
+		if (account) writer.advertiseMcpPresenterControl(path);
 		this.enrollment = new McpPresenterEnrollment(this.authority.instance, path);
 		this.successors = new McpPresenterSuccessors(this.authority.instance, this.enrollment.nonces);
 		this.server = createServer((stream) => this.manage(stream));

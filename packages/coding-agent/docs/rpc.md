@@ -6566,7 +6566,26 @@ fresh challenge over the existing authenticated launch-owner channel. The CLI's
 bootstrap stream is never serialized into `begin_handover`.
 
 `mcp_presenter_context` returns the caller's current connection nonce and attachment
-context. These identifiers confer no authority. Acquisition and revocation use the
+context. These identifiers confer no authority.
+
+An embedding distribution may inject a `PresenterAccountAuthority` at host start
+(`presenterAccountAuthority` in the host options); no RPC command, argument,
+environment variable, settings file, or session state can supply one. An enforced host
+with such an authority has the management endpoint even without the descriptor-4
+bootstrap. A caller discovers it only by asking explicitly:
+`{"type":"mcp_presenter_context","sessionId":"...","discover":true}`. The reply's
+`context` then also carries `controlEndpoint`, the endpoint's socket or pipe path. The
+key is added only when `discover` is the boolean `true` and the host has an account
+authority; every other request, and every host without an authority, gets the five
+context fields exactly as before, so strict decoders that reject unknown keys keep
+working. The endpoint path confers no authority. Account enrollment over it is not yet
+accepted, so it currently admits only the inherited launch principal.
+
+An engine that predates `discover` ignores the key and answers with the five context
+fields. A client must treat a missing `controlEndpoint` as "account enrollment
+unavailable on this host": not an error, and not a reason to retry the request.
+
+Acquisition and revocation use the
 separate authenticated management endpoint, with a fresh challenge for each
 `mcp_presenter_assign`, `mcp_presenter_acquire`, or `mcp_presenter_revoke` command.
 Enrollment alone assigns no sessions. Before acquisition, the trusted native

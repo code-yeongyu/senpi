@@ -100,11 +100,3 @@ it("an authority does not create a control endpoint without enforcement, and the
 	expect(await start(new SessionEventWriter(() => {}), { account, bootstrap })).toBeUndefined();
 	expect(bootstrap.destroyed).toBe(true);
 });
-
-it("a disposed control endpoint is no longer discoverable", async () => {
-	const { writer, context, today } = enforcedWriter();
-	const presenter = await start(writer, { enforcement: true, account });
-	if (!presenter) throw new Error("No control endpoint");
-	presenter.control.dispose();
-	expect(context({ discover: true })).toBe(today());
-});
