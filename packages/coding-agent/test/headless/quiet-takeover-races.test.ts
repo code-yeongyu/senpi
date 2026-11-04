@@ -20,6 +20,9 @@ interface RaceRow {
 	readonly aReleased: boolean;
 }
 
+const releaseOneHold = (t: Rig, s: Opened) => t.call("a", { type: "release_attachment", sessionId: s.sessionId });
+const takeOverForC = (t: Rig, s: Opened) => t.takeOver("c", s, "device-c");
+
 const ROWS: readonly RaceRow[] = [
 	{
 		name: "the taker disconnects",
@@ -70,7 +73,7 @@ const ROWS: readonly RaceRow[] = [
 		name: "the previous client releases a hold",
 		at: "notice",
 		holds: 2,
-		disturb: (t, s) => t.call("a", { type: "release_attachment", sessionId: s.sessionId }),
+		disturb: releaseOneHold,
 		answer: "ok",
 		attachments: 1,
 		aReleased: true,
@@ -79,9 +82,45 @@ const ROWS: readonly RaceRow[] = [
 		name: "a second client takes over",
 		at: "notice",
 		holds: 2,
-		disturb: (t, s) => t.takeOver("c", s, "device-c"),
+		disturb: takeOverForC,
 		answer: "ok",
 		attachments: 1,
+		aReleased: true,
+	},
+	{
+		name: "the previous client releases a hold",
+		at: "commit",
+		holds: 2,
+		disturb: releaseOneHold,
+		answer: "ok",
+		attachments: 1,
+		aReleased: true,
+	},
+	{
+		name: "a second client takes over",
+		at: "commit",
+		holds: 2,
+		disturb: takeOverForC,
+		answer: "ok",
+		attachments: 1,
+		aReleased: true,
+	},
+	{
+		name: "the new holder closes its hold",
+		at: "notice",
+		holds: 2,
+		disturb: (t, s) => t.call("b", { type: "close_session", sessionId: s.sessionId }),
+		answer: "ok",
+		attachments: 0,
+		aReleased: true,
+	},
+	{
+		name: "the host starts draining",
+		at: "notice",
+		holds: 2,
+		disturb: async (t) => t.rig.core.router.beginDrain(),
+		answer: "ok",
+		attachments: null,
 		aReleased: true,
 	},
 ];
