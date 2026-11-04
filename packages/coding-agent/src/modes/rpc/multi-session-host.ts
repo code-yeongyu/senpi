@@ -64,6 +64,7 @@ import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
 import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
+import type { HeadlessPresence } from "../headless/presence.ts";
 
 export { presenterPipePath } from "./mcp-presenter-control-start.ts";
 
@@ -93,6 +94,8 @@ export interface MultiSessionHostOptions {
 	 * an explicit `false` is honored) and never exits for being empty.
 	 */
 	sessionOwner?: "client" | "machine";
+	/** Set only by a headless host with a presence binding (`modes/headless`): rows and opens carry presence. */
+	sessionPresence?: HeadlessPresence;
 }
 
 export {

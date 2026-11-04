@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,13 +34,17 @@ const OWNED_REGISTRY_ALIASES = [
 	"@code-yeongyu/senpi-pty",
 	"@code-yeongyu/senpi-telemetry",
 	"@code-yeongyu/senpi-codemode",
-	"@code-yeongyu/senpi-machine-ops",
 	"@code-yeongyu/senpi",
 ];
-const VENDORED_ONLY_WORKSPACES = ["@earendil-works/pi-client", "@earendil-works/pi-protocol"];
-const VENDORED_FILES = ["pi-client", "pi-protocol"].flatMap((name) =>
-	["index.js", "index.d.ts"].map((file) => ({ path: `package/vendor/${name}/${file}` })),
-);
+const VENDORED_ONLY_WORKSPACES = [
+	"@earendil-works/pi-client",
+	"@earendil-works/pi-protocol",
+	"@code-yeongyu/senpi-machine-ops",
+];
+const VENDORED_FILES = [
+	...["pi-client", "pi-protocol", "senpi-machine-ops"].flatMap((name) => ["index.js", "index.d.ts"].map((file) => `${name}/${file}`)),
+	"senpi-machine-ops/process/in-process-holder.js",
+].map((path) => ({ path: `package/vendor/${path}` }));
 
 let tempDir;
 
@@ -95,6 +99,23 @@ describe("npm publish dependency graph", () => {
 		for (const packageName of VENDORED_ONLY_WORKSPACES) {
 			assert.ok(!publishedNames.includes(packageName));
 		}
+	});
+
+	it("gives every registry package source a CHANGELOG.md next to its package.json", () => {
+		// Given: the release payload step (`release-notes.mjs extract --published` in build-binaries.yml) reads one
+		// CHANGELOG.md per published package and throws when one is missing; v2026.11.4-1 failed there (senpi#5784).
+		const directories = new Map(
+			findPackageDirectories("packages").map((directory) => [readJson(join(repoRoot, directory, "package.json")).name, directory]),
+		);
+
+		// When
+		const missing = [...registrySourcePackageNames]
+			.map((packageName) => [packageName, directories.get(packageName)])
+			.filter(([, directory]) => directory === undefined || !existsSync(join(repoRoot, directory, "CHANGELOG.md")))
+			.map(([packageName, directory]) => `${packageName} (${directory ?? "no workspace"}/CHANGELOG.md)`);
+
+		// Then
+		assert.deepEqual(missing, [], `registry packages without a CHANGELOG.md: ${missing.join(", ")}`);
 	});
 
 	it("reaches every in-repo workspace a published package declares through a resolvable registry edge", () => {
@@ -166,8 +187,7 @@ describe("npm publish dependency graph", () => {
 					.filter(([name]) => !VENDORED_ONLY_WORKSPACES.includes(name))
 					.map(([name, spec]) => {
 						if (ownedRegistryAliases.has(name)) return [name, `npm:${ownedRegistryAliases.get(name)}@${source.version}`];
-						if (name === "@code-yeongyu/senpi-codemode" || name === "@code-yeongyu/senpi-machine-ops")
-							return [name, source.version];
+						if (name === "@code-yeongyu/senpi-codemode") return [name, source.version];
 						return [name, spec];
 					}),
 			);
