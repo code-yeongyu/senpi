@@ -12,6 +12,21 @@
 
 ### Removed
 
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+- `ToolHostOptions.local` (the loop's context and assistant message, for a ToolHost running in the loop's process) and main-entry exports of `createBatchCoordinator`, `createExecutionLedger`, `createMemoryStoreMedium`, `openMemoryStore`, `createAdmissionLine` and `withToolNameCorrection` ([#5657](https://github.com/code-yeongyu/senpi/pull/5657)).
+- `DeviceFiles`: extension code reaches the device's files through one channel, the local filesystem on a fused session and the hand's disk, through its grant, `tool_call` handlers and filesystem policy, on a split session ([#5691](https://github.com/code-yeongyu/senpi/pull/5691))
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.4-1] - 2026-11-04
 
 ### Breaking Changes

@@ -1,4 +1,5 @@
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
+import type { HeadlessPresence } from "../headless/presence.ts";
 
 import type { createRpcSessionBinding } from "./session-binding.ts";
 
@@ -19,6 +20,8 @@ export type RpcHostSessionDefaults = Pick<
 	readonly hostContext?: RpcSessionLaunchProfile["sessionContext"];
 	/** The host's own agent dir (captured at startup); reported as `agentDir` so it survives a cwd change. */
 	readonly agentDir?: string;
+	/** A headless host's presence (`modes/headless`): `open_session` and `list_sessions` carry each session's. */
+	readonly sessionPresence?: HeadlessPresence;
 	/** The host's `--tool-runtime`; absent means `in-process`. */
 	readonly toolRuntime?: ToolRuntimeKind;
 };

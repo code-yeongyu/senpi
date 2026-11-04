@@ -25,6 +25,12 @@ export interface PreparationPipeline {
 	beforeToolCall(context: BeforeToolCallContext, signal?: AbortSignal): Promise<BeforeToolCallResult | undefined>;
 	afterToolCall(context: AfterToolCallContext, signal?: AbortSignal): Promise<AfterToolCallResult | undefined>;
 	removedToolHint(name: string): string | undefined;
+	/**
+	 * Called once per call after its freeze is recorded and before its body is stored: carries the facts the
+	 * `tool_call` preflight attached to the prepared arguments object over to the frozen copy the tool will execute
+	 * (senpi#5795). Synchronous and must never throw: a throw here would turn into a block after the freeze.
+	 */
+	afterFreeze(prepared: unknown, frozen: unknown): void;
 }
 
 export interface PreparedExecutorOptions {
@@ -50,8 +56,10 @@ export interface PrepareRequest {
 	readonly generation: number;
 	readonly workspace: string;
 	readonly scope: string;
-	/** The model's raw call; its id is the execution's command id. */
+	/** The model's raw call; its id is the execution's command id unless `commandId` names another. */
 	readonly call: AgentToolCall;
+	/** The execution's command id when the call's own id cannot be one: the model may repeat a call id in one message. */
+	readonly commandId?: string;
 	readonly assistantMessage: AssistantMessage;
 	readonly context: AgentContext;
 	/** Issuer-minted with the call, so a re-sent prepare matches its admission exactly. */
