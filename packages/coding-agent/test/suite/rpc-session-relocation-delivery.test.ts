@@ -16,6 +16,20 @@ function afterHops(hops: number, step: () => void): void {
 	else queueMicrotask(() => afterHops(hops - 1, step));
 }
 
+function relocationOn(channel: RelocationChannel): RpcSessionRelocation {
+	return new RpcSessionRelocation({
+		session: {
+			sessionFile: "/session.jsonl",
+			subscribe: () => () => {},
+			isStreaming: false,
+			currentAbortSource: undefined,
+			sendCustomMessage: async () => {},
+		} as never,
+		pendingPrompts: () => [],
+		channel,
+	});
+}
+
 async function leaveDuringDelivery(hops: number): Promise<{ order: string[]; delivered: number }> {
 	const order: string[] = [];
 	let delivered = 0;
@@ -39,17 +53,7 @@ async function leaveDuringDelivery(hops: number): Promise<{ order: string[]; del
 			});
 		},
 	};
-	relocation = new RpcSessionRelocation({
-		session: {
-			sessionFile: "/session.jsonl",
-			subscribe: () => () => {},
-			isStreaming: false,
-			currentAbortSource: undefined,
-			sendCustomMessage: async () => {},
-		} as never,
-		pendingPrompts: () => [],
-		channel,
-	});
+	relocation = relocationOn(channel);
 	const answered = relocation
 		.request({ target: "Studio", reason: "heavy build" })
 		.then((result) => order.push(`answer:${result.status}:${"reason" in result ? result.reason : ""}`));
@@ -70,5 +74,33 @@ describe("relocation request delivery (senpi#5801)", () => {
 			expect(run.order).toContain("answer:refused:app_disconnected");
 		}
 		expect(runs.map((run) => run.order)).toEqual(runs.map(() => runs[2]?.order));
+	});
+
+	it("refuses the request at once when writing the record throws, instead of throwing past it", async () => {
+		// Given: a channel whose write throws synchronously, as a failing sink or an in-process client's handler can.
+		let writes = 0;
+		const relocation = relocationOn({
+			offerer: () => DESKTOP,
+			current: () => DESKTOP,
+			send: () => {
+				writes += 1;
+				throw new Error("sink write failed");
+			},
+		});
+
+		// When: the agent asks to move, twice.
+		const first = await relocation.request({ target: "Studio", reason: "heavy build" });
+		const second = await relocation.request({ target: "Studio", reason: "again" });
+
+		// Then: each request was written once and refused with the write's failure, never left waiting for an answer.
+		const refusedSend = {
+			status: "refused",
+			reason: "send_failed",
+			detail: expect.stringContaining("sink write failed"),
+		};
+		expect(first).toEqual(refusedSend);
+		expect(second).toEqual(refusedSend);
+		expect(writes).toBe(2);
+		relocation.dispose();
 	});
 });

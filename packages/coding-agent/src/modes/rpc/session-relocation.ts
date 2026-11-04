@@ -222,13 +222,21 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		// that leaves right there refuses this request and starts the teardown in that same stack; a waiter attached after
 		// that would be queued behind the teardown (senpi#5801). Holding a waiter here instead is not enough: the body's
 		// race attaches only when execute() returns. Run-to-completion makes this independent of how many hops the sink takes.
+		// A send that throws ends the request at once with a typed refusal: thrown from this microtask it would be an
+		// uncaught exception, which ends an RPC host process, and the request would wait out the answer timeout.
 		queueMicrotask(() => {
-			if (this.pending.has(id))
+			const pending = this.pending.get(id);
+			if (pending === undefined) return;
+			try {
 				this.deps.channel.send(
 					connection,
 					{ type: "host_request", id, ...fields } satisfies RpcHostRequest,
 					"request",
 				);
+			} catch (error) {
+				const detail = error instanceof Error ? error.message : String(error);
+				pending.finish(refused("send_failed", `the request could not be sent to the app: ${detail}`));
+			}
 		});
 		return answer;
 	}
