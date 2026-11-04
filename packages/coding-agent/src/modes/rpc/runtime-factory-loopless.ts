@@ -219,7 +219,9 @@ export function createLooplessRuntimeFactory(
 		const fileGuards: HandFileGuards | undefined =
 			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)
 				? {
-						// A file operation's tool_call check presents its handlers' UI on the attached client, as a tool call does.
+						// A file operation's tool_call check presents its handlers' UI through the port with that operation's nested
+						// requester. It reaches the attached client only when the brain lets file operations host the presentation
+						// plane (`filePlanes`); by default it does not, so the UI stays on the hand and the refusal is reported.
 						beforeToolCall: (toolName, toolCallId, input, nested) =>
 							presentation.present(nested, () =>
 								toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
