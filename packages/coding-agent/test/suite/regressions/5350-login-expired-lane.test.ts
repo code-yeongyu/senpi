@@ -1,8 +1,8 @@
 /**
  * senpi#5350 (PR-A) on the auth lane: a `login_expired` account is never spawned for a turn, healthy siblings keep
  * serving, and a pool with only expired accounts fails with the expired sign-in message, which stops retries and
- * model hops. The end-to-end case runs the `auth_error` path only (failing turn -> block -> due probe signed_out);
- * the SDK error a refused grant really produces is the open Q1 capture.
+ * model hops. One end-to-end case runs the generic `auth_error` path (failing turn -> block -> due probe signed_out);
+ * "RED (Q1 capture)" replays the result Claude Code returns for a refused refresh (captured on senpi#5350).
  *
  * Guard test (already green on main): "a sibling serves".
  */
@@ -175,7 +175,7 @@ describe("senpi#5350 login_expired on the auth lane", () => {
 		expect(await stored(lane, "alice")).toMatchObject({ signInRequired: "login_expired", blockReason: "auth_error" });
 	});
 
-	it("RED (auth_error path only, Q1 open): failed turn -> block -> due probe signed_out -> expired, no spawn", async () => {
+	it("RED (generic auth_error path): failed turn -> block -> due probe signed_out -> expired, no spawn", async () => {
 		const lane = await installLane(
 			[cliSlot("alice")],
 			async () => ({ state: "signed_out" }),
