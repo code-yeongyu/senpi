@@ -14,7 +14,11 @@ export type LoopHookRunner = (event: string, payload: JsonValue) => Promise<Json
 export type LoopHookPoint = "received" | "started" | "ran" | "replied";
 
 export interface LoopHookHandOptions {
-	/** The user machine's end of the link to the loop host. */
+	/**
+	 * The user machine's end of the link to the loop host. It must outlive this process (the machine's long-lived link
+	 * endpoint): a `started` still unacknowledged when the endpoint dies is lost, and the loop host then sends the call
+	 * again to the replacement process, which runs the hooks a second time.
+	 */
 	readonly transport: Transport;
 	readonly lane: string;
 	readonly run: LoopHookRunner;

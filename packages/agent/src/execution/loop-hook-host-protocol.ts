@@ -3,8 +3,13 @@ import type { JsonValue } from "@earendil-works/pi-ai";
 /**
  * The loop-hook link (brain/hand split S33, decisions C8, K5, K7): when the loop runs away from the user's machine, the
  * loop host asks that machine to run the user's loop hooks (shell hooks and the hook halves of extensions) and waits for
- * the result before it builds the provider request. Every message travels on one lane, so a hook's `started` always
- * reaches the loop host before the `hello` of a hand process that replaced the one that started it.
+ * the result before it builds the provider request. Every message travels on one lane, so a hook's `started` reaches
+ * the loop host before the `hello` of a hand process that replaced the one that started it, PROVIDED the hand's
+ * transport endpoint outlives the hand process: `started` is in the endpoint's send window once `send` resolves, not yet
+ * acknowledged, and the transport delivers it only while both endpoints live. If the endpoint dies with the process and
+ * takes an unacknowledged `started` with it, the loop host never learns the call began and sends it again to the
+ * replacement, so a hook that had run runs a second time. At-most-once dispatch therefore holds only on a hand whose
+ * endpoint is the machine's long-lived link endpoint, not one owned by the hand process.
  */
 export type LoopHookMessage = LoopHookCall | LoopHookHello | LoopHookStarted | LoopHookReply | LoopHookFailed;
 

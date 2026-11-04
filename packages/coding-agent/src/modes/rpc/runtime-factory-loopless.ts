@@ -18,7 +18,13 @@ import {
 	looplessGrantRunsToolHandlers,
 } from "./loopless-execute-grant.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
-import { extensionToolHandlers, type TwoSidedHome } from "./loopless-tool-handlers.ts";
+import {
+	createLoopHookCall,
+	extensionLoopHooks,
+	extensionToolHandlers,
+	type LooplessLoopHooks,
+	type TwoSidedHome,
+} from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
 
 /**
@@ -49,6 +55,11 @@ export interface LooplessRuntime {
 		signal?: AbortSignal,
 		nested?: NestedRequest,
 	): Promise<AgentToolResult<unknown>>;
+	/**
+	 * Runs this runtime's extensions' loop hooks for a loop that runs elsewhere, on the same runner as its tool calls
+	 * (S33). Refused unless the runtime was built as its extensions' home (`twoSidedHome: "hand"`).
+	 */
+	readonly runLoopHooks: LooplessLoopHooks;
 	/** Marks its extension contexts stale, then closes the tool work and the tool child it still runs. */
 	dispose(): Promise<void>;
 }
@@ -173,8 +184,10 @@ export function createLooplessRuntimeFactory(
 		});
 		toolNames = () => [...registry.toolRegistry.keys()];
 		const getLoadedHookSources = services.resourceLoader.getLoadedHookSources?.bind(services.resourceLoader);
+		const loopHookCall = createLoopHookCall();
 		runtime.extensionRunner.bindSessionlessFacts({
 			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
+			loopHookCall: () => loopHookCall.current(),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
@@ -205,6 +218,12 @@ export function createLooplessRuntimeFactory(
 			definitions: registry.definitions,
 			diagnostics,
 			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
+			runLoopHooks: extensionLoopHooks(
+				runtime.extensionRunner,
+				local.twoSidedHome ?? "loop",
+				services.cwd,
+				loopHookCall,
+			),
 			dispose: async () => {
 				// Stale first, as a session disposes: a close that fails must not leave the contexts usable.
 				runtime.extensionRunner.invalidate("This loopless runtime was disposed.");

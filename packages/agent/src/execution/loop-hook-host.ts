@@ -11,7 +11,9 @@ import { decodeLoopHookMessage, encodeLoopHookMessage, type LoopHookCall } from 
  * builds this host: its hooks run in its own process, as today.
  *
  * Restarts: a call the previous hand process never started is sent again, with the same ID, to the new one. A call it
- * had started (and so may have run) is never sent again: it ends with {@link LoopHookRestartedError}.
+ * had started (and so may have run) is never sent again: it ends with {@link LoopHookRestartedError}. "Started" is what
+ * this host received, so this holds only while the hand's transport endpoint outlives the hand process (see
+ * `loop-hook-host-protocol.ts`).
  */
 export interface LoopHookHost {
 	/** Runs the user's hooks for `event` on the user's machine. Rejects with the hook's failure, a restart or an abort. */

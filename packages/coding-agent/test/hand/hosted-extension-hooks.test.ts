@@ -1,8 +1,12 @@
 // S33 (brain/hand split, C7c.b; decisions K5, K7): with the loop away from the user's machine (an in-process stand-in
-// for a hosted loop host), an unmodified two-sided extension runs whole on the connected user machine: its tool hooks
-// run there with the tool, and its loop hooks run there through the loop-hook link, so one state reaches the provider
-// request. With that machine offline the request waits, then resumes once.
+// for a hosted loop host), the unmodified two-sided closure-ext fixture (loaded by path, as S29 loads it) runs whole on
+// the connected user machine: its tool hooks run there with the tool, and its loop hook runs there too, in the same
+// extension instance, so one closure reaches the provider request exactly as on a fused session. Nothing is shared
+// in-process between the loop host and the user machine. With that machine offline the request waits, then resumes once.
+import { fileURLToPath } from "node:url";
 import {
+	type AgentTool,
+	type ExecutionScope,
 	createInProcessNetwork,
 	createLoopHookHost,
 	createReliableTransport,
@@ -12,13 +16,22 @@ import {
 	serveLoopHooks,
 	type TransportSide,
 } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type JsonValue } from "@earendil-works/pi-ai";
+import {
+	type FauxResponseStep,
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentSystemPrompt,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadExtensions } from "../../src/core/extensions/loader.ts";
 import type { BeforeAgentStartEventResult, ExtensionFactory } from "../../src/core/extensions/types.ts";
-import { createHarness, type Harness } from "../suite/harness.ts";
-import { createLooplessHandScopes } from "../../src/modes/rpc/remote-executor-scope.ts";
+import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
+import { createHarness, getToolResult, type Harness } from "../suite/harness.ts";
+import { createTestResourceLoader } from "../utilities.ts";
 import { cleanupHands, handConfiguration, handDirs, openLink, startHandOn } from "./remote-hand-fixture.ts";
+
+const closureExt = fileURLToPath(new URL("../fixtures/closure-ext/index.ts", import.meta.url));
 
 const harnesses: Harness[] = [];
 const closers: Array<() => void> = [];
@@ -58,137 +71,165 @@ function hookLink() {
 	return { loop, hand, drop: () => link.drop(), connect: () => link.connect() };
 }
 
-const noteTool = {
-	name: "note",
-	label: "note",
-	description: "note echoes its input",
+const echo: AgentTool = {
+	name: "echo",
+	label: "Echo",
+	description: "Echo the arguments back",
 	parameters: Type.Object({}, { additionalProperties: true }),
-	execute: async (_id: string, params: unknown) => ({
-		content: [{ type: "text" as const, text: JSON.stringify(params) }],
-		details: {},
-	}),
+	execute: async (_id, params) => ({ content: [{ type: "text", text: JSON.stringify(params) }], details: {} }),
+};
+const echoOnHand: ExtensionFactory = (pi) => {
+	pi.registerTool(echo);
 };
 
-/**
- * Two-sided and unmodified: its tool_result writes state that its next before_agent_start reads into the prompt. The
- * user machine is one process, so its tool host and its hook runner share `machine` (the extension's module state).
- */
-const twoSided =
-	(machine: { lastResult?: string; loopHookRuns: number }): ExtensionFactory =>
+/** The loop host's only extension: its before_agent_start waits for the user machine and applies what came back. */
+const forwardLoopHooks =
+	(host: LoopHookHost, scope: () => ExecutionScope, issued: () => void, errors: string[]): ExtensionFactory =>
 	(pi) => {
-		pi.on("tool_result", (event) => {
-			machine.lastResult = event.content.map((part) => (part.type === "text" ? part.text : "")).join("");
-			return undefined;
-		});
-		pi.on("before_agent_start", (event) => {
-			machine.loopHookRuns++;
-			return machine.lastResult === undefined
-				? undefined
-				: { systemPrompt: `${event.systemPrompt}\nThe last note said ${machine.lastResult}` };
-		});
-		pi.registerTool(noteTool);
-	};
-
-/** What the loop host loads: the tool's definition only (its catalog), and the forward of its loop hooks. */
-const loopHost =
-	(host: LoopHookHost, issued: () => void): ExtensionFactory =>
-	(pi) => {
-		pi.registerTool(noteTool);
-		pi.on("before_agent_start", async (event): Promise<BeforeAgentStartEventResult> => {
+		pi.on("before_agent_start", async (event, ctx): Promise<BeforeAgentStartEventResult> => {
 			issued();
-			const reply = (await host.run("before_agent_start", {
-				prompt: event.prompt,
-				systemPrompt: event.systemPrompt,
-			})) as { systemPrompt?: string };
+			const { id, root } = scope();
+			const reply = (await host
+				.run("before_agent_start", {
+					prompt: event.prompt,
+					systemPrompt: event.systemPrompt,
+					sessionId: ctx.sessionManager.getSessionId(),
+					scope: { id, root },
+				})
+				.catch((error: unknown) => {
+					errors.push(error instanceof Error ? error.message : String(error));
+					throw error;
+				})) as { systemPrompt?: string; errors?: { extensionPath: string; error: string }[] };
+			for (const failed of reply.errors ?? []) errors.push(`${failed.extensionPath}: ${failed.error}`);
 			return reply.systemPrompt === undefined ? {} : { systemPrompt: reply.systemPrompt };
 		});
 	};
 
+const closureLine = (systemPrompt: string): string =>
+	systemPrompt.split("\n").find((line) => line.startsWith("closure-ext ")) ?? "<missing>";
+
+interface Trace {
+	readonly toolText: string;
+	readonly providerClosureLines: string[];
+}
+
+const turns = (lines: string[]): FauxResponseStep[] => [
+	(context) => {
+		lines.push(closureLine(getCurrentSystemPrompt(context.messages)));
+		return fauxAssistantMessage([fauxToolCall("echo", { n: 0 })], { stopReason: "toolUse" });
+	},
+	fauxAssistantMessage("turn one done"),
+	(context) => {
+		lines.push(closureLine(getCurrentSystemPrompt(context.messages)));
+		return fauxAssistantMessage("turn two done");
+	},
+];
+
+async function fusedTrace(): Promise<Trace> {
+	const extensionsResult = await loadExtensions([closureExt], process.cwd());
+	const fused = await createHarness({ tools: [echo], resourceLoader: createTestResourceLoader({ extensionsResult }) });
+	harnesses.push(fused);
+	const providerClosureLines: string[] = [];
+	fused.setResponses(turns(providerClosureLines));
+	await fused.session.prompt("call echo");
+	const toolText = getToolResult(fused, "echo")
+		.content.map((part) => (part.type === "text" ? part.text : ""))
+		.join("");
+	await fused.session.prompt("what did the tool see?");
+	return { toolText, providerClosureLines };
+}
+
+/**
+ * The user machine: one hand whose scope runtime loads closure-ext by path and serves both the tool calls (remote
+ * executor) and the loop hooks (loop-hook link). The loop host loads nothing of the extension.
+ */
 async function hostedSession() {
-	const machine = { loopHookRuns: 0 } as { lastResult?: string; loopHookRuns: number };
-	const user = await createHarness({ extensionFactories: [twoSided(machine)] });
-	harnesses.push(user);
 	const tools = openLink();
 	const dirs = await handDirs("s33");
-	startHandOn(
-		tools,
-		createLooplessHandScopes(handConfiguration(dirs), {
-			extensionFactories: [twoSided(machine)],
-			twoSidedHome: "hand",
-		}),
-	);
+	const hand = createLooplessHand(handConfiguration(dirs, ["-e", closureExt]), {
+		extensionFactories: [echoOnHand],
+		twoSidedHome: "hand",
+	});
+	startHandOn(tools, hand.openScope);
 	const hooks = hookLink();
-	const runner = user.getExtensionRunner();
 	const served = serveLoopHooks({
 		transport: hooks.hand,
 		lane: "loop-hooks",
-		run: async (_event, payload) => {
-			const { prompt, systemPrompt } = payload as { prompt: string; systemPrompt: string };
-			const combined = await runner.emitBeforeAgentStart(prompt, undefined, systemPrompt, { cwd: user.tempDir });
-			return JSON.parse(JSON.stringify(combined ?? {})) as JsonValue;
-		},
+		run: hand.loopHooks,
 	});
 	closers.push(() => served.close());
 	const host = createLoopHookHost({ transport: hooks.loop, lane: "loop-hooks" });
 	let issued = Promise.withResolvers<void>();
-	const loop = await createHarness({ extensionFactories: [loopHost(host, () => issued.resolve())] });
-	harnesses.push(loop);
-	loop.agent.toolHost = createRemoteToolHost({ transport: tools.brain, placement: "cross-machine" });
-	const systemPrompts = () => loop.faux.getCallLog().map((entry) => entry.context.systemPrompt ?? "");
+	const hookErrors: string[] = [];
+	let loop: Harness | undefined;
+	const scope = (): ExecutionScope => {
+		if (loop === undefined) throw new Error("the loop host is not built yet");
+		return loop.agent.getExecutionScope?.() ?? loop.agent.executionScope;
+	};
+	loop = await createHarness({
+		tools: [echo],
+		extensionFactories: [forwardLoopHooks(host, scope, () => issued.resolve(), hookErrors)],
+	});
+	const session = loop;
+	harnesses.push(session);
+	session.agent.toolHost = createRemoteToolHost({ transport: tools.brain, placement: "cross-machine" });
+	const providerClosureLines: string[] = [];
+	session.setResponses(turns(providerClosureLines));
 	return {
-		machine,
-		loop,
+		loop: session,
+		hookErrors,
 		host,
 		hooks,
-		systemPrompts,
+		providerClosureLines,
 		nextIssue: () => {
 			issued = Promise.withResolvers<void>();
 			return issued.promise;
 		},
+		toolText: () =>
+			getToolResult(session, "echo")
+				.content.map((part) => (part.type === "text" ? part.text : ""))
+				.join(""),
 	};
 }
 
-describe("a two-sided extension's hooks run on the connected user machine (S33, C7c.b, K5)", () => {
-	it("its tool_result state on the user machine reaches the next turn's provider request through its loop hook", async () => {
+describe("an unmodified two-sided extension runs whole on the connected user machine (S33, C7c.b, K5)", () => {
+	it("its tool_result closure state reaches the next turn's provider request, exactly as fused", async () => {
+		const fused = await fusedTrace();
 		const session = await hostedSession();
-		session.loop.setResponses([
-			fauxAssistantMessage([{ ...fauxToolCall("note", { n: 1 }), id: "call-0" }], { stopReason: "toolUse" }),
-			fauxAssistantMessage("noted"),
-			fauxAssistantMessage("done"),
-		]);
 
-		await session.loop.session.prompt("take a note");
-		await session.loop.session.prompt("what did it say?");
+		await session.loop.session.prompt("call echo");
+		const toolText = session.toolText();
+		await session.loop.session.prompt("what did the tool see?");
 
-		expect(session.machine.loopHookRuns).toBe(2);
-		expect(session.systemPrompts().at(-1)).toContain('The last note said {"n":1}');
-		expect(session.loop.getExtensionRunner().twoSidedExtensionPaths().size).toBe(0);
+		expect(session.hookErrors).toEqual([]);
+		expect(fused).toEqual({
+			toolText: '{"n":1}',
+			providerClosureLines: ["closure-ext turn=1 lastResultN=none", "closure-ext turn=2 lastResultN=1"],
+		});
+		expect({ toolText, providerClosureLines: session.providerClosureLines }).toEqual(fused);
+		expect(session.loop.getExtensionRunner().getExtensionPaths()).not.toContain(closureExt);
 	});
 
 	it("user machine offline: the request waits with no provider request, then resumes exactly once", async () => {
+		const fused = await fusedTrace();
 		const session = await hostedSession();
-		session.loop.setResponses([
-			fauxAssistantMessage([{ ...fauxToolCall("note", { n: 2 }), id: "call-0" }], { stopReason: "toolUse" }),
-			fauxAssistantMessage("noted"),
-			fauxAssistantMessage("done"),
-		]);
-		await session.loop.session.prompt("take a note");
+		await session.loop.session.prompt("call echo");
+		const toolText = session.toolText();
 		const before = session.loop.faux.getCallLog().length;
 		session.hooks.drop();
 
 		const issued = session.nextIssue();
-		const turn = session.loop.session.prompt("what did it say?");
+		const turn = session.loop.session.prompt("what did the tool see?");
 		await issued;
 
 		expect(session.host.waiting()).toHaveLength(1);
 		expect(session.loop.faux.getCallLog()).toHaveLength(before);
-		expect(session.machine.loopHookRuns).toBe(1);
 
 		session.hooks.connect();
 		await turn;
 
-		expect(session.machine.loopHookRuns).toBe(2);
+		expect(session.hookErrors).toEqual([]);
 		expect(session.loop.faux.getCallLog()).toHaveLength(before + 1);
-		expect(session.systemPrompts().at(-1)).toContain('The last note said {"n":2}');
+		expect({ toolText, providerClosureLines: session.providerClosureLines }).toEqual(fused);
 	});
 });
