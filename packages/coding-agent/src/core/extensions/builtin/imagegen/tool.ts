@@ -9,7 +9,7 @@ import {
 	parseOpenAIImageSize,
 } from "@earendil-works/pi-ai/compat";
 import { defineTool, type ExtensionContext } from "../../types.ts";
-import { type ImageGenAuthResolution, imageGenCandidates, SETUP_REASON } from "./auth.ts";
+import { type ImageGenAuthResolution, imageGenCandidates, setupReason, unsupportedImageGateways } from "./auth.ts";
 import { DEFAULT_IMAGE_MODEL, failure, type GenerateImageDetails, IMAGE_MODEL_NAMES, Params } from "./params.ts";
 import { displayPath, outputFormatOf, resolveTargets, withFormatExtension } from "./paths.ts";
 import { loadMaskImage, loadReferenceImages } from "./reference-images.ts";
@@ -126,10 +126,14 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			return failure(NATIVE_BYPASS_MESSAGE, "provider_native_bypass", context);
 		}
 
-		const candidates = imageGenCandidates({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+		const modelRegistry = imageGenRegistryOverride() ?? ctx.modelRegistry;
+		const candidates = imageGenCandidates({ modelRegistry });
 		const firstCandidate = await candidates.next();
 		if (firstCandidate.done) {
-			return failure(SETUP_REASON, "missing_config", context);
+			const unsupported = await unsupportedImageGateways({ modelRegistry });
+			const result = failure(setupReason(unsupported), "missing_config", context);
+			if (unsupported.length === 0) return result;
+			return { ...result, details: { ...result.details, unsupportedProviders: unsupported } };
 		}
 		let source = sourceLabel(firstCandidate.value);
 		const parsedSize = parseOpenAIImageSize(size);
