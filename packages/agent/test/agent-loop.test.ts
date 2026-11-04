@@ -1972,9 +1972,11 @@ describe("agentLoop with AgentMessage", () => {
 					parallelFastObserved = true;
 				}
 				executionOrder.push(`fast:${params.value}`);
-				if (params.value === "b") {
-					await fastDone;
-				}
+				if (params.value === "c") releaseFast?.();
+				// b runs until c has started, so the overlap is observed without a timer; a scheduler that ran the two
+				// one after the other reaches the bound with c not yet started and fails the parallel assertion.
+				if (params.value === "b")
+					await Promise.race([fastDone, new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
 				activeFastTools--;
 				return {
 					content: [{ type: "text", text: `fast: ${params.value}` }],
@@ -2010,7 +2012,6 @@ describe("agentLoop with AgentMessage", () => {
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
 					setTimeout(() => releaseSlow?.(), 20);
-					setTimeout(() => releaseFast?.(), 40);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
