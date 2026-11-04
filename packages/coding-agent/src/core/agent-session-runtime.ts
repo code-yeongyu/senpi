@@ -729,6 +729,9 @@ export class AgentSessionRuntime {
 	 * (senpi#3711). An RPC host closing one session leaves it unset and keeps only the per-handler limits.
 	 */
 	async dispose(options: { readonly processExit?: boolean } = {}): Promise<void> {
+		// End the active run first, as teardownCurrent() does. Otherwise `session_shutdown` tears extension
+		// resources down under a running tool and the loop sends that failure to the model in one more request.
+		await this.session.abort();
 		await emitSessionShutdownEvent(
 			this.session.extensionRunner,
 			{ type: "session_shutdown", reason: "quit" },
