@@ -2,21 +2,21 @@ import { randomUUID } from "node:crypto";
 import { queuedForm } from "../../core/extensions/builtin/mcp/modern/consent-queue.ts";
 import { isRecord, validateMrtrForm } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
 import type { McpFormInput, McpFormOutcome, McpFormPresentation } from "../../core/mcp-form-types.ts";
-import { McpFormDialog, type McpPresenterReply } from "./mcp-form-dialog.ts";
-import type { McpPresenterConnection, McpPresenterState } from "./mcp-presenter-bindings.ts";
-import { current, type Grant } from "./mcp-presenter-grants.ts";
+import type { McpPresenterReply } from "./mcp-form-dialog.ts";
+import type { Binding, McpPresenterConnection, McpPresenterState } from "./mcp-presenter-bindings.ts";
+import { McpFormGroup } from "./mcp-presenter-form-group.ts";
+import { current, holders } from "./mcp-presenter-grants.ts";
 
 export function receive(state: McpPresenterState, sender: McpPresenterConnection, value: unknown): McpPresenterReply {
 	const connection = state.connections.get(sender);
-	const binding =
-		isRecord(value) && typeof value.sessionId === "string" ? state.bindings.get(value.sessionId) : undefined;
-	const grant = binding?.grant;
+	if (!isRecord(value) || typeof value.sessionId !== "string") return { error: "presenter_not_authorized" };
+	const binding = state.bindings.get(value.sessionId);
+	const held = binding ? holders(state, binding).filter((grant) => grant.registration.connection === connection) : [];
 	// Check authority before parsing the private namespace, including invented dialog ids.
-	if (!connection || !grant || grant.registration.connection !== connection || !current(state, grant))
-		return { error: "presenter_not_authorized" };
+	if (!connection || held.length === 0) return { error: "presenter_not_authorized" };
+	const grant = held.find((candidate) => candidate.id === value.grantId);
 	if (
-		!isRecord(value) ||
-		value.grantId !== grant.id ||
+		!grant ||
 		value.bindingEpoch !== grant.scope.bindingEpoch ||
 		value.attachmentEpoch !== grant.scope.attachmentEpoch
 	)
@@ -59,15 +59,26 @@ export function receive(state: McpPresenterState, sender: McpPresenterConnection
 	}
 }
 
-export function presentation(state: McpPresenterState, grant: Grant): McpFormPresentation {
+export function presentation(
+	state: McpPresenterState,
+	binding: Binding,
+	presence: NonNullable<Binding["presence"]>,
+): McpFormPresentation {
+	const ready = () => binding.presence === presence && holders(state, binding).length > 0;
 	return {
-		signal: grant.lifetime.signal,
-		ready: () => current(state, grant),
-		present: (input) => present(state, grant, input),
+		signal: presence.lifetime.signal,
+		ready,
+		present: (input) => present(state, binding, presence.lifetime.signal, ready, input),
 	};
 }
 
-function present(state: McpPresenterState, grant: Grant, input: McpFormInput): Promise<McpFormOutcome> {
+function present(
+	state: McpPresenterState,
+	binding: Binding,
+	lifetime: AbortSignal,
+	ready: () => boolean,
+	input: McpFormInput,
+): Promise<McpFormOutcome> {
 	const { clock } = state;
 	const unavailable: McpFormOutcome = {
 		kind: "processing_failure",
@@ -75,34 +86,28 @@ function present(state: McpPresenterState, grant: Grant, input: McpFormInput): P
 		humanAdmission: false,
 	};
 	if (
-		!current(state, grant) ||
+		!ready() ||
 		!validateMrtrForm(input.schema) ||
 		Object.keys(input.schema.properties).length > 64 ||
 		Buffer.byteLength(JSON.stringify({ message: input.message, schema: input.schema })) > 512 * 1024
 	)
 		return Promise.resolve(unavailable);
-	const binding = grant.registration.binding;
 	const deadline = clock.now() + input.deadlineMs;
 	const expired = new AbortController();
 	const timer = clock.schedule(() => expired.abort(), Math.max(0, input.deadlineMs));
-	const signal = AbortSignal.any([
-		input.operationSignal,
-		input.presentationSignal,
-		grant.lifetime.signal,
-		expired.signal,
-	]);
-	return queuedForm(grant, signal, () => {
+	const signal = AbortSignal.any([input.operationSignal, input.presentationSignal, lifetime, expired.signal]);
+	return queuedForm(binding.queue, signal, () => {
 		clock.cancel(timer);
-		if (!current(state, grant)) return Promise.resolve(unavailable);
-		const dialogId = randomUUID();
-		const dialog = new McpFormDialog(
-			{
-				...input,
-				presentationSignal: signal,
-				deadlineMs: Math.max(0, deadline - clock.now()),
-			},
-			{
-				clock,
+		// The holder snapshot: only grants current now get a dialog; later holders wait for the next form (2.5, 2.7).
+		const snapshot = ready() ? holders(state, binding) : [];
+		if (snapshot.length === 0) return Promise.resolve(unavailable);
+		const group = new McpFormGroup(
+			{ ...input, presentationSignal: signal, deadlineMs: Math.max(0, deadline - clock.now()) },
+			{ clock, sessionId: binding.sessionId, admit: binding.admit },
+		);
+		for (const grant of snapshot) {
+			const dialogId = randomUUID();
+			const dialog = group.join({
 				envelope: {
 					sessionId: binding.sessionId,
 					bindingEpoch: binding.epoch,
@@ -115,13 +120,14 @@ function present(state: McpPresenterState, grant: Grant, input: McpFormInput): P
 				remove: () => {
 					grant.dialogs.delete(dialogId);
 				},
-				admit: binding.admit,
 				send: grant.registration.connection.send,
-			},
-		);
-		grant.dialogs.set(dialogId, dialog);
-		dialog.start();
-		return dialog.result;
+				negotiated: grant.registration.elsewhere,
+				answeredBy: grant.answeredBy,
+			});
+			grant.dialogs.set(dialogId, dialog);
+		}
+		group.start();
+		return group.result;
 	})
 		.catch((): McpFormOutcome => ({
 			...unavailable,
