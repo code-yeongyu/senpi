@@ -9,6 +9,7 @@ import {
 	isProviderDiagnosticCategory,
 	isProviderDiagnosticResetsAt,
 	isProviderDiagnosticStatus,
+	isTlsChainVerificationCode,
 	PROVIDER_DIAGNOSTIC_MAX_BYTES,
 } from "./utils/provider-diagnostic-vocabulary.ts";
 
@@ -45,7 +46,7 @@ export interface ProviderDiagnostic {
 	resetsAt?: number;
 }
 
-export { PROVIDER_DIAGNOSTIC_MAX_BYTES };
+export { isTlsChainVerificationCode, PROVIDER_DIAGNOSTIC_MAX_BYTES };
 
 function readField(
 	value: object,

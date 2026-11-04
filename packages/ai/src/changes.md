@@ -1,3 +1,57 @@
+## 2026-10-30 - Session-affinity key option for Anthropic Messages (senpi#2553)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `StreamOptions` gains `sessionAffinityKey?: string`, an opaque routing key that Anthropic Messages sends in its session-affinity header instead of `sessionId`.
+
+### Why
+
+- A gateway that spreads requests over several upstream accounts needs a stable per-session key to keep one session on one account and its prompt cache; the header carried the raw session id, and only for named gateways (senpi#2553).
+
+### Why an extension could not handle it
+
+- The affinity header is built inside the Anthropic client construction from the session id; no hook replaces that value without also changing `sessionId`, which keys per-session caches and resource cleanup.
+
+### Expected merge conflict zones
+
+- LOW: the `sessionId` doc block in `StreamOptions`.
+
+## 2026-10-27 - Models.login stamps a login id that refreshes never mint (senpi#4099)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` stamps the credential it commits through `stampLogin(appendLoginSlot(...))`, so every sign-in stores a fresh `loginId`.
+
+### Why
+
+- Retry fallback needs a durable "someone signed in" signal that a token refresh never produces (senpi#4099). The material HMAC moves on every refresh.
+
+### Why an extension could not handle it
+
+- Extension login flows commit through `Models.login`, and only that write path knows a sign-in happened.
+
+### Expected merge conflict zones
+
+- The `appendLoginSlot` call inside `Models.login`'s `modify`.
+
+## 2026-10-30 - Stable SIWC host identity and app name (senpi#5014, part of #5003)
+
+### What changed
+
+- `packages/ai/src/cli.ts`: persist the standalone AI CLI's UUIDv4 in user-level state and reuse it across invocations and working directories.
+
+### Why
+
+- `packages/ai/src/cli.ts`: OpenAI requires a stable host identifier rather than a fresh UUID on every invocation.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/cli.ts`: the standalone CLI owns its installation persistence.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/cli.ts`: login options and installation persistence.
+
 ## 2026-11-01 - Tool names with a stray word prefix resolve to their unique suffix tool (senpi#5316)
 
 ### What changed
