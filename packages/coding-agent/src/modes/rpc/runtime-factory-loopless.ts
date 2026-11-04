@@ -219,8 +219,11 @@ export function createLooplessRuntimeFactory(
 		const fileGuards: HandFileGuards | undefined =
 			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)
 				? {
+						// A file operation's tool_call check presents its handlers' UI on the attached client, as a tool call does.
 						beforeToolCall: (toolName, toolCallId, input, nested) =>
-							toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
+							presentation.present(nested, () =>
+								toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
+							),
 						filesystemPolicy: () => runtime.filesystemPolicy,
 					}
 				: undefined;

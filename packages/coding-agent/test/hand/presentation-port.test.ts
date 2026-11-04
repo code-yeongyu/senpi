@@ -2,6 +2,8 @@
 // (widgets, notices, status, titles, editor text, ...) is presented by the UI of the session the client is attached to,
 // with the same calls, content and order as on a fused session. Dialogs are not the port's: they stay on the UI broker
 // and the remote dialog path. A fused session never builds the port.
+import { realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import { createRemoteToolHost } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
@@ -343,6 +345,34 @@ describe("one call's presentation port (S30)", () => {
 		expect(p.base).toEqual([
 			["notify", "one", "info"],
 			["notify", "two", "info"],
+		]);
+	});
+});
+
+describe("the presentation port during a device file operation (S30 with S40)", () => {
+	it("presents UI from the hand's tool_call handler that checks a file operation on the attached client", async () => {
+		const harness = await createHarness({ extensionFactories: [handPresenter] });
+		harnesses.push(harness);
+		const log: unknown[] = [];
+		const runner = harness.getExtensionRunner();
+		runner.setUIContext(recordingUi(log), "tui");
+		const dirs = await handDirs("s30-file");
+		const link = openLink();
+		startHand(link, dirs, [handPresenter]);
+		const host = createRemoteToolHost({
+			transport: link.brain,
+			placement: "split-local",
+			planes: { [UI_PRESENTATION_PLANE]: servePresentation(runner) },
+			filePlanes: [UI_PRESENTATION_PLANE],
+		});
+		const root = realpathSync(dirs.cwd);
+		writeFileSync(join(root, "note.md"), "from the device");
+
+		await host.deviceFiles({ id: "s30-file-scope", root }).read(join(root, "note.md"));
+
+		expect(log).toEqual([
+			["setStatus", "phase", expect.stringMatching(/^call file-/)],
+			["setWidget", "progress", ["before", "read"]],
 		]);
 	});
 });
