@@ -63,6 +63,7 @@ export {
 	type RemoteAbort,
 	type RemoteAck,
 	type RemoteHandMessage,
+	type RemoteFile,
 	type RemoteHello,
 	type RemoteInvoke,
 	type RemoteRefused,
@@ -99,6 +100,41 @@ export {
 	type HandAuthority,
 	type WorkspaceRoot,
 } from "./execution/grant-verify.ts";
+export {
+	base64Length,
+	DEVICE_FILE_OPS,
+	type DeviceFileArgs,
+	DeviceFileError,
+	type DeviceFileErrorCode,
+	type DeviceFileOp,
+	type DeviceFileOptions,
+	type DeviceFileOutcome,
+	type DeviceFiles,
+	type DeviceFileStat,
+	decodeBase64,
+	decodeDeviceFileArgs,
+	encodeBase64,
+	FILE_CHANNEL,
+	FILE_CHANNEL_MAX_BYTES,
+	fileOutcomeOf,
+} from "./execution/device-files.ts";
+export { HELLO_WAIT_MS } from "./execution/remote-device-files.ts";
+export { fileRefusal, fileResult } from "./execution/remote-file-call.ts";
+export {
+	createModelPlaneClient,
+	decodeModelPlaneRequest,
+	MODEL_PLANE,
+	type ModelPlaneRequest,
+	serveModelPlane,
+} from "./execution/plane-model.ts";
+export {
+	decodePlaneMessage,
+	encodePlaneMessage,
+	type NestedRequest,
+	type PlaneHandler,
+	type PlaneMessage,
+	PlaneRefusedError,
+} from "./execution/plane.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";

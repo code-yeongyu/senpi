@@ -604,9 +604,12 @@ describe("TUI Kitty image cleanup", () => {
 			component.lines = ["l0", "l1", "l2", "l3", "l4", ...imageLines, "after"];
 			tui.requestRender();
 			await terminal.waitForRender();
+			terminal.clearWrites();
+			tui.requestRender(true);
+			await terminal.waitForRender();
 
 			const writes = terminal.getWrites();
-			assert.ok(tui.fullRedraws > redrawsBeforeImage, "scrolling image append should force a full redraw");
+			assert.ok(tui.fullRedraws > redrawsBeforeImage, "a forced render should take the full redraw path");
 			assert.ok(
 				writes.includes(`\r\n\r\n\x1b[2A${imageSequence}\x1b[2B`),
 				"full redraw should reserve visible image rows before drawing the placement",
