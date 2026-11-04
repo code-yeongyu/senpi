@@ -1,6 +1,7 @@
 import { TOOL_RESULT_PLACEHOLDER, type ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { AgentToolCall } from "../types.ts";
+import { createPlaneServer, decodePlaneMessage, type PlaneHandler } from "./plane.ts";
 import {
 	decodeRemoteMessage,
 	encodeRemoteMessage,
@@ -26,6 +27,12 @@ export interface RemoteToolHostOptions {
 	/** What the session says about itself; the hand never acts on it (R16). */
 	readonly sessionRef?: string;
 	readonly mintId?: () => string;
+	/**
+	 * The planes this session serves to its running calls' nested requests (S31), keyed by plane name (`MODEL_PLANE`).
+	 * A request is admitted only while its parent call is live on the lane it came on; absent: every request is refused
+	 * `plane_unavailable`.
+	 */
+	readonly planes?: Readonly<Record<string, PlaneHandler>>;
 }
 
 interface Pending {
@@ -63,15 +70,23 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 	const { transport } = options;
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
 	const pending = new Map<string, Pending>();
+	const planes = createPlaneServer({
+		transport,
+		planes: options.planes ?? {},
+		liveLane: (executionId) => pending.get(executionId)?.invoke.scope.id,
+	});
 
 	const settle = (executionId: string, result: RemoteToolResult): void => {
 		const waiter = pending.get(executionId);
 		if (waiter === undefined) return;
 		pending.delete(executionId);
+		planes.parentEnded(executionId);
 		waiter.resolve(result);
 	};
 
 	transport.onFrame((frame: TransportFrame) => {
+		const nested = decodePlaneMessage(frame.payload);
+		if (nested !== undefined) return planes.receive(frame.lane, nested);
 		let message: RemoteHandMessage;
 		try {
 			message = decodeRemoteMessage(frame.payload);
