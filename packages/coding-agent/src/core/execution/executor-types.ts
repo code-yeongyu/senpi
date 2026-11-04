@@ -50,8 +50,10 @@ export interface PrepareRequest {
 	readonly generation: number;
 	readonly workspace: string;
 	readonly scope: string;
-	/** The model's raw call; its id is the execution's command id. */
+	/** The model's raw call; its id is the execution's command id unless `commandId` names another. */
 	readonly call: AgentToolCall;
+	/** The execution's command id when the call's own id cannot be one: the model may repeat a call id in one message. */
+	readonly commandId?: string;
 	readonly assistantMessage: AssistantMessage;
 	readonly context: AgentContext;
 	/** Issuer-minted with the call, so a re-sent prepare matches its admission exactly. */
