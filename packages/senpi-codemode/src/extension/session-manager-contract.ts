@@ -5,7 +5,7 @@ import type { CodemodeSettings } from "../config/settings.ts";
 import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
 import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { InterpreterAvailability } from "../interpreters/detect.ts";
-import type { SessionEnvironment } from "../kernels/session-env.ts";
+import type { InheritedEnvironment, SessionEnvironment } from "../kernels/session-env.ts";
 import type { EvalKernelManager, ExecuteTool } from "../tool/types.ts";
 
 export interface CodemodeSessionManager extends EvalKernelManager {
@@ -38,6 +38,8 @@ export interface CreateCodemodeSessionManagerOptions {
 	readonly artifactsDir?: string;
 	/** Per-session PI_* values exposed to every kernel and the children it spawns. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The host environment kernel children inherit, without the RPC host's supervisor hand-off (senpi#5635); defaults to process.env. */
+	readonly inheritedEnv?: InheritedEnvironment;
 	/** The kill guard is on (`terminal.killGuard` in user settings): kernels judge signals before they leave a cell. */
 	readonly killGuard?: boolean;
 	readonly executeTool: ExecuteTool;

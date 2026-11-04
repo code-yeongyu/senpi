@@ -20,7 +20,8 @@ export interface TerminalSessionNativeOptions {
 	readonly command: string;
 	readonly args: readonly string[];
 	readonly cwd?: string;
-	readonly env?: Readonly<Record<string, string | undefined>>;
+	/** The whole child environment (`undefined` = deleted); `toNativeOptions` builds it with `childEnvironment`. */
+	readonly env: Readonly<Record<string, string | undefined>>;
 	readonly cols: number;
 	readonly rows: number;
 	readonly timeoutMs?: number;

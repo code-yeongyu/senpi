@@ -673,6 +673,7 @@ export {
 // Exact-pid collection of children whose owning thread is gone (#1962)
 export { collectOrphanedChildren } from "./modes/rpc/child-reaper.ts";
 // Shell utilities
+export { childEnvironmentOf } from "./modes/rpc/host-identity-env.ts";
 export { withBundledBunCommands } from "./utils/bundled-bun.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";

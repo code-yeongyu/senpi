@@ -173,9 +173,9 @@ export function normalizePipInstall(args: readonly string[]): string[] {
  * pip's environment with every PIP_* variable removed and its config file pointed at nothing: `--isolated`
  * alone still honours PIP_CONFIG_FILE, and a configured target, root or prefix would install outside the revision.
  */
-export function isolatedPipEnv(): NodeJS.ProcessEnv {
+export function isolatedPipEnv(base: Readonly<Record<string, string | undefined>> = process.env): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {};
-	for (const [key, value] of Object.entries(process.env)) {
+	for (const [key, value] of Object.entries(base)) {
 		if (!key.toUpperCase().startsWith("PIP_")) env[key] = value;
 	}
 	// pip skips every config file when PIP_CONFIG_FILE equals Python's os.devnull: "nul" on Windows, not Node's "\\\\.\\nul".
@@ -189,6 +189,7 @@ export async function runPipInstall(input: {
 	readonly cwd: string;
 	readonly signal: AbortSignal;
 	readonly onOutput?: (stream: "stdout" | "stderr", data: string) => void;
+	readonly inheritedEnv?: () => Readonly<Record<string, string | undefined>>;
 }): Promise<void> {
 	const argv = [
 		"-m",
@@ -217,7 +218,7 @@ export async function runPipInstall(input: {
 			const child = spawn(input.interpreter, argv, {
 				cwd: input.cwd,
 				stdio: ["ignore", "pipe", "pipe"],
-				env: { ...isolatedPipEnv(), TMPDIR: scratch, TEMP: scratch, TMP: scratch },
+				env: { ...isolatedPipEnv(input.inheritedEnv?.()), TMPDIR: scratch, TEMP: scratch, TMP: scratch },
 			});
 			let termination: Promise<void> | undefined;
 			let stderrTail = "";

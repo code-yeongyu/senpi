@@ -42,6 +42,8 @@ export interface JavaScriptProcessWorkerOptions {
 	readonly searchPath?: string;
 	readonly execPath?: string;
 	readonly env?: NodeJS.ProcessEnv;
+	/** The host environment the child inherits, without the RPC host's supervisor hand-off (senpi#5635). */
+	readonly inheritedEnv?: () => Readonly<Record<string, string | undefined>>;
 	readonly spawn?: (
 		command: string,
 		args: readonly string[],
@@ -126,7 +128,7 @@ export function spawnProcessWorker(url: URL, options: JavaScriptProcessWorkerOpt
 	const isBun = runtimeNameOf(command) === "bun";
 	const args = isBun ? [fileURLToPath(url)] : ["--experimental-strip-types", fileURLToPath(url)];
 	const env: NodeJS.ProcessEnv = {
-		...process.env,
+		...(options.inheritedEnv?.() ?? process.env),
 		...options.env,
 		SENPI_CODEMODE_PROCESS_CWD: options.cwd,
 		SENPI_CODEMODE_PROCESS_POOL_WIDTH: String(options.parallelPoolWidth),

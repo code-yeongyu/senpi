@@ -13,7 +13,7 @@
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { INTERNAL_KEY_ENV_PREFIX } from "../../src/modes/rpc/host-identity-env.ts";
+import { INTERNAL_KEY_ENV_PREFIX, ORIGIN_HOST_INSTANCE_ENV } from "../../src/modes/rpc/host-identity-env.ts";
 
 /** Env var suffix every brand uses for its agent-state directory override. */
 const AGENT_DIR_ENV_SUFFIX = "_CODING_AGENT_DIR";
@@ -64,6 +64,8 @@ export function scrubHostLifecycleEnv(env: NodeJS.ProcessEnv = process.env): voi
 	for (const key of Object.keys(env)) {
 		if (key.startsWith(HOST_LIFECYCLE_ENV_PREFIX) || key.startsWith(INTERNAL_KEY_ENV_PREFIX)) delete env[key];
 	}
+	// An agent shell's origin attribution (senpi#5635) would mark every test-built RpcClient as the outer host's.
+	delete env[ORIGIN_HOST_INSTANCE_ENV];
 }
 
 /**

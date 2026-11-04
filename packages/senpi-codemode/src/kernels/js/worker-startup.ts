@@ -3,6 +3,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
 import { retireWorker } from "./interrupt-bounds.ts";
+import { inheritedEnvironmentDelta } from "../session-env.ts";
 import { resolveKernelToolNameSource } from "./kernel-contract.ts";
 import type { KernelPermissionHost } from "./permission-host.ts";
 import { type JavaScriptKernelOptions, localBridgeConnection } from "./local-module-loader.ts";
@@ -78,6 +79,7 @@ function spawnWorker(options: JavaScriptKernelOptions, permissions?: KernelPermi
 		return spawnProcessWorker(url, {
 			cwd: options.cwd,
 			parallelPoolWidth: options.parallelPoolWidth,
+			...(options.inheritedEnv === undefined ? {} : { inheritedEnv: options.inheritedEnv }),
 			...(options.processCommandPath === undefined ? {} : { searchPath: options.processCommandPath }),
 			...(options.processExecPath === undefined ? {} : { execPath: options.processExecPath }),
 		});
@@ -105,6 +107,12 @@ async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, s
 		hostToolNames: resolveKernelToolNameSource(options.hostToolNames),
 		foreignLanguageNames: resolveKernelToolNameSource(options.foreignLanguageNames),
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
+		// A worker thread's process.env starts as a copy of the host's, so it is told what to drop and set. That includes
+		// the inline fallback, which is a worker thread too. A process kernel already starts from the scrubbed env
+		// (senpi#5635, senpi#5653).
+		...(worker.mode !== "process" && options.inheritedEnv !== undefined
+			? inheritedEnvironmentDelta(process.env, options.inheritedEnv())
+			: {}),
 		...(options.memory === undefined ? {} : { memory: options.memory }),
 		...(options.kernelToolsEnabled === false ? { kernelToolsDisabled: true } : {}),
 		...(options.killGuard === undefined

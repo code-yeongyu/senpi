@@ -10,7 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PAYLOAD_LINES: usize = 16_384;
 const PAYLOAD_BYTES: usize = PAYLOAD_LINES * 64;
-const GATE_SCRIPT: &str = "stty -echo; printf GATED; read -r _ < \"$1\"; head -c \"$2\" | wc -c";
+// The newline keeps the count its own token: GNU wc does not pad it (senpi#5688).
+const GATE_SCRIPT: &str = "stty -echo; printf 'GATED\\n'; read -r _ < \"$1\"; head -c \"$2\" | wc -c";
 
 struct Fifo(PathBuf);
 

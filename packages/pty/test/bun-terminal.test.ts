@@ -83,7 +83,7 @@ describe("Bun terminal session adapter", () => {
 		const fake = fakeRuntime();
 		const chunks: string[] = [];
 		const session = createBunTerminalSession(
-			{ command: "bash", args: ["-i"], cols: 80, rows: 24 },
+			{ command: "bash", args: ["-i"], env: {}, cols: 80, rows: 24 },
 			(data) => chunks.push(new TextDecoder().decode(data)),
 			fake.runtime,
 		);

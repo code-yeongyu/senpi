@@ -7,7 +7,7 @@ import { PythonKernel } from "../kernels/py/kernel.ts";
 import type { PeerKernelToolsDescribe } from "../kernels/py/kernel-tools-host.ts";
 import { defaultSpawn } from "../kernels/py/process.ts";
 import { RubyKernel } from "../kernels/rb/kernel.ts";
-import type { SessionEnvironment } from "../kernels/session-env.ts";
+import type { InheritedEnvironment, SessionEnvironment } from "../kernels/session-env.ts";
 import { spawnSubprocess } from "../kernels/shared/subprocess-process.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import { type KernelMemoryReading, kernelRegistry, type RegisteredKernelSource } from "./kernel-registry.ts";
@@ -25,6 +25,7 @@ export interface SubprocessKernelStart {
 		readonly sessionId: string;
 		readonly cwd: string;
 		readonly sessionEnv?: SessionEnvironment;
+		readonly inheritedEnv?: InheritedEnvironment;
 		readonly connection: BridgeConnectionConfig;
 		readonly onMessage: (message: KernelToHostMessage) => void;
 	};
