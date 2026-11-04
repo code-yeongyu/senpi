@@ -13,7 +13,7 @@ import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
 import { McpPresenterEnrollment, type PresenterPrincipal } from "./mcp-presenter-enrollment.ts";
 import { features } from "./mcp-presenter-grants.ts";
 import { McpPresenterSuccessors, type LaunchOwner } from "./mcp-presenter-successor.ts";
-import { controlTranscript, privateFrames, send, signed } from "./mcp-presenter-wire.ts";
+import { challengeTranscript, privateFrames, send, signed } from "./mcp-presenter-wire.ts";
 
 type Owner = ReturnType<McpPresenterAuthority["enroll"]>;
 type Principal =
@@ -155,7 +155,7 @@ export class McpPresenterControl {
 					deadline = performance.now() + 30_000;
 					clearTimeout(challengeTimer);
 					challengeTimer = setTimeout(() => stream.destroy(), 30_000);
-					transcript = controlTranscript(this.authority.instance, value.backendGeneration, pending);
+					transcript = challengeTranscript(this.authority.instance, value.backendGeneration, pending);
 					send(stream, { type: "challenge", transcript, hostInstance: this.authority.instance });
 					return;
 				}

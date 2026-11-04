@@ -7052,6 +7052,14 @@ A terminal refuses a frame whose `answers` is missing or malformed with `invalid
 
 While the question is open, the client may send `extension_ui_progress` frames with draft `answers` and `comment`. Each progress frame resets the idle timer; the host emits `question_updated` with the refreshed `deadlineAtMs` and `remainingMs`.
 
+Every progress frame then gets exactly one reply, keyed by the frame's `id` (the question's id), after that `question_updated`:
+
+```json
+{ "id": "uuid-q1", "type": "response", "command": "extension_ui_progress", "success": true }
+```
+
+A frame for a question that already resolved is answered `success: false` with `error: "question_already_resolved"`, and one for an id no open question holds with `error: "unknown_extension_ui_request"`; neither changes any question. A progress frame for a private input keeps its `invalid_secret_response` refusal. The reply lets a client that forwards records for someone else (a relay host, for example) settle every record it passes on from the engine's own reply, without a list of records that have none. `question_updated` is a frame, not the reply: match the reply by `type: "response"` and `id`. The typed `RpcClient` still sends progress without waiting, as it sends `extension_ui_response`, and consumes those replies itself.
+
 When the question resolves (answered, comment-submitted, timed_out, or cancelled), the host broadcasts `question_resolved` to all connections:
 
 ```json

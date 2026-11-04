@@ -1,3 +1,91 @@
+## 2026-11-04 - The presenter control endpoint takes a host surface, not the writer (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-host-surface.ts` is new: the `PresenterHostSurface` interface (`authority`, `getMcpFormBinding`, `findMcpPresenterConnection`, `getConnectionCapabilities`, `advertiseMcpPresenterControl`, `withdrawMcpPresenterControl`).
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: `McpPresenterControl` takes a `PresenterHostSurface` instead of a `SessionEventWriter`. No behaviour change.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: implements `PresenterHostSurface`; its `authority` getter returns `enableMcpPresenters()`.
+
+### Why
+
+- D11 S3-6a (senpi#4249): a terminal session has no `SessionEventWriter`, so the control endpoint needs an interface a terminal adapter can provide (S3-6b).
+
+### Why an extension could not handle it
+
+- The presenter control endpoint and the writer's presenter state are host internals of the RPC mode; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: all three paths are fork-only.
+
+## 2026-11-04 - Several same-account presenters hold one MCP form binding; first answer wins (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-grants.ts`: a binding holds a set of grants, at most one per (principal, connection), each checked by `current()` on its own; `holders()`; `features` parses a signed acquire's feature list and `ELSEWHERE_FEATURE` (`elsewhere_v1`) is recorded on the registration; `enroll(principal, identity)` records the verified presenter identity for `answeredBy`; a presence (id + lifetime) opens with the first holder and closes with the last.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-bindings.ts`: `grants`, `queue` and `presence` replace the single `grant`; `version()` is the presence id and `capture()` a binding-level presentation; detach, withdraw and dispose revoke every grant the connection holds.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-forms.ts`: `receive` finds the caller's grant by (connection, grantId) before any private parsing; one FIFO per binding (`binding.queue`); when a form reaches the head, each current holder gets its own dialog in one group.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-form-group.ts` (new): `McpFormGroup`, the one terminal latch per form: first valid human action wins, any holder's presentation counts, one holder's loss ends only its dialog, the last holder's loss ends the form; settles `mcp_form_resolved` (with `elsewhere: true` for negotiated non-winners) and the value-free `mcp_form_settled`.
+- `packages/coding-agent/src/modes/rpc/mcp-form-dialog.ts`: one holder's view of a group (deliver, sync, presented, respond, close, resolved, settled).
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: `mcp_presenter_acquire` accepts `features`; a malformed list is refused.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-authority.ts`, `packages/coding-agent/src/core/mcp-form-types.ts`, `packages/coding-agent/src/modes/interactive/mcp-local-presenter.ts`: the identity parameter, the `elsewhere`/`McpFormSettled`/`McpPresenterIdentity` types, and the widened private frame union.
+
+### Why
+
+- D11 (senpi#4249), design section 2.5: every attached same-account device shows the form and the first answer wins, with one FIFO per binding and holders snapshotted at dialog creation. The new wire keys are negotiated per grant because the shipping desktop decodes private records strictly.
+
+### Why an extension could not handle it
+
+- The presenter authority, its grants and private form frames are host internals of the RPC writer; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-04 - The presenter control endpoint opens for an injected account authority (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts` is new: the `PresenterAccountAuthority` interface (`hostAccount`, `verify` with typed refusals, `onAccountChange`) that a distribution injects at host start. Nothing calls `verify` yet.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control-start.ts` is new: `startMcpPresenterControl` starts the management endpoint on an enforced host that has the fd-4 bootstrap, an account authority, or both; `presenterPipePath` moved here.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `presenterAccountAuthority` host option; the control start is delegated to `startMcpPresenterControl`; `presenterPipePath` is re-exported.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: the constructor takes the optional authority; only once `listen()` succeeds is the path advertised to the writer, and only when an authority is present. `dispose()` withdraws it.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts` and `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `mcp_presenter_context` adds `context.controlEndpoint` only for `discover: true` on a host whose control has an account authority.
+
+### Why
+
+- D11 (senpi#4249): a same-account presenter must be able to reach the management endpoint of a host it did not launch. Discovery is opt-in because the shipping desktop decodes the context reply strictly and would reject an unrequested key.
+
+### Why an extension could not handle it
+
+- The presenter control endpoint, its start, and the private `mcp_presenter_context` record are host internals of the RPC writer; no extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: `multi-session-host.ts` around the presenter control start in `runSocketHost`; the other paths are fork-only.
+
+## 2026-11-03 - Delegated connections: the engine enforces its own method classes (senpi#5632)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/delegated-connection.ts` (new): `declare_delegation {principal, granted}` and `classify_record {record}`, answered by the host core outside the class table. A connection that proved the launch key may declare before any record other than `get_protocol_info`/`authenticate`; later declarations only narrow (`delegation_unauthenticated`, `delegation_late`, `delegation_fixed`). On a delegated connection every record is classified and checked against the grant before dispatch (`delegation_malformed` only for what the local path also refuses before dispatch: not an object, no string `type`; `delegation_unclassified`; `delegation_not_granted` with `errorData.class`), so it accepts exactly what a local connection accepts. `connection_local` records act on the connection itself except `subscribe_sessions` (`observe`), `record_user_activity` (`drive`), `release_session`, `warm`, `reclaim_session`, `move_session` (`device_admin`), refused `delegation_local_only` without that grant (exhaustive `CONNECTION_LOCAL_REQUIREMENT`); `set_client_info` is unfiltered. The codes are omo-relay-spec decision 0018's `delegationRefusal` set.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore.handle` runs that decision synchronously after `JSON.parse`, before any await; `runSocketHost` registers each connection with the proof source its transport reports.
+- `packages/coding-agent/src/modes/rpc/host-internal-transport.ts`, `rpc-public-auth.ts`, `host-admission-proxy.ts`, `host-lifecycle-proxy.ts`, `rpc-auth-proof.ts`, `host-observe-request.ts`: how the launch-key proof reaches the host core. The public-key filter forwards one `launch_proven` record, in order, after a successful `authenticate`, and refuses that record from a client (`reserved_record`); the supervisor's proxy refuses it from a client too and writes it first for a client that proved the Windows public secret. The host trusts it only on a connection whose transport delivers proof in band (the supervisor's hop, the bare host's filter); the Windows bare secret is proof at admission. The record is an observing line for occupancy.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: per-connection delegation state, created at `registerConnection` (`launchProof` option) and dropped at `unregisterConnection`.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts`, `rpc-protocol-info-types.ts`, `host-capabilities.ts`, `custom-capability.ts`: `get_protocol_info.method_classes` carries the whole table description (`classes`, `dynamic_versions`) next to `version`/`digest`; multi-session hosts advertise `delegated_connection_v1`. `RPC_METHOD_CLASS` and its digest are unchanged.
+
+### Why
+
+- A forwarder had to keep its own copy of the class table, and every engine table change broke remote use until it shipped a new copy (senpi#5632, S1a of the DS2b split).
+
+### Why an extension could not handle it
+
+- The decision has to run inside the host core before dispatch, on the connection state and launch-key proof only the RPC transport holds.
+
+### Expected merge conflict zones
+
+- LOW: the top of `createHostCore.handle`, `accept` in `runSocketHost`, `PublicRpcConnection.line`, `proxyWithAdmission.requests`.
+
 ## 2026-11-03 - RPC replies are written at any depth; an unwritable reply answers its id with `response_unwritable` (senpi#5702)
 
 ### What changed

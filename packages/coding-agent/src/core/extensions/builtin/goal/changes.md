@@ -1,3 +1,23 @@
+## 2026-10-30 - Goal parks until the soonest reset after an exhausted fallback ladder (senpi#3709)
+
+### What changed
+
+- `monitor-continuation.ts` `afterAgentSettled(fallbackExhausted)`: on a limit-exhausted ladder the generic provider recovery is replaced. With a `resumeAt`, the goal arms one `providerRetry` wait for that time (or the 1 s margin when it already passed); without one, it arms nothing and stays parked until input. Outage-only exhaustion retains immediate first recovery and the existing 15 s to 30 min backoff.
+- `provider-retry.ts` `exhaustedLadderResumeDelayMs`: waits until `resumeAt` + 1 s, skips the 6 h wake cap, and is clamped to the timer maximum.
+- `index.ts` passes `event.fallbackExhausted` to `afterAgentSettled`.
+
+### Why
+
+- senpi#3709: after exhaustion the goal either resumed at once into the same limits or never resumed.
+
+### Why an extension could not handle it
+
+- The change is inside this builtin extension, driven by the new `agent_settled` field.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentSettled` in `monitor-continuation.ts`; the provider-retry delay helpers.
+
 ## 2026-10-30 - Goal parks on a provider limit with one notice; refused turns are not stalls (senpi#3975)
 
 ### What changed

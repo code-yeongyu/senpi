@@ -16,8 +16,8 @@ export function signed(value: unknown, transcript: string, key: KeyObject): bool
 	return verify(null, Buffer.from(transcript), key, Buffer.from(value.signature, "hex"));
 }
 
-/** The transcript a principal signs to run one management command on this host instance. */
-export function controlTranscript(hostInstance: string, backendGeneration: string, command: object): string {
+/** The control challenge each signed command proves; a fresh nonce pair binds it to one exchange. */
+export function challengeTranscript(hostInstance: string, backendGeneration: string, command: unknown): string {
 	return JSON.stringify([
 		"mcp-presenter-control-v1",
 		hostInstance,

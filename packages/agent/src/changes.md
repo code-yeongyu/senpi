@@ -1,3 +1,42 @@
+## 2026-11-03 - Device files reach the hand's disk through a file channel (senpi#5691)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports the device file channel (`DeviceFiles`, `DeviceFileError`, its codes, the operation and outcome codecs, `FILE_CHANNEL`, `FILE_CHANNEL_MAX_BYTES`, `HELLO_WAIT_MS`) and the `RemoteFile` message type. The new modules under `src/execution/` are fork-only; `src/node.ts` adds the node-only `localDeviceFiles()`.
+
+### Why
+
+- Memory operations must stay on the device wherever the loop runs (senpi#5645, S40): extension code needs one way to the device's files that is the local filesystem on a fused session and the hand's own disk, through its grant, handlers and policy, on a split one.
+
+### Why an extension could not handle it
+
+- The channel rides the hand's execution protocol and admission (grant, scope binding, ledger), which live in the agent core; an extension cannot add a wire message kind or reach the hand's executor.
+
+### Expected merge conflict zones
+
+- LOW: the export list in `packages/agent/src/index.ts`, next to the remote executor exports.
+
+## 2026-11-03 - In-process ToolHost context (senpi#5657)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: passes `local: { context, assistantMessage }` to the ToolHost.
+- `packages/agent/src/execution/tool-host.ts`: optional `ToolHostOptions.local`.
+- `packages/agent/src/execution/tool-outcome-events.ts`: the module description is a file comment instead of the first function's JSDoc.
+- `packages/agent/src/index.ts`: exports the coordinator, ledger, memory store, admission line and `withToolNameCorrection`.
+
+### Why
+
+The prepared pipeline (brain/hand split S18b) runs today's preparation steps in the loop's process and needs the loop's context and the issuing assistant message; a remote host never reads them.
+
+### Why an extension could not handle it
+
+The ToolHost seam's options are the agent loop's own contract.
+
+### Expected merge conflict zones
+
+`agent-loop.ts` at the ToolHost call; `src/index.ts` exports.
+
 ## 2026-11-03 - Durable scope lifecycle on the endpoint; LIFECYCLE, SCOPE and MULTI-LIFE-01 cases (S15, senpi#5681)
 
 ### What changed

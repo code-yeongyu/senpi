@@ -1,3 +1,39 @@
+## 2026-11-03 - Runtime creation carries open-timing spans (senpi#5709, fixes #5707)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: with `SENPI_OPEN_TIMING=1`, `createCliRuntimeFactory` marks `project_trust` and `services` while building services, and `create_session` once the session exists. These marks join the host-open, worker-open, worker-commit, registry-open and rebind spans that `src/core/open-timing.ts` writes for each open phase.
+
+### Why
+
+- senpi#5707 asked for per-phase timing of the open path, behind a flag, so the await that idles a warm open can be named.
+
+### Why an extension could not handle it
+
+- Runtime creation runs before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `createCliRuntimeFactory` in `main.ts` (two timers, three marks, one import).
+
+## 2026-10-30 - Opt-in hand-side subscription executor (senpi#5039)
+
+### What changed
+
+- `packages/coding-agent/src/subscription-egress/`: adds JSON wire schemas, safe output projection, and a nonresident executor reusing the existing subscription adapter.
+
+### Why
+
+- Subscription model calls need local credential custody, attachment-scoped cancellation, ordered streaming, and subscription-tagged usage without changing today's provider path.
+
+### Why an extension could not handle it
+
+- The public SDK boundary must be importable independently of extension startup. The existing provider remains the authentication and account-failover implementation.
+
+### Expected merge conflict zones
+
+- LOW: new fork-only files under `packages/coding-agent/src/subscription-egress/`.
+
 ## 2026-11-03 - Source runtime resolves the machine-ops workspace package (senpi#5592)
 
 ### What changed
