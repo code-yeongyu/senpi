@@ -5928,8 +5928,7 @@ export class AgentSession {
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
 		if (barrierError !== undefined) throw new Error(barrierError);
 		// A steer naming a turn that is not running is refused before a run hold or a command can take it (senpi#5776).
-		const staleTurn = turnConflict(options?.expectedTurnId, this.currentTurnId);
-		if (staleTurn !== undefined) throw staleTurn;
+		this._refuseStaleNamedTurn(options, this._runHolds.inheritedOwner() !== undefined);
 		if (isHumanInput(options) && options?.humanInputReported !== true) this._humanInputAdmitted(promptKind(options));
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
@@ -6897,6 +6896,17 @@ export class AgentSession {
 	}
 
 	/**
+	 * An input that names a turn is refused before any admission side effect (human-input record, person input, input
+	 * handlers) when that turn is not running, or when a hold would deliver the input into a later turn (senpi#5776).
+	 */
+	private _refuseStaleNamedTurn(options: QueuedInputOptions | PromptOptions | undefined, held: boolean): void {
+		const stale = turnConflict(options?.expectedTurnId, this.currentTurnId);
+		if (stale !== undefined) throw stale;
+		if (options?.expectedTurnId !== undefined && held && originOf(options) === "person")
+			throw new TurnConflictError(this.currentTurnId);
+	}
+
+	/**
 	 * Queue a steering message while the agent is running.
 	 * Delivered after the current assistant turn finishes executing its tool calls,
 	 * before the next LLM call.
@@ -6907,6 +6917,7 @@ export class AgentSession {
 	 * @throws Error if text is an extension command
 	 */
 	async steer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<QueuedInputDisposition> {
+		this._refuseStaleNamedTurn(options, this._engineTurnHold.held);
 		if (isHumanInput(options)) this._humanInputAdmitted("steer");
 		return this._queueUserInput(text, images, "steer", options);
 	}
@@ -6925,6 +6936,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
+		this._refuseStaleNamedTurn(options, this._engineTurnHold.held);
 		if (isHumanInput(options)) this._humanInputAdmitted("follow_up");
 		return this._queueUserInput(text, images, "followUp", options);
 	}

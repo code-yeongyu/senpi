@@ -12,7 +12,17 @@ describe("RPC input commands that name their turn", () => {
 	});
 
 	const setup = async () => {
-		const fixture = await createIdentityHarness();
+		const handlerSaw: string[] = [];
+		const fixture = await createIdentityHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", async (event) => {
+						handlerSaw.push(event.text);
+						return event.text === "Handled" ? { action: "handled" } : { action: "continue" };
+					});
+				},
+			],
+		});
 		fixtures.push(fixture);
 		fixture.harness.setResponses([fauxAssistantMessage("first answer"), fauxAssistantMessage("second answer")]);
 		const entered = Promise.withResolvers<void>();
@@ -28,7 +38,7 @@ describe("RPC input commands that name their turn", () => {
 		await rpc.send({ type: "prompt", message: "hold" });
 		await entered.promise;
 		const turnId = ((await rpc.send({ type: "get_state" })).data as { currentTurnId?: unknown }).currentTurnId;
-		return { fixture, rpc, turnId, release: () => release.resolve() };
+		return { fixture, rpc, turnId, handlerSaw, release: () => release.resolve() };
 	};
 
 	const commands = [
@@ -63,6 +73,26 @@ describe("RPC input commands that name their turn", () => {
 		}
 		await Promise.all(rpc.handler.pendingPrompts());
 	});
+
+	it.each(["steer", "follow_up"])(
+		"refuses a stale %s before any admission side effect, even one a handler would claim",
+		async (type) => {
+			const { fixture, rpc, handlerSaw, release } = await setup();
+			try {
+				const before = fixture.session.messages.length;
+				expect(await rpc.send({ type, message: "Handled", expectedTurnId: "999" })).toMatchObject({
+					success: false,
+					errorCode: "turn_conflict",
+				});
+				expect(handlerSaw).toEqual(["hold"]);
+				expect(fixture.session.pendingMessageCount).toBe(0);
+				expect(fixture.session.messages.length).toBe(before);
+			} finally {
+				release();
+			}
+			await Promise.all(rpc.handler.pendingPrompts());
+		},
+	);
 
 	it.each(commands)("queues a $name that names the running turn", async ({ build }) => {
 		const { fixture, rpc, turnId, release } = await setup();
