@@ -3360,7 +3360,7 @@ Every `host_response` is acknowledged under its `id`: `{"type":"response","comma
 
 - `list_relocation_targets` `data`: `targets`, each `{ name, online, capacity?, aboutToSleep? }`. `name` is what the agent passes as `target`; `capacity` is a free-form hint. The list passes through unchanged; one that does not parse is refused `invalid_host_answer`.
 - `relocate_session` `data`: `{ accepted: true, moveId, target? }` accepts (`moveId` is the plain id the host will use for `release_session` and `move_session`; `target` is the name to show, defaulting to the asked one), and `{ accepted: false, reason?, detail? }` declines. The host should prepare the receiver before accepting, and must decline a session it cannot release (for example one in a worker isolate, which `release_session` answers `release_unsupported`).
-- The session waits at most 60 seconds for an answer (refused `no_answer`); an aborted tool call is refused `cancelled`; a session closed while waiting is refused `session_closed`; a request whose connection leaves the session (`close_session`, `detach_connection`, a dropped socket) is refused `app_disconnected` at once; `error` is refused `host_error` with the error text.
+- The session waits at most 60 seconds for an answer (refused `no_answer`); an aborted tool call is refused `cancelled`; a session closed while waiting is refused `session_closed`; a request whose connection leaves the session (`close_session`, `detach_connection`, a dropped socket) is refused `app_disconnected` at once; `error` is refused `host_error` with the error text; a request whose `host_request` cannot be written to the connection is refused `send_failed` at once, with the write's error text.
 - A session without a session file answers `unavailable` with reason `not_releasable` without asking. One accepted move per run: a second `relocate_session` while one is scheduled or still being asked is refused `already_scheduled` without asking.
 
 The agent's tool results are typed in `details`: `{ status: "listed", targets }`, `{ status: "scheduled", target, moveId }`, `{ status: "unavailable", reason, detail }`, or `{ status: "refused", reason, detail }` (the host's own `reason` and `detail` when it declined). Every outcome except `scheduled` leaves the session open and writable here.
@@ -6713,12 +6713,36 @@ successor host's enrollment.
 Acquisition and revocation use the
 separate authenticated management endpoint, with a fresh challenge for each
 `mcp_presenter_assign`, `mcp_presenter_acquire`, or `mcp_presenter_revoke` command.
-Enrollment alone assigns no sessions. Before acquisition, the trusted native
-supervisor signs `mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`,
-and `purpose: "mcp_form"` for a session it opened, or one the user explicitly adopted
-through the trusted host-owner UI. Ordinary RPC attachment cannot assign a session.
-Assignment belongs only to that enrolled principal and live binding; re-enrollment
-or binding replacement requires a new assignment. It is not persisted.
+Enrollment alone assigns no sessions: before acquisition, a principal signs
+`mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`, and
+`purpose: "mcp_form"`. Who may assign depends on the principal:
+
+- The inherited launch principal, the trusted native supervisor, assigns a session it
+  opened, or one the user explicitly adopted through the trusted host-owner UI.
+- An account principal assigns itself. A same-account login is the authorization, so
+  there is no owner prompt. Its `mcp_presenter_assign` and `mcp_presenter_acquire` are
+  accepted only while the host is still signed into the principal's account and the
+  time is before its `attestedUntil`, and acquisition needs the acquiring connection's
+  live attachment to that session. A command from a principal that fails the account
+  or attestation check gets `account_refused` with `presenter_account_mismatch`,
+  `presenter_account_unavailable`, or `attestation_expired`, and its connection closes,
+  revoking its grants.
+
+Ordinary RPC attachment cannot assign a session.
+Assignment belongs only to that enrolled principal and live binding; re-enrollment,
+including the same device and key enrolling again, or binding replacement requires a
+new assignment. It is not persisted, and a successor host knows no earlier principal.
+
+An account principal is also revoked, with its grants, when the embedding distribution
+reports a sign-out or an account switch, and when `attestedUntil` passes without an
+`account_reattest`. The connection receives `account_refused` with
+`presenter_account_unavailable`, `presenter_account_mismatch`, or `attestation_expired`
+and closes. A revoked grant ends its forms under the outcome rules below: a presented
+form cancels without human admission, and one not yet presented is a processing
+failure. A dialog belongs to the grant it was created for. A later holder, including
+another device of the same account, never receives or answers a dialog created for
+another holder, even after that holder leaves.
+
 An acquisition also requires the connection's `interactive_user` and
 `mcp_form_presenter_v1` capabilities, and binds the
 current host, session, binding epoch, connection nonce, attachment ID and epoch, and

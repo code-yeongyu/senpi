@@ -4,6 +4,7 @@ import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-co
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
 import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
+import { PresentationBroker } from "../../core/extensions/ui-presentation.ts";
 import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { toolInfoOf } from "../../core/tool-info.ts";
@@ -181,6 +182,15 @@ export function createLooplessRuntimeFactory(
 			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
+		// On a hand, a call's extension UI is presented by the loop that owns the call (S30).
+		const presentation = new PresentationBroker((error) =>
+			runtime.extensionRunner.emitError({
+				extensionPath: "<presentation-port>",
+				event: "ui_presentation",
+				error: `A presentation could not reach the attached client: ${error instanceof Error ? error.message : String(error)}`,
+			}),
+		);
+		runtime.extensionRunner.setUiBroker(presentation);
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
 			? extensionToolHandlers(runtime.extensionRunner)
 			: undefined;
@@ -193,22 +203,29 @@ export function createLooplessRuntimeFactory(
 				);
 			const tool = registry.toolRegistry.get(name);
 			if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
-			return runLooplessToolCall(
-				tool,
-				{
-					toolCallId,
-					params,
-					...(signal ? { signal } : {}),
-					...(nested ? { nested } : {}),
-				},
-				toolHandlers,
+			return presentation.present(nested, () =>
+				runLooplessToolCall(
+					tool,
+					{
+						toolCallId,
+						params,
+						...(signal ? { signal } : {}),
+						...(nested ? { nested } : {}),
+					},
+					toolHandlers,
+				),
 			);
 		};
 		const fileGuards: HandFileGuards | undefined =
 			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)
 				? {
+						// A file operation's tool_call check presents its handlers' UI through the port with that operation's nested
+						// requester. It reaches the attached client only when the brain lets file operations host the presentation
+						// plane (`filePlanes`); by default it does not, so the UI stays on the hand and the refusal is reported.
 						beforeToolCall: (toolName, toolCallId, input, nested) =>
-							toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
+							presentation.present(nested, () =>
+								toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
+							),
 						filesystemPolicy: () => runtime.filesystemPolicy,
 					}
 				: undefined;
