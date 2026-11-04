@@ -8,6 +8,7 @@ import {
 	enroll,
 	enrollAssignAcquire,
 	installation,
+	proof,
 	issuer,
 	signedCommand,
 } from "./fixtures/presenter-account-host.ts";
@@ -114,6 +115,19 @@ it("T3: a replayed jti is refused, even after the first enrollment succeeded", a
 	expect((await enroll(host.open(), device, token)).reply).toMatchObject({ type: "account_enrolled" });
 	const replay = await enroll(host.open(), device, token);
 	expect(replay.reply).toEqual({ type: "account_refused", version: 1, reason: "attestation_replayed" });
+});
+
+it("an account switch between the challenge and the proof refuses the proof", async () => {
+	const host = await accountHost();
+	const device = installation();
+	const peer = host.open();
+	peer.send(device.frame(issuer.mint(device.publicKey)));
+	const challenge = await peer.next();
+	expect(challenge).toMatchObject({ type: "challenge" });
+	host.state.account = "account-b";
+	peer.send(proof(challenge?.transcript, device.privateKey));
+	expect(await peer.next()).toEqual({ type: "account_refused", version: 1, reason: "presenter_account_mismatch" });
+	expect(await peer.next()).toBeUndefined();
 });
 
 it("T3: a valid token with a transcript signature from another key is refused", async () => {
