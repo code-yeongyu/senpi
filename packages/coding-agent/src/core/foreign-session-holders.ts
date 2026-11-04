@@ -47,6 +47,57 @@ export async function foreignSessionHolders(
 }
 
 /** One terminal-safe line; cwd can contain newlines or escape sequences. */
+export function describeSessionHolders(holders: readonly SessionHolder[]): string {
+	return holders
+		.map(({ pid, cwd }) => `pid ${pid}${cwd === undefined ? "" : ` in ${JSON.stringify(cwd)}`}`)
+		.join("; ");
+}
+
+export const SESSION_HOLDER_LOOKUP_FAILED = "Unable to inspect session holders; continuing without holder information.";
+
+/** Live foreign holders of `sessionFile` before an interactive resume switches onto it; a failed lookup stays advisory. */
+export async function checkSessionHolders(
+	sessionFile: string,
+): Promise<{ readonly holders: readonly SessionHolder[] } | { readonly lookupFailed: true }> {
+	try {
+		return { holders: await foreignSessionHolders(sessionFile) };
+	} catch {
+		return { lookupFailed: true };
+	}
+}
+
+const HOLDER_EXIT_POLL_MS = 100;
+
+/**
+ * Explicit take-over of a session another live process holds (senpi#5744): ask each holder to exit with SIGTERM
+ * and wait until none of them holds the file any more. A holder record is only reported live after its process
+ * identity was validated, so the signal never reaches a reused pid. Returns false when a holder is still there
+ * at the deadline.
+ */
+export async function stopSessionHolders(
+	sessionFile: string,
+	holders: readonly SessionHolder[],
+	timeoutMs = 10_000,
+): Promise<boolean> {
+	for (const { pid } of holders) {
+		try {
+			process.kill(pid, "SIGTERM");
+		} catch (cause) {
+			if (errorCode(cause) !== "ESRCH") throw cause;
+		}
+	}
+	const stopping = new Set(holders.map(({ pid }) => pid));
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const left = (await foreignSessionHolders(sessionFile)).filter(({ pid }) => stopping.has(pid));
+		if (left.length === 0) return true;
+		if (Date.now() >= deadline) return false;
+		// A foreign process offers no exit event to await; its holder record is the only signal.
+		await new Promise((resolve) => setTimeout(resolve, HOLDER_EXIT_POLL_MS));
+	}
+}
+
+/** The post-switch advisory line, or `undefined` when no other process holds the session. */
 export async function sessionHolderWarning(
 	sessionFile: string | undefined,
 	sessionId?: string,
@@ -55,9 +106,8 @@ export async function sessionHolderWarning(
 	try {
 		holders = await foreignSessionHolders(sessionFile, sessionId);
 	} catch {
-		return "Unable to inspect session holders; continuing without holder information.";
+		return SESSION_HOLDER_LOOKUP_FAILED;
 	}
 	if (holders.length === 0) return undefined;
-	const who = holders.map(({ pid, cwd }) => `pid ${pid}${cwd === undefined ? "" : ` in ${JSON.stringify(cwd)}`}`);
-	return `This session is also open in another process (${who.join("; ")}). Concurrent writes may corrupt its history; quit the other process before continuing.`;
+	return `This session is also open in another process (${describeSessionHolders(holders)}). Concurrent writes may corrupt its history; quit the other process before continuing.`;
 }
