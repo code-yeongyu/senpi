@@ -20,6 +20,10 @@ export abstract class SessionEventWriterPresenters extends SessionEventWriterCon
 		this.presenterControlEndpoint = path;
 	}
 
+	withdrawMcpPresenterControl(path: string): void {
+		if (this.presenterControlEndpoint === path) this.presenterControlEndpoint = undefined;
+	}
+
 	/**
 	 * The `mcp_presenter_context` reply. `controlEndpoint` is added only on an explicit `discover: true` and only
 	 * when an account-enrolling control is advertised; otherwise the reply keeps the shape strict clients decode.
