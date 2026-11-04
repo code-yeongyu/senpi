@@ -21,6 +21,7 @@ export type {
 	StoreWritePoint,
 } from "../durable/store.ts";
 export { DurableStoreError } from "../durable/store.ts";
+export type { AdmissionLine } from "../durable/store-admission.ts";
 export type { KillDeclaration } from "../durable/testing/kill-store.ts";
 export { KILL_STORE_CASES, KILL_STORE_DECLARATIONS } from "../durable/testing/kill-store.ts";
 export { STORE_CASES } from "../durable/testing/store-cases.ts";
