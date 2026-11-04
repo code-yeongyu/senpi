@@ -1,7 +1,13 @@
 // D11 S3-6b (senpi#4249, design 2.9): terminal control connections present MCP forms on the TUI's own authority.
 import { afterEach, beforeAll, expect, it } from "vitest";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
-import { answerFrame, heldTerminal, terminalPresenter } from "./fixtures/presenter-terminal.ts";
+import {
+	answerFrame,
+	type ControlClient,
+	heldTerminal,
+	PRESENTER_ROLES,
+	terminalPresenter,
+} from "./fixtures/presenter-terminal.ts";
 
 const open: Array<() => Promise<void>> = [];
 beforeAll(() => initTheme("dark"));
@@ -123,4 +129,69 @@ it("T16 terminal and an enrolled desktop: the first answer wins and the audit na
 	expect(await desktop.request(answerFrame(request, "mcp_form_response", { action: "decline" }))).toMatchObject({
 		error: "form_stale",
 	});
+});
+
+const EMPTY_FORM = { schema: { type: "object", properties: {} } } as const;
+const TERMINAL_ANSWER = {
+	kind: "result",
+	result: { action: "accept", content: {} },
+	source: "presenter_action",
+	humanAdmission: true,
+};
+
+type Terminal = Awaited<ReturnType<typeof terminal>>;
+const REVOCATIONS: ReadonlyArray<{
+	readonly name: string;
+	readonly open: boolean;
+	readonly revoke: (t: Terminal, desktop: ControlClient) => Promise<void>;
+}> = [
+	{
+		name: "release_attachment",
+		open: true,
+		revoke: async (t, desktop) => {
+			expect(await desktop.request({ type: "release_attachment", sessionId: t.sessionId })).toMatchObject({
+				success: true,
+			});
+		},
+	},
+	{
+		// Declaring the roles again afterwards does not bring the grant back.
+		name: "a re-declare without mcp_form_presenter_v1",
+		open: true,
+		revoke: async (_t, desktop) => {
+			for (const capabilities of [["interactive_user"], PRESENTER_ROLES])
+				expect(await desktop.request({ type: "set_client_info", capabilities })).toMatchObject({ success: true });
+		},
+	},
+	{
+		name: "connection close",
+		open: false,
+		revoke: async (_t, desktop) => desktop.close(),
+	},
+];
+
+it.each(REVOCATIONS)("$name revokes the desktop's grant: the next form reaches only the terminal", async (row) => {
+	const t = await terminal();
+	const desktop = await t.client();
+	expect((await t.enrollDesktop(desktop)).acquired).toMatchObject({ type: "mcp_presenter_acquired" });
+
+	await row.revoke(t, desktop);
+	const outcome = await t.present(EMPTY_FORM);
+	// A request to a holder is written before the terminal answers, so it precedes this reply on the same socket.
+	if (row.open) await desktop.request({ type: "mcp_presenter_context", sessionId: t.sessionId });
+
+	expect(outcome).toMatchObject(TERMINAL_ANSWER);
+	expect(t.admissions()).toBe(1);
+	expect(desktop.records.filter((record) => record.type === "mcp_form_request")).toEqual([]);
+});
+
+it("stopping the control endpoint leaves the terminal's own local_tui presenter answering", async () => {
+	const t = await terminal();
+	const desktop = await t.client();
+	expect((await t.enrollDesktop(desktop)).acquired).toMatchObject({ type: "mcp_presenter_acquired" });
+
+	await t.endpoint.dispose();
+
+	expect(await t.present(EMPTY_FORM)).toMatchObject(TERMINAL_ANSWER);
+	expect(t.admissions()).toBe(1);
 });

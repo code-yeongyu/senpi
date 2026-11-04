@@ -169,7 +169,17 @@ export async function terminalPresenter(
 		harness.cleanup();
 		tui.lose();
 	};
-	return { harness, local, sessionId, client, present, enrollDesktop, close, admissions: () => admissions };
+	return {
+		harness,
+		local,
+		sessionId,
+		endpoint: fixture.endpoint,
+		client,
+		present,
+		enrollDesktop,
+		close,
+		admissions: () => admissions,
+	};
 }
 
 export function answerFrame(request: Wire, type: string, extra: Wire = {}): Wire {
