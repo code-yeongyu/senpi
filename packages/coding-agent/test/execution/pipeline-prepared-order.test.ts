@@ -1,7 +1,6 @@
 // S18b (R10.c): the prepared pipeline gives a session the same event ORDER as today's scheduler, the session's own
-// lifecycle events included. The session observes `tool_execution_start` synchronously and delivers its message
-// events through a queue, so a pipeline that starts a batch later than the scheduler does moves the first tool
-// activity past the assistant message_end (the EQ regression this pins).
+// lifecycle events included, for a parallel batch and for session-wide sequential mode. It compares the whole event
+// sequence of the two pipelines; a sequential tool between parallel ones is covered by pipeline-prepared.test.ts.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -21,7 +20,6 @@ const echo: AgentTool = {
 	parameters: Type.Object({}, { additionalProperties: true }),
 	execute: async (_id, params) => ({ content: [{ type: "text", text: JSON.stringify(params) }], details: {} }),
 };
-const serial: AgentTool = { ...echo, name: "serial", label: "Serial", executionMode: "sequential" };
 
 function line(event: Harness["events"][number]): string[] {
 	if (event.type === "session_lifecycle") {
@@ -46,7 +44,7 @@ async function order(
 	calls: readonly string[],
 	sequential: boolean,
 ): Promise<string[]> {
-	const harness = await createHarness({ tools: [echo, serial] });
+	const harness = await createHarness({ tools: [echo] });
 	harnesses.push(harness);
 	if (sequential) harness.agent.toolExecution = "sequential";
 	if (pipeline === "prepared") harness.agent.toolHost = createPreparedToolHost(harness.agent);
@@ -65,7 +63,6 @@ describe("the prepared pipeline keeps today's session event order (S18b, R10.c)"
 	it.each([
 		["one call", ["echo"], false],
 		["three parallel calls", ["echo", "echo", "echo"], false],
-		["a sequential call between parallel ones", ["echo", "serial", "echo"], false],
 		["session-wide sequential mode", ["echo", "echo"], true],
 	] as const)("%s", async (_label, calls, sequential) => {
 		const legacy = await order("legacy", calls, sequential);
