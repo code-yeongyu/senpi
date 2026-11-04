@@ -121,8 +121,9 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 		await waitForSessionEvent(h, "agent_idle");
 	}, 60_000);
 
-	// senpi#5797: the prepared pipeline must reach tool_execution_start with no hop the legacy scheduler lacks,
-	// or the lease expires between the model's tool call and the tool's start.
+	// senpi#5797: the prepared pipeline awaits real work (its Web Crypto plan digest) between the model's tool call and
+	// tool_execution_start. The drive waits out that real hop instead of jumping fake time across it, so both pipelines
+	// are held to the same contract: tool progress renews the lease, and only the max runtime ends the turn.
 	it.each(["legacy", "prepared"] as const)(
 		"renews on tool execution progress so only the hard max runtime stops the turn (%s pipeline)",
 		async (pipeline) => {
@@ -138,7 +139,9 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 					stopReason: "toolUse",
 				});
 			h.setResponses([step(), step(), step(), step(), step()]);
-			const ended = waitForSessionEvent(h, "agent_end", (event) => event.aborted === true);
+			// This wait spans the whole stepped drive (~300 one-second steps), not one jump: a row measured 205-314 ms on an
+			// idle host, so 45 s leaves >140x headroom for a loaded CI worker while staying under the 60 s test timeout.
+			const ended = waitForSessionEvent(h, "agent_end", (event) => event.aborted === true, 45_000);
 
 			const prompting = h.session.prompt("keep reporting without ever finishing");
 			await advanceAcrossToolCalls(h, MAX_RUNTIME_MS + 10_000);
