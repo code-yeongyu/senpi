@@ -1,3 +1,21 @@
+## 2026-10-30 - ProviderConfig.localOnly capability flag (senpi#5028)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: optional `localOnly` on `ProviderConfig`. A provider whose every request runs a binary on this machine, under a login stored on this machine, sets it. `anthropic-subscription` and `cursor-cli-oauth` set it; nothing reads it yet.
+
+### Why
+
+senpi#5028 (SUBP-LOCAL): later brain/hand work (senpi#4998) needs to tell a provider that can only be served where its local binary and login live from a hosted one. Recording it now as inert metadata keeps that later change small and leaves one-machine selection and resolution byte-identical.
+
+### Why an extension could not handle it
+
+The flag is the extension's way to declare the capability on its registration; the registration type is core API.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `ProviderConfig`, after `ownsAccountSelection`.
+
 ## 2026-11-03 - Tools carry full-section guidelines (senpi#5665 selection) (senpi#5665)
 
 ### What changed
