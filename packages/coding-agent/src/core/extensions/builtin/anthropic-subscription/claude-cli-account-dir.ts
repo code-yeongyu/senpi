@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, readlinkSync, type Stats, symlinkSync, unlinkSync } from "node:fs";
-import { lstat, mkdir, readFile, rm, unlink } from "node:fs/promises";
+import { chmodSync, constants, lstatSync, mkdirSync, readlinkSync, type Stats, symlinkSync, unlinkSync } from "node:fs";
+import { lstat, mkdir, open, rm, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { logoutClaudeCli } from "./claude-cli-auth-status.ts";
@@ -42,7 +42,8 @@ export function accountDirFor(agentDir: string, dirId: string): string {
  * Undefined when the credential file is missing, unreadable, malformed or already expired; the CLI renews it on
  * its next turn. Only the file store is read, which the CLI uses on Linux and Windows; on macOS the CLI keeps the
  * token in the Keychain, so a macOS account offers none. Like `removeAccountDir`, it follows no link: a linked
- * account dir or credential file (say, to the user's own `~/.claude`) offers none.
+ * account dir or credential file (say, to the user's own `~/.claude`) offers none, including one swapped in after
+ * the check.
  */
 export async function readClaudeCliAccessToken(accountDir: string, now: number): Promise<string | undefined> {
 	const file = join(accountDir, ".credentials.json");
@@ -50,7 +51,19 @@ export async function readClaudeCliAccessToken(accountDir: string, now: number):
 	try {
 		const [dirStats, fileStats] = await Promise.all([lstat(accountDir), lstat(file)]);
 		if (!dirStats.isDirectory() || !fileStats.isFile()) return undefined;
-		parsed = JSON.parse(await readFile(file, "utf8"));
+		// Checked, then read: a link swapped in between must not be followed. The open refuses a final link where the
+		// platform can (O_NOFOLLOW; Windows has none), and the opened handle must be the very file that was checked.
+		const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+		try {
+			const opened = await handle.stat();
+			if (!opened.isFile() || opened.ino !== fileStats.ino || opened.dev !== fileStats.dev) return undefined;
+			parsed = JSON.parse(await handle.readFile("utf8"));
+		} finally {
+			await handle.close();
+		}
+		// The dir is not opened, so a dir swapped for a link during the read shows up as a changed dir afterwards.
+		const dirAfter = await lstat(accountDir);
+		if (!dirAfter.isDirectory() || dirAfter.ino !== dirStats.ino || dirAfter.dev !== dirStats.dev) return undefined;
 	} catch {
 		return undefined;
 	}
