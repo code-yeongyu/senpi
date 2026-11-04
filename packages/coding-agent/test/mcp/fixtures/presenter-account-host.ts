@@ -4,6 +4,7 @@ import { rm } from "node:fs/promises";
 import { connect, createServer, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { startMcpPresenterControl } from "../../../src/modes/rpc/mcp-presenter-control-start.ts";
+import { isRecord } from "../../../src/core/extensions/builtin/mcp/modern/form-schema.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { presenterIssuer } from "./presenter-account-issuer.ts";
 import { enrollmentPeer } from "./presenter-enrollment.ts";
@@ -57,18 +58,43 @@ export async function connectedPair(): Promise<{ hostSide: Socket; peerSide: Soc
 	return { hostSide, peerSide };
 }
 
+/** An RPC connection attached to `session` as a capable presenter; it collects its private form requests. */
+function presenterConnection(writer: SessionEventWriter, id: string, lines: string[] = []) {
+	const requests: Record<string, unknown>[] = [];
+	const waiters: Array<(request: Record<string, unknown>) => void> = [];
+	const writeRaw = (line: string) => {
+		lines.push(line);
+		const value: unknown = JSON.parse(line);
+		if (!isRecord(value) || value.type !== "mcp_form_request") return;
+		const waiter = waiters.shift();
+		if (waiter) waiter(value);
+		else requests.push(value);
+	};
+	writer.registerConnection(id, { writeRaw, waitForBackpressure: async () => {} });
+	writer.setConnectionCapabilities(id, ["interactive_user", "mcp_form_presenter_v1"]);
+	writer.attachConnectionToSession(id, "session");
+	const connection = writer.getMcpPresenterConnection(id);
+	const context = connection && writer.mcpPresenters?.connectionContext(connection, "session");
+	if (!connection || !context) throw new Error("Fixture presenter connection missing");
+	const request = (): Promise<Record<string, unknown>> => {
+		const queued = requests.shift();
+		return queued ? Promise.resolve(queued) : new Promise((resolve) => waiters.push(resolve));
+	};
+	return { id, connection, context, request, unread: () => requests.length };
+}
+
 export async function accountHost(options: { authority?: boolean; inheritedBootstrap?: Duplex } = {}) {
-	const state: { account: string | undefined } = { account: "account-a" };
+	const state: { account: string | undefined; readonly listeners: Set<() => void> } = {
+		account: "account-a",
+		listeners: new Set(),
+	};
 	const lines: string[] = [];
 	const writer = new SessionEventWriter(() => {});
 	const authority = writer.enableMcpPresenters();
-	writer.registerConnection("human", { writeRaw: (line) => lines.push(line), waitForBackpressure: async () => {} });
-	writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1"]);
 	writer.bindMcpForms("session", "durable", {}, () => {});
-	writer.attachConnectionToSession("human", "session");
+	const human = presenterConnection(writer, "human", lines);
 	const binding = writer.getMcpFormBinding("session");
-	const connection = writer.getMcpPresenterConnection("human");
-	if (!binding || !connection) throw new Error("Fixture binding missing");
+	if (!binding) throw new Error("Fixture binding missing");
 	const started = await startMcpPresenterControl(writer, {
 		enforcement: true,
 		...(options.authority !== false && { account: issuer.authority(state) }),
@@ -79,13 +105,29 @@ export async function accountHost(options: { authority?: boolean; inheritedBoots
 		started.control.dispose();
 		if (started.dir) await rm(started.dir, { recursive: true, force: true });
 	});
-	const open = (): Peer => {
+	const open = (): Peer & { close: () => void } => {
 		const socket = connect(started.control.path);
 		disposals.push(() => socket.destroy());
-		return enrollmentPeer(socket);
+		return { ...enrollmentPeer(socket), close: () => socket.destroy() };
 	};
-	const context = authority.connectionContext(connection, "session");
-	return { state, lines, writer, binding, context, control: started.control, open };
+	/** The distribution's sign-out or account-switch event. */
+	const switchAccount = (account: string | undefined) => {
+		state.account = account;
+		for (const listener of [...state.listeners]) listener();
+	};
+	return {
+		state,
+		lines,
+		writer,
+		authority,
+		binding,
+		human,
+		context: human.context,
+		control: started.control,
+		open,
+		switchAccount,
+		presenter: (id: string) => presenterConnection(writer, id),
+	};
 }
 
 export async function enroll(peer: Peer, device: Installation, token: string, signer = device.privateKey) {
@@ -104,9 +146,13 @@ export async function signedCommand(peer: Peer, principalId: unknown, key: KeyOb
 	return peer.next();
 }
 
-export async function enrollAssignAcquire(host: AccountHost, device = installation()) {
+export async function enrollAssignAcquire(
+	host: AccountHost,
+	device = installation(),
+	options: { readonly context?: AccountHost["context"]; readonly claims?: Record<string, unknown> } = {},
+) {
 	const peer = host.open();
-	const token = issuer.mint(device.publicKey);
+	const token = issuer.mint(device.publicKey, options.claims);
 	const { challenge, reply } = await enroll(peer, device, token);
 	const principalId = reply?.principalId;
 	const assigned = await signedCommand(peer, principalId, device.privateKey, {
@@ -118,7 +164,7 @@ export async function enrollAssignAcquire(host: AccountHost, device = installati
 	const acquired = await signedCommand(peer, principalId, device.privateKey, {
 		type: "mcp_presenter_acquire",
 		id: "acquire",
-		...host.context,
+		...(options.context ?? host.context),
 		sessionId: "session",
 		kind: "desktop",
 		purpose: "mcp_form",
@@ -128,4 +174,26 @@ export async function enrollAssignAcquire(host: AccountHost, device = installati
 
 export function claimsOf(token: string): Record<string, unknown> {
 	return JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+}
+
+/** Offers one ordinary form through the session's current holder. */
+export function offer(host: AccountHost) {
+	const presentation = host.binding.capture();
+	if (!presentation) throw new Error("No presenter holds the session");
+	return presentation.present({
+		operationId: "operation",
+		inputId: "input",
+		round: 0,
+		server: { label: "server", source: "user" },
+		message: "message",
+		schema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+		operationSignal: new AbortController().signal,
+		presentationSignal: new AbortController().signal,
+		deadlineMs: 3_600_000,
+	});
+}
+
+export function envelopeOf(request: Record<string, unknown>) {
+	const { sessionId, bindingEpoch, attachmentEpoch, grantId, dialogId, dialogToken, formRevision } = request;
+	return { sessionId, bindingEpoch, attachmentEpoch, grantId, dialogId, dialogToken, formRevision };
 }
