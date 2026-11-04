@@ -4,7 +4,7 @@ import type { McpFormDialog } from "./mcp-form-dialog.ts";
 import type { Binding, Connection, McpPresenterConnection, McpPresenterState } from "./mcp-presenter-bindings.ts";
 
 /** The one acquire feature this host negotiates: `mcp_form_resolved.elsewhere` and `mcp_form_settled`. */
-export const ELSEWHERE_FEATURE = "elsewhere_v1";
+const ELSEWHERE_FEATURE = "elsewhere_v1";
 
 /** A signed acquire's feature list: at most 16 short strings. Unknown names are ignored, never an error. */
 export function features(value: unknown): value is readonly string[] {
