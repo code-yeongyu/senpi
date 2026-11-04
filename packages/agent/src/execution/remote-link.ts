@@ -1,4 +1,5 @@
 import type { Transport, TransportFrame } from "../transport/transport.ts";
+import { createPlaneServer, decodePlaneMessage, type PlaneHandler } from "./plane.ts";
 import {
 	decodeRemoteMessage,
 	encodeRemoteMessage,
@@ -37,8 +38,20 @@ interface Pending {
  * hand with a record answers what it already holds, while a hand without one would run a re-sent call again or refuse
  * it as a duplicate, so its waiting calls are left to the paths that already end them.
  */
-export function createHandLink(transport: Transport): HandLink {
+export function createHandLink(
+	transport: Transport,
+	planeHandlers: Readonly<Record<string, PlaneHandler>> = {},
+): HandLink {
 	const pending = new Map<string, Pending>();
+	// Nested requests (S31) are admitted only while their parent CALL is live on its lane; a file operation hosts none.
+	const planes = createPlaneServer({
+		transport,
+		planes: planeHandlers,
+		liveLane: (executionId) => {
+			const waiting = pending.get(executionId)?.message;
+			return waiting?.kind === "invoke" ? waiting.scope.id : undefined;
+		},
+	});
 	let announced: RemoteHello | undefined;
 	// A wait that ran out is remembered: later operations answer at once instead of each waiting again.
 	let waitedOut = false;
@@ -48,12 +61,15 @@ export function createHandLink(transport: Transport): HandLink {
 		const waiter = pending.get(executionId);
 		if (waiter === undefined) return;
 		pending.delete(executionId);
+		planes.parentEnded(executionId);
 		waiter.resolve(reply);
 	};
 	const send = (lane: string, message: RemoteHandMessage): Promise<void> =>
 		transport.send(lane, encodeRemoteMessage(message));
 
 	transport.onFrame((frame: TransportFrame) => {
+		const nested = decodePlaneMessage(frame.payload);
+		if (nested !== undefined) return planes.receive(frame.lane, nested);
 		let message: RemoteHandMessage;
 		try {
 			message = decodeRemoteMessage(frame.payload);

@@ -1,6 +1,7 @@
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { AgentToolResult } from "../types.ts";
 import { FILE_CHANNEL } from "./device-files.ts";
+import { createPlaneClient, decodePlaneMessage, type NestedRequest } from "./plane.ts";
 import { fileCall, fileRefusal, fileStopped } from "./remote-file-call.ts";
 import {
 	decodeRemoteMessage,
@@ -20,6 +21,8 @@ export interface HandCall {
 	readonly name: string;
 	readonly arguments: unknown;
 	readonly signal: AbortSignal;
+	/** Asks the brain that owns this call (a model-backed tool's completion, S31); fails once the call has ended. */
+	readonly nested: NestedRequest;
 }
 
 /**
@@ -96,6 +99,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 	const accepted: string[] = [];
 	const seen = new Set<string>();
 	const running = new Map<string, { readonly controller: AbortController; readonly root: string }>();
+	const planes = createPlaneClient({ transport });
 	let closed = false;
 	const stopWatching =
 		authority.kind === "peer"
@@ -167,6 +171,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 								name: call.name,
 								arguments: call.arguments,
 								signal: controller.signal,
+								nested: planes.requestFor(call.executionId, lane, controller.signal),
 							})
 						: scope.file === undefined
 							? fileRefusal("unsupported", "this hand serves no file channel")
@@ -187,6 +192,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 				}
 			} finally {
 				running.delete(call.executionId);
+				planes.parentEnded(call.executionId);
 			}
 			const settled = toRemoteToolResult(result);
 			reply(
@@ -222,6 +228,8 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		} catch {
 			return;
 		}
+		const nested = decodePlaneMessage(frame.payload);
+		if (nested !== undefined) return planes.receive(nested);
 		let message: RemoteHandMessage;
 		try {
 			message = decodeRemoteMessage(frame.payload);
