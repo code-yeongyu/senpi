@@ -55,6 +55,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		...(typeof session.getSessionModelThinkingLevels === "function"
 			? { sessionModelThinkingLevels: session.getSessionModelThinkingLevels() }
 			: {}),
+		...(session.isStreaming ? { currentTurnId: String(session.externalAdmission.turnEpoch) } : {}),
 		...(lastAbortSource ? { lastAbortSource } : {}),
 		...(lastProviderDiagnostic ? { lastProviderDiagnostic } : {}),
 		serviceTier: session.effectiveServiceTier,

@@ -12,10 +12,24 @@ import { ClientAdmissions } from "./client-admissions.ts";
 import { clientInputContext } from "./client-message-events.ts";
 import {
 	RPC_ERROR_NO_MODEL_SELECTED,
+	RPC_ERROR_TURN_CONFLICT,
 	RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED,
 	RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
 	RPC_ERROR_UNKNOWN_COMMAND,
 } from "./rpc-types.ts";
+
+/** A steer named a turn that is not running (senpi#5776); `currentTurnId` is the running one, if any. */
+class TurnConflictError extends Error {
+	readonly currentTurnId: string | undefined;
+	constructor(currentTurnId: string | undefined) {
+		super(
+			currentTurnId === undefined
+				? "No turn is running, so this steer cannot reach the turn it names."
+				: `This steer names a turn that is not running; the running turn is ${currentTurnId}.`,
+		);
+		this.currentTurnId = currentTurnId;
+	}
+}
 
 /** The `prompt` refusal's `errorCode` for each reason a turn cannot start. */
 const MODEL_NOT_READY_ERROR_CODES = {
@@ -109,6 +123,12 @@ export async function handleClientInput(
 				};
 				switch (command.type) {
 					case "prompt": {
+						if (command.streamingBehavior === "steer" && command.expectedTurnId !== undefined) {
+							const currentTurnId = session.isStreaming
+								? String(session.externalAdmission.turnEpoch)
+								: undefined;
+							if (command.expectedTurnId !== currentTurnId) throw new TurnConflictError(currentTurnId);
+						}
 						if (
 							command.thinkingLevel !== undefined &&
 							session.isStreaming &&
@@ -171,6 +191,12 @@ export async function handleClientInput(
 				? {
 						errorCode: MODEL_NOT_READY_ERROR_CODES[error.code],
 						...(error.provider === undefined ? {} : { errorData: { provider: error.provider } }),
+					}
+				: {}),
+			...(error instanceof TurnConflictError
+				? {
+						errorCode: RPC_ERROR_TURN_CONFLICT,
+						...(error.currentTurnId === undefined ? {} : { errorData: { currentTurnId: error.currentTurnId } }),
 					}
 				: {}),
 			...(unknownCommand

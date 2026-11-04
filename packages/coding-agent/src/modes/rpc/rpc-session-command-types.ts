@@ -31,6 +31,11 @@ export type RpcSessionCommand =
 			unknownCommandAsText?: boolean;
 			clientMessageId?: string;
 			clientTurnId?: string;
+			/**
+			 * With `streamingBehavior: "steer"`: the turn the caller means to steer, as `get_state.currentTurnId` reports it. A steer
+			 * that names a turn which is not running is refused `turn_conflict` (senpi#5776).
+			 */
+			expectedTurnId?: string;
 			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
 			toolBarrier?: ToolBarrierSpec;
 	  }

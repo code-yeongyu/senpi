@@ -57,6 +57,7 @@ const PROMPTING_SCHEMAS = {
 		unknownCommandAsText: OptBool,
 		clientMessageId: OptId,
 		clientTurnId: OptId,
+		expectedTurnId: OptId,
 		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
 	}),
 	release_tool_barrier: session("release_tool_barrier", { barrierId: Id }),

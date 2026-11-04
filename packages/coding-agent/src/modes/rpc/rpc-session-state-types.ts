@@ -134,6 +134,8 @@ export interface RpcSessionModelEntry {
 }
 
 export interface RpcSessionState {
+	/** The running turn's id; absent when no turn is running. A steer names it as `prompt.expectedTurnId` (senpi#5776). */
+	currentTurnId?: string;
 	/** Latest 64 UI-answer receipts in this session generation, oldest first. */
 	answeredUiRequests?: UiAnswerReceipt[];
 	paused: boolean;

@@ -729,3 +729,98 @@ describe("RPC prompt response semantics", () => {
 		}
 	});
 });
+
+// senpi#5776: get_state names the running turn, and a steer that carries expectedTurnId reaches only that turn.
+describe("RPC steer turn check", () => {
+	afterEach(() => {
+		rpcIo.outputLines = [];
+		rpcIo.lineHandler = undefined;
+	});
+
+	const responseFor = (id: string, command: string) =>
+		parseOutputLines(rpcIo.outputLines).find(
+			(record) => record.id === id && record.type === "response" && record.command === command,
+		);
+
+	async function runningTurnId(lineHandler: (line: string) => void): Promise<unknown> {
+		lineHandler(JSON.stringify({ id: "state", type: "get_state" }));
+		let state: ParsedOutputLine | undefined;
+		await vi.waitFor(() => {
+			state = responseFor("state", "get_state");
+			expect(state).toBeDefined();
+		});
+		return (state?.data as { currentTurnId?: unknown } | undefined)?.currentTurnId;
+	}
+
+	it("reports no turn id while idle and refuses a steer that names one", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, holdResponse: true });
+		try {
+			expect(await runningTurnId(lineHandler)).toBeUndefined();
+			lineHandler(
+				JSON.stringify({
+					id: "idle-steer",
+					type: "prompt",
+					message: "Steer",
+					streamingBehavior: "steer",
+					expectedTurnId: "1",
+				}),
+			);
+			await vi.waitFor(() => {
+				expect(responseFor("idle-steer", "prompt")).toMatchObject({ success: false, errorCode: "turn_conflict" });
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("steers the running turn when expectedTurnId matches the id get_state reports", async () => {
+		const { lineHandler, cleanup, streamStarted } = await startRpcMode({ withAuth: true, holdResponse: true });
+		try {
+			lineHandler(JSON.stringify({ id: "start", type: "prompt", message: "Hold this" }));
+			await streamStarted;
+			const turnId = await runningTurnId(lineHandler);
+			expect(typeof turnId).toBe("string");
+			lineHandler(
+				JSON.stringify({
+					id: "steer-ok",
+					type: "prompt",
+					message: "Steer",
+					streamingBehavior: "steer",
+					expectedTurnId: turnId,
+				}),
+			);
+			await vi.waitFor(() => {
+				expect(responseFor("steer-ok", "prompt")).toMatchObject({ success: true, data: { disposition: "queued" } });
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("refuses a steer whose expectedTurnId names another turn, with the running one", async () => {
+		const { lineHandler, cleanup, streamStarted } = await startRpcMode({ withAuth: true, holdResponse: true });
+		try {
+			lineHandler(JSON.stringify({ id: "start", type: "prompt", message: "Hold this" }));
+			await streamStarted;
+			const turnId = await runningTurnId(lineHandler);
+			lineHandler(
+				JSON.stringify({
+					id: "steer-stale",
+					type: "prompt",
+					message: "Steer",
+					streamingBehavior: "steer",
+					expectedTurnId: "999",
+				}),
+			);
+			await vi.waitFor(() => {
+				expect(responseFor("steer-stale", "prompt")).toMatchObject({
+					success: false,
+					errorCode: "turn_conflict",
+					errorData: { currentTurnId: turnId },
+				});
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+});

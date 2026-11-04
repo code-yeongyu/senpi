@@ -3938,6 +3938,12 @@ With images:
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
 Queued prompts cannot include `thinkingLevel`; wait for the current turn to complete before changing it.
 
+**Steering a specific turn**: a steer may name the turn it is meant for with `expectedTurnId`, the id `get_state` reports as `currentTurnId`. The steer is queued only when that turn is still running. If no turn is running, or a different one is, it is refused with `errorCode: "turn_conflict"`, and `errorData.currentTurnId` names the running turn when there is one, so a steer meant for one turn never lands in the next.
+
+```json
+{"type": "prompt", "message": "Use the other file", "streamingBehavior": "steer", "expectedTurnId": "3"}
+```
+
 **Model not ready**: A prompt that would start a turn is refused before the model is called when the session
 cannot run one. The `error` text is the same guidance the TUI shows; the `errorCode` says why:
 
@@ -4325,6 +4331,7 @@ Response:
     "fastMode": true,
     "isStreaming": false,
     "isCompacting": false,
+    "currentTurnId": "3",
     "steeringMode": "all",
     "followUpMode": "one-at-a-time",
     "sessionFile": "/path/to/session.jsonl",
@@ -4337,6 +4344,8 @@ Response:
   }
 }
 ```
+
+`currentTurnId` is the id of the running turn, present only while one runs; a steer names it as `prompt.expectedTurnId`.
 
 The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
