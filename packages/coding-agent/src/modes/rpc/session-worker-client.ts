@@ -498,12 +498,14 @@ export class SessionWorkerClient {
 				}
 				let outputConnection = message.connection;
 				if (isGrantSelectRequest(record)) {
+					const title: unknown = Reflect.get(record, "title");
 					const target = writer.routeWorkerGrant(
 						sessionId,
 						record.id,
 						message.connection,
 						this.options.capabilities ?? [],
 						() => this.post({ type: "cancel_grant", id: record.id }),
+						typeof title === "string" ? title : undefined,
 					);
 					if (!target.accepted) {
 						acknowledge(message.signal, true);

@@ -543,14 +543,36 @@ refused. The pending host record determines sensitivity even if the incoming
 
 Requests belong to one immutable presenter and live session incarnation. The
 initiating attached client must itself be eligible; it cannot borrow another
-client's declaration. Background calls choose an eligible attached presenter in
-registration order. Unsupported presentation raises `secret_input_unavailable`
-before emission. Worker isolates negotiate accepted/refused-with-reason with the
-parent before registering a request; a refusal is not user cancellation.
+client's declaration. Background calls (no connection's command raised them)
+choose an eligible attached presenter in registration order, but only a local
+one: a connection that declared a delegation (`declare_delegation`) or a
+`remoteOrigin` is never chosen, whatever it declares, and with no local
+eligible presenter the call ends `secret_input_unavailable` (`no_presenter`). A
+background request whose presenter later declares a `remoteOrigin` ends
+`unavailable`. Unsupported presentation raises `secret_input_unavailable`
+before emission. A secret raised by a remote device's own turn is presented only
+on that device's connection; a relay forwarder never declares `secret_input_v1`
+for it, so that secret ends `secret_input_unavailable` (`client_unsupported`)
+with no prompt and no notice anywhere. Worker isolates negotiate
+accepted/refused-with-reason with the parent before registering a request; a
+refusal is not user cancellation.
 
 The private transport bypasses replay, observer, transcript and trace-record
-publication. Generic `get_state`/`get_snapshot` and non-owner views contain no
-secret prompt or receipt. The owner can query its bounded, value-free
+publication. Generic `get_state`/`get_snapshot` contain no secret prompt or
+receipt. Another attached connection sees only that a secret is pending, and
+only when its `set_client_info` declared `raiser_notice_v1`:
+
+```json
+{"type":"secret_input_notice","sessionId":"session-id","uiRequestId":"request-id","title":"Credential","deadlineAtMs":1900000000000,"raisedBy":"socket-1"}
+{"type":"secret_input_notice_settled","sessionId":"session-id","uiRequestId":"request-id","outcome":"answered"}
+```
+
+`raisedBy` is the raising connection, or `"agent"` for a background call;
+`remoteOrigin` is present when the raising connection declared one. A notice
+never carries a value, draft, `answerId` or receipt, it is not replayed, and it
+grants no answering authority: an answer from that connection is still
+`secret_answer_refused`. A connection without `raiser_notice_v1` receives
+nothing, as before. The owner can query its bounded, value-free
 `get_state.answeredUiRequests` receipts after acknowledgement loss. Discard the
 value instead of resending or saving it in a reconnect queue. A missing receipt
 after eviction/restart means unknown outcome, not proof the callback did not run.
@@ -628,6 +650,16 @@ may answer. Only **Grant and save permanently** persists the names for that
 declaration; **Start without them**, cancellation, disconnect and timeout save
 nothing. A client that never answers reaches the deadline and the server starts
 filtered. A headless or question-only client receives no grant dialog.
+
+Without a raising connection that declares `grant_select`, the dialog goes to the
+first attached local connection that does; a connection that declared a
+delegation or a `remoteOrigin` is never that fallback, and is never registered as
+an in-process grant presentation. With no local candidate the decision ends at
+once with nothing saved. The other attached connections that declared
+`raiser_notice_v1` receive
+`{type:"grant_select_notice", sessionId, uiRequestId, title}` and, when the
+dialog ends, `{type:"grant_select_notice_settled", sessionId, uiRequestId}`;
+an answer from them is still `grant_answer_refused`.
 
 Sessions retain skill-link and withheld-environment warnings. Every attached
 RPC connection receives the current snapshot as warning `notify` requests on

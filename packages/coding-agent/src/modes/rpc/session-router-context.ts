@@ -130,6 +130,8 @@ export class RouterContext {
 		);
 		this.registry = registry;
 		this.writer = writer;
+		// The writer's background routes stay local (D11 S3-5): it reads each connection's declared origin from here.
+		writer.originOf = (connection) => this.connectionRoles.originOf(connection);
 		this.defaults = defaults;
 		this.createBinding = createBinding;
 		this.connectionOptions = {

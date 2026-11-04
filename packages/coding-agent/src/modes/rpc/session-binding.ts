@@ -176,6 +176,7 @@ export async function createRpcSessionBinding(
 			workerSecurityBridge: writer.workerSecurityBridge,
 			secretInputRoute: writer.secretInputRoute(sessionId),
 			grantDialogSettled: (id) => writer.settleGrantDialog(sessionId, id),
+			grantDialogRaised: (id, title) => writer.noticeGrantDialog(sessionId, id, title),
 			bindSecurityPresentation: (session, ui) =>
 				writer.bindSecurityPresentations(sessionId, session.sessionId, session.securityNotices, ui),
 			bindMcpForms: (session, ui) =>
