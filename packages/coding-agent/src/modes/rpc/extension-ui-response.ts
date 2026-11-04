@@ -120,6 +120,21 @@ function reply(id: string) {
 	return { id, type: "response", command: "extension_ui_response" } as const;
 }
 
+/** The one correlated reply to an `extension_ui_progress` record, keyed by its `id` (senpi#5761). */
+export type ExtensionUiProgressReply = {
+	readonly id: string;
+	readonly type: "response";
+	readonly command: "extension_ui_progress";
+} & ({ readonly success: true } | { readonly success: false; readonly error: string });
+
+export function extensionUiProgressReply(
+	id: string,
+	outcome: "applied" | "question_already_resolved" | "unknown_extension_ui_request",
+): ExtensionUiProgressReply {
+	const head = { id, type: "response", command: "extension_ui_progress" } as const;
+	return outcome === "applied" ? { ...head, success: true } : { ...head, success: false, error: outcome };
+}
+
 export function refusedExtensionUiResponse(id: string, error: string): ExtensionUiResponseReply {
 	const disposition =
 		error === "question_already_resolved"
