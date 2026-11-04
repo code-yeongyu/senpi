@@ -125,7 +125,14 @@ import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/ext
 import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
 import { emitUserActivity } from "../../core/extensions/user-activity.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-import { sessionHolderWarning } from "../../core/foreign-session-holders.ts";
+import {
+	checkSessionHolders,
+	describeSessionHolders,
+	SESSION_HOLDER_LOOKUP_FAILED,
+	sessionHolderWarning,
+	stopSessionHolders,
+	takeOverRefusal,
+} from "../../core/foreign-session-holders.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
@@ -9040,6 +9047,36 @@ export class InteractiveMode {
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
+		// A session another live process holds must not get a second writer here (senpi#5744): the restored
+		// lifecycle would read that process's live run as interrupted and the next input would run it again.
+		const holderCheck = await checkSessionHolders(sessionPath);
+		if ("holders" in holderCheck && holderCheck.holders.length > 0) {
+			const takeOver = "Take over (stop it there)";
+			const refusal = takeOverRefusal(holderCheck.holders);
+			const choice = await this.showExtensionSelector(
+				`This session is open in another process (${describeSessionHolders(holderCheck.holders)}).\nResuming it here while it runs would start a second run of the same session.${refusal === undefined ? "" : `\n${refusal}`}`,
+				refusal === undefined ? ["Cancel", takeOver] : ["Cancel"],
+			);
+			if (choice !== takeOver) {
+				this.showStatus("Not resumed: the session is open in another process");
+				return { cancelled: true };
+			}
+			let stopped: boolean;
+			try {
+				stopped = await stopSessionHolders(sessionPath, holderCheck.holders);
+			} catch (error: unknown) {
+				this.showWarning(
+					`Not resumed: could not stop the other process (${error instanceof Error ? error.message : String(error)}).`,
+				);
+				return { cancelled: true };
+			}
+			if (!stopped) {
+				this.showWarning(
+					"Not resumed: the session is still open in another process; quit it there, then /resume again.",
+				);
+				return { cancelled: true };
+			}
+		}
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,
@@ -9048,10 +9085,10 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return result;
 			}
-			const warning = await sessionHolderWarning(
-				this.sessionManager.getSessionFile(),
-				this.sessionManager.getSessionId(),
-			);
+			const warning =
+				"lookupFailed" in holderCheck
+					? SESSION_HOLDER_LOOKUP_FAILED
+					: await sessionHolderWarning(this.sessionManager.getSessionFile(), this.sessionManager.getSessionId());
 			if (warning !== undefined) this.showWarning(warning);
 			const switchTimings = formatTimings("switch");
 			this.showStatus(
@@ -9073,10 +9110,13 @@ export class InteractiveMode {
 				if (result.cancelled) {
 					return result;
 				}
-				const warning = await sessionHolderWarning(
-					this.sessionManager.getSessionFile(),
-					this.sessionManager.getSessionId(),
-				);
+				const warning =
+					"lookupFailed" in holderCheck
+						? SESSION_HOLDER_LOOKUP_FAILED
+						: await sessionHolderWarning(
+								this.sessionManager.getSessionFile(),
+								this.sessionManager.getSessionId(),
+							);
 				if (warning !== undefined) this.showWarning(warning);
 				this.showStatus("Resumed session in current cwd");
 				return result;
