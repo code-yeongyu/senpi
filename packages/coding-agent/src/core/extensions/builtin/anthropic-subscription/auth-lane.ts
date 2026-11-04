@@ -16,7 +16,12 @@ import { isBlockedFor, type PinSource, selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
 import { recoverAuthBlockedSlots } from "./auth-block-recovery.ts";
 import { activeBoundary } from "./auth-lane-boundary.ts";
-import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
+import {
+	hasRequestOauthToken,
+	mergeRequestAuthEnvironment,
+	stripAmbientApiKey,
+	stripManagedAuthEnvironment,
+} from "./auth-environment.ts";
 import { accountDirFor, claudeCliSharedRoot, ensureAccountDir } from "./claude-cli-account-dir.ts";
 import { buildClaudeCliEnvironment } from "./claude-cli-environment.ts";
 import { profileChanged, verifyClaudeCliInitialization } from "./claude-cli-token-source.ts";
@@ -30,7 +35,11 @@ import { classifyForRequest, retryAtStandardWindowOnce, sdkFailure, visibleSdkMe
 import { refreshFailure } from "./refresh-failure.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
-import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
+import {
+	type AnthropicSubscriptionProviderSettings,
+	type AnthropicSubscriptionTokenInjection,
+	resolveAmbientApiKey,
+} from "./settings.ts";
 import { ClaudeSignInRequiredError, signInRequiredNames } from "./sign-in-again.ts";
 
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
@@ -256,10 +265,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 	};
 	if (!pool) {
 		const parentEnvironment = mergeRequestAuthEnvironment(activeBoundary.env(), input.env);
-		const ambientEnvironment: Record<string, string | undefined> = { ...parentEnvironment };
-		for (const name of Object.keys(ambientEnvironment)) {
-			if (name.startsWith("SENPI_")) delete ambientEnvironment[name];
-		}
+		const ambientEnvironment = stripAmbientApiKey(parentEnvironment, resolveAmbientApiKey(input.providerSettings));
 		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
 		let askedLegacyLongContext = false;
 		const ambientAttempt = async () => {

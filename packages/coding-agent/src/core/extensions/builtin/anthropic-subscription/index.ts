@@ -106,7 +106,11 @@ export function registerAnthropicSubscriptionExtension(
 					const settings = deps.readSettings
 						? deps.readSettings()
 						: loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
-					return { tokenInjection: settings.tokenInjection, enabled: settings.enabled };
+					return {
+						tokenInjection: settings.tokenInjection,
+						enabled: settings.enabled,
+						ambientApiKey: settings.ambientApiKey,
+					};
 				} catch {
 					return undefined;
 				}

@@ -199,6 +199,30 @@ export function sdkErrorGuidance(kind: SdkErrorKind): string | undefined {
 	}
 }
 
+/**
+ * The ambient `claude auth status` probe did not report a login after the lane dropped a host API key (senpi#1195);
+ * the probe also reads false when it could not run (no binary, deadline), so the message does not claim which.
+ * `kind` and `ignoredKey` are the machine-readable part; `message` names the ways to use that key or the subscription.
+ */
+export type AmbientApiKeyIgnoredDiagnostic = {
+	kind: "ambient_api_key_ignored";
+	ignoredKey: "ANTHROPIC_API_KEY";
+	message: string;
+};
+
+export function ambientApiKeyIgnoredDiagnostic(ignoredKey: "ANTHROPIC_API_KEY"): AmbientApiKeyIgnoredDiagnostic {
+	return {
+		kind: "ambient_api_key_ignored",
+		ignoredKey,
+		message: [
+			`${PROVIDER} is not configured: its ambient lane ignored the host ${ignoredKey}, and the Claude Code login probe (claude auth status) did not report a login without it.`,
+			`  To bill that key through Claude Code, set anthropicSubscriptionProvider.ambientApiKey: "inherit" (or SENPI_CLAUDE_SDK_OAUTH_AMBIENT_API_KEY=inherit).`,
+			"  To use the key directly, pick the anthropic provider.",
+			`  To use your Claude subscription, run /login ${PROVIDER} or claude auth login.`,
+		].join("\n"),
+	};
+}
+
 export function missingBinaryGuidance(platform: string, arch: string): string {
 	return [
 		`Claude native binary not found for ${platform}-${arch}.`,

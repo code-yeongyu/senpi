@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import { signalSpawnedChild } from "../../../../utils/child-signal.ts";
+import { stripAmbientApiKey } from "./auth-environment.ts";
 import {
 	defaultExecutableDeps,
 	describeClaudeCodeExecutable,
 	type ExecutableResolution,
 	resolveClaudeCodeExecutable,
 } from "./executable.ts";
+import { type AnthropicSubscriptionAmbientApiKey, resolveAmbientApiKey } from "./settings.ts";
 
 export type ClaudeLaneDiagnostics = ExecutableResolution & {
 	/** The JavaScript runtime spawning the binary; Bun and Node spell and stat Windows paths differently (#1541). */
@@ -88,13 +90,17 @@ type ProbeChildProcess = {
 
 export type AmbientProbeOptions = {
 	timeoutMs?: number;
-	spawnProbe?: (command: string, args: readonly string[]) => ProbeChildProcess;
+	spawnProbe?: (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => ProbeChildProcess;
+	env?: NodeJS.ProcessEnv;
+	ambientApiKey?: AnthropicSubscriptionAmbientApiKey;
 };
 
 export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions = {}): Promise<boolean> {
 	const timeoutMs = options.timeoutMs ?? AMBIENT_PROBE_TIMEOUT_MS;
 	const spawnProbe =
-		options.spawnProbe ?? ((command, args) => spawn(command, [...args], { stdio: "ignore", windowsHide: true }));
+		options.spawnProbe ??
+		((command, args, env) => spawn(command, [...args], { env, stdio: "ignore", windowsHide: true }));
+	const probeEnvironment = stripAmbientApiKey(options.env ?? process.env, resolveAmbientApiKey(options));
 	let executable: string;
 	try {
 		executable = resolveClaudeCodeExecutable(defaultExecutableDeps());
@@ -110,7 +116,7 @@ export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions 
 			clearTimeout(deadline);
 			resolve(available);
 		};
-		const child = spawnProbe(executable, ["auth", "status"]);
+		const child = spawnProbe(executable, ["auth", "status"], probeEnvironment);
 		const deadline = setTimeout(() => {
 			signalSpawnedChild(child, "SIGKILL");
 			finish(false);
@@ -121,4 +127,15 @@ export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions 
 	});
 }
 
-export const readAmbientClaudeAuthStatus = createAmbientAuthStatusReader(probeAmbientClaudeAuthStatus);
+/** One memo per `ambientApiKey` policy, so changing the setting never reuses the other policy's answer. */
+const ambientStatusReaders = {
+	strip: createAmbientAuthStatusReader(() => probeAmbientClaudeAuthStatus({ ambientApiKey: "strip" })),
+	inherit: createAmbientAuthStatusReader(() => probeAmbientClaudeAuthStatus({ ambientApiKey: "inherit" })),
+};
+
+export function readAmbientClaudeAuthStatus(
+	signal: AbortSignal | undefined,
+	policy: AnthropicSubscriptionAmbientApiKey,
+): Promise<boolean> {
+	return ambientStatusReaders[policy](signal);
+}

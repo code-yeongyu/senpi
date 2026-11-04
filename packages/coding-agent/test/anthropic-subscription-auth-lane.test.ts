@@ -276,7 +276,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		expect(captured[0]?.env).not.toHaveProperty("CLAUDE_CODE_USE_VERTEX");
 	});
 
-	it("preserves the parent environment minus SENPI_* variables in ambient mode", async () => {
+	it("preserves the parent environment minus SENPI_* variables and the API key in ambient mode (senpi#1195)", async () => {
 		const captured: Options[] = [];
 		const { CLAUDE_CODE_OAUTH_TOKEN: _oauthToken, ...ambientEnvironment } = managedEnvironment();
 		configureAuth(new InMemoryCredentialStore(), ambientEnvironment);
@@ -287,7 +287,13 @@ describe("Claude SDK OAuth auth lanes", () => {
 		expect(captured).toHaveLength(1);
 		expect(captured[0]?.env).toBeDefined();
 		expect(captured[0]?.env?.PATH).toBe("/usr/bin");
-		expect(captured[0]?.env?.ANTHROPIC_API_KEY).toBe("parent-api-key");
+		expect(captured[0]?.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+		expect(captured[0]?.env).toMatchObject({
+			ANTHROPIC_AUTH_TOKEN: "parent-auth-token",
+			ANTHROPIC_BASE_URL: "https://gateway.invalid",
+			CLAUDE_CODE_USE_BEDROCK: "1",
+			CLAUDE_CODE_USE_VERTEX: "1",
+		});
 		expect(captured[0]?.env).not.toHaveProperty("SENPI_CLAUDE_SDK_OAUTH_SYSTEM_PROMPT_MODE");
 		expect(captured[0]?.env).not.toHaveProperty("SENPI_SEED");
 	});
