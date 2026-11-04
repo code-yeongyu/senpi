@@ -15,7 +15,7 @@ import type { ExtensionUIContext } from "./types.ts";
 export const UI_PRESENTATION_PLANE = "ui-presentation";
 
 /** The `ExtensionUIContext` calls that present something and answer nothing, so a port can carry them. */
-export const PRESENTATION_METHODS = [
+const PRESENTATION_METHODS = [
 	"notify",
 	"setStatus",
 	"setSubagentCost",
