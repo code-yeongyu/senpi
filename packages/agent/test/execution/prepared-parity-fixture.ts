@@ -14,6 +14,8 @@ export interface Observation {
 	readonly calls: Readonly<Record<string, string>>;
 	readonly results: readonly string[];
 	readonly turns: number;
+	/** The run's error, when it ended in one. */
+	readonly error?: string;
 }
 
 export interface Scenario {
@@ -130,5 +132,7 @@ export async function observe(scenario: Scenario): Promise<Observation> {
 			: [],
 	);
 	const joined = Object.fromEntries(Object.entries(calls).map(([id, steps]) => [id, steps.join(" ")]));
-	return { starts, calls: joined, results, turns: agent.state.messages.filter((m) => m.role === "assistant").length };
+	const turns_ = agent.state.messages.filter((m) => m.role === "assistant").length;
+	const error = agent.state.errorMessage;
+	return { starts, calls: joined, results, turns: turns_, ...(error === undefined ? {} : { error }) };
 }

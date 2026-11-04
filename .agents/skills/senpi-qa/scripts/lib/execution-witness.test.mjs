@@ -46,6 +46,9 @@ test("the witness is read from the session's sink file: missing, no-calls, prepa
 		writeFileSync(sessionFile, assistant([{ type: "toolCall", id: "one" }]));
 		const missing = readWitness(witnessFile, [undefined, sessionFile]);
 		assert.deepEqual(missing, { pipeline: "missing", source: "none", calls: [] });
+		writeFileSync(sessionFile, assistant([{ type: "toolCall", id: "one" }, { type: "toolCall", id: "two" }]));
+		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n');
+		assert.equal(readWitness(witnessFile, [sessionFile]).pipeline, "missing", "a call without its own receipt fails");
 		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n{"pipeline":"prepared","toolCallId":"two"}\n');
 		const prepared = readWitness(witnessFile, [sessionFile]);
 		assert.deepEqual(prepared, {

@@ -35,7 +35,11 @@ export function withoutWitnessEntries(entries) {
 export function readWitness(witnessFile, sessionFiles = []) {
 	const lines = witnessFile && existsSync(witnessFile) ? readJsonl(readFileSync(witnessFile, "utf8")) : [];
 	const calls = lines.map((line) => ({ toolCallId: line.toolCallId, pipeline: line.pipeline }));
-	if (calls.length === 0) return { pipeline: sessionFiles.some(madeToolCalls) ? "missing" : "no-calls", source: "none", calls };
+	const sessionCalls = sessionFiles.flatMap(toolCallIds);
+	if (calls.length === 0) return { pipeline: sessionCalls.length > 0 ? "missing" : "no-calls", source: "none", calls };
+	// Per call, not per run: a session call with no receipt of its own is `missing` even when other calls have one.
+	const witnessed = new Set(calls.map((call) => call.toolCallId));
+	if (sessionCalls.some((id) => !witnessed.has(id))) return { pipeline: "missing", source: "sink", calls };
 	const kinds = new Set(calls.map((call) => call.pipeline));
 	return { pipeline: kinds.size === 1 ? [...kinds][0] : "mixed", source: "sink", calls };
 }
@@ -45,13 +49,11 @@ export function witnessOk(witness) {
 	return witness.pipeline === "prepared" || witness.pipeline === "no-calls";
 }
 
-function madeToolCalls(sessionFile) {
-	if (!sessionFile || !existsSync(sessionFile)) return false;
-	return readJsonl(readFileSync(sessionFile, "utf8")).some(
-		(entry) =>
-			entry.type === "message" &&
-			entry.message?.role === "assistant" &&
-			Array.isArray(entry.message.content) &&
-			entry.message.content.some((part) => part?.type === "toolCall"),
+function toolCallIds(sessionFile) {
+	if (!sessionFile || !existsSync(sessionFile)) return [];
+	return readJsonl(readFileSync(sessionFile, "utf8")).flatMap((entry) =>
+		entry.type === "message" && entry.message?.role === "assistant" && Array.isArray(entry.message.content)
+			? entry.message.content.filter((part) => part?.type === "toolCall" && typeof part.id === "string").map((part) => part.id)
+			: [],
 	);
 }
