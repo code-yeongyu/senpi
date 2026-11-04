@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -220,9 +220,8 @@ test("diffNormalized reports array order, missing keys and value changes by path
 
 // #5682 made a tool call's `session_lifecycle` (activity `tool`) follow the assistant `message_end` and `entry_appended`
 // it reflects. A golden recorded before that change still has the lifecycle first; #5764 (E29) slipped through a manual
-// re-record, so every golden on every platform is checked here.
-test("every EQ golden puts a tool-activity session_lifecycle after the assistant message_end it reflects", () => {
-	const goldenRoot = join(dirname(fileURLToPath(import.meta.url)), "../../scenarios/fused-equivalence/golden");
+// re-record, so every golden on every platform is checked here. Only runs with a non-empty `events` stream count as checked.
+function staleLifecycleOrder(goldenRoot) {
 	const stale = [];
 	let checked = 0;
 	for (const platform of readdirSync(goldenRoot)) {
@@ -230,7 +229,8 @@ test("every EQ golden puts a tool-activity session_lifecycle after the assistant
 			const observations = JSON.parse(readFileSync(join(goldenRoot, platform, file), "utf8")).observations ?? {};
 			for (const [key, runs] of Object.entries(observations)) {
 				for (const [run, entry] of (Array.isArray(runs) ? runs : []).entries()) {
-					const events = Array.isArray(entry?.events) ? entry.events : [];
+					const events = entry?.events;
+					if (!Array.isArray(events) || events.length === 0) continue;
 					checked += 1;
 					for (let index = 0; index + 1 < events.length; index++) {
 						const event = events[index];
@@ -247,6 +247,24 @@ test("every EQ golden puts a tool-activity session_lifecycle after the assistant
 			}
 		}
 	}
-	assert.ok(checked > 0, "no golden event streams were found");
+	return { checked, stale };
+}
+
+test("every EQ golden puts a tool-activity session_lifecycle after the assistant message_end it reflects", () => {
+	const { checked, stale } = staleLifecycleOrder(
+		join(dirname(fileURLToPath(import.meta.url)), "../../scenarios/fused-equivalence/golden"),
+	);
+	assert.ok(checked > 0, "no golden event streams were checked");
 	assert.deepEqual(stale, []);
+});
+
+test("the golden order check counts only runs it actually inspected", () => {
+	const root = mkdtempSync(join(tmpdir(), "eq-golden-order-"));
+	try {
+		mkdirSync(join(root, "linux-x64"));
+		writeFileSync(join(root, "linux-x64", "E99.json"), JSON.stringify({ observations: { O6: [{}, { events: [] }], O1: [{ method: "GET" }] } }));
+		assert.deepEqual(staleLifecycleOrder(root), { checked: 0, stale: [] });
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
