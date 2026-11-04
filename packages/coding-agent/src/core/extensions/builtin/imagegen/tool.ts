@@ -9,7 +9,13 @@ import {
 	parseOpenAIImageSize,
 } from "@earendil-works/pi-ai/compat";
 import { defineTool, type ExtensionContext } from "../../types.ts";
-import { type ImageGenAuthResolution, imageGenAvailability, imageGenCandidates, SETUP_REASON } from "./auth.ts";
+import {
+	type ImageGenAuthResolution,
+	imageGenAvailability,
+	imageGenCandidates,
+	setupReason,
+	unsupportedImageGateways,
+} from "./auth.ts";
 import { DEFAULT_IMAGE_MODEL, failure, type GenerateImageDetails, IMAGE_MODEL_NAMES, Params } from "./params.ts";
 import { displayPath, outputFormatOf, resolveTargets, withFormatExtension } from "./paths.ts";
 import { loadMaskImage, loadReferenceImages } from "./reference-images.ts";
@@ -139,7 +145,10 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 					context,
 				);
 			}
-			return failure(SETUP_REASON, "missing_config", context);
+			const unsupported = await unsupportedImageGateways({ modelRegistry });
+			const result = failure(setupReason(unsupported), "missing_config", context);
+			if (unsupported.length === 0) return result;
+			return { ...result, details: { ...result.details, unsupportedProviders: unsupported } };
 		}
 		let source = sourceLabel(firstCandidate.value);
 		const parsedSize = parseOpenAIImageSize(size);

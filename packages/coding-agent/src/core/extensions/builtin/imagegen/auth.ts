@@ -1,3 +1,4 @@
+import { type BuiltinProvider, getBuiltinImageModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type {
 	CredentialAuthResult,
 	CredentialModel,
@@ -54,6 +55,20 @@ export const SETUP_REASON =
 
 function isGatewayApi(api: string | undefined): boolean {
 	return api === "openai-completions" || api === "openai-responses";
+}
+
+const BUILTIN_PROVIDERS: ReadonlySet<string> = new Set(getBuiltinProviders());
+
+/**
+ * Whether scanning may send OpenAI Images requests to `providerId` (senpi#5674). A built-in provider
+ * answers from its generated image catalog: it qualifies only when that catalog lists an
+ * `openai-images` model, so a chat-only OpenAI-compatible API such as xAI's is never scanned. A provider
+ * the user declared in models.json has no catalog entry, so it is scanned and the 404/405 fall-through
+ * probes it.
+ */
+function servesOpenAiImages(providerId: string): boolean {
+	if (!BUILTIN_PROVIDERS.has(providerId)) return true;
+	return getBuiltinImageModels(providerId as BuiltinProvider).some((model) => model.api === "openai-images");
 }
 
 function compareText(left: string, right: string): number {
@@ -139,7 +154,7 @@ export async function* imageGenCandidates<TModel extends ImageGenAuthModel>(
 	}
 
 	const providerIds = [...groups.keys()]
-		.filter((providerId) => providerId !== pinnedProvider)
+		.filter((providerId) => providerId !== pinnedProvider && servesOpenAiImages(providerId))
 		.sort(compareProviderIds);
 	for (const providerId of providerIds) {
 		const model = groups.get(providerId);
@@ -220,13 +235,35 @@ export async function imageGenAvailability<TModel extends ImageGenAuthModel>(
 		return { kind: openAiKind(openai.baseUrl), provenance: openai.tier, providerId: "openai" };
 	}
 	const gateway = [...groups.keys()]
-		.filter((providerId) => providerId !== pinnedProvider)
+		.filter((providerId) => providerId !== pinnedProvider && servesOpenAiImages(providerId))
 		.sort(compareProviderIds)
 		.find(keyed);
 	if (gateway !== undefined) return { kind: "gateway", provenance: "provider-config", providerId: gateway };
 	const envApiKey = nonEmpty(env.OPENAI_API_KEY);
 	if (envApiKey && !isPlaceholderKey(envApiKey)) return { kind: "native-openai", provenance: "env" };
 	return { kind: "none", reason: SETUP_REASON };
+}
+
+/**
+ * The logged-in built-in providers that scanning passed over because their API serves no OpenAI Images
+ * endpoint, so a setup failure can say why they were not used. Only called once no candidate remains.
+ */
+export async function unsupportedImageGateways<TModel extends ImageGenAuthModel>(
+	deps: ResolveImageGenAuthDeps<TModel>,
+): Promise<string[]> {
+	const unsupported: string[] = [];
+	for (const [providerId, model] of groupGatewayModels(deps.modelRegistry.getAll())) {
+		if (servesOpenAiImages(providerId)) continue;
+		if (await resolveGateway(providerId, model, deps.modelRegistry)) unsupported.push(providerId);
+	}
+	return unsupported;
+}
+
+/** The setup guidance, naming any logged-in providers that were not used because they cannot generate images. */
+export function setupReason(unsupported: readonly string[]): string {
+	if (unsupported.length === 0) return SETUP_REASON;
+	const names = unsupported.join(", ");
+	return `${SETUP_REASON} Not used: ${names} (no OpenAI Images endpoint; pin one with PI_IMAGE_GEN_PROVIDER to try it anyway).`;
 }
 
 export async function resolveImageGenAuth<TModel extends ImageGenAuthModel>(

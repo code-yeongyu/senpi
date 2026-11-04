@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
-import { imageGenAvailability, resolveImageGenAuth } from "../../../src/core/extensions/builtin/imagegen/auth.ts";
+import {
+	type ImageGenAuthModel,
+	type ImageGenAuthRegistry,
+	imageGenAvailability,
+	resolveImageGenAuth,
+} from "../../../src/core/extensions/builtin/imagegen/auth.ts";
 import imageGenExtension from "../../../src/core/extensions/builtin/imagegen/index.ts";
 import { setImageGenRegistry, setNativeBypass } from "../../../src/core/extensions/builtin/imagegen/state.ts";
 import { type GenerateImageDetails, generateImageTool } from "../../../src/core/extensions/builtin/imagegen/tool.ts";
@@ -237,5 +242,55 @@ describe("senpi#5707: image-generation availability is decided without running c
 		const resources = await runner.emitResourcesDiscover(dir, "startup");
 
 		expect(resources.skillPaths).toEqual([]);
+	});
+});
+
+describe("senpi#5707 with senpi#5674: availability scans only gateways that serve OpenAI Images", () => {
+	const xai: ImageGenAuthModel = {
+		provider: "xai",
+		id: "grok-test",
+		api: "openai-completions",
+		baseUrl: "https://api.x.ai/v1",
+	};
+	const userGateway: ImageGenAuthModel = {
+		provider: "my-images-gateway",
+		id: "chat",
+		api: "openai-completions",
+		baseUrl: "https://gateway.example/v1",
+	};
+
+	function keyedRegistry(models: ImageGenAuthModel[]): ImageGenAuthRegistry {
+		return {
+			authStorage: { get: () => undefined },
+			getAll: () => models,
+			getApiKeyAndHeaders: async (model) => ({ ok: true, apiKey: `${model.provider}-key` }),
+			getProviderAuth: async () => undefined,
+			getProviderAuthStatus: () => ({ configured: true, source: "runtime" }),
+			providerAuthIsHeaderOnly: () => false,
+		};
+	}
+
+	it.each([
+		{ name: "only a logged-in xai", models: [xai], env: {}, expected: undefined },
+		{
+			name: "xai beside a user-declared gateway",
+			models: [xai, userGateway],
+			env: {},
+			expected: "my-images-gateway",
+		},
+		{
+			name: "xai pinned with PI_IMAGE_GEN_PROVIDER",
+			models: [xai, userGateway],
+			env: { PI_IMAGE_GEN_PROVIDER: "xai" },
+			expected: "xai",
+		},
+	])("agrees with resolution: $name", async ({ models, env, expected }) => {
+		const registry = keyedRegistry(models);
+
+		const available = await imageGenAvailability({ modelRegistry: registry, env });
+		const resolved = await resolveImageGenAuth({ modelRegistry: registry, env });
+
+		expect(available.kind === "none" ? undefined : available.providerId).toBe(expected);
+		expect(resolved.kind === "none" ? undefined : resolved.providerId).toBe(expected);
 	});
 });
