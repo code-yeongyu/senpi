@@ -22,6 +22,7 @@ import type {
 	OAuthRevocationResult,
 	ProviderAuthInteraction,
 } from "../types.ts";
+import { createOpenAIIdTokenVerifier, type OpenAIIdTokenDependencies } from "./openai-id-token.ts";
 import { getWireIdentity } from "../../wire-identity.ts";
 import { generatePKCE } from "./pkce.ts";
 
@@ -60,17 +61,47 @@ type TokenResponse = {
 	scope?: unknown;
 };
 
+class OpenAIConsentDeclinedError extends Error {
+	readonly code = "consent_declined";
+
+	constructor() {
+		super("ChatGPT consent declined");
+		this.name = "OpenAIConsentDeclinedError";
+	}
+}
+
+class OpenAIPlanUsageNotEnabledError extends Error {
+	readonly code = "plan_usage_not_enabled";
+	readonly recovery = ["enable_plan_usage", "use_api_key"] as const;
+
+	constructor() {
+		super("ChatGPT plan usage is not enabled. Enable ChatGPT plan usage or use an API key.");
+		this.name = "OpenAIPlanUsageNotEnabledError";
+	}
+}
+
 function randomValue(): string {
 	return randomBytes(32).toString("base64url");
 }
 
-function authorizationResultFromCallback(url: URL, expectedState: string): AuthorizationResult {
-	const code = url.searchParams.get("code");
-	if (!code) throw new Error("Missing authorization code");
+function authorizationResultFromCallback(
+	url: URL,
+	expectedState: string,
+	consentClientId?: string,
+): AuthorizationResult {
 	const state = url.searchParams.get("state");
 	if (!state) throw new Error("Missing OAuth state");
 	if (state !== expectedState) throw new Error("OAuth state mismatch");
-	const clientId = url.searchParams.get("client_id")?.trim();
+	const error = url.searchParams.get("error");
+	if (error === "access_denied") throw new OpenAIConsentDeclinedError();
+	if (error) throw new Error(`ChatGPT authorization failed: ${error}`);
+	const code = url.searchParams.get("code");
+	if (!code) throw new Error("Missing authorization code");
+	const callbackClientId = url.searchParams.get("client_id")?.trim();
+	if (consentClientId && callbackClientId && callbackClientId !== consentClientId) {
+		throw new Error("ChatGPT consent callback client ID mismatch");
+	}
+	const clientId = consentClientId ?? callbackClientId;
 	if (!clientId) throw new Error("OpenAI OAuth registration callback did not contain an issued client ID");
 	return { code, clientId };
 }
@@ -79,6 +110,7 @@ function authorizationResultFromManualInput(
 	input: string,
 	expectedState: string,
 	redirectUri: string,
+	consentClientId?: string,
 ): AuthorizationResult {
 	let url: URL;
 	try {
@@ -90,9 +122,7 @@ function authorizationResultFromManualInput(
 	if (url.origin !== expected.origin || url.pathname !== expected.pathname) {
 		throw new Error(`The pasted callback URL must start with ${redirectUri}`);
 	}
-	const error = url.searchParams.get("error");
-	if (error) throw new Error(`ChatGPT authorization failed: ${error}`);
-	return authorizationResultFromCallback(url, expectedState);
+	return authorizationResultFromCallback(url, expectedState, consentClientId);
 }
 
 function sendHtml(response: ServerResponse, status: number, body: string): void {
@@ -100,7 +130,11 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
 	response.end(body);
 }
 
-function startCallbackServer(expectedState: string, preferredPort: number): Promise<CallbackServer> {
+function startCallbackServer(
+	expectedState: string,
+	preferredPort: number,
+	consentClientId?: string,
+): Promise<CallbackServer> {
 	return new Promise((resolve, reject) => {
 		let redirectUri = REDIRECT_URI;
 		let resolveResult!: (result: AuthorizationResult) => void;
@@ -118,19 +152,16 @@ function startCallbackServer(expectedState: string, preferredPort: number): Prom
 					return;
 				}
 
-				const error = url.searchParams.get("error");
-				if (error) {
-					sendHtml(response, 400, oauthErrorHtml("ChatGPT was not connected.", `Error: ${error}`));
-					rejectResult(new Error(`ChatGPT authorization failed: ${error}`));
-					return;
-				}
-
 				let authorizationResult: AuthorizationResult;
 				try {
-					authorizationResult = authorizationResultFromCallback(url, expectedState);
+					authorizationResult = authorizationResultFromCallback(url, expectedState, consentClientId);
 				} catch (error) {
 					const message = error instanceof Error ? error.message : "Invalid callback";
 					sendHtml(response, 400, oauthErrorHtml(message));
+					// Unrelated callbacks must not stop the pending login attempt.
+					if (url.searchParams.get("state") === expectedState && url.searchParams.has("error")) {
+						rejectResult(error instanceof Error ? error : new Error(message));
+					}
 					return;
 				}
 
@@ -179,8 +210,12 @@ function tokenErrorCode(value: unknown): string | undefined {
 	return tokenErrorCode(error) ?? (typeof type === "string" ? type : undefined);
 }
 
-async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise<TokenResponse> {
-	const response = await fetch(TOKEN_URL, {
+async function requestToken(
+	body: URLSearchParams,
+	signal: AbortSignal,
+	fetchToken: OpenAIIdTokenDependencies["fetch"],
+): Promise<TokenResponse> {
+	const response = await fetchToken(TOKEN_URL, {
 		method: "POST",
 		headers: {
 			accept: "application/json",
@@ -231,7 +266,7 @@ function requireTokenString(value: unknown, field: "access_token" | "refresh_tok
 	return value;
 }
 
-function credentialFromTokenResponse(token: TokenResponse, clientId: string): OAuthCredential {
+function credentialFromTokenResponse(token: TokenResponse, clientId: string, now: () => number): OAuthCredential {
 	const access = requireTokenString(token.access_token, "access_token");
 	const refresh = requireTokenString(token.refresh_token, "refresh_token");
 	const scope = requireTokenString(token.scope, "scope");
@@ -239,16 +274,14 @@ function credentialFromTokenResponse(token: TokenResponse, clientId: string): OA
 		throw new Error("OpenAI OAuth token response has invalid expires_in");
 	}
 	const scopes = scope.trim().split(/\s+/).filter(Boolean);
-	if (!scopes.includes(DIRECT_TOKEN_SCOPE)) {
-		throw new Error(`OpenAI OAuth grant did not include ${DIRECT_TOKEN_SCOPE}`);
-	}
 	return {
 		type: "oauth",
 		access,
 		refresh,
-		expires: Date.now() + token.expires_in * 1000 - EXPIRY_MARGIN_MS,
+		expires: now() + token.expires_in * 1000 - EXPIRY_MARGIN_MS,
 		clientId,
 		scopes,
+		planUsageEnabled: scopes.includes(DIRECT_TOKEN_SCOPE),
 	};
 }
 
@@ -258,6 +291,9 @@ async function exchangeAuthorizationCode(
 	clientId: string,
 	redirectUri: string,
 	signal: AbortSignal,
+	nonce: string,
+	deps: OpenAIIdTokenDependencies,
+	verifyIdToken: ReturnType<typeof createOpenAIIdTokenVerifier>,
 ): Promise<OAuthCredential> {
 	const token = await requestToken(
 		new URLSearchParams({
@@ -269,16 +305,17 @@ async function exchangeAuthorizationCode(
 			resource: RESOURCE,
 		}),
 		signal,
+		deps.fetch,
 	);
-	// Pi does not use the ID token to identify the user or read profile data.
-	// Keep the presence check as part of the token-response contract.
-	if (typeof token.id_token !== "string" || token.id_token.trim().length === 0) {
-		throw new Error("OpenAI OAuth token response did not contain an ID token");
-	}
-	return credentialFromTokenResponse(token, clientId);
+	const identity = await verifyIdToken(token.id_token, clientId, nonce, signal);
+	return { ...credentialFromTokenResponse(token, clientId, deps.now), ...identity, idToken: token.id_token as string };
 }
 
-async function refreshAccessToken(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential> {
+async function refreshAccessToken(
+	credential: OAuthCredential,
+	signal: AbortSignal,
+	deps: OpenAIIdTokenDependencies,
+): Promise<OAuthCredential> {
 	const clientId = credential.clientId;
 	if (typeof clientId !== "string" || clientId.trim().length === 0) {
 		throw new Error("Stored OpenAI OAuth credential does not contain an issued client ID; reconnect ChatGPT");
@@ -291,8 +328,9 @@ async function refreshAccessToken(credential: OAuthCredential, signal: AbortSign
 			resource: RESOURCE,
 		}),
 		signal,
+		deps.fetch,
 	);
-	return credentialFromTokenResponse(token, clientId);
+	return { ...credential, ...credentialFromTokenResponse(token, clientId, deps.now) };
 }
 
 async function revokeSession(credential: OAuthCredential, options?: LogoutOptions): Promise<OAuthRevocationResult> {
@@ -372,15 +410,21 @@ function agentHostId(deviceId: string | undefined): string {
 
 async function loginOpenAIChatGPT(
 	interaction: ProviderAuthInteraction,
-	options?: LoginOptions & { readonly preferredCallbackPort?: number },
+	options: (LoginOptions & { readonly preferredCallbackPort?: number }) | undefined,
+	deps: OpenAIIdTokenDependencies,
+	verifyIdToken: ReturnType<typeof createOpenAIIdTokenVerifier>,
 ): Promise<OAuthCredential> {
 	const hostId = agentHostId(options?.getDeviceId?.());
+	const consentClientId = options?.planUsageConsent?.clientId;
+	if (options?.planUsageConsent && (!consentClientId?.trim() || consentClientId === DYNAMIC_CLIENT_ID)) {
+		throw new Error("Enabling ChatGPT plan usage requires the saved issued client ID");
+	}
 	const { verifier, challenge } = await generatePKCE();
 	const state = randomValue();
 	const nonce = randomValue();
 	let callback: CallbackServer | undefined;
 	try {
-		callback = await startCallbackServer(state, options?.preferredCallbackPort ?? CALLBACK_PORT);
+		callback = await startCallbackServer(state, options?.preferredCallbackPort ?? CALLBACK_PORT, consentClientId);
 	} catch (error) {
 		interaction.notify({
 			type: "info",
@@ -404,6 +448,10 @@ async function loginOpenAIChatGPT(
 		code_challenge_method: "S256",
 		nonce,
 	}).toString();
+	if (consentClientId) {
+		authorizationUrl.searchParams.set("client_id", consentClientId);
+		authorizationUrl.searchParams.set("prompt", "consent");
+	}
 	interaction.notify({
 		type: "auth_url",
 		url: authorizationUrl.toString(),
@@ -419,12 +467,21 @@ async function loginOpenAIChatGPT(
 			placeholder: redirectUri,
 			signal: AbortSignal.any([manualAbort.signal, interaction.signal]),
 		})
-		.then((input) => authorizationResultFromManualInput(input, state, redirectUri));
+		.then((input) => authorizationResultFromManualInput(input, state, redirectUri, consentClientId));
 
 	try {
 		const result = await (callback ? Promise.race([callback.result, manualCode]) : manualCode);
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return await exchangeAuthorizationCode(result.code, verifier, result.clientId, redirectUri, interaction.signal);
+		return await exchangeAuthorizationCode(
+			result.code,
+			verifier,
+			result.clientId,
+			redirectUri,
+			interaction.signal,
+			nonce,
+			deps,
+			verifyIdToken,
+		);
 	} catch (error) {
 		if (interaction.signal.aborted) throw new Error("Login cancelled");
 		throw error;
@@ -440,18 +497,33 @@ async function loginOpenAIChatGPT(
 	}
 }
 
-export const openaiChatGPTOAuth = {
-	name: "OpenAI (ChatGPT subscription)",
-	isSubscription: true,
-	loginLabel: "Sign in with ChatGPT",
-	login: loginOpenAIChatGPT,
-	refresh: refreshAccessToken,
-	revoke: revokeSession,
-	async check({ credential }) {
-		if (!credential?.access || !credential.refresh || credential.signedOut === true) return undefined;
-		return { type: "oauth", source: "OAuth" };
-	},
-	async toAuth(credential) {
-		return { apiKey: credential.access };
-	},
-} satisfies OAuthAuth;
+export function createOpenAIChatGPTOAuth(dependencies: Partial<OpenAIIdTokenDependencies> = {}) {
+	const deps: OpenAIIdTokenDependencies = {
+		fetch: dependencies.fetch ?? ((url, init) => fetch(url, init)),
+		now: dependencies.now ?? (() => Date.now()),
+	};
+	const verifyIdToken = createOpenAIIdTokenVerifier(deps);
+	return {
+		name: "OpenAI (ChatGPT subscription)",
+		isSubscription: true,
+		loginLabel: "Sign in with ChatGPT",
+		login: (
+			interaction: ProviderAuthInteraction,
+			options?: LoginOptions & { readonly preferredCallbackPort?: number },
+		) => loginOpenAIChatGPT(interaction, options, deps, verifyIdToken),
+		refresh: (credential, signal) => refreshAccessToken(credential, signal, deps),
+		revoke: revokeSession,
+		async check({ credential }) {
+			if (!credential?.access || !credential.refresh || credential.signedOut === true) return undefined;
+			return { type: "oauth", source: "OAuth" };
+		},
+		async toAuth(credential) {
+			if (credential.planUsageEnabled === false || !credential.scopes?.includes(DIRECT_TOKEN_SCOPE)) {
+				throw new OpenAIPlanUsageNotEnabledError();
+			}
+			return { apiKey: credential.access };
+		},
+	} satisfies OAuthAuth;
+}
+
+export const openaiChatGPTOAuth = createOpenAIChatGPTOAuth();

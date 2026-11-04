@@ -33,6 +33,18 @@ export interface OAuthCredentials {
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
+	/** Verified account identity, retained only by flows that validate an ID token. */
+	subject?: string;
+	/** Display metadata only; not proof of identity or workspace membership. */
+	email?: string;
+	issuer?: string;
+	/** Issued OAuth client ID, not the dynamic registration entrypoint. */
+	clientId?: string;
+	/** Retained for a later id_token_hint; treat as secret credential material. */
+	idToken?: string;
+	scopes?: string[];
+	/** SIWC plan permission; absent on credentials saved before permission tracking. */
+	planUsageEnabled?: boolean;
 	/** Random id the last sign-in wrote (`stampLogin`); a refresh keeps or drops it, never mints one. Not key material. */
 	loginId?: string;
 }
@@ -271,6 +283,8 @@ export interface LoginOptions {
 	 * the ID on first use and must return the same ID on every later call.
 	 */
 	getDeviceId?: () => string;
+	/** Explicitly enable ChatGPT plan usage for a saved SIWC registration. */
+	planUsageConsent?: { clientId: string };
 }
 
 /**
