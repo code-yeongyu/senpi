@@ -7,6 +7,7 @@ import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { parseArgs } from "../../../src/cli/args.ts";
 import { CONFIG_DIR_NAME } from "../../../src/config.ts";
+import { createPreparedToolHost } from "../../../src/core/execution/pipeline-prepared.ts";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
@@ -32,6 +33,8 @@ export interface PermissionTurn {
 }
 
 export interface PermissionHostSetup {
+	/** Run each opened session's tool calls on the prepared pipeline instead of the loop's own scheduler (senpi#5795). */
+	readonly pipeline?: "legacy" | "prepared";
 	readonly globalSettings?: Record<string, unknown>;
 	readonly projectSettings?: Record<string, unknown>;
 	readonly presetFlag?: string;
@@ -123,6 +126,8 @@ export async function createPermissionP0Host(
 			}
 			const runtime = registry.peek(sessionId)?.runtime;
 			if (!runtime) throw new Error("Opened session has no runtime");
+			if (setup.pipeline === "prepared")
+				runtime.session.agent.toolHost = createPreparedToolHost(runtime.session.agent);
 			if (!runtime.session.getActiveToolNames().includes(turn.name)) {
 				throw new Error(`Fixture tool unavailable: ${turn.name}; ${JSON.stringify(runtime.diagnostics)}`);
 			}

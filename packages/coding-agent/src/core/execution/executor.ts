@@ -144,6 +144,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 				options.consent.needsConsent({ name: frozen.name, args: frozen.args });
 			const freeze = await step(key, generation, { kind: "freeze", call: frozen, awaitingConsent });
 			if (freeze.status !== "applied") return refusal(freeze);
+			pipeline.afterFreeze(prepared.args, frozen.args);
 			bodies.set(keyId(key), {
 				...named,
 				tool,
