@@ -376,7 +376,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const presenter = await startMcpPresenterControl(writer, {
 		enforcement: options.mcpPresenterEnforcement,
 		bootstrap:
-			options.presenterBootstrapFd === undefined ? undefined : presenterBootstrapStream(options.presenterBootstrapFd),
+			options.presenterBootstrapFd === undefined
+				? undefined
+				: presenterBootstrapStream(options.presenterBootstrapFd),
 		account: options.presenterAccountAuthority,
 	});
 	const presenterControl = presenter?.control;

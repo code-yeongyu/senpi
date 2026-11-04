@@ -3,7 +3,10 @@ import { connect } from "node:net";
 import { PassThrough } from "node:stream";
 import { afterEach, expect, it } from "vitest";
 import type { PresenterAccountAuthority } from "../../src/modes/rpc/mcp-presenter-account.ts";
-import { type McpPresenterControlStart, startMcpPresenterControl } from "../../src/modes/rpc/mcp-presenter-control-start.ts";
+import {
+	type McpPresenterControlStart,
+	startMcpPresenterControl,
+} from "../../src/modes/rpc/mcp-presenter-control-start.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 
 const account: PresenterAccountAuthority = {
