@@ -162,3 +162,20 @@ it("take-over signals nothing when the confirmed holder no longer holds the sess
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+it("take-over refuses when another process holds the session once the confirmed one is gone", async () => {
+	const root = await mkdtemp(join(tmpdir(), "held-resume-newcomer-"));
+	const target = join(root, "target.jsonl");
+	const id = randomUUID();
+	await writeFile(
+		target,
+		`${JSON.stringify({ type: "session", version: 3, id, cwd: root, timestamp: new Date(0).toISOString() })}\n`,
+	);
+	try {
+		await using newcomer = await startSessionHolder(target, id, root);
+		expect(await stopSessionHolders(target, [{ pid: 2_147_483_000, cwd: undefined }])).toBe(false);
+		expect((await foreignSessionHolders(target, id)).map(({ pid }) => pid)).toEqual([newcomer.pid]);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

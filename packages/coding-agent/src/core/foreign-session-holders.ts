@@ -84,7 +84,7 @@ export function takeOverRefusal(holders: readonly SessionHolder[]): string | und
  * Explicit take-over of a session another live process holds (senpi#5744). The holder set is read again right
  * before signalling and intersected with the pids the person confirmed; only verified, single-session holders are
  * asked to exit (SIGTERM). Then it waits until none of them holds the file. Returns false when a confirmed holder
- * can no longer be signalled safely or is still there at the deadline.
+ * can no longer be signalled safely, is still there at the deadline, or another process holds the session by then.
  */
 export async function stopSessionHolders(
 	sessionFile: string,
@@ -106,8 +106,9 @@ export async function stopSessionHolders(
 	const stopping = new Set(current.map(({ pid }) => pid));
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
-		const left = (await foreignSessionHolders(sessionFile)).filter(({ pid }) => stopping.has(pid));
-		if (left.length === 0) return true;
+		const holders = await foreignSessionHolders(sessionFile);
+		// Done only when nobody holds the session: another process that opened it meanwhile is a second writer too.
+		if (!holders.some(({ pid }) => stopping.has(pid))) return holders.length === 0;
 		if (Date.now() >= deadline) return false;
 		// A foreign process offers no exit event to await; its holder record is the only signal.
 		await new Promise((resolve) => setTimeout(resolve, HOLDER_EXIT_POLL_MS));

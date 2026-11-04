@@ -9064,7 +9064,9 @@ export class InteractiveMode {
 				return { cancelled: true };
 			}
 			if (!stopped) {
-				this.showWarning("Not resumed: the other process did not exit; quit it there, then /resume again.");
+				this.showWarning(
+					"Not resumed: the session is still open in another process; quit it there, then /resume again.",
+				);
 				return { cancelled: true };
 			}
 		}
