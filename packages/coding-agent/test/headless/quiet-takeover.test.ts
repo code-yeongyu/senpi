@@ -101,13 +101,16 @@ describe("quiet takeover on a headless engine (R21)", () => {
 	);
 
 	it(
-		"a takeover retried by the holder records nothing new and lets no one else go",
+		"releases every hold of the previous client; a takeover retried by the holder records nothing new",
 		() =>
-			disposing(takeoverRig(), async ({ rig, open, takeOver, lifecycle, takeovers }) => {
+			disposing(takeoverRig(), async ({ rig, call, open, takeOver, lifecycle, takeovers, attachments }) => {
 				rig.connect("a");
 				rig.connect("b");
 				const session = await open("a");
+				await call("a", { type: "open_session", cwd: rig.root, sessionPath: session.file });
+				expect(await attachments("a")).toEqual({ [session.sessionId]: 2 });
 				await takeOver("b", session, "device-b");
+				expect(await attachments("b")).toEqual({ [session.sessionId]: 1 });
 				const again = await takeOver("b", session, "device-b");
 
 				expect(again).toMatchObject({ success: true, data: { holder: "device-b", generation: 1, released: 0 } });
