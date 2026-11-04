@@ -1055,18 +1055,6 @@
 		},
 		{
 			"file": "src/utils/paths.ts",
-			"callee": "lstatSync",
-			"symbol": "resolveWithoutOpen",
-			"count": 1
-		},
-		{
-			"file": "src/utils/paths.ts",
-			"callee": "readlinkSync",
-			"symbol": "resolveWithoutOpen",
-			"count": 1
-		},
-		{
-			"file": "src/utils/paths.ts",
 			"callee": "statSync",
 			"symbol": "getFileRevision",
 			"count": 1

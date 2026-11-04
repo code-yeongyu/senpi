@@ -3,6 +3,7 @@ import type { Transport } from "../transport/transport.ts";
 import type { AgentToolCall } from "../types.ts";
 import type { DeviceFiles } from "./device-files.ts";
 import { createRemoteDeviceFiles } from "./remote-device-files.ts";
+import type { PlaneHandler } from "./plane.ts";
 import { createHandLink, type HandReply } from "./remote-link.ts";
 import type { RemoteInvoke, RemoteTerminal, RemoteToolResult } from "./remote-protocol.ts";
 import type { ExecutionScope, ToolHost, ToolHostCall, ToolHostOptions, ToolHostResult } from "./tool-host.ts";
@@ -22,6 +23,12 @@ export interface RemoteToolHostOptions {
 	/** What the session says about itself; the hand never acts on it (R16). */
 	readonly sessionRef?: string;
 	readonly mintId?: () => string;
+	/**
+	 * The planes this session serves to its running calls' nested requests (S31), keyed by plane name (`MODEL_PLANE`).
+	 * A request is admitted only while its parent call is live on the lane it came on; absent: every request is refused
+	 * `plane_unavailable`.
+	 */
+	readonly planes?: Readonly<Record<string, PlaneHandler>>;
 }
 
 function errorResult(text: string): RemoteToolResult {
@@ -53,7 +60,7 @@ export function createRemoteToolHost(
 	options: RemoteToolHostOptions,
 ): ToolHost & { deviceFiles(scope: ExecutionScope): DeviceFiles; close(): void } {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
-	const link = createHandLink(options.transport);
+	const link = createHandLink(options.transport, options.planes ?? {});
 
 	const resultOf = (reply: HandReply): RemoteToolResult => {
 		switch (reply.kind) {

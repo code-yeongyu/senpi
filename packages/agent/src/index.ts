@@ -118,6 +118,21 @@ export {
 } from "./execution/device-files.ts";
 export { HELLO_WAIT_MS } from "./execution/remote-device-files.ts";
 export { fileRefusal, fileResult } from "./execution/remote-file-call.ts";
+export {
+	createModelPlaneClient,
+	decodeModelPlaneRequest,
+	MODEL_PLANE,
+	type ModelPlaneRequest,
+	serveModelPlane,
+} from "./execution/plane-model.ts";
+export {
+	decodePlaneMessage,
+	encodePlaneMessage,
+	type NestedRequest,
+	type PlaneHandler,
+	type PlaneMessage,
+	PlaneRefusedError,
+} from "./execution/plane.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
