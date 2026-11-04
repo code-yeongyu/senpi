@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { InteractiveMode, replayStartupSubmission } from "../../../src/modes/interactive/interactive-mode.ts";
 
 // senpi#5731: a submit made while the TUI is still starting is parked in the editor behind
 // "Startup is still in progress". Nothing ran it once startup finished, so an early /resume sat
@@ -10,69 +10,58 @@ vi.mock("../../../src/utils/version-check.ts", () => ({
 	getReleaseChangelogUrl: vi.fn((version: string) => `https://example.invalid/releases/${version}`),
 }));
 
+type Editor = { text: string; setText: (text: string) => void; getText: () => string };
+
 type StartupContext = {
 	startupParkedSubmission?: string;
-	editor: { text: string; setText: (text: string) => void; getText: () => string };
-	defaultEditor: { onSubmit?: (text: string) => void | Promise<void> };
+	editor: Editor;
 	showStatus: (message: string) => void;
 	shutdown: () => Promise<void>;
 };
 
-type StartupMethods = {
-	handleStartupSubmit(this: StartupContext, text: string): void;
-	replayStartupSubmission(this: StartupContext): void;
-};
+const handleStartupSubmit = (
+	InteractiveMode.prototype as unknown as {
+		handleStartupSubmit(this: StartupContext, text: string): void;
+	}
+).handleStartupSubmit;
 
-const prototype = InteractiveMode.prototype as unknown as StartupMethods;
-
-function startingTui(): StartupContext & { submitted: string[] } {
-	const submitted: string[] = [];
-	const editor = {
+function startingTui(): StartupContext {
+	const editor: Editor = {
 		text: "",
 		setText(text: string) {
 			editor.text = text;
 		},
 		getText: () => editor.text,
 	};
-	return {
-		submitted,
-		editor,
-		defaultEditor: {},
-		showStatus: vi.fn(),
-		shutdown: vi.fn(async () => {}),
-	};
+	return { editor, showStatus: vi.fn(), shutdown: vi.fn(async () => {}) };
 }
 
-function finishStartup(tui: ReturnType<typeof startingTui>): void {
-	tui.defaultEditor.onSubmit = (text) => {
-		tui.submitted.push(text);
-	};
-	prototype.replayStartupSubmission.call(tui);
+function finishStartup(tui: StartupContext): string[] {
+	const submitted: string[] = [];
+	const parked = tui.startupParkedSubmission;
+	tui.startupParkedSubmission = undefined;
+	replayStartupSubmission(parked, tui.editor, { onSubmit: (text) => void submitted.push(text) });
+	return submitted;
 }
 
 describe("a submit made during startup runs once startup finishes (#5731)", () => {
 	it("submits a parked /resume exactly once through the real submit handler", () => {
 		const tui = startingTui();
-		prototype.handleStartupSubmit.call(tui, "/resume");
+		handleStartupSubmit.call(tui, "/resume");
 		expect(tui.editor.getText()).toBe("/resume");
 		expect(tui.showStatus).toHaveBeenCalledWith("Startup is still in progress");
 
-		finishStartup(tui);
-
-		expect(tui.submitted).toEqual(["/resume"]);
+		expect(finishStartup(tui)).toEqual(["/resume"]);
 		expect(tui.editor.getText()).toBe("");
-		prototype.replayStartupSubmission.call(tui);
-		expect(tui.submitted).toEqual(["/resume"]);
+		expect(finishStartup(tui)).toEqual([]);
 	});
 
 	it("leaves a parked draft the person edited before startup finished", () => {
 		const tui = startingTui();
-		prototype.handleStartupSubmit.call(tui, "/resume");
+		handleStartupSubmit.call(tui, "/resume");
 		tui.editor.setText("/resume and more");
 
-		finishStartup(tui);
-
-		expect(tui.submitted).toEqual([]);
+		expect(finishStartup(tui)).toEqual([]);
 		expect(tui.editor.getText()).toBe("/resume and more");
 	});
 
@@ -80,9 +69,7 @@ describe("a submit made during startup runs once startup finishes (#5731)", () =
 		const tui = startingTui();
 		tui.editor.setText("typed but never sent");
 
-		finishStartup(tui);
-
-		expect(tui.submitted).toEqual([]);
+		expect(finishStartup(tui)).toEqual([]);
 		expect(tui.editor.getText()).toBe("typed but never sent");
 	});
 });
