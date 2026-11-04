@@ -14,6 +14,7 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { dirname } from "node:path";
+import { socketHoldersByIdentity } from "./socket-holders-by-identity.ts";
 import { resolveSocketTransportAddress } from "./socket-transport.ts";
 
 /** Filesystem identity of one bound socket path entry. */
@@ -93,7 +94,18 @@ export type SocketHolders = (socketPath: string) => Promise<readonly number[] | 
 
 const HOLDER_PROBE_TIMEOUT_MS = 5_000;
 
-export const lsofSocketHolders: SocketHolders = (socketPath) =>
+/**
+ * `lsof -- <path>` matches a unix socket by the name it was bound at. An entry published with `link(2)` (nlink > 1)
+ * is bound elsewhere (#5319), so a path lookup that finds nobody falls back to matching by inode.
+ */
+export const lsofSocketHolders: SocketHolders = async (socketPath) => {
+	const byPath = await lsofHoldersByPath(socketPath);
+	if (byPath === undefined || byPath.length > 0) return byPath;
+	const entry = await lstat(socketPath).catch(() => undefined);
+	return entry !== undefined && entry.nlink > 1 ? socketHoldersByIdentity(entry) : byPath;
+};
+
+const lsofHoldersByPath: SocketHolders = (socketPath) =>
 	new Promise((resolve) => {
 		execFile("lsof", ["-t", "--", socketPath], { timeout: HOLDER_PROBE_TIMEOUT_MS }, (error, stdout) => {
 			const pids = String(stdout)

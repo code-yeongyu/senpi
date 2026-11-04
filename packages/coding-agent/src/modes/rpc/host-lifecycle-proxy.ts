@@ -14,7 +14,12 @@ import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { PublicRpcConnection } from "./rpc-public-auth.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
-import { type ListenerState, MAX_SOCKET_PATH_BYTES, socketEntryListenerState } from "./socket-ownership.ts";
+import {
+	type ListenerState,
+	MAX_SOCKET_PATH_BYTES,
+	type SocketFileIdentity,
+	socketEntryListenerState,
+} from "./socket-ownership.ts";
 
 import {
 	authenticateSocket,
@@ -287,8 +292,12 @@ export async function prepareSocketPath(socketPath: string, hooks: PrepareSocket
 }
 
 /** The supervisor's public bind: the same never-through-a-link publish as the socket host's (#5319). */
-export async function listen(server: Server, socketPath: string, secret?: Uint8Array): Promise<void> {
-	await bindOwnedSocket(server, socketPath, secret);
+export function listen(
+	server: Server,
+	socketPath: string,
+	secret?: Uint8Array,
+): Promise<SocketFileIdentity | undefined> {
+	return bindOwnedSocket(server, socketPath, secret);
 }
 
 export function closeServer(server: Server): Promise<void> {
