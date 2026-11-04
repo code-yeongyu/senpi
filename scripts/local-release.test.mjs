@@ -193,5 +193,12 @@ function writeLocalReleaseFixture(repoRoot) {
 		if (directory === "packages/client" || directory === "packages/protocol") {
 			writeFileSync(join(repoRoot, directory, "dist", "index.d.ts"), "");
 		}
+		// ...and machine-ops' runtime entries, which it builds under dist/src (senpi#5784).
+		if (directory === "packages/machine-ops") {
+			mkdirSync(join(repoRoot, directory, "dist", "src", "process"), { recursive: true });
+			for (const file of ["index.js", "index.d.ts", "process/in-process-holder.js", "process/in-process-holder.d.ts"]) {
+				writeFileSync(join(repoRoot, directory, "dist", "src", file), "");
+			}
+		}
 	}
 }

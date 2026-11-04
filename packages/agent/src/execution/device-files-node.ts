@@ -1,7 +1,15 @@
+import { spawn } from "node:child_process";
 import { constants, type Stats } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { DeviceFileError, type DeviceFiles, type DeviceFileStat, FILE_CHANNEL_MAX_BYTES } from "./device-files.ts";
+import {
+	DeviceFileError,
+	type DeviceFiles,
+	type DeviceFileStat,
+	type DeviceRunRequest,
+	type DeviceRunResult,
+	FILE_CHANNEL_MAX_BYTES,
+} from "./device-files.ts";
 
 function deviceError(error: unknown, path: string): DeviceFileError {
 	if (error instanceof DeviceFileError) return error;
@@ -65,6 +73,44 @@ async function readBounded(path: string, signal: AbortSignal | undefined): Promi
 	}
 }
 
+/** A fused session's `run`: a direct spawn in `cwd`, no shell, no allowlist and no hop, as the caller spawns today. */
+function runDirect(request: DeviceRunRequest, signal: AbortSignal | undefined): Promise<DeviceRunResult> {
+	return new Promise((done, fail) => {
+		const child = spawn(request.exe, [...request.argv], {
+			cwd: request.cwd,
+			env: request.env === undefined ? process.env : { ...process.env, ...request.env },
+			shell: false,
+			windowsHide: true,
+			...(signal === undefined ? {} : { signal }),
+		});
+		const out: Buffer[] = [];
+		const err: Buffer[] = [];
+		child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
+		child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
+		let killTimer: NodeJS.Timeout | undefined;
+		const timer =
+			request.timeoutMs === undefined
+				? undefined
+				: setTimeout(() => {
+						child.kill("SIGTERM");
+						killTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+					}, request.timeoutMs);
+		child.on("error", (error) => fail(new DeviceFileError(signal?.aborted ? "aborted" : "io", error.message)));
+		child.on("close", (code, exitSignal) => {
+			clearTimeout(timer);
+			clearTimeout(killTimer);
+			done({
+				code,
+				signal: exitSignal,
+				stdout: new Uint8Array(Buffer.concat(out)),
+				stderr: Buffer.concat(err).toString("utf8"),
+			});
+		});
+		child.stdin.on("error", () => undefined);
+		child.stdin.end(request.stdin === undefined ? undefined : Buffer.from(request.stdin));
+	});
+}
+
 function statOf(entry: Stats): DeviceFileStat {
 	const kind = entry.isFile() ? "file" : entry.isDirectory() ? "directory" : "other";
 	return { kind, size: entry.size, mtimeMs: entry.mtimeMs };
@@ -104,5 +150,6 @@ export function localDeviceFiles(): DeviceFiles {
 			guarded(path, options?.signal, async () => {
 				await mkdir(path, { recursive: true });
 			}),
+		run: (request, options) => runDirect(request, options?.signal),
 	};
 }

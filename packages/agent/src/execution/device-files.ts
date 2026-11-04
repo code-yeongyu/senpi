@@ -17,6 +17,8 @@ export interface DeviceFiles {
 	remove(path: string, options?: DeviceFileOptions): Promise<void>;
 	/** Creates a directory and its parents; an existing directory is not an error. */
 	mkdir(path: string, options?: DeviceFileOptions): Promise<void>;
+	/** Runs git or lsof on the device (split: only the calls the hand's allowlist admits; fused: a direct spawn). */
+	run(request: DeviceRunRequest, options?: DeviceFileOptions): Promise<DeviceRunResult>;
 }
 
 export interface DeviceFileOptions {
@@ -35,8 +37,38 @@ export const FILE_CHANNEL = "file/1";
 /** The most data one operation reads or writes, in raw bytes, in both directions. */
 export const FILE_CHANNEL_MAX_BYTES = 8 * 1024 * 1024;
 
-export type DeviceFileOp = "read" | "write" | "list" | "stat" | "rename" | "remove" | "mkdir";
-export const DEVICE_FILE_OPS: readonly DeviceFileOp[] = ["read", "write", "list", "stat", "rename", "remove", "mkdir"];
+export type DeviceFileOp = "read" | "write" | "list" | "stat" | "rename" | "remove" | "mkdir" | "run";
+export const DEVICE_FILE_OPS: readonly DeviceFileOp[] = [
+	"read",
+	"write",
+	"list",
+	"stat",
+	"rename",
+	"remove",
+	"mkdir",
+	"run",
+];
+
+/** The `run` operation's name in a hand's `hello` (S40 PR 2): git and lsof as the memory component calls them. */
+export const RUN_CHANNEL = "run/1";
+
+export interface DeviceRunRequest {
+	readonly exe: string;
+	readonly argv: readonly string[];
+	readonly cwd: string;
+	readonly env?: Readonly<Record<string, string>>;
+	readonly stdin?: Uint8Array;
+	readonly timeoutMs?: number;
+	/** Hold the memory component's git-activity lock as fd 3 while git runs; the hand derives the lock from `cwd`. */
+	readonly activityLock?: boolean;
+}
+
+export interface DeviceRunResult {
+	readonly code: number | null;
+	readonly signal: string | null;
+	readonly stdout: Uint8Array;
+	readonly stderr: string;
+}
 
 export type DeviceFileErrorCode =
 	| "not_found"
@@ -92,7 +124,17 @@ function isDeviceFileErrorCode(value: unknown): value is DeviceFileErrorCode {
 export type DeviceFileArgs =
 	| { readonly op: "read" | "list" | "stat" | "remove" | "mkdir"; readonly path: string }
 	| { readonly op: "write"; readonly path: string; readonly data: string; readonly exclusive: boolean }
-	| { readonly op: "rename"; readonly path: string; readonly to: string };
+	| { readonly op: "rename"; readonly path: string; readonly to: string }
+	| {
+			readonly op: "run";
+			readonly path: string;
+			readonly exe: string;
+			readonly argv: readonly string[];
+			readonly env: Readonly<Record<string, string>>;
+			readonly stdin?: string;
+			readonly timeoutMs?: number;
+			readonly activityLock: boolean;
+	  };
 
 /** One operation's outcome, carried in a settled result's `details.file`. */
 export type DeviceFileOutcome =
@@ -118,9 +160,34 @@ export function decodeDeviceFileArgs(op: unknown, args: unknown): DeviceFileArgs
 				: undefined;
 		case "rename":
 			return typeof args.to === "string" && args.to.length > 0 ? { op, path, to: args.to } : undefined;
+		case "run":
+			return decodeRunArgs(path, args);
 		default:
 			return undefined;
 	}
+}
+
+function decodeRunArgs(path: string, args: Record<string, unknown>): DeviceFileArgs | undefined {
+	const { exe, argv, env, stdin, timeoutMs, activityLock } = args;
+	if (typeof exe !== "string" || !Array.isArray(argv) || !argv.every((arg) => typeof arg === "string"))
+		return undefined;
+	const environment = env ?? {};
+	if (!isRecord(environment) || !Object.values(environment).every((value) => typeof value === "string"))
+		return undefined;
+	if (stdin !== undefined && typeof stdin !== "string") return undefined;
+	if (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0))
+		return undefined;
+	if (activityLock !== undefined && typeof activityLock !== "boolean") return undefined;
+	return {
+		op: "run",
+		path,
+		exe,
+		argv: argv as string[],
+		env: environment as Record<string, string>,
+		...(stdin === undefined ? {} : { stdin }),
+		...(timeoutMs === undefined ? {} : { timeoutMs }),
+		activityLock: activityLock === true,
+	};
 }
 
 export function encodeBase64(bytes: Uint8Array): string {
