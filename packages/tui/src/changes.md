@@ -1,3 +1,41 @@
+## 2026-11-03 - Clipboard frames pass through the stdout guard (senpi#5680)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: pass validated ASCII clipboard text through the captured stdout writer, preserving the original callback and return value without re-encoding the frame.
+- `packages/tui/test/external-stdout-guard.test.ts`: cover clipboard delivery, non-UTF8 encodings, rejected non-clipboard-only output, callback completion, backpressure and writer errors.
+
+### Why
+
+- `packages/tui/src/terminal.ts`: the external stdout guard hid clipboard frames while the TUI was running; applying the caller's encoding after validation could also emit different bytes.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts`: ProcessTerminal owns the process-wide stdout guard and its captured raw writer.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts`, inside installExternalStdoutGuard.
+- LOW: `packages/tui/test/external-stdout-guard.test.ts`, the guard harness and clipboard cases.
+
+## 2026-11-02 - A Kitty image appended below a full viewport no longer clears the screen and scrollback (senpi#4583)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: the differential render path no longer falls back to `fullRender(true, clearScrollback)` when a Kitty image's reserved rows reach past the viewport bottom. Reserving those rows writes newlines that scroll the terminal exactly as appended text does, and the relative cursor-up back to the image's first row still lands on it after the scroll, so the image is placed in place. The full-redraw fallback remains for an image that starts above the viewport or is taller than the viewport.
+
+### Why
+
+- An append-only update that added an inline image right below an already-full viewport took the fallback every time, because the image's first row sits at the viewport height. That sent `CSI 2 J`, `CSI 3 J` and replayed the whole transcript, erasing native scrollback outside multiplexers and costing a full-transcript write on image-heavy sessions; the reporter linked it to visible blank frames (senpi#4583, reported by copycatcode).
+
+### Why an extension could not handle it
+
+- The renderer's differential path and its fallback decisions are internal to `TuiBase.doRender()`; components only return lines.
+
+### Expected merge conflict zones
+
+- LOW: the Kitty image reservation branch inside the differential render loop of `doRender()` in `tui.ts`.
+
 ## 2026-11-03 - Shift+Enter inserts a newline in macOS Terminal.app (code-yeongyu/oh-my-openagent#9796, PR #5647)
 
 ### What changed

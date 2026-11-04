@@ -1,3 +1,69 @@
+## 2026-11-03 - RPC replies are written at any depth; an unwritable reply answers its id with `response_unwritable` (senpi#5702)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/jsonl.ts`: `legacyJsonText` keeps native `JSON.stringify` as the fast path and, only on the engine's own stack overflow, falls back to an explicit-stack writer (`jsonNormalValue` + a non-recursive text writer) with `JSON.stringify`'s exact semantics (`toJSON(key)`, boxed primitives, undefined/function/symbol omitted in objects and `null` in arrays, BigInt and cycle `TypeError`, `Object.keys` order, `-0` to `0`, non-finite to `null`), so it no longer throws `LegacyRecordDepthError`. `isStackOverflow` is exported. No module is added to the lifecycle supervisor's import graph.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts`: the recursive normalizer's stack-overflow fallback is the explicit-stack `jsonNormalValue` instead of `JSON.parse(legacyJsonText(...))`.
+- `packages/coding-agent/src/modes/rpc/legacy-record-depth.ts`: `enqueueLegacyRecord` answers a reply (`type: "response"`) whose enqueue throws for any reason with `unwritableReply` (same `id` and `command`, `success: false`, a one-line `error`, `errorCode: "response_unwritable"`), reported once on stderr and counted in `legacyRefusals`; a non-reply record whose path overflows the stack is still the typed, counted `LegacyRecordDepthError` refusal. The same function runs inside a worker session's isolate, so worker replies get the same answer.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `RPC_ERROR_RESPONSE_UNWRITABLE = "response_unwritable"`, added to `RpcErrorCode`.
+
+### Why
+
+- Native `JSON.stringify` recurses per nesting level, and `get_tree` nests one level per chained entry: on Node 24 a session of about 3,000+ entries overflowed, the reply was refused on stderr only, and the caller (a relay forwarding `get_tree`) waited its whole 30-minute deadline. The LEAD ruling for senpi#5702 keeps the `get_tree` wire shape, makes serialization depth-independent, and requires every reply that still cannot be written to answer its caller with a typed error for every RPC method; it supersedes RULING-68's "refused, never delivered" for replies.
+
+### Why an extension could not handle it
+
+- The record writer and its failure handling sit on the RPC host's output path below every command handler; no extension hook sees or replaces a serialized reply.
+
+### Expected merge conflict zones
+
+- LOW: `jsonl.ts` (`legacyJsonText` and the helpers above it), `json-normal-value.ts` (the final fallback), `legacy-record-depth.ts` (`LegacyRecordRefusals`, `enqueueLegacyRecord`), `rpc-error-types.ts` (after `RPC_ERROR_RESPONSE_TOO_LARGE`, the end of `RpcErrorCode`).
+
+## 2026-11-03 - Advertise account_reset in get_protocol_info (senpi#5698)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `ACCOUNT_RESET_CAPABILITY = "account_reset"`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the multi-session host advertises `account_reset`, after `provider_account_test`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: classic `get_protocol_info` advertises `account_reset`, after `provider_account_test`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the `resetProviderAccount` doc comment names the capability.
+
+### Why
+
+- `account_reset { provider, name }` (senpi#4879) was accepted by both host kinds but no capability said so, so capability-gated clients (the desktop Unblock action) kept the action hidden on engines that support it.
+
+### Why an extension could not handle it
+
+- `get_protocol_info` capability lists are built by the protocol-owned connection handler and multi-session host.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: capability imports and the `get_protocol_info` capability lists.
+
+## 2026-11-02 - A marked admission retry is never re-run as a fresh admission (senpi#5285, RULING-125, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/attachment-types.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: `open_session`, `attach_session` and `subscribe_sessions` accept an optional `retry: true`.
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: a marked retry whose ID has no row on the socket epoch (evicted into the retired ring, forgotten after the ring overflowed, or never seen) is refused with `admission_unknown` before any producer runs. A marked retry of a done row still answers the stored result and of a live pending ID still joins the in-flight admission; unmarked requests are unchanged (`admission_retired` for a retired ID, a fresh admission for a forgotten one).
+- `packages/coding-agent/src/modes/rpc/compact-admission-error.ts`, `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: the `admission_unknown` reason (wire code `admission_admission_unknown`) and the identity's `retry` flag.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`, `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: the marker is passed to the admission index and left out of the request fingerprint, so a marked retry matches its original row instead of answering `admission_conflict`.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: `RpcClient.openSession` sends `retry: true` whenever it re-sends an `admissionId` this client instance already sent, including after a refused or unanswered first send and across a disconnect and reconnect. The sent IDs live in a 4,096-entry LRU (least recently sent dropped first) that a disconnect does not clear.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: a C4.4 retry is the same `admissionId` sent again, and the wire could not tell it from a fresh open. #5274 bounded a socket epoch's IDs (a 128-row LRU plus a 4,096-digest ring), so a retry older than the ring ran again as a fresh admission and could duplicate its effect (the RULING-114 residual). That residual blocks turning `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on by default.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`, `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: every request field fed the fingerprint, so a marked retry of an existing row would otherwise have been refused as a conflicting request.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: the residual stays open for any client that does not mark its retries. The typical C4.4 retry follows a reconnect, on a socket epoch that has never seen the ID, so a client that forgot its sent IDs on disconnect would re-send unmarked and open again; the LRU bound keeps that memory from growing with the client's lifetime.
+
+### Why an extension could not handle it
+
+- Compact admission is host RPC transport state; extensions cannot reach the per-socket admission index or the inbound command schemas.
+
+### Expected merge conflict zones
+
+- LOW: `compact-admissions.ts` `run()` registration branch; the `open_session`, `subscribe_sessions` and `attach_session` command types and schemas.
+
 ## 2026-11-03 - A host signal between a permit worker's checks and its wait no longer leaves it parked (senpi#5591)
 
 ### What changed

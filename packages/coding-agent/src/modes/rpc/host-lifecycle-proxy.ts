@@ -73,7 +73,7 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 					hop?.destroy();
 					return;
 				}
-				proxyWithAdmission(client, hop, options.admission, auth);
+				proxyWithAdmission(client, hop, options.admission, auth, publicSecret !== undefined);
 				// An authenticated endpoint resumes the client itself once its key record is published.
 				if (!auth) client.resume();
 			} catch {
