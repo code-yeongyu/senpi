@@ -163,6 +163,7 @@ function writeLocalReleaseFixture(repoRoot) {
 		["packages/telemetry", "@earendil-works/pi-telemetry"],
 		["packages/ai", "@earendil-works/pi-ai"],
 		["packages/pty", "@earendil-works/pi-pty"],
+		["packages/machine-ops", "@code-yeongyu/senpi-machine-ops"],
 		["packages/tui", "@earendil-works/pi-tui"],
 		["packages/agent", "@earendil-works/pi-agent-core"],
 		["packages/protocol", "@earendil-works/pi-protocol"],
