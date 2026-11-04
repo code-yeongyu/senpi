@@ -29,13 +29,17 @@ export function withoutWitnessEntries(entries) {
 
 /**
  * @param {string | undefined} witnessFile the run's sink file
- * @param {readonly (string | undefined)[]} sessionFiles the run's session files, to tell `missing` from `no-calls`
+ * @param {readonly (string | undefined)[]} sessionFiles the run's session files, to tell `missing` from `no-calls`; a listed
+ *   file that does not exist, or no file at all, makes the call set unknown, so the witness is `unknown` (never `no-calls`)
  * @returns {{ pipeline: string, source: "sink" | "none", calls: Array<{ toolCallId: string, pipeline: string }> }}
  */
 export function readWitness(witnessFile, sessionFiles = []) {
 	const lines = witnessFile && existsSync(witnessFile) ? readJsonl(readFileSync(witnessFile, "utf8")) : [];
 	const calls = lines.map((line) => ({ toolCallId: line.toolCallId, pipeline: line.pipeline }));
-	const sessionCalls = sessionFiles.flatMap(toolCallIds);
+	const listed = sessionFiles.filter((file) => file !== undefined);
+	if (listed.length === 0 || listed.some((file) => !existsSync(file)))
+		return { pipeline: "unknown", source: calls.length === 0 ? "none" : "sink", calls };
+	const sessionCalls = listed.flatMap(toolCallIds);
 	if (calls.length === 0) return { pipeline: sessionCalls.length > 0 ? "missing" : "no-calls", source: "none", calls };
 	// Per call, not per run: a session call with no receipt of its own is `missing` even when other calls have one.
 	const witnessed = new Set(calls.map((call) => call.toolCallId));
@@ -50,7 +54,6 @@ export function witnessOk(witness) {
 }
 
 function toolCallIds(sessionFile) {
-	if (!sessionFile || !existsSync(sessionFile)) return [];
 	return readJsonl(readFileSync(sessionFile, "utf8")).flatMap((entry) =>
 		entry.type === "message" && entry.message?.role === "assistant" && Array.isArray(entry.message.content)
 			? entry.message.content.filter((part) => part?.type === "toolCall" && typeof part.id === "string").map((part) => part.id)

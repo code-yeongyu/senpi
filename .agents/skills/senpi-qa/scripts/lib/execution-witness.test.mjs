@@ -68,6 +68,24 @@ test("the witness is read from the session's sink file: missing, no-calls, prepa
 	}
 });
 
+// senpi#5771 review: a lost session file is an unknown call set, never zero calls, so it can never pass as no-calls.
+test("a missing session file makes the witness unknown, which fails", () => {
+	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
+	try {
+		const witnessFile = join(dir, "witness.jsonl");
+		const gone = join(dir, "gone.jsonl");
+		for (const sessionFiles of [[gone], [undefined], []]) {
+			assert.deepEqual(readWitness(witnessFile, sessionFiles), { pipeline: "unknown", source: "none", calls: [] });
+		}
+		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n');
+		const withReceipts = readWitness(witnessFile, [gone]);
+		assert.equal(withReceipts.pipeline, "unknown", "receipts cannot prove every call ran when the call set is unknown");
+		assert.equal(witnessOk(withReceipts), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("a mutation that only breaks the witness is KILLED by its witness row", () => {
 	const mutation = { expect: { E01: /^witness\.pipeline: actual="missing"$/ } };
 	const verdict = classifyMutation(mutation, {
