@@ -184,6 +184,19 @@ describe("LoginDialogComponent OAuth prompts", () => {
 		},
 	);
 
+	// A waiting step replaced the live hint while the prompt waited; the restored prompt shows its own hint again.
+	test("a step that restores an open prompt restores its own hint, not a later waiting hint", () => {
+		const dialog = createDialog();
+
+		void dialog.showPrompt("Paste the code:");
+		dialog.showWaiting("Waiting for the browser...");
+		dialog.showAuth("https://example.invalid/login");
+
+		const hintLines = renderDialog(dialog).filter((line) => /^\([^)]*to (?:cancel|close|submit)/.test(line.trim()));
+		expect(hintLines.length).toBe(1);
+		expect(hintLines[0]).toContain("to submit");
+	});
+
 	test("keeps previous manual input stable when a later prompt is active", async () => {
 		const dialog = createDialog();
 
