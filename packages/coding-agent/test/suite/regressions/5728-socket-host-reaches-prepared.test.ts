@@ -1,6 +1,7 @@
 // senpi#5728 (S36, plan amendment A4): the shipped CLI's shared RPC host on a Unix socket (`--mode rpc --listen`, the
 // host the desktop engine runs) executes a model-issued tool call on the prepared pipeline with no batch-store
-// configuration. `SENPI_EXECUTION_PIPELINE=default` only turns receipts on; the pipeline stays the default.
+// configuration. The loop has one pipeline and fails closed (BatchStoreMissingError) without a store, so a successful
+// tool result on this host is the prepared pipeline; no default writer persists a receipt (that sink is S18b part 3).
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -24,7 +25,7 @@ it("the Unix-socket RPC host runs a tool call on the prepared pipeline on defaul
 		["--mode", "rpc", "--listen", `unix://${qa.socketPath}`, "--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
 		qa,
 		undefined,
-		{ SENPI_EXECUTION_PIPELINE: "default" },
+		{},
 	);
 	try {
 		await waitForStderr(child, `senpi rpc listening on unix://${qa.socketPath}`);
@@ -46,12 +47,20 @@ it("the Unix-socket RPC host runs a tool call on the prepared pipeline on defaul
 			const entries = readFileSync(sessionFile, "utf8")
 				.split("\n")
 				.filter((line) => line.trim().length > 0)
-				.map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: unknown });
-			expect(
-				entries
-					.filter((entry) => entry.type === "custom" && entry.customType === "execution-pipeline")
-					.map((e) => e.data),
-			).toEqual([{ pipeline: "prepared", toolCallId: "toolu_fake_read" }]);
+				.map(
+					(line) =>
+						JSON.parse(line) as {
+							type?: string;
+							customType?: string;
+							message?: { role?: string; toolCallId?: string; isError?: boolean; content?: unknown };
+						},
+				);
+			const results = entries.flatMap((entry) =>
+				entry.type === "message" && entry.message?.role === "toolResult" ? [entry.message] : [],
+			);
+			expect(results).toMatchObject([{ toolCallId: "toolu_fake_read", isError: false }]);
+			expect(JSON.stringify(results[0]?.content)).toContain("probe contents");
+			expect(entries.some((entry) => entry.customType === "execution-pipeline")).toBe(false);
 		} finally {
 			client.peer.close();
 			client.socket.destroy();

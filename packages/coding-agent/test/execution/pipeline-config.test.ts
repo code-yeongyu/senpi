@@ -1,4 +1,4 @@
-// S21a (brain/hand split): prepared is the default pipeline; `legacy` still opts out until S36 removes the flag.
+// S21a / S36 (senpi#5412, senpi#5728): the loop has one pipeline; the test/QA-only variable can only name it.
 import { Agent, type ToolHost } from "@earendil-works/pi-agent-core";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
@@ -9,25 +9,24 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 const flag = (value: string | undefined): NodeJS.ProcessEnv =>
 	value === undefined ? {} : { SENPI_EXECUTION_PIPELINE: value };
 
-describe("resolving the execution pipeline", () => {
+describe("resolving SENPI_EXECUTION_PIPELINE", () => {
 	it.each([
-		[undefined, { pipeline: "prepared", named: false }],
-		["", { pipeline: "prepared", named: false }],
-		["default", { pipeline: "prepared", named: false }],
-		["prepared", { pipeline: "prepared", named: true }],
-		["legacy", { pipeline: "legacy", named: true }],
-	])("SENPI_EXECUTION_PIPELINE=%s resolves to %o", (value, expected) => {
-		expect(resolveExecutionPipeline(flag(value))).toEqual(expected);
+		[undefined, false],
+		["", false],
+		["default", false],
+		["prepared", true],
+	])("%j names the pipeline: %s", (value, named) => {
+		expect(resolveExecutionPipeline(flag(value))).toEqual({ named });
 	});
 
-	it("refuses an unknown value instead of running the default", () => {
-		expect(() => resolveExecutionPipeline(flag("fused"))).toThrow(
-			'SENPI_EXECUTION_PIPELINE must be legacy, prepared or default, got "fused"',
+	it.each(["legacy", "fused"])("refuses %s instead of running the default under its name", (value) => {
+		expect(() => resolveExecutionPipeline(flag(value))).toThrow(
+			`SENPI_EXECUTION_PIPELINE must be prepared or default, got "${value}"`,
 		);
 	});
 });
 
-describe("binding the pipeline to a session's agent", () => {
+describe("binding a session's agent", () => {
 	const fixedHost: ToolHost = {
 		execute: async () => ({ messages: [], terminate: false }),
 	};
@@ -36,22 +35,17 @@ describe("binding the pipeline to a session's agent", () => {
 	const bind = (agent: Agent, value: string | undefined): void =>
 		bindPipelineWitness(agent, SessionManager.inMemory(), () => "/work", resolveExecutionPipeline(flag(value)));
 
-	it.each([
-		[undefined, true],
-		["default", true],
-		["prepared", true],
-		["legacy", false],
-	])(
-		"SENPI_EXECUTION_PIPELINE=%s installs the prepared ToolHost: %s, and never a receipt writer",
-		(value, prepared) => {
+	it.each([undefined, "default", "prepared"])(
+		"%j installs no ToolHost (the loop's default is prepared) and never a receipt writer",
+		(value) => {
 			const agent = agentWith();
 			bind(agent, value);
-			expect(agent.toolHost !== undefined).toBe(prepared);
+			expect(agent.toolHost).toBeUndefined();
 			expect(agent.onExecutionPipeline).toBeUndefined();
 		},
 	);
 
-	it.each([undefined, "default"])("keeps a ToolHost the session was built with (flag: %s)", (value) => {
+	it.each([undefined, "default"])("keeps a ToolHost the session was built with (flag: %j)", (value) => {
 		const agent = agentWith(fixedHost);
 		bind(agent, value);
 		expect(agent.toolHost).toBe(fixedHost);
