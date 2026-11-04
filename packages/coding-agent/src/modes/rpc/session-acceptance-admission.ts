@@ -66,11 +66,12 @@ export function admitRecord(
 	type: string,
 	at: LanePlace,
 	folds = true,
+	callKey?: string,
 ): AdmittedRecord | undefined {
 	const mintsTurn = type === "turn_start" || (at.turnId === null && turnScoped(type, record));
 	const turnId = mintsTurn ? randomUUID() : at.turnId;
 	const next = at.sequence + 1;
-	const call = folds && CALL_RECORDS.has(type) ? current.foldCall(record, next, turnId) : undefined;
+	const call = folds && CALL_RECORDS.has(type) ? current.foldCall(record, next, turnId, callKey) : undefined;
 	if (call && !call.changed && CALL_ONLY_RECORDS.has(type)) return undefined;
 	return { sequence: next, turnId, call };
 }

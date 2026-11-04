@@ -313,39 +313,6 @@
       "statusKey": "todo-waiting"
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:2>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:1>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:2>"
-      }
-     },
-     {
       "type": "agent_start",
       "runId": "<uuid:17>"
      },
@@ -444,6 +411,39 @@
        "content": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
        "display": false,
        "timestamp": "<ts:message.timestamp:7>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:2>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:1>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:2>"
       }
      },
      {
@@ -636,10 +636,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:5>",
       "phase": "start",
-      "statusMessage": "running hooks"
+      "statusMessage": "running kill-guard"
      },
      {
       "type": "tool_hook_status",
@@ -647,10 +647,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:hooks>",
+      "extensionPath": "<builtin:kill-guard>",
       "startedAt": "<ts:events.startedAt:6>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": "running kill-guard",
       "completedAt": "<ts:events.completedAt:3>",
       "status": "completed"
      },
@@ -660,10 +660,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:7>",
       "phase": "start",
-      "statusMessage": "matching project rules"
+      "statusMessage": "running hooks"
      },
      {
       "type": "message_update",
@@ -695,10 +695,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
+      "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:8>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:4>",
       "status": "completed"
      },
@@ -708,10 +708,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:9>",
       "phase": "start",
-      "statusMessage": "applying bash timeout"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -719,10 +719,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:bash-timeout>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:10>",
       "phase": "end",
-      "statusMessage": "applying bash timeout",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:5>",
       "status": "completed"
      },
@@ -732,10 +732,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:11>",
       "phase": "start",
-      "statusMessage": "running terminal"
+      "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
@@ -743,10 +743,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:terminal>",
+      "extensionPath": "<builtin:bash-timeout>",
       "startedAt": "<ts:events.startedAt:12>",
       "phase": "end",
-      "statusMessage": "running terminal",
+      "statusMessage": "applying bash timeout",
       "completedAt": "<ts:events.completedAt:6>",
       "status": "completed"
      },
@@ -756,10 +756,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:13>",
       "phase": "start",
-      "statusMessage": "checking compaction state"
+      "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
@@ -767,10 +767,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:compaction>",
+      "extensionPath": "<builtin:terminal>",
       "startedAt": "<ts:events.startedAt:14>",
       "phase": "end",
-      "statusMessage": "checking compaction state",
+      "statusMessage": "running terminal",
       "completedAt": "<ts:events.completedAt:7>",
       "status": "completed"
      },
@@ -780,10 +780,10 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:15>",
       "phase": "start",
-      "statusMessage": "running mcp"
+      "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
@@ -791,11 +791,35 @@
       "hookName": "PreToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:mcp>",
+      "extensionPath": "<builtin:compaction>",
       "startedAt": "<ts:events.startedAt:16>",
       "phase": "end",
-      "statusMessage": "running mcp",
+      "statusMessage": "checking compaction state",
       "completedAt": "<ts:events.completedAt:8>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:8",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:mcp>",
+      "startedAt": "<ts:events.startedAt:17>",
+      "phase": "start",
+      "statusMessage": "running mcp"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:8",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:mcp>",
+      "startedAt": "<ts:events.startedAt:18>",
+      "phase": "end",
+      "statusMessage": "running mcp",
+      "completedAt": "<ts:events.completedAt:9>",
       "status": "completed"
      },
      {
@@ -877,49 +901,25 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "call-cursor-read:PostToolUse:8",
+      "hookRunId": "call-cursor-read:PostToolUse:9",
       "hookName": "PostToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:events.startedAt:17>",
+      "startedAt": "<ts:events.startedAt:19>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "call-cursor-read:PostToolUse:8",
+      "hookRunId": "call-cursor-read:PostToolUse:9",
       "hookName": "PostToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:events.startedAt:18>",
-      "phase": "end",
-      "statusMessage": "running hooks",
-      "completedAt": "<ts:events.completedAt:9>",
-      "status": "completed"
-     },
-     {
-      "type": "tool_hook_status",
-      "hookRunId": "call-cursor-read:PostToolUse:9",
-      "hookName": "PostToolUse",
-      "toolName": "read",
-      "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:events.startedAt:19>",
-      "phase": "start",
-      "statusMessage": "matching project rules"
-     },
-     {
-      "type": "tool_hook_status",
-      "hookRunId": "call-cursor-read:PostToolUse:9",
-      "hookName": "PostToolUse",
-      "toolName": "read",
-      "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:20>",
       "phase": "end",
-      "statusMessage": "matching project rules",
+      "statusMessage": "running hooks",
       "completedAt": "<ts:events.completedAt:10>",
       "status": "completed"
      },
@@ -929,10 +929,10 @@
       "hookName": "PostToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:gpt-apply-patch>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:21>",
       "phase": "start",
-      "statusMessage": "running gpt-apply-patch"
+      "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
@@ -940,10 +940,10 @@
       "hookName": "PostToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:gpt-apply-patch>",
+      "extensionPath": "<builtin:permission-system>",
       "startedAt": "<ts:events.startedAt:22>",
       "phase": "end",
-      "statusMessage": "running gpt-apply-patch",
+      "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:11>",
       "status": "completed"
      },
@@ -953,8 +953,32 @@
       "hookName": "PostToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:nested-agents-md>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
       "startedAt": "<ts:events.startedAt:23>",
+      "phase": "start",
+      "statusMessage": "running gpt-apply-patch"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:11",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
+      "startedAt": "<ts:events.startedAt:24>",
+      "phase": "end",
+      "statusMessage": "running gpt-apply-patch",
+      "completedAt": "<ts:events.completedAt:12>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:12",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:nested-agents-md>",
+      "startedAt": "<ts:events.startedAt:25>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
@@ -966,38 +990,14 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "call-cursor-read:PostToolUse:11",
+      "hookRunId": "call-cursor-read:PostToolUse:12",
       "hookName": "PostToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:events.startedAt:24>",
-      "phase": "end",
-      "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:events.completedAt:12>",
-      "status": "completed"
-     },
-     {
-      "type": "tool_hook_status",
-      "hookRunId": "call-cursor-read:PostToolUse:12",
-      "hookName": "PostToolUse",
-      "toolName": "read",
-      "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:events.startedAt:25>",
-      "phase": "start",
-      "statusMessage": "running rules"
-     },
-     {
-      "type": "tool_hook_status",
-      "hookRunId": "call-cursor-read:PostToolUse:12",
-      "hookName": "PostToolUse",
-      "toolName": "read",
-      "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:26>",
       "phase": "end",
-      "statusMessage": "running rules",
+      "statusMessage": "running nested-agents-md",
       "completedAt": "<ts:events.completedAt:13>",
       "status": "completed"
      },
@@ -1007,10 +1007,10 @@
       "hookName": "PostToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:goal>",
+      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:27>",
       "phase": "start",
-      "statusMessage": "running goal"
+      "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
@@ -1018,11 +1018,35 @@
       "hookName": "PostToolUse",
       "toolName": "read",
       "toolCallId": "<id:6>",
-      "extensionPath": "<builtin:goal>",
+      "extensionPath": "<builtin:rules>",
       "startedAt": "<ts:events.startedAt:28>",
       "phase": "end",
-      "statusMessage": "running goal",
+      "statusMessage": "running rules",
       "completedAt": "<ts:events.completedAt:14>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:14",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:goal>",
+      "startedAt": "<ts:events.startedAt:29>",
+      "phase": "start",
+      "statusMessage": "running goal"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:14",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:goal>",
+      "startedAt": "<ts:events.startedAt:30>",
+      "phase": "end",
+      "statusMessage": "running goal",
+      "completedAt": "<ts:events.completedAt:15>",
       "status": "completed"
      },
      {
@@ -1857,7 +1881,8 @@
         "name": "read",
         "arguments": {
          "path": "<sandbox>/work/cursor-target.txt"
-        }
+        },
+        "runtimeItemKey": "exe:<uuid:3>"
        },
        {
         "type": "text",
@@ -1909,7 +1934,8 @@
       ],
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "exe:<uuid:3>"
     },
     {
      "type": "custom",

@@ -4,7 +4,18 @@ import type { Duplex } from "node:stream";
 import { inheritedDuplex } from "../../utils/inherited-duplex.ts";
 import { attachJsonlLineReader } from "./jsonl.ts";
 
+/** How a relayed exchange ended: the host's `enrolled`, its explicit `unavailable`, or a channel that closed first. */
+export type PresenterRelayResult = "enrolled" | "unavailable" | "closed";
+
 export const MCP_PRESENTER_BOOTSTRAP_FD = 4;
+
+/** The exchange window: from the first frame of a parked channel, or from the start of any other. */
+export const PRESENTER_EXCHANGE_MS = 30_000;
+/**
+ * How long a launch channel may sit untouched before its first frame (senpi#4602): the startup decision budget G.
+ * A successor's exchange starts at its P7, which can come long after its host opened the channel.
+ */
+export const PRESENTER_PARKING_MS = 180_000;
 
 /** The descriptor is not authority: only this live channel's enrollment transcript can issue grants. */
 export function presenterBootstrapStream(fd: number): Duplex | undefined {
@@ -22,15 +33,16 @@ export function relayPresenterBootstrap(
 	 * `predecessorHostInstance: undefined` means nothing proves the replaced host, so no replacement enrolls.
 	 */
 	launch?: { readonly kind: "initial" | "replacement"; readonly predecessorHostInstance: string | null | undefined },
-): Promise<void> {
+): Promise<PresenterRelayResult> {
 	const downstream = child.stdio[MCP_PRESENTER_BOOTSTRAP_FD];
 	if (!(downstream instanceof Socket)) {
 		upstream.destroy();
-		return Promise.resolve();
+		return Promise.resolve("closed");
 	}
 	return new Promise((resolve) => {
 		let ended = false;
-		let acknowledging = false;
+		let acknowledging: "enrolled" | "unavailable" | undefined;
+		let parked = true;
 		const finish = () => {
 			if (ended) return;
 			ended = true;
@@ -39,12 +51,18 @@ export function relayPresenterBootstrap(
 			unreadDown();
 			upstream.destroy();
 			downstream.destroy();
-			resolve();
+			resolve(acknowledging ?? "closed");
 		};
-		const timer = setTimeout(finish, 30_000);
+		// Parked until the owner's first frame (a successor's exchange starts at its P7, senpi#4602), then the window.
+		let timer = setTimeout(finish, PRESENTER_PARKING_MS);
 		const unreadUp = attachJsonlLineReader(
 			upstream,
 			(line) => {
+				if (parked) {
+					parked = false;
+					clearTimeout(timer);
+					timer = setTimeout(finish, PRESENTER_EXCHANGE_MS);
+				}
 				if (launch) {
 					try {
 						const record: unknown = JSON.parse(line);
@@ -79,7 +97,9 @@ export function relayPresenterBootstrap(
 						typeof record === "object" &&
 						record !== null &&
 						"type" in record &&
-						(record.type === "enrolled" || record.type === "unavailable");
+						(record.type === "enrolled" || record.type === "unavailable")
+							? record.type
+							: undefined;
 					upstream.write(`${line}\n`, () => {
 						if (acknowledging) finish();
 					});

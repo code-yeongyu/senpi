@@ -1258,6 +1258,11 @@ export class RpcClient {
 		return data === undefined ? {} : { notice: data.notice };
 	}
 
+	/** Reset one account's local health on a host advertising `account_reset`; rejects with RpcCommandError on failure. */
+	async resetProviderAccount(provider: string, name: string): Promise<void> {
+		this.getData(await this.send({ type: "account_reset", provider, name }));
+	}
+
 	// =========================================================================
 	// Helpers
 	// =========================================================================
