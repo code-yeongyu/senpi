@@ -982,6 +982,11 @@ those calls leaves the table. Where the field sits: a `calls` member carries it 
 directly after `runtimeItemKey` (before `entryId`), and the call projection directly before `nestedCalls`. Every other
 row, and every row with the flag off, carries no `callUnknown`.
 
+A snapshot member's own key (`calls/call-<sequence>-<n>`, `settled/message-<sequence>`) is opaque and derived from the
+session's record sequence. It is stable for the session's lifetime but not across engine versions: a change that emits
+more or fewer records before a call moves it (senpi#5682 moved the `calls` keys of the admission golden
+`k-same-message-reused-id.json` down by two). Do not pin these values; join a call by its `runtimeItemKey`.
+
 The host appends the field after the record's own, like the message ids above (`{"type": "tool_execution_end", ...,
 "sessionId": "rpc-1", "runtimeItemKey": "..."}`); legacy connections and every connection with the flag off receive
 the same bytes as before.
@@ -6605,8 +6610,8 @@ prompt, in one attempt within the connection's 30 s window:
    connection then carries that principal's signed `challenge`/`proof` commands; no other
    connection can act as an account principal.
 
-Any refusal is `{"type":"account_refused","version":1,"reason"}` followed by the close of
-the connection. `reason` is one of `presenter_account_unavailable` (no authority, or the
+An enrollment refusal is `{"type":"account_refused","version":1,"reason"}` followed by the
+close of the connection. `reason` is one of `presenter_account_unavailable` (no authority, or the
 host is signed out), `presenter_account_mismatch`, `attestation_malformed`,
 `attestation_signature`, `attestation_audience`, `attestation_expired`,
 `attestation_key_mismatch`, `attestation_replayed`, `presenter_busy`, or
@@ -6617,9 +6622,10 @@ principal: its connection closes and its grants are revoked.
 On its enrollment connection the principal extends `attestedUntil` with
 `{"type":"account_reattest","attestation":"<token>"}`; the host answers
 `{"type":"account_reattested","version":1,"attestedUntil"}`. The same checks apply. A
-reused `jti` is refused and the principal stays. A token for another key, or an account
-that is no longer the host's, is refused, revokes the principal's grants and closes the
-connection. An account principal never becomes the launch owner, so it cannot authorize a
+token for another key, an account that is no longer the host's, or a signed-out host is
+refused with `account_refused`, revokes the principal's grants and closes the connection.
+Any other re-attestation refusal (for example a reused `jti` or an expired token) is an
+`account_refused` on an open connection, and the principal and its grants stay. An account principal never becomes the launch owner, so it cannot authorize a
 successor host's enrollment.
 
 Acquisition and revocation use the
