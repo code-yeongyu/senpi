@@ -3558,8 +3558,14 @@ first; then the caller attaches, and every other connection holding the session 
 error reaches it, and the session and its running turn go on. The answer adds `holder`, its `generation`
 (1 for the session's first holder, one more for each new holder) and `released` (how many connections
 were let go). A takeover by the current holder records nothing new. Without `holder` the command
-returns `takeover_holder_required`; any other host returns `takeover_unsupported`. Without `takeover`,
-`attach_session` behaves as above on every host.
+returns `takeover_holder_required`; any other host, the interactive terminal's endpoint included, returns
+`takeover_unsupported`. A failed takeover record returns `takeover_failed` with `errorData.reason`. After the
+record is written the host checks again before it attaches anyone: a draining host answers `session_busy_lifecycle`
+(`reason: "host_draining"`), a caller that disconnected meanwhile gets `session_not_attached`
+(`reason: "no_connection"`) and nobody is let go, and a session that closed meanwhile answers `unknown_session`.
+The other clients' holds are removed in the same step as the caller's attach, so a client that disconnects or
+releases, or a second takeover, while the `session_released` notices go out cannot release a hold twice.
+Without `takeover`, `attach_session` behaves as above on every host.
 
 #### release_attachment
 
@@ -3725,6 +3731,7 @@ codes or code prefixes in `error`:
 - `attached_elsewhere` (`reclaim_session` found another connection's holds; `errorData.attachments` counts them)
 - `takeover_unsupported` (`attach_session { takeover: true }` on a host that is not a headless engine with a takeover ledger)
 - `takeover_holder_required` (`attach_session { takeover: true }` without `holder`)
+- `takeover_failed` (`attach_session { takeover: true }` could not write its takeover record; `errorData.reason` says why)
 - `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
@@ -5710,6 +5717,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `service_tier_changed` | Effective service tier or fast-mode state changed |
 | `session_closed` | Multi-session host: a routing handle ended. Optional `reason`: `client_close`, `idle_evicted`, `host_shutdown`, `replaced`, `handoff_parked`, `session_dir_removed`, `error` |
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
+| `session_released` | Headless engine: a quiet takeover let this connection go (`sessionId`, `reason: "taken_over"`); the session runs on for its new holder. Sent to that connection only |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
 | `subscription_limits` | A subscription account reported new limit windows: `{ provider, account, windows, reportedAt }`, the same shape as one `get_subscription_limits` account; every connection hears it once per report |

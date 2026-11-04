@@ -23,13 +23,6 @@ export type RpcAttachmentCommand =
 			readonly expectedHostInstance: string;
 	  };
 
-/** Sent to each connection a takeover let go: it no longer holds the session, which goes on running. */
-export interface RpcSessionReleasedRecord {
-	readonly type: "session_released";
-	readonly sessionId: string;
-	readonly reason: "taken_over";
-}
-
 export type RpcAttachmentResponse =
 	| {
 			readonly id?: string;

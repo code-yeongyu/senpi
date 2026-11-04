@@ -1310,6 +1310,7 @@ export class RpcClient {
 					// Connection-level, not part of the agent's event stream.
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
+					event.type === "session_released" ||
 					event.type === "queued" ||
 					event.type === "socket_closing" ||
 					event.type === "message_tool_arguments_reset"

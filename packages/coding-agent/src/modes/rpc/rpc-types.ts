@@ -124,6 +124,7 @@ export type {
 	RpcSessionClosedReason,
 	RpcSessionOpenedEvent,
 	RpcSessionParkedEvent,
+	RpcSessionReleasedEvent,
 	RpcSessionReplacedEvent,
 	RpcSettingsSourceSelectedEvent,
 	RpcSkillInvocationEvent,
