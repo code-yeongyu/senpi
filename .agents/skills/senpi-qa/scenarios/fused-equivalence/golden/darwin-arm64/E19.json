@@ -313,39 +313,6 @@
       "statusKey": "todo-waiting"
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:2>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:1>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:2>"
-      }
-     },
-     {
       "type": "agent_start",
       "runId": "<uuid:17>"
      },
@@ -444,6 +411,39 @@
        "content": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
        "display": false,
        "timestamp": "<ts:message.timestamp:7>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:2>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:1>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:2>"
       }
      },
      {

@@ -1,6 +1,4 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { splitBom } from "../../utils/text.ts";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
@@ -15,6 +13,7 @@ import {
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { asBuffer, defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type EditRenderState, editRenderers } from "./renderers/edit.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -91,17 +90,27 @@ export interface EditOperations {
 	access: (absolutePath: string) => Promise<void>;
 }
 
-const defaultEditOperations: EditOperations = {
-	readFile: (path) => fsReadFile(path),
-	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
-	access: (path) => fsAccess(path, constants.R_OK | constants.W_OK),
-};
+/** The default edit operations over the shared operation layer; the tool already holds the file's mutation slot. */
+function machineEditOperations(machine: ToolMachine, signal: AbortSignal | undefined): EditOperations {
+	const ctx = machine.context(signal, "caller");
+	return {
+		readFile: async (path) => asBuffer((await machine.ops.files.read({ path }, ctx)).bytes),
+		writeFile: async (path, content) => {
+			await machine.ops.files.write({ path, bytes: Buffer.from(content, "utf-8") }, ctx);
+		},
+		access: async (path) => {
+			await machine.ops.files.stat({ path, access: "readwrite" }, ctx);
+		},
+	};
+}
 
 export interface EditToolOptions {
 	/** Custom operations for file editing. Default: local filesystem */
 	operations?: EditOperations;
 	/** Extension-registered filesystem policy checker. */
 	filesystemPolicy?: FilesystemPolicyChecker;
+	/** Operation layer and policy gate. Default: the process-wide local machine. */
+	machine?: ToolMachine;
 }
 
 function prepareEditArguments(input: unknown): EditToolInput {
@@ -148,7 +157,7 @@ export function createEditToolDefinition(
 	cwd: string,
 	options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
-	const ops = options?.operations ?? defaultEditOperations;
+	const machine = options?.machine ?? defaultToolMachine();
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		...(options?.operations !== undefined || options?.filesystemPolicy !== undefined ? { serverPinned: true } : {}),
@@ -165,6 +174,9 @@ export function createEditToolDefinition(
 		prepareArguments: prepareEditArguments,
 		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionContext) {
 			const { path, edits } = validateEditInput(input);
+			const admitted = machine.begin("files.edit", { path, edits }, signal);
+			if (admitted !== undefined) await admitted;
+			const ops = options?.operations ?? machineEditOperations(machine, signal);
 			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
 
 			return withFileMutationQueue(absolutePath, async () => {
