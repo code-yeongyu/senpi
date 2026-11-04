@@ -14,7 +14,7 @@ import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts"
 
 export type HostKind = "headless" | "client-owned";
 
-interface ResponseRecord {
+export interface ResponseRecord {
 	readonly type: "response";
 	readonly id?: string;
 	readonly success: boolean;
@@ -33,6 +33,7 @@ export interface SessionRow {
 export interface HostRig {
 	readonly root: string;
 	readonly core: ReturnType<typeof createHostCore>;
+	readonly writer: SessionEventWriter;
 	readonly turnStarted: Promise<void>;
 	newSessionFile(): Promise<string>;
 	connect(connection: string): void;
@@ -109,6 +110,7 @@ export async function startHostRig(
 	return {
 		root,
 		core,
+		writer,
 		turnStarted: started.promise,
 		newSessionFile: async () => {
 			const file = join(root, `${randomUUID()}.jsonl`);
