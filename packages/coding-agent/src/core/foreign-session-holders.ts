@@ -60,7 +60,7 @@ export async function checkSessionHolders(
 	sessionFile: string,
 ): Promise<{ readonly holders: readonly SessionHolder[] } | { readonly lookupFailed: true }> {
 	try {
-		return { holders: await foreignSessionHolders(sessionFile) };
+		return { holders: await foreignSessionHolders(sessionFile, undefined, { markUnproven: true }) };
 	} catch {
 		return { lookupFailed: true };
 	}
@@ -69,24 +69,41 @@ export async function checkSessionHolders(
 const HOLDER_EXIT_POLL_MS = 100;
 
 /**
- * Explicit take-over of a session another live process holds (senpi#5744): ask each holder to exit with SIGTERM
- * and wait until none of them holds the file any more. A holder record is only reported live after its process
- * identity was validated, so the signal never reaches a reused pid. Returns false when a holder is still there
- * at the deadline.
+ * Why taking over is not offered, or `undefined` when it is: a holder whose identity is unverified could be a
+ * reused pid, and a holder inside a multi-session host would take every other session of that host down with it.
+ */
+export function takeOverRefusal(holders: readonly SessionHolder[]): string | undefined {
+	if (holders.some((holder) => holder.host_instance !== undefined))
+		return "It is open in a multi-session host; close it there, then /resume again.";
+	if (holders.some((holder) => holder.unproven === true))
+		return "The other process could not be verified; quit it there, then /resume again.";
+	return undefined;
+}
+
+/**
+ * Explicit take-over of a session another live process holds (senpi#5744). The holder set is read again right
+ * before signalling and intersected with the pids the person confirmed; only verified, single-session holders are
+ * asked to exit (SIGTERM). Then it waits until none of them holds the file. Returns false when a confirmed holder
+ * can no longer be signalled safely or is still there at the deadline.
  */
 export async function stopSessionHolders(
 	sessionFile: string,
-	holders: readonly SessionHolder[],
+	confirmed: readonly SessionHolder[],
 	timeoutMs = 10_000,
 ): Promise<boolean> {
-	for (const { pid } of holders) {
+	const confirmedPids = new Set(confirmed.map(({ pid }) => pid));
+	const current = (await foreignSessionHolders(sessionFile, undefined, { markUnproven: true })).filter(({ pid }) =>
+		confirmedPids.has(pid),
+	);
+	if (takeOverRefusal(current) !== undefined) return false;
+	for (const { pid } of current) {
 		try {
 			process.kill(pid, "SIGTERM");
 		} catch (cause) {
 			if (errorCode(cause) !== "ESRCH") throw cause;
 		}
 	}
-	const stopping = new Set(holders.map(({ pid }) => pid));
+	const stopping = new Set(current.map(({ pid }) => pid));
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		const left = (await foreignSessionHolders(sessionFile)).filter(({ pid }) => stopping.has(pid));

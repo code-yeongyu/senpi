@@ -131,6 +131,7 @@ import {
 	SESSION_HOLDER_LOOKUP_FAILED,
 	sessionHolderWarning,
 	stopSessionHolders,
+	takeOverRefusal,
 } from "../../core/foreign-session-holders.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
@@ -9044,15 +9045,25 @@ export class InteractiveMode {
 		const holderCheck = await checkSessionHolders(sessionPath);
 		if ("holders" in holderCheck && holderCheck.holders.length > 0) {
 			const takeOver = "Take over (stop it there)";
+			const refusal = takeOverRefusal(holderCheck.holders);
 			const choice = await this.showExtensionSelector(
-				`This session is open in another process (${describeSessionHolders(holderCheck.holders)}).\nResuming it here while it runs would start a second run of the same session.`,
-				["Cancel", takeOver],
+				`This session is open in another process (${describeSessionHolders(holderCheck.holders)}).\nResuming it here while it runs would start a second run of the same session.${refusal === undefined ? "" : `\n${refusal}`}`,
+				refusal === undefined ? ["Cancel", takeOver] : ["Cancel"],
 			);
 			if (choice !== takeOver) {
 				this.showStatus("Not resumed: the session is open in another process");
 				return { cancelled: true };
 			}
-			if (!(await stopSessionHolders(sessionPath, holderCheck.holders))) {
+			let stopped: boolean;
+			try {
+				stopped = await stopSessionHolders(sessionPath, holderCheck.holders);
+			} catch (error: unknown) {
+				this.showWarning(
+					`Not resumed: could not stop the other process (${error instanceof Error ? error.message : String(error)}).`,
+				);
+				return { cancelled: true };
+			}
+			if (!stopped) {
 				this.showWarning("Not resumed: the other process did not exit; quit it there, then /resume again.");
 				return { cancelled: true };
 			}

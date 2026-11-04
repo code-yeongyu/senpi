@@ -12,7 +12,11 @@ import {
 	createAgentSessionRuntime,
 	createAgentSessionServices,
 } from "../../../src/core/agent-session-runtime.ts";
-import { foreignSessionHolders } from "../../../src/core/foreign-session-holders.ts";
+import {
+	foreignSessionHolders,
+	stopSessionHolders,
+	takeOverRefusal,
+} from "../../../src/core/foreign-session-holders.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
@@ -130,6 +134,31 @@ it.each(["Cancel", TAKE_OVER] as const)("a resume of a session another live proc
 		await runtime.dispose();
 		vi.restoreAllMocks();
 		faux.unregister();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it.each([
+	{ holder: { pid: 1, cwd: undefined }, offered: true },
+	{ holder: { pid: 1, cwd: undefined, host_instance: "h-1" }, offered: false },
+	{ holder: { pid: 1, cwd: undefined, unproven: true as const }, offered: false },
+])("take-over is offered only for verified single-session holders: %o", ({ holder, offered }) => {
+	expect(takeOverRefusal([holder]) === undefined).toBe(offered);
+});
+
+it("take-over signals nothing when the confirmed holder no longer holds the session", async () => {
+	const root = await mkdtemp(join(tmpdir(), "held-resume-stale-"));
+	const target = join(root, "target.jsonl");
+	await writeFile(
+		target,
+		`${JSON.stringify({ type: "session", version: 3, id: randomUUID(), cwd: root, timestamp: new Date(0).toISOString() })}\n`,
+	);
+	const kill = vi.spyOn(process, "kill");
+	try {
+		expect(await stopSessionHolders(target, [{ pid: 2_147_483_000, cwd: undefined }])).toBe(true);
+		expect(kill).not.toHaveBeenCalled();
+	} finally {
+		kill.mockRestore();
 		await rm(root, { recursive: true, force: true });
 	}
 });
