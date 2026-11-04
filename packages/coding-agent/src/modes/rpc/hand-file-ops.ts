@@ -141,7 +141,11 @@ export function createHandFileOps(
 					...(stdin === undefined ? {} : { stdin }),
 					...(timeoutMs === undefined ? {} : { timeoutMs }),
 				};
-				const outcome = await runOnHand(request, { root, guards, context: run.context, flock: run.flock }, signal);
+				const outcome = await runOnHand(
+					request,
+					{ root, guards, context: run.context, flock: run.flock, ...(nested ? { nested } : {}) },
+					signal,
+				);
 				return fileResult({ ok: true, value: { ...outcome } });
 			} catch (error) {
 				if (error instanceof DeviceFileError) return fileRefusal(error.code, error.message);
