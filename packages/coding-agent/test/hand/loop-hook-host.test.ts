@@ -466,6 +466,29 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		expect(next.sent[0]).toBe("m2");
 	});
 
+	it("past its cap drops held notices before any message: messages reach the model, notices only the UI", async () => {
+		const call = createLoopHookCall();
+		let kept: ReturnType<typeof call.current>;
+		await call.run("loop-session-4", "/work", true, async () => {
+			kept = call.current();
+		});
+
+		kept?.notify("oldest-notice");
+		for (let index = 0; index < LATE_PER_SESSION; index++)
+			kept?.sendMessage({ customType: "late", content: `m${index}`, display: false });
+		const next = await call.run("loop-session-4", "/work", true, async (effects) => ({
+			sent: effects.sent.map((entry) => entry.message.content),
+			notices: effects.notices.map((entry) => entry.message),
+			dropped: effects.dropped,
+		}));
+
+		expect(next).toEqual({
+			sent: Array.from({ length: LATE_PER_SESSION }, (_, index) => `m${index}`),
+			notices: [],
+			dropped: 1,
+		});
+	});
+
 	it("is not visible to work that runs outside the call", async () => {
 		const call = createLoopHookCall();
 		const outside = Promise.withResolvers<ReturnType<typeof call.current>>();

@@ -220,7 +220,8 @@ export interface LoopHookCall {
 
 /**
  * Messages and notices from a call's work after that call ended, which one loop session holds until its next reply
- * (the loop-hook link has no hand-to-loop push). Past this many the oldest is dropped and counted in that reply:
+ * (the loop-hook link has no hand-to-loop push). Past this many the oldest held notice is dropped, or the oldest
+ * message when no notice is held, and counted in that reply:
  * late work never throws into the user's hook code.
  */
 export const LATE_PER_SESSION = 256;
@@ -232,8 +233,8 @@ export function createLoopHookCall(): LoopHookCall {
 		const held = late.get(sessionId) ?? { sent: [], notices: [], dropped: 0 };
 		add(held);
 		while (held.sent.length + held.notices.length > LATE_PER_SESSION) {
-			const oldest = held.sent.length > 0 ? held.sent : held.notices;
-			oldest.shift();
+			// Notices only reach the loop's UI, messages reach its model, so the oldest notice goes first.
+			(held.notices.length > 0 ? held.notices : held.sent).shift();
 			held.dropped++;
 		}
 		late.set(sessionId, held);
