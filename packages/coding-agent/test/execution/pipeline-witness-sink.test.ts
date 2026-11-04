@@ -91,7 +91,7 @@ describe("the witness sink's edges", () => {
 		const sink = resolveWitnessSink(undefined, {
 			SENPI_EXECUTION_PIPELINE_WITNESS: join(witnessFile(), "missing", "w.jsonl"),
 		});
-		expect(() => sink?.({ pipeline: "legacy", toolCallId: "call-1" })).not.toThrow();
+		expect(() => sink?.({ pipeline: "prepared", toolCallId: "call-1" })).not.toThrow();
 		expect(warn).toHaveBeenCalledWith(
 			expect.stringContaining("execution-pipeline witness not written"),
 			"ExecutionPipelineWitnessWarning",
@@ -149,7 +149,6 @@ describe("createAgentSessionFromServices", () => {
 
 	it.each([
 		["default (unset)", "prepared", {}],
-		["legacy", "legacy", { SENPI_EXECUTION_PIPELINE: "legacy" }],
 		["prepared", "prepared", { SENPI_EXECUTION_PIPELINE: "prepared" }],
 	] as const)(
 		"writes a real %s tool call's receipt to the env file and keeps receipts out of the session",
