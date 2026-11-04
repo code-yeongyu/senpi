@@ -51,6 +51,14 @@ it("T7: with an inherited owner, a later account command leaves the successor pe
 	expect(probe).toMatchObject({ type: "mcp_presenter_error", id: "probe" });
 });
 
+it("an account principal cannot be driven from another control connection, even with its key", async () => {
+	const host = await accountHost();
+	const adopted = await enrollAssignAcquire(host);
+	const command = { type: "mcp_presenter_revoke", id: "elsewhere", registrationId: "none" };
+	expect(await signedCommand(host.open(), adopted.principalId, adopted.device.privateKey, command)).toBeUndefined();
+	expect(host.binding.capture()?.ready()).toBe(true);
+});
+
 it("T11: a fresh attestation for the same key and account extends attestedUntil", async () => {
 	const host = await accountHost();
 	const adopted = await enrollAssignAcquire(host);
