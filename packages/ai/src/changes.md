@@ -1,3 +1,21 @@
+## 2026-10-30 - Keep retained SIWC hints out of CLI output (senpi#5046)
+
+### What changed
+
+- `packages/ai/src/cli.ts` prints a hint-free authorization URL through the new browser-safe `packages/ai/src/utils/oauth-url.ts` helper.
+
+### Why
+
+- `packages/ai/src/cli.ts` must not log retained ID tokens inside authorization URLs.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/cli.ts` owns its authorization URL console output.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/cli.ts`: auth_url output; `packages/ai/src/utils/oauth-url.ts`: new helper.
+
 ## 2026-10-30 - Session-affinity key option for Anthropic Messages (senpi#2553)
 
 ### What changed

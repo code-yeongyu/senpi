@@ -982,6 +982,11 @@ those calls leaves the table. Where the field sits: a `calls` member carries it 
 directly after `runtimeItemKey` (before `entryId`), and the call projection directly before `nestedCalls`. Every other
 row, and every row with the flag off, carries no `callUnknown`.
 
+A snapshot member's own key (`calls/call-<sequence>-<n>`, `settled/message-<sequence>`) is opaque and derived from the
+session's record sequence. It is stable for the session's lifetime but not across engine versions: a change that emits
+more or fewer records before a call moves it (senpi#5682 moved the `calls` keys of the admission golden
+`k-same-message-reused-id.json` down by two). Do not pin these values; join a call by its `runtimeItemKey`.
+
 The host appends the field after the record's own, like the message ids above (`{"type": "tool_execution_end", ...,
 "sessionId": "rpc-1", "runtimeItemKey": "..."}`); legacy connections and every connection with the flag off receive
 the same bytes as before.
@@ -1061,7 +1066,8 @@ attempts plus routed admissions share 127 rows (128 rows within 16 MiB of 131,58
 them is refused `admission_admission_limit` (`errorData.reason: "admission_limit"`). A completed admission that no
 longer routes a stream stays in a least-recently-used row: an exact retry of a recent ID (C4.4) answers its stored
 result, opens nothing and replaces nothing, and an evicted ID answers `admission_admission_retired` (a 4,096-entry ring;
-an ID older than that is indistinguishable from a fresh one). A completed `open_session` or `attach_session` of a
+an unmarked ID older than that is indistinguishable from a fresh one, while a retry marked `retry: true` answers
+`admission_admission_unknown`; see Admission retries below). A completed `open_session` or `attach_session` of a
 session this socket already routes REPLACES that route: the earlier admission receives no record after the new
 admission's baseline, its attachment is released, and `reset_stream` or `cancel_attempt` naming it answers
 `unknown_admission`. An ordinary route has no separate end record; a record already queued for the earlier ID is
@@ -1099,6 +1105,36 @@ before the route stops delivering. Per path:
 - A session's close or park: announced by `session_closed` or `session_parked`, tagged with every route the session had
   on the socket; the session's streams end with it.
 - A socket's end: nothing can be delivered on it any more; its streams end with it.
+
+**Admission retries (senpi#5285, RULING-125).** `open_session`, `attach_session` and `subscribe_sessions` accept an
+optional `retry: true`. A compact client sends it on every C4.4 retry, that is, whenever it sends an `admissionId` again
+on the same socket; the first send of an ID never carries it. The marker is not part of the request's identity: a
+marked retry with otherwise identical fields matches the original row. The host answers by what this socket's admission
+index holds for the ID:
+
+| Request | ID state on this socket | Answer |
+| --- | --- | --- |
+| `retry: true` | done row (completed, cancelled or failed) | that row's stored result; nothing runs again |
+| `retry: true` | live pending attempt | the existing in-flight admission's answer; no second admission |
+| `retry: true` | unknown: evicted into the ring, forgotten after the ring overflowed, or never seen | `admission_admission_unknown` (`errorData.reason: "admission_unknown"`); nothing runs |
+| no `retry` | retired (evicted, in the ring) | `admission_admission_retired`, as before |
+| no `retry` | live (pending or done row) | the existing duplicate handling: join the pending attempt or answer the stored result |
+
+`admission_admission_unknown` means the outcome is unconfirmed: the original send may have run (an evicted ID did), so
+the client treats the request as possibly applied and never re-sends it as new. This closes the residual of RULING-114:
+before the marker, a retry older than the 4,096-entry ring was indistinguishable from a fresh open and ran again,
+possibly duplicating its effect. An unmarked request for a forgotten ID still runs as a fresh admission, which is why
+clients must mark retries; `status().retiredOverflow` still counts ring drops. A marked request whose fields differ from
+the stored row answers `admission_admission_conflict`, as an unmarked one does. With
+`SENPI_ENGINE_SOCKET_COMPACT_UPDATES` off, and on a legacy (non-compact) request, the field is ignored. The in-repo
+`RpcClient` marks every `openSession` that re-sends an `admissionId` the same client instance already sent, also
+after a disconnect and reconnect: the typical C4.4 retry follows a reconnect, and the new socket does not know the ID,
+so an unmarked re-send would open again. The client remembers the 4,096 most recently sent IDs (least recently sent
+dropped first), so its memory stays bounded; a client must not reuse an `admissionId` for a different request. A
+re-send of an ID older than that 4,096-entry window goes out unmarked. On the same socket the late-retry residual is
+bounded by both windows (the client's 4,096 sent IDs and the engine's per-socket 4,096-entry ring plus 127 live rows);
+after a reconnect the new socket knows no IDs, so only the client window bounds it. `RpcClient`'s window is fixed; a
+custom client that retries older admissions keeps a larger window of its own.
 
 **Engine-initiated socket close (senpi#5322, RULING-124).** With `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on, the engine
 never closes a socket that selected compact events without saying why. Before every close the engine itself decides,
@@ -1416,7 +1452,12 @@ parsing a version string:
     "core": { "extensions": [], "multi_session": true, "session_runtime": "in-process" }
   },
   "agentDir": "/home/me/.senpi/agent",
-  "method_classes": { "version": 1, "digest": "71d68465…" }
+  "method_classes": {
+    "version": 1,
+    "digest": "71d68465…",
+    "classes": { "get_state": "observe", "prompt": "dynamic", "...": "..." },
+    "dynamic_versions": { "prompt": 1, "...": 1 }
+  }
 }
 ```
 
@@ -1442,8 +1483,11 @@ parsing a version string:
 - `method_classes` - the inbound method-class table this engine runs: `version` is the class-meaning version
   and `digest` the sha256 (hex) of the table's sorted `type=class\n` lines (`type=dynamic@<n>` for a
   record-dependent entry). A client that classifies records with its own copy of the table uses that copy only
-  while its digest equals this one, and otherwise treats every record as unclassified. Hosts released before
-  the field omit it.
+  while its digest equals this one, and otherwise treats every record as unclassified. `classes` is the whole
+  table as data: each inbound type's class, or `dynamic` when the class depends on the record's fields, with that
+  rule's version in `dynamic_versions` (the rules themselves are never shipped; ask `classify_record`, see
+  "Delegated connections"). Hosts released before the field omit it; hosts released before `classes` send only
+  `version` and `digest`.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
@@ -2343,6 +2387,7 @@ A multi-session host advertising the capability `session_status` pushes one `ses
 - `include_context`: carry each session's published `context` on its records; default `false`.
 - `mirror`: `"none"` (default), `"all"` or an array of record types (`["message_update", "tool_execution_start"]`). The matched sessions' records of those types are also delivered to this connection. Mirroring is an explicit opt-in open to every subscriber of the host (the socket is per user, mode 0600): it is not an attachment and does not keep a session alive. Worker content is mirrored only with `include_workers: true`.
 - `effects`: also deliver `effect_status` receipts of matched sessions; default `true` for `childrenOf`, `false` otherwise. Each `effect_status` is enqueued after the record that caused the transition and shares the subscription's `seq`.
+- `admissionId`, `retry`: compact admission fields behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (see `cancel_attempt` and "Admission retries"); ignored with the flag off.
 - `dialogs`: with capability `dialog_observer`, also deliver the `ui_request_pending` and `ui_request_settled` records of matched sessions; default `false`. It takes effect only together with a `mirror` selection, stays observing, and grants no answering authority (see "UI-answer receipts and dialog observation").
 
 Response:
@@ -2509,6 +2554,55 @@ context - inside a provider scope of their own, then drops them.
 
 Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
 error.
+
+### Delegated connections (`declare_delegation`)
+
+A client that forwards records on behalf of someone else (a relay host forwarding a remote viewer) declares it, and
+the host then decides every record on that connection with its own method-class table: the forwarder keeps no
+table. Hosts that do this advertise `delegated_connection_v1`.
+
+```json
+{ "id": "d1", "type": "declare_delegation", "principal": { "deviceId": "laptop-7", "deviceName": "Laptop", "conn": "c1" }, "granted": ["observe", "drive"] }
+{ "id": "d1", "type": "response", "command": "declare_delegation", "success": true, "data": { "granted": ["observe", "drive"], "digest": "71d68465…" } }
+```
+
+- Only a connection that proved the endpoint key (see "Authentication"; on Windows, the socket secret) may declare;
+  any other gets `delegation_unauthenticated`.
+- The first declaration must come before any record other than `get_protocol_info` and `authenticate`, else
+  `delegation_late`.
+- `principal.deviceId` (1-256 characters) is required; `deviceName` (1-256) and `conn` (1-64) are optional.
+  `granted` holds each of `observe`, `drive`, `answer`, `thread`, `device_admin` at most once (anything else is
+  `delegation_malformed`).
+- A declaration on a delegated connection may only narrow it: the same principal and a subset of the current grant,
+  else `delegation_fixed`. It takes effect for the very next line, even one written in the same chunk.
+
+On a delegated connection every record is checked before dispatch:
+
+| Check | Refusal `errorCode` |
+|---|---|
+| Not JSON, not an object, or without a string `type` | `delegation_malformed` |
+| A type the engine does not classify | `delegation_unclassified` |
+| Its class (for a record-dependent type, the class of this record) is not granted | `delegation_not_granted`, `errorData: { class }` |
+| A `connection_local` record without the grant it needs (below) | `delegation_local_only`, `errorData: { class }` |
+
+`connection_local` records act on the delegated connection itself and need no grant, except `subscribe_sessions`
+(`observe`), `record_user_activity` (`drive`), and `release_session`, `warm`, `reclaim_session` and `move_session`,
+which reach the host (`device_admin`). `set_client_info` needs no grant and is not filtered: a viewer declares its own
+roles. A permitted record runs exactly as on any other connection, with the same answer: a record its type's schema
+would refuse is not refused by the delegation check, it gets the same response a local connection gets. A refusal is an ordinary error response
+(`success: false`, `error`, `errorCode`). Secret and grant-select dialogs stay answerable only from the connection
+that raised them, delegated or not.
+
+`classify_record` answers the class of one record without running it, on any connection:
+
+```json
+{ "id": "c1", "type": "classify_record", "record": { "type": "prompt", "message": "/mcp" } }
+{ "id": "c1", "type": "response", "command": "classify_record", "success": true, "data": { "class": "device_admin", "version": 1, "digest": "71d68465…", "static": false, "rule": 1 } }
+```
+
+`class` is `null` for a record the engine does not classify; `static` says whether the class depends only on the
+type (`rule` is then absent), so a client may cache static answers per `digest`. It is never an authorization: the
+host decides again when the record arrives.
 
 ### Prompt surface
 
@@ -3523,7 +3617,9 @@ returns `unknown_session`; a recycled routing id or mismatching host instance re
 receives `session_not_attached` with `errorData: { reason: "no_connection" }`. It never creates or resumes a runtime, and never applies a permission preset,
 prompt surface, or browser engine. Each success adds one attachment, connects the event stream, and publishes
 `session_status` with `lastChange.cause: "attach"`. Intentional profile-changing attaches through
-`open_session { sessionPath, permissionPreset, ... }` retain their existing behavior.
+`open_session { sessionPath, permissionPreset, ... }` retain their existing behavior. Behind
+`SENPI_ENGINE_SOCKET_COMPACT_UPDATES`, `admissionId` and `retry: true` make it a compact admission, as on
+`open_session` (see "Admission retries").
 
 #### release_attachment
 
@@ -6541,7 +6637,26 @@ fresh challenge over the existing authenticated launch-owner channel. The CLI's
 bootstrap stream is never serialized into `begin_handover`.
 
 `mcp_presenter_context` returns the caller's current connection nonce and attachment
-context. These identifiers confer no authority. Acquisition and revocation use the
+context. These identifiers confer no authority.
+
+An embedding distribution may inject a `PresenterAccountAuthority` at host start
+(`presenterAccountAuthority` in the host options); no RPC command, argument,
+environment variable, settings file, or session state can supply one. An enforced host
+with such an authority has the management endpoint even without the descriptor-4
+bootstrap. A caller discovers it only by asking explicitly:
+`{"type":"mcp_presenter_context","sessionId":"...","discover":true}`. The reply's
+`context` then also carries `controlEndpoint`, the endpoint's socket or pipe path. The
+key is added only when `discover` is the boolean `true` and the host has an account
+authority; every other request, and every host without an authority, gets the five
+context fields exactly as before, so strict decoders that reject unknown keys keep
+working. The endpoint path confers no authority. Account enrollment over it is not yet
+accepted, so it currently admits only the inherited launch principal.
+
+An engine that predates `discover` ignores the key and answers with the five context
+fields. A client must treat a missing `controlEndpoint` as "account enrollment
+unavailable on this host": not an error, and not a reason to retry the request.
+
+Acquisition and revocation use the
 separate authenticated management endpoint, with a fresh challenge for each
 `mcp_presenter_assign`, `mcp_presenter_acquire`, or `mcp_presenter_revoke` command.
 Enrollment alone assigns no sessions. Before acquisition, the trusted native
@@ -6553,10 +6668,16 @@ or binding replacement requires a new assignment. It is not persisted.
 An acquisition also requires the connection's `interactive_user` and
 `mcp_form_presenter_v1` capabilities, and binds the
 current host, session, binding epoch, connection nonce, attachment ID and epoch, and
-`purpose: "mcp_form"`. Only one holder is active for a session binding.
-Concurrent forms, including worker-origin forms, wait in the host's abort-aware
-FIFO for that holder. Waiting consumes the original deadline; timeout, cancellation,
-or revocation before display never fabricates a human response.
+`purpose: "mcp_form"`. A session binding can have several holders at once, at most
+one per (principal, connection), and each grant is checked on its own. An acquire may
+add `features: ["elsewhere_v1"]`. The list is part of the signed command, so the host
+records it on the grant. Unknown names are ignored, and a list that is not an array of
+at most 16 short strings is refused.
+Concurrent forms, including worker-origin forms, wait in one abort-aware FIFO per
+binding, whichever holder answers. When a form reaches the head, it is offered to the
+holders current at that moment; a holder that acquires later never receives that form,
+only the following ones. Waiting consumes the original deadline; timeout, cancellation,
+or loss of every holder before display never fabricates a human response.
 Enforced legacy connections observe presenter readiness and reconnect when their
 negotiated form capability becomes stale, including a grant issued after connect.
 Revoking the last ready holder removes the capability on the new connection.
@@ -6592,9 +6713,27 @@ to recover the holder's still-live form. It is not a public replay API.
 
 Unknown and stolen-dialog submissions from a non-holder both return
 `presenter_not_authorized` before private dialog lookup. The host validates a whole
-form before admitting a human answer, and a synchronous terminal latch accepts only
-one outcome. `mcp_form_resolved` carries the session, grant, dialog, and a reason:
-`answered`, `declined`, `cancelled`, `processing_failed`, or `operation_aborted`.
+form before admitting a human answer. Each holder gets its own `dialogId`,
+`dialogToken` and envelope. One synchronous terminal latch per form accepts only one
+outcome: the first valid `mcp_form_response` from any holder wins, and a later response
+is `form_stale`. `mcp_form_presented` from any holder marks the form presented.
+Losing one holder ends only that holder's dialog. The form ends with presentation loss
+only when its last holder is gone. `mcp_form_resolved` carries the session, grant,
+dialog, and the winning reason: `answered`, `declined`, `cancelled`,
+`processing_failed`, or `operation_aborted`. When another holder's action settled the
+form, a grant that negotiated `elsewhere_v1` also gets `elsewhere: true`.
+A grant without it sees exactly the earlier bytes.
+
+After the latch, each `elsewhere_v1` holder of the form that is still current gets one
+private `mcp_form_settled` record:
+`{ type, sessionId, groupId, outcome, answeredBy? }`. `outcome` is the same reason.
+`answeredBy` is present only when a holder's action settled the form. It contains
+`principalKind` (`inherited` or `account`), `presenterKind`, and, for an account
+principal, the attested `dev` and `dname`, never the self-declared `remoteOrigin`.
+The record carries no message, schema, content, draft, token, or dialog, grant or
+revision id. It is memory-only, and it goes only to those holders on the private lane:
+never to a holder without `elsewhere_v1`, a `dialog_observer` subscription, the session
+file, snapshots, replay, or logs.
 
 No presenter, or loss before actual presentation, is a processing failure. Only
 explicit human refusal produces decline. Dismissal after presentation is cancel;
