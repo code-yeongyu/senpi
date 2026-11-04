@@ -54,8 +54,9 @@ function isSequential(context: AgentContext, name: string): boolean {
 /**
  * Runs one batch through the prepared pipeline (S18b): the batch coordinator prepares every call in source order on the
  * in-process prepared executor, decides once, then releases by dependencies. The loop's events are emitted where
- * today's scheduler emits them; the returned outcomes are the calls that started, in source order. Each batch runs on
- * its own in-memory ledger, because a call's command ID is the model's call ID, which providers may reuse across turns.
+ * today's scheduler emits them; the returned outcomes are the calls that started, in source order. A call's command ID
+ * is its block position in the batch, not the model's call ID: a model may repeat a call ID inside one message, and
+ * today's scheduler runs each such block as its own call. Each batch runs on its own in-memory ledger.
  */
 export async function runPreparedBatch(request: PreparedBatchRequest): Promise<AgentToolCallOutcome[]> {
 	const { agent, calls, context, assistantMessage, emit, signal } = request;
@@ -64,27 +65,28 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 	await store.claim(0, 1);
 	const admission = createAdmissionLine();
 	const base = agentPreparationPipeline(agent);
-	const resolved = new Map<string, AgentTool | undefined>();
+	// Keyed by the call itself: two blocks of one message may share a call ID but never a call.
+	const resolved = new Map<AgentToolCall, AgentTool | undefined>();
 	const prepared = createPreparedExecutor({
 		ledger: createExecutionLedger({ store, epoch: 1, admission }),
 		executor: EXECUTOR,
-		pipeline: { ...base, resolve: async (call) => resolved.get(call.id) },
+		pipeline: { ...base, resolve: async (call) => resolved.get(call) },
 	});
-	const byId = new Map(calls.map((call) => [call.id, call]));
-	if (byId.size !== calls.length)
-		throw new Error("prepared pipeline: duplicate tool call id in one batch; each call needs its own id");
+	const executionIdOf = (index: number): string => String(index);
+	const byExecution = new Map(calls.map((call, index) => [executionIdOf(index), call]));
+	// Every map below is keyed by execution ID (the block), never by the model's call ID.
 	const renamed = new Map<string, AgentToolCall>();
-	const named = (call: AgentToolCall): AgentToolCall => renamed.get(call.id) ?? call;
+	const named = (id: string, call: AgentToolCall): AgentToolCall => renamed.get(id) ?? call;
 	const callOf = (id: string): AgentToolCall => {
-		const call = byId.get(id);
-		if (call === undefined) throw new Error(`prepared pipeline: unknown call ${id}`);
+		const call = byExecution.get(id);
+		if (call === undefined) throw new Error(`prepared pipeline: unknown execution ${id}`);
 		return call;
 	};
 	const started = new Set<string>();
 	const pending = new Map<string, AgentToolCallOutcome>();
 	const finalized = new Map<string, AgentToolCallOutcome>();
-	const finish = async (outcome: AgentToolCallOutcome): Promise<void> => {
-		finalized.set(outcome.toolCall.id, outcome);
+	const finish = async (id: string, outcome: AgentToolCallOutcome): Promise<void> => {
+		finalized.set(id, outcome);
 		await emitToolExecutionEnd(outcome, emit);
 	};
 	const aborted = (call: AgentToolCall): AgentToolCallOutcome => ({
@@ -95,20 +97,22 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 
 	const endpoint: BatchExecutor = {
 		prepare: async (ref) => {
-			const call = callOf(ref.executionId);
+			const id = ref.executionId;
+			const call = callOf(id);
 			if (signal?.aborted && started.size > 0) return { kind: "batch_abort" };
 			const tool = call.incomplete === true ? undefined : await base.resolve(call, context);
-			resolved.set(call.id, tool);
-			if (tool !== undefined && tool.name !== call.name) renamed.set(call.id, { ...call, name: tool.name });
+			resolved.set(call, tool);
+			if (tool !== undefined && tool.name !== call.name) renamed.set(id, { ...call, name: tool.name });
 			await emit({
 				type: "tool_execution_start",
 				toolCallId: call.id,
 				toolName: tool?.name ?? call.name,
 				args: call.arguments,
 			});
-			started.add(call.id);
+			started.add(id);
 			const reply = await prepared.prepare({
 				issuer: ISSUER,
+				commandId: id,
 				generation: ref.generation,
 				workspace: ref.workspace,
 				scope: ref.scope,
@@ -120,7 +124,7 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 				...(signal === undefined ? {} : { signal }),
 			});
 			if (signal?.aborted) {
-				pending.set(call.id, aborted(named(call)));
+				pending.set(id, aborted(named(id, call)));
 				return { kind: "batch_abort" };
 			}
 			if (reply.kind === "prepared") return { kind: "prepared", frozenDigest: reply.call.digest };
@@ -131,14 +135,15 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 				reply.kind === "blocked" && reply.requestedName !== undefined && tool !== undefined
 					? withToolNameCorrection(reply.result, reply.requestedName, tool.name)
 					: reply.result;
-			pending.set(call.id, { toolCall: named(call), result, isError: true });
+			pending.set(id, { toolCall: named(id, call), result, isError: true });
 			const value = toStoreValue({ content: result.content ?? [] });
 			return reply.kind === "blocked" ? { kind: "blocked", result: value } : { kind: "batch_abort" };
 		},
 		release: async (ref) => {
-			const call = callOf(ref.executionId);
+			const id = ref.executionId;
+			const call = callOf(id);
 			const reply = await prepared.release({
-				key: { issuer: ISSUER, commandId: call.id },
+				key: { issuer: ISSUER, commandId: id },
 				generation: ref.generation,
 				actor: { id: ISSUER },
 				onUpdateFor: (toolCall) => emitToolExecutionUpdate(toolCall, emit),
@@ -149,7 +154,7 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 					reply.requestedName === undefined
 						? reply.result
 						: withToolNameCorrection(reply.result, reply.requestedName, reply.toolCall.name);
-				await finish({ toolCall: reply.toolCall, result, isError: reply.isError });
+				await finish(id, { toolCall: reply.toolCall, result, isError: reply.isError });
 				return {
 					kind: "settled",
 					outcome: {
@@ -162,14 +167,21 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 			}
 			if (reply.kind !== "aborted") throw new Error(`prepared pipeline: release ${reply.kind} for ${call.id}`);
 			await finish(
-				signal?.aborted ? aborted(named(call)) : { toolCall: named(call), result: reply.result, isError: true },
+				id,
+				signal?.aborted
+					? aborted(named(id, call))
+					: { toolCall: named(id, call), result: reply.result, isError: true },
 			);
 			return { kind: "settled", outcome: { reason: "cancelled", hooksRan: true, uncertain: false } };
 		},
 		abort: async (ref) => {
-			const call = callOf(ref.executionId);
-			if (started.has(call.id))
-				await finish(signal?.aborted ? aborted(named(call)) : (pending.get(call.id) ?? aborted(named(call))));
+			const id = ref.executionId;
+			const call = callOf(id);
+			if (started.has(id))
+				await finish(
+					id,
+					signal?.aborted ? aborted(named(id, call)) : (pending.get(id) ?? aborted(named(id, call))),
+				);
 			return { kind: "settled", outcome: { reason: "cancelled", hooksRan: false, uncertain: false } };
 		},
 	};
@@ -182,8 +194,8 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 		generation: 1,
 		admittedAt: now,
 		leaseUntil: now + LEASE_MS,
-		calls: calls.map((call) => ({
-			executionId: call.id,
+		calls: calls.map((call, index) => ({
+			executionId: executionIdOf(index),
 			executor: EXECUTOR,
 			name: call.name,
 			args: toStoreValue(call.arguments),
@@ -191,8 +203,9 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 		})),
 	};
 	await createBatchCoordinator({ issuer: ISSUER, store, epoch: 1, admission, executor: () => endpoint }).run(plan);
-	return calls.flatMap((call) => {
-		const outcome = finalized.get(call.id);
-		return started.has(call.id) && outcome !== undefined ? [outcome] : [];
+	return calls.flatMap((_call, index) => {
+		const id = executionIdOf(index);
+		const outcome = finalized.get(id);
+		return started.has(id) && outcome !== undefined ? [outcome] : [];
 	});
 }
