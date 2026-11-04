@@ -1,3 +1,21 @@
+## 2026-10-30 - Typed OAuth reauthorization and client configuration errors (senpi#5003)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` adds `OAuthReauthorizationRequiredError` with a closed refresh-code union and `OAuthClientConfigurationError`. Both extend the existing status-bearing token endpoint error and set its facts: the reauthorization error carries its code as `oauthError` with `credentialRefused: true`, and the configuration error carries `oauthError: "invalid_client"` (not a refused credential, so the credential pool never blocks the account for it).
+
+### Why
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` must preserve HTTP status and existing transient/permanent behavior while letting callers distinguish terminal recovery actions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` defines the shared refresh error contract below provider extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/oauth-refresh-error.ts`: declarations beside `OAuthTokenEndpointError`.
+
 ## 2026-10-30 - Credential-pool-blocked diagnostic token (senpi#3975)
 
 ### What changed

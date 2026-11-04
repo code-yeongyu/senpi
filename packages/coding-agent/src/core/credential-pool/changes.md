@@ -1,3 +1,45 @@
+## 2026-10-30 - Select accounts by configured strategy (senpi#5068)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/selection-order.ts`: share cache-affine, stored-order fill-first, and round-robin ordering.
+- `packages/coding-agent/src/core/credential-pool/round-robin-state.ts`: hold process-local per-provider cursors and account choices for stable affinity keys.
+- `packages/coding-agent/src/core/credential-pool/rotation-slots.ts`: carry the strategy in the rotation policy.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: pass the strategy and this session's round-robin turn into the shared slot pick, and retain round-robin replacements after a block or skip (pins are never remembered).
+- `packages/coding-agent/src/core/credential-pool/session-slot.ts`: `SlotPickPolicy` carries `strategy` and `roundRobinOffset`; `orderRotationSlots` orders through `orderAccounts`, so the stream and `selectSessionSlot` apply the same strategy.
+
+### Why
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` previously offered only affinity ordering, not stored-order filling or cursor-based distribution of new sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` selects credentials before dispatching provider requests.
+
+### Expected merge conflict zones
+
+- LOW: imports and selection callback in `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`, ordering helpers in `packages/coding-agent/src/core/credential-pool/selection-order.ts`, and the policy type in `packages/coding-agent/src/core/credential-pool/rotation-slots.ts`. Failure classification and block lifetimes are unchanged.
+
+## 2026-10-30 - Prefer reported subscription headroom (senpi#5053)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/selection-order.ts`: add a pure preference for accounts whose live reported windows are below 95% usage.
+- `packages/coding-agent/src/core/credential-pool/session-slot.ts`: `pickRotationSlot` applies the preference after the pin and the normal account ordering (`orderRotationSlots`) when the policy carries limit readings, and holds the per-session memory of a headroom move (`rememberedHeadroomAccount` / `rememberHeadroomAccount`), so the stream and auxiliary requests pick the same account.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: passes the live limit readings and the remembered account to `pickRotationSlot`, and remembers a move the preference made (never a pinned pick).
+
+### Why
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` selected an account already near its subscription limit even when another account had reported headroom.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` selects the credential before the provider request runs.
+
+### Expected merge conflict zones
+
+- LOW: imports and the `select` callback in `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`, and `SlotPickPolicy` / `pickRotationSlot` in `packages/coding-agent/src/core/credential-pool/session-slot.ts`; classification and block lifetimes are unchanged.
+
 ## 2026-11-03 - An ISO reset after "Resets at" is read (senpi#5596)
 
 ### What changed

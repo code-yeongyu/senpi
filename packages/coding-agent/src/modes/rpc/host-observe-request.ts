@@ -25,6 +25,7 @@
  */
 
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 
 export const OBSERVE_REQUEST_FIELD = "observe";
 export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
@@ -51,7 +52,7 @@ export function isObservingRequest(line: string): boolean {
 	}
 	if (typeof request !== "object" || request === null || Array.isArray(request)) return false;
 	const record = request as Readonly<Record<string, unknown>>;
-	if (record.type === "warm" || record.type === "authenticate") return true;
+	if (record.type === "warm" || record.type === "authenticate" || record.type === RPC_LAUNCH_PROOF_RECORD) return true;
 	return record[OBSERVE_REQUEST_FIELD] === true && OBSERVING_COMMANDS.has(record.type);
 }
 
