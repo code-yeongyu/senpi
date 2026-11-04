@@ -12,6 +12,71 @@
 
 ### Removed
 
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- JS eval imports a module by `file://` URL (for example `import(pathToFileURL(p).href)`) instead of refusing it as an unsupported protocol; other schemes without a registered root are still refused ([#4111](https://github.com/code-yeongyu/senpi/issues/4111), reported by @yjacket).
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Eval cells are judged by the kill guard before a signal leaves them: JS `Bun.$` (and `new Bun.$.Shell()` instances), `Bun.spawn`/`spawnSync`, `child_process` and `process.kill`, and Python `subprocess`, `os.system`, `os.popen`, `os.exec*`/`spawn*`, `os.kill` and `os.killpg`, whether or not permission enforcement is on ([#5354](https://github.com/code-yeongyu/senpi/pull/5354))
+- Eval kernels and the processes they start get the kill guard's runtime shims on `PATH`, its `BASH_ENV` wrapper and its interactive-bash `PROMPT_COMMAND` hook while the guard is on, so `kill`, `pkill` and `killall` run from a cell or its children are judged on their real arguments ([#5358](https://github.com/code-yeongyu/senpi/pull/5358))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.02-1] - 2026-11-02
 
 ### Breaking Changes

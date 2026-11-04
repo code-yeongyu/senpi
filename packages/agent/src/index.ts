@@ -42,6 +42,99 @@ export * from "./agent.ts";
 export * from "./agent-loop.ts";
 export { createInternalAgentChannel, type InternalAgentChannel, type OrderedAgentRecord } from "./internal-events.ts";
 export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
+export {
+	createRemoteExecutor,
+	type HandCall,
+	type HandScope,
+	type OpenHandScope,
+	type RemoteExecutor,
+	type RemoteExecutorOptions,
+} from "./execution/remote-executor.ts";
+export {
+	createHandLedger,
+	type HandAdmission,
+	type HandLedger,
+	type HandLedgerOptions,
+} from "./execution/remote-hand-ledger.ts";
+export {
+	decodeRemoteMessage,
+	encodeRemoteMessage,
+	HAND_CONTROL_LANE,
+	type RemoteAbort,
+	type RemoteAck,
+	type RemoteHandMessage,
+	type RemoteFile,
+	type RemoteHello,
+	type RemoteInvoke,
+	type RemoteRefused,
+	type RemoteSettled,
+	RemoteProtocolError,
+	type RemoteTerminal,
+	type RemoteTerminalReason,
+	type RemoteToolResult,
+} from "./execution/remote-protocol.ts";
+export {
+	createErrorToolResult,
+	createToolResultMessage,
+	emitToolExecutionEnd,
+	emitToolExecutionUpdate,
+	emitToolResultMessage,
+	shouldTerminateToolBatch,
+} from "./execution/tool-outcome-events.ts";
+export {
+	authorize,
+	createGrantVerifier,
+	DEFAULT_WORKSPACE,
+	type GrantRefusal,
+	type GrantRow,
+	type GrantSnapshot,
+	type GrantVerdict,
+	type GrantVerifier,
+	type GrantVerifierOptions,
+	HAND_CAPABILITY,
+	type HandAuthority,
+	type WorkspaceRoot,
+} from "./execution/grant-verify.ts";
+export {
+	base64Length,
+	DEVICE_FILE_OPS,
+	type DeviceFileArgs,
+	DeviceFileError,
+	type DeviceFileErrorCode,
+	type DeviceFileOp,
+	type DeviceFileOptions,
+	type DeviceFileOutcome,
+	type DeviceFiles,
+	type DeviceFileStat,
+	decodeBase64,
+	decodeDeviceFileArgs,
+	encodeBase64,
+	FILE_CHANNEL,
+	FILE_CHANNEL_MAX_BYTES,
+	fileOutcomeOf,
+} from "./execution/device-files.ts";
+export { HELLO_WAIT_MS } from "./execution/remote-device-files.ts";
+export { fileRefusal, fileResult } from "./execution/remote-file-call.ts";
+export {
+	createModelPlaneClient,
+	decodeModelPlaneRequest,
+	MODEL_PLANE,
+	type ModelPlaneRequest,
+	serveModelPlane,
+} from "./execution/plane-model.ts";
+export {
+	decodePlaneMessage,
+	encodePlaneMessage,
+	type NestedRequest,
+	type PlaneHandler,
+	type PlaneMessage,
+	PlaneRefusedError,
+} from "./execution/plane.ts";
+export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
+export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
+export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
+export { createReliableTransport, type ReliableTransportOptions } from "./transport/reliable-transport.ts";
+export type { Transport, TransportClock, TransportFrame, TransportSide } from "./transport/transport.ts";
 export * from "./harness/agent-harness.ts";
 export {
 	type BranchPreparation,

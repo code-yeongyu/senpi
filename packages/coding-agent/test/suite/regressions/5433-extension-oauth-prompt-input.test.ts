@@ -4,6 +4,7 @@ import { KeybindingsManager } from "../../../src/core/keybindings.ts";
 import { LoginDialogComponent } from "../../../src/modes/interactive/components/login-dialog.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
+import { openBrowser } from "../../../src/utils/open-browser.ts";
 
 vi.mock("../../../src/utils/open-browser.ts", () => ({
 	openBrowser: vi.fn(),
@@ -68,6 +69,18 @@ describe("LoginDialogComponent OAuth prompts", () => {
 		expect(output).toContain("https://example.invalid/login");
 		expect(output).toContain("Authorize the extension");
 		expect(output).toContain("First prompt:");
+	});
+
+	// #5003: neither visible text nor terminal hyperlink bytes may retain an ID token.
+	test("opens the hinted URL but keeps the hint out of terminal output", () => {
+		const dialog = createDialog();
+		const url = "https://auth.openai.com/api/accounts/authorize?client_id=oaiapp_saved&id_token_hint=retained-token";
+		dialog.showAuth(url);
+		const output = dialog.render(200).join("\n");
+		expect(output).not.toContain("retained-token");
+		expect(output).not.toContain("id_token_hint");
+		expect(output).toContain("client_id=oaiapp_saved");
+		expect(openBrowser).toHaveBeenLastCalledWith(url);
 	});
 
 	test("preserves neutral information and links when showing a prompt", () => {

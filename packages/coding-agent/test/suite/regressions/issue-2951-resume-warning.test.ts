@@ -16,7 +16,7 @@ import * as sessionHolders from "../../../src/core/session-holders.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
-import { reservationPhase } from "../rpc-worker-reservation-support.ts";
+import { reservationStep } from "../rpc-worker-reservation-support.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 // senpi#2951: exercise command-context -> controller -> real runtime replacement, with a virtual terminal.
@@ -102,7 +102,7 @@ it.each(["holder", "lookup-error"] as const)("resumes through the public control
 		needle = holder ? String(holder.pid) : "Unable to inspect session holders";
 		await runtime.session.prompt("/fixture-resume");
 		expect(runtime.session.sessionManager.getSessionId()).toBe(id);
-		await reservationPhase("resume-warning-rendered", printed.promise);
+		await reservationStep("resume-warning-rendered", printed.promise);
 		if (holder) expect(output.join("\n")).toContain(root);
 	} finally {
 		mode.stop();

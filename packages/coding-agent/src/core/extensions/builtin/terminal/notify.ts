@@ -1,3 +1,4 @@
+import { annotateShellTrust } from "../../../../engine-trust/shell-trust.ts";
 import type { ExtensionContext } from "../../types.ts";
 import { withTerminalContext } from "./context-lifetime.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
@@ -52,7 +53,7 @@ export function getTerminalNotificationDelivery(
 	};
 }
 
-function buildNotice(id: string, runtime: TerminalExitView): string {
+function buildNotice(id: string, runtime: TerminalExitView, trustText: string | undefined): string {
 	const status = describeExit(runtime) ?? "exited";
 	const code = runtime.exitResult?.exitCode;
 	const codeText = code === null || code === undefined ? "" : ` (exit code ${code})`;
@@ -66,7 +67,8 @@ function buildNotice(id: string, runtime: TerminalExitView): string {
 			: "";
 		tailSection = `\nFinal output:\n${shown}${note}`;
 	}
-	return `<system-reminder>Background terminal session ${id} finished: ${status}${codeText}.${tailSection}</system-reminder>`;
+	const trustSection = trustText === undefined ? "" : `\n${trustText}`;
+	return `<system-reminder>Background terminal session ${id} finished: ${status}${codeText}.${tailSection}${trustSection}</system-reminder>`;
 }
 
 /**
@@ -101,6 +103,13 @@ export class TerminalNotifier {
 		if (!delivery) return;
 
 		this.notified.add(id);
-		delivery.send(buildNotice(id, runtime));
+		const annotation = annotateShellTrust({
+			exitCode: runtime.exitResult?.exitCode ?? null,
+			output: runtime.fullOutput(),
+		});
+		delivery.send(
+			buildNotice(id, runtime, annotation?.text),
+			annotation === undefined ? undefined : { details: { trust: annotation.trust } },
+		);
 	}
 }

@@ -9,7 +9,7 @@ import { RecordLine, SessionEventWriterDestinations } from "./session-event-writ
 import { causeOfRecord } from "./session-status.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 
-export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
+export type { SessionEventWriterConnection } from "./session-event-connection.ts";
 export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./session-event-writer-lanes.ts";
 
 /**
@@ -41,15 +41,9 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 			return false;
 		const id = this.currentConnection();
 		const sender = id === undefined ? undefined : this.presenterConnections.get(id);
-		const context =
-			value.type === "mcp_presenter_context" && "sessionId" in value && typeof value.sessionId === "string" && sender
-				? this.presenterAuthority?.connectionContext(sender, value.sessionId)
-				: undefined;
 		const reply =
 			value.type === "mcp_presenter_context"
-				? context
-					? { ok: true, context }
-					: { error: "presenter_not_authorized" }
+				? this.mcpPresenterContextReply(sender, value)
 				: sender && this.presenterAuthority
 					? this.presenterAuthority.receive(sender, value)
 					: { error: "presenter_not_authorized" };

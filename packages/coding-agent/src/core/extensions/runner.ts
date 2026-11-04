@@ -3,6 +3,7 @@
  */
 
 import { basename } from "node:path";
+import { openTimingEnabled, startOpenTimer } from "../open-timing.ts";
 import { SecretInputUnavailableError } from "./secret-input.ts";
 import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
 import { requestExtensionRpc } from "./rpc-request.ts";
@@ -82,6 +83,7 @@ import type {
 	ExtensionCommandContextActions,
 	ExtensionContext,
 	ExtensionContextActions,
+	GetAllToolsHandler,
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionFlag,
@@ -164,10 +166,13 @@ function loopSideUnbound(member: string): Error {
 	return new Error(`${member} is loop-side and not bound: this extension runtime has no session`);
 }
 
-/** Narrow a context of a runner without a session to its runtime members (senpi#5223). */
-function withoutSession(context: ExtensionContext): void {
+/**
+ * Narrow a context of a runner without a session to its runtime members (senpi#5223), plus `boundMembers`: runtime
+ * facts the runner's host bound itself (S27a), which a runner without a session would otherwise answer with defaults.
+ */
+function withoutSession(context: ExtensionContext, boundMembers: ReadonlySet<string>): void {
 	for (const key of Reflect.ownKeys(context)) {
-		if (typeof key !== "string" || RUNTIME_CONTEXT_MEMBERS.has(key)) continue;
+		if (typeof key !== "string" || RUNTIME_CONTEXT_MEMBERS.has(key) || boundMembers.has(key)) continue;
 		if (SESSION_IDENTITY_MEMBERS.has(key)) {
 			Reflect.deleteProperty(context, key);
 			continue;
@@ -633,6 +638,7 @@ export const noOpUIContext: ExtensionUIContext = {
 	setFooter: () => {},
 	setHeader: () => {},
 	setTitle: () => {},
+	setProgramStatus: () => {},
 	custom: async () => undefined as never,
 	pasteToEditor: () => {},
 	setEditorText: () => {},
@@ -735,6 +741,7 @@ export class ExtensionRunner {
 		runtimeHookSourcePaths: [],
 	});
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
+	private readonly sessionlessBoundMembers = new Set<string>();
 	private getPromptCachePrefixRequestFn: ExtensionContextActions["getPromptCachePrefixRequest"] = undefined;
 	private onUserActivityFn: ExtensionContextActions["onUserActivity"];
 	private getAgentDirFn: () => string = () => getAgentDir();
@@ -784,6 +791,24 @@ export class ExtensionRunner {
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
 		this.eventBus = eventBus;
+	}
+
+	/**
+	 * Binds the runtime facts a runner without a session (a loopless runtime, S27a) can still answer: the registered
+	 * tools (`pi.getAllTools()`), the active set (`pi.getActiveTools()` is empty and `pi.setActiveTools()` changes nothing:
+	 * the active set belongs to a loop, as `getActiveTools()` answers) and, when given, where hook configuration is loaded from (its contexts then answer
+	 * `getLoadedHookSources()` instead of refusing it). A session binds them through `bindCore`.
+	 */
+	bindSessionlessFacts(facts: {
+		readonly getAllTools: GetAllToolsHandler;
+		readonly getLoadedHookSources?: ExtensionContextActions["getLoadedHookSources"];
+	}): void {
+		this.runtime.getAllTools = facts.getAllTools;
+		this.runtime.getActiveTools = () => this.getActiveTools();
+		this.runtime.setActiveTools = () => {};
+		if (facts.getLoadedHookSources === undefined) return;
+		this.getLoadedHookSourcesFn = facts.getLoadedHookSources;
+		this.sessionlessBoundMembers.add("getLoadedHookSources");
 	}
 
 	bindCore(
@@ -1958,7 +1983,7 @@ export class ExtensionRunner {
 				runner.questionInput?.();
 			});
 		}
-		if (this.sessionManager === undefined) withoutSession(context);
+		if (this.sessionManager === undefined) withoutSession(context, this.sessionlessBoundMembers);
 		return context;
 	}
 
@@ -2257,6 +2282,7 @@ export class ExtensionRunner {
 		const isSessionShutdown = event.type === "session_shutdown";
 		let shutdownBudget: SessionShutdownBudget | undefined;
 		let quitDeadline: QuitDeadline | undefined;
+		const timer = event.type === "session_start" && openTimingEnabled() ? startOpenTimer("session_start") : undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
@@ -2285,6 +2311,7 @@ export class ExtensionRunner {
 						continue;
 					}
 					const handlerResult = await handler(event, this.createContext(ext.path));
+					timer?.mark(basename(ext.path));
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
