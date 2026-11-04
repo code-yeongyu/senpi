@@ -1,3 +1,81 @@
+## 2026-11-03 - Header-only provider auth is queryable without resolving (senpi#5709, fixes #5707)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `providerAuthIsHeaderOnly(providerId)` reports whether the provider's only credential is a configured header (`configuredAuthIsHeaderOnly` in `provider-request-auth.ts`). Its models.json or extension config must name credential headers and no API key, and the provider's own auth check from the last availability pass must have fallen back to those headers. A built-in provider's own env key keeps it keyed. It reads configuration and the availability snapshot only, and resolves nothing; before any availability pass it answers false.
+- `packages/coding-agent/src/core/model-registry.ts`: `providerAuthIsHeaderOnly(provider)` passes it through. `CredentialResolver` gains it as an optional member.
+
+### Why
+
+- Image-generation availability is now decided from configuration on every open (senpi#5707). A header-only gateway reports `configured` through `getProviderAuthStatus`, yet the image tool needs an API key, so availability must tell the two apart without running key helpers. `getProviderAuthStatus` keeps its shape because RPC `get_auth_providers` serves it.
+
+### Why an extension could not handle it
+
+- The provider config and its extension overlays live in the runtime; an extension sees only resolved request auth.
+
+### Expected merge conflict zones
+
+- LOW: one method after `getProviderAuthStatus` in `model-runtime.ts` and in `model-registry.ts`, plus one import in `model-runtime.ts`.
+
+## 2026-11-03 - Opt-in prepared execution pipeline (senpi#5657)
+
+### What changed
+
+- `packages/coding-agent/src/core/execution/pipeline-prepared.ts` and `pipeline-prepared-batch.ts` are new: the prepared ToolHost and its per-batch coordinator/executor adapter.
+- `packages/coding-agent/src/core/execution/pipeline-witness.ts`: with `SENPI_EXECUTION_PIPELINE=prepared`, installs the prepared ToolHost; it installs no receipt writer, so receipts still come only from an explicitly configured sink.
+- `packages/coding-agent/src/core/execution/executor.ts` and `executor-types.ts`: `ReleaseRequest.onUpdateFor(toolCall)`, so updates carry the prepared call.
+
+### Why
+
+Plan row S18b: the prepared pipeline (executor + coordinator) behind the ToolHost seam, off by default until its phase gate.
+
+### Why an extension could not handle it
+
+The session's ToolHost and receipt sink are bound by the session itself.
+
+### Expected merge conflict zones
+
+`pipeline-witness.ts`; `executor.ts` release body.
+
+## 2026-11-03 - The usage poll also reads claude CLI accounts from the CLI's credential file (senpi#5627)
+
+### What changed
+
+- `packages/coding-agent/src/core/subscription-limits/usage-accounts.ts`: this narrows the 2026-10-27 entry "The usage poll reads Claude only through env tokens (senpi#4436, S7)". Env token accounts are polled as before; a stored claude CLI account with a valid `dirId` and no `signInRequired` is now polled too, with the access token `readClaudeCliAccessToken` reads from its account dir. Nothing is refreshed and nothing is written; a missing, linked, malformed or expired credential offers no token, including a credential file swapped for a link between the check and the read: `claude-cli-account-dir.ts` opens it without following a final link (`O_NOFOLLOW`; on Windows, which has none, the opened handle's inode must match the checked file) and re-checks the account dir afterwards. `AccountSources` gains an optional `agentDir`; without it only env token accounts are listed.
+- `packages/coding-agent/src/core/subscription-limits/usage-poller.ts`: `startSubscriptionUsagePolling` passes its `agentDir` to `listPollAccounts`.
+- `packages/coding-agent/src/core/subscription-limits/usage-cache.ts`, `usage-poller.ts`: a poll with nothing to ask with (a macOS claude CLI account, an expired token) caches its placeholder reading as `pending`, which only schedules the next look; `#adopt` never hands a pending reading to the limit store, so it cannot replace windows a turn's `rate_limit_event` recorded before the first poll, in this process or a sibling that adopts the cache.
+
+### Why
+
+- After senpi#4436 every stored Claude account is a claude CLI account and the poll skipped all of them, while a turn's `rate_limit_event` carries utilization only near a limit, so a signed-in user had no Claude limit record at all. The CLI's file store is where the token lives on Linux and Windows; the macOS Keychain is not read (a separate change with its own security review).
+
+### Why an extension could not handle it
+
+- The poller and its account listing are core subscription-limits plumbing; extensions only read the resulting records.
+
+### Expected merge conflict zones
+
+- LOW: the `claudeAccounts` body and the `AccountSources` interface in `usage-accounts.ts`; the `listPollAccounts` call in `startSubscriptionUsagePolling`.
+
+## 2026-10-30 - An exhausted fallback ladder reports its soonest reset on settle (senpi#3709)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/limit-reset.ts` (new): `limitResetAt` returns the wall-clock reset a failed request names. It reads the structured quota or rate-limit `resetsAt` first, then usage-limit reset fields or prose, then a Retry-After hint.
+- `packages/coding-agent/src/core/agent-session.ts`: records `limitResetAt` and limit-shaped failures for each run and notes when `retry_fallback_exhausted` fires. At settle it emits `agent_settled.fallbackExhausted` only after limit-shaped exhaustion; outage-only exhaustion keeps the existing provider recovery. `resumeAt` is the soonest future reset, or the latest collected past reset when all passed, so the goal resumes with the 1 s margin rather than parking forever. The per-run state is consumed once and cleared. The fallback wall clock is now held as `_fallbackWallNow`.
+
+### Why
+
+- Once the ladder ran out, the reset times the rungs named were dropped. A goal session then either resumed at once into the same limits or never resumed, and sat idle until input (senpi#3709).
+
+### Why an extension could not handle it
+
+- Only the session sees every rung's failure and knows that the ladder ran out. Extensions get `agent_end` before the retry owner decides, and only for the last rung's message.
+
+### Expected merge conflict zones
+
+- LOW: the `_emit` exhaustion flag, the `agent_end` error bookkeeping next to `this._lastAssistantMessage = undefined`, and the `agent_settled` extension emit in `_emitAgentSettled`.
+
 ## 2026-11-03 - Lifecycle bridge for a split endpoint (S15, senpi#5681)
 
 ### What changed
