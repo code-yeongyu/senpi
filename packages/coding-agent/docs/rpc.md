@@ -6583,12 +6583,50 @@ bootstrap. A caller discovers it only by asking explicitly:
 key is added only when `discover` is the boolean `true` and the host has an account
 authority; every other request, and every host without an authority, gets the five
 context fields exactly as before, so strict decoders that reject unknown keys keep
-working. The endpoint path confers no authority. Account enrollment over it is not yet
-accepted, so it currently admits only the inherited launch principal.
+working. The endpoint path confers no authority; only the exchange below does.
 
 An engine that predates `discover` ignores the key and answers with the five context
 fields. A client must treat a missing `controlEndpoint` as "account enrollment
 unavailable on this host": not an error, and not a reason to retry the request.
+
+A same-account presenter enrolls on a fresh connection to that endpoint, with no owner
+prompt, in one attempt within the connection's 30 s window:
+
+1. `{"type":"account_enroll","version":1,"purpose":"mcp_form","publicKey":"<SPKI PEM>","installationKeyId":"<sha256 hex of the SPKI DER>","attestation":"<token>"}`.
+   The key set is exact and the key must be Ed25519. The attestation is an issuer token
+   with `aud: "omo-mcp-presenter"` and `typ: "mcp_presenter"`, whose `cnf.jkt` is the
+   RFC 7638 OKP thumbprint of this key (the 32 raw bytes after the fixed 12-byte Ed25519
+   SPKI prefix). The injected authority verifies it; the host then requires `acc` to be
+   the host's signed-in account, `dev`, `dname` and `jti` to be 1-256 characters with no
+   control characters, and the `jti` to be unused in this host incarnation. A `jti` is
+   remembered until `exp` plus 60 s; at 4096 live entries the host refuses with
+   `presenter_busy` instead of forgetting one.
+2. The host answers `{"type":"challenge","version":1,"transcript","hostInstance"}`, where
+   `transcript` is the JSON tuple `["mcp-presenter-account-enroll-v1","mcp_form",
+   hostInstance, hostAccount, acc, dev, installationKeyId, jti, nonce, 30000]`.
+3. The presenter signs the exact transcript: `{"type":"proof","signature":"<hex>"}`.
+4. The host answers `{"type":"account_enrolled","version":1,"principalId","hostInstance",
+   "attestedUntil"}` (`attestedUntil` is the attestation's `exp`, in seconds). The same
+   connection then carries that principal's signed `challenge`/`proof` commands; no other
+   connection can act as an account principal.
+
+An enrollment refusal is `{"type":"account_refused","version":1,"reason"}` followed by the
+close of the connection. `reason` is one of `presenter_account_unavailable` (no authority, or the
+host is signed out), `presenter_account_mismatch`, `attestation_malformed`,
+`attestation_signature`, `attestation_audience`, `attestation_expired`,
+`attestation_key_mismatch`, `attestation_replayed`, `presenter_busy`, or
+`presenter_proof_invalid`. A malformed `account_enroll` record closes the connection
+without a reason. Enrolling the same account, device and key again supersedes the earlier
+principal: its connection closes and its grants are revoked.
+
+On its enrollment connection the principal extends `attestedUntil` with
+`{"type":"account_reattest","attestation":"<token>"}`; the host answers
+`{"type":"account_reattested","version":1,"attestedUntil"}`. The same checks apply. A
+token for another key, an account that is no longer the host's, or a signed-out host is
+refused with `account_refused`, revokes the principal's grants and closes the connection.
+Any other re-attestation refusal (for example a reused `jti` or an expired token) is an
+`account_refused` on an open connection, and the principal and its grants stay. An account principal never becomes the launch owner, so it cannot authorize a
+successor host's enrollment.
 
 Acquisition and revocation use the
 separate authenticated management endpoint, with a fresh challenge for each
