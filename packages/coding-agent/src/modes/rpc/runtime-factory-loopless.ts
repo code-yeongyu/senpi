@@ -219,8 +219,8 @@ export function createLooplessRuntimeFactory(
 		const fileGuards: HandFileGuards | undefined =
 			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)
 				? {
-						beforeToolCall: (toolName, toolCallId, input) =>
-							toolHandlers.beforeToolCall({ toolName, toolCallId, input }),
+						beforeToolCall: (toolName, toolCallId, input, nested) =>
+							toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
 						filesystemPolicy: () => runtime.filesystemPolicy,
 					}
 				: undefined;
