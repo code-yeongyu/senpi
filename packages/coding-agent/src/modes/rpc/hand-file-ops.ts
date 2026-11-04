@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+	type NestedRequest,
 	type AgentToolResult,
 	base64Length,
 	type DeviceFileArgs,
@@ -23,6 +24,8 @@ export interface HandFileGuards {
 		toolName: string,
 		toolCallId: string,
 		input: Record<string, unknown>,
+		/** The operation's nested requests to the loop: a two-sided extension's handler runs on the loop's copy (S29). */
+		nested?: NestedRequest,
 	): Promise<{ readonly block?: boolean; readonly reason?: string } | undefined>;
 	filesystemPolicy(): FilesystemPolicyChecker | undefined;
 }
@@ -71,13 +74,18 @@ async function canonicalOf(path: string, entry: boolean): Promise<string> {
 		: canonicalizeFilesystemPath(path);
 }
 
-async function allowed(guards: HandFileGuards, root: string, check: Check): Promise<string> {
+async function allowed(
+	guards: HandFileGuards,
+	root: string,
+	check: Check,
+	nested: NestedRequest | undefined,
+): Promise<string> {
 	const content = check.content ?? "";
 	const input: Record<string, unknown> =
 		check.toolName === "write" ? { path: check.path, content } : { path: check.path };
 	let decision: Awaited<ReturnType<HandFileGuards["beforeToolCall"]>>;
 	try {
-		decision = await guards.beforeToolCall(check.toolName, `file-${randomUUID()}`, input);
+		decision = await guards.beforeToolCall(check.toolName, `file-${randomUUID()}`, input, nested);
 	} catch (error) {
 		throw new DeviceFileError("refused_by_policy", error instanceof Error ? error.message : String(error));
 	}
@@ -105,13 +113,20 @@ async function allowed(guards: HandFileGuards, root: string, check: Check): Prom
  */
 export function createHandFileOps(root: string, guards: HandFileGuards) {
 	const files = localDeviceFiles();
-	return async (op: string, rawArgs: unknown, signal: AbortSignal): Promise<AgentToolResult<unknown>> => {
+	return async (
+		op: string,
+		rawArgs: unknown,
+		signal: AbortSignal,
+		nested?: NestedRequest,
+	): Promise<AgentToolResult<unknown>> => {
 		const args = decodeDeviceFileArgs(op, rawArgs);
 		if (args === undefined) return fileRefusal("protocol", `malformed ${op} arguments`);
 		if (args.op === "write" && base64Length(args.data) > FILE_CHANNEL_MAX_BYTES)
 			return fileRefusal("too_large", args.path);
 		try {
-			const [target, destination] = await Promise.all(checksOf(args).map((check) => allowed(guards, root, check)));
+			const [target, destination] = await Promise.all(
+				checksOf(args).map((check) => allowed(guards, root, check, nested)),
+			);
 			if (target === undefined) return fileRefusal("protocol", "no target");
 			const options = { signal };
 			switch (args.op) {

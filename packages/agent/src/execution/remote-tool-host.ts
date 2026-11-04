@@ -29,6 +29,12 @@ export interface RemoteToolHostOptions {
 	 * `plane_unavailable`.
 	 */
 	readonly planes?: Readonly<Record<string, PlaneHandler>>;
+	/**
+	 * The planes a pending device file operation (S40) may host, on its own lane: a two-sided extension's forwarded tool
+	 * events (S29), so its handler runs on the loop's copy for a file operation as for a tool call. Absent: none, so
+	 * every nested request under a file operation is refused `parent_terminal`.
+	 */
+	readonly filePlanes?: readonly string[];
 }
 
 function errorResult(text: string): RemoteToolResult {
@@ -60,7 +66,7 @@ export function createRemoteToolHost(
 	options: RemoteToolHostOptions,
 ): ToolHost & { deviceFiles(scope: ExecutionScope): DeviceFiles; close(): void } {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
-	const link = createHandLink(options.transport, options.planes ?? {});
+	const link = createHandLink(options.transport, options.planes ?? {}, options.filePlanes ?? []);
 
 	const resultOf = (reply: HandReply): RemoteToolResult => {
 		switch (reply.kind) {
