@@ -35,6 +35,29 @@ function waitForSessionEvent<K extends Harness["events"][number]["type"]>(
 	});
 }
 
+/** Tool calls the model issued whose `tool_execution_end` has not arrived yet. */
+function unfinishedToolCallIds(harness: Harness): string[] {
+	const ended = new Set(harness.eventsOfType("tool_execution_end").map((event) => event.toolCallId));
+	return harness
+		.eventsOfType("message_end")
+		.flatMap((event) => (event.message.role === "assistant" ? event.message.content : []))
+		.flatMap((block) => (block.type === "toolCall" && !ended.has(block.id) ? [block.id] : []));
+}
+
+/**
+ * Advances fake time in one-second steps, but never past an unfinished tool call: the loop may await real work
+ * between the model's tool call and the tool's start (the prepared pipeline hashes its batch plan through Web Crypto),
+ * and one large jump would run the next fake timer before that work settles (senpi#5797).
+ */
+async function advanceAcrossToolCalls(harness: Harness, totalMs: number): Promise<void> {
+	for (let elapsed = 0; elapsed < totalMs; elapsed += 1_000) {
+		if (harness.eventsOfType("agent_end").some((event) => event.aborted === true)) return;
+		await vi.advanceTimersByTimeAsync(1_000);
+		for (const id of unfinishedToolCallIds(harness))
+			await waitForSessionEvent(harness, "tool_execution_end", (event) => event.toolCallId === id);
+	}
+}
+
 const INACTIVITY_MS = 120_000;
 const MAX_RUNTIME_MS = 300_000;
 
@@ -55,6 +78,7 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.unstubAllEnvs();
 		harness?.cleanup();
 	});
 
@@ -97,30 +121,37 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 		await waitForSessionEvent(h, "agent_idle");
 	}, 60_000);
 
-	it("renews on tool execution progress so only the hard max runtime stops the turn", async () => {
-		// Each step streams ~80 s of text (faux: 4 chars per token, 1 token/s), then calls `tick`: only the tool events renew the 120 s lease,
-		// so the turn outlives several leases and the 300 s cap is what ends it.
-		const h = await createLeaseHarness(
-			{ turn_inactivity_ms: INACTIVITY_MS, turn_max_runtime_ms: MAX_RUNTIME_MS },
-			true,
-		);
-		const step = () =>
-			fauxAssistantMessage([fauxText(`step ${"working ".repeat(40)}`), fauxToolCall("tick", {})], {
-				stopReason: "toolUse",
-			});
-		h.setResponses([step(), step(), step(), step(), step()]);
-		const ended = waitForSessionEvent(h, "agent_end", (event) => event.aborted === true);
+	// senpi#5797: the prepared pipeline must reach tool_execution_start with no hop the legacy scheduler lacks,
+	// or the lease expires between the model's tool call and the tool's start.
+	it.each(["legacy", "prepared"] as const)(
+		"renews on tool execution progress so only the hard max runtime stops the turn (%s pipeline)",
+		async (pipeline) => {
+			vi.stubEnv("SENPI_EXECUTION_PIPELINE", pipeline);
+			// Each step streams ~80 s of text (faux: 4 chars per token, 1 token/s), then calls `tick`: only the tool events renew the 120 s lease,
+			// so the turn outlives several leases and the 300 s cap is what ends it.
+			const h = await createLeaseHarness(
+				{ turn_inactivity_ms: INACTIVITY_MS, turn_max_runtime_ms: MAX_RUNTIME_MS },
+				true,
+			);
+			const step = () =>
+				fauxAssistantMessage([fauxText(`step ${"working ".repeat(40)}`), fauxToolCall("tick", {})], {
+					stopReason: "toolUse",
+				});
+			h.setResponses([step(), step(), step(), step(), step()]);
+			const ended = waitForSessionEvent(h, "agent_end", (event) => event.aborted === true);
 
-		const prompting = h.session.prompt("keep reporting without ever finishing");
-		await vi.advanceTimersByTimeAsync(MAX_RUNTIME_MS + 10_000);
-		const agentEnd = await ended;
-		await prompting;
+			const prompting = h.session.prompt("keep reporting without ever finishing");
+			await advanceAcrossToolCalls(h, MAX_RUNTIME_MS + 10_000);
+			const agentEnd = await ended;
+			await prompting;
 
-		const deadline = agentEnd.deadline;
-		expect(deadline?.kind).toBe("max_runtime");
-		expect(deadline?.limitMs).toBe(MAX_RUNTIME_MS);
-		expect(h.eventsOfType("tool_execution_end").length).toBeGreaterThanOrEqual(2);
-	}, 60_000);
+			const deadline = agentEnd.deadline;
+			expect(deadline?.kind).toBe("max_runtime");
+			expect(deadline?.limitMs).toBe(MAX_RUNTIME_MS);
+			expect(h.eventsOfType("tool_execution_end").length).toBeGreaterThanOrEqual(2);
+		},
+		60_000,
+	);
 
 	it("never fires when turn_inactivity_ms is 0", async () => {
 		const h = await createLeaseHarness({ turn_inactivity_ms: 0, turn_max_runtime_ms: 0 });
