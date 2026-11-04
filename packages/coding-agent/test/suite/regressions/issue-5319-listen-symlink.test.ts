@@ -143,7 +143,8 @@ describe.skipIf(process.platform === "win32")(
 					const bound = boundPath(host);
 
 					// The attacker: every scratch directory on the bound path that no longer exists is re-created as a
-					// link to the victim. One that still exists is ours (0700) and cannot be replaced by another user.
+					// link to the victim. One that still exists is ours (0700): the attacker here runs as this user and cannot
+					// re-create a name that exists. A parent another user can rename entries in is out of scope (senpi#5404).
 					const scratch = dirname(bound).startsWith(socket) ? dirname(bound) : dirname(dirname(bound));
 					const planted = await mkdir(scratch, { mode: 0o700 }).then(
 						() => true,

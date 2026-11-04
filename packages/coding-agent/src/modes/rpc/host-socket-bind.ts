@@ -1,7 +1,7 @@
 /** Where a socket host listens and how it binds: the `--listen` address forms and the owned bind (moved out of multi-session-host.ts). */
 import { randomBytes } from "node:crypto";
 import { rmSync } from "node:fs";
-import { chmod, link, lstat, mkdir, mkdtemp, stat, symlink } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, stat, symlink, writeFile } from "node:fs/promises";
 import type { Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import {
 	MAX_SOCKET_PATH_BYTES,
 	type SocketFileIdentity,
 } from "./socket-ownership.ts";
+import { readProcessStartTime } from "../../utils/process-identity.ts";
 import { resolveSocketTransportAddress } from "./socket-transport.ts";
 
 export function resolveSocketPath(value: string, agentDir: string): string {
@@ -41,6 +42,8 @@ function bindAt(server: Server, address: string): Promise<void> {
 const BIND_DIR_ATTEMPTS = 8;
 export const ALIAS_PREFIX = "senpi-bind-";
 export const ALIAS_LINK = "d";
+/** The alias owner record `{ pid, processStartTime, createdAt }` the alias reaper proves the owner dead by. */
+export const ALIAS_OWNER = ".owner";
 const SHORT_TEMP_ROOT = "/tmp";
 
 /** The roots a long-path bind may place its alias in, in preference order (also what the alias reaper scans). */
@@ -98,15 +101,19 @@ async function aliasRoot(): Promise<string> {
 /**
  * The address to bind so the socket lands at `<bindDir>/s`. That path itself whenever it fits sun_path; otherwise
  * (any endpoint near MAX_SOCKET_PATH_BYTES) a short alias: a fresh 0700 temp directory holding this process's own
- * link to `bindDir`. Only that intermediate component is a link, created by us in a directory no other user can
- * write; the final name, the one `bind(2)` creates, is resolved inside the private `bindDir`. The alias costs at
- * most `/tmp/senpi-bind-XXXXXX/d/s`, so every endpoint `prepareSocketPath` accepts can bind.
+ * link to `bindDir` and its owner record (written first, so a reaper never sees a link without an owner). Only that
+ * intermediate component is a link, created by us in a directory no other user can write; the final name, the one
+ * `bind(2)` creates, is resolved inside the private `bindDir`. The alias costs at most
+ * `/tmp/senpi-bind-XXXXXX/d/s`, so every endpoint `prepareSocketPath` accepts can bind.
  */
 async function bindAddress(bindDir: string): Promise<{ readonly address: string; readonly alias?: string }> {
 	const direct = join(bindDir, BIND_SCRATCH_SOCKET);
 	if (Buffer.byteLength(direct) <= MAX_SOCKET_PATH_BYTES) return { address: direct };
 	const alias = await mkdtemp(join(await aliasRoot(), ALIAS_PREFIX));
 	try {
+		const processStartTime = (await readProcessStartTime(process.pid)) ?? "";
+		const owner = { pid: process.pid, processStartTime, createdAt: Date.now() };
+		await writeFile(join(alias, ALIAS_OWNER), JSON.stringify(owner), { mode: 0o600, flag: "wx" });
 		await symlink(bindDir, join(alias, ALIAS_LINK));
 	} catch (cause) {
 		removeScratch([alias]);
