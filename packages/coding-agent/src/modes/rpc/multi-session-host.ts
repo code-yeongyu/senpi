@@ -63,6 +63,7 @@ import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 import { McpPresenterControl } from "./mcp-presenter-control.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
+import type { AttachLedger } from "./attach-ledger.ts";
 
 export interface MultiSessionHostOptions {
 	/** Host deployment policy; never derived from client capabilities or project settings. */
@@ -88,6 +89,11 @@ export interface MultiSessionHostOptions {
 	 * an explicit `false` is honored) and never exits for being empty.
 	 */
 	sessionOwner?: "client" | "machine";
+	/**
+	 * The durable takeover ledger (R21; S37). Honored only with `sessionOwner: "machine"`: `attach_session { takeover,
+	 * holder }` then takes a session over and lets its other clients go quietly. Absent, a takeover is refused.
+	 */
+	sessionTakeover?: AttachLedger;
 }
 
 export {

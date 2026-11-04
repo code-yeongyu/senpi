@@ -3519,7 +3519,7 @@ names a valid preset.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
-| `attach_session` | `sessionId`, `durableSessionId`, `expectedHostInstance?` | `{ sessionId, attached: true }` | Live-only, identity-fenced attachment; never opens/resumes or changes the launch profile. Capability `attach_session`. |
+| `attach_session` | `sessionId`, `durableSessionId`, `expectedHostInstance?`, `takeover?`, `holder?` | `{ sessionId, attached: true, holder?, generation?, released? }` | Live-only, identity-fenced attachment; never opens/resumes or changes the launch profile. `takeover` (headless engine only) lets the other clients go quietly. Capability `attach_session`. |
 | `release_attachment` | `sessionId` | `{ deferred: boolean }` | Releases exactly one caller hold with disconnect semantics; `deferred` is true only when settlement owns the final release, and false while draining. Capability `release_attachment`. |
 | `reclaim_session` | `sessionPath`, `durableSessionId`, `expectedHostInstance` | `{ reclaimed: true, sessionId }` | Atomic attach-and-claim of every caller hold; refuses other connections before aborting. Capability `reclaim_session`. |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, method_classes: { version, digest }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `session_held` (the active foreign-holder admission guard, in both runtimes), `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `moved_path_guard` (senpi resolves and guards paths the OmO desktop moved with its data home), `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
@@ -3549,6 +3549,17 @@ prompt surface, or browser engine. Each success adds one attachment, connects th
 `open_session { sessionPath, permissionPreset, ... }` retain their existing behavior. Behind
 `SENPI_ENGINE_SOCKET_COMPACT_UPDATES`, `admissionId` and `retry: true` make it a compact admission, as on
 `open_session` (see "Admission retries").
+
+**Quiet takeover (headless engine).** On a headless engine built with a takeover ledger,
+`attach_session { sessionId, durableSessionId, takeover: true, holder }` takes the session over for
+`holder`, the taking client's stable identity across its reconnects. The takeover is recorded durably
+first; then the caller attaches, and every other connection holding the session receives one
+`{ "type": "session_released", "sessionId", "reason": "taken_over" }` record and loses its holds. No
+error reaches it, and the session and its running turn go on. The answer adds `holder`, its `generation`
+(1 for the session's first holder, one more for each new holder) and `released` (how many connections
+were let go). A takeover by the current holder records nothing new. Without `holder` the command
+returns `takeover_holder_required`; any other host returns `takeover_unsupported`. Without `takeover`,
+`attach_session` behaves as above on every host.
 
 #### release_attachment
 
@@ -3712,6 +3723,8 @@ codes or code prefixes in `error`:
 - `session_identity_mismatch` (`attach_session` or `reclaim_session` selected a different durable identity or host instance)
 - `session_busy_lifecycle` (`reclaim_session` found an opening or closing target, or `attach_session` / `reclaim_session` reached a draining or shutting-down host: then `errorData.reason` is `host_draining`)
 - `attached_elsewhere` (`reclaim_session` found another connection's holds; `errorData.attachments` counts them)
+- `takeover_unsupported` (`attach_session { takeover: true }` on a host that is not a headless engine with a takeover ledger)
+- `takeover_holder_required` (`attach_session { takeover: true }` without `holder`)
 - `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
