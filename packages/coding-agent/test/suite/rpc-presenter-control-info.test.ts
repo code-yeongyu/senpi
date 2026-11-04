@@ -102,6 +102,21 @@ it.each([
 	});
 });
 
+it("asking for control info counts as a record, so a later first declaration is late", async () => {
+	await listen({ account });
+	const relay = core.peer("relay", { launchProof: "proven" });
+	expect(await ask(relay)).toMatchObject({ success: true });
+	expect(await declare(relay, ["observe", "answer"])).toMatchObject({
+		success: false,
+		command: "declare_delegation",
+		errorCode: "delegation_late",
+	});
+	expect(await ask(relay, "still-local")).toMatchObject({
+		success: true,
+		data: { controlEndpoint: expect.any(String) },
+	});
+});
+
 it("a disposed control is no longer reported", async () => {
 	await listen({ account });
 	const relay = core.peer("relay", { launchProof: "proven" });
