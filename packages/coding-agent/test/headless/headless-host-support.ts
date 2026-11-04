@@ -36,6 +36,8 @@ export interface HostRig {
 	readonly turnStarted: Promise<void>;
 	newSessionFile(): Promise<string>;
 	connect(connection: string): void;
+	/** Every record delivered to `connection`, in order. */
+	recordsFor(connection: string): readonly Record<string, unknown>[];
 	send(connection: string, command: Record<string, unknown>): Promise<void>;
 	response(id: string): Promise<ResponseRecord>;
 	openSession(connection: string, sessionPath: string): Promise<string>;
@@ -47,9 +49,14 @@ export interface HostRig {
 
 export const OWNED_TURN_ENTRY = "owned-turn-finished";
 
-export async function startHostRig(kind: HostKind, idle: HostIdleOverrides = {}): Promise<HostRig> {
+export async function startHostRig(
+	kind: HostKind,
+	idle: HostIdleOverrides = {},
+	host: Pick<MultiSessionHostOptions, "sessionTakeover"> = {},
+): Promise<HostRig> {
 	const root = await mkdtemp(join(tmpdir(), "headless-host-"));
 	const records: unknown[] = [];
+	const byConnection = new Map<string, Record<string, unknown>[]>();
 	const writer = new SessionEventWriter((line) => records.push(JSON.parse(line)));
 	const started = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
@@ -80,7 +87,7 @@ export async function startHostRig(kind: HostKind, idle: HostIdleOverrides = {})
 			diagnostics: services.diagnostics,
 		};
 	};
-	const base: MultiSessionHostOptions = { agentDir: root, cwd: root, createRuntime, listen: "stdio://" };
+	const base: MultiSessionHostOptions = { ...host, agentDir: root, cwd: root, createRuntime, listen: "stdio://" };
 	const core = createHostCore(kind === "headless" ? headlessHostOptions(base) : base, writer, [], {
 		closeGraceMs: 100,
 		...idle,
@@ -115,11 +122,19 @@ export async function startHostRig(kind: HostKind, idle: HostIdleOverrides = {})
 			await writeFile(file, `${JSON.stringify(header)}\n`);
 			return file;
 		},
-		connect: (connection) =>
+		connect: (connection) => {
+			const own: Record<string, unknown>[] = [];
+			byConnection.set(connection, own);
 			writer.registerConnection(connection, {
-				writeRaw: (line) => records.push(JSON.parse(line)),
+				writeRaw: (line) => {
+					const record = JSON.parse(line);
+					records.push(record);
+					own.push(record);
+				},
 				waitForBackpressure: () => Promise.resolve(),
-			}),
+			});
+		},
+		recordsFor: (connection) => byConnection.get(connection) ?? [],
 		send,
 		response,
 		openSession: async (connection, sessionPath) => {
