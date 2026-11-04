@@ -425,7 +425,7 @@ Set the order, or clear it with `names: null`:
 
 #### account_reset
 
-Unblock one account using its immutable name:
+Unblock one account using its immutable name. Hosts that answer it advertise `account_reset` in `get_protocol_info`.
 
 ```json
 {"id": "reset1", "type": "account_reset", "provider": "openai", "name": "work"}
@@ -452,7 +452,7 @@ health stores are written sequentially, not as a cross-file transaction.
 `RpcClient.resetProviderAccount(provider, name)` awaits acknowledgement and rejects
 with `RpcCommandError` on failure.
 
-This command is additive. Older hosts reject it as unknown; the typed client rejects
+This command is additive. Older hosts do not advertise `account_reset` and reject it as unknown; the typed client rejects
 that response rather than reporting success. Existing account listings without
 optional block reason or expiry fields remain readable.
 
@@ -737,15 +737,26 @@ or not the compact state is still live: after such a loss, refusals on either pr
 
 The legacy JSONL stream has no protocol depth limit: a record deeper than 1,024 levels is delivered unchanged to a
 legacy client. This holds whether or not the client advertises `media_placeholders`: the placeholder transform
-walks a record without recursion. Only a record the runtime's own JSON engine cannot serialize (above about 6,185 levels on Node 24
-or 40,000 on Bun 1.4, less on a deep stack) is refused, as the typed `LegacyRecordDepthError`: it is not delivered,
-the session (and a worker session's isolate) keeps running, and the next record is delivered. The refusal is
-reported once on stderr as
-`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`
-and counted by the writer that refused it. When the host's writer refuses it, the host counts it. When a worker
-session's isolate refuses it first (at the isolate's own engine limit, before the record leaves the isolate), the
-count stays in the isolate's writer and is not added to the host's count; only the stderr line reaches the host,
-through the worker's stderr.
+walks a record without recursion. Serialization has no depth limit either (senpi#5702): the writer uses the
+runtime's native `JSON.stringify`, and where that overflows its own stack (about 3,000 chained `get_tree` entries
+on Node 24, 18,000-20,000 on Bun 1.4, fewer when a value uses `toJSON`) an explicit-stack writer with the same
+semantics writes the same bytes. A `get_tree` answer for a 10,000-entry session therefore arrives whole, in its
+usual shape `{ tree, leafId }`, on the in-process host and in a worker session alike.
+
+A reply (`type: "response"`) that still cannot be written, for any method and any reason (a `BigInt` or a cycle
+in its value, a `toJSON` that throws), is never dropped: the caller receives, for the same `id`,
+
+```json
+{"id":"<request id>","type":"response","command":"<command>","success":false,"error":"<command> response could not be written: <cause>","errorCode":"response_unwritable"}
+```
+
+and the session keeps serving later requests. The host reports it once on stderr as
+`senpi rpc host: <command> response unwritable (<cause>); answered response_unwritable (session <id>)` and counts
+it with the writer's refusals. This supersedes RULING-68's "refused, never delivered" for replies. A non-reply
+record whose path still overflows the stack outside the writer is refused as before, as the typed
+`LegacyRecordDepthError`, reported as
+`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`,
+and the session keeps running.
 A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
 reader (which stops near 4,000 levels on Node) never drops it.
 
@@ -1050,7 +1061,8 @@ attempts plus routed admissions share 127 rows (128 rows within 16 MiB of 131,58
 them is refused `admission_admission_limit` (`errorData.reason: "admission_limit"`). A completed admission that no
 longer routes a stream stays in a least-recently-used row: an exact retry of a recent ID (C4.4) answers its stored
 result, opens nothing and replaces nothing, and an evicted ID answers `admission_admission_retired` (a 4,096-entry ring;
-an ID older than that is indistinguishable from a fresh one). A completed `open_session` or `attach_session` of a
+an unmarked ID older than that is indistinguishable from a fresh one, while a retry marked `retry: true` answers
+`admission_admission_unknown`; see Admission retries below). A completed `open_session` or `attach_session` of a
 session this socket already routes REPLACES that route: the earlier admission receives no record after the new
 admission's baseline, its attachment is released, and `reset_stream` or `cancel_attempt` naming it answers
 `unknown_admission`. An ordinary route has no separate end record; a record already queued for the earlier ID is
@@ -1088,6 +1100,36 @@ before the route stops delivering. Per path:
 - A session's close or park: announced by `session_closed` or `session_parked`, tagged with every route the session had
   on the socket; the session's streams end with it.
 - A socket's end: nothing can be delivered on it any more; its streams end with it.
+
+**Admission retries (senpi#5285, RULING-125).** `open_session`, `attach_session` and `subscribe_sessions` accept an
+optional `retry: true`. A compact client sends it on every C4.4 retry, that is, whenever it sends an `admissionId` again
+on the same socket; the first send of an ID never carries it. The marker is not part of the request's identity: a
+marked retry with otherwise identical fields matches the original row. The host answers by what this socket's admission
+index holds for the ID:
+
+| Request | ID state on this socket | Answer |
+| --- | --- | --- |
+| `retry: true` | done row (completed, cancelled or failed) | that row's stored result; nothing runs again |
+| `retry: true` | live pending attempt | the existing in-flight admission's answer; no second admission |
+| `retry: true` | unknown: evicted into the ring, forgotten after the ring overflowed, or never seen | `admission_admission_unknown` (`errorData.reason: "admission_unknown"`); nothing runs |
+| no `retry` | retired (evicted, in the ring) | `admission_admission_retired`, as before |
+| no `retry` | live (pending or done row) | the existing duplicate handling: join the pending attempt or answer the stored result |
+
+`admission_admission_unknown` means the outcome is unconfirmed: the original send may have run (an evicted ID did), so
+the client treats the request as possibly applied and never re-sends it as new. This closes the residual of RULING-114:
+before the marker, a retry older than the 4,096-entry ring was indistinguishable from a fresh open and ran again,
+possibly duplicating its effect. An unmarked request for a forgotten ID still runs as a fresh admission, which is why
+clients must mark retries; `status().retiredOverflow` still counts ring drops. A marked request whose fields differ from
+the stored row answers `admission_admission_conflict`, as an unmarked one does. With
+`SENPI_ENGINE_SOCKET_COMPACT_UPDATES` off, and on a legacy (non-compact) request, the field is ignored. The in-repo
+`RpcClient` marks every `openSession` that re-sends an `admissionId` the same client instance already sent, also
+after a disconnect and reconnect: the typical C4.4 retry follows a reconnect, and the new socket does not know the ID,
+so an unmarked re-send would open again. The client remembers the 4,096 most recently sent IDs (least recently sent
+dropped first), so its memory stays bounded; a client must not reuse an `admissionId` for a different request. A
+re-send of an ID older than that 4,096-entry window goes out unmarked. On the same socket the late-retry residual is
+bounded by both windows (the client's 4,096 sent IDs and the engine's per-socket 4,096-entry ring plus 127 live rows);
+after a reconnect the new socket knows no IDs, so only the client window bounds it. `RpcClient`'s window is fixed; a
+custom client that retries older admissions keeps a larger window of its own.
 
 **Engine-initiated socket close (senpi#5322, RULING-124).** With `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on, the engine
 never closes a socket that selected compact events without saying why. Before every close the engine itself decides,
@@ -2059,8 +2101,14 @@ which prints the bare socket path).
   cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
   endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
   waits and then attaches to the successor, and `gc` reports the endpoint `locked` rather than judging it
-  halfway. An `ensure` waits for the lock as long as the longest holder can keep it: a probe plus either a
-  stop-and-restart or a handoff (probe, successor start, 30 s readiness). A REFUSED handoff leaves the endpoint
+  halfway. An `ensure`, a `handoff` and a `stop --expected-generation` wait for the lock as long as one
+  compliant holder can keep it (senpi#4602): W = H + 10 s, where H = 90 s of discovery + S + 284 s from spawn to
+  a settled startup result, and S = max(5 s, M) + 37 s is the stop allowance for the child-stall setting M
+  (`SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, default 60 s). At the default that is S = 97 s, H = 471 s and
+  W = 481 s; every value is recomputed from the resolved M on each operation. A waiter that exhausts W exits 1
+  `host_error` with `detail` `RPC host ensure lock wait exceeded <W>ms; startup not started by this caller`: it
+  started nothing and signalled nothing. An idle handover request waits up to 2 x H + 20 s (962 s at the default)
+  for its reply. `gc` keeps its own 2 s lock attempt and reports `locked`. A REFUSED handoff leaves the endpoint
   as it found it: the successor it started is killed and, once it has exited (up to 5 s), its generation record
   and directory are released, so `status --all` never lists it; the boot `settings.json` it rewrote before
   spawning is restored byte for byte. A cleanup that fails is reported in the refusal's `detail`.
@@ -2326,6 +2374,7 @@ A multi-session host advertising the capability `session_status` pushes one `ses
 - `include_context`: carry each session's published `context` on its records; default `false`.
 - `mirror`: `"none"` (default), `"all"` or an array of record types (`["message_update", "tool_execution_start"]`). The matched sessions' records of those types are also delivered to this connection. Mirroring is an explicit opt-in open to every subscriber of the host (the socket is per user, mode 0600): it is not an attachment and does not keep a session alive. Worker content is mirrored only with `include_workers: true`.
 - `effects`: also deliver `effect_status` receipts of matched sessions; default `true` for `childrenOf`, `false` otherwise. Each `effect_status` is enqueued after the record that caused the transition and shares the subscription's `seq`.
+- `admissionId`, `retry`: compact admission fields behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (see `cancel_attempt` and "Admission retries"); ignored with the flag off.
 - `dialogs`: with capability `dialog_observer`, also deliver the `ui_request_pending` and `ui_request_settled` records of matched sessions; default `false`. It takes effect only together with a `mirror` selection, stays observing, and grants no answering authority (see "UI-answer receipts and dialog observation").
 
 Response:
@@ -2736,8 +2785,89 @@ Windows retains its inherited lifetime pipe. Bare hosts and embedders without su
 
 The POSIX internal hop stays in its per-launch temporary directory and publishes no key file. Proxy, readiness and
 activity-observer connections all prove the in-memory key with challenge-response before sending session traffic.
-The readiness probe (10 s) and the activity observer (5 s) bound their handshake, so a child that accepts the hop and
-never answers fails startup; the proxy forwarding a public connection has no deadline.
+The readiness probe (10 s) and the activity observer (5 s) bound each handshake attempt; the proxy forwarding a public
+connection has no deadline. An uncoordinated supervisor (a direct launch, or a successor started by a command that is
+not the engine's own) fails startup on the first silent attempt, as before. Under a coordinated start it disposes that attempt and retries on a
+fresh connection with fresh nonces, and the launcher's startup phases below decide when the start has failed. A wrong
+key proof still fails at once.
+
+#### Startup readiness (senpi#4602)
+
+`ensureHost()` no longer gives a new host one fixed 10 s to answer. It owns a startup controller from just before
+the spawn, on its own monotonic clock. The supervisor and its host child report fixed milestones on a dedicated
+startup pipe at descriptor 16, above the 5..15 range the private-descriptor table forwards. The supervisor relays
+the child's records in a frame of their own, so neither process can complete the other's phase. Each phase gets a
+finite allowance from the moment it is entered. Repeats, heartbeats and wrong-attempt records add no time, and every
+deadline is clipped to 180 s after the spawn:
+
+| Phase | Allowance | Completed by |
+|---|---:|---|
+| `supervisor_bootstrap` | 30 s | the supervisor's startup stub, before its lifecycle graph loads |
+| `supervisor_setup` | 15 s | the supervisor, once its host child is spawned and its pipe is relayed |
+| `host_bootstrap` | 30 s | the host child's startup stub |
+| `host_runtime` | 60 s | the host child, once everything its internal listener needs is initialized |
+| `internal_ready` | 15 s | the supervisor's authenticated internal-ready reply |
+| `observer_ready` | 15 s | the supervisor's first authenticated activity observer |
+| `public_published` | 15 s | the supervisor, once the public socket and key are published |
+| `presenter_resolved` | 30 s | the launcher, once its presenter exchange settles (immediately when none was requested) |
+| `public_verified` | 10 s | the launcher's compatible public `get_protocol_info` answer and its attach hold |
+
+A custom host-child command (`--child-command`) cannot report its own progress. The supervisor declares this before
+spawning it, and `host_bootstrap` + `host_runtime` + `internal_ready` become one `opaque_host` phase of 90 s, completed
+only by the authenticated internal reply. A supervisor command that is not the engine's own runs in a legacy mode: one
+`public_verified` phase of the whole 180 s, with every inner limit of its own. A slow start that keeps meeting its
+phase deadlines is accepted. A stalled phase fails at its own allowance, and nothing runs past 180 s. At a deadline,
+expiry beats an event that arrives in the same instant, and a settled start is never revived. A failed start runs its
+owned teardown within the failed-start allowance (104 s at the default `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`). Spawn
+to a settled failure is therefore at most 284 s. The failure exits 1 `host_error` with one machine-readable `detail`
+line, followed by the host's stderr diagnostics:
+
+```
+RPC host startup timed out: phase=<phase>; limit=<phase|overall>; phase_budget_ms=<n>; startup_budget_ms=180000; elapsed_ms=<n>; cleanup=<completed|incomplete>
+```
+
+An explicit failure keeps its own message: the host exited, it answered with an incompatible protocol, or a startup
+record broke the protocol. `cleanup=incomplete` means the teardown could not prove the child exited, so its
+registration and startup intent are kept rather than read as gone.
+
+Before the spawn, the launcher writes `startup-intent.json` (0600) in the endpoint's daemon directory under the ensure
+lock. It records the attempt nonce and generation; once known it also records the child's identity, and the supervisor
+records the same nonce in its own generation directory. The next ensure reconciles a leftover intent through the
+candidate's own identity. A candidate proven gone is cleared; one still running refuses `host_stalled`. One that
+nobody can identify refuses `endpoint_occupied` until the intent is 284 s old, after which it no longer blocks the
+endpoint. Nothing is ever signalled on intent evidence.
+
+#### Successor startup and endpoint adoption (senpi#4602)
+
+A generation handoff's successor runs the same phases and the same 180 s ceiling, with one difference in order:
+`presenter_resolved` comes right after `observer_ready`, and `public_published` after it. While the presenter
+exchange runs, the successor has only its own `<public>.next-<gen>` listener; the predecessor keeps serving its
+unchanged public socket, key and pointer. The launcher grants publication only after a validated presenter result:
+it writes `adoption-grant.json` (0600, naming the attempt) into the successor's generation directory and wakes the
+supervisor on the startup pipe. Only then does the successor publish its key and rename its entry over the public
+path. A presenter exchange that misses its 30 s phase ends the successor before it touched the predecessor's endpoint,
+and the handoff is refused. A presenter channel that closes without `enrolled` (for example a refused enrollment for
+a foreign or stale predecessor) passes the phase as not enrolled, and the handoff proceeds as it always did. When the
+predecessor is a running host performing an idle handover, it asks its launch owner for the successor's fresh
+presenter permit only at that phase, so the 30 s permit covers the exchange and not the successor's boot. The
+presenter channel itself waits up to 180 s for its first frame; the existing 30 s exchange window starts with that
+frame. A successor started by a command that is not the engine's own keeps the old order and waits for its public
+answer under the 180 s legacy phase (formerly a fixed 30 s).
+
+Every rename or remove of the public socket entry - the successor's adoption, a generation's close-time shield and
+its final unlink - runs under one short cross-process fence per canonical endpoint (an exclusive SQLite lock next to
+the ensure lock, released by the kernel when its holder dies) and re-reads the endpoint's owner token
+(`<ensure-lock>.owner.json`: endpoint, generation, instance, pid and a per-claim nonce) inside it. A start claims the
+token with its bind; an adoption requires that the grant still stands, that the token still names the predecessor
+and that the entry is still the one the handoff was decided against, then renames and writes its own token before the
+fence is released. A predecessor whose teardown was decided before the adoption therefore re-reads the successor's
+token and leaves its entry alone. A host advertises this with the `endpoint_owner_fence` capability. A successor
+claims the token guard only against a predecessor that advertises it; the first handoff away from an older host runs
+as before and keeps that host's race with a late rename.
+
+When a successor attempt fails, its launcher revokes the grant and reads the owner token inside the same fence. An
+adoption that started within its window but committed after the deadline is a completed handoff: the successor is
+registered and the predecessor drains, nothing is rolled back. One that had not committed can no longer commit.
 The child announces `launch_id: "internal"` and `socket_auth`; neither side sends the key. After authentication,
 HKDF-SHA256 derives separate `senpi-rpc-internal c2s` and `senpi-rpc-internal s2c` keys using the two raw nonces as salt.
 Each record has a four-byte big-endian ciphertext length (17..65552), AES-256-GCM ciphertext and a 16-byte tag.
@@ -3418,7 +3548,9 @@ returns `unknown_session`; a recycled routing id or mismatching host instance re
 receives `session_not_attached` with `errorData: { reason: "no_connection" }`. It never creates or resumes a runtime, and never applies a permission preset,
 prompt surface, or browser engine. Each success adds one attachment, connects the event stream, and publishes
 `session_status` with `lastChange.cause: "attach"`. Intentional profile-changing attaches through
-`open_session { sessionPath, permissionPreset, ... }` retain their existing behavior.
+`open_session { sessionPath, permissionPreset, ... }` retain their existing behavior. Behind
+`SENPI_ENGINE_SOCKET_COMPACT_UPDATES`, `admissionId` and `retry: true` make it a compact admission, as on
+`open_session` (see "Admission retries").
 
 #### release_attachment
 

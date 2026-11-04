@@ -17,7 +17,12 @@ import { join } from "node:path";
 import { providerCredentialEnvNames } from "@earendil-works/pi-ai";
 import { envSlotVarNames } from "../../core/credential-pool/env-slots.ts";
 import type { HostDaemonPaths } from "./host-daemon-paths.ts";
-import { HOST_HANDOFF_ENV_NAMES, isHostHandoffEnvName, ORIGIN_HOST_INSTANCE_ENV } from "./host-identity-env.ts";
+import {
+	HOST_HANDOFF_ENV_NAMES,
+	HOST_STARTUP_EVENTS_ENV,
+	isHostHandoffEnvName,
+	ORIGIN_HOST_INSTANCE_ENV,
+} from "./host-identity-env.ts";
 import { parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
 
 /** Names a daemon may inherit from the process that ensures it. */
@@ -88,6 +93,9 @@ const TRANSIENT_ENV_NAMES = new Set([
 	// (senpi#4528). The origin attribution names the ensuring host, which a separate daemon is not.
 	...HOST_HANDOFF_ENV_NAMES,
 	ORIGIN_HOST_INSTANCE_ENV,
+	// A coordinated launch's startup-event binding (senpi#4602): it names one attempt's pipe, which a
+	// separately ensured daemon does not report on.
+	HOST_STARTUP_EVENTS_ENV,
 	// Engine trust launch plumbing: a daemon gets the generation only through its forced hand-off.
 	"SENPI_ENGINE_TRUST",
 	"SENPI_ENGINE_TRUST_HOP",
