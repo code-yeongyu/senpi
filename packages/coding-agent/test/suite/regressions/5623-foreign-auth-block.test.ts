@@ -193,6 +193,7 @@ describe("senpi#5623 an auth block another engine wrote about a token the Claude
 		expect(generic[0]).toMatchObject({ blocked: true, blockedReason: "auth_error" });
 	});
 
+	// senpi#5350: a re-check that finds the CLI signed out marks the login expired, so the refusal asks for a new sign-in.
 	it("keeps the re-check's own re-block when the CLI reports the login signed out", async () => {
 		await installLane(cliSlot(), { state: "signed_out" });
 		const queries = installSdk(1);
@@ -203,8 +204,8 @@ describe("senpi#5623 an auth block another engine wrote about a token the Claude
 		clock += 60_000;
 		const stillRefused = await turn("s3");
 
-		expect(afterRecheck.errorMessage).toMatch(/currently blocked \(authentication error\)/);
-		expect(stillRefused.errorMessage).toMatch(/currently blocked \(authentication error\)/);
+		expect(afterRecheck.errorMessage).toMatch(/Claude sign-in expired/);
+		expect(stillRefused.errorMessage).toMatch(/Claude sign-in expired/);
 		expect(queries).toHaveLength(1);
 	});
 });

@@ -287,8 +287,11 @@ class SessionList implements Component, Focusable {
 
 	private filterSessions(query: string): void {
 		const trimmed = query.trim();
+		// The live session's file exists from startup (persistHeaderNow); until it holds a conversation,
+		// resuming it is a no-op that reads as "Resumed session" on an empty screen (senpi#5727).
+		const resumable = this.allSessions.filter((session) => !this.isLiveSessionWithoutConversation(session));
 		const nameFiltered =
-			this.nameFilter === "all" ? this.allSessions : this.allSessions.filter((session) => hasSessionName(session));
+			this.nameFilter === "all" ? resumable : resumable.filter((session) => hasSessionName(session));
 
 		if (this.sortMode === "threaded" && !trimmed) {
 			// Threaded mode without search: show tree structure
@@ -323,6 +326,10 @@ class SessionList implements Component, Focusable {
 		}
 
 		this.setConfirmingDeletePath(selected.session.path);
+	}
+
+	private isLiveSessionWithoutConversation(session: SessionInfo): boolean {
+		return session.messageCount === 0 && !hasSessionName(session) && this.isCurrentSessionPath(session.path);
 	}
 
 	private isCurrentSessionPath(path: string): boolean {
