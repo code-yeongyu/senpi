@@ -6,13 +6,12 @@ import {
 	selectedReadFolder,
 } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, ModelImageResizeOptions, TextContent } from "@earendil-works/pi-ai";
-import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { asBuffer, defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { modelOnlyText } from "./model-only-text.ts";
 import { resolveReadPathAsync } from "./path-utils.ts";
 import { type ReadRenderState, readRenderers } from "./renderers/read.ts";
@@ -54,11 +53,17 @@ export interface ReadOperations {
 	detectImageMimeType?: (absolutePath: string) => Promise<string | null | undefined>;
 }
 
-const defaultReadOperations: ReadOperations = {
-	readFile: (path) => fsReadFile(path),
-	access: (path) => fsAccess(path, constants.R_OK),
-	detectImageMimeType: detectSupportedImageMimeTypeFromFile,
-};
+/** The default read operations: the shared operation layer, called with the context of one admitted call. */
+function machineReadOperations(machine: ToolMachine, signal: AbortSignal | undefined): ReadOperations {
+	const ctx = machine.context(signal);
+	return {
+		readFile: async (path) => asBuffer((await machine.ops.files.read({ path }, ctx)).bytes),
+		access: async (path) => {
+			await machine.ops.files.stat({ path, access: "read" }, ctx);
+		},
+		detectImageMimeType: detectSupportedImageMimeTypeFromFile,
+	};
+}
 
 export interface ReadToolOptions {
 	/** Structural folder. Default options select the measured folder; omit here for verbatim reads. */
@@ -73,6 +78,8 @@ export interface ReadToolOptions {
 	operations?: ReadOperations;
 	/** Extension-registered filesystem policy checker. */
 	filesystemPolicy?: FilesystemPolicyChecker;
+	/** Operation layer and policy gate. Default: the process-wide local machine. */
+	machine?: ToolMachine;
 }
 
 function getNonVisionImageNote(model: Model<Api> | undefined): string | undefined {
@@ -89,7 +96,8 @@ export function createReadToolDefinition(
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const fallbackResizeOptions = options?.resizeOptions;
 	const contextModel = options?.contextModel ?? true;
-	const ops = options?.operations ?? defaultReadOperations;
+	const customOps = options?.operations;
+	const machine = options?.machine ?? defaultToolMachine();
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
@@ -127,6 +135,10 @@ export function createReadToolDefinition(
 
 					(async () => {
 						try {
+							const admitted = machine.begin("files.read", { path, offset, limit }, signal);
+							if (admitted !== undefined) await admitted;
+							if (aborted) return;
+							const ops = customOps ?? machineReadOperations(machine, signal);
 							const absolutePath = await resolveReadPathAsync(path, ctx?.cwd || cwd);
 							if (aborted) return;
 							if (filesystemPolicy) {
