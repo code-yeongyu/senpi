@@ -165,6 +165,44 @@ describe("a two-sided extension on a split session behaves as fused (S29)", () =
 		expect(split).toEqual(['ok {"n":1,"order":["first@loop","declared@hand","second@loop"]}']);
 	});
 
+	it("dispatches the tool_call handlers registered when the event started (snapshot)", async () => {
+		const ran: string[] = [];
+		let unsubscribeB: (() => void) | undefined;
+		let piB: Parameters<ExtensionFactory>[0] | undefined;
+		const a: ExtensionFactory = (pi) => {
+			pi.on("tool_call", () => {
+				ran.push("a");
+				unsubscribeB?.();
+				piB?.on("tool_call", () => {
+					ran.push("b-late");
+					return undefined;
+				});
+				return undefined;
+			});
+		};
+		const b: ExtensionFactory = (pi) => {
+			piB = pi;
+			unsubscribeB = pi.on("tool_call", () => {
+				ran.push("b");
+				return undefined;
+			});
+			pi.registerTool({
+				name: "note",
+				label: "note",
+				description: "note echoes its input",
+				parameters: Type.Object({}, { additionalProperties: true }),
+				execute: async (_id, params) => ({
+					content: [{ type: "text", text: JSON.stringify(params) }],
+					details: {},
+				}),
+			});
+		};
+
+		await resultsOf("fused", [["note", { n: 1 }]], [a, b]);
+
+		expect(ran).toEqual(["a", "b"]);
+	});
+
 	it("fails the call closed when a forwarded preflight throws, as fused does", async () => {
 		const calls: [string, JsonObject][] = [
 			["note", { fail: true }],

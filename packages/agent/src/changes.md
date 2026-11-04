@@ -1,3 +1,252 @@
+## 2026-11-03 - Durable scope lifecycle on the endpoint; LIFECYCLE, SCOPE and MULTI-LIFE-01 cases (S15, senpi#5681)
+
+### What changed
+
+- `packages/agent/src/execution/scope-lifecycle.ts` (new): `createScopeLifecycle` keeps a durable record per scope. A lifecycle event from the issuer commits its handler's effect before it is admitted, and later calls of that scope wait for it. Only the issuer closes. A forced close writes every live resource's terminal outcome first. The idle TTL never closes a scope with live resources. Close and the sweep decide inside the admission line, so a racing hold is never dropped. A close waits for an event in progress. A call on a closed or unknown scope throws `ScopeUnavailableError` and never runs.
+- `packages/agent/src/execution/testing/{lifecycle-cases,scope-cases,multi-lifecycle-cases,lifecycle-registry}.ts` (new): LIFECYCLE-01..03, SCOPE-01..02, MULTI-LIFE-01. `batch-harness.ts`: `scopes(idleTtlMs, dieAt?)`.
+- `packages/agent/src/conformance/{registry,index}.ts`: the cases are registered and exported with `createScopeLifecycle`.
+- `packages/agent/src/execution/nested.ts`: re-opening a parent and re-registering an activity compare fields regardless of key order, and `open` refuses a non-finite generation, admission time or lease, so no unreadable record is written (#5673 review).
+
+### Why
+
+- A split scope had no durable lifecycle: no commit-before-next-call order, no issuer-only close, and no guard on the TTL or a forced close (design 5.6.6, senpi#5681).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution layer.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line each in the registry, the conformance index and the run-suite case map.
+
+## 2026-11-03 - Durable wakes from a hand to the brain; WAKEX and KILL-WAKEX cases (S14, senpi#5675)
+
+### What changed
+
+- `packages/agent/src/execution/{wake-types,wake-outbox,wake-inbox}.ts` (new):
+  - A hand's outbox commits a wake before sending it and re-offers un-acked wakes in order (except those refused for good). It removes a wake only on its ack, and drops wakes after scope close plus 7 days with a logged `wake_expired`.
+  - The brain's inbox accepts a wake only from the hand bound to its scope and deduplicates by event id. It acks only after its commit, and hands each wake to the loop until the take is recorded.
+- `packages/agent/src/execution/testing/{wake-exec-cases,kill-wakex,wake-registry}.ts` (new): WAKEX-01..07, KILL-WAKEX-01..06. `batch-harness.ts`: `wakeOutbox`, `wakeInbox`, `wakeLog`; kill labels cover every `execution.*` write.
+- `packages/agent/src/conformance/{registry,index}.ts`: the cases are registered and exported with `createWakeOutbox`, `createWakeInbox` and `WAKE_RETENTION_MS`.
+
+### Why
+
+- A wake from a hand (a background job finishing) had no durable path to the brain that owns its scope (design 5.6.4, senpi#5675).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution layer.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line each in the registry, the conformance index and the run-suite case map.
+
+## 2026-11-03 - Nested admission on the brain that owns the parent; NEST, CANCEL and KILL-NEST cases (S13, senpi#5669)
+
+### What changed
+
+- `packages/agent/src/execution/{nested,nested-types,nested-codec}.ts` (new): `createNestedAdmission` admits a nested request only from the parent's recorded executor for its generation and scope. It persists `(parent, childRequestId) -> child` together with the budget debit, so a replay returns the same child and is debited once. It keeps the phase-scoped nested set (preparation, then body at release) with the parent's lease and 24-hour lifetime cap, and registers background activities that are a subset of the parent. A parent cancel is linearized with admissions, and its cascade to admitted children is durable. A cost or budget that is not a finite number >= 0 is refused, an activity is registered only for a live parent within its current phase, and re-opening a parent with different fields is refused.
+- `packages/agent/src/execution/testing/{nest-cases,cancel-cases,kill-nest,nest-registry}.ts` (new): NEST-01..09, CANCEL-01..02, KILL-NEST-01..03. `batch-harness.ts`: `nested(dieAt?)` over the brain's medium; its kill labels include nested writes.
+- `packages/agent/src/conformance/{registry,index}.ts`: the cases are registered and exported with `createNestedAdmission`.
+- `packages/agent/src/execution/coordinator-consent.ts`: an `expired` Gate B answer no longer aborts the call. The endpoint settles `lease_expired` on its own lease, and the brain records it uncertain (#5667 review).
+
+### Why
+
+- A nested request from a hand had no admission on the brain that owns its parent (design 5.6.3, senpi#5669).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution coordinator.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line each in the registry, the conformance index and the run-suite case map.
+
+## 2026-11-03 - Gate A/B consent on the batch coordinator; CONSENT-01 and CONSENT-02 (S12, senpi#5663)
+
+### What changed
+
+- `packages/agent/src/execution/coordinator-consent.ts` (new), `coordinator.ts`, `coordinator-types.ts`, `coordinator-codec.ts`: an optional `consent` port on the coordinator. Gate A asks for approval of a raw call's request digest before preparation when the port classifies it as needing consent; Gate B asks for approval of a `prepared_awaiting_consent` call's frozen digest and applies it with `BatchExecutor.consent`. A denial is a blocked per-call result (`consent_denied`); an expiry or a late approval settles `lease_expired` and ABORTs the unreleased calls with no successor. Every answer is durable in the batch record (`consents`) before the step it decides.
+- `packages/agent/src/execution/testing/{consent-cases,seq-registry,batch-executor,batch-harness}.ts`: CONSENT-01 and CONSENT-02, a reference executor that gates the `gated`/`ask` tools, and a harness with a movable executor clock and a consent port per brain.
+- `packages/agent/src/execution/coordinator-sequential.ts`: a one-call batch that ABORTs on a blocked preparation outcome hands the later calls `interrupted_preparation`, as one batch does (#5662 review). `testing/multi-seq-cases.ts`: MULTI-FAIR-02's starvation bound stays under the test timeout and is cleared.
+
+### Why
+
+- A cross-machine call that needed consent had no durable consent step (design 5.6.1 Gate A/B, 5.6.2 decision table; senpi#5663).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution coordinator.
+
+### Expected merge conflict zones
+
+- LOW: `coordinator.ts` prepare loop; one line each in the conformance index and the run-suite case map.
+
+## 2026-11-03 - Sequential mode on the batch coordinator; SEQ-01 and MULTI-FAIR-02 (S11, senpi#5661)
+
+### What changed
+
+- `packages/agent/src/execution/coordinator-sequential.ts` (new): `createSequentialCoordinator` runs each call of a plan as its own one-call batch (`<batchId>#<index>`) in source order, so a call is prepared and run to its outcome before the next is prepared; a rerun after a crash resumes from the durable one-call batches; a call whose batch ABORTs ends the run and the later calls are `not_run`.
+- `packages/agent/src/execution/testing/{seq-cases,multi-seq-cases,seq-registry}.ts` (new): SEQ-01 and MULTI-FAIR-02; `batch-harness.ts`: the brain factory takes an issuer.
+- `packages/agent/src/conformance/{registry,index}.ts`: the new cases are registered and exported with `createSequentialCoordinator`; the transport case registered as `MULTI-FAIR-02` moves, unchanged, to `MULTI-FAIR-03` (`transport/testing/multi-cases.ts`).
+
+### Why
+
+- Today's `toolExecution: "sequential"` interleaving had no durable equivalent on the coordinator (design 5.6.1, senpi#5661).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution coordinator.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line each in the registry, the conformance index and the transport case map.
+
+## 2026-11-03 - Shared tool-outcome events (senpi#5648)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `createErrorToolResult`, `emitToolExecutionUpdate`, `emitToolExecutionEnd`, `createToolResultMessage`, `emitToolResultMessage` and `shouldTerminateToolBatch` moved, unchanged, to the new `packages/agent/src/execution/tool-outcome-events.ts`; the loop imports them.
+- `packages/agent/src/conformance/loop-core-manifest.ts`: the new module is part of the declared loop-core closure.
+- `packages/agent/src/index.ts`: exports the helpers.
+
+### Why
+
+The prepared pipeline (brain/hand split S18b) is a ToolHost that keeps the loop's side of a batch; it must emit exactly the loop's event and message shapes, so both use one implementation instead of a copy.
+
+### Why an extension could not handle it
+
+The helpers are the agent loop's own event construction.
+
+### Expected merge conflict zones
+
+`agent-loop.ts` near the tool-result helpers at the end of the file and the import block.
+
+## 2026-11-03 - The model plane: a hand call's nested model requests (senpi#5640)
+
+### What changed
+
+- `packages/agent/src/execution/plane.ts` is new: plane messages (`plane.request`, `plane.abort`, `plane.reply`, `plane.refused`) and their codec; `createPlaneServer()` for the brain (admission by live parent and lane, one serve per request with replayed answers, abort on parent end) and `createPlaneClient()` for the hand.
+- `packages/agent/src/execution/plane-model.ts` is new: `MODEL_PLANE`, `ModelPlaneRequest`, `decodeModelPlaneRequest()`, `serveModelPlane()` and `createModelPlaneClient()`.
+- `packages/agent/src/execution/remote-tool-host.ts`: optional `planes`; a call's end ends its nested requests.
+- `packages/agent/src/execution/remote-executor.ts`: `HandCall.nested`; a call's end fails its open nested requests.
+- `packages/agent/src/index.ts`: exports the plane and model-plane surface.
+
+### Why
+
+A model-backed tool running on a hand has no model: the hand owns no session and none of its credentials. Its completion has to come from the brain that owns the call (design 5.6.3), never from another hand, and the hand must not be able to steer the brain's provider endpoint or credentials.
+
+### Why an extension could not handle it
+
+The admission rule depends on the remote ToolHost's live-call table and on the executor's per-call abort, which only these modules hold.
+
+### Expected merge conflict zones
+
+`remote-tool-host.ts` and `remote-executor.ts` frame handlers; `src/index.ts` exports.
+
+## 2026-11-03 - Offline grant check on the hand (senpi#5659)
+
+### What changed
+
+- `packages/agent/src/execution/grant-verify.ts` is new: grant snapshot, verifier, `HandAuthority` and `authorize()`.
+- `packages/agent/src/execution/remote-executor.ts`: required `authority`; the grant check runs after the closed and lane checks and before the seen set, the ledger and the scope; the scope opens on the canonical root; a snapshot replacement aborts running calls it no longer allows.
+- `packages/agent/src/execution/testing/hand-harness.ts`: passes `{ kind: "self" }`.
+- `packages/agent/src/index.ts`: exports the verifier surface.
+
+### Why
+
+Brain/hand split S27b (R14.b): across machines the pair grant is the whole authority model for a user's own devices, checked with no per-call round trip. Design approved by the security gate (capability `execute`).
+
+### Why an extension could not handle it
+
+The check must precede the executor's own durable admission and scope opening.
+
+### Expected merge conflict zones
+
+`remote-executor.ts` invoke ordering and options; `src/index.ts` exports.
+
+## 2026-11-03 - List a directory while another process removes one of its entries (senpi#5615)
+
+### What changed
+
+- `packages/agent/src/harness/env/nodejs.ts`: `NodeExecutionEnv.listDir` omits an entry whose `lstat` fails with `ENOENT` after `readdir` listed it, instead of failing the whole listing. Any other per-entry error is still returned.
+
+### Why
+
+- A Session worker holds its session through a `<session>.jsonl.lock` directory next to the session file and removes it on release. A session listing that read the directory just before a worker released its lock failed with `Failed to list sessions directory ...: ENOENT ... lstat '<session>.jsonl.lock'`, so a server refreshing its session catalog while a worker retired failed that refresh (senpi#5272). The removed entry is now absent from the listing, as if `readdir` had run a moment later.
+
+### Why an extension could not handle it
+
+- `listDir` is the harness file-system primitive under `JsonlSessionRepo.list`; no extension hook runs between `readdir` and the per-entry `lstat`.
+
+### Expected merge conflict zones
+
+- LOW: the per-entry `try`/`catch` in `NodeExecutionEnv.listDir`.
+
+## 2026-11-02 - A hand's durable call record and its conformance cases (senpi#5513)
+
+### What changed
+
+- `packages/agent/src/execution/remote-hand-ledger.ts` is new: `createHandLedger()` admits each invoke into the execution ledger and walks it to `dispatched` before it runs, records its result, answers a re-delivered invoke from the record (refusing `identity_conflict` when the record holds another request under that execution ID), and on restart runs the ledger's recovery, then re-sends the outcomes the session has not acknowledged.
+- `packages/agent/src/execution/ledger.ts`: `ExecutionLedger.scan()` lists every row.
+- `packages/agent/src/execution/remote-executor.ts`: optional `ledger`, required `onFault` (a failed restart recovery is reported there and the hand then answers no frame), a `hello` after a restarted hand recovered, and `ack` handling; a call's scope is opened before the call is recorded, so a scope that cannot open leaves no record.
+- `packages/agent/src/execution/remote-tool-host.ts`: required `placement`; `terminal` outcomes mapped per placement; every outcome acknowledged; waiting calls re-sent on `hello`.
+- `packages/agent/src/execution/remote-protocol.ts`: `ack`, `terminal` and `hello` messages.
+- `packages/agent/src/execution/testing/{hand-harness,kill-hand,multi-hand-cases,fault-hand-cases}.ts` are new, registered in `packages/agent/src/conformance/registry.ts` and exported from `packages/agent/src/conformance/index.ts`; `packages/agent/src/index.ts` exports the new hand APIs.
+
+### Why
+
+- Brain/hand split (senpi#5482): a hand that dies after receiving a call left the session waiting forever, and a restarted hand had no record to keep it from running a call twice.
+
+### Why an extension could not handle it
+
+- The execution ledger, the ToolHost seam and the conformance registry are the agent core's.
+
+### Expected merge conflict zones
+
+- LOW: the end of `CONFORMANCE_REGISTRY` in `registry.ts` and the hand export blocks in `index.ts` and `conformance/index.ts`.
+
+## 2026-11-02 - Remote ToolHost and hand executor (senpi#5483)
+
+### What changed
+
+- `packages/agent/src/execution/remote-tool-host.ts` is new: `createRemoteToolHost({ transport, sessionRef? })` sends each raw call of a batch to a hand on the scope's lane, emits the tool events, waits per call in `sequential` mode, forwards an abort, and returns result messages in source order; a call is never re-sent.
+- `packages/agent/src/execution/remote-executor.ts` is new: `createRemoteExecutor({ transport, openScope })` opens scopes lazily, refuses a known scope with another root and a repeated execution ID, never passes the session reference on, and keeps `sequential` tool barriers per scope.
+- `packages/agent/src/execution/remote-protocol.ts` is new: the `invoke`, `abort`, `settled` and `refused` messages and a strict decoder.
+- `packages/agent/src/index.ts` exports the three modules, the reference transport and the `Transport` types.
+
+### Why
+
+- Brain/hand split (senpi#5482): a session must be able to run its tool calls on a hand, first on one machine over the in-process carrier.
+
+### Why an extension could not handle it
+
+- The ToolHost seam and the transport live in the agent core; an extension cannot replace where the loop dispatches tool calls.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` export list, next to the internal-events exports.
+
+## 2026-11-02 - Durable batch coordinator (senpi#5429)
+
+### What changed
+
+- `packages/agent/src/execution/coordinator.ts`, `coordinator-types.ts`, `coordinator-plan.ts` and `coordinator-codec.ts` implement the brain-side batch coordinator over DurableStore and the `BatchExecutor` port.
+- `packages/agent/src/execution/testing/` supplies the reference batch executor, the BATCH-01..03/05..09, REPLAY-01..02 and KILL-BATCH cases, and their registry entries.
+- `packages/agent/src/conformance/registry.ts` and `packages/agent/src/conformance/index.ts` register and expose the cases.
+
+### Why
+
+- A batch's prepare replies, decision and release marks need one durable owner on the coordinating side, so a crash there recovers without rerunning hooks or bodies, and an interrupted preparation replays as it does today.
+
+### Why an extension could not handle it
+
+- The coordinator is a host-neutral execution primitive below extension callbacks.
+
+### Expected merge conflict zones
+
+- LOW: the conformance registry and barrel exports; the coordinator modules are new.
+
 ## 2026-11-02 - The agent proxy handles `message_tool_arguments_reset` (senpi#5300)
 
 ### What changed

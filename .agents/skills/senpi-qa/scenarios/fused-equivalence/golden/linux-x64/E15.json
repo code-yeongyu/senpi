@@ -3044,42 +3044,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:6>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -3175,6 +3139,42 @@
          "endedAt": "<ts:timing.endedAt:2>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
       }
      },
      {
@@ -4643,7 +4643,8 @@
          "path": "out/steered.txt",
          "text": "call_steered\n",
          "barrier": "steer-1"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -4717,10 +4718,10 @@
       "type": "pending_input_transition",
       "cursor": 1,
       "input": {
-       "clientMessageId": "host:<uuid:1>:<uuid:3>",
+       "clientMessageId": "host:<uuid:1>:<uuid:4>",
        "fingerprint": "3398e161d8a38231071ebfdb9be4e3c542f2c697bbacc662de48c64a891c96dc",
        "handle": {
-        "lifetimeId": "<uuid:4>",
+        "lifetimeId": "<uuid:5>",
         "queuedId": "q_1"
        },
        "revision": 1,
@@ -4735,9 +4736,9 @@
       },
       "result": {
        "outcome": "admitted",
-       "clientMessageId": "host:<uuid:1>:<uuid:3>",
+       "clientMessageId": "host:<uuid:1>:<uuid:4>",
        "revision": 1,
-       "lifetimeId": "<uuid:4>"
+       "lifetimeId": "<uuid:5>"
       }
      },
      "id": "<id:12>",
@@ -4748,14 +4749,14 @@
      "type": "custom",
      "customType": "rpc_client_message_admission",
      "data": {
-      "clientMessageId": "host:<uuid:1>:<uuid:3>",
+      "clientMessageId": "host:<uuid:1>:<uuid:4>",
       "durableSessionId": "<uuid:1>",
       "fingerprint": "530642eecec62bca6bbf0acd2f0c00aeb858bb64386418d2f24ef9a57e6aca58",
       "hostMinted": true,
       "state": "queued",
       "disposition": "queued",
       "prepared": {
-       "clientMessageId": "host:<uuid:1>:<uuid:3>",
+       "clientMessageId": "host:<uuid:1>:<uuid:4>",
        "text": "E15 steer: also mention the file name",
        "mode": "steer",
        "enqueueOrder": 1,
@@ -4784,7 +4785,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "custom",
@@ -4793,10 +4795,10 @@
       "type": "pending_input_transition",
       "cursor": 2,
       "input": {
-       "clientMessageId": "host:<uuid:1>:<uuid:3>",
+       "clientMessageId": "host:<uuid:1>:<uuid:4>",
        "fingerprint": "3398e161d8a38231071ebfdb9be4e3c542f2c697bbacc662de48c64a891c96dc",
        "handle": {
-        "lifetimeId": "<uuid:4>",
+        "lifetimeId": "<uuid:5>",
         "queuedId": "q_1"
        },
        "revision": 1,
@@ -4810,9 +4812,9 @@
        "operations": {},
        "attempt": {
         "ownerId": "<id:15>",
-        "lifetimeId": "<uuid:4>",
-        "attemptId": "<uuid:4>:1",
-        "clientMessageId": "host:<uuid:1>:<uuid:3>"
+        "lifetimeId": "<uuid:5>",
+        "attemptId": "<uuid:5>:1",
+        "clientMessageId": "host:<uuid:1>:<uuid:4>"
        }
       }
      },
@@ -4827,10 +4829,10 @@
       "type": "pending_input_transition",
       "cursor": 3,
       "input": {
-       "clientMessageId": "host:<uuid:1>:<uuid:3>",
+       "clientMessageId": "host:<uuid:1>:<uuid:4>",
        "fingerprint": "3398e161d8a38231071ebfdb9be4e3c542f2c697bbacc662de48c64a891c96dc",
        "handle": {
-        "lifetimeId": "<uuid:4>",
+        "lifetimeId": "<uuid:5>",
         "queuedId": "q_1"
        },
        "revision": 1,
@@ -4853,7 +4855,7 @@
      "type": "custom",
      "customType": "rpc_client_message_admission",
      "data": {
-      "clientMessageId": "host:<uuid:1>:<uuid:3>",
+      "clientMessageId": "host:<uuid:1>:<uuid:4>",
       "durableSessionId": "<uuid:1>",
       "fingerprint": "530642eecec62bca6bbf0acd2f0c00aeb858bb64386418d2f24ef9a57e6aca58",
       "hostMinted": true,
@@ -4878,7 +4880,7 @@
        }
       ],
       "timestamp": "<ts:message.timestamp:4>",
-      "clientMessageId": "host:<uuid:1>:<uuid:3>"
+      "clientMessageId": "host:<uuid:1>:<uuid:4>"
      },
      "inputSource": "rpc"
     },
@@ -4941,7 +4943,7 @@
      "type": "custom",
      "customType": "rpc_client_message_admission",
      "data": {
-      "clientMessageId": "host:<uuid:1>:<uuid:3>",
+      "clientMessageId": "host:<uuid:1>:<uuid:4>",
       "durableSessionId": "<uuid:1>",
       "fingerprint": "530642eecec62bca6bbf0acd2f0c00aeb858bb64386418d2f24ef9a57e6aca58",
       "hostMinted": true,

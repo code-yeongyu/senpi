@@ -3,6 +3,7 @@ import type { AgentToolResult, HandScope, OpenHandScope } from "@earendil-works/
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { createHandFileOps } from "./hand-file-ops.ts";
 import { grantLooplessExecuteToRemoteExecutor } from "./loopless-execute-grant.ts";
 import { createLooplessRuntimeFactory } from "./runtime-factory-loopless.ts";
 
@@ -34,6 +35,7 @@ export function createLooplessHandScopes(
 					? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested)
 					: Promise.resolve(notFound(call.name)),
 			isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
+			...(runtime.fileGuards === undefined ? {} : { file: createHandFileOps(scope.root, runtime.fileGuards) }),
 			dispose: () => runtime.dispose(),
 		};
 	};

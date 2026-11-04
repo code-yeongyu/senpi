@@ -3,6 +3,7 @@
  */
 
 import { basename } from "node:path";
+import { openTimingEnabled, startOpenTimer } from "../open-timing.ts";
 import { SecretInputUnavailableError } from "./secret-input.ts";
 import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
 import { requestExtensionRpc } from "./rpc-request.ts";
@@ -2236,6 +2237,7 @@ export class ExtensionRunner {
 		const isSessionShutdown = event.type === "session_shutdown";
 		let shutdownBudget: SessionShutdownBudget | undefined;
 		let quitDeadline: QuitDeadline | undefined;
+		const timer = event.type === "session_start" && openTimingEnabled() ? startOpenTimer("session_start") : undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
@@ -2264,6 +2266,7 @@ export class ExtensionRunner {
 						continue;
 					}
 					const handlerResult = await handler(event, this.createContext(ext.path));
+					timer?.mark(basename(ext.path));
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
@@ -2380,9 +2383,10 @@ export class ExtensionRunner {
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
 
-		for (const ext of [...this.extensions]) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_result")) {
 			const handlers = toolEventHandlers(
 				ext,
+				own,
 				"tool_result",
 				options,
 				(index) => async () => options.forward?.toolResult(ext.path, index, currentEvent),
@@ -2460,9 +2464,10 @@ export class ExtensionRunner {
 	): Promise<ToolCallEventResult | undefined> {
 		let result: ToolCallEventResult | undefined;
 
-		for (const ext of [...this.extensions]) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_call")) {
 			const handlers = toolEventHandlers(
 				ext,
+				own,
 				"tool_call",
 				options,
 				(index) => async () => options.forward?.toolCall(ext.path, index, event),

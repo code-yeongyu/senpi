@@ -8,6 +8,7 @@ export const registryPackageNames = new Map([
 	["@earendil-works/pi-pty", "@code-yeongyu/senpi-pty"],
 	["@earendil-works/pi-telemetry", "@code-yeongyu/senpi-telemetry"],
 	["@code-yeongyu/senpi-codemode", "@code-yeongyu/senpi-codemode"],
+	["@code-yeongyu/senpi-machine-ops", "@code-yeongyu/senpi-machine-ops"],
 	["@code-yeongyu/senpi", "@code-yeongyu/senpi"],
 ]);
 

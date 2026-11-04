@@ -1,3 +1,4 @@
+import type { HandFileGuards } from "./hand-file-ops.ts";
 import { randomUUID } from "node:crypto";
 import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
@@ -50,6 +51,11 @@ export interface LooplessRuntime {
 		signal?: AbortSignal,
 		nested?: NestedRequest,
 	): Promise<AgentToolResult<unknown>>;
+	/**
+	 * What a device file operation (S40) is checked against: this runtime's `tool_call` handlers and filesystem policy.
+	 * Present only when its grant runs the handlers, so no file operation can skip them.
+	 */
+	readonly fileGuards: HandFileGuards | undefined;
 	/** Marks its extension contexts stale, then closes the tool work and the tool child it still runs. */
 	dispose(): Promise<void>;
 }
@@ -210,10 +216,19 @@ export function createLooplessRuntimeFactory(
 				),
 			);
 		};
+		const fileGuards: HandFileGuards | undefined =
+			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)
+				? {
+						beforeToolCall: (toolName, toolCallId, input) =>
+							toolHandlers.beforeToolCall({ toolName, toolCallId, input }),
+						filesystemPolicy: () => runtime.filesystemPolicy,
+					}
+				: undefined;
 		return {
 			cwd: services.cwd,
 			definitions: registry.definitions,
 			diagnostics,
+			fileGuards,
 			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
 			dispose: async () => {
 				// Stale first, as a session disposes: a close that fails must not leave the contexts usable.

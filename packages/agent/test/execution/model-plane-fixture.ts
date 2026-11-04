@@ -95,6 +95,7 @@ export function startHand(
 	};
 	const executor = createRemoteExecutor({
 		transport,
+		authority: { kind: "self" },
 		openScope: async () => scope,
 		onFault: (error) => {
 			throw error;

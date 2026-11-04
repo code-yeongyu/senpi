@@ -10,6 +10,7 @@ test("announces every fork-owned registry package from private sources", () => {
 			"@code-yeongyu/senpi-agent-core",
 			"@code-yeongyu/senpi-ai",
 			"@code-yeongyu/senpi",
+			"@code-yeongyu/senpi-machine-ops",
 			"@code-yeongyu/senpi-pty",
 			"@code-yeongyu/senpi-codemode",
 			"@code-yeongyu/senpi-telemetry",
