@@ -144,6 +144,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 				options.consent.needsConsent({ name: frozen.name, args: frozen.args });
 			const freeze = await step(key, generation, { kind: "freeze", call: frozen, awaitingConsent });
 			if (freeze.status !== "applied") return refusal(freeze);
+			pipeline.afterFreeze(prepared.args, frozen.args);
 			bodies.set(keyId(key), {
 				...named,
 				tool,
@@ -175,7 +176,11 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		if (dispatched.status !== "applied" || dispatched.entry.progress.state !== "dispatched") {
 			return refusal(dispatched);
 		}
-		const executed = await runBody(body, signal, request.onUpdate ?? (() => {}));
+		const executed = await runBody(
+			body,
+			signal,
+			request.onUpdateFor?.(body.toolCall) ?? request.onUpdate ?? (() => {}),
+		);
 		const { result, isError } = await finalizeBody(body, executed, pipeline, signal);
 		const value = resultValue(result, isError, body.requestedName);
 		const recorded = await step(key, generation, { kind: "result", value });
