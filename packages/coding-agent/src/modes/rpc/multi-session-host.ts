@@ -1,8 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { reportStartupMilestone } from "./host-startup-beacon.ts";
 import { createServer, type Server } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Duplex } from "node:stream";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
@@ -62,13 +60,18 @@ import { socketSink } from "./socket-sink.ts";
 import type { SocketClosingCode } from "./socket-closing.ts";
 import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./socket-transport.ts";
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
-import { McpPresenterControl } from "./mcp-presenter-control.ts";
+import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
+import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
+
+export { presenterPipePath } from "./mcp-presenter-control-start.ts";
 
 export interface MultiSessionHostOptions {
 	/** Host deployment policy; never derived from client capabilities or project settings. */
 	mcpPresenterEnforcement?: boolean;
 	presenterBootstrapFd?: number;
+	/** Injected by the distribution at host start (senpi#4249); never derived from RPC, arguments or environment. */
+	presenterAccountAuthority?: PresenterAccountAuthority;
 	agentDir: string;
 	createRuntime: CreateAgentSessionRuntimeFactory;
 	workerConfiguration?: CliRuntimeConfiguration;
@@ -122,14 +125,6 @@ export async function runMultiSessionHost(options: MultiSessionHostOptions): Pro
 			? runStdioHost(options)
 			: runSocketHost(options, resolveSocketPath(options.listen, options.agentDir)),
 	);
-}
-
-/**
- * The Windows presenter control pipe. Its name comes from its own random value, never the host's public
- * protocol instanceId, so nothing can learn it before the host listens and squat it.
- */
-export function presenterPipePath(): string {
-	return `\\\\.\\pipe\\senpi-presenter-${randomUUID()}`;
 }
 
 export function createHostCore(
@@ -389,26 +384,16 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			}),
 		},
 	);
-	let presenterDir: string | undefined;
-	let presenterControl: McpPresenterControl | undefined;
-	if (options.presenterBootstrapFd !== undefined) {
-		const bootstrap = presenterBootstrapStream(options.presenterBootstrapFd);
-		try {
-			if (bootstrap && options.mcpPresenterEnforcement === true) {
-				if (process.platform !== "win32") presenterDir = await mkdtemp(join(tmpdir(), "senpi-presenter-"));
-				presenterControl = new McpPresenterControl(
-					writer,
-					presenterDir ? join(presenterDir, "control.sock") : presenterPipePath(),
-				);
-				await presenterControl.listen();
-				presenterControl.bootstrap(bootstrap);
-			} else bootstrap?.destroy();
-		} catch {
-			bootstrap?.destroy();
-			presenterControl?.dispose();
-			presenterControl = undefined;
-		}
-	}
+	const presenter = await startMcpPresenterControl(writer, {
+		enforcement: options.mcpPresenterEnforcement,
+		bootstrap:
+			options.presenterBootstrapFd === undefined
+				? undefined
+				: presenterBootstrapStream(options.presenterBootstrapFd),
+		account: options.presenterAccountAuthority,
+	});
+	const presenterControl = presenter?.control;
+	const presenterDir = presenter?.dir;
 	const observers = startHostObservers(router, writer, {
 		trim,
 		// The shape #1893 measured: gigabytes resident with `sessions.total 0`. Say it once, and when
