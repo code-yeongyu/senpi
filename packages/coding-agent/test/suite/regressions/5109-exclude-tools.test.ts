@@ -53,7 +53,8 @@ describe("regression #5109: exclude tools", () => {
 			expect(harness.session.getActiveToolNames().sort()).toEqual(["bash", "dynamic_tool", "edit", "grep", "write"]);
 			expect(harness.session.systemPrompt).not.toContain("- read:");
 			expect(harness.session.systemPrompt).not.toContain("ask_question");
-			expect(harness.session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
+			// A described tool reaches the model through its schema, not a snippet line (senpi#5335).
+			expect(harness.session.agent.state.tools.map((tool) => tool.name)).toContain("dynamic_tool");
 		} finally {
 			harness.cleanup();
 		}
@@ -71,7 +72,7 @@ describe("regression #5109: exclude tools", () => {
 
 			expect(toolNames(harness.session.getAllTools())).toEqual(["bash"]);
 			expect(harness.session.getActiveToolNames()).toEqual(["bash"]);
-			expect(harness.session.systemPrompt).toContain("- bash:");
+			expect(harness.session.agent.state.tools.map((tool) => tool.name)).toEqual(["bash"]);
 			expect(harness.session.systemPrompt).not.toContain("- read:");
 			expect(harness.session.systemPrompt).not.toContain("ask_question");
 		} finally {

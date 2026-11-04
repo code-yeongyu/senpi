@@ -4,6 +4,8 @@ export type RpcAttachmentCommand =
 			readonly id?: string;
 			readonly type: "attach_session";
 			readonly admissionId?: string;
+			/** A C4.4 resend of `admissionId` (RULING-125, docs/rpc.md "Admission retries"); ignored with the flag off. */
+			readonly retry?: true;
 			readonly sessionId: string;
 			readonly durableSessionId: string;
 			readonly expectedHostInstance?: string;

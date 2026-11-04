@@ -53,6 +53,14 @@ export class McpPresenterControl {
 		return owner ? this.successors.prepare(owner) : Promise.resolve(undefined);
 	}
 
+	/**
+	 * The deferred form (senpi#4602): a provider when an owner can authorize a successor at all, called only when that
+	 * successor reaches its P7, so the fresh permit's 30 s window covers the exchange and not the successor's boot.
+	 */
+	successorBootstrapProvider(): (() => Promise<Duplex | undefined>) | undefined {
+		return this.launchOwner ? () => this.successorBootstrap() : undefined;
+	}
+
 	/** Only the inherited launch channel may introduce the installation public key. */
 	bootstrap(stream: Duplex): void {
 		this.enrollment.bootstrap(stream, (principal) => {

@@ -109,21 +109,61 @@ function collectOccurrences(
 	return occurrences;
 }
 
-function selectUserFirstThenMostRecent(occurrences: readonly ImageOccurrence[]): ReadonlySet<string> {
-	const ranked = new Map<string, { fromUser: boolean; lastSeen: number }>();
+/**
+ * Past `MAX_REPLAYED_HISTORY_IMAGES` distinct user uploads, the oldest ones are dropped in blocks of this many, so the
+ * history (where uploads are replayed in place) changes once per this many new uploads instead of on every one
+ * (senpi#2988 item 3). Between 8 - 4 + 1 = 5 and 8 of the newest uploads stay replayed.
+ */
+export const REPLAYED_UPLOAD_DROP_STEP = 4;
+
+function droppedUploadCount(entries: number): number {
+	const over = entries - MAX_REPLAYED_HISTORY_IMAGES;
+	return over <= 0 ? 0 : Math.ceil(over / REPLAYED_UPLOAD_DROP_STEP) * REPLAYED_UPLOAD_DROP_STEP;
+}
+
+type ReplaySelection = {
+	/** User-upload occurrences replayed in place. */
+	readonly uploads: ReadonlySet<ImageOccurrence>;
+	readonly currentTurnTools: ReadonlySet<string>;
+};
+
+/**
+ * The user's uploads come first, as a list of entries in order of appearance; past the cap the oldest entries are
+ * dropped in steps. Dropping only ever grows, so an entry's decision never changes once made. A re-upload of an image
+ * whose entry was already dropped when it arrived opens a new entry at the end instead of inheriting the old decision.
+ * The current turn's tool images fill the remaining slots, most recent first; they are sent after the cache breakpoint,
+ * so that choice may change every request.
+ */
+function selectUserFirstThenMostRecent(occurrences: readonly ImageOccurrence[]): ReplaySelection {
+	const entryHashes: string[] = [];
+	const entryOfHash = new Map<string, number>();
+	const entryOf = new Map<ImageOccurrence, number>();
+	const toolLastSeen = new Map<string, number>();
 	occurrences.forEach((occurrence, order) => {
 		const hash = occurrence.decoded?.sha256;
 		if (hash === undefined || isAnsweredToolImage(occurrence)) return;
-		const previous = ranked.get(hash);
-		ranked.set(hash, {
-			fromUser: (previous?.fromUser ?? false) || occurrence.origin.kind === "user",
-			lastSeen: order,
-		});
+		if (occurrence.origin.kind !== "user") {
+			toolLastSeen.set(hash, order);
+			return;
+		}
+		let entry = entryOfHash.get(hash);
+		if (entry === undefined || entry < droppedUploadCount(entryHashes.length)) {
+			entry = entryHashes.push(hash) - 1;
+			entryOfHash.set(hash, entry);
+		}
+		entryOf.set(occurrence, entry);
 	});
-	const ordered = [...ranked.entries()].sort(
-		([, a], [, b]) => Number(b.fromUser) - Number(a.fromUser) || b.lastSeen - a.lastSeen,
-	);
-	return new Set(ordered.slice(0, MAX_REPLAYED_HISTORY_IMAGES).map(([hash]) => hash));
+	const firstKept = droppedUploadCount(entryHashes.length);
+	const keptHashes = new Set(entryHashes.slice(firstKept));
+	const uploads = new Set([...entryOf].filter(([, entry]) => entry >= firstKept).map(([occurrence]) => occurrence));
+	// A current-turn tool image whose bytes match a dropped upload takes a free slot without making that upload's
+	// history entry replayable again, which would rewrite the cached history.
+	const tools = [...toolLastSeen.entries()]
+		.filter(([hash]) => !keptHashes.has(hash))
+		.sort(([, x], [, y]) => y - x)
+		.slice(0, MAX_REPLAYED_HISTORY_IMAGES - keptHashes.size)
+		.map(([hash]) => hash);
+	return { uploads, currentTurnTools: new Set([...keptHashes, ...tools]) };
 }
 
 /**
@@ -196,7 +236,7 @@ export function replayHistoryImages(
 				const first = shownInCurrentTurn.get(hash);
 				if (first !== undefined) {
 					currentTurn.push({ type: "text", text: coldSeedImageText.duplicate(origin, first) });
-				} else if (!replayed.has(hash)) {
+				} else if (!replayed.currentTurnTools.has(hash)) {
 					currentTurn.push({ type: "text", text: coldSeedImageText.capped(origin) });
 				} else {
 					shownInCurrentTurn.set(hash, origin);
@@ -206,7 +246,7 @@ export function replayHistoryImages(
 					);
 				}
 			}
-		} else if (!replayed.has(hash)) {
+		} else if (!replayed.uploads.has(occurrence)) {
 			replacement = [{ type: "text", text: coldSeedImageText.capped(origin) }];
 		} else {
 			shownInHistory.set(hash, origin);
