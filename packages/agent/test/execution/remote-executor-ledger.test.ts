@@ -163,6 +163,36 @@ describe("remote executor with a durable record", () => {
 		expect([ran, hand.sent]).toEqual([[], [refusal, { kind: "hello", instance: expect.any(String) }, refusal]]);
 	});
 
+	// senpi#5729: a moved session reaches the live hand over a second link; that link's executor must not run the
+	// restart recovery that ends the first link's running calls as hand_restarted.
+	it("lets a second link's executor join a live hand without ending the calls the first link runs", async () => {
+		const store = await claimed(createMemoryStoreMedium());
+		const ledger = handLedger(store);
+		const gate = Promise.withResolvers<void>();
+		const ran: unknown[] = [];
+		const gated: OpenHandScope = async () => ({
+			run: async (call) => {
+				ran.push(call.arguments);
+				await gate.promise;
+				return { content: [{ type: "text", text: "ran" }], details: {} };
+			},
+			isSequential: () => false,
+			dispose: async () => {},
+		});
+		const first = startHand(store, gated, ledger);
+		await first.executor.ready;
+		await first.deliver(invoke({ id: 1 }));
+		const second = startHand(store, gated, ledger);
+		await second.executor.ready;
+		gate.resolve();
+		await first.sentCount(2);
+		expect([first.sent.map(({ kind }) => kind), second.sent.map(({ kind }) => kind), ran]).toEqual([
+			["hello", "settled"],
+			["hello"],
+			[{ id: 1 }],
+		]);
+	});
+
 	it.each([
 		{ resent: { id: 1 }, outcome: "runs the frozen call once", sent: "settled", bodies: [{ id: 1 }] },
 		{ resent: { id: 2 }, outcome: "refuses other arguments", sent: "refused", bodies: [] },

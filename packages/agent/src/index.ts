@@ -61,10 +61,14 @@ export {
 	encodeRemoteMessage,
 	HAND_CONTROL_LANE,
 	type RemoteAbort,
+	type EpochRefusal,
 	type RemoteAck,
 	type RemoteHandMessage,
 	type RemoteHello,
 	type RemoteInvoke,
+	type RemoteFloor,
+	type RemoteFloorAck,
+	type RemoteFloorRefused,
 	type RemoteRefused,
 	type RemoteSettled,
 	RemoteProtocolError,
@@ -94,6 +98,14 @@ export {
 	type HandAuthority,
 	type WorkspaceRoot,
 } from "./execution/grant-verify.ts";
+export {
+	createHandEpochFence,
+	EPOCH_FLOOR_MAX_STEP,
+	type FloorRaise,
+	HAND_SELF_SENDER,
+	type HandEpochFence,
+	type HandEpochFenceOptions,
+} from "./execution/remote-epoch.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
