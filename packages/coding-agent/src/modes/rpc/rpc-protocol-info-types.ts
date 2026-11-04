@@ -1,3 +1,4 @@
+import type { RpcMethodClassesDescription } from "./method-classes.ts";
 import type { PathIdentityResolverStatus } from "./path-identity-status.ts";
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 
@@ -42,10 +43,11 @@ export interface RpcProtocolIdentity {
 	/** Absolute agent directory this host reads and writes; a handoff from another agent dir is refused. */
 	readonly agentDir: string;
 	/**
-	 * The inbound method-class table this engine runs (`method-classes.ts`): a remote forwarder classifies with its
-	 * own copy only while that copy's digest equals `digest`.
+	 * The inbound method-class table this engine runs (`method-classes.ts`): its `version`, `digest`, and the whole
+	 * table as data (`classes`: each type's class or `dynamic`; `dynamic_versions`: each rule's version), never the
+	 * rule functions (senpi#5632).
 	 */
-	readonly method_classes: { readonly version: number; readonly digest: string };
+	readonly method_classes: RpcMethodClassesDescription;
 }
 
 export interface RpcProtocolInfo extends RpcProtocolIdentity {
