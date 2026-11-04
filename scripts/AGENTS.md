@@ -80,7 +80,7 @@ parse `## YYYY-MM-DD` and `## Title (YYYY-MM-DD)` dialects.
 
 ## prepare-senpi-bundled-workspaces.mjs
 
-Vendors the never-published `pi-client`/`pi-protocol` build output under `vendor/` in the
+Vendors the never-published `pi-client`/`pi-protocol`/`senpi-machine-ops` build output under `vendor/` in the
 `@code-yeongyu/senpi` tarball (emitted imports rewritten to relative paths), then
 `stagePublishManifest` (`prepare-senpi-publish-manifest.mjs`) writes the real publish manifest:
 the source dependency list minus the vendored packages, with every fork workspace reached through
