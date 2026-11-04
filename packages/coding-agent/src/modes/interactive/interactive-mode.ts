@@ -1026,6 +1026,7 @@ export class InteractiveMode {
 	 * ordinary submission that never references it.
 	 */
 	private preResolvedSubmissionImages?: ImageContent[];
+	private startupParkedSubmission: string | undefined;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -1821,6 +1822,7 @@ export class InteractiveMode {
 		this.setupEditorSubmitHandler();
 		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
 		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		this.replayStartupSubmission();
 		this.ui.requestRender();
 		time("keyHandlers", "tui");
 
@@ -4974,8 +4976,21 @@ export class InteractiveMode {
 			void this.shutdown();
 			return;
 		}
+		this.startupParkedSubmission = text;
 		this.editor.setText(text);
 		this.showStatus("Startup is still in progress");
+	}
+
+	/**
+	 * Run the submission parked by `handleStartupSubmit` once the real submit path is installed (senpi#5731).
+	 * The person already pressed Enter, so the parked text is submitted unless they edited it since.
+	 */
+	private replayStartupSubmission(): void {
+		const parked = this.startupParkedSubmission;
+		this.startupParkedSubmission = undefined;
+		if (parked === undefined || this.editor.getText() !== parked) return;
+		this.editor.setText("");
+		void this.defaultEditor.onSubmit?.(parked);
 	}
 
 	/**
