@@ -15,6 +15,7 @@ export class CompactAdmissionError extends Error {
 		| "malformed_request"
 		| "admission_conflict"
 		| "admission_retired"
+		| "admission_unknown"
 		| "admission_limit"
 		| "admission_busy"
 		| "storage_unavailable";
