@@ -6698,12 +6698,36 @@ successor host's enrollment.
 Acquisition and revocation use the
 separate authenticated management endpoint, with a fresh challenge for each
 `mcp_presenter_assign`, `mcp_presenter_acquire`, or `mcp_presenter_revoke` command.
-Enrollment alone assigns no sessions. Before acquisition, the trusted native
-supervisor signs `mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`,
-and `purpose: "mcp_form"` for a session it opened, or one the user explicitly adopted
-through the trusted host-owner UI. Ordinary RPC attachment cannot assign a session.
-Assignment belongs only to that enrolled principal and live binding; re-enrollment
-or binding replacement requires a new assignment. It is not persisted.
+Enrollment alone assigns no sessions: before acquisition, a principal signs
+`mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`, and
+`purpose: "mcp_form"`. Who may assign depends on the principal:
+
+- The inherited launch principal, the trusted native supervisor, assigns a session it
+  opened, or one the user explicitly adopted through the trusted host-owner UI.
+- An account principal assigns itself. A same-account login is the authorization, so
+  there is no owner prompt. Its `mcp_presenter_assign` and `mcp_presenter_acquire` are
+  accepted only while the host is still signed into the principal's account and the
+  time is before its `attestedUntil`, and acquisition needs the acquiring connection's
+  live attachment to that session. A command from a principal that fails the account
+  or attestation check gets `account_refused` with `presenter_account_mismatch`,
+  `presenter_account_unavailable`, or `attestation_expired`, and its connection closes,
+  revoking its grants.
+
+Ordinary RPC attachment cannot assign a session.
+Assignment belongs only to that enrolled principal and live binding; re-enrollment,
+including the same device and key enrolling again, or binding replacement requires a
+new assignment. It is not persisted, and a successor host knows no earlier principal.
+
+An account principal is also revoked, with its grants, when the embedding distribution
+reports a sign-out or an account switch, and when `attestedUntil` passes without an
+`account_reattest`. The connection receives `account_refused` with
+`presenter_account_unavailable`, `presenter_account_mismatch`, or `attestation_expired`
+and closes. A revoked grant ends its forms under the outcome rules below: a presented
+form cancels without human admission, and one not yet presented is a processing
+failure. A dialog belongs to the grant it was created for. A later holder, including
+another device of the same account, never receives or answers a dialog created for
+another holder, even after that holder leaves.
+
 An acquisition also requires the connection's `interactive_user` and
 `mcp_form_presenter_v1` capabilities, and binds the
 current host, session, binding epoch, connection nonce, attachment ID and epoch, and
