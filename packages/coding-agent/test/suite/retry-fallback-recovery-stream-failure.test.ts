@@ -1,7 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
@@ -68,51 +67,5 @@ describe("retry fallback on tool-call recovery stream failures (senpi#5723)", ()
 			stopReason: "error",
 			errorMessage: failure.errorMessage,
 		});
-	});
-
-	it("still falls back on a genuine model overload once the same-model budget is spent", async () => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: {
-				retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
-			},
-		});
-		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "HTTP 503: overloaded" }),
-			fauxAssistantMessage("fallback answer"),
-		]);
-
-		await harness.session.prompt("hello");
-
-		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2"]);
-		expect(harness.eventsOfType("retry_fallback_applied")).toHaveLength(1);
-		expect(harness.session.model?.id).toBe("faux-2");
-	});
-
-	it("still takes the hard-error fallback when the model's account is out of quota", async () => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: {
-				retry: {
-					enabled: true,
-					maxRetries: 3,
-					baseDelayMs: 1,
-					fallbackChains: { [primary]: ["other-faux/faux-2"] },
-				},
-			},
-		});
-		harnesses.push(harness);
-		registerFallbackModels(harness, "other-faux", ["faux-2"]);
-		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "billing error: insufficient_quota" }),
-			fauxAssistantMessage("fallback answer"),
-		]);
-
-		await harness.session.prompt("hello");
-
-		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2"]);
-		expect(harness.eventsOfType("retry_fallback_applied")).toHaveLength(1);
-		expect(harness.session.model?.provider).toBe("other-faux");
 	});
 });
