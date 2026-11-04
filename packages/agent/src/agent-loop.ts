@@ -41,16 +41,14 @@ import { type InternalLoopConfig, internalProgressSink } from "./internal-events
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiveness } from "./stream-keepalive.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
-import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
+import { withToolNameCorrection } from "./tool-name-alias.ts";
 import { createPreparedToolHost } from "./execution/prepared/pipeline-prepared.ts";
 import { BatchStoreMissingError, type ToolHost } from "./execution/tool-host.ts";
 import {
 	createErrorToolResult,
 	createToolResultMessage,
 	emitToolExecutionEnd,
-	emitToolExecutionUpdate,
 	emitToolResultMessage,
-	shouldTerminateToolBatch,
 } from "./execution/tool-outcome-events.ts";
 import type {
 	AgentContext,
@@ -1227,42 +1225,8 @@ async function executeToolCalls(
 	);
 
 	function defaultToolHost(): ToolHost {
-		if (config.executionPipeline === "legacy") return legacyToolHost();
 		if (config.batchStoreFactory === undefined) throw new BatchStoreMissingError();
 		return createPreparedToolHost(config, config.batchStoreFactory);
-	}
-
-	function legacyToolHost(): ToolHost {
-		return {
-			execute: async (call, options) => {
-				// Only yield when a witness sink is configured and returns a promise: an unconditional `await` adds a
-				// microtask per call and reorders lifecycle vs message events against today's fused path (EQ E03).
-				const recordWitness = options.recordWitness;
-				if (recordWitness) {
-					for (const raw of call.calls) {
-						const pending = recordWitness({ pipeline: "legacy", toolCallId: raw.id });
-						if (pending) await pending;
-					}
-				}
-				return call.mode === "sequential"
-					? executeToolCallsSequential(
-							currentContext,
-							assistantMessage,
-							toolCalls,
-							config,
-							options.signal,
-							options.emit,
-						)
-					: executeToolCallsParallel(
-							currentContext,
-							assistantMessage,
-							toolCalls,
-							config,
-							options.signal,
-							options.emit,
-						);
-			},
-		};
 	}
 }
 
@@ -1270,181 +1234,6 @@ type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
 	terminate: boolean;
 };
-
-async function executeToolCallsSequential(
-	currentContext: AgentContext,
-	assistantMessage: AssistantMessage,
-	toolCalls: AgentToolCall[],
-	config: AgentLoopConfig,
-	signal: AbortSignal | undefined,
-	emit: AgentEventSink,
-): Promise<ExecutedToolCallBatch> {
-	const finalizedCalls: FinalizedToolCallOutcome[] = [];
-	const messages: ToolResultMessage[] = [];
-
-	for (const toolCall of toolCalls) {
-		const tool = await resolveCallTool(currentContext, toolCall, config);
-		await emit({
-			type: "tool_execution_start",
-			toolCallId: toolCall.id,
-			toolName: tool?.name ?? toolCall.name,
-			args: toolCall.arguments,
-		});
-
-		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, tool, config, signal);
-		let finalized: FinalizedToolCallOutcome;
-		if (preparation.kind === "immediate") {
-			finalized = {
-				toolCall: preparation.toolCall,
-				result: preparation.result,
-				isError: preparation.isError,
-			};
-		} else {
-			const executed = await executePreparedToolCall(
-				preparation,
-				signal,
-				emitToolExecutionUpdate(preparation.toolCall, emit),
-			);
-			finalized = await finalizeExecutedToolCall(
-				currentContext,
-				assistantMessage,
-				preparation,
-				executed,
-				config,
-				signal,
-			);
-		}
-
-		await emitToolExecutionEnd(finalized, emit);
-		const toolResultMessage = createToolResultMessage(finalized);
-		await emitToolResultMessage(toolResultMessage, emit);
-		finalizedCalls.push(finalized);
-		messages.push(toolResultMessage);
-
-		if (signal?.aborted) {
-			break;
-		}
-	}
-
-	return {
-		messages,
-		terminate: shouldTerminateToolBatch(finalizedCalls),
-	};
-}
-
-async function executeToolCallsParallel(
-	currentContext: AgentContext,
-	assistantMessage: AssistantMessage,
-	toolCalls: AgentToolCall[],
-	config: AgentLoopConfig,
-	signal: AbortSignal | undefined,
-	emit: AgentEventSink,
-): Promise<ExecutedToolCallBatch> {
-	const finalizedCalls: Promise<FinalizedToolCallOutcome>[] = [];
-	const preparedCalls: Array<{
-		preparation: PreparedToolCall | ImmediateToolCallOutcome;
-		isSequential: boolean;
-		dependencies: Promise<FinalizedToolCallOutcome>[];
-	}> = [];
-	let lastSequentialCall: Promise<FinalizedToolCallOutcome> | undefined;
-	let currentParallelWave: Promise<FinalizedToolCallOutcome>[] = [];
-
-	for (const toolCall of toolCalls) {
-		const tool = await resolveCallTool(currentContext, toolCall, config);
-		await emit({
-			type: "tool_execution_start",
-			toolCallId: toolCall.id,
-			toolName: tool?.name ?? toolCall.name,
-			args: toolCall.arguments,
-		});
-
-		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, tool, config, signal);
-		const isSequential = isSequentialToolCall(currentContext, preparation.toolCall);
-		const dependencies = isSequential
-			? [...(lastSequentialCall ? [lastSequentialCall] : []), ...currentParallelWave]
-			: lastSequentialCall
-				? [lastSequentialCall]
-				: [];
-
-		preparedCalls.push({ preparation, isSequential, dependencies });
-
-		if (isSequential) {
-			// Dependencies are assigned in the second phase after all preflight hooks
-			// have completed, so a later preflight abort vetoes every execution.
-			lastSequentialCall = undefined;
-			currentParallelWave = [];
-		} else {
-			currentParallelWave.push(Promise.resolve(undefined as never));
-		}
-
-		if (signal?.aborted) {
-			break;
-		}
-	}
-
-	let previousSequential: Promise<FinalizedToolCallOutcome> | undefined;
-	let previousWave: Promise<FinalizedToolCallOutcome>[] = [];
-	for (const { preparation, isSequential } of preparedCalls) {
-		const dependencies = isSequential
-			? [...(previousSequential ? [previousSequential] : []), ...previousWave]
-			: previousSequential
-				? [previousSequential]
-				: [];
-		const finalizedCall = (async () => {
-			await Promise.all(dependencies);
-			const finalized = signal?.aborted
-				? { toolCall: preparation.toolCall, result: createErrorToolResult("Operation aborted"), isError: true }
-				: await runPreparedToolCall(currentContext, assistantMessage, preparation, config, signal, emit);
-			await emitToolExecutionEnd(finalized, emit);
-			return finalized;
-		})();
-		finalizedCalls.push(finalizedCall);
-		if (isSequential) {
-			previousSequential = finalizedCall;
-			previousWave = [];
-		} else previousWave.push(finalizedCall);
-	}
-	const orderedFinalizedCalls = await Promise.all(finalizedCalls);
-	const messages: ToolResultMessage[] = [];
-	for (const finalized of orderedFinalizedCalls) {
-		const toolResultMessage = createToolResultMessage(finalized);
-		await emitToolResultMessage(toolResultMessage, emit);
-		messages.push(toolResultMessage);
-	}
-
-	return {
-		messages,
-		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
-	};
-}
-
-async function runPreparedToolCall(
-	currentContext: AgentContext,
-	assistantMessage: AssistantMessage,
-	preparation: PreparedToolCall | ImmediateToolCallOutcome,
-	config: AgentLoopConfig,
-	signal: AbortSignal | undefined,
-	emit: AgentEventSink,
-): Promise<FinalizedToolCallOutcome> {
-	if (preparation.kind === "immediate") {
-		return {
-			toolCall: preparation.toolCall,
-			result: preparation.result,
-			isError: preparation.isError,
-		};
-	}
-
-	const executed = await executePreparedToolCall(
-		preparation,
-		signal,
-		emitToolExecutionUpdate(preparation.toolCall, emit),
-	);
-	return finalizeExecutedToolCall(currentContext, assistantMessage, preparation, executed, config, signal);
-}
-
-function isSequentialToolCall(currentContext: AgentContext, toolCall: AgentToolCall): boolean {
-	return currentContext.tools?.find((tool) => tool.name === toolCall.name)?.executionMode === "sequential";
-}
 
 type PreparedToolCall = {
 	kind: "prepared";

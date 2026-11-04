@@ -1,5 +1,4 @@
-// S36 (senpi#5728): one agent turn, run on the loop's own scheduler or on its default (the prepared pipeline), reduced
-// to what a session observes: start order, each call's own events, the result messages and whether the loop asked again.
+// S36 (senpi#5728): one agent turn on the loop's pipeline through the package entry, reduced to what a session observes: start order, each call's own events, the result messages and whether the loop asked again.
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
@@ -9,8 +8,6 @@ import {
 import { Type } from "typebox";
 import { Agent } from "../../src/index.ts";
 import type { AgentEvent, AgentTool, AgentToolCall } from "../../src/types.ts";
-
-export type Pipeline = "legacy" | "prepared";
 
 export interface Observation {
 	readonly starts: readonly string[];
@@ -103,14 +100,13 @@ function resultText(content: unknown): string {
 	return content.map((part: { type?: string; text?: string }) => (part.type === "text" ? part.text : "")).join("");
 }
 
-export async function observe(pipeline: Pipeline, scenario: Scenario): Promise<Observation> {
+export async function observe(scenario: Scenario): Promise<Observation> {
 	let turns = 0;
 	const agent = new Agent({
 		initialState: { model, tools: [...tools] },
 		streamFn: () => reply(turns++ === 0 ? [...scenario.calls] : [{ type: "text", text: "done" }]),
 	});
 	scenario.setup?.(agent);
-	if (pipeline === "legacy") agent.executionPipeline = "legacy";
 	const starts: string[] = [];
 	const calls: Record<string, string[]> = {};
 	const push = (id: string, step: string) => {

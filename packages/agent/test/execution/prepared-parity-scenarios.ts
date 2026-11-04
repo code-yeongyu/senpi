@@ -10,7 +10,7 @@ const abortOn =
 		};
 	};
 
-// One scenario per path the loop's own scheduler handles (agent-loop.ts executeToolCalls*), named by that path.
+// One scenario per path the removed loop scheduler handled (agent-loop.ts executeToolCalls*), named by that path.
 export const scenarios: Readonly<Record<string, Scenario>> = {
 	"parallel batch with updates": {
 		calls: [call("c0", "echo", { n: 0 }), call("c1", "echo", { n: 1 })],

@@ -15,7 +15,7 @@ export interface ToolHostCall {
 }
 
 export interface ExecutionPipelineWitness {
-	readonly pipeline: "legacy" | "prepared";
+	readonly pipeline: "prepared";
 	readonly toolCallId: string;
 }
 

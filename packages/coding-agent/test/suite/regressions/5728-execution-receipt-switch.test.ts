@@ -54,3 +54,7 @@ it.each(["default", "prepared"])("writes one prepared receipt per call when the 
 		{ pipeline: "prepared", toolCallId: "call-b" },
 	]);
 });
+
+it("refuses the removed legacy scheduler instead of running the default under its name", async () => {
+	await expect(receiptsFor("legacy")).rejects.toThrow("SENPI_EXECUTION_PIPELINE must be default or prepared");
+});

@@ -397,8 +397,6 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	toolExecution?: ToolExecutionMode;
 	/** Unprepared batch boundary. Omitted selects the prepared pipeline (batch coordinator + prepared executor) in this process. */
 	toolHost?: ToolHost;
-	/** Test and QA rollback until S36 removes it: `legacy` runs the loop's own scheduler when no `toolHost` is set. */
-	executionPipeline?: "legacy" | "prepared";
 	/**
 	 * Opens each batch's execution ledger for the default (prepared) pipeline. The loop builds no store itself: with no
 	 * `toolHost` and no factory, a tool batch fails closed with `BatchStoreMissingError`. The package entry's `Agent` and

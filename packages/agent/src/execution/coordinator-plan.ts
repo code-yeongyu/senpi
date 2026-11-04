@@ -10,8 +10,7 @@ import type {
 } from "./coordinator-types.ts";
 
 /**
- * Release dependencies exactly as today's scheduler assigns them (agent-loop.ts, executeToolCallsParallel): a
- * sequential call waits for the previous sequential call and every parallel call since; a parallel call waits for the
+ * Release dependencies exactly as the agent loop has always ordered a batch: a sequential call waits for the previous sequential call and every parallel call since; a parallel call waits for the
  * previous sequential call only.
  */
 export function batchDependencies(

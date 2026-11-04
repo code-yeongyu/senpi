@@ -168,7 +168,6 @@ export interface AgentOptions {
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
 	toolHost?: AgentLoopConfig["toolHost"];
-	executionPipeline?: AgentLoopConfig["executionPipeline"];
 	batchStoreFactory?: AgentLoopConfig["batchStoreFactory"];
 	executionScope?: AgentLoopConfig["executionScope"];
 	onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
@@ -347,7 +346,6 @@ export class Agent {
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
 	public toolHost?: AgentLoopConfig["toolHost"];
-	public executionPipeline?: AgentLoopConfig["executionPipeline"];
 	public batchStoreFactory?: AgentLoopConfig["batchStoreFactory"];
 	public executionScope: NonNullable<AgentLoopConfig["executionScope"]>;
 	public getExecutionScope?: () => NonNullable<AgentLoopConfig["executionScope"]>;
@@ -399,7 +397,6 @@ export class Agent {
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
 		this.toolHost = runtimeOptions.toolHost;
-		this.executionPipeline = runtimeOptions.executionPipeline;
 		this.batchStoreFactory = runtimeOptions.batchStoreFactory;
 		this.executionScope = runtimeOptions.executionScope ?? { id: crypto.randomUUID(), root: "" };
 		this.onExecutionPipeline = runtimeOptions.onExecutionPipeline;
@@ -804,7 +801,6 @@ export class Agent {
 			cursorExecHandlers: this.cursorExecHandlers,
 			toolExecution: this.toolExecution,
 			toolHost: this.toolHost,
-			executionPipeline: this.executionPipeline,
 			batchStoreFactory: this.batchStoreFactory,
 			executionScope: this.getExecutionScope?.() ?? this.executionScope,
 			onExecutionPipeline: this.onExecutionPipeline,
