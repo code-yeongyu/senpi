@@ -148,11 +148,12 @@ describe("createAgentSessionFromServices", () => {
 	});
 
 	it.each([
-		["legacy", {}],
-		["prepared", { SENPI_EXECUTION_PIPELINE: "prepared" }],
+		["default (unset)", "prepared", {}],
+		["legacy", "legacy", { SENPI_EXECUTION_PIPELINE: "legacy" }],
+		["prepared", "prepared", { SENPI_EXECUTION_PIPELINE: "prepared" }],
 	] as const)(
 		"writes a real %s tool call's receipt to the env file and keeps receipts out of the session",
-		async (pipeline, pipelineEnv) => {
+		async (_label, pipeline, pipelineEnv) => {
 			const path = witnessFile();
 			vi.stubEnv("SENPI_EXECUTION_PIPELINE_WITNESS", path);
 			for (const [key, value] of Object.entries(pipelineEnv)) vi.stubEnv(key, value);

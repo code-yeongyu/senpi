@@ -9,20 +9,6 @@ import {
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { runPreparedBatch } from "./pipeline-prepared-batch.ts";
 
-/** The pipelines a session can run its tool calls on; `legacy` is the agent loop's own scheduler. */
-export type ExecutionPipeline = "legacy" | "prepared";
-
-/**
- * The pipeline `SENPI_EXECUTION_PIPELINE` asks for, or `undefined` when it is unset (the default: legacy, no receipts).
- * An unknown value is refused rather than silently running the default.
- */
-export function requestedExecutionPipeline(env: NodeJS.ProcessEnv = process.env): ExecutionPipeline | undefined {
-	const value = env.SENPI_EXECUTION_PIPELINE;
-	if (value === undefined || value === "") return undefined;
-	if (value === "legacy" || value === "prepared") return value;
-	throw new Error(`SENPI_EXECUTION_PIPELINE must be legacy or prepared, got ${JSON.stringify(value)}`);
-}
-
 /**
  * The prepared pipeline as the session's ToolHost (S18b): every model-issued batch runs through the batch coordinator
  * and the prepared executor in this process, with today's events, result messages and source order. A batch the loop

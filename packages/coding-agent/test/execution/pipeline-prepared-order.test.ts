@@ -47,7 +47,7 @@ async function order(
 	const harness = await createHarness({ tools: [echo] });
 	harnesses.push(harness);
 	if (sequential) harness.agent.toolExecution = "sequential";
-	if (pipeline === "prepared") harness.agent.toolHost = createPreparedToolHost(harness.agent);
+	harness.agent.toolHost = pipeline === "prepared" ? createPreparedToolHost(harness.agent) : undefined;
 	harness.setResponses([
 		fauxAssistantMessage(
 			calls.map((name, index) => ({ ...fauxToolCall(name, { n: index }), id: `call-${index}` })),

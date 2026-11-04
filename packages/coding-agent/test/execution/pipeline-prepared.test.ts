@@ -52,7 +52,7 @@ async function turn(
 	harness.agent.onExecutionPipeline = (witness) => {
 		receipts.push(`${witness.pipeline}:${witness.toolCallId}`);
 	};
-	if (pipeline === "prepared") harness.agent.toolHost = createPreparedToolHost(harness.agent);
+	harness.agent.toolHost = pipeline === "prepared" ? createPreparedToolHost(harness.agent) : undefined;
 	harness.setResponses([
 		fauxAssistantMessage(
 			calls.map(([name, args], index) => ({
