@@ -1,4 +1,8 @@
-import { decodeRemoteMessage, encodeRemoteMessage, type RemoteHandMessage } from "../../src/execution/remote-protocol.ts";
+import {
+	decodeRemoteMessage,
+	encodeRemoteMessage,
+	type RemoteHandMessage,
+} from "../../src/execution/remote-protocol.ts";
 import type { FrameHandler, Transport } from "../../src/transport/transport.ts";
 
 export function fakeHandLink() {

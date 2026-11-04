@@ -221,7 +221,8 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 				reply(frame.lane, await answerFloor(fence, frame.lane, message.epoch, sender));
 			else if ((message.kind === "abort" || message.kind === "ack") && !admits(frame.lane, message.epoch)) return;
 			else if (message.kind === "abort") running.get(message.executionId)?.controller.abort();
-			else if (message.kind === "ack") await ledger?.ack(message.executionId, () => admits(frame.lane, message.epoch));
+			else if (message.kind === "ack")
+				await ledger?.ack(message.executionId, () => admits(frame.lane, message.epoch));
 		} catch (error) {
 			options.onFault(error);
 		}

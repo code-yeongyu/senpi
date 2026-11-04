@@ -22,10 +22,7 @@ interface Lane {
 	verdict: { readonly refusal: string | undefined } | undefined;
 }
 
-export function createEpochGate(
-	epoch: number,
-	send: (lane: string, floor: RemoteFloor) => Promise<void>,
-): EpochGate {
+export function createEpochGate(epoch: number, send: (lane: string, floor: RemoteFloor) => Promise<void>): EpochGate {
 	const lanes = new Map<string, Lane>();
 	const decide = (state: Lane, refusal: string | undefined): void => {
 		state.verdict = { refusal };

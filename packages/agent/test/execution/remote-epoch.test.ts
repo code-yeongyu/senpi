@@ -51,8 +51,18 @@ describe("session floor gate", () => {
 	const REFUSED = { kind: "floor_refused", reason: "peer_unauthorized" } as const;
 	const now = (verdict: Promise<string | undefined>) => Promise.race([verdict, Promise.resolve("pending")]);
 	it.each([
-		{ name: "a late refusal after the ack keeps the lane open", steps: [ACK, REFUSED], resend: false, expected: undefined },
-		{ name: "a late ack after a refusal keeps the lane closed", steps: [REFUSED, ACK], resend: false, expected: "peer_unauthorized" },
+		{
+			name: "a late refusal after the ack keeps the lane open",
+			steps: [ACK, REFUSED],
+			resend: false,
+			expected: undefined,
+		},
+		{
+			name: "a late ack after a refusal keeps the lane closed",
+			steps: [REFUSED, ACK],
+			resend: false,
+			expected: "peer_unauthorized",
+		},
 		{ name: "after a resend the lane waits for the new answer", steps: [ACK], resend: true, expected: "pending" },
 	])("$name", async ({ steps, resend, expected }) => {
 		const floors: string[] = [];
@@ -105,7 +115,11 @@ describe("remote ToolHost after a hand restart", () => {
 		};
 		const host = createRemoteToolHost({ transport, placement: "split-local", epoch: 2 });
 		void host.execute(
-			{ scope: { id: "s", root: "/w" }, calls: [{ type: "toolCall", id: "c", name: "probe", arguments: {} }], mode: "parallel" },
+			{
+				scope: { id: "s", root: "/w" },
+				calls: [{ type: "toolCall", id: "c", name: "probe", arguments: {} }],
+				mode: "parallel",
+			},
 			{ emit: () => {} },
 		);
 		await settle();
