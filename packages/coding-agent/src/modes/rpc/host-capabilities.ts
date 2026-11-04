@@ -17,6 +17,7 @@ import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	BROWSER_ENGINE_CAPABILITY,
 	CONTINUE_FROM_LEAF_CAPABILITY,
+	DELEGATED_CONNECTION_CAPABILITY,
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
@@ -107,6 +108,8 @@ export function multiSessionHostCapabilities(options: {
 			RETAIN_ON_DISCONNECT_CAPABILITY,
 			// Only a multi-session host tracks attachments per connection, so only it can drop them on request.
 			DETACH_CONNECTION_CAPABILITY,
+			// Its host core decides every inbound line of a delegated connection before dispatch (senpi#5632).
+			DELEGATED_CONNECTION_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.

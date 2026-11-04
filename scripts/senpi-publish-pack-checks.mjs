@@ -44,7 +44,6 @@ const publishedWorkspaceRequiredFiles = new Map([
 	["@earendil-works/pi-pty", ["package.json", "dist/index.js", "native/index.js"]],
 	["@earendil-works/pi-tui", ["package.json", "dist/index.js"]],
 	["@earendil-works/pi-telemetry", ["package.json", "dist/index.js"]],
-	["@code-yeongyu/senpi-machine-ops", ["package.json", "dist/src/index.js", "dist/test/conformance/index.js"]],
 	[
 		"@code-yeongyu/senpi-codemode",
 		["package.json", "src/index.ts", "src/kernels/py/prelude.py", "README.md", "CHANGELOG.md", "LICENSE"],
@@ -115,7 +114,15 @@ export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, opt
 	}
 }
 
-const vendoredRequiredFiles = ["vendor/pi-client/index.js", "vendor/pi-client/index.d.ts", "vendor/pi-protocol/index.js", "vendor/pi-protocol/index.d.ts"];
+const vendoredRequiredFiles = [
+	"vendor/pi-client/index.js",
+	"vendor/pi-client/index.d.ts",
+	"vendor/pi-protocol/index.js",
+	"vendor/pi-protocol/index.d.ts",
+	"vendor/senpi-machine-ops/index.js",
+	"vendor/senpi-machine-ops/index.d.ts",
+	"vendor/senpi-machine-ops/process/in-process-holder.js",
+];
 
 // The Windows socket-secret bridge has no fallback (sisyphuslabs/omo-desktop-app#4199): a publish that names its
 // targets must ship every one of them, the best-effort arm64 build included.
