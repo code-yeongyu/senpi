@@ -7,6 +7,7 @@ import type { McpPresenterAuthority, McpPresenterRegistration } from "./mcp-pres
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { McpPresenterEnrollment, type PresenterPrincipal } from "./mcp-presenter-enrollment.ts";
+import { features } from "./mcp-presenter-grants.ts";
 import { McpPresenterSuccessors } from "./mcp-presenter-successor.ts";
 import { privateFrames, send, signed } from "./mcp-presenter-wire.ts";
 
@@ -199,7 +200,8 @@ export class McpPresenterControl {
 								typeof command.sessionId !== "string" ||
 								typeof command.bindingEpoch !== "string" ||
 								typeof command.connectionNonce !== "string" ||
-								(command.kind !== "desktop" && command.kind !== "gateway")
+								(command.kind !== "desktop" && command.kind !== "gateway") ||
+								(command.features !== undefined && !features(command.features))
 							)
 								throw new Error("presenter_not_authorized");
 							const binding = this.writer.getMcpFormBinding(command.sessionId);
@@ -222,7 +224,11 @@ export class McpPresenterControl {
 								command.attachmentEpoch !== context.attachmentEpoch
 							)
 								throw new Error("presenter_not_authorized");
-							const registration = owner.register(binding, connection, { kind: command.kind });
+							// `features` is inside the signed transcript, so the grant records only what the principal asked for.
+							const registration = owner.register(binding, connection, {
+								kind: command.kind,
+								features: command.features,
+							});
 							const grant = owner.acquire(registration);
 							registrations.set(registration.id, registration);
 							send(stream, { type: "mcp_presenter_acquired", id, registrationId: registration.id, ...grant });
