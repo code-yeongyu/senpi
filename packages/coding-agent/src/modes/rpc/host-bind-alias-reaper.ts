@@ -11,7 +11,7 @@
 import { lstat, readdir, readFile, rmdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../../utils/process-identity.ts";
-import { ALIAS_LINK, ALIAS_OWNER, ALIAS_PREFIX, bindAliasRoots } from "./host-socket-bind.ts";
+import { ALIAS_LINK, ALIAS_OWNER, ALIAS_PREFIX, bindAliasRoots, readAliasOwnerStartTime } from "./host-socket-bind.ts";
 
 const ALIAS_NAME = new RegExp(`^${ALIAS_PREFIX}[A-Za-z0-9]{6}$`);
 const MIN_AGE_MS = 60_000;
@@ -47,9 +47,11 @@ async function ownerIsDead(file: string): Promise<boolean> {
 	const pid = Reflect.get(owner, "pid");
 	const processStartTime = Reflect.get(owner, "processStartTime");
 	if (typeof pid !== "number" || typeof processStartTime !== "string" || processStartTime.length === 0) return false;
-	const alive = await processMatchesPidFile({ pid, processStartTime }).catch((error: unknown) => {
-		if (error instanceof ProcessIdentityUnreadableError) return true;
-		throw error;
-	});
+	const alive = await processMatchesPidFile({ pid, processStartTime }, readAliasOwnerStartTime).catch(
+		(error: unknown) => {
+			if (error instanceof ProcessIdentityUnreadableError) return true;
+			throw error;
+		},
+	);
 	return !alive;
 }

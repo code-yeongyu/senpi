@@ -107,7 +107,8 @@ const PRIVATE_FD_LEAVES = new Set([
 
 // senpi#5319: the supervisor publishes its public endpoint through the socket host's bind (a private 0700 bind
 // directory, then link(2), so a symlink planted at the endpoint is never bound through). That adds exactly this leaf,
-// importing only Node builtins and socket-ownership/socket-transport, both already in the graph. Measured: 71 modules
+// importing only Node builtins and socket-ownership/socket-transport/utils/process-identity (the alias owner's start
+// time), all already in the graph. Measured before the alias owner record: 71 modules
 // (8 hop, 3 public auth, 4 private fd leaves), 3,972 source / 4,108 built bytes, 71 code lines.
 const ENDPOINT_BIND_LEAVES = new Set(["packages/coding-agent/dist/modes/rpc/host-socket-bind.js"]);
 

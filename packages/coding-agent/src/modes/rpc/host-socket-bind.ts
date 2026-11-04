@@ -11,7 +11,7 @@ import {
 	MAX_SOCKET_PATH_BYTES,
 	type SocketFileIdentity,
 } from "./socket-ownership.ts";
-import { readProcessStartTime } from "../../utils/process-identity.ts";
+import { readProcessIdentity } from "../../utils/process-identity.ts";
 import { resolveSocketTransportAddress } from "./socket-transport.ts";
 
 export function resolveSocketPath(value: string, agentDir: string): string {
@@ -44,6 +44,16 @@ export const ALIAS_PREFIX = "senpi-bind-";
 export const ALIAS_LINK = "d";
 /** The alias owner record `{ pid, processStartTime, createdAt }` the alias reaper proves the owner dead by. */
 export const ALIAS_OWNER = ".owner";
+
+/**
+ * The one start-time reader both the alias writer and its reaper use: in UTC, so a host and a later sweep running
+ * under different TZ values read the same instant (review r3 LOW 1). An error surfaces to the caller.
+ */
+export async function readAliasOwnerStartTime(pid: number): Promise<string | undefined> {
+	const identity = await readProcessIdentity(pid, process.platform, undefined, undefined, "UTC");
+	if (identity.kind === "error") throw identity.error;
+	return identity.kind === "present" ? identity.identity : undefined;
+}
 const SHORT_TEMP_ROOT = "/tmp";
 
 /** The roots a long-path bind may place its alias in, in preference order (also what the alias reaper scans). */
@@ -111,7 +121,8 @@ async function bindAddress(bindDir: string): Promise<{ readonly address: string;
 	if (Buffer.byteLength(direct) <= MAX_SOCKET_PATH_BYTES) return { address: direct };
 	const alias = await mkdtemp(join(await aliasRoot(), ALIAS_PREFIX));
 	try {
-		const processStartTime = (await readProcessStartTime(process.pid)) ?? "";
+		// An unreadable start time is recorded as "": the reaper then never proves this alias dead, and the bind still works.
+		const processStartTime = (await readAliasOwnerStartTime(process.pid).catch(() => undefined)) ?? "";
 		const owner = { pid: process.pid, processStartTime, createdAt: Date.now() };
 		await writeFile(join(alias, ALIAS_OWNER), JSON.stringify(owner), { mode: 0o600, flag: "wx" });
 		await symlink(bindDir, join(alias, ALIAS_LINK));

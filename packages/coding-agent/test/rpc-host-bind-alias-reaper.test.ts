@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { reapOrphanedBindAliasesIn } from "../src/modes/rpc/host-bind-alias-reaper.ts";
-import { readProcessStartTime } from "../src/utils/process-identity.ts";
+import { readAliasOwnerStartTime } from "../src/modes/rpc/host-socket-bind.ts";
 
 const OLD = new Date(Date.now() - 10 * 60_000);
 const DEAD_PID = 2_147_483_000;
@@ -20,7 +20,7 @@ describe("reapOrphanedBindAliasesIn (senpi#5404 review LOW 3)", () => {
 	type Owner = { readonly pid: number; readonly processStartTime: string };
 	const deadOwner: Owner = { pid: DEAD_PID, processStartTime: "Thu Jan  1 00:00:00 1970" };
 	async function liveOwner(): Promise<Owner> {
-		const processStartTime = await readProcessStartTime(process.pid);
+		const processStartTime = await readAliasOwnerStartTime(process.pid);
 		if (processStartTime === undefined) throw new Error("cannot read this test process's start time");
 		return { pid: process.pid, processStartTime };
 	}
@@ -44,6 +44,20 @@ describe("reapOrphanedBindAliasesIn (senpi#5404 review LOW 3)", () => {
 		await alias("senpi-bind-LiVe12", join(root, "moved.bind-0022"), await liveOwner());
 		await reapOrphanedBindAliasesIn(root);
 		expect(await readdir(root)).toEqual(["senpi-bind-LiVe12"]);
+	});
+
+	it("keeps a live host's alias when the sweeping process runs under another TZ (review r3 LOW 1)", async () => {
+		const owner = await liveOwner();
+		await alias("senpi-bind-TzLiV1", join(root, "gone.bind-0099"), owner);
+		const previous = process.env.TZ;
+		process.env.TZ = previous === "Pacific/Kiritimati" ? "Etc/GMT+12" : "Pacific/Kiritimati";
+		try {
+			await reapOrphanedBindAliasesIn(root);
+		} finally {
+			if (previous === undefined) delete process.env.TZ;
+			else process.env.TZ = previous;
+		}
+		expect(await readdir(root)).toEqual(["senpi-bind-TzLiV1"]);
 	});
 
 	it("keeps a young alias even when its owner is dead", async () => {
