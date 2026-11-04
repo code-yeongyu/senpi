@@ -100,9 +100,18 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 				.catch(() => undefined);
 		if (message.kind === "hello") {
 			gate?.resend();
-			for (const { invoke } of pending.values())
-				if (sent.has(invoke.executionId))
+			for (const { invoke } of pending.values()) {
+				if (!sent.has(invoke.executionId)) continue;
+				const resend = (): void =>
 					void transport.send(invoke.scope.id, encodeRemoteMessage(invoke)).catch(() => undefined);
+				if (gate === undefined) resend();
+				else
+					void gate.open(invoke.scope.id).then((refusal) => {
+						if (!pending.has(invoke.executionId)) return;
+						if (refusal === undefined) return resend();
+						settle(invoke.executionId, errorResult(`The hand refused this session's epoch: ${refusal}`));
+					});
+			}
 			return;
 		}
 		if (message.kind === "floor_ack" || message.kind === "floor_refused") return gate?.answer(frame.lane, message);
