@@ -177,6 +177,7 @@ export class McpPresenterControl {
 				clearTimeout(challengeTimer);
 				pending = undefined;
 				transcript = undefined;
+				if (this.accounts.lapsed(principal)) return;
 				owner ??= this.authority.enroll(principal.id);
 				if (backendGeneration === undefined) {
 					stream.destroy();
@@ -201,8 +202,8 @@ export class McpPresenterControl {
 									: undefined;
 							if (!binding || binding.epoch !== command.bindingEpoch || command.purpose !== "mcp_form")
 								throw new Error("presenter_not_authorized");
-							// Only a signed native-supervisor decision assigns an opened/adopted session.
-							// Enrollment and ordinary RPC attachment do not imply assignment.
+							// The inherited supervisor assigns sessions it opened or the user adopted; an account principal
+							// assigns itself under D1 while current. Enrollment and RPC attachment never imply assignment.
 							principal.sessions.add(binding);
 							send(stream, { type: "mcp_presenter_assigned", id, sessionId: command.sessionId });
 							return;
