@@ -1,5 +1,5 @@
 import { hostInstanceId } from "./protocol-identity.ts";
-import type { McpFormBinding } from "../../core/mcp-form-types.ts";
+import type { McpFormBinding, McpPresenterIdentity } from "../../core/mcp-form-types.ts";
 import { mcpFormClock, type McpFormClock, type McpPresenterReply } from "./mcp-form-dialog.ts";
 import * as presenterBindings from "./mcp-presenter-bindings.ts";
 import type {
@@ -57,8 +57,8 @@ export class McpPresenterAuthority {
 	}
 
 	/** Called only after the protected bootstrap has pinned and authenticated its launch principal. */
-	enroll(principal?: string) {
-		return presenterGrants.enroll(this.state, principal);
+	enroll(principal?: string, identity?: McpPresenterIdentity) {
+		return presenterGrants.enroll(this.state, principal, identity);
 	}
 
 	receive(sender: McpPresenterConnection, value: unknown): McpPresenterReply {
