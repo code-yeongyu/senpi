@@ -1,4 +1,5 @@
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
+import { serializeJsonLine } from "./jsonl.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
 import { SessionEventWriterConnections } from "./session-event-writer-connections.ts";
@@ -31,6 +32,33 @@ export abstract class SessionEventWriterPresenters
 
 	withdrawMcpPresenterControl(path: string): void {
 		if (this.presenterControlEndpoint === path) this.presenterControlEndpoint = undefined;
+	}
+
+	/** The listening account-enrolling control endpoint, if any (`mcp_presenter_control_info`, senpi#4249 R-1b d2). */
+	get mcpPresenterControlEndpoint(): string | undefined {
+		return this.presenterControlEndpoint;
+	}
+
+	/**
+	 * Writes the private reply to `request` straight to the current connection: never an event queue, snapshot,
+	 * mirror or replay. A failed write detaches that connection's presenter.
+	 */
+	writeMcpFormReply(requestId: string | undefined, reply: object): void {
+		const id = this.currentConnection();
+		const connection = id === undefined ? undefined : this.fanout.get(id)?.connection;
+		if (!connection) return;
+		try {
+			connection.writeRaw(
+				serializeJsonLine({
+					type: "mcp_form_reply",
+					...(requestId === undefined ? {} : { id: requestId }),
+					...reply,
+				}),
+			);
+		} catch {
+			const sender = id === undefined ? undefined : this.presenterConnections.get(id);
+			if (sender) this.presenterAuthority?.detach(sender);
+		}
 	}
 
 	/**

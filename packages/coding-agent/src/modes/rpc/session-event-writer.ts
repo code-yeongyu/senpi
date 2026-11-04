@@ -47,20 +47,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 				: sender && this.presenterAuthority
 					? this.presenterAuthority.receive(sender, value)
 					: { error: "presenter_not_authorized" };
-		const connection = id === undefined ? undefined : this.fanout.get(id)?.connection;
-		if (connection) {
-			try {
-				connection.writeRaw(
-					serializeJsonLine({
-						type: "mcp_form_reply",
-						...("id" in value && typeof value.id === "string" ? { id: value.id } : {}),
-						...reply,
-					}),
-				);
-			} catch {
-				if (sender) this.presenterAuthority?.detach(sender);
-			}
-		}
+		this.writeMcpFormReply("id" in value && typeof value.id === "string" ? value.id : undefined, reply);
 		return true;
 	}
 
