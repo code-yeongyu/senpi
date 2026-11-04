@@ -39,6 +39,7 @@ export const HOST_RECORD_SCHEMAS = {
 		observe: OptBool,
 	}),
 	open_session: command("open_session", {
+		retry: Opt(Type.Literal(true)),
 		attended: Opt(Type.Literal(false)),
 		spawnedBy: Opt(Type.Object({ parentSessionId: Id, rootSessionId: Id, taskId: Id })),
 		expectedHostInstance: OptId,
@@ -94,6 +95,7 @@ export const HOST_RECORD_SCHEMAS = {
 	get_subscription_limits: command("get_subscription_limits", { observe: OptBool }),
 	list_sessions: command("list_sessions", { include_workers: OptBool, observe: OptBool }),
 	subscribe_sessions: command("subscribe_sessions", {
+		retry: Opt(Type.Literal(true)),
 		sessions: Opt(Type.Union([Type.Literal("all"), Type.Object({ ids: Strings }), Type.Object({ childrenOf: Id })])),
 		include_workers: OptBool,
 		include_context: OptBool,
@@ -110,7 +112,12 @@ export const HOST_RECORD_SCHEMAS = {
 		}),
 	}),
 	warm: command("warm", { cwd: OptPath, kind: Opt(SessionKind), context: Opt(SessionContext) }),
-	attach_session: command("attach_session", { sessionId: Id, durableSessionId: Id, expectedHostInstance: OptId }),
+	attach_session: command("attach_session", {
+		sessionId: Id,
+		durableSessionId: Id,
+		expectedHostInstance: OptId,
+		retry: Opt(Type.Literal(true)),
+	}),
 	release_attachment: command("release_attachment", { sessionId: Id }),
 	reclaim_session: command("reclaim_session", {
 		sessionPath: PathStr,
