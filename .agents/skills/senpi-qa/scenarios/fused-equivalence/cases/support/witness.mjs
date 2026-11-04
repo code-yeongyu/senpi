@@ -53,9 +53,9 @@ export function witnessMatches(witness, requested) {
 	return witness.toolCalls === 0 || witness.source === "sink";
 }
 
-/** The pipeline a `--pipeline` request must be witnessed as: `default` is legacy until the default flips (S21a). */
+/** The pipeline a `--pipeline` request must be witnessed as: `default` is prepared since S21a. */
 export function expectedWitness(requested) {
-	if (requested === "legacy" || requested === "default") return "legacy";
-	if (requested === "prepared") return "prepared";
+	if (requested === "legacy") return "legacy";
+	if (requested === "prepared" || requested === "default") return "prepared";
 	throw new Error(`--pipeline must be legacy, prepared or default, got ${JSON.stringify(requested)}`);
 }
