@@ -1,8 +1,8 @@
-import type { Agent } from "../../agent.ts";
-import type { AgentToolCallOutcome } from "../../types.ts";
+import type { AgentToolCallOutcome, BatchStoreFactory } from "../../types.ts";
 import type { ToolHost } from "../tool-host.ts";
 import { createToolResultMessage, emitToolResultMessage, shouldTerminateToolBatch } from "../tool-outcome-events.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import type { PreparationSource } from "./executor-pipeline.ts";
 import { runPreparedBatch } from "./pipeline-prepared-batch.ts";
 
 /**
@@ -10,7 +10,7 @@ import { runPreparedBatch } from "./pipeline-prepared-batch.ts";
  * and the prepared executor in this process, with today's events, result messages and source order. A batch the loop
  * runs sequentially runs as consecutive one-call batches, so each call is prepared after the previous one finished.
  */
-export function createPreparedToolHost(agent: Agent): ToolHost {
+export function createPreparedToolHost(source: PreparationSource, openStore: BatchStoreFactory): ToolHost {
 	return {
 		async execute(call, options) {
 			const { emit, signal, recordWitness, local } = options;
@@ -23,7 +23,8 @@ export function createPreparedToolHost(agent: Agent): ToolHost {
 			}
 			const batch = (calls: typeof call.calls) =>
 				runPreparedBatch({
-					agent,
+					source,
+					openStore,
 					calls,
 					scope: call.scope,
 					context: local.context,

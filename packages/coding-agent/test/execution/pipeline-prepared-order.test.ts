@@ -5,6 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { openMemoryBatchStore } from "../../../agent/src/execution/prepared/memory-batch-store.ts";
 import { createPreparedToolHost } from "../../../agent/src/execution/prepared/pipeline-prepared.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 
@@ -47,7 +48,8 @@ async function order(
 	const harness = await createHarness({ tools: [echo] });
 	harnesses.push(harness);
 	if (sequential) harness.agent.toolExecution = "sequential";
-	harness.agent.toolHost = pipeline === "prepared" ? createPreparedToolHost(harness.agent) : undefined;
+	if (pipeline === "legacy") harness.agent.executionPipeline = "legacy";
+	else harness.agent.toolHost = createPreparedToolHost(harness.agent, openMemoryBatchStore);
 	harness.setResponses([
 		fauxAssistantMessage(
 			calls.map((name, index) => ({ ...fauxToolCall(name, { n: index }), id: `call-${index}` })),

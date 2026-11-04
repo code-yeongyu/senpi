@@ -1,8 +1,13 @@
-import type { Agent } from "../../agent.ts";
 import { createAdmissionLine } from "../../durable/store-admission.ts";
-import { createMemoryStoreMedium, openMemoryStore } from "../../durable/store-memory.ts";
 import { resolveToolNameAlias, withToolNameCorrection } from "../../tool-name-alias.ts";
-import type { AgentContext, AgentEvent, AgentTool, AgentToolCall, AgentToolCallOutcome } from "../../types.ts";
+import type {
+	AgentContext,
+	AgentEvent,
+	AgentTool,
+	AgentToolCall,
+	AgentToolCallOutcome,
+	BatchStoreFactory,
+} from "../../types.ts";
 import type { BatchExecutor, BatchPlan } from "../coordinator-types.ts";
 import { createBatchCoordinator } from "../coordinator.ts";
 import { createExecutionLedger } from "../ledger.ts";
@@ -10,7 +15,7 @@ import { createErrorToolResult, emitToolExecutionEnd, emitToolExecutionUpdate } 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createPreparedExecutor } from "./executor.ts";
 import { toStoreValue } from "./executor-freeze.ts";
-import { agentPreparationPipeline } from "./executor-pipeline.ts";
+import { agentPreparationPipeline, type PreparationSource } from "./executor-pipeline.ts";
 
 const ISSUER = "loop";
 const EXECUTOR = "local";
@@ -22,13 +27,14 @@ const NO_WORKSPACE = "in-process";
 type Emit = (event: AgentEvent) => Promise<void> | void;
 
 export interface PreparedBatchRequest {
-	readonly agent: Agent;
+	readonly source: PreparationSource;
 	readonly calls: readonly AgentToolCall[];
 	readonly scope: { readonly id: string; readonly root: string };
 	readonly context: AgentContext;
 	readonly assistantMessage: AssistantMessage;
 	readonly emit: Emit;
 	readonly signal?: AbortSignal;
+	readonly openStore: BatchStoreFactory;
 }
 
 /** The scheduler's sequential test, decided before preparation: exact name, then the alias rule; an unresolved name runs in parallel. */
@@ -50,12 +56,11 @@ function isSequential(context: AgentContext, name: string): boolean {
  * its own in-memory ledger, because a call's command ID is the model's call ID, which providers may reuse across turns.
  */
 export async function runPreparedBatch(request: PreparedBatchRequest): Promise<AgentToolCallOutcome[]> {
-	const { agent, calls, context, assistantMessage, emit, signal } = request;
-	const medium = createMemoryStoreMedium();
-	const store = openMemoryStore(medium);
+	const { source, calls, context, assistantMessage, emit, signal } = request;
+	const store = request.openStore();
 	await store.claim(0, 1);
 	const admission = createAdmissionLine();
-	const base = agentPreparationPipeline(agent);
+	const base = agentPreparationPipeline(source);
 	const resolved = new Map<string, AgentTool | undefined>();
 	const prepared = createPreparedExecutor({
 		ledger: createExecutionLedger({ store, epoch: 1, admission }),

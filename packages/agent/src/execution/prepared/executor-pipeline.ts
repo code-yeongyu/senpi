@@ -1,4 +1,4 @@
-import type { Agent } from "../../agent.ts";
+import type { AgentLoopConfig } from "../../types.ts";
 import { resolveToolNameAlias } from "../../tool-name-alias.ts";
 import type { PreparationPipeline } from "./executor-types.ts";
 
@@ -7,7 +7,13 @@ import type { PreparationPipeline } from "./executor-types.ts";
  * its `beforeToolCall` / `afterToolCall` (the session's `tool_call` and `tool_result` chains) and its removed-tool
  * hints. Building this pipeline installs nothing on the agent.
  */
-export function agentPreparationPipeline(agent: Agent): PreparationPipeline {
+/** What preparation reads from an agent or a loop config, at call time. */
+export type PreparationSource = Pick<
+	AgentLoopConfig,
+	"resolveUnknownToolCall" | "beforeToolCall" | "afterToolCall" | "removedToolHints"
+>;
+
+export function agentPreparationPipeline(agent: PreparationSource): PreparationPipeline {
 	return {
 		resolve: async (call, context) => {
 			const tools = context.tools ?? [];

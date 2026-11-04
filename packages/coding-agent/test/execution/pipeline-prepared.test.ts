@@ -1,7 +1,7 @@
 // S18b (brain/hand split, R10.c projection): the prepared pipeline (batch coordinator + prepared executor behind the
 // ToolHost seam) gives a session exactly the events and tool results today's scheduler gives, and its receipt says
 // `prepared` for every call. Each case runs the same faux turn on both pipelines and compares them.
-import { type AgentTool, createPreparedToolHost } from "@earendil-works/pi-agent-core";
+import { type AgentTool, createPreparedToolHost, openMemoryBatchStore } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -51,7 +51,8 @@ async function turn(
 	harness.agent.onExecutionPipeline = (witness) => {
 		receipts.push(`${witness.pipeline}:${witness.toolCallId}`);
 	};
-	harness.agent.toolHost = pipeline === "prepared" ? createPreparedToolHost(harness.agent) : undefined;
+	if (pipeline === "legacy") harness.agent.executionPipeline = "legacy";
+	else harness.agent.toolHost = createPreparedToolHost(harness.agent, openMemoryBatchStore);
 	harness.setResponses([
 		fauxAssistantMessage(
 			calls.map(([name, args], index) => ({

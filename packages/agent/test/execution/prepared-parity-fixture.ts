@@ -1,5 +1,5 @@
-// S36 (senpi#5728): one agent turn, run on the loop's own scheduler or on the prepared pipeline, reduced to what a
-// session observes: start order, each call's own events, the result messages and whether the loop asked again.
+// S36 (senpi#5728): one agent turn, run on the loop's own scheduler or on its default (the prepared pipeline), reduced
+// to what a session observes: start order, each call's own events, the result messages and whether the loop asked again.
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
@@ -7,8 +7,7 @@ import {
 	type Model,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { Agent } from "../../src/agent.ts";
-import { createPreparedToolHost } from "../../src/execution/prepared/pipeline-prepared.ts";
+import { Agent } from "../../src/index.ts";
 import type { AgentEvent, AgentTool, AgentToolCall } from "../../src/types.ts";
 
 export type Pipeline = "legacy" | "prepared";
@@ -26,7 +25,7 @@ export interface Scenario {
 	readonly expected: Observation;
 }
 
-const model: Model<"openai-completions"> = {
+export const model: Model<"openai-completions"> = {
 	id: "parity",
 	name: "parity",
 	api: "openai-completions",
@@ -39,7 +38,7 @@ const model: Model<"openai-completions"> = {
 	maxTokens: 1024,
 };
 
-function reply(content: AssistantMessage["content"]) {
+export function reply(content: AssistantMessage["content"]) {
 	const stopReason = content.some((item) => item.type === "toolCall") ? "toolUse" : "stop";
 	const message: AssistantMessage = {
 		role: "assistant",
@@ -111,7 +110,7 @@ export async function observe(pipeline: Pipeline, scenario: Scenario): Promise<O
 		streamFn: () => reply(turns++ === 0 ? [...scenario.calls] : [{ type: "text", text: "done" }]),
 	});
 	scenario.setup?.(agent);
-	if (pipeline === "prepared") agent.toolHost = createPreparedToolHost(agent);
+	if (pipeline === "legacy") agent.executionPipeline = "legacy";
 	const starts: string[] = [];
 	const calls: Record<string, string[]> = {};
 	const push = (id: string, step: string) => {

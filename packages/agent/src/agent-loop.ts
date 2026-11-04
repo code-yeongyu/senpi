@@ -42,7 +42,8 @@ import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiveness } from "./stream-keepalive.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
 import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
-import type { ToolHost } from "./execution/tool-host.ts";
+import { createPreparedToolHost } from "./execution/prepared/pipeline-prepared.ts";
+import { BatchStoreMissingError, type ToolHost } from "./execution/tool-host.ts";
 import {
 	createErrorToolResult,
 	createToolResultMessage,
@@ -1210,36 +1211,7 @@ async function executeToolCalls(
 	const toolCalls = assistantMessage.content.filter(
 		(c): c is AgentToolCall => c.type === "toolCall" && !isCursorExecResolved(c as CursorExecResolvedCarrier),
 	);
-	const host: ToolHost = config.toolHost ?? {
-		execute: async (call, options) => {
-			// Only yield when a witness sink is configured and returns a promise: an unconditional `await` adds a
-			// microtask per call and reorders lifecycle vs message events against today's fused path (EQ E03).
-			const recordWitness = options.recordWitness;
-			if (recordWitness) {
-				for (const raw of call.calls) {
-					const pending = recordWitness({ pipeline: "legacy", toolCallId: raw.id });
-					if (pending) await pending;
-				}
-			}
-			return call.mode === "sequential"
-				? executeToolCallsSequential(
-						currentContext,
-						assistantMessage,
-						toolCalls,
-						config,
-						options.signal,
-						options.emit,
-					)
-				: executeToolCallsParallel(
-						currentContext,
-						assistantMessage,
-						toolCalls,
-						config,
-						options.signal,
-						options.emit,
-					);
-		},
-	};
+	const host: ToolHost = config.toolHost ?? defaultToolHost();
 	return host.execute(
 		{
 			scope: config.executionScope ?? { id: crypto.randomUUID(), root: "" },
@@ -1253,6 +1225,45 @@ async function executeToolCalls(
 			local: { context: currentContext, assistantMessage },
 		},
 	);
+
+	function defaultToolHost(): ToolHost {
+		if (config.executionPipeline === "legacy") return legacyToolHost();
+		if (config.batchStoreFactory === undefined) throw new BatchStoreMissingError();
+		return createPreparedToolHost(config, config.batchStoreFactory);
+	}
+
+	function legacyToolHost(): ToolHost {
+		return {
+			execute: async (call, options) => {
+				// Only yield when a witness sink is configured and returns a promise: an unconditional `await` adds a
+				// microtask per call and reorders lifecycle vs message events against today's fused path (EQ E03).
+				const recordWitness = options.recordWitness;
+				if (recordWitness) {
+					for (const raw of call.calls) {
+						const pending = recordWitness({ pipeline: "legacy", toolCallId: raw.id });
+						if (pending) await pending;
+					}
+				}
+				return call.mode === "sequential"
+					? executeToolCallsSequential(
+							currentContext,
+							assistantMessage,
+							toolCalls,
+							config,
+							options.signal,
+							options.emit,
+						)
+					: executeToolCallsParallel(
+							currentContext,
+							assistantMessage,
+							toolCalls,
+							config,
+							options.signal,
+							options.emit,
+						);
+			},
+		};
+	}
 }
 
 type ExecutedToolCallBatch = {

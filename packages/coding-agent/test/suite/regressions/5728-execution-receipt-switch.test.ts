@@ -48,8 +48,8 @@ it("writes no receipt when the switch is unset", async () => {
 	expect(await receiptsFor(undefined)).toEqual([]);
 });
 
-it("writes one prepared receipt per call when the switch is on", async () => {
-	expect(await receiptsFor("prepared")).toEqual([
+it.each(["default", "prepared"])("writes one prepared receipt per call when the switch is %s", async (value) => {
+	expect(await receiptsFor(value)).toEqual([
 		{ pipeline: "prepared", toolCallId: "call-a" },
 		{ pipeline: "prepared", toolCallId: "call-b" },
 	]);

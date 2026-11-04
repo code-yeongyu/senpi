@@ -18,7 +18,14 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
+import type { DurableStore } from "./durable/store.ts";
 import type { ExecutionPipelineWitness, ExecutionScope, ToolHost } from "./execution/tool-host.ts";
+
+/**
+ * Opens a new, empty store for one tool batch, which the batch claims at epoch 1. A batch never reuses another's
+ * store: a call's command ID is the model's call ID, and providers reuse those across turns.
+ */
+export type BatchStoreFactory = () => DurableStore;
 
 export type {
 	ExecutionPipelineWitness,
@@ -388,8 +395,16 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Default: "parallel"
 	 */
 	toolExecution?: ToolExecutionMode;
-	/** Unprepared batch boundary. Omitted selects the existing in-process legacy scheduler. */
+	/** Unprepared batch boundary. Omitted selects the prepared pipeline (batch coordinator + prepared executor) in this process. */
 	toolHost?: ToolHost;
+	/** Test and QA rollback until S36 removes it: `legacy` runs the loop's own scheduler when no `toolHost` is set. */
+	executionPipeline?: "legacy" | "prepared";
+	/**
+	 * Opens each batch's execution ledger for the default (prepared) pipeline. The loop builds no store itself: with no
+	 * `toolHost` and no factory, a tool batch fails closed with `BatchStoreMissingError`. The package entry's `Agent` and
+	 * `agentLoop` default it to `openMemoryBatchStore`.
+	 */
+	batchStoreFactory?: BatchStoreFactory;
 	executionScope?: ExecutionScope;
 	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => Promise<void> | void;
 

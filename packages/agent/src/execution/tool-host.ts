@@ -37,6 +37,16 @@ export interface ToolHostOptions {
 	readonly local?: { readonly context: AgentContext; readonly assistantMessage: AssistantMessage };
 }
 
+/** The loop had a tool batch to run on its default pipeline but no `batchStoreFactory`; it refuses instead of guessing a store. */
+export class BatchStoreMissingError extends Error {
+	readonly code = "batch_store_missing";
+
+	constructor() {
+		super("agent loop: no batchStoreFactory configured for the prepared pipeline; pass one (or a toolHost)");
+		this.name = "BatchStoreMissingError";
+	}
+}
+
 export interface ToolHost {
 	execute(call: ToolHostCall, options: ToolHostOptions): Promise<ToolHostResult>;
 }
