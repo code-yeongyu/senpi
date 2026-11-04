@@ -26,13 +26,13 @@ function makeApiMock(): ApiMock {
 }
 
 describe("bashTimeoutExtension factory wiring", () => {
-	it("registers only the tool_call handler; the terminal section states the timeout facts (senpi#5335)", () => {
+	it("registers tool_call and the full-sections-only before_agent_start handler (senpi#5665)", () => {
 		const { api, handlers } = makeApiMock();
 
 		bashTimeoutExtension(api as never);
 
 		expect(handlers.tool_call?.length).toBe(1);
-		expect(handlers.before_agent_start).toBeUndefined();
+		expect(handlers.before_agent_start?.length).toBe(1);
 	});
 
 	it("mutates bash input.timeout in place when undefined", async () => {

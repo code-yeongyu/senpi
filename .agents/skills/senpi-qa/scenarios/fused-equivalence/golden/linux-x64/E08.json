@@ -4074,42 +4074,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "eval",
-        "toolCallId": "<id:6>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -4205,6 +4169,42 @@
          "endedAt": "<ts:timing.endedAt:2>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "eval",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
       }
      },
      {
@@ -7582,7 +7582,8 @@
          "language": "js",
          "summary": "G4 detached nested calls",
          "code": "await fetch(process.env.EQ_BARRIER_ORIGIN + \"/__barrier/g4-detach\").then((r) => r.text());\nconst reply = await completion(\"G4 completion prompt\");\nconst answer = await agent(\"G4 agent prompt\");\nconst handle = await agent({ prompt: \"G4 handle prompt\", handle: true });\nprint(JSON.stringify({ reply, answer, handle }));"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -7619,7 +7620,7 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:3>",
+      "id": "<uuid:4>",
       "key": "wake-source:senpi-codemode",
       "source": "senpi-codemode",
       "kind": "background",
@@ -7732,7 +7733,8 @@
       },
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -7832,7 +7834,7 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:3>",
+      "id": "<uuid:4>",
       "key": "wake-source:senpi-codemode",
       "source": "senpi-codemode",
       "kind": "background",
@@ -7899,8 +7901,8 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "open",
       "sessionId": "<uuid:1>"
@@ -7929,7 +7931,7 @@
        "children": 0,
        "background": [
         {
-         "source": "delivery:senpi-codemode:notification:<uuid:5>",
+         "source": "delivery:senpi-codemode:notification:<uuid:6>",
          "activeCount": 1
         },
         {
@@ -7961,11 +7963,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:6>",
+      "ticketId": "<uuid:7>",
       "sessionId": "<uuid:1>"
      },
      "id": "<id:20>",
@@ -7976,11 +7978,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:6>",
+      "ticketId": "<uuid:7>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -8025,14 +8027,14 @@
        "children": 0,
        "background": [
         {
-         "source": "delivery:senpi-codemode:notification:<uuid:5>",
+         "source": "delivery:senpi-codemode:notification:<uuid:6>",
          "activeCount": 1
         }
        ],
        "human": []
       },
       "holds": [],
-      "runId": "<uuid:7>",
+      "runId": "<uuid:8>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
@@ -8050,7 +8052,7 @@
      "content": "<system-reminder>Detached eval cell <id:9> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
      "display": false,
      "details": {
-      "ticketId": "<uuid:6>"
+      "ticketId": "<uuid:7>"
      },
      "id": "<id:24>",
      "parentId": "<id:23>",
@@ -8060,11 +8062,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "consumed",
-      "ticketId": "<uuid:6>",
+      "ticketId": "<uuid:7>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -8073,7 +8075,7 @@
        },
        "deliverAs": "steer"
       },
-      "runId": "<uuid:7>",
+      "runId": "<uuid:8>",
       "transcriptEntryId": "<id:24>",
       "sessionId": "<uuid:1>"
      },
@@ -8140,11 +8142,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "delivery:senpi-codemode:notification:<uuid:5>",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
       "state": "settled",
-      "ticketId": "<uuid:6>",
+      "ticketId": "<uuid:7>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -8153,7 +8155,7 @@
        },
        "deliverAs": "steer"
       },
-      "runId": "<uuid:7>",
+      "runId": "<uuid:8>",
       "transcriptEntryId": "<id:24>",
       "sessionId": "<uuid:1>"
      },
@@ -8183,7 +8185,7 @@
        "human": []
       },
       "holds": [],
-      "runId": "<uuid:7>",
+      "runId": "<uuid:8>",
       "completionId": "<uuid:1>:1",
       "completion": {
        "kind": "reply",

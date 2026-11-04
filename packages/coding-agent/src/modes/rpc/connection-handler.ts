@@ -4,6 +4,7 @@ import {
 	toolRuntimeCapabilities,
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
@@ -37,6 +38,7 @@ import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
+import { CredentialAccountNotFoundError, resetCredentialAccount } from "../../core/credential-account-reset.ts";
 import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
@@ -83,6 +85,7 @@ import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import {
+	ACCOUNT_RESET_CAPABILITY,
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
@@ -1162,8 +1165,11 @@ export function createRpcConnectionHandler(
 			);
 			return;
 		}
+		const timer = startOpenTimer("rebind");
 		await refresh;
+		timer.mark("bind_extensions");
 		await ClientAdmissions.forSession(session).ready;
+		timer.mark("client_admissions");
 		// The open-time readers above (receipt seals, extension starts) read the full history; an idle
 		// session lets it go now instead of holding it until its first turn settles (senpi#3519).
 		session.releaseSettledSessionMemory();
@@ -1283,6 +1289,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								PROVIDER_ACCOUNT_TEST_CAPABILITY,
+								ACCOUNT_RESET_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
@@ -2263,6 +2270,26 @@ export function createRpcConnectionHandler(
 						return error(id, "test_provider_account", testError.code);
 					throw testError;
 				}
+			}
+
+			case "account_reset": {
+				if (typeof command.provider !== "string" || typeof command.name !== "string") {
+					return error(id, "account_reset", "provider and name must be strings", "invalid_argument");
+				}
+				try {
+					await resetCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
+				} catch (resetError: unknown) {
+					if (resetError instanceof CredentialAccountNotFoundError) {
+						return error(
+							id,
+							"account_reset",
+							"Provider account not found. Refresh the account list.",
+							resetError.code,
+						);
+					}
+					return error(id, "account_reset", "Could not reset this account. Try again.", "account_reset_failed");
+				}
+				return success(id, "account_reset");
 			}
 
 			case "account_order": {

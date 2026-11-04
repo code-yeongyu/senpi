@@ -5,53 +5,12 @@
 // extension_ui_response. Connection B, a second client, then attaches to the same session (open_session with its
 // sessionPath); the second tool call asks, and B approves it. Both writes run (O5); both connections' event streams are
 // O6; a headless reopen reads the final state (O8).
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { spawnCli } from "../../../scripts/lib/common.mjs";
 import { RpcClient } from "../../../scripts/lib/rpc-client.mjs";
 import { HELD_TOOLS } from "./support/held.mjs";
+import { startMultiSessionHost } from "./support/multi-session-host.mjs";
 import { ALL_OBSERVABLES } from "./support/observables.mjs";
 
 const write = (id, path) => ({ id, name: "eq_write", args: { path, text: `${id}\n`, barrier: `open-${id}` } });
-
-function startHost(run) {
-	const socketDir = mkdtempSync(join(tmpdir(), "eqh-"));
-	const socket = join(socketDir, "h.sock");
-	const host = spawnCli(
-		[
-			"--mode",
-			"rpc",
-			"--multi-session",
-			"--listen",
-			socket,
-			"--session-runtime",
-			"in-process",
-			"--no-context-files",
-			...run.args,
-		],
-		{
-			env: run.env,
-			cwd: run.box.cwd,
-		},
-	);
-	run.cleanups.push(async () => {
-		if (host.exitCode === null && host.signalCode === null) {
-			const closed = new Promise((resolve) => host.once("close", resolve));
-			host.kill("SIGTERM");
-			await closed;
-		}
-		rmSync(socketDir, { recursive: true, force: true });
-	});
-	return new Promise((resolve, reject) => {
-		let stderr = "";
-		host.stderr.on("data", (chunk) => {
-			stderr += chunk.toString();
-			if (stderr.includes("senpi rpc listening on")) resolve(socket);
-		});
-		host.once("close", (code) => reject(new Error(`RPC host exited ${code}: ${stderr.slice(-400)}`)));
-	});
-}
 
 async function attach(run, socket, open) {
 	const client = new RpcClient({ env: run.env, cwd: run.box.cwd, attach: socket });
@@ -103,7 +62,7 @@ export default {
 	async drive(run) {
 		run.server.releaseBarrier("open-call_by_client");
 		run.server.releaseBarrier("open-call_by_other");
-		const socket = await startHost(run);
+		const socket = await startMultiSessionHost(run);
 		const a = await attach(run, socket, { cwd: run.box.cwd, permissionPreset: "ask" });
 		const idle = a.client.waitForEvent((e) => e.type === "agent_idle", { timeoutMs: 120_000 });
 		idle.catch(() => {});

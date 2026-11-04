@@ -1,3 +1,40 @@
+## 2026-11-03 - CI runs the machine-ops workspace tests (senpi#5592)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `--workspace packages/machine-ops` in the workspace test step, which runs the package's conformance suite (50 cases), its dependency-boundary test and its scope-registry tests.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- CI configuration is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the workspace list of the "Workspace tests (all but coding-agent)" step.
+
+## 2026-10-26 - Native prebuilds and the npm publish carry the socket-secret bridge (senpi#4312)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: Windows rows build `crates/senpi-socket-secret`, the win32-x64 row loads it and checks its ABI sentinel, and "Stage artifact" stages it at `native/socket-secret/prebuilds/<host>/` (three addons expected on Windows).
+- `.github/workflows/publish-npm.yml`: a publish-only step stages both Windows bridges into `packages/coding-agent` and fails when one is missing; the publish passes `--require-socket-secret-bridge=win32-x64,win32-arm64`.
+
+### Why
+
+- sisyphuslabs/omo-desktop-app#4199 section 7: native packaging failure of the bridge is a release blocker.
+
+### Why an extension could not handle it
+
+- CI and release workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- MEDIUM: the "Stage artifact" step of `native-prebuilds.yml` and the publish command line in `publish-npm.yml`.
+
 ## 2026-11-01 - Provision QEMU and a gondolin image store so EQ E29 runs in the Fused EQ job (senpi#5265)
 
 ### What changed

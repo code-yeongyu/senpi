@@ -46,6 +46,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 ## ANTI-PATTERNS
 
 - Expanding a bare selector beyond its vendor's `FIRST_PARTY_PROVIDERS` (resellers, gateways, cloud re-hosts, custom providers); only an explicit `provider/...` selector may route there. An unmapped vendor stays on the chain key's own provider.
+- Moving a session to another lane of its own vendor through a bare rung (subscription <-> API key, `google` <-> `google-vertex`): a bare rung the session's provider serves stays on that provider, and a same-vendor rung it does not serve adds nothing (senpi#5518). Only another vendor's model named in the chain reaches that vendor's first-party lanes.
 - Persisting cooldown or tried-selector state across sessions.
 - Two in-flight probes, or arming a second plan without superseding — `probe-scheduler.ts` owns exactly one plan per session.
 - Writing raw provider errors/headers to `fallback.log` — always go through `log.ts` scrubbing.

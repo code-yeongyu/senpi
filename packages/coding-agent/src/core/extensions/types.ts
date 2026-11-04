@@ -1142,6 +1142,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * prompt-cache prefix.
 	 */
 	promptGuidelines?: string[];
+	/**
+	 * Optional guideline bullets that replace `promptGuidelines` when the active prompt preset renders the full
+	 * (pre-diet) shared sections (senpi#5665). Omitted means `promptGuidelines` renders there too.
+	 */
+	fullPromptGuidelines?: string[];
 	/** Optional eval-kernel globals installed while this tool is active; see {@link KernelPreludeContribution}. */
 	kernelPrelude?: KernelPreludeContribution;
 	/**
@@ -3358,6 +3363,12 @@ export interface ProviderConfig {
 	 * used and blocked all of them (senpi#2081).
 	 */
 	ownsAccountSelection?: boolean;
+	/**
+	 * Capability flag: every request runs through a binary on this machine, under a login stored on this
+	 * machine (for example a CLI driven as a subprocess), so the provider can only be served where that
+	 * binary and login exist. Metadata only: nothing reads it yet, and selection and resolution ignore it.
+	 */
+	localOnly?: boolean;
 }
 
 interface ProviderModelConfigBase {
