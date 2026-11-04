@@ -110,7 +110,12 @@ const PRIVATE_FD_LEAVES = new Set([
 // importing only Node builtins and socket-ownership/socket-transport/utils/process-identity (the alias owner's start
 // time), all already in the graph. Measured before the alias owner record: 71 modules
 // (8 hop, 3 public auth, 4 private fd leaves), 3,972 source / 4,108 built bytes, 71 code lines.
-const ENDPOINT_BIND_LEAVES = new Set(["packages/coding-agent/dist/modes/rpc/host-socket-bind.js"]);
+// The published endpoint is bound elsewhere, so lsof finds its holder only by inode: socket-ownership's holder probe
+// falls back to socket-holders-by-identity (node:child_process and node:fs only). Measured: 2,250 source / 2,301 built
+// bytes, 36 code lines; nothing else entered the graph.
+const ENDPOINT_BIND_LEAVES = new Set(
+	["host-socket-bind", "socket-holders-by-identity"].map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`),
+);
 
 // senpi#4602: a coordinated start reports its phases on the dedicated startup pipe, which adds exactly these three
 // leaves. Measured at 73 modules (8 hop, 3 public auth, 4 private fd leaves): host-startup-beacon 3,839 source / 3,670

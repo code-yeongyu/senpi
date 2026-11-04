@@ -37,7 +37,8 @@ export async function socketHoldersByIdentity(identity: {
 	for (const line of listing.split("\n")) {
 		if (line.startsWith("p")) pid = Number(line.slice(1));
 		if (!line.startsWith("n/") || pid === undefined || !Number.isInteger(pid)) continue;
-		const name = line.slice(1);
+		// Linux lsof appends the socket type to the bound path: `n/run/x/s type=STREAM`.
+		const name = line.slice(1).replace(/ type=\S+.*$/, "");
 		let same = sameInode.get(name);
 		if (same === undefined) {
 			const entry = await stat(name).catch(() => undefined);
