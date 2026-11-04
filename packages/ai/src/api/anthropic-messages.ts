@@ -305,6 +305,8 @@ const DISABLED_THINKING_REJECTING_MODEL_MARKERS = [
 	"sonnet-5.5",
 	"haiku-5-5",
 	"haiku-5.5",
+	// Kimi K3.1 Pro (Kimi Code, verified live 400: "K3.1 Pro does not support disabled thinking mode"); K3 accepts it.
+	"k3.1-pro",
 ] as const;
 const UNSUPPORTED_NATIVE_COMPUTER_TOOL_MODEL_MARKERS = [
 	"opus-4-6",

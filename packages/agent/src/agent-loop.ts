@@ -10,12 +10,14 @@ import {
 	type AssistantRecord,
 	assistantRecords,
 	carryAssistantCapture,
+	clampThinkingLevel,
 	getAssistantCapture,
 	type Context,
 	type CursorExecResolvedCarrier,
 	createInitialSystemMessage,
 	EventStream,
 	getCurrentTools,
+	getSupportedThinkingLevels,
 	getToolStateChanges,
 	isCursorExecResolved,
 	isAssistantProgress,
@@ -477,6 +479,21 @@ async function runLoop(
 	await emit({ type: "agent_end", messages: newMessages });
 }
 
+/**
+ * The level a request is sent at. Thinking-off reaches a model whose ladder has no `off` (a thinking-only
+ * model such as Kimi K3.1 Pro) when a level is carried over from another model; that model rejects the
+ * request, so it is raised to the model's lowest supported level instead (omo#12316).
+ */
+function sendableReasoning(
+	model: AgentLoopConfig["model"],
+	reasoning: AgentLoopConfig["reasoning"],
+): AgentLoopConfig["reasoning"] {
+	if (reasoning !== undefined || !model.reasoning) return reasoning;
+	if (getSupportedThinkingLevels(model).includes("off")) return undefined;
+	const level = clampThinkingLevel(model, "off");
+	return level === "off" ? undefined : level;
+}
+
 /** Apply a `prepareNextTurn` or `prepareRequest` update to the loop config for this and later requests. */
 function applyLoopUpdate(config: AgentLoopConfig, update: AgentRequestUpdate): AgentLoopConfig {
 	return {
@@ -683,10 +700,12 @@ async function streamAssistantResponse(
 		const resolvedApiKey =
 			(config.getApiKey ? await preStream.run(config.getApiKey(config.model.provider)) : undefined) || config.apiKey;
 
+		const reasoning = sendableReasoning(config.model, config.reasoning);
 		responseTiming.requested();
 		const response = await preStream.run(
 			streamFunction(config.model, llmContext, {
 				...config,
+				reasoning,
 				streamKind: "main",
 				apiKey: resolvedApiKey,
 				signal: requestAbortController.signal,
@@ -716,7 +735,7 @@ async function streamAssistantResponse(
 			},
 		);
 		// Record the requested level, whichever stream function answered.
-		const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });
+		const result = async () => Object.assign(await response.result(), { thinkingLevel: reasoning ?? "off" });
 
 		// Without an internal listener the loop reads the public stream exactly as before: no records, no carriers.
 		const sink = config[internalProgressSink];
