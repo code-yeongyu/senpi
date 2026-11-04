@@ -27,7 +27,7 @@ import type {
 	InputEventResult,
 } from "../../src/core/extensions/types.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
-import { createLoopHookCall } from "../../src/modes/rpc/loopless-tool-handlers.ts";
+import { createLoopHookCall, LATE_PER_SESSION } from "../../src/modes/rpc/loopless-tool-handlers.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
@@ -440,6 +440,25 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		expect(captured?.signal.aborted).toBe(true);
 	});
 
+	it("holds late messages up to its cap, then drops the oldest and counts them, never throwing", async () => {
+		const call = createLoopHookCall();
+		let kept: ReturnType<typeof call.current>;
+		await call.run("loop-session-3", "/work", true, async () => {
+			kept = call.current();
+		});
+
+		for (let index = 0; index < LATE_PER_SESSION + 2; index++)
+			expect(() => kept?.sendMessage({ customType: "late", content: `m${index}`, display: false })).not.toThrow();
+		const next = await call.run("loop-session-3", "/work", true, async (effects) => ({
+			sent: effects.sent.map((entry) => entry.message.content),
+			dropped: effects.dropped,
+		}));
+
+		expect(next.dropped).toBe(2);
+		expect(next.sent).toHaveLength(LATE_PER_SESSION);
+		expect(next.sent[0]).toBe("m2");
+	});
+
 	it("is not visible to work that runs outside the call", async () => {
 		const call = createLoopHookCall();
 		const outside = Promise.withResolvers<ReturnType<typeof call.current>>();
@@ -448,6 +467,57 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		queueMicrotask(() => outside.resolve(call.current()));
 
 		expect(await outside.promise).toBeUndefined();
+	});
+});
+
+describe("what a handler's kept ctx and pi do after its call ended (S33 review)", () => {
+	/**
+	 * Every member a loop-hook call binds, used from a handler's async work after its call ended: each either rides
+	 * the same loop session's next reply or behaves as after any ended turn; none throws into the user's hook code. The
+	 * loop session's identity is the one deliberate refusal (option A: bound to that call only).
+	 */
+	const rows: { member: string; use: string; expect: "next-reply" | "value" | "refused" }[] = [
+		{
+			member: "pi.sendMessage",
+			use: 'pi.sendMessage({ customType: "late", content: "late message", display: true })',
+			expect: "next-reply",
+		},
+		{ member: "ctx.ui.notify", use: 'ctx.ui.notify("late notice", "info")', expect: "next-reply" },
+		{ member: "ctx.isIdle", use: "ctx.isIdle()", expect: "value" },
+		{ member: "ctx.signal", use: "ctx.signal.aborted", expect: "value" },
+		{ member: "ctx.sessionManager.getSessionId", use: "ctx.sessionManager.getSessionId()", expect: "refused" },
+	];
+
+	it.each(rows)("$member after the call ended: $expect", async (row) => {
+		const dirs = await handDirs("s33-late");
+		const extension = join(dirs.cwd, "..", "late-ext.ts");
+		writeFileSync(
+			extension,
+			`export default (pi) => { pi.on("input", (event, ctx) => { if (event.text !== "first") return; const gate = Promise.withResolvers(); globalThis.s33Fire = gate.resolve; globalThis.s33Late = gate.promise.then(() => { try { ${row.use}; return "value"; } catch (error) { return String(error).includes("has ended") ? "refused" : "threw: " + String(error); } }); }); };`,
+		);
+		const machine = createLooplessHand(handConfiguration(dirs, ["-e", extension]), { twoSidedHome: "hand" });
+		closers.push(() => void machine.close());
+		const input = (text: string) =>
+			machine.loopHooks("input", {
+				inputId: `late:${text}`,
+				text,
+				source: "interactive",
+				attribution: "user",
+				idle: true,
+				sessionId: "late-session",
+				scope: { id: "late-scope", root: dirs.cwd },
+			});
+
+		await input("first");
+		const late = globalThis as { s33Fire?: () => void; s33Late?: Promise<string> };
+		late.s33Fire?.();
+		const outcome = await late.s33Late;
+		const next = JSON.stringify(await input("second"));
+
+		if (row.expect === "next-reply") {
+			expect(outcome).toBe("value");
+			expect(next).toMatch(/late (message|notice)/);
+		} else expect(outcome).toBe(row.expect);
 	});
 });
 

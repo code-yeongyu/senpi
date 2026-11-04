@@ -105,7 +105,8 @@ export function extensionLoopHooks(
 				!isRecord(systemPromptOptions)
 			)
 				throw new Error("malformed before_agent_start payload");
-			// The loop's options, except `cwd`: the user's loop hooks see the workspace on this machine, as a local session would.
+			// The loop's options as the loop built them: only `cwd` is this machine's (its workspace); the rest (context files,
+			// skills, tools) describes the loop's machine. They are data for handlers to read; nothing here acts on them.
 			const options = { ...(systemPromptOptions as Partial<BuildSystemPromptOptions>), cwd };
 			return call.run(sessionId, cwd, idle, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
@@ -153,7 +154,15 @@ export interface SentLoopMessage {
 /** What a loop-hook call's handlers did beyond their result, which the loop does in turn. */
 export interface LoopHookEffects {
 	readonly sent: SentLoopMessage[];
-	readonly notices: { readonly message: string; readonly type?: Parameters<LoopHookCallFacts["notify"]>[1] }[];
+	readonly notices: LoopNotice[];
+	/** Late messages and notices dropped because the loop session already held {@link LATE_PER_SESSION}. */
+	dropped: number;
+}
+
+/** A notice a loop hook showed during its call, for the loop to show on its own UI. */
+export interface LoopNotice {
+	readonly message: string;
+	readonly type?: Parameters<LoopHookCallFacts["notify"]>[1];
 }
 
 async function dispatchLoopHook(
@@ -177,6 +186,7 @@ async function dispatchLoopHook(
 				...result,
 				...(sent.length > 0 ? { sent } : {}),
 				...(notices.length > 0 ? { notices } : {}),
+				...(effects.dropped > 0 ? { droppedLate: effects.dropped } : {}),
 				...(errors.length > 0 ? { errors } : {}),
 			}),
 		) as JsonValue;
@@ -208,12 +218,26 @@ export interface LoopHookCall {
 	): Promise<T>;
 }
 
-/** Messages sent after their call ended that one loop session can hold until its next reply. */
-const LATE_MESSAGES_PER_SESSION = 256;
+/**
+ * Messages and notices from a call's work after that call ended, which one loop session holds until its next reply
+ * (the loop-hook link has no hand-to-loop push). Past this many the oldest is dropped and counted in that reply:
+ * late work never throws into the user's hook code.
+ */
+export const LATE_PER_SESSION = 256;
 
 export function createLoopHookCall(): LoopHookCall {
 	const calls = new AsyncLocalStorage<{ readonly live: () => boolean; readonly facts: LoopHookCallFacts }>();
-	const late = new Map<string, SentLoopMessage[]>();
+	const late = new Map<string, LoopHookEffects>();
+	const holdLate = (sessionId: string, add: (held: LoopHookEffects) => void) => {
+		const held = late.get(sessionId) ?? { sent: [], notices: [], dropped: 0 };
+		add(held);
+		while (held.sent.length + held.notices.length > LATE_PER_SESSION) {
+			const oldest = held.sent.length > 0 ? held.sent : held.notices;
+			oldest.shift();
+			held.dropped++;
+		}
+		late.set(sessionId, held);
+	};
 	return {
 		current: () => {
 			const call = calls.getStore();
@@ -223,7 +247,7 @@ export function createLoopHookCall(): LoopHookCall {
 		async run(sessionId, cwd, idle, dispatch) {
 			let live = true;
 			const controller = new AbortController();
-			const effects: LoopHookEffects = { sent: late.get(sessionId) ?? [], notices: [] };
+			const effects: LoopHookEffects = late.get(sessionId) ?? { sent: [], notices: [], dropped: 0 };
 			late.delete(sessionId);
 			const facts: LoopHookCallFacts = Object.freeze({
 				sessionManager: readOnlySession(sessionId, cwd, () => live),
@@ -231,16 +255,13 @@ export function createLoopHookCall(): LoopHookCall {
 				isIdle: () => idle,
 				sendMessage: (message: SentLoopMessage["message"], options?: SentLoopMessage["options"]) => {
 					const entry = options === undefined ? { message } : { message, options };
-					if (live) return void effects.sent.push(entry);
-					const held = late.get(sessionId) ?? [];
-					if (held.length >= LATE_MESSAGES_PER_SESSION)
-						throw new Error(`loop session ${sessionId} already holds ${held.length} messages for its next reply`);
-					held.push(entry);
-					late.set(sessionId, held);
+					if (live) effects.sent.push(entry);
+					else holdLate(sessionId, (held) => held.sent.push(entry));
 				},
 				notify: (message: string, type?: Parameters<LoopHookCallFacts["notify"]>[1]) => {
-					if (!live) throw new Error("this loop-hook call has ended; it can no longer notify the loop");
-					effects.notices.push(type === undefined ? { message } : { message, type });
+					const entry = type === undefined ? { message } : { message, type };
+					if (live) effects.notices.push(entry);
+					else holdLate(sessionId, (held) => held.notices.push(entry));
 				},
 			});
 			try {
