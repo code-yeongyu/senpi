@@ -24,7 +24,7 @@ type StartupView = {
 	chatContainer: { render(width: number): string[] };
 	defaultEditor: CustomEditor;
 	editor: { getText(): string };
-	pendingUserInputs: readonly { text: string }[];
+	pendingUserInputs: readonly { text: string; unknownCommandAsText?: boolean }[];
 };
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -118,6 +118,30 @@ it("holds a submit made during startup binding until the restored history is ren
 	expect(after.filter((line) => line.includes("NEW-4826"))).toHaveLength(1);
 	expect(rowOf(after, "OLD-4826-SECOND")).toBeLessThan(rowOf(after, "NEW-4826"));
 	expect(view.pendingUserInputs.map((input) => input.text)).toEqual(["NEW-4826"]);
+});
+
+it("replays a leading-space command parked during startup as text, keeping its raw text (#5731)", async () => {
+	const bindEntered = Promise.withResolvers<void>();
+	const releaseBind = Promise.withResolvers<void>();
+	const { mode, view } = await startInteractive((pi) => {
+		pi.on("session_start", async () => {
+			bindEntered.resolve();
+			await releaseBind.promise;
+		});
+	}, []);
+
+	const init = mode.init();
+	try {
+		await bindEntered.promise;
+		await view.defaultEditor.onSubmit?.("/foo-4826", { rawText: " /foo-4826" });
+	} finally {
+		releaseBind.resolve();
+		await init;
+	}
+
+	expect(view.pendingUserInputs.map(({ text, unknownCommandAsText }) => ({ text, unknownCommandAsText }))).toEqual([
+		{ text: "/foo-4826", unknownCommandAsText: true },
+	]);
 });
 
 it("gives a custom editor installed by session_start the app handlers enabled after startup", async () => {
