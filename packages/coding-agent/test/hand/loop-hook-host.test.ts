@@ -18,7 +18,12 @@ import { parseHookConfig } from "../../src/core/extensions/builtin/hooks/index.t
 import { createHookTrustEntry, hookTrustId } from "../../src/core/extensions/builtin/hooks/trust.ts";
 import type { HookSourceMetadata, HookTrustEntry } from "../../src/core/extensions/builtin/hooks/types.ts";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
-import type { BeforeAgentStartEventResult, ExtensionFactory } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import type {
+	BeforeAgentStartEventResult,
+	ExtensionFactory,
+	InputEventResult,
+} from "../../src/core/extensions/types.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { createLoopHookCall } from "../../src/modes/rpc/loopless-tool-handlers.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
@@ -69,14 +74,17 @@ const hooksFactory = (): ExtensionFactory => {
 	return hooks.factory;
 };
 
-/** A trusted project UserPromptSubmit shell hook that leaves a mark in its own cwd and adds context. */
-function writePromptHook(cwd: string): void {
+/** A trusted project UserPromptSubmit shell hook that leaves a mark in its own cwd and adds context, or blocks the prompt. */
+function writePromptHook(cwd: string, block = false): void {
 	const senpiDir = join(cwd, ".senpi");
 	mkdirSync(senpiDir, { recursive: true });
 	const script = join(senpiDir, "prompt-hook.mjs");
 	writeFileSync(
 		script,
-		"import { appendFileSync } from 'node:fs'; process.stdin.resume(); process.stdin.on('end', () => { appendFileSync('hook-ran.txt', 'ran\\n'); process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'context from the user machine' } })); });",
+		"import { appendFileSync } from 'node:fs'; process.stdin.resume(); process.stdin.on('end', () => { appendFileSync('hook-ran.txt', 'ran\\n'); " +
+			(block
+				? "process.stderr.write('blocked on the user machine'); process.exit(2); });"
+				: "process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'context from the user machine' } })); });"),
 	);
 	const hookConfig = {
 		hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: `${process.execPath} ${script}` }] }] },
@@ -98,10 +106,47 @@ function writePromptHook(cwd: string): void {
 	writeFileSync(join(senpiDir, "hooks-state.json"), JSON.stringify({ version: 1, hooks }));
 }
 
-/** The loop host's side: its before_agent_start waits for the user's machine and applies what its hooks produced. */
+/** The hand's `input` reply, read as a session's input result plus what its hooks sent and reported. */
+function parseInputReply(
+	reply: unknown,
+): HandReply & ({ action: "continue" | "handled" } | { action: "transform"; text: string }) {
+	const value = reply as HandReply & { action?: unknown; text?: unknown };
+	if (value.action === "transform" && typeof value.text === "string")
+		return { ...value, action: "transform", text: value.text };
+	if (value.action === "continue" || value.action === "handled") return { ...value, action: value.action };
+	throw new Error(`unexpected input reply: ${JSON.stringify(reply)}`);
+}
+
+/** What the user's machine sends back for one loop-hook call: its result, plus what its hooks sent and reported. */
+interface HandReply {
+	sent?: {
+		message: Parameters<ExtensionAPI["sendMessage"]>[0];
+		options?: Parameters<ExtensionAPI["sendMessage"]>[1];
+	}[];
+	errors?: { extensionPath: string; error: string }[];
+}
+
+/**
+ * The loop host's side: its `input` and `before_agent_start` wait for the user's machine and apply what its hooks
+ * produced, through the loop session's own handling of those results, so the result is the same as a session's.
+ */
 const forwardLoopHooks =
 	(host: LoopHookHost, workspace: string, issued: () => void, errors: string[]): ExtensionFactory =>
 	(pi) => {
+		const deliver = (reply: HandReply) => {
+			for (const failed of reply.errors ?? []) errors.push(`${failed.extensionPath}: ${failed.error}`);
+			for (const sent of reply.sent ?? []) pi.sendMessage(sent.message, sent.options);
+		};
+		const scopeOf = (sessionId: string) => ({ id: `session-${sessionId}`, root: workspace });
+		pi.on("input", async (event, ctx): Promise<InputEventResult> => {
+			issued();
+			const sessionId = ctx.sessionManager.getSessionId();
+			const reply = parseInputReply(
+				await host.run("input", { text: event.text, sessionId, scope: scopeOf(sessionId) }),
+			);
+			deliver(reply);
+			return reply.action === "transform" ? { action: "transform", text: reply.text } : { action: reply.action };
+		});
 		pi.on("before_agent_start", async (event, ctx): Promise<BeforeAgentStartEventResult> => {
 			issued();
 			const sessionId = ctx.sessionManager.getSessionId();
@@ -109,13 +154,9 @@ const forwardLoopHooks =
 				prompt: event.prompt,
 				systemPrompt: event.systemPrompt,
 				sessionId,
-				scope: { id: `session-${sessionId}`, root: workspace },
-			})) as {
-				messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
-				systemPrompt?: string;
-				errors?: { extensionPath: string; error: string }[];
-			};
-			for (const failed of reply.errors ?? []) errors.push(`${failed.extensionPath}: ${failed.error}`);
+				scope: scopeOf(sessionId),
+			})) as HandReply & { messages?: NonNullable<BeforeAgentStartEventResult["message"]>[]; systemPrompt?: string };
+			deliver(reply);
 			const [message] = reply.messages ?? [];
 			return {
 				...(message === undefined ? {} : { message }),
@@ -125,10 +166,15 @@ const forwardLoopHooks =
 	};
 
 /** The user machine is a hand: its scope runtime (default builtins, so the hooks builtin) runs the loop hooks. */
-async function hostedSession() {
+async function hostedSession(options: { block?: boolean; userExtension?: string } = {}) {
 	const dirs = await handDirs("s33-c8");
-	writePromptHook(dirs.cwd);
-	const machine = createLooplessHand(handConfiguration(dirs), { twoSidedHome: "hand" });
+	writePromptHook(dirs.cwd, options.block);
+	const extension = join(dirs.cwd, "..", "user-ext.ts");
+	if (options.userExtension !== undefined) writeFileSync(extension, options.userExtension);
+	const machine = createLooplessHand(
+		handConfiguration(dirs, options.userExtension === undefined ? [] : ["-e", extension]),
+		{ twoSidedHome: "hand" },
+	);
 	const link = hookLink();
 	const hand = serveLoopHooks({
 		transport: link.hand,
@@ -161,6 +207,30 @@ describe("the user's loop hooks run on the user's machine when the loop runs els
 		expect(existsSync(join(session.loop.tempDir, "hook-ran.txt"))).toBe(false);
 		expect(session.loop.faux.getCallLog()).toHaveLength(1);
 		expect(session.requestText()).toContain("context from the user machine");
+	});
+
+	it("a blocking shell hook on the user machine stops the turn, with its notice in the transcript, as in a session", async () => {
+		const session = await hostedSession({ block: true });
+
+		await session.loop.session.prompt("ship it");
+
+		expect(session.hookErrors).toEqual([]);
+		expect(session.marks()).toBe("ran\n");
+		expect(session.loop.faux.getCallLog()).toHaveLength(0);
+		expect(JSON.stringify(session.loop.session.messages)).toContain('"decision":"block"');
+	});
+
+	it("an input transform on the user machine replaces the prompt before before_agent_start, as in a session", async () => {
+		const session = await hostedSession({
+			userExtension:
+				'export default (pi) => { pi.on("input", (event) => ({ action: "transform", text: event.text + " (rewritten on the user machine)" })); };',
+		});
+
+		await session.loop.session.prompt("ship it");
+
+		expect(session.hookErrors).toEqual([]);
+		expect(session.loop.faux.getCallLog()).toHaveLength(1);
+		expect(session.requestText()).toContain("ship it (rewritten on the user machine)");
 	});
 
 	it("user machine offline: no provider request and the turn waits; reconnecting resumes it exactly once", async () => {
@@ -234,5 +304,58 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		queueMicrotask(() => outside.resolve(call.current()));
 
 		expect(await outside.promise).toBeUndefined();
+	});
+});
+
+describe("a hand's loop-hook scopes (S33 review)", () => {
+	const hookPayload = (id: string, root: string) => ({
+		prompt: "p",
+		systemPrompt: "s",
+		sessionId: "loop-session",
+		scope: { id, root },
+	});
+
+	it("refuses a scope bound to another root, a disposed scope, and every call after close", async () => {
+		const dirs = await handDirs("s33-scope");
+		const machine = createLooplessHand(handConfiguration(dirs), { twoSidedHome: "hand" });
+		await machine.loopHooks("before_agent_start", hookPayload("a", dirs.cwd));
+
+		await expect(
+			machine.loopHooks("before_agent_start", hookPayload("a", join(dirs.cwd, "elsewhere"))),
+		).rejects.toThrow(/scope_binding_mismatch/);
+		const scope = await machine.openScope({ id: "b", root: dirs.cwd });
+		await scope.dispose();
+		await expect(machine.loopHooks("before_agent_start", hookPayload("b", dirs.cwd))).rejects.toThrow(/disposed/);
+		await machine.close();
+		await expect(machine.loopHooks("before_agent_start", hookPayload("a", dirs.cwd))).rejects.toThrow(/closed/);
+	});
+
+	it("reports only its own handlers' failures, not a concurrent tool call's", async () => {
+		const dirs = await handDirs("s33-attrib");
+		const extension = join(dirs.cwd, "..", "attrib-ext.ts");
+		writeFileSync(
+			extension,
+			'export default (pi) => { pi.on("before_agent_start", async () => { globalThis.s33Entered(); await globalThis.s33Gate; }); pi.on("tool_result", () => { throw new Error("tool_result failed outside the hook call"); }); };',
+		);
+		writeFileSync(join(dirs.cwd, "a.txt"), "x");
+		const entered = Promise.withResolvers<void>();
+		const gate = Promise.withResolvers<void>();
+		Object.assign(globalThis, { s33Entered: entered.resolve, s33Gate: gate.promise });
+		const machine = createLooplessHand(handConfiguration(dirs, ["-e", extension]), { twoSidedHome: "hand" });
+		closers.push(() => void machine.close());
+
+		const reply = machine.loopHooks("before_agent_start", hookPayload("s", dirs.cwd));
+		await entered.promise;
+		const scope = await machine.openScope({ id: "s", root: dirs.cwd });
+		await scope.run({
+			name: "read",
+			toolCallId: "t1",
+			arguments: { path: join(dirs.cwd, "a.txt") },
+			signal: new AbortController().signal,
+			nested: () => Promise.reject(new Error("this loop serves no planes")),
+		});
+		gate.resolve();
+
+		expect(await reply).not.toHaveProperty("errors");
 	});
 });

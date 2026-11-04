@@ -28,6 +28,8 @@ export interface LooplessHand {
 	runLoopHooks(scope: ExecutionScope, event: string, payload: JsonValue): Promise<JsonValue>;
 	/** `runLoopHooks` for `serveLoopHooks`: the scope comes from the payload's `scope` (`{ id, root }`); refused without one. */
 	readonly loopHooks: (event: string, payload: JsonValue) => Promise<JsonValue>;
+	/** Disposes every runtime this hand opened, including one only loop hooks opened; every later call is refused. */
+	close(): Promise<void>;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -54,20 +56,35 @@ export function createLooplessHand(
 		...local,
 		executeGrant: grantLooplessExecuteToRemoteExecutor(),
 	});
-	const runtimes = new Map<string, Promise<LooplessRuntime>>();
-	const runtimeOf = (scope: ExecutionScope): Promise<LooplessRuntime> => {
+	// One runtime per scope ID, bound to the root it was opened with. A scope's loop hooks need its extensions' state, so
+	// a loop-hook call never reopens a scope that was disposed (only the remote executor reopens one, with openScope).
+	const runtimes = new Map<string, { readonly root: string; readonly runtime: Promise<LooplessRuntime> }>();
+	const disposed = new Set<string>();
+	let closed = false;
+	const runtimeOf = (scope: ExecutionScope, reopen: boolean): Promise<LooplessRuntime> => {
+		if (closed) return Promise.reject(new Error("this hand is closed"));
 		if (!isAbsolute(scope.root))
 			return Promise.reject(new Error(`scope root must be an absolute path: ${JSON.stringify(scope.root)}`));
 		const known = runtimes.get(scope.id);
-		if (known !== undefined) return known;
+		if (known !== undefined)
+			return known.root === scope.root
+				? known.runtime
+				: Promise.reject(
+						new Error(`scope_binding_mismatch: scope ${JSON.stringify(scope.id)} is bound to another root`),
+					);
+		if (!reopen && disposed.has(scope.id))
+			return Promise.reject(
+				new Error(`scope ${JSON.stringify(scope.id)} was disposed; its extensions' loop-hook state is gone`),
+			);
+		disposed.delete(scope.id);
 		const opened = factory({ cwd: scope.root });
-		runtimes.set(scope.id, opened);
+		runtimes.set(scope.id, { root: scope.root, runtime: opened });
 		opened.catch(() => runtimes.delete(scope.id));
 		return opened;
 	};
 	return {
 		async openScope(scope): Promise<HandScope> {
-			const runtime = await runtimeOf(scope);
+			const runtime = await runtimeOf(scope, true);
 			return {
 				run: (call) =>
 					runtime.definitions.has(call.name)
@@ -76,12 +93,19 @@ export function createLooplessHand(
 				isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
 				dispose: () => {
 					runtimes.delete(scope.id);
+					disposed.add(scope.id);
 					return runtime.dispose();
 				},
 			};
 		},
-		runLoopHooks: async (scope, event, payload) => (await runtimeOf(scope)).runLoopHooks(event, payload),
-		loopHooks: async (event, payload) => (await runtimeOf(scopeOf(payload))).runLoopHooks(event, payload),
+		runLoopHooks: async (scope, event, payload) => (await runtimeOf(scope, false)).runLoopHooks(event, payload),
+		loopHooks: async (event, payload) => (await runtimeOf(scopeOf(payload), false)).runLoopHooks(event, payload),
+		async close() {
+			closed = true;
+			const open = [...runtimes.values()];
+			runtimes.clear();
+			await Promise.all(open.map(async ({ runtime }) => (await runtime).dispose()));
+		},
 	};
 }
 

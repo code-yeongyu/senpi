@@ -173,6 +173,8 @@ export interface LoopHookCallFacts {
 	readonly sessionManager: ReadonlySessionManager;
 	readonly signal: AbortSignal;
 	isIdle(): boolean;
+	/** `pi.sendMessage` during the call: the hand carries the message back to the loop, which sends it there. */
+	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
 }
 
 function loopSideUnbound(member: string): Error {
@@ -758,6 +760,12 @@ export class ExtensionRunner {
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		this.loopHookCallFn = facts.loopHookCall;
+		if (facts.loopHookCall !== undefined)
+			this.runtime.sendMessage = (message, options) => {
+				const call = this.loopHookCallFn?.();
+				if (call === undefined) throw loopSideUnbound("sendMessage");
+				call.sendMessage(message, options);
+			};
 		this.runtime.getActiveTools = () => this.getActiveTools();
 		this.runtime.setActiveTools = () => {};
 		if (facts.getLoadedHookSources === undefined) return;

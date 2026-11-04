@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { JsonValue } from "@earendil-works/pi-ai";
+import type { ImageContent, JsonValue } from "@earendil-works/pi-ai";
 import type { ExtensionRunner, LoopHookCallFacts } from "../../core/extensions/runner.ts";
 import type { ReadonlySessionManager } from "../../core/session-manager.ts";
 import { forwardToolEvents } from "../../core/extensions/two-sided-forwarding.ts";
@@ -57,8 +57,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * The loop hooks of this runtime's own extensions, on the same runner (so the same extension instances) that runs its
  * tool calls: a two-sided extension keeps one state across its loop and tool hooks. Only a hand that is its extensions'
  * home (`twoSidedHome: "hand"`) runs them; any other hand refuses, because its extensions' loop hooks run where the loop
- * runs. `before_agent_start` runs the `input` handlers first, as a session does before a turn (the hooks builtin's
- * UserPromptSubmit runs there), then `before_agent_start`; the combined result is returned as the session would apply it.
+ * runs. The loop forwards the two events a session runs before a turn, in a session's order: `input` (the hooks
+ * builtin's UserPromptSubmit runs there), whose result (`continue`, `handled`, or `transform` with the new text) the
+ * loop returns from its own `input` handler, so its session acts on it as on a local one; then `before_agent_start`
+ * with the prompt the session now has, whose combined result the loop returns from its `before_agent_start`. Each reply
+ * also carries the messages its handlers sent (`sent`, which the loop sends with the same options) and their failures
+ * (`errors`).
  */
 export function extensionLoopHooks(
 	runner: ExtensionRunner,
@@ -68,16 +72,30 @@ export function extensionLoopHooks(
 ): LooplessLoopHooks {
 	return async (event, payload) => {
 		if (twoSidedHome !== "hand") throw new Error("this hand is not the home of its extensions' loop hooks");
-		if (event !== "before_agent_start") throw new Error(`no loop hooks run on a hand for ${event}`);
-		if (
-			!isRecord(payload) ||
-			typeof payload.prompt !== "string" ||
-			typeof payload.systemPrompt !== "string" ||
-			typeof payload.sessionId !== "string"
-		)
-			throw new Error("malformed before_agent_start payload");
-		const { prompt, systemPrompt, sessionId } = payload;
-		return call.run(sessionId, cwd, () => dispatchBeforeAgentStart(runner, prompt, systemPrompt, cwd));
+		if (!isRecord(payload) || typeof payload.sessionId !== "string") throw new Error(`malformed ${event} payload`);
+		const { sessionId } = payload;
+		if (event === "input") {
+			const { text, images } = payload;
+			const imageList =
+				images === undefined ? undefined : Array.isArray(images) && images.every(isImage) ? images : null;
+			if (typeof text !== "string" || imageList === null) throw new Error("malformed input payload");
+			return call.run(sessionId, cwd, (sent) =>
+				dispatchLoopHook(runner, call, sent, () =>
+					runner.emitInput(text, imageList, "interactive", undefined, undefined, undefined, isUserLoopHook),
+				),
+			);
+		}
+		if (event === "before_agent_start") {
+			const { prompt, systemPrompt } = payload;
+			if (typeof prompt !== "string" || typeof systemPrompt !== "string")
+				throw new Error("malformed before_agent_start payload");
+			return call.run(sessionId, cwd, (sent) =>
+				dispatchLoopHook(runner, call, sent, () =>
+					runner.emitBeforeAgentStart(prompt, undefined, systemPrompt, { cwd }, { only: isUserLoopHook }),
+				),
+			);
+		}
+		throw new Error(`no loop hooks run on a hand for ${event}`);
 	};
 }
 
@@ -89,25 +107,37 @@ export function extensionLoopHooks(
 const isUserLoopHook = (extensionPath: string): boolean =>
 	!extensionPath.startsWith("<builtin:") || extensionPath === "<builtin:hooks>";
 
-async function dispatchBeforeAgentStart(
+const isImage = (value: unknown): value is ImageContent =>
+	isRecord(value) && value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string";
+
+/** A message a loop hook sent during its call, for the loop to send with the same options. */
+export interface SentLoopMessage {
+	readonly message: Parameters<LoopHookCallFacts["sendMessage"]>[0];
+	readonly options?: Parameters<LoopHookCallFacts["sendMessage"]>[1];
+}
+
+async function dispatchLoopHook(
 	runner: ExtensionRunner,
-	prompt: string,
-	systemPrompt: string,
-	cwd: string,
+	call: LoopHookCall,
+	sent: readonly SentLoopMessage[],
+	dispatch: () => Promise<object | undefined>,
 ): Promise<JsonValue> {
 	// A handler's failure is reported, not thrown, as in a session; here it goes back to the loop host with the result.
+	// The runner is shared with tool calls, so only failures inside this call's own async context are its own.
+	const own = call.current();
 	const errors: { extensionPath: string; event: string; error: string }[] = [];
-	const stop = runner.onError(({ extensionPath, event, error }) => void errors.push({ extensionPath, event, error }));
+	const stop = runner.onError(({ extensionPath, event, error }) => {
+		if (own !== undefined && call.current() === own) errors.push({ extensionPath, event, error });
+	});
 	try {
-		await runner.emitInput(prompt, undefined, "interactive", undefined, undefined, undefined, isUserLoopHook);
-		const combined = await runner.emitBeforeAgentStart(
-			prompt,
-			undefined,
-			systemPrompt,
-			{ cwd },
-			{ only: isUserLoopHook },
-		);
-		return JSON.parse(JSON.stringify({ ...combined, ...(errors.length > 0 ? { errors } : {}) })) as JsonValue;
+		const result = await dispatch();
+		return JSON.parse(
+			JSON.stringify({
+				...result,
+				...(sent.length > 0 ? { sent } : {}),
+				...(errors.length > 0 ? { errors } : {}),
+			}),
+		) as JsonValue;
 	} finally {
 		stop();
 	}
@@ -122,7 +152,8 @@ async function dispatchBeforeAgentStart(
 export interface LoopHookCall {
 	/** The facts of the loop-hook call in progress in this async context; none outside one. */
 	current(): LoopHookCallFacts | undefined;
-	run<T>(sessionId: string, cwd: string, dispatch: () => Promise<T>): Promise<T>;
+	/** Runs `dispatch` as the call; `sent` collects what its handlers send through `pi.sendMessage`. */
+	run<T>(sessionId: string, cwd: string, dispatch: (sent: readonly SentLoopMessage[]) => Promise<T>): Promise<T>;
 }
 
 export function createLoopHookCall(): LoopHookCall {
@@ -135,13 +166,18 @@ export function createLoopHookCall(): LoopHookCall {
 		async run(sessionId, cwd, dispatch) {
 			let live = true;
 			const controller = new AbortController();
+			const sent: SentLoopMessage[] = [];
 			const facts: LoopHookCallFacts = Object.freeze({
 				sessionManager: readOnlySession(sessionId, cwd, () => live),
 				signal: controller.signal,
 				isIdle: () => true,
+				sendMessage: (message: SentLoopMessage["message"], options?: SentLoopMessage["options"]) => {
+					if (!live) throw new Error("this loop-hook call has ended; it can no longer send messages");
+					sent.push(options === undefined ? { message } : { message, options });
+				},
 			});
 			try {
-				return await calls.run({ live: () => live, facts }, dispatch);
+				return await calls.run({ live: () => live, facts }, () => dispatch(sent));
 			} finally {
 				live = false;
 				controller.abort();
