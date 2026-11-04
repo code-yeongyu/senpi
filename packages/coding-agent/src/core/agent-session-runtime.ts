@@ -728,10 +728,11 @@ export class AgentSessionRuntime {
 	 * `processExit`: the caller exits the process right after, so quit-time handlers share the total quit budget
 	 * (senpi#3711). An RPC host closing one session leaves it unset and keeps only the per-handler limits.
 	 */
-	async dispose(options: { readonly processExit?: boolean } = {}): Promise<void> {
-		// End the active run first, as teardownCurrent() does. Otherwise `session_shutdown` tears extension
-		// resources down under a running tool and the loop sends that failure to the model in one more request.
-		await this.session.abort();
+	async dispose(options: { readonly processExit?: boolean; readonly endActiveRun?: boolean } = {}): Promise<void> {
+		// A person quitting ends the active run first, as teardownCurrent() does (senpi#5753). Otherwise
+		// `session_shutdown` tears extension resources down under a running tool and the loop sends that failure
+		// to the model in one more request. Host closes keep their own bounded abort handling.
+		if (options.endActiveRun === true) await this.session.abort();
 		await emitSessionShutdownEvent(
 			this.session.extensionRunner,
 			{ type: "session_shutdown", reason: "quit" },

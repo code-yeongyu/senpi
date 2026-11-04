@@ -86,7 +86,7 @@ it("quitting while a tool runs ends the run before shutdown and sends no further
 
 	const turn = h.session.prompt("start the slow work").catch(() => {});
 	await toolStarted.promise;
-	const disposed = runtime.dispose();
+	const disposed = runtime.dispose({ processExit: true, endActiveRun: true });
 	const outcome = await reservationStep(
 		"quit-turn-outcome",
 		Promise.race([turn.then(() => "settled" as const), requestAfterQuit.promise]),
@@ -134,7 +134,7 @@ it("quitting while a goal's turn runs stops the goal like an interrupt, so the n
 
 	const turn = h.session.prompt("work on the goal").catch(() => {});
 	await toolStarted.promise;
-	await runtime.dispose();
+	await runtime.dispose({ processExit: true, endActiveRun: true });
 	await reservationStep("goal-quit-turn-settled", turn);
 
 	expect((await readGoal(ref))?.status).toBe("blocked");
