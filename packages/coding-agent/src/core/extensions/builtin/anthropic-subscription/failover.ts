@@ -208,7 +208,12 @@ function blockedAccount(
 	model: string | undefined,
 ): AccountSlot {
 	if (classification.kind === "auth_error") {
-		return { ...account, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error", blockedAt: now };
+		const blocked = { blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error" as const, blockedAt: now };
+		// Only a claude CLI login can be marked for a new sign-in; an env token account has no login to expire.
+		if (classification.signInRequired !== undefined && account.store === "claude-cli") {
+			return { ...account, ...blocked, signInRequired: classification.signInRequired };
+		}
+		return { ...account, ...blocked };
 	}
 	const fallback = Math.min(MAX_RATE_LIMIT_BLOCK_MS, baseBlockMs * 2 ** attempt);
 	if (classification.modelFamily !== undefined && model !== undefined) {
@@ -343,6 +348,9 @@ async function persistBlock(
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
 						...(account.blockedAt === undefined ? {} : { blockedAt: account.blockedAt }),
+						...(account.store === "claude-cli" && account.signInRequired !== undefined
+							? { signInRequired: account.signInRequired }
+							: {}),
 						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),
 					}
 				: existing,

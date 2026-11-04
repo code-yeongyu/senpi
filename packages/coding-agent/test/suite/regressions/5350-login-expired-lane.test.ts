@@ -66,10 +66,21 @@ afterEach(() => {
 
 type Lane = { store: InMemoryCredentialStore; spawned: string[]; clock: { now: number }; probes: string[] };
 
+/** The result Claude Code returns when its own refresh is refused (reporter capture on senpi#5350, synthetic tokens). */
+const REFRESH_REFUSED = {
+	type: "result",
+	subtype: "success",
+	is_error: true,
+	api_error_status: null,
+	terminal_reason: "api_error",
+	result: "Failed to authenticate: OAuth session expired and could not be refreshed",
+} as unknown as SDKMessage;
+
 async function installLane(
 	slots: AccountSlot[],
 	status: () => Promise<ClaudeCliAuthStatus>,
 	failFor: (account: string, spawn: number) => boolean = () => false,
+	refusedFor: (account: string) => boolean = () => false,
 ): Promise<Lane> {
 	const agentDir = mkdtempSync(join(tmpdir(), "senpi-5350-lane-"));
 	dirs.push(agentDir);
@@ -93,9 +104,10 @@ async function installLane(
 		if (failFor(account, lane.spawned.length)) {
 			throw new Error("Failed to authenticate. API Error: 401 (authentication_failed)");
 		}
+		const refused = refusedFor(account);
 		return {
 			async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {
-				yield { type: "result", subtype: "success", result: "ok" } as SDKMessage;
+				yield refused ? REFRESH_REFUSED : ({ type: "result", subtype: "success", result: "ok" } as SDKMessage);
 			},
 			async interrupt() {},
 			close() {},
@@ -148,6 +160,19 @@ describe("senpi#5350 login_expired on the auth lane", () => {
 		expect(lane.spawned).toEqual([]);
 		expect(result.errorMessage).toContain(`${EXPIRED_TEXT}alpha.`);
 		expect(isSignInAgainError(result.errorMessage)).toBe(true);
+	});
+
+	it("RED (Q1 capture): a refused CLI refresh marks the account login_expired at once and a sibling serves", async () => {
+		const lane = await installLane(
+			[cliSlot("alice"), cliSlot("bravo")],
+			async () => ({ state: "unreadable" }),
+			() => false,
+			(account) => account === "alice",
+		);
+		const result = await runTurn();
+		expect(result.errorMessage).toBeUndefined();
+		expect(lane.spawned).toEqual(["alice", "bravo"]);
+		expect(await stored(lane, "alice")).toMatchObject({ signInRequired: "login_expired", blockReason: "auth_error" });
 	});
 
 	it("RED (auth_error path only, Q1 open): failed turn -> block -> due probe signed_out -> expired, no spawn", async () => {
