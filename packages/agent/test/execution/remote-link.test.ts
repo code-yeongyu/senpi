@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeviceFileError, FILE_CHANNEL } from "../../src/execution/device-files.ts";
 import { createRemoteDeviceFiles, HELLO_WAIT_MS } from "../../src/execution/remote-device-files.ts";
+import { decodePlaneMessage, encodePlaneMessage, type PlaneMessage } from "../../src/execution/plane.ts";
 import { createHandLink } from "../../src/execution/remote-link.ts";
 import {
 	decodeRemoteMessage,
@@ -105,5 +106,62 @@ describe("the session's hand link (senpi#5645, C1/C3)", () => {
 
 		expect(error).toBeInstanceOf(DeviceFileError);
 		expect(error).toMatchObject({ code: "interrupted", reason: "hand_restarted", uncertain: true });
+	});
+});
+
+// The model plane (S31) admits a nested request only while its parent CALL is live on its lane; a file operation is
+// never a parent, even while it is waiting.
+describe("nested requests through the hand link", () => {
+	function planeTransport() {
+		const planeSent: PlaneMessage[] = [];
+		let handler: FrameHandler | undefined;
+		const transport: Transport = {
+			send: async (_lane, payload) => {
+				const plane = decodePlaneMessage(payload);
+				if (plane !== undefined) planeSent.push(plane);
+			},
+			onFrame: (next) => {
+				handler = next;
+			},
+			inFlight: () => 0,
+			close: () => {},
+		};
+		const deliverPlane = async (lane: string, message: PlaneMessage): Promise<void> => {
+			await handler?.({ lane, payload: encodePlaneMessage(message) });
+		};
+		return { transport, planeSent, deliverPlane };
+	}
+	const request = (parent: string, childRequestId: string): PlaneMessage => ({
+		kind: "plane.request",
+		parent,
+		childRequestId,
+		plane: "probe",
+		body: {},
+	});
+
+	it("serves a nested request whose parent is a live call, and refuses one whose parent is a file operation", async () => {
+		const { transport, planeSent, deliverPlane } = planeTransport();
+		const served: string[] = [];
+		const handLink = createHandLink(transport, {
+			probe: async () => {
+				served.push("probe");
+				return "ok";
+			},
+		});
+		void handLink.dispatch({
+			kind: "file",
+			executionId: "file-1",
+			scope,
+			op: "stat",
+			arguments: { path: "a" },
+		} as never);
+		await deliverPlane(scope.id, request("file-1", "child-1"));
+		await vi.waitFor(() => expect(planeSent.map((message) => message.kind)).toEqual(["plane.refused"]));
+		expect(served).toEqual([]);
+
+		void handLink.dispatch(invoke);
+		await deliverPlane(scope.id, request(invoke.executionId, "child-2"));
+		await vi.waitFor(() => expect(served).toEqual(["probe"]));
+		handLink.close();
 	});
 });
