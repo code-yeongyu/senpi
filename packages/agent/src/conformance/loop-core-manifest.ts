@@ -23,6 +23,7 @@ export const LOOP_CORE_MODULES = [
 	"execution/canonical-digest.ts",
 	"execution/coordinator.ts",
 	"execution/coordinator-codec.ts",
+	"execution/coordinator-consent.ts",
 	"execution/coordinator-plan.ts",
 	"execution/coordinator-types.ts",
 	"execution/ledger.ts",
