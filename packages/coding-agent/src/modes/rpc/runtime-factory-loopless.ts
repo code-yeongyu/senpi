@@ -18,7 +18,7 @@ import {
 	looplessGrantRunsToolHandlers,
 } from "./loopless-execute-grant.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
-import { extensionToolHandlers } from "./loopless-tool-handlers.ts";
+import { extensionToolHandlers, type TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
 
 /**
@@ -82,6 +82,8 @@ export function createLooplessRuntimeFactory(
 		startupSettingsManager?: SettingsManager;
 		/** Required for `execute`; see `loopless-execute-grant.ts`. */
 		executeGrant?: LooplessExecuteGrant;
+		/** Where two-sided extensions run whole; see `extensionToolHandlers`. Default: with the loop. */
+		twoSidedHome?: TwoSidedHome;
 	} = {},
 ): LooplessRuntimeFactory {
 	const { parsed, agentDir, toolRuntime } = configuration;
@@ -176,7 +178,7 @@ export function createLooplessRuntimeFactory(
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
-			? extensionToolHandlers(runtime.extensionRunner)
+			? extensionToolHandlers(runtime.extensionRunner, local.twoSidedHome)
 			: undefined;
 		execute = (name, toolCallId, params, signal, nested) => {
 			if (!isLooplessExecuteGranted(local.executeGrant))

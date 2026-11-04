@@ -4,6 +4,7 @@ import type { InlineExtension } from "../../core/extensions/types.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { grantLooplessExecuteToRemoteExecutor } from "./loopless-execute-grant.ts";
+import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { createLooplessRuntimeFactory } from "./runtime-factory-loopless.ts";
 
 function notFound(name: string): AgentToolResult<unknown> {
@@ -18,7 +19,11 @@ function notFound(name: string): AgentToolResult<unknown> {
  */
 export function createLooplessHandScopes(
 	configuration: CliRuntimeConfiguration,
-	local: { extensionFactories?: InlineExtension[]; startupSettingsManager?: SettingsManager } = {},
+	local: {
+		extensionFactories?: InlineExtension[];
+		startupSettingsManager?: SettingsManager;
+		twoSidedHome?: TwoSidedHome;
+	} = {},
 ): OpenHandScope {
 	const factory = createLooplessRuntimeFactory(configuration, {
 		...local,
