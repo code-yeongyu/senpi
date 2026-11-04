@@ -4,7 +4,12 @@
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createHandEpochFence, createRemoteToolHost, HAND_SELF_SENDER } from "@earendil-works/pi-agent-core";
+import {
+	createHandEpochFence,
+	createRemoteToolHost,
+	DeviceFileError,
+	HAND_SELF_SENDER,
+} from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
@@ -77,5 +82,20 @@ describe("epoch floor on a hand (S35, R7.e)", () => {
 			true,
 			false,
 		]);
+
+		// Device file operations (S40) are fenced by the same floor: the new owner's write lands, the old owner's is
+		// refused by the hand's ownership policy and writes nothing.
+		const scope = { id: "scope-moving", root: dirs.cwd };
+		await newOwner.deviceFiles(scope).write(join(dirs.cwd, "new-file.txt"), new TextEncoder().encode("new"));
+		const refused = await oldOwner
+			.deviceFiles(scope)
+			.write(join(dirs.cwd, "old-file.txt"), new TextEncoder().encode("old"))
+			.then(
+				() => "written",
+				(error: unknown) => (error instanceof DeviceFileError ? error.code : String(error)),
+			);
+		expect([refused, existsSync(join(dirs.cwd, "new-file.txt")), existsSync(join(dirs.cwd, "old-file.txt"))]).toEqual(
+			["refused_by_policy", true, false],
+		);
 	});
 });
