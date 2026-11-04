@@ -1,3 +1,57 @@
+## 2026-10-30 - Pass an explicitly selected account to OAuth login (senpi#5046)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts` adds optional `LoginOptions.reauthorize` for the selected saved OAuth credential; omission means Add account.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` must distinguish a selected account from new registration without inferring one from the active provider credential.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` owns the options forwarded through Models to bundled provider login.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: LoginOptions.
+
+## 2026-10-30 - Record SIWC plan permission and explicit plan consent (senpi#5044)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: add optional `OAuthCredential.planUsageEnabled` and `LoginOptions.planUsageConsent` with the saved issued client ID.
+
+### Why
+
+- `packages/ai/src/auth/types.ts`: callers need a backward-compatible permission field and an explicit opt-in for later plan consent.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts`: shared login options and persisted credential metadata are core auth contracts.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: `OAuthCredential` and `LoginOptions` optional fields.
+
+## 2026-10-30 - Carry the validated SIWC identity on OAuth credentials (senpi#5012)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts` declares optional subject, display-only email, issuer, clientId, idToken, and scopes fields on `OAuthCredential`. Provider registration and the missing-scope rejection remain unchanged.
+
+### Why
+
+- `packages/ai/src/auth/types.ts`: the validated identity and retained ID token must survive storage so a later sign-in can send `id_token_hint` and match the same account.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` is the shared persisted credential contract read by every auth consumer.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: `OAuthCredential` optional fields.
+
 ## 2026-10-30 - Serialize rotating-token refresh per session (senpi#5003, PR #5024)
 
 ### What changed

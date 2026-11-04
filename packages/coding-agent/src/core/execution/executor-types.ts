@@ -78,6 +78,8 @@ export interface ReleaseRequest {
 	readonly actor: { readonly id: string };
 	readonly signal?: AbortSignal;
 	readonly onUpdate?: AgentToolUpdateCallback<unknown>;
+	/** Like `onUpdate`, built from the prepared call it updates (renamed and prepared as the body runs it); wins over it. */
+	readonly onUpdateFor?: (toolCall: AgentToolCall) => AgentToolUpdateCallback<unknown>;
 }
 
 export type ReleaseReply =
