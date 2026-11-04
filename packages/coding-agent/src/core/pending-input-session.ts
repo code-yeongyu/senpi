@@ -110,9 +110,14 @@ export class SessionPendingInputs {
 	 * inside the same gated step, so no drain, edit or removal can run between the two. A repeated submit of the
 	 * same input is answered from the record (`replayed`) and enqueues nothing.
 	 */
+	/**
+	 * `refusal` is read in the same synchronous step as `enqueue`: an input it refuses is never enqueued, its admission
+	 * is cancelled in the same transaction (`turn_conflict`), and the refusal is thrown.
+	 */
 	async admit(
 		input: IdentifiedInput,
 		enqueue: (queuedId: string) => void,
+		refusal?: () => Error | undefined,
 	): Promise<PendingInputOperationResult | undefined> {
 		const store = await this.store();
 		return store.transaction(async (tx) => {
@@ -126,8 +131,14 @@ export class SessionPendingInputs {
 			if (result?.outcome === "client_message_id_conflict")
 				throw new ClientMessageIdConflictError(input.clientMessageId);
 			const admitted = tx.current(input.clientMessageId);
-			if (result?.outcome === "admitted" && admitted !== undefined) enqueue(admitted.handle.queuedId);
-			return result;
+			if (result?.outcome !== "admitted" || admitted === undefined) return result;
+			const refused = refusal?.();
+			if (refused === undefined) {
+				enqueue(admitted.handle.queuedId);
+				return result;
+			}
+			await tx.apply(input.clientMessageId, { type: "cancel", cause: "turn_conflict", consumerFenced: true });
+			throw refused;
 		});
 	}
 

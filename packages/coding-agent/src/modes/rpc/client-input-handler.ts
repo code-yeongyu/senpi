@@ -2,6 +2,7 @@ import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
 import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
+import { TurnConflictError } from "../../core/turn-conflict.ts";
 import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import {
 	type ClientMessageAdmission,
@@ -18,19 +19,6 @@ import {
 	RPC_ERROR_UNKNOWN_COMMAND,
 } from "./rpc-types.ts";
 
-/** A steer named a turn that is not running (senpi#5776); `currentTurnId` is the running one, if any. */
-class TurnConflictError extends Error {
-	readonly currentTurnId: string | undefined;
-	constructor(currentTurnId: string | undefined) {
-		super(
-			currentTurnId === undefined
-				? "No turn is running, so this steer cannot reach the turn it names."
-				: `This steer names a turn that is not running; the running turn is ${currentTurnId}.`,
-		);
-		this.currentTurnId = currentTurnId;
-	}
-}
-
 /** The `prompt` refusal's `errorCode` for each reason a turn cannot start. */
 const MODEL_NOT_READY_ERROR_CODES = {
 	provider_credentials_missing: RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
@@ -41,6 +29,7 @@ const MODEL_NOT_READY_ERROR_CODES = {
 type PromptPathOptions = Pick<
 	PromptOptions,
 	| "streamingBehavior"
+	| "expectedTurnId"
 	| "thinkingLevel"
 	| "sessionTitlePrompt"
 	| "expandPromptTemplates"
@@ -123,12 +112,6 @@ export async function handleClientInput(
 				};
 				switch (command.type) {
 					case "prompt": {
-						if (command.streamingBehavior === "steer" && command.expectedTurnId !== undefined) {
-							const currentTurnId = session.isStreaming
-								? String(session.externalAdmission.turnEpoch)
-								: undefined;
-							if (command.expectedTurnId !== currentTurnId) throw new TurnConflictError(currentTurnId);
-						}
 						if (
 							command.thinkingLevel !== undefined &&
 							session.isStreaming &&
@@ -140,6 +123,8 @@ export async function handleClientInput(
 						}
 						return promptPath({
 							streamingBehavior: command.streamingBehavior,
+							// The session checks it where the steer enters the queue, in the same step (senpi#5776).
+							expectedTurnId: command.expectedTurnId,
 							thinkingLevel: command.thinkingLevel,
 							sessionTitlePrompt: command.sessionTitlePrompt,
 							expandPromptTemplates: command.expandPromptTemplates,

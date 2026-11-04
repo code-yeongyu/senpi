@@ -5,6 +5,7 @@ import type {
 	PendingInputDecision,
 	PendingInputEvent,
 	PendingInputFailure,
+	RemovalCause,
 	SubmitEvent,
 } from "./pending-input-types.ts";
 
@@ -109,7 +110,11 @@ function reduceLifecycle(current: PendingInput, event: LifecycleEvent): PendingI
 	}
 }
 
-function cancel(current: PendingInput, cause: "stop" | "child_cancel", consumerFenced: boolean): PendingInputDecision {
+function cancel(
+	current: PendingInput,
+	cause: Exclude<RemovalCause, "remove">,
+	consumerFenced: boolean,
+): PendingInputDecision {
 	const removable = current.phase === "queued" || (current.phase === "sending" && consumerFenced);
 	if (!removable) {
 		return current.phase === "sending"
