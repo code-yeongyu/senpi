@@ -1,4 +1,4 @@
-import type { AccountPrincipal, PresenterAccountRefusal } from "./mcp-presenter-account.ts";
+import type { AccountPrincipal, PresenterAccountAuthority, PresenterAccountRefusal } from "./mcp-presenter-account.ts";
 
 /**
  * Why an account principal is no longer current (D11 S3-4), or `undefined` while it is: the host must still be signed
@@ -6,12 +6,12 @@ import type { AccountPrincipal, PresenterAccountRefusal } from "./mcp-presenter-
  */
 export function accountLapse(
 	principal: Pick<AccountPrincipal, "acc" | "attestedUntil">,
-	hostAccount: string | undefined,
-	nowS: number,
+	authority: PresenterAccountAuthority | undefined,
 ): PresenterAccountRefusal | undefined {
+	const hostAccount = authority?.hostAccount();
 	if (hostAccount === undefined) return "presenter_account_unavailable";
 	if (hostAccount !== principal.acc) return "presenter_account_mismatch";
-	return nowS < principal.attestedUntil ? undefined : "attestation_expired";
+	return Date.now() / 1000 < principal.attestedUntil ? undefined : "attestation_expired";
 }
 
 /** One timer per account principal that revokes it at `attestedUntil`; each re-attestation re-arms it. */

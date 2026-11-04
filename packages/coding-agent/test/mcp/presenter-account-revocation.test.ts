@@ -89,7 +89,13 @@ it("T4: a same-account device enrolling while another holds a presented form can
 		claims: { dev: "device-b", dname: "Phone" },
 	});
 	expect(second.reply).toMatchObject({ type: "account_enrolled" });
-	const sync = { ...envelope, type: "mcp_form_sync", dialogId: undefined, dialogToken: undefined, formRevision: undefined };
+	const sync = {
+		...envelope,
+		type: "mcp_form_sync",
+		dialogId: undefined,
+		dialogToken: undefined,
+		formRevision: undefined,
+	};
 	expect(host.authority.receive(phone.connection, JSON.parse(JSON.stringify(sync)))).toEqual({
 		error: "presenter_not_authorized",
 	});
@@ -114,7 +120,10 @@ it("T4: a form already offered to one device is never delivered to the next hold
 	host.writer.detachConnectionFromSession("human", "session");
 	expect(await result).toMatchObject({ kind: "result", result: { action: "cancel" }, humanAdmission: false });
 	const phone = host.presenter("phone");
-	const next = await enrollAssignAcquire(host, installation(), { context: phone.context, claims: { dev: "device-b" } });
+	const next = await enrollAssignAcquire(host, installation(), {
+		context: phone.context,
+		claims: { dev: "device-b" },
+	});
 	expect(next.acquired).toMatchObject({ type: "mcp_presenter_acquired" });
 	const own = {
 		sessionId: "session",

@@ -82,7 +82,12 @@ it("T8: re-enrolling the same device and key fences the earlier assignment", asy
 	const first = await enrollAssignAcquire(host);
 	const peer = host.open();
 	const second = await enroll(peer, first.device, issuer.mint(first.device.publicKey));
-	const reacquire = await signedCommand(peer, second.reply?.principalId, first.device.privateKey, acquire(host.context));
+	const reacquire = await signedCommand(
+		peer,
+		second.reply?.principalId,
+		first.device.privateKey,
+		acquire(host.context),
+	);
 	expect(reacquire).toMatchObject({ type: "mcp_presenter_error", id: "acquire" });
 	expect(host.binding.capture()).toBeUndefined();
 });
@@ -92,6 +97,8 @@ it("T8: an account principal of one host incarnation cannot act on its successor
 	const adopted = await enrollAssignAcquire(first);
 	const successor = await accountHost();
 	const command = assign(successor);
-	expect(await signedCommand(successor.open(), adopted.principalId, adopted.device.privateKey, command)).toBeUndefined();
+	expect(
+		await signedCommand(successor.open(), adopted.principalId, adopted.device.privateKey, command),
+	).toBeUndefined();
 	expect(successor.binding.capture()).toBeUndefined();
 });

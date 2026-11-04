@@ -116,7 +116,7 @@ export class McpPresenterAccounts {
 		this.unsubscribe = authority?.onAccountChange(() => {
 			for (const principal of [...this.principals.values()])
 				if (principal.kind === "account")
-					this.revoke(principal, this.lapse(principal) ?? "presenter_account_mismatch");
+					this.revoke(principal, accountLapse(principal, this.authority) ?? "presenter_account_mismatch");
 		});
 	}
 
@@ -148,7 +148,7 @@ export class McpPresenterAccounts {
 	/** Revokes an account principal whose host account or attestation is no longer current; true when it did. */
 	lapsed(principal: AccountPrincipal | { readonly kind: "inherited" }): boolean {
 		if (principal.kind !== "account") return false;
-		const reason = this.lapse(principal);
+		const reason = accountLapse(principal, this.authority);
 		if (reason !== undefined) this.revoke(principal, reason);
 		return reason !== undefined;
 	}
@@ -268,10 +268,6 @@ export class McpPresenterAccounts {
 		if (attestation.acc !== hostAccount) return "presenter_account_mismatch";
 		const admitted = this.jtis.admit(attestation.jti, attestation.exp, nowS);
 		return admitted === "ok" ? attestation : admitted;
-	}
-
-	private lapse(principal: AccountPrincipal): PresenterAccountRefusal | undefined {
-		return accountLapse(principal, this.authority?.hostAccount(), Date.now() / 1000);
 	}
 
 	private expireAt(principal: AccountPrincipal): void {
