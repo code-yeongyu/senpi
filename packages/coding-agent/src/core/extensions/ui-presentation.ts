@@ -38,13 +38,25 @@ const PRESENTATIONS: ReadonlySet<string> = new Set(PRESENTATION_METHODS);
 const isPresentation = (method: unknown): method is PresentationMethod =>
 	typeof method === "string" && PRESENTATIONS.has(method);
 
-/** Plain data survives the plane; a component factory or a callback (a `setWidget` factory, an action) cannot. */
-function isPlainData(value: unknown): boolean {
-	if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") return false;
-	if (Array.isArray(value)) return value.every(isPlainData);
-	if (typeof value === "object" && value !== null) return Object.values(value).every(isPlainData);
-	return true;
+/**
+ * Whether a value crosses the plane unchanged: plain JSON data only. A component factory or a callback (a `setWidget`
+ * factory, an action), a cycle, a non-finite number, a nested `undefined` or a class instance (`Date`, `Map`) would
+ * arrive different from what fused presents, so it stays on the hand's own UI instead.
+ */
+function survivesPlane(value: unknown, path: Set<object> = new Set()): boolean {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (typeof value !== "object" || path.has(value)) return false;
+	const proto: unknown = Object.getPrototypeOf(value);
+	if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return false;
+	path.add(value);
+	const plain = (Array.isArray(value) ? value : Object.values(value)).every((item) => survivesPlane(item, path));
+	path.delete(value);
+	return plain;
 }
+
+const transportable = (args: readonly unknown[]): boolean =>
+	args.every((arg) => arg === undefined || survivesPlane(arg));
 
 /** `undefined` arguments are meaningful (`setStatus(key, undefined)` clears), so they travel as explicit markers. */
 const UNDEFINED = { $undefined: true } as const;
@@ -72,7 +84,7 @@ export const isPresentationOnly = (ui: ExtensionUIContext | undefined): boolean 
 /** One call's port: the UI its handlers and tool see, and the drain the call awaits before it ends. */
 export interface PresentationPort {
 	readonly ui: ExtensionUIContext;
-	/** Waits for every presentation sent so far; rejects with the first one the loop could not take. */
+	/** Waits for every presentation made so far to be presented; never rejects. */
 	close(): Promise<void>;
 }
 
@@ -80,21 +92,35 @@ export interface PresentationPort {
  * Opens the port for one running call. Presentations are sent one at a time, in order; dialogs, reads and anything
  * that does not survive the plane stay on `base` (the UI the hand had before the port). After `close`, presentations
  * fall back to `base` too: the call they belonged to has ended, and with it the plane they would have ridden.
+ *
+ * Presentation is best-effort relative to the call: it never changes the call's result or error. When the loop cannot
+ * take a presentation (a loop that serves no `ui-presentation` plane, a refused request), that one and every later one
+ * are presented on `base` instead, as without the port, and the failure goes to `onUndelivered`, once.
  */
 export function openPresentationPort(
 	nested: NestedRequest,
 	base: ExtensionUIContext = noOpUIContext,
+	onUndelivered: (error: unknown) => void = () => {},
 ): PresentationPort {
 	let closed = false;
-	let failure: unknown;
+	let undeliverable = false;
 	let chain: Promise<void> = Promise.resolve();
+	const presentHere = (method: PresentationMethod, args: readonly unknown[]): void => {
+		try {
+			(base[method] as PresentationFn | undefined)?.apply(base, [...args]);
+		} catch (error) {
+			onUndelivered(error);
+		}
+	};
 	const send = (method: PresentationMethod, args: readonly unknown[]): void => {
 		chain = chain.then(async () => {
-			if (failure !== undefined) return;
+			if (undeliverable) return presentHere(method, args);
 			try {
 				await nested(UI_PRESENTATION_PLANE, { method, args: encode(args) });
 			} catch (error) {
-				failure = error;
+				undeliverable = true;
+				onUndelivered(error);
+				presentHere(method, args);
 			}
 		});
 	};
@@ -102,7 +128,7 @@ export function openPresentationPort(
 		PRESENTATION_METHODS.map((method) => [
 			method,
 			(...args: unknown[]): void => {
-				if (closed || !isPlainData(args)) {
+				if (closed || !transportable(args)) {
 					(base[method] as PresentationFn | undefined)?.apply(base, args);
 					return;
 				}
@@ -112,10 +138,9 @@ export function openPresentationPort(
 	);
 	return {
 		ui: { ...base, ...presentations, [PRESENTATION_ONLY]: true } as ExtensionUIContext,
-		async close() {
+		close() {
 			closed = true;
-			await chain;
-			if (failure !== undefined) throw failure;
+			return chain;
 		},
 	};
 }
@@ -145,6 +170,13 @@ function parsePresentation(body: JsonValue): { method: PresentationMethod; args:
  */
 export class PresentationBroker extends RuntimeUiBroker {
 	readonly #calls = new AsyncLocalStorage<ExtensionUIContext>();
+	readonly #onUndelivered: (error: unknown) => void;
+
+	/** `onUndelivered` hears each call's first presentation the loop could not take; the call itself is unaffected. */
+	constructor(onUndelivered: (error: unknown) => void) {
+		super();
+		this.#onUndelivered = onUndelivered;
+	}
 
 	override get presenter(): ExtensionUIContext | undefined {
 		return this.#calls.getStore() ?? super.presenter;
@@ -152,17 +184,11 @@ export class PresentationBroker extends RuntimeUiBroker {
 
 	async present<T>(nested: NestedRequest | undefined, run: () => Promise<T>): Promise<T> {
 		if (nested === undefined) return run();
-		const port = openPresentationPort(nested, super.presenter ?? noOpUIContext);
-		let result: T;
+		const port = openPresentationPort(nested, super.presenter ?? noOpUIContext, this.#onUndelivered);
 		try {
-			result = await this.#calls.run(port.ui, run);
-		} catch (error) {
-			await port.close().catch((delivery: unknown) => {
-				throw new AggregateError([error, delivery], "the call failed and its presentations were not delivered");
-			});
-			throw error;
+			return await this.#calls.run(port.ui, run);
+		} finally {
+			await port.close();
 		}
-		await port.close();
-		return result;
 	}
 }

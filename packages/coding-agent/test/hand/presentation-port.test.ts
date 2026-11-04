@@ -8,7 +8,11 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { noOpUIContext } from "../../src/core/extensions/runner.ts";
 import type { ExtensionFactory, ExtensionUIContext } from "../../src/core/extensions/types.ts";
-import { servePresentation, UI_PRESENTATION_PLANE } from "../../src/core/extensions/ui-presentation.ts";
+import {
+	openPresentationPort,
+	servePresentation,
+	UI_PRESENTATION_PLANE,
+} from "../../src/core/extensions/ui-presentation.ts";
 import { cleanupHands, handDirs, openLink, startHand } from "./remote-hand-fixture.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 
@@ -117,6 +121,12 @@ const handPresenter: ExtensionFactory = (pi) => {
 			details: {},
 		}),
 	});
+	pi.registerTool(
+		presentTool("boom", async (ui) => {
+			ui.notify("about to fail", "warning");
+			throw new Error("tool exploded");
+		}),
+	);
 	pi.on("tool_result", (_event, ctx) => {
 		ctx.ui.setWidget("progress", ["after"], { placement: "belowEditor" });
 		ctx.ui.setTitle("done");
@@ -130,7 +140,11 @@ interface Run {
 	readonly planeMethods: unknown[];
 }
 
-async function run(placement: "fused" | "split-local", calls: readonly [string, JsonObject][]): Promise<Run> {
+async function run(
+	placement: "fused" | "split-local",
+	calls: readonly [string, JsonObject][],
+	brain: { readonly servesPresentation: boolean } = { servesPresentation: true },
+): Promise<Run> {
 	const harness = await createHarness({ extensionFactories: [handPresenter] });
 	harnesses.push(harness);
 	const log: unknown[] = [];
@@ -145,12 +159,14 @@ async function run(placement: "fused" | "split-local", calls: readonly [string, 
 		harness.agent.toolHost = createRemoteToolHost({
 			transport: link.brain,
 			placement: "split-local",
-			planes: {
-				[UI_PRESENTATION_PLANE]: (body, context) => {
-					planeMethods.push((body as { method?: unknown }).method);
-					return serve(body, context);
-				},
-			},
+			planes: brain.servesPresentation
+				? {
+						[UI_PRESENTATION_PLANE]: (body, context) => {
+							planeMethods.push((body as { method?: unknown }).method);
+							return serve(body, context);
+						},
+					}
+				: {},
 		});
 	}
 	harness.agent.subscribe((event) => {
@@ -222,10 +238,111 @@ describe("the presentation port presents a hand's extension UI on the attached c
 		expect(split.planeMethods).toEqual(["setStatus", "setWidget", "setWidget", "setTitle"]);
 	});
 
+	it("a call whose presentations cannot be delivered still returns its own result", async () => {
+		const fused = await run("fused", [["show", { n: 1 }]]);
+
+		const split = await run("split-local", [["show", { n: 1 }]], { servesPresentation: false });
+
+		expect(split.results).toEqual(fused.results);
+		expect(split.results).toEqual(["shown"]);
+	});
+
+	it("a failing tool whose presentations cannot be delivered keeps its own error", async () => {
+		const fused = await run("fused", [["boom", {}]]);
+
+		const split = await run("split-local", [["boom", {}]], { servesPresentation: false });
+
+		expect(fused.results[0]).toContain("tool exploded");
+		expect(split.results).toHaveLength(1);
+		expect(split.results[0]).toContain("tool exploded");
+		expect(split.results[0]).not.toMatch(/presentation|refused|plane_unavailable/);
+	});
+
 	it("fused: presents directly, and the port is never used", async () => {
 		const fused = await run("fused", [["show", { n: 1 }]]);
 
 		expect(fused.planeMethods).toEqual([]);
 		expect(fused.log).toContainEqual(["notify", 'running {"n":1}', "info"]);
+	});
+});
+
+describe("one call's presentation port (S30)", () => {
+	const port = (options: { readonly fail?: boolean } = {}) => {
+		const sent: unknown[] = [];
+		const base: unknown[] = [];
+		const undelivered: unknown[] = [];
+		const opened = openPresentationPort(
+			async (_plane, body) => {
+				if (options.fail === true) throw new Error("plane_unavailable");
+				sent.push(body);
+				return null;
+			},
+			recordingUi(base),
+			(error) => void undelivered.push(error instanceof Error ? error.message : error),
+		);
+		return { ...opened, sent, base, undelivered };
+	};
+
+	it("sends presentations in order and keeps undefined arguments", async () => {
+		const p = port();
+		p.ui.setStatus("key", "a");
+		p.ui.setStatus("key", undefined);
+		await p.close();
+
+		expect(p.sent).toEqual([
+			{ method: "setStatus", args: ["key", "a"] },
+			{ method: "setStatus", args: ["key", { $undefined: true }] },
+		]);
+	});
+
+	it("presents on the hand's own UI after the call ended", async () => {
+		const p = port();
+		await p.close();
+		p.ui.notify("late", "info");
+
+		expect(p.sent).toEqual([]);
+		expect(p.base).toEqual([["notify", "late", "info"]]);
+	});
+
+	it("keeps content that does not survive the plane on the hand's own UI, without throwing", async () => {
+		const p = port();
+		const cyclic: Record<string, unknown> = {};
+		cyclic.self = cyclic;
+		const factory = () => ({ render: () => [], invalidate: () => {} });
+		p.ui.setWidget("component", factory as unknown as string[]);
+		p.ui.setWorkingIndicator(cyclic as never);
+		p.ui.setSubagentCost?.(Number.NaN);
+		p.ui.setWidget("dated", [new Date(0) as unknown as string]);
+		await p.close();
+
+		expect(p.sent).toEqual([]);
+		expect(p.base.map((entry) => (entry as unknown[])[0])).toEqual([
+			"setWidget",
+			"setWorkingIndicator",
+			"setSubagentCost",
+			"setWidget",
+		]);
+	});
+
+	it("answers dialogs from the hand's own UI", async () => {
+		const p = port();
+
+		expect(await p.ui.confirm("Proceed?", "really")).toBe(true);
+		await p.close();
+		expect(p.sent).toEqual([]);
+		expect(p.base).toEqual([["confirm", "Proceed?"]]);
+	});
+
+	it("reports an undeliverable presentation on its own channel and never fails the call", async () => {
+		const p = port({ fail: true });
+		p.ui.notify("one", "info");
+		p.ui.notify("two", "info");
+
+		await expect(p.close()).resolves.toBeUndefined();
+		expect(p.undelivered).toEqual(["plane_unavailable"]);
+		expect(p.base).toEqual([
+			["notify", "one", "info"],
+			["notify", "two", "info"],
+		]);
 	});
 });

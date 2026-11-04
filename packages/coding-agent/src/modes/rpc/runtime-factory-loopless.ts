@@ -177,7 +177,13 @@ export function createLooplessRuntimeFactory(
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
 		// On a hand, a call's extension UI is presented by the loop that owns the call (S30).
-		const presentation = new PresentationBroker();
+		const presentation = new PresentationBroker((error) =>
+			runtime.extensionRunner.emitError({
+				extensionPath: "<presentation-port>",
+				event: "ui_presentation",
+				error: `A presentation could not reach the attached client: ${error instanceof Error ? error.message : String(error)}`,
+			}),
+		);
 		runtime.extensionRunner.setUiBroker(presentation);
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
 			? extensionToolHandlers(runtime.extensionRunner)
