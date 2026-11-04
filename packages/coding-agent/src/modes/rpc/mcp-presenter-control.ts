@@ -11,7 +11,7 @@ import type { McpPresenterAuthority, McpPresenterRegistration } from "./mcp-pres
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { McpPresenterEnrollment, type PresenterPrincipal } from "./mcp-presenter-enrollment.ts";
-import { McpPresenterSuccessors } from "./mcp-presenter-successor.ts";
+import { McpPresenterSuccessors, type LaunchOwner } from "./mcp-presenter-successor.ts";
 import { privateFrames, send, signed } from "./mcp-presenter-wire.ts";
 
 type Owner = ReturnType<McpPresenterAuthority["enroll"]>;
@@ -26,11 +26,7 @@ export class McpPresenterControl {
 	private readonly principals = new Map<string, Principal>();
 	private readonly controls = new Set<Duplex>();
 	private readonly revokeControls = new Map<Duplex, () => void>();
-	private launchOwner?: {
-		readonly stream: Duplex;
-		readonly principal: PresenterPrincipal;
-		readonly backendGeneration: string;
-	};
+	private launchOwner?: LaunchOwner;
 	private readonly backendGenerations = new Map<Duplex, { principal: Principal; generation: string }>();
 	private readonly enrollment: McpPresenterEnrollment;
 	private readonly successors: McpPresenterSuccessors;
