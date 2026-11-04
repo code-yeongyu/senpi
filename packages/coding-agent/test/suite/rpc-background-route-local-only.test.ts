@@ -8,6 +8,7 @@ import { getMcpGrantPresentation } from "../../src/core/mcp-grant-presentations.
 import { SecurityNoticeSnapshot } from "../../src/core/security-notices.ts";
 import { SecretInputRequests } from "../../src/modes/rpc/secret-input-requests.ts";
 import {
+	ORIGIN,
 	onCleanup,
 	presenterHost,
 	runCleanups,
@@ -86,6 +87,40 @@ it("a delegated or remote connection declaring grant_select is never the backgro
 	await getMcpGrantPresentation(durableId)?.("Synthetic grant", ["Grant and save permanently", "Start without them"]);
 	expect(presentedOn).toEqual(["local"]);
 	expect(cancelled).toEqual(["grant-a"]);
+});
+
+it("a background presenter that later declares a remoteOrigin loses its background secret and grant, not its own", async () => {
+	const h = await presenterHost();
+	await h.connect("late", "local", [...SECRET_CAPS, "grant_select"]);
+	const requests = new SecretInputRequests(h.writer.secretInputRoute(SESSION), () => {});
+	onCleanup(() => requests.close());
+	let secretEnded = false;
+	void requests.input("Synthetic credential", undefined).then(() => {
+		secretEnded = true;
+	});
+	const [prompt] = secretPrompts(await h.received("late"));
+	const cancelled: string[] = [];
+	expect(h.writer.routeWorkerGrant(SESSION, "grant-bg", undefined, [], () => cancelled.push("grant-bg"))).toEqual({
+		accepted: true,
+		connection: "late",
+	});
+	expect(h.writer.routeWorkerGrant(SESSION, "grant-own", "late", [], () => cancelled.push("grant-own"))).toEqual({
+		accepted: true,
+		connection: "late",
+	});
+
+	await h.handle("late", {
+		type: "set_client_info",
+		id: "late-info-remote",
+		width: 80,
+		capabilities: [...SECRET_CAPS, "grant_select"],
+		remoteOrigin: ORIGIN,
+	});
+	expect((await h.received("late")).find((frame) => frame.id === "late-info-remote")).toMatchObject({ success: true });
+	expect(secretEnded).toBe(true);
+	expect(h.writer.secretInputRoute(SESSION).available(String(prompt?.id))).toBe(false);
+	expect(cancelled).toEqual(["grant-bg"]);
+	expect(h.writer.acceptWorkerGrantResponse(SESSION, "grant-own", "late")).toBe(true);
 });
 
 it("raiser-only stays raiser-only: a non-raiser, remote viewer or observer cannot answer a secret or grant", async () => {
