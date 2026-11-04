@@ -1,3 +1,76 @@
+## 2026-10-30 - Serialize rotating-token refresh per session (senpi#5003, PR #5024)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts` adds the optional `CredentialStore.withRefreshLock` capability. `packages/ai/src/auth/oauth-refresh.ts` holds it across read-latest, exchange and persistence, sharing a stable provider/slot identity between flat, named-slot and catalog refreshes.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/oauth-refresh.ts` previously provided only process-local exchange deduplication. Compare-and-swap after exchange cannot prevent two processes from consuming one rotating refresh token. The global write lock stays outside the exchange as required by #1542.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/oauth-refresh.ts` define the credential-store contract and common refresh path below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: credential-store capability. `packages/ai/src/auth/oauth-refresh.ts`: pre-exchange read and dispatch.
+
+## 2026-10-27 - Credentials carry a login id that only a sign-in writes (senpi#4099)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: optional `loginId` on `ApiKeyCredential` and `OAuthCredential`. It is not key material. A refresh keeps or drops it and never mints one: the pooled merges spread the stored credential and keep it, while the single-account refresh (`mergeRefreshed` with no accounts) replaces the flat credential and drops it.
+- `packages/ai/src/auth/pool/login-id.ts` (fork-only): `stampLogin(credential)` sets a fresh random `loginId` on a credential a sign-in (a login or an account import) stores.
+
+### Why
+
+- Retry fallback needs a durable "someone signed in" signal that a token refresh never produces (senpi#4099). The material HMAC moves on every refresh.
+
+### Why an extension could not handle it
+
+- The field belongs to the stored credential contract that every login and refresh path shares.
+
+### Expected merge conflict zones
+
+- The `ApiKeyCredential` and `OAuthCredential` interfaces in `auth/types.ts`.
+
+## 2026-10-27 - Never exchange a managed account-pool sentinel (senpi#3924)
+
+### What changed
+
+- `packages/ai/src/auth/resolve.ts`: `resolveStoredOAuth` refuses a stale credential whose `access` and `refresh` are the provider's managed-sentinel material (`managedSentinelMaterials`) with a `ModelsError("auth")` instead of calling `refreshOAuthCredential`, so the placeholder never reaches a provider's token endpoint.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- Staleness and the refresh call live inside `resolveStoredOAuth`, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the staleness block at the top of `resolveStoredOAuth` in `auth/resolve.ts`.
+
+## 2026-10-30 - Product display name in login options (senpi#5014, part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: add the configured product display name to login options.
+
+### Why
+
+- `packages/ai/src/auth/types.ts`: OpenAI registration needs the app's actual name even when its user-agent token differs.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts`: the shared login contract owns the app-supplied metadata.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: `LoginOptions`.
+
 ## 2026-10-30 - Clear SIWC sessions atomically and confirm remote revocation (part of #5003)
 
 ### What changed

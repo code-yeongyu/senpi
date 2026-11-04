@@ -38,6 +38,7 @@ describe("build-all", () => {
 			"packages/protocol",
 			"packages/ai",
 			"packages/client",
+			"packages/machine-ops",
 			"packages/agent",
 			"packages/session-backends/sqlite-node",
 			"packages/coding-agent",

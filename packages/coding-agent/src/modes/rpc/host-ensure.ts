@@ -21,7 +21,7 @@ import { HostEnsureRefusedError } from "./host-decision.ts";
 import { decideEnsureAction as decide } from "./host-ensure-client.ts";
 import { refuseIfForeignHeld, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
-import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
+import { appendStderr, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
 import {
 	delay,
 	ensureSender,
@@ -32,13 +32,14 @@ import {
 } from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { scheduleOpportunisticHostGc } from "./host-gc-pass.ts";
-import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
+import { handoffHostLocked } from "./host-handoff.ts";
 import { reapOrphanedInternalHostDirs } from "./host-internal-dir-reaper.ts";
 import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
-import { hostChildAlive } from "./host-stalled-evidence.ts";
-import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
+import { childStalledStopMaxMs, hostChildAlive } from "./host-stalled-evidence.ts";
+import { ensureLockWaitDetail, startupEnvelope } from "./host-startup-policy.ts";
+import { acquireOwnershipSafeLock, isBusy } from "./ownership-safe-lock.ts";
 import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 
 export {
@@ -55,21 +56,6 @@ export { type ProbeHostOptions, probeHost } from "./host-probe.ts";
 export type { HostColdStart, HostLifecyclePolicyInput };
 
 const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
-/**
- * A lock waiter must outlast the longest critical section a holder can run:
- * probing an existing host, then either stopping an incompatible one (SIGTERM wait
- * plus the SIGKILL grace, or a supervisor's reported stall wait) and spawning the replacement and waiting for it to answer,
- * or handing it off (an upgrade) - which is also as long as a forced handoff holds it.
- * Each SQLite busy wait stays short because it blocks the event loop; this
- * cumulative budget is what covers the whole section, with headroom for a slow
- * runner. A waiter that gives up early surfaces as a raw "database is locked"
- * failure on the second of two concurrent starts.
- */
-const ENSURE_LOCK_WAIT_MS =
-	EXISTING_HOST_PROBE_TIMEOUT_MS +
-	Math.max(STOP_WAIT_BUDGET_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
-	10_000;
-const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
 export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
 	return withRpcKeyRoot(rpcKeyRoot(options, options.agentDir), () => ensureHostInKeyRoot(options));
 }
@@ -89,7 +75,16 @@ async function ensureHostInKeyRoot(options: EnsureHostOptions): Promise<EnsuredH
 	// ensureHost until a waiter exhausted its budget and surfaced a raw "database is
 	// locked". Its own guards (60s age, dead owner pid) already make it safe unlocked.
 	await reapOrphanedInternalHostDirs();
-	const release = await acquireOwnershipSafeLock(`${lockTarget}.lock`, lockOptions);
+	// A lock waiter must outlast the longest critical section one compliant holder can run: W, derived from
+	// the resolved child-stall setting once per operation (senpi#4602, `startupEnvelope`). Each SQLite busy
+	// wait stays short because it blocks the event loop; W is the cumulative budget. Exhausting it is
+	// reported as the ensure-lock expiry, never as a raw "database is locked", and starts nothing.
+	const { lockWait } = startupEnvelope(childStalledStopMaxMs());
+	const release = await acquireOwnershipSafeLock(`${lockTarget}.lock`, hostEnsureLockOptions(lockWait)).catch(
+		(error: unknown) => {
+			throw isBusy(error) ? new Error(ensureLockWaitDetail(lockWait), { cause: error }) : error;
+		},
+	);
 	let ensured: EnsuredHost;
 	try {
 		await options._test?.afterLockAcquired?.();
