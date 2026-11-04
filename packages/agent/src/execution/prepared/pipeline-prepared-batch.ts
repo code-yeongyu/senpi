@@ -15,6 +15,9 @@ import { agentPreparationPipeline } from "./executor-pipeline.ts";
 const ISSUER = "loop";
 const EXECUTOR = "local";
 const LEASE_MS = 24 * 60 * 60 * 1000;
+// The ledger admits no call without a workspace, and a loop built with no execution scope has an empty root. The
+// batch's ledger lives only for this batch, so the name only has to be non-empty.
+const NO_WORKSPACE = "in-process";
 
 type Emit = (event: AgentEvent) => Promise<void> | void;
 
@@ -167,7 +170,7 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 	const plan: BatchPlan = {
 		batchId: crypto.randomUUID(),
 		scope: request.scope.id,
-		workspace: request.scope.root,
+		workspace: request.scope.root === "" ? NO_WORKSPACE : request.scope.root,
 		generation: 1,
 		admittedAt: now,
 		leaseUntil: now + LEASE_MS,
