@@ -465,6 +465,7 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { ToolBarrier, type ToolBarrierSpec, toolBarrierSpecError } from "./tool-barrier.ts";
+import { TurnConflictError, turnConflict } from "./turn-conflict.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
 import type { HostCallTarget, RegisteredHostCallKind } from "./tool-child-host-calls.ts";
 import type { StuckModuleNotice } from "./tool-dispatch/in-process-module.ts";
@@ -1225,6 +1226,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	interactiveUser?: boolean;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
+	/** A steer meant only for this turn (`currentTurnId`): checked where it enters the queue, else `TurnConflictError`. */
+	expectedTurnId?: string;
 }
 
 /** Internal: the id of the `input` event a queued input passed, so its delivery can report `started`. */
@@ -1249,6 +1252,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	inputOrigin?: InputOrigin;
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
+	/** With `streamingBehavior: "steer"`: the turn (`currentTurnId`) this steer is for; any other outcome is `TurnConflictError`. */
+	expectedTurnId?: string;
 	/** Session-only thinking level applied before starting this prompt. */
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -5143,6 +5148,11 @@ export class AgentSession {
 		return this._isAgentRunActive;
 	}
 
+	/** The running turn's id (its admission epoch); undefined while no turn runs. A steer names it as `expectedTurnId`. */
+	get currentTurnId(): string | undefined {
+		return this._isAgentRunActive ? String(this.externalAdmission.turnEpoch) : undefined;
+	}
+
 	/** True while a provider retry is in flight; the deadline lease treats it as turn progress. */
 	get isRetryInFlight(): boolean {
 		return this._retryPromise !== undefined;
@@ -5921,6 +5931,8 @@ export class AgentSession {
 		this._standingRecovery = undefined;
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
 		if (barrierError !== undefined) throw new Error(barrierError);
+		// A steer naming a turn that is not running is refused before a run hold or a command can take it (senpi#5776).
+		this._refuseStaleNamedTurn(options, this._runHolds.inheritedOwner() !== undefined);
 		if (isHumanInput(options) && options?.humanInputReported !== true) this._humanInputAdmitted(promptKind(options));
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
@@ -5933,6 +5945,8 @@ export class AgentSession {
 		try {
 			const origin = options?.inputOrigin ?? inputOriginOf(options?.source);
 			if (origin === "person" && this._runHolds.inheritedOwner() !== undefined) {
+				// A held input is delivered into a later turn, which a steer that names its turn must never reach.
+				if (options?.expectedTurnId !== undefined) throw new TurnConflictError(this.currentTurnId);
 				// A run-owned pause holds every person input before anything runs, a "." or a command included (senpi#3811).
 				this._holdForRun(text, options);
 				hold.accepted();
@@ -6255,7 +6269,9 @@ export class AgentSession {
 			// empty session, or a "." carrying image attachments (the user is sending
 			// the images, not asking to continue), falls through to ordinary prompt
 			// handling below.
+			// A steer that names a turn is delivered as its own text through the checked queue path below.
 			if (
+				options?.expectedTurnId === undefined &&
 				isManualContinueSubmission({
 					text,
 					hasMessages: this.agent.state.messages.length > 0,
@@ -6481,6 +6497,9 @@ export class AgentSession {
 				preflightResult?.(true);
 				return;
 			}
+
+			// Every queue path above checked the named turn at its enqueue; reaching a start means that turn is not running.
+			if (options?.expectedTurnId !== undefined) throw new TurnConflictError(this.currentTurnId);
 
 			// Flush any pending bash messages before the new prompt
 			this._flushPendingBashMessages();
@@ -6881,6 +6900,17 @@ export class AgentSession {
 	}
 
 	/**
+	 * An input that names a turn is refused before any admission side effect (human-input record, person input, input
+	 * handlers) when that turn is not running, or when a hold would deliver the input into a later turn (senpi#5776).
+	 */
+	private _refuseStaleNamedTurn(options: QueuedInputOptions | PromptOptions | undefined, held: boolean): void {
+		const stale = turnConflict(options?.expectedTurnId, this.currentTurnId);
+		if (stale !== undefined) throw stale;
+		if (options?.expectedTurnId !== undefined && held && originOf(options) === "person")
+			throw new TurnConflictError(this.currentTurnId);
+	}
+
+	/**
 	 * Queue a steering message while the agent is running.
 	 * Delivered after the current assistant turn finishes executing its tool calls,
 	 * before the next LLM call.
@@ -6891,6 +6921,7 @@ export class AgentSession {
 	 * @throws Error if text is an extension command
 	 */
 	async steer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<QueuedInputDisposition> {
+		this._refuseStaleNamedTurn(options, this._engineTurnHold.held);
 		if (isHumanInput(options)) this._humanInputAdmitted("steer");
 		return this._queueUserInput(text, images, "steer", options);
 	}
@@ -6909,6 +6940,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
+		this._refuseStaleNamedTurn(options, this._engineTurnHold.held);
 		if (isHumanInput(options)) this._humanInputAdmitted("follow_up");
 		return this._queueUserInput(text, images, "followUp", options);
 	}
@@ -7033,13 +7065,18 @@ export class AgentSession {
 	): Promise<void> {
 		const clientMessageId = input.clientMessageId;
 		const sourced = { ...input, source: input.source ?? "interactive" };
+		// Read in the same synchronous step as the enqueue it guards (senpi#5776).
+		const refusal = (): TurnConflictError | undefined => turnConflict(input.expectedTurnId, this.currentTurnId);
 		if (clientMessageId === undefined) {
+			const refused = refusal();
+			if (refused !== undefined) throw refused;
 			this._enqueuePreparedInput(sourced);
 			return;
 		}
 		await this._pendingInputs.admit(
 			{ clientMessageId, text: input.text, ...(input.images ? { images: input.images } : {}), mode: input.mode },
 			(queuedId) => this._enqueuePreparedInput({ ...sourced, queuedId }),
+			refusal,
 		);
 	}
 
