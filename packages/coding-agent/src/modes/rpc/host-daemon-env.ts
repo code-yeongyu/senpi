@@ -90,6 +90,7 @@ const TRANSIENT_ENV_NAMES = new Set([
 	"SENPI_RPC_HOST_GENERATION",
 	"SENPI_RPC_HOST_DAEMON_DIR",
 	"SENPI_RPC_HOST_EXPECTED_RUNTIME_BUILD_ID",
+	"SENPI_RPC_HOST_STARTUP_EVENTS",
 	// The rest of a supervisor's hand-off to its own host child. A daemon ensured BY a host child
 	// would otherwise inherit its parent's lane: with the key sentinel set and no key on its stdin,
 	// the new daemon exits "internal_key_unavailable" before it ever listens (senpi#4528).

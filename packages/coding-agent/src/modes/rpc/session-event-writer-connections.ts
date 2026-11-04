@@ -1,16 +1,22 @@
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import type { CanonicalControl } from "./compact-canonical-pairing.ts";
+import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
+import { ConnectionDelegations, type LaunchProofSource } from "./delegated-connection.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
-import type { SessionEventWriterConnection } from "./session-event-fanout.ts";
+import type { SessionEventWriterConnection } from "./session-event-connection.ts";
 import type { RpcRecord } from "./session-event-writer-compaction.ts";
 import { acceptActors, SessionEventWriterLanes, settleActors } from "./session-event-writer-lanes.ts";
+import { closeSocket, type SocketClosingCode } from "./socket-closing.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 /** Connection registration, capabilities, security presentations and per-session delivery settings. */
 export abstract class SessionEventWriterConnections extends SessionEventWriterLanes {
+	/** Which connections act for someone else, and what they were granted (senpi#5632). */
+	readonly delegations = new ConnectionDelegations();
+
 	protected isTargetedRecord(record: RpcRecord): boolean {
 		return (
 			record.type === "response" ||
@@ -30,8 +36,13 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	registerConnection(
 		id: string,
 		connection: SessionEventWriterConnection,
-		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
+		options: {
+			readonly maxQueueBytes?: number;
+			readonly stallMs?: number;
+			readonly launchProof?: LaunchProofSource;
+		} = {},
 	): void {
+		this.delegations.admit(id, options.launchProof);
 		const previousPresenter = this.presenterConnections.get(id);
 		if (previousPresenter) this.presenterAuthority?.detach(previousPresenter);
 		this.fanout.registerConnection(id, connection, options);
@@ -53,6 +64,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	}
 
 	unregisterConnection(id: string): void {
+		this.delegations.drop(id);
 		this.secretPresentations.detach(id);
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.detach(sender);
@@ -169,6 +181,21 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	setSessionKind(sessionId: string, kind: SessionKind): void {
 		if (kind === "worker") this.workerSessions.add(sessionId);
 		else this.workerSessions.delete(sessionId);
+	}
+
+	/**
+	 * RULING-124: the host's own close of connection `id` (shutdown, handoff). A peer that selected compact events receives
+	 * `socket_closing` first and `close(true)` must then flush before it closes; every other peer gets `close(false)` at
+	 * once, exactly as before.
+	 */
+	closeConnection(id: string, code: SocketClosingCode, close: (announced: boolean) => void): Promise<void> {
+		const registered = this.fanout.get(id);
+		const compact = registered !== undefined && this.fanout.connectionHas(id, COMPACT_EVENTS_CAPABILITY);
+		if (registered === undefined) {
+			close(false);
+			return Promise.resolve();
+		}
+		return closeSocket({ ...registered.connection, close: () => close(compact) }, registered.actor, compact, code);
 	}
 
 	/** Drain just this connection before closing it after its last handoff park. */

@@ -43,6 +43,14 @@ import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiv
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
 import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
 import type { ToolHost } from "./execution/tool-host.ts";
+import {
+	createErrorToolResult,
+	createToolResultMessage,
+	emitToolExecutionEnd,
+	emitToolExecutionUpdate,
+	emitToolResultMessage,
+	shouldTerminateToolBatch,
+} from "./execution/tool-outcome-events.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -1238,7 +1246,12 @@ async function executeToolCalls(
 			calls: toolCalls,
 			mode: config.toolExecution ?? "parallel",
 		},
-		{ signal, emit, recordWitness: config.onExecutionPipeline },
+		{
+			signal,
+			emit,
+			recordWitness: config.onExecutionPipeline,
+			local: { context: currentContext, assistantMessage },
+		},
 	);
 }
 
@@ -1452,10 +1465,6 @@ type ToolPreparationConfig = ToolCallHooks & Pick<AgentLoopConfig, "removedToolH
 
 type ToolUpdateSink = (partialResult: AgentToolResult<any>) => Promise<void> | void;
 
-function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
-	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
-}
-
 export interface PreparedAgentToolCall {
 	toolCall: AgentToolCall;
 	tool: AgentTool;
@@ -1598,17 +1607,6 @@ function abortReleasePromise(signal: AbortSignal | undefined): Promise<typeof AB
 	});
 }
 
-function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink): ToolUpdateSink {
-	return (partialResult) =>
-		emit({
-			type: "tool_execution_update",
-			toolCallId: toolCall.id,
-			toolName: toolCall.name,
-			args: toolCall.arguments,
-			partialResult,
-		});
-}
-
 /** Options for {@link runToolCall}. */
 export interface RunToolCallOptions extends ToolCallHooks {
 	/** Tools the call resolves against. */
@@ -1730,42 +1728,4 @@ async function finalizeExecutedToolCall(
 		result,
 		isError,
 	};
-}
-
-function createErrorToolResult(message: string): AgentToolResult<unknown> {
-	return {
-		content: [{ type: "text", text: message }],
-		details: {},
-	};
-}
-
-async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: AgentEventSink): Promise<void> {
-	await emit({
-		type: "tool_execution_end",
-		toolCallId: finalized.toolCall.id,
-		toolName: finalized.toolCall.name,
-		result: finalized.result,
-		isError: finalized.isError,
-	});
-}
-
-function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResultMessage {
-	return {
-		role: "toolResult",
-		toolCallId: finalized.toolCall.id,
-		toolName: finalized.toolCall.name,
-		// Untyped tools (JS extensions) can return results without content; normalize
-		// so the null never enters session history or provider payloads.
-		content: finalized.result.content ?? [],
-		details: finalized.result.details,
-		usage: finalized.result.usage,
-		...(finalized.result.addedToolNames?.length ? { addedToolNames: finalized.result.addedToolNames } : {}),
-		isError: finalized.isError,
-		timestamp: Date.now(),
-	};
-}
-
-async function emitToolResultMessage(toolResultMessage: ToolResultMessage, emit: AgentEventSink): Promise<void> {
-	await emit({ type: "message_start", message: toolResultMessage });
-	await emit({ type: "message_end", message: toolResultMessage });
 }

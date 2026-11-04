@@ -5,6 +5,7 @@ import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import { AcceptedTranscript, type TranscriptRoot } from "./accepted-transcript.ts";
 import type { CanonicalUnit } from "./compact-lane-transitions.ts";
+import { MessageIdentities } from "./compact-message-identity.ts";
 import { CompactSettledMessages, type SettledDiagnostic, type SettledRoot } from "./compact-settled-messages.ts";
 import type { FrozenCompactState } from "./compact-state-view.ts";
 import { CompactContentStore, type CompactContentStoreOptions } from "./compact-content-store.ts";
@@ -76,6 +77,8 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	private turnId: string | null = null;
 	private correlation: AcceptedCorrelation | null = null;
 	private refusedCorrelations = 0;
+	/** RULING-120 (#5331): the settled ids of the record being delivered, read at `acceptedSequence`. */
+	readonly identities = new MessageIdentities();
 	private retiredAs: "close" | "worker_failed" | undefined;
 	private storageRetired = false;
 	private nonce: string = randomUUID();
@@ -133,6 +136,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	bootstrap(input: SessionBootstrap, nonce: string = randomUUID()): void {
 		if (this.retired) return;
 		if (this.settled) this.retireSettled();
+		this.identities.reset();
 		this.nonce = nonce;
 		if (input.epochSignal) Buffer.from(nonce, "ascii").copy(Buffer.from(input.epochSignal));
 		this.settled = new CompactSettledMessages(
@@ -167,7 +171,8 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		for (const transition of transitions) {
 			this.sequence += 1;
 			this.transcript.apply(transition);
-			foldCompactTransition(this.compact(), transition, this.transcript.available, this.nonce);
+			const owner = foldCompactTransition(this.compact(), transition, this.transcript.available, this.nonce);
+			this.identities.joined(transition, owner);
 		}
 	}
 
@@ -182,8 +187,10 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		carrier: RecoveryCarrier | undefined,
 		canonical?: CanonicalUnit,
 		canonicalRefused = false,
+		callKey?: string,
 	): AcceptedRef | undefined {
 		const type = field(record, "type");
+		this.identities.clear();
 		if (this.retired || this.epoch === "" || typeof type !== "string" || !SEQUENCED.has(type)) return undefined;
 		this.beforeAccept?.(record);
 		const folds = !canonicalRefused && this.current.admits(record, type);
@@ -191,7 +198,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		// included (RULING-13 Q9); a correlation change takes the sequence just before its record.
 		const correlation = folds ? correlationChange(this.correlation, this.turnId, record) : undefined;
 		const at = { sequence: this.sequence + (correlation ? 1 : 0), turnId: this.turnId };
-		const place = admitRecord(this.current, record, type, at, folds);
+		const place = admitRecord(this.current, record, type, at, folds, callKey);
 		if (!place) return undefined;
 		if (!folds && correlationChange(this.correlation, this.turnId, record)) this.refusedCorrelations += 1;
 		if (correlation) this.correlation = Object.freeze({ sequence: place.sequence - 1, ...correlation });
@@ -201,16 +208,9 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		if (type === "turn_end" || type === "agent_end") this.turnId = null;
 		const messageId = type.startsWith("message_") && this.settled.valid(carrier) ? carrier.messageId : null;
 		if (type === "message_start") this.activeMessageId = messageId;
-		if (folds)
-			foldCompactRecord(this.compact(), {
-				record,
-				type,
-				carrier,
-				canonical,
-				sequence: this.sequence,
-				turnId,
-				call: call?.projection,
-			});
+		const unit = { record, type, carrier, canonical, sequence: this.sequence, turnId, call };
+		// An unfolded record is still delivered, so its `entry_appended` takes its entry's join (RULING-122).
+		this.identities.hold(type, this.sequence, record, folds ? foldCompactRecord(this.compact(), unit) : undefined);
 		if (type === "message_end" && this.activeMessageId === messageId) this.activeMessageId = null;
 		return {
 			sessionEpoch: this.epoch,
@@ -271,6 +271,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		return {
 			...this.settled.storageStatus(),
 			refusedRecords: this.current.refusedRecords,
+			...this.identities.status(),
 			transcript: this.staging.status(),
 		};
 	}
@@ -299,6 +300,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	 */
 	retire(reason: "close" | "worker_failed", keep: ReadonlySet<FrozenAcceptedRoot> = new Set()): void {
 		this.retiredAs ??= reason;
+		this.identities.reset();
 		this.generations.close();
 		this.transcript = new AcceptedTranscript(this.staging);
 		for (const root of this.live) if (!keep.has(root)) this.release(root);

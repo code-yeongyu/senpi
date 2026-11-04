@@ -111,6 +111,32 @@ const PRIVATE_FD_LEAVES = new Set([
 // (8 hop, 3 public auth, 4 private fd leaves), 3,972 source / 4,108 built bytes, 71 code lines.
 const ENDPOINT_BIND_LEAVES = new Set(["packages/coding-agent/dist/modes/rpc/host-socket-bind.js"]);
 
+// senpi#4602: a coordinated start reports its phases on the dedicated startup pipe, which adds exactly these three
+// leaves. Measured at 73 modules (8 hop, 3 public auth, 4 private fd leaves): host-startup-beacon 3,839 source / 3,670
+// built bytes, 82 code lines (the stub every entry imports first; node builtins, host-identity-env and the wire);
+// host-startup-wire 6,931 / 5,909, 96 (the producer-side record format and filler pipes; node:fs only, its policy
+// import is type-only; the launcher-only relay parsing lives in host-startup-events, outside this graph);
+// host-lifecycle-startup 3,912 / 3,131, 73 (the supervisor's milestones, relay, in-phase retries and its host
+// child's stdio, over modules already in the graph). Their import-only phys_footprint cost on Bun was not measurable
+// (graph import, 15 alternating samples: base median 11.141 MiB, head 11.126). The base ceiling and every forbidden/core
+// import check remain unchanged.
+// The filler slots and their release then moved out of the wire into private-fd-startup-fillers (4,018 source
+// bytes, 47 code lines), over the table decoder private-fds now shares, private-fd-table (1,781 / 32): moved code,
+// node:fs and modules already in the graph only, and the wire shrank to 3,631 source bytes.
+// The successor path (senpi#4602, second PR) adds exactly two more: host-endpoint-owner 7,689 source / 6,417 built
+// bytes, 130 code lines (the endpoint owner token and the mutation fence every public-entry rename/remove runs under;
+// Node builtins, socket-ownership and ownership-safe-lock, both already in the graph) and host-ensure-lock 2,633 /
+// 2,605, 31 (the canonical endpoint key the fence shares with the ensure lock; its imports were already in the graph).
+// Measured: 75 modules.
+const STARTUP_EVENT_LEAVES = new Set(
+	["host-startup-beacon", "host-startup-wire", "host-lifecycle-startup", "host-endpoint-owner", "host-ensure-lock"]
+		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
+		.concat(
+			"packages/coding-agent/dist/private-fd-startup-fillers.js",
+			"packages/coding-agent/dist/private-fd-table.js",
+		),
+);
+
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
 	return [
@@ -129,8 +155,9 @@ describe("RPC host supervisor import graph", () => {
 		const publicAuthLeaves = modules.filter((url) => PUBLIC_AUTH_LEAVES.has(url)).length;
 		const privateFdLeaves = modules.filter((url) => PRIVATE_FD_LEAVES.has(url)).length;
 		const endpointBindLeaves = modules.filter((url) => ENDPOINT_BIND_LEAVES.has(url)).length;
+		const startupEventLeaves = modules.filter((url) => STARTUP_EVENT_LEAVES.has(url)).length;
 		console.info(
-			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves}, private fd ${privateFdLeaves}, endpoint bind ${endpointBindLeaves})`,
+			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves}, private fd ${privateFdLeaves}, startup events ${startupEventLeaves}, endpoint bind ${endpointBindLeaves})`,
 		);
 
 		const core = modules.filter((url) => url.startsWith("packages/coding-agent/dist/core/"));
@@ -140,7 +167,12 @@ describe("RPC host supervisor import graph", () => {
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/interactive/"))).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/app-server/"))).toEqual([]);
 		expect(
-			modules.length - internalHopLeaves - publicAuthLeaves - privateFdLeaves - endpointBindLeaves,
+			modules.length -
+				internalHopLeaves -
+				publicAuthLeaves -
+				privateFdLeaves -
+				startupEventLeaves -
+				endpointBindLeaves,
 		).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 

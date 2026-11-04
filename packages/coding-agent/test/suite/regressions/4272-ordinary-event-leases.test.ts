@@ -153,7 +153,19 @@ it("T6 X04 S13-Q1 an oversized message_end reaches a compact-events peer as an e
 		expect(lease.sequence, "the lease names the sequence the lane accepted the event at").toBe(
 			accepted.find((each) => each.type === "message_end")?.sequence,
 		);
-		expect(JSON.parse(await fetchLease(compact, routing, lease))).toEqual(legacyEnd);
+		// RULING-120 (#5331): the compact copy is the legacy record plus exactly its settled ids, inside the lease too.
+		const rebuilt = JSON.parse(await fetchLease(compact, routing, lease)) as WireRecord;
+		const { messageId, terminalSequence, ...unstamped } = rebuilt;
+		expect(legacyEnd).not.toHaveProperty("messageId");
+		expect(legacyEnd).not.toHaveProperty("terminalSequence");
+		expect(unstamped).toEqual(legacyEnd);
+		expect(Object.keys(rebuilt), "the stamp follows the record's own fields").toEqual([
+			...Object.keys(legacyEnd),
+			"messageId",
+			"terminalSequence",
+		]);
+		expect(messageId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+		expect(terminalSequence, "the terminal row's sequence is the end's accepted sequence").toBe(lease.sequence);
 		expect(host.writer.recoveryCheckpoints.stream(caller)?.generation, "an event lease mints no generation").toBe(
 			generation,
 		);
@@ -224,7 +236,11 @@ it("S13-Q1 (2) leases are count-bounded per peer: past the stated bound the peer
 			host.writer.enqueue(routing, oversized(`call-${index}`, String(index % 10).repeat(263_000)));
 		await host.writer.flush();
 		expect(compact.inbox.filter((record) => leaseOf(record) !== undefined)).toHaveLength(bound);
-		expect(compact.inbox.at(-1)).toEqual({ type: "event_lease_refused", sessionId: routing, reason: "lease_limit" });
+		// RULING-124 (#5322): the refusal, then the record announcing the close it causes.
+		expect(compact.inbox.slice(-2)).toEqual([
+			{ type: "event_lease_refused", sessionId: routing, reason: "lease_limit" },
+			{ type: "socket_closing", code: "event_lease_refused", retryable: true, detail: "lease_limit" },
+		]);
 		expect(events.status()).toMatchObject({ open: bound, refused: { lease_limit: 1 } });
 		await host.drop("compact");
 		expect(events.status(), "the peer's end releases all its references").toMatchObject({ open: 0, contentBytes: 0 });

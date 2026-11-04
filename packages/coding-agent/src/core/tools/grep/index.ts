@@ -1,9 +1,9 @@
-import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
 import type { FilesystemPolicyChecker, ToolDefinition } from "../../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "../filesystem-policy.ts";
+import { defaultToolMachine, type ToolMachine } from "../machine.ts";
 import { resolveToCwd } from "../path-utils.ts";
 import { grepRenderers } from "../renderers/grep.ts";
 import { wrapToolDefinition } from "../tool-definition-wrapper.ts";
@@ -35,7 +35,9 @@ const grepSchema = Type.Object({
 export type GrepToolInput = Static<typeof grepSchema>;
 export const grepToolSystemPromptContribution = {
 	snippet: "Search file contents (regex/literal) across paths with structured results; respects .gitignore",
-	guidelines: [
+	// The eval-only grep guideline (system-prompt.ts getEvalOnlyGrepGuideline) carries the pagination rule once.
+	guidelines: [] as string[],
+	fullGuidelines: [
 		"Use tool.grep for content search instead of rg/grep in a shell; paginate with skip and narrow with glob/path when a page is full",
 	],
 };
@@ -65,11 +67,18 @@ export interface GrepOperations {
 }
 export interface GrepToolOptions {
 	filesystemPolicy?: FilesystemPolicyChecker;
+	/** Operation layer and policy gate. Default: the process-wide local machine. */
+	machine?: ToolMachine;
 }
 
-async function pathStat(path: string) {
+/**
+ * Path probe through the shared operation layer; the search engine itself stays in this tool. The probe ignores
+ * abort, as the plain stat it replaces did: the engine observes the signal.
+ */
+async function pathStat(machine: ToolMachine, path: string) {
 	try {
-		return await stat(path);
+		const info = await machine.ops.files.stat({ path }, machine.context(undefined));
+		return { isFile: () => info.type === "file" };
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
@@ -82,6 +91,7 @@ export function createGrepToolDefinition(
 ): ToolDefinition<typeof grepSchema, GrepToolDetails> {
 	if (options && "operations" in options)
 		throw new TypeError("GrepToolOptions.operations is deprecated and no longer supported; removed next release");
+	const machine = options?.machine ?? defaultToolMachine();
 	return {
 		...(options?.filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "grep",
@@ -92,10 +102,13 @@ export function createGrepToolDefinition(
 			"Search file contents with tool.grep({ pattern, path }) inside eval. Supports regex/literal patterns, file pages with skip, context, count/files modes, and structured results. Respects .gitignore.",
 		promptSnippet: grepToolSystemPromptContribution.snippet,
 		promptGuidelines: grepToolSystemPromptContribution.guidelines,
+		fullPromptGuidelines: grepToolSystemPromptContribution.fullGuidelines,
 		parameters: grepSchema,
 		async execute(_id, input, signal, _update, ctx) {
 			const started = Date.now();
 			if (!input.pattern) throw new Error("Pattern must not be empty");
+			const admitted = machine.begin("files.grep", input, signal);
+			if (admitted !== undefined) await admitted;
 			const requested = input.path === undefined ? ["."] : Array.isArray(input.path) ? input.path : [input.path];
 			if (!requested.length || requested.some((p) => typeof p !== "string" || !p.length))
 				throw new Error("path must be a non-empty string or array of non-empty strings");
@@ -111,11 +124,11 @@ export function createGrepToolDefinition(
 			let singleFile = false;
 			for (const raw of requested) {
 				let path = resolveToCwd(raw, workingCwd);
-				let info = await pathStat(path);
+				let info = await pathStat(machine, path);
 				if (!info) {
 					const selector = /^(.*):L(\d+)-L?(\d+)$/.exec(path);
 					if (selector) {
-						const prefix = await pathStat(selector[1]);
+						const prefix = await pathStat(machine, selector[1]);
 						if (prefix?.isFile()) {
 							if (requested.length !== 1 || +selector[2] < 1 || +selector[3] < +selector[2])
 								throw new Error("Invalid line selector");

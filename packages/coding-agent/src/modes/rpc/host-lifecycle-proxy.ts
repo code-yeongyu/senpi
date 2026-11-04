@@ -16,7 +16,6 @@ import { PublicRpcConnection } from "./rpc-public-auth.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { type ListenerState, MAX_SOCKET_PATH_BYTES, socketEntryListenerState } from "./socket-ownership.ts";
 
-export { adoptPublicSocket } from "./socket-ownership.ts";
 import {
 	authenticateSocket,
 	ensureSocketSecret,
@@ -75,7 +74,7 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 					hop?.destroy();
 					return;
 				}
-				proxyWithAdmission(client, hop, options.admission, auth);
+				proxyWithAdmission(client, hop, options.admission, auth, publicSecret !== undefined);
 				// An authenticated endpoint resumes the client itself once its key record is published.
 				if (!auth) client.resume();
 			} catch {
@@ -116,18 +115,20 @@ export async function waitForListener(
 	timeoutMs: number,
 	secret?: Uint8Array,
 	internalKey?: Buffer,
+	/** A coordinated start retries a silent probe on a fresh connection; its launcher decides expiry (senpi#4602). */
+	options: { readonly retrySilent?: boolean } = {},
 ): Promise<void> {
 	const deadline = performance.now() + timeoutMs;
 	while (performance.now() <= deadline) {
 		const probeMs = Math.max(1, Math.min(INTERNAL_READINESS_PROBE_MS, deadline - performance.now()));
 		const probe = await canConnect(socketPath, secret, internalKey, probeMs);
 		if (probe === "ready") return;
-		if (probe === "silent")
+		if (probe === "silent" && !options.retrySilent)
 			throw new Error(
 				`${socketPath}: host accepted the internal hop but did not answer within ${Math.round(probeMs)}ms`,
 			);
 		// A host that answered but could not prove the key will not start proving it: fail now, and say why.
-		if (probe !== "refused") throw new Error(`${socketPath}: ${probe.unproven}`);
+		if (probe !== "refused" && probe !== "silent") throw new Error(`${socketPath}: ${probe.unproven}`);
 		await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`${socketPath}: host did not start listening within ${timeoutMs}ms`);

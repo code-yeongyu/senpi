@@ -18,6 +18,8 @@ export interface ApiKeyCredential {
 	type: "api_key";
 	key?: string;
 	env?: ProviderEnv;
+	/** Random id the last sign-in wrote (`stampLogin`); a refresh keeps or drops it, never mints one. Not key material. */
+	loginId?: string;
 }
 
 /** OAuth token data returned by extension compatibility flows. */
@@ -31,6 +33,20 @@ export interface OAuthCredentials {
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
+	/** Verified account identity, retained only by flows that validate an ID token. */
+	subject?: string;
+	/** Display metadata only; not proof of identity or workspace membership. */
+	email?: string;
+	issuer?: string;
+	/** Issued OAuth client ID, not the dynamic registration entrypoint. */
+	clientId?: string;
+	/** Retained for a later id_token_hint; treat as secret credential material. */
+	idToken?: string;
+	scopes?: string[];
+	/** SIWC plan permission; absent on credentials saved before permission tracking. */
+	planUsageEnabled?: boolean;
+	/** Random id the last sign-in wrote (`stampLogin`); a refresh keeps or drops it, never mints one. Not key material. */
+	loginId?: string;
 }
 
 /** One type-tagged credential per provider — the shape of today's auth.json. */
@@ -60,8 +76,8 @@ export interface LogoutOptions extends AuthOperationOptions {
  * App-owned credential storage, keyed by `Provider.id`, one entry per
  * provider; an entry may pool sibling slots under `accounts` while its flat
  * fields remain a valid credential. `modify` is the only write path, so every mutation is a
- * serialized read-modify-write; `Models.getAuth()` runs OAuth refresh inside
- * `modify` so concurrent requests cannot double-refresh a rotated token. The
+ * serialized read-modify-write. Persistent stores inject `withRefreshLock` to
+ * serialize a session's exchange without holding the global write lock. The
  * app persists a credential after login via
  * `modify(provider.id, async () => credential)`. Login/logout orchestration
  * is app-owned.
@@ -86,6 +102,20 @@ export interface CredentialStore {
 	 * resolves only the selected slot, never the flat key or a sibling.
 	 */
 	readSlot?(providerId: string, slotName: string, options?: AuthOperationOptions): Promise<Credential | undefined>;
+
+	/**
+	 * Optional session-scoped exclusion around read-latest -> exchange -> persist.
+	 * Persistent stores serialize across processes, separately from `modify`, so
+	 * unrelated accounts stay concurrent. The key is the provider and stable slot
+	 * name, never token material. The callback's signal also aborts on lock loss;
+	 * the lock stays held until the callback settles, including its final write.
+	 */
+	withRefreshLock?<T>(
+		providerId: string,
+		slotName: string,
+		fn: (signal: AbortSignal) => Promise<T>,
+		options?: AuthOperationOptions,
+	): Promise<T>;
 
 	/**
 	 * List stored credential metadata without resolving or exposing secrets.
@@ -245,12 +275,21 @@ export interface ApiKeyAuth {
 
 /** App-supplied context for `Models.login`. */
 export interface LoginOptions {
+	/** Configured product display name, consistent across installations of this app. */
+	appName?: string;
+	/**
+	 * The explicitly selected saved account for reauthorization. Omit when adding
+	 * an account; callers must not infer this from the provider's active credential.
+	 */
+	reauthorize?: OAuthCredential;
 	/**
 	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
 	 * agent host ID. Called only by login flows that need it, so apps can create
 	 * the ID on first use and must return the same ID on every later call.
 	 */
 	getDeviceId?: () => string;
+	/** Explicitly enable ChatGPT plan usage for a saved SIWC registration. */
+	planUsageConsent?: { clientId: string };
 }
 
 /**
@@ -288,7 +327,8 @@ export interface OAuthAuth {
 
 	/**
 	 * Exchange the refresh token. Network call; throws on failure
-	 * (invalid_grant etc.). `Models` runs this under the store lock.
+	 * (invalid_grant etc.). `Models` uses the injected session refresh lock,
+	 * never the store's global write lock.
 	 */
 	refresh(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential>;
 

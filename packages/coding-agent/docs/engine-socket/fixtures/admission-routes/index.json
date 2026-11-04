@@ -10,6 +10,9 @@
 		"f-subscribe.json",
 		"g-cancelled.json",
 		"h-legacy.json",
-		"i-reset-stream.json"
+		"i-live-identity.json",
+		"i-reset-stream.json",
+		"j-live-call-identity.json",
+		"k-same-message-reused-id.json"
 	]
 }

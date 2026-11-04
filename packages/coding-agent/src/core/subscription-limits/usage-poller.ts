@@ -86,7 +86,8 @@ export class UsagePoller {
 	#adopt(cache: UsageCacheFile, accounts: ReadonlyMap<string, PollAccount>): void {
 		for (const [key, account] of accounts) {
 			const reading = cache.accounts[key];
-			if (reading === undefined || this.#adopted.get(key) === reading.updatedAt) continue;
+			if (reading === undefined || reading.pending === true || this.#adopted.get(key) === reading.updatedAt)
+				continue;
 			this.#adopted.set(key, reading.updatedAt);
 			const reportedAt = new Date(reading.updatedAt);
 			this.#deps.store.report(
@@ -109,7 +110,7 @@ export class UsagePoller {
 		const credential = await account.access(signal);
 		if (credential === undefined) {
 			// Nothing to ask with yet: keep what is known and look again next interval.
-			return { ...(previous ?? { windows: [], updatedAt: now }), nextAt: now + interval };
+			return { ...(previous ?? { windows: [], updatedAt: now, pending: true }), nextAt: now + interval };
 		}
 		if ("error" in credential) {
 			return { windows: [], error: credential.error, updatedAt: now, nextAt: now + SIGNED_OUT_INTERVALS * interval };
@@ -165,6 +166,7 @@ export function startSubscriptionUsagePolling(options: {
 				store: storage,
 				env: (name) => process.env[name],
 				now: Date.now,
+				agentDir: options.agentDir,
 			}),
 		fetch: fetchUsageJson,
 		now: Date.now,

@@ -1,3 +1,76 @@
+## 2026-11-03 - coding-agent depends on @code-yeongyu/senpi-machine-ops (senpi#5592)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new dependency `@code-yeongyu/senpi-machine-ops`; `build:binary` builds it before coding-agent.
+- `packages/coding-agent/tsconfig.build.json`: paths for `@code-yeongyu/senpi-machine-ops` and its `in-process-holder` subpath to the package's `dist`.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- A package dependency and build paths are manifest changes, not extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list and `build:binary` in `package.json`; the `paths` block in `tsconfig.build.json`.
+
+## 2026-10-26 - The senpi package ships the Windows socket-secret bridge (senpi#4312)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `files` includes `native/socket-secret`, where the publish job stages `prebuilds/win32-x64/` and `prebuilds/win32-arm64/senpi_socket_secret.<host>.node`.
+
+### Why
+
+- sisyphuslabs/omo-desktop-app#4199: the Windows public socket secret is published and repaired through a native bridge with no fallback, so the installed package must carry it for both Windows architectures.
+
+### Why an extension could not handle it
+
+- Package contents are decided by the manifest, before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `files` array in `packages/coding-agent/package.json`.
+
+## 2026-11-03 - Loopless worker entry in the compiled binary (senpi#5438)
+
+### What changed
+
+- `packages/coding-agent/package.json` (`build:binary`): `./src/modes/rpc/loopless-worker.ts` joins the `bun build --compile` entry list, next to `./src/modes/rpc/session-worker.ts`, so the compiled binary can start a loopless worker isolate.
+
+### Why
+
+- A loopless worker runs in its own isolate (senpi#5413, brain/hand split); a compiled binary starts isolates only from entries compiled into it.
+
+### Why an extension could not handle it
+
+- The compiled entry list is the build script itself.
+
+### Expected merge conflict zones
+
+- LOW: the `build:binary` entry list, which other worker entries also extend.
+
+## 2026-11-01 - Kill guard judge embedded in the compiled binary (senpi#5349, PR #5354)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `build:binary` adds `./src/core/kill-guard/index.ts` as an explicit `bun build --compile` entry.
+
+### Why
+
+- Codemode workers import the kill guard's judge by URL; in the compiled binary that module has to be an embedded entry under its source path.
+
+### Why an extension could not handle it
+
+- The compile entry list is the package's own build script.
+
+### Expected merge conflict zones
+
+- LOW: the `bun build --compile` entry list in `build:binary`.
+
 ## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
 
 ### What changed

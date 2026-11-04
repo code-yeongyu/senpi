@@ -92,6 +92,7 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		custom: async <T>() => undefined as T,
 		pasteToEditor: () => {},
 		setEditorText: () => {},

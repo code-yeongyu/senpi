@@ -1,3 +1,4 @@
+import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { McpFormInput, McpFormOutcome } from "../../core/mcp-form-types.ts";
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
@@ -104,6 +105,8 @@ export type HostToSessionWorker =
 			command: object;
 			connection?: string;
 			roles?: readonly string[];
+			/** The remote device the connection declared on the host (senpi#5475); the isolate adopts it. */
+			origin?: RpcRemoteOrigin;
 			/** The gate the host captured at ingress, before its first await (#4728). */
 			owner?: ExtensionOwnerWire;
 	  }
@@ -152,6 +155,8 @@ export type SessionWorkerToHost =
 			 * text without recursion, where its structured-clone reader drops a deep frame (Node ~4,000 levels; RULING-68). */
 			recordText?: string;
 			recovery?: RecoveryCarrier;
+			/** A bridge-started call's `tool_execution_start`: the key its producer minted with it (RULING-127 (b)). */
+			callKey?: string;
 			/** Transcript transitions the isolate's manager committed before this record, accepted just before it. */
 			transitions?: readonly TranscriptTransition[];
 			/** The next incarnation's baseline, on the `session_replaced` record that starts it. */

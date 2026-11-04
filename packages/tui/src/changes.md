@@ -1,3 +1,77 @@
+## 2026-11-03 - Clipboard frames pass through the stdout guard (senpi#5680)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: pass validated ASCII clipboard text through the captured stdout writer, preserving the original callback and return value without re-encoding the frame.
+- `packages/tui/test/external-stdout-guard.test.ts`: cover clipboard delivery, non-UTF8 encodings, rejected non-clipboard-only output, callback completion, backpressure and writer errors.
+
+### Why
+
+- `packages/tui/src/terminal.ts`: the external stdout guard hid clipboard frames while the TUI was running; applying the caller's encoding after validation could also emit different bytes.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts`: ProcessTerminal owns the process-wide stdout guard and its captured raw writer.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal.ts`, inside installExternalStdoutGuard.
+- LOW: `packages/tui/test/external-stdout-guard.test.ts`, the guard harness and clipboard cases.
+
+## 2026-11-02 - A Kitty image appended below a full viewport no longer clears the screen and scrollback (senpi#4583)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: the differential render path no longer falls back to `fullRender(true, clearScrollback)` when a Kitty image's reserved rows reach past the viewport bottom. Reserving those rows writes newlines that scroll the terminal exactly as appended text does, and the relative cursor-up back to the image's first row still lands on it after the scroll, so the image is placed in place. The full-redraw fallback remains for an image that starts above the viewport or is taller than the viewport.
+
+### Why
+
+- An append-only update that added an inline image right below an already-full viewport took the fallback every time, because the image's first row sits at the viewport height. That sent `CSI 2 J`, `CSI 3 J` and replayed the whole transcript, erasing native scrollback outside multiplexers and costing a full-transcript write on image-heavy sessions; the reporter linked it to visible blank frames (senpi#4583, reported by copycatcode).
+
+### Why an extension could not handle it
+
+- The renderer's differential path and its fallback decisions are internal to `TuiBase.doRender()`; components only return lines.
+
+### Expected merge conflict zones
+
+- LOW: the Kitty image reservation branch inside the differential render loop of `doRender()` in `tui.ts`.
+
+## 2026-11-03 - Shift+Enter inserts a newline in macOS Terminal.app (code-yeongyu/oh-my-openagent#9796, PR #5647)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `normalizeAppleTerminalInput` also rewrites ESC CR (`"\x1b\r"`) to the native Shift+Enter sequence when the session is Apple Terminal and native Shift is pressed; `ProcessTerminal.forwardInputSequence` probes Shift for CR and ESC CR in Apple Terminal and routes both through it. The Windows bare-CR path is unchanged.
+
+### Why
+
+- Terminal.app sends ESC CR for Shift+Return, but the native Shift fallback only handled a bare CR. Legacy key parsing reads ESC CR as `alt+enter`, the macOS default for `app.message.followUp`, so Shift+Enter queued or sent the prompt. Without Shift, ESC CR stays `alt+enter`, so Option-as-Meta Return keeps working.
+
+### Why an extension could not handle it
+
+- Input normalization runs in `ProcessTerminal` before keybinding matching; extensions only see the submitted text.
+
+### Expected merge conflict zones
+
+- LOW: `normalizeAppleTerminalInput` and the constant block near `NATIVE_SHIFT_ENTER_SEQUENCE` in `terminal.ts`; the start of `forwardInputSequence`.
+
+## 2026-11-01 - OSC 7501 Program Status encoder (senpi#5323)
+
+### What changed
+
+- `packages/tui/src/index.ts` exports `encodeProgramStatus` and the `ProgramStatus`, `ProgramStatusState` and `ProgramStatusKind` types from the new fork-only `program-status.ts`. The encoder builds `OSC 7501 ; state=…[:kind=…][:app=…][:msg=<base64>] ST` per revision 0.4 of the proposal: `kind` only with `blocked`, an `app` outside the protocol charset or 32-character limit left out, the message stripped of C0/DEL/C1 controls and bidi or invisible formatting, truncated to 2048 bytes on a UTF-8 boundary, and `undefined` encoded as `state=clear`.
+
+### Why
+
+- Terminals such as herdr-core read a program's state only from OSC 7501, so omo panes there showed as a plain shell. The TUI package already owns the other terminal OSC writes (title, OSC 9;4 progress) and their sanitizing.
+
+### Why an extension could not handle it
+
+- The barrel is the only public import path of the TUI package; the encoder is pure and shared by the coding agent's interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: one export block after `terminal-text.ts` in `packages/tui/src/index.ts`.
+
 ## 2026-10-30 - First-class private secret input (senpi#5108)
 
 ### What changed
