@@ -189,6 +189,29 @@ describe("multi-holder MCP form group (D11 S3-3b)", () => {
 		]);
 	});
 
+	it("a holder that acquires after a form reached the head gets no dialog for it, only the next form", async () => {
+		const f = fixture();
+		const a = f.holder("a");
+		const first = f.present("first");
+		const second = f.present("second");
+		const version = f.binding.version?.();
+		const late = f.holder("late");
+		expect(f.requests(late)).toEqual([]);
+		expect(f.binding.version?.()).toBe(version);
+		expect(f.authority.receive(late.sender, { ...f.envelope(a), type: "mcp_form_presented" })).toEqual({
+			error: "presenter_not_authorized",
+		});
+		f.presented(a);
+		f.accept(a, "first-answer");
+		expect(await first).toMatchObject({ kind: "result", result: { content: { value: "first-answer" } } });
+		expect(f.resolutions(late)).toEqual([]);
+		await vi.waitFor(() => expect(f.requests(late)).toHaveLength(1));
+		expect(f.requests(late)[0]?.message).toBe("message-canary second");
+		f.presented(late);
+		f.accept(late, "second-answer");
+		expect(await second).toMatchObject({ kind: "result", result: { content: { value: "second-answer" } } });
+	});
+
 	it("T12: mcp_form_settled is value-free", async () => {
 		const f = fixture();
 		const writes: string[] = [];
