@@ -56,6 +56,9 @@ test("a run with tool calls must have its witness from the sink, whatever the pi
 	assert.equal(witnessMatches({ ...noSeam, toolCalls: 2 }, "legacy"), false);
 	assert.equal(witnessMatches({ ...noSeam, toolCalls: 2 }, "default"), false);
 	assert.equal(witnessMatches({ ...noSeam, toolCalls: 0 }, "default"), true);
+	// A run with no tool calls and no receipts ran no pipeline, so it matches whichever one was requested.
+	assert.equal(witnessMatches({ ...noSeam, toolCalls: 0 }, "prepared"), true);
+	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 0 }, "prepared"), false);
 	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "legacy"), true);
 	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "prepared"), false);
 	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));

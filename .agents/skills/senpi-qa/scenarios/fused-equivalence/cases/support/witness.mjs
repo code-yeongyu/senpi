@@ -41,8 +41,12 @@ export function toolCallCount(sessionFile) {
 	return entries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult").length;
 }
 
-/** A run's witness is right when it names the requested pipeline and, if the run made tool calls, came from the sink. */
+/**
+ * A run's witness is right when it names the requested pipeline and, if the run made tool calls, came from the sink. A run
+ * with no tool calls and no receipts ran no pipeline, so it matches whichever one was requested.
+ */
 export function witnessMatches(witness, requested) {
+	if (witness.toolCalls === 0 && witness.calls.length === 0) return true;
 	if (witness.pipeline !== expectedWitness(requested)) return false;
 	return witness.toolCalls === 0 || witness.source === "sink";
 }
