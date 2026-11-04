@@ -1,8 +1,11 @@
-import { rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { connect } from "node:net";
 import { PassThrough } from "node:stream";
 import { afterEach, expect, it } from "vitest";
 import type { PresenterAccountAuthority } from "../../src/modes/rpc/mcp-presenter-account.ts";
+import { McpPresenterControl } from "../../src/modes/rpc/mcp-presenter-control.ts";
 import {
 	type McpPresenterControlStart,
 	startMcpPresenterControl,
@@ -37,9 +40,9 @@ function enforcedWriter() {
 	writer.attachConnectionToSession("human", "session");
 	const sender = writer.getMcpPresenterConnection("human");
 	if (!sender) throw new Error("Missing presenter connection");
-	const context = (extra: Record<string, unknown> = {}): string => {
+	const context = (extra: Record<string, unknown> = {}, peer = "human"): string => {
 		const before = lines.length;
-		writer.withConnection("human", () =>
+		writer.withConnection(peer, () =>
 			writer.handleMcpForm({ type: "mcp_presenter_context", id: "context", sessionId: "session", ...extra }),
 		);
 		const reply = lines.slice(before).find((line) => JSON.parse(line).id === "context");
@@ -53,7 +56,12 @@ function enforcedWriter() {
 			ok: true,
 			context: authority.connectionContext(sender, "session"),
 		})}\n`;
-	return { writer, context, today };
+	const late = (peer: string) => {
+		writer.registerConnection(peer, { writeRaw: (line) => lines.push(line), waitForBackpressure: async () => {} });
+		writer.bindMcpForms("session", "durable", {}, () => {});
+		writer.attachConnectionToSession(peer, "session");
+	};
+	return { writer, context, today, late };
 }
 
 async function start(
@@ -96,6 +104,35 @@ it("with no account authority an fd-4 host's discover reply carries no controlEn
 	const { writer, context, today } = enforcedWriter();
 	expect(await start(writer, { enforcement: true, bootstrap: new PassThrough() })).toBeDefined();
 	expect(context({ discover: true })).toBe(today());
+});
+
+it("a control whose listen fails is never advertised", async () => {
+	const { writer, context } = enforcedWriter();
+	const dir = await mkdtemp(join(tmpdir(), "presenter-unlistenable-"));
+	const control = new McpPresenterControl(writer, join(dir, "missing", "control.sock"), account);
+	try {
+		await expect(control.listen()).rejects.toThrow();
+		expect(JSON.parse(context({ discover: true }))).toEqual({
+			type: "mcp_form_reply",
+			id: "context",
+			ok: true,
+			context: expect.not.objectContaining({ controlEndpoint: expect.anything() }),
+		});
+	} finally {
+		control.dispose();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+it("a disposed control is not advertised to a session bound after it", async () => {
+	const { writer, context, late } = enforcedWriter();
+	const presenter = await start(writer, { enforcement: true, account });
+	if (!presenter) throw new Error("No control endpoint");
+	presenter.control.dispose();
+	late("late");
+	const reply = JSON.parse(context({ discover: true }, "late"));
+	expect(reply.ok).toBe(true);
+	expect(reply.context).not.toHaveProperty("controlEndpoint");
 });
 
 it("an authority does not create a control endpoint without enforcement, and the bootstrap is closed", async () => {
