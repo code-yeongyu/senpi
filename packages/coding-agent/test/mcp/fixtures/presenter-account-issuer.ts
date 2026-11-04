@@ -8,8 +8,8 @@ import {
 	type KeyObject,
 } from "node:crypto";
 import { isRecord } from "../../../src/core/extensions/builtin/mcp/modern/form-schema.ts";
+import { presenterKeyThumbprint } from "../../../src/modes/rpc/mcp-presenter-attestation.ts";
 import {
-	presenterKeyThumbprint,
 	type PresenterAccountAuthority,
 	type PresenterAttestationRefusal,
 	type PresenterAttestationResult,

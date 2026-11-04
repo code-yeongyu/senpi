@@ -1,6 +1,6 @@
 import { createPublicKey, generateKeyPairSync } from "node:crypto";
 import { expect, it } from "vitest";
-import { PresenterJtiCache, presenterKeyThumbprint } from "../../src/modes/rpc/mcp-presenter-account.ts";
+import { PresenterJtiCache, presenterKeyThumbprint } from "../../src/modes/rpc/mcp-presenter-attestation.ts";
 import { jwkThumbprint } from "./fixtures/presenter-account-issuer.ts";
 import vectors from "./fixtures/presenter-jkt-vectors.json" with { type: "json" };
 

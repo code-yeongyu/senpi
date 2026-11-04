@@ -2,7 +2,11 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import type { Duplex } from "node:stream";
 import { isRecord } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
-import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
+import {
+	McpPresenterAccounts,
+	type AccountPrincipal,
+	type PresenterAccountAuthority,
+} from "./mcp-presenter-account.ts";
 import type { McpPresenterAuthority, McpPresenterRegistration } from "./mcp-presenter-authority.ts";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
@@ -11,9 +15,9 @@ import { McpPresenterSuccessors } from "./mcp-presenter-successor.ts";
 import { privateFrames, send, signed } from "./mcp-presenter-wire.ts";
 
 type Owner = ReturnType<McpPresenterAuthority["enroll"]>;
-interface Principal extends PresenterPrincipal {
-	readonly sessions: WeakSet<McpFormBinding>;
-}
+type Principal =
+	| (PresenterPrincipal & { readonly kind: "inherited"; readonly sessions: WeakSet<McpFormBinding> })
+	| AccountPrincipal;
 
 /** Separate authenticated control endpoint. Ordinary RPC credentials cannot enroll or acquire. */
 export class McpPresenterControl {
@@ -22,10 +26,15 @@ export class McpPresenterControl {
 	private readonly principals = new Map<string, Principal>();
 	private readonly controls = new Set<Duplex>();
 	private readonly revokeControls = new Map<Duplex, () => void>();
-	private launchOwner?: { readonly stream: Duplex; readonly principal: Principal; readonly backendGeneration: string };
+	private launchOwner?: {
+		readonly stream: Duplex;
+		readonly principal: PresenterPrincipal;
+		readonly backendGeneration: string;
+	};
 	private readonly backendGenerations = new Map<Duplex, { principal: Principal; generation: string }>();
 	private readonly enrollment: McpPresenterEnrollment;
 	private readonly successors: McpPresenterSuccessors;
+	private readonly accounts: McpPresenterAccounts;
 	private readonly server: Server;
 	readonly path: string;
 
@@ -37,6 +46,9 @@ export class McpPresenterControl {
 		if (account) writer.advertiseMcpPresenterControl(path);
 		this.enrollment = new McpPresenterEnrollment(this.authority.instance, path);
 		this.successors = new McpPresenterSuccessors(this.authority.instance, this.enrollment.nonces);
+		this.accounts = new McpPresenterAccounts(this.authority.instance, this.principals, account, (stream) =>
+			this.revokeControls.get(stream)?.(),
+		);
 		this.server = createServer((stream) => this.manage(stream));
 	}
 
@@ -67,7 +79,7 @@ export class McpPresenterControl {
 	/** Only the inherited launch channel may introduce the installation public key. */
 	bootstrap(stream: Duplex): void {
 		this.enrollment.bootstrap(stream, (principal) => {
-			this.principals.set(principal.id, { ...principal, sessions: new WeakSet() });
+			this.principals.set(principal.id, { ...principal, kind: "inherited", sessions: new WeakSet() });
 		});
 	}
 
@@ -76,6 +88,7 @@ export class McpPresenterControl {
 		for (const stream of this.controls) stream.destroy();
 		this.controls.clear();
 		this.successors.dispose();
+		this.accounts.dispose();
 		this.enrollment.dispose();
 		this.principals.clear();
 		this.server.close();
@@ -115,6 +128,8 @@ export class McpPresenterControl {
 					return;
 				}
 				if (this.successors.receive(stream, value)) return;
+				if (this.accounts.receive(stream, value, !principal && !pending, () => clearTimeout(challengeTimer)))
+					return;
 				if (value.type === "challenge") {
 					if (
 						pending ||
@@ -126,7 +141,9 @@ export class McpPresenterControl {
 						return;
 					}
 					const requested = this.principals.get(value.principalId);
-					if (!requested || (principal && principal !== requested)) {
+					// An account principal is managed only on the stream it enrolled on (D11 S3-2).
+					const foreign = requested?.kind === "account" && requested.stream !== stream;
+					if (!requested || foreign || (principal && principal !== requested)) {
 						stream.destroy();
 						return;
 					}
@@ -173,7 +190,8 @@ export class McpPresenterControl {
 					}
 				}
 				this.backendGenerations.set(stream, { principal, generation: backendGeneration });
-				this.launchOwner = { stream, principal, backendGeneration };
+				// Only the inherited launch principal can authorize a successor; never an adopted device (D11 T7).
+				if (principal.kind === "inherited") this.launchOwner = { stream, principal, backendGeneration };
 				const id = typeof command.id === "string" ? command.id : undefined;
 				try {
 					switch (command.type) {
