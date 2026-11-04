@@ -1468,6 +1468,7 @@ jobs:
           --workspace packages/agent
           --workspace packages/ai
           --workspace packages/client
+          --workspace packages/machine-ops
           --workspace packages/protocol
           --workspace packages/pty
           --workspace packages/senpi-codemode

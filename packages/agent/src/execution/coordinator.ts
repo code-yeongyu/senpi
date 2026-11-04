@@ -1,8 +1,10 @@
 import type { DurableStore } from "../durable/store.ts";
 import type { AdmissionLine } from "../durable/store-admission.ts";
 import { decodeBatchRecord } from "./coordinator-codec.ts";
+import { type ConsentStep, gateRawCall, resolveFrozenConsent } from "./coordinator-consent.ts";
 import { abortCause, buildBatchManifest, finished, settledOutcome } from "./coordinator-plan.ts";
 import type {
+	BatchConsent,
 	BatchExecutor,
 	BatchPlan,
 	BatchRecord,
@@ -10,6 +12,7 @@ import type {
 	CallOutcome,
 	ExecutionRef,
 	ManifestCall,
+	PrepareReply,
 	SettleReply,
 } from "./coordinator-types.ts";
 
@@ -30,6 +33,8 @@ export interface BatchCoordinatorOptions {
 	/** The single admission line of the store's writable epoch, shared with every other writer on it. */
 	readonly admission: AdmissionLine;
 	readonly executor: (id: string) => BatchExecutor;
+	/** Gate A/B consent for cross-machine executors; absent (fused, split-local) means no consent step (K3). */
+	readonly consent?: BatchConsent;
 }
 
 export interface BatchCoordinator {
@@ -51,7 +56,7 @@ const replace = <T>(items: readonly T[], index: number, value: T): T[] =>
 	items.map((item, at) => (at === index ? value : item));
 
 export function createBatchCoordinator(options: BatchCoordinatorOptions): BatchCoordinator {
-	const { issuer, store, epoch, admission, executor } = options;
+	const { issuer, store, epoch, admission, executor, consent } = options;
 	const read = async (batchId: string): Promise<BatchRecord | undefined> => {
 		const value = await store.getDocument(keyOf(issuer, batchId));
 		return value === undefined ? undefined : decodeBatchRecord(value);
@@ -109,11 +114,43 @@ export function createBatchCoordinator(options: BatchCoordinatorOptions): BatchC
 				throw new BatchManifestConflictError(plan.batchId);
 			}
 
+			const consentStep = (gate: BatchConsent, call: ManifestCall): ConsentStep => ({
+				consent: gate,
+				executor: executor(call.executor),
+				ref: ref(call),
+				call,
+				leaseUntil: manifest.leaseUntil,
+				recorded: current().consents?.[call.sourceIndex] ?? null,
+				record: (answered) =>
+					persist(
+						{
+							...current(),
+							consents: replace(
+								current().consents ?? manifest.calls.map(() => null),
+								call.sourceIndex,
+								answered,
+							),
+						},
+						"consent",
+						call,
+					),
+			});
+			const setPrepare = (call: ManifestCall, reply: PrepareReply): Promise<void> =>
+				persist({ ...current(), prepares: replace(current().prepares, call.sourceIndex, reply) }, "prepare", call);
+
 			if (current().decision === null) {
 				for (const call of manifest.calls) {
 					let reply = current().prepares[call.sourceIndex] ?? null;
-					if (reply === null) {
+					const gate =
+						reply === null && consent !== undefined ? await gateRawCall(consentStep(consent, call)) : {};
+					if (reply === null && "blocked" in gate) {
+						reply = gate.blocked;
+						await setPrepare(call, reply);
+					} else if (reply === null) {
 						reply = await executor(call.executor).prepare({
+							...("authorizedDigest" in gate && gate.authorizedDigest !== undefined
+								? { authorizedDigest: gate.authorizedDigest }
+								: {}),
 							...ref(call),
 							batchId: manifest.batchId,
 							manifestDigest: manifest.manifestDigest,
@@ -124,13 +161,17 @@ export function createBatchCoordinator(options: BatchCoordinatorOptions): BatchC
 							requestDigest: call.requestDigest,
 							call: { name: call.name, args: call.args },
 						});
-						await persist(
-							{ ...current(), prepares: replace(current().prepares, call.sourceIndex, reply) },
-							"prepare",
-							call,
-						);
+						await setPrepare(call, reply);
 					}
 					if (abortCause(reply) !== undefined) break;
+				}
+				for (const call of manifest.calls) {
+					if (current().prepares.some((reply) => reply !== null && abortCause(reply) !== undefined)) break;
+					const reply = current().prepares[call.sourceIndex] ?? null;
+					if (reply?.kind !== "prepared_awaiting_consent") continue;
+					if (consent === undefined)
+						throw new Error(`batch ${plan.batchId}: a call awaits consent but none is configured`);
+					await setPrepare(call, await resolveFrozenConsent(consentStep(consent, call), reply.frozenDigest));
 				}
 				const aborted = current().prepares.some((reply) => reply !== null && abortCause(reply) !== undefined);
 				await persist({ ...current(), decision: aborted ? "ABORT" : "RELEASE" }, "decision");

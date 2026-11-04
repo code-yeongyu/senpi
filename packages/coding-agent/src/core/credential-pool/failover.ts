@@ -1,4 +1,6 @@
 import { TURN_RETRY_SUPPRESSION_PREFIX } from "@earendil-works/pi-ai/auth/pool/failover";
+import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
+import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
 import { type CredentialAction, type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 
 /**
@@ -57,6 +59,12 @@ export type RunCredentialFailoverOptions<TEvent, TSlot extends RunSlot> = {
 	persistBlock: (slot: TSlot, block: CredentialBlock) => void | Promise<void>;
 	onRotate?: (event: CredentialFailoverEvent<TSlot>) => void | Promise<void>;
 	onSuccess?: (slot: TSlot) => void | Promise<void>;
+	/**
+	 * Marks the terminal event forwarded when every slot is limited, with the time the first one is due
+	 * back, so the session and goal read a rate limit with its reset instead of one slot's bare error
+	 * (senpi#3975).
+	 */
+	withPoolRetryAt?: (event: TEvent, retryAt: number) => TEvent;
 	/**
 	 * Called once when the request leaves a selected slot without a verdict on it: neither a success
 	 * nor a persisted block (an abort, a request-scoped failure, exhausted same-slot retries, or the
@@ -183,6 +191,31 @@ function noSlotsMessage(slots: readonly RunSlot[], now: number): string {
 		: `No credential slots available: ${blocked.join(", ")}. ${step}`;
 }
 
+function isRateLimitBlock(action: CredentialAction): boolean {
+	return action.kind === "failover" && action.block.reason === "rate_limit";
+}
+
+/** Blocks that need the user (a new login, a re-enabled or topped-up account), not a wait. */
+const OUT_OF_POOL_REASONS: ReadonlySet<string> = new Set(["auth_error", "account_disabled"]);
+
+/**
+ * The soonest rate-limit reset when the pool waits only on rate limits, else undefined (senpi#3975).
+ * Slots out for auth or a disabled account are not counted; every other slot must be rate-limited, so a
+ * slot with an unknown block or none keeps the refusal unclassified, and a disabled slot's re-probe time
+ * is never the pool's reset.
+ */
+function limitedUntil(slots: readonly RunSlot[], now: number): number | undefined {
+	const resets: number[] = [];
+	for (const slot of slots) {
+		if (OUT_OF_POOL_REASONS.has(slot.blockReason ?? "")) continue;
+		if (slot.blockReason !== "rate_limit" || slot.blockedUntil === undefined || slot.blockedUntil <= now) {
+			return undefined;
+		}
+		resets.push(slot.blockedUntil);
+	}
+	return resets.length === 0 ? undefined : Math.min(...resets);
+}
+
 function soonestRetryAt(slots: readonly RunSlot[], now: number): number | undefined {
 	const deadlines = slots
 		.map((slot) => slot.blockedUntil)
@@ -236,13 +269,28 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 			const slots = await options.listSlots();
 			const candidates = attemptCandidates(slots, attempted, now());
 			if (candidates.length === 0) {
+				// Only a refusal that is itself a limit is the pool's rate limit: a probe refused for auth, billing
+				// or a missing model keeps its own classification, which the goal's auth block reads (senpi#3975).
+				const limitedRetryAt =
+					lastError === undefined || isRateLimitBlock(lastError.action) ? limitedUntil(slots, now()) : undefined;
 				if (lastTerminalEvent !== undefined) {
-					yield lastTerminalEvent;
+					yield limitedRetryAt === undefined || options.withPoolRetryAt === undefined
+						? lastTerminalEvent
+						: options.withPoolRetryAt(lastTerminalEvent, limitedRetryAt);
 					return;
 				}
-				if (lastError === undefined || lastOriginal === undefined) throw noSlotsError(slots, now());
 				const retryAt = soonestRetryAt(slots, now());
-				throw new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt });
+				const refusal =
+					lastError === undefined || lastOriginal === undefined
+						? noSlotsError(slots, now())
+						: new CredentialFailoverError(
+								lastError.action,
+								lastOriginal,
+								retryAt === undefined ? {} : { retryAt },
+							);
+				throw limitedRetryAt === undefined
+					? refusal
+					: attachProviderDiagnostic(refusal, credentialPoolBlockedDiagnostic(limitedRetryAt));
 			}
 			const slot = options.select(candidates);
 			unsettled = slot;

@@ -8,8 +8,10 @@ import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
 import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
+import { executionCallKey } from "../../core/session-call-keys.ts";
 import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { getDefaultSessionDir, type SessionManager } from "../../core/session-manager.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
@@ -180,11 +182,13 @@ class WorkerEventWriter extends SessionEventWriter {
 			const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
 			epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
 			const recovery = recoveryCarrier(record);
+			const callKey = executionCallKey(record);
 			const canonical = carriedCanonical(record);
 			const order = ordered
 				? {
 						...stamp.stamp(recovery, canonical, record),
 						recovery,
+						...(callKey ? { callKey } : {}),
 						...(canonical ? { canonical } : {}),
 						...(carriedRefusal(record) ? { canonicalRefused: true as const } : {}),
 						...(replaced
@@ -294,14 +298,18 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		}
 		case "commit": {
 			if (!prepared || registry) throw new Error("Invalid session commit");
+			const timer = startOpenTimer(`worker-commit:${message.request}`);
 			const startupSettingsManager = SettingsManager.create(
 				prepared.configuration.cwd,
 				prepared.configuration.agentDir,
 			);
+			timer.mark("settings");
 			const factory = createCliRuntimeFactory(prepared.configuration, { startupSettingsManager });
 			initTheme(startupSettingsManager.getTheme(), false);
 			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
+			timer.mark("factory");
 			const opened = await registry.openSession(prepared.profile);
+			timer.mark("registry_open");
 			entry = registry.getForCommand(opened.sessionId, "open_session");
 			// The host offers acceptance only with the flag on (RULING-112); a session without the structured lane declines
 			// it with a `ready` lacking a bootstrap, which the host refuses (RULING-106).

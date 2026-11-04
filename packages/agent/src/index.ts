@@ -63,6 +63,7 @@ export {
 	type RemoteAbort,
 	type RemoteAck,
 	type RemoteHandMessage,
+	type RemoteFile,
 	type RemoteHello,
 	type RemoteInvoke,
 	type RemoteRefused,
@@ -72,6 +73,48 @@ export {
 	type RemoteTerminalReason,
 	type RemoteToolResult,
 } from "./execution/remote-protocol.ts";
+export {
+	createErrorToolResult,
+	createToolResultMessage,
+	emitToolExecutionEnd,
+	emitToolExecutionUpdate,
+	emitToolResultMessage,
+	shouldTerminateToolBatch,
+} from "./execution/tool-outcome-events.ts";
+export {
+	authorize,
+	createGrantVerifier,
+	DEFAULT_WORKSPACE,
+	type GrantRefusal,
+	type GrantRow,
+	type GrantSnapshot,
+	type GrantVerdict,
+	type GrantVerifier,
+	type GrantVerifierOptions,
+	HAND_CAPABILITY,
+	type HandAuthority,
+	type WorkspaceRoot,
+} from "./execution/grant-verify.ts";
+export {
+	base64Length,
+	DEVICE_FILE_OPS,
+	type DeviceFileArgs,
+	DeviceFileError,
+	type DeviceFileErrorCode,
+	type DeviceFileOp,
+	type DeviceFileOptions,
+	type DeviceFileOutcome,
+	type DeviceFiles,
+	type DeviceFileStat,
+	decodeBase64,
+	decodeDeviceFileArgs,
+	encodeBase64,
+	FILE_CHANNEL,
+	FILE_CHANNEL_MAX_BYTES,
+	fileOutcomeOf,
+} from "./execution/device-files.ts";
+export { HELLO_WAIT_MS } from "./execution/remote-device-files.ts";
+export { fileRefusal, fileResult } from "./execution/remote-file-call.ts";
 export {
 	createModelPlaneClient,
 	decodeModelPlaneRequest,

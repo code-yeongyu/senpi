@@ -1,6 +1,8 @@
 // S29 (brain/hand split, C7(c), C7c.a, R23.c): an unmodified two-sided extension keeps one state on a split session.
 // Its loop hooks run where the loop runs; on the hand its tool_call handlers are forwarded to that same generation over
 // the call's nested plane, so a block, an input mutation and state from a loop hook behave exactly as on a fused session.
+import { realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import { createRemoteToolHost } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
@@ -165,6 +167,44 @@ describe("a two-sided extension on a split session behaves as fused (S29)", () =
 		expect(split).toEqual(['ok {"n":1,"order":["first@loop","declared@hand","second@loop"]}']);
 	});
 
+	it("dispatches the tool_call handlers registered when the event started (snapshot)", async () => {
+		const ran: string[] = [];
+		let unsubscribeB: (() => void) | undefined;
+		let piB: Parameters<ExtensionFactory>[0] | undefined;
+		const a: ExtensionFactory = (pi) => {
+			pi.on("tool_call", () => {
+				ran.push("a");
+				unsubscribeB?.();
+				piB?.on("tool_call", () => {
+					ran.push("b-late");
+					return undefined;
+				});
+				return undefined;
+			});
+		};
+		const b: ExtensionFactory = (pi) => {
+			piB = pi;
+			unsubscribeB = pi.on("tool_call", () => {
+				ran.push("b");
+				return undefined;
+			});
+			pi.registerTool({
+				name: "note",
+				label: "note",
+				description: "note echoes its input",
+				parameters: Type.Object({}, { additionalProperties: true }),
+				execute: async (_id, params) => ({
+					content: [{ type: "text", text: JSON.stringify(params) }],
+					details: {},
+				}),
+			});
+		};
+
+		await resultsOf("fused", [["note", { n: 1 }]], [a, b]);
+
+		expect(ran).toEqual(["a", "b"]);
+	});
+
 	it("fails the call closed when a forwarded preflight throws, as fused does", async () => {
 		const calls: [string, JsonObject][] = [
 			["note", { fail: true }],
@@ -205,5 +245,43 @@ describe("a two-sided extension on a split session behaves as fused (S29)", () =
 
 		expect(results[0]).toMatch(/^error .*not loaded where the loop runs/);
 		expect(ran).toEqual([]);
+	});
+});
+
+/** Two-sided: a device file read is allowed only once a turn started, which only the loop's copy has seen. */
+const turnGatedReads: ExtensionFactory = (pi) => {
+	let turnStarted = false;
+	pi.on("before_agent_start", () => {
+		turnStarted = true;
+	});
+	pi.on("tool_call", (event) =>
+		event.toolName === "read" && !turnStarted
+			? { block: true, reason: "no turn has started on this copy" }
+			: undefined,
+	);
+};
+
+describe("a device file operation's tool_call handlers (S29 with S40)", () => {
+	it("forwards a two-sided extension's handler to the loop's copy, as for a tool call", async () => {
+		const harness = await createHarness({ extensionFactories: [turnGatedReads] });
+		harnesses.push(harness);
+		const dirs = await handDirs("s29-file");
+		const link = openLink();
+		startHand(link, dirs, [turnGatedReads]);
+		const host = createRemoteToolHost({
+			transport: link.brain,
+			placement: "split-local",
+			planes: { [EXTENSION_EVENTS_PLANE]: serveExtensionEvents(harness.getExtensionRunner()) },
+			filePlanes: [EXTENSION_EVENTS_PLANE],
+		});
+		harness.agent.toolHost = host;
+		harness.setResponses([fauxAssistantMessage("done")]);
+		await harness.session.prompt("go");
+		const root = realpathSync(dirs.cwd);
+		writeFileSync(join(root, "note.md"), "from the device");
+
+		const read = await host.deviceFiles({ id: "s29-file-scope", root }).read(join(root, "note.md"));
+
+		expect(new TextDecoder().decode(read)).toBe("from the device");
 	});
 });

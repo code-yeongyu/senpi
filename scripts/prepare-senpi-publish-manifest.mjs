@@ -5,7 +5,11 @@ import { isUnpublishedForkPackage, registryPackageNames } from "./registry-packa
 export const ownedRegistryAliases = new Map(
 	[...registryPackageNames].filter(([sourceName, registryName]) => sourceName !== registryName),
 );
-const ownedRegistryPackageNames = new Set([...ownedRegistryAliases.values(), "@code-yeongyu/senpi-codemode"]);
+const ownedRegistryPackageNames = new Set([
+	...ownedRegistryAliases.values(),
+	"@code-yeongyu/senpi-codemode",
+	"@code-yeongyu/senpi-machine-ops",
+]);
 const vendoredOnlyPackageNames = ["@earendil-works/pi-client", "@earendil-works/pi-protocol"];
 const runtimeDependencyFields = ["dependencies", "optionalDependencies"];
 

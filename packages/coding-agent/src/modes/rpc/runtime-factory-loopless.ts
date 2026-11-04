@@ -1,3 +1,4 @@
+import type { HandFileGuards } from "./hand-file-ops.ts";
 import { randomUUID } from "node:crypto";
 import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
@@ -60,6 +61,11 @@ export interface LooplessRuntime {
 	 * (S33). Refused unless the runtime was built as its extensions' home (`twoSidedHome: "hand"`).
 	 */
 	readonly runLoopHooks: LooplessLoopHooks;
+	/**
+	 * What a device file operation (S40) is checked against: this runtime's `tool_call` handlers and filesystem policy.
+	 * Present only when its grant runs the handlers, so no file operation can skip them.
+	 */
+	readonly fileGuards: HandFileGuards | undefined;
 	/** Marks its extension contexts stale, then closes the tool work and the tool child it still runs. */
 	dispose(): Promise<void>;
 }
@@ -214,10 +220,19 @@ export function createLooplessRuntimeFactory(
 				toolHandlers,
 			);
 		};
+		const fileGuards: HandFileGuards | undefined =
+			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)
+				? {
+						beforeToolCall: (toolName, toolCallId, input, nested) =>
+							toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
+						filesystemPolicy: () => runtime.filesystemPolicy,
+					}
+				: undefined;
 		return {
 			cwd: services.cwd,
 			definitions: registry.definitions,
 			diagnostics,
+			fileGuards,
 			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
 			runLoopHooks: extensionLoopHooks(
 				runtime.extensionRunner,
