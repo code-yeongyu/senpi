@@ -5,6 +5,8 @@ import {
 	Agent,
 	BatchStoreMissingError,
 	type ExecutionPipelineWitness,
+	noPreflightCarry,
+	PreflightCarryMissingError,
 	agentLoop,
 	agentLoopContinue,
 	openMemoryBatchStore,
@@ -102,6 +104,21 @@ describe("the loop core alone", () => {
 		expect(failed?.role === "assistant" ? failed.errorMessage : undefined).toBe(new BatchStoreMissingError().message);
 		expect(agent.state.messages.some((m) => m.role === "toolResult")).toBe(false);
 	});
+
+	// senpi#5795: the core never guesses that a host's preflight binds nothing to the arguments object.
+	it("refuses a tool batch with PreflightCarryMissingError when no afterToolFreeze is configured", async () => {
+		const agent = new LoopCoreAgent({
+			initialState: { model, tools: [echo] },
+			streamFn: turns([call("c0", "echo")]),
+			batchStoreFactory: openMemoryBatchStore,
+		});
+		await agent.prompt("go").catch(() => undefined);
+		const failed = agent.state.messages.find((m) => m.role === "assistant" && m.errorMessage !== undefined);
+		expect(failed?.role === "assistant" ? failed.errorMessage : undefined).toBe(
+			new PreflightCarryMissingError().message,
+		);
+		expect(agent.state.messages.some((m) => m.role === "toolResult")).toBe(false);
+	});
 });
 
 it("opens a fresh store for every batch, never the previous batch's", async () => {
@@ -109,6 +126,7 @@ it("opens a fresh store for every batch, never the previous batch's", async () =
 	const agent = new LoopCoreAgent({
 		initialState: { model, tools: [echo] },
 		streamFn: turns([call("same-id", "echo", { n: 0 })], [call("same-id", "echo", { n: 1 })]),
+		afterToolFreeze: noPreflightCarry,
 		batchStoreFactory: () => {
 			const store = openMemoryBatchStore();
 			opened.push(store);

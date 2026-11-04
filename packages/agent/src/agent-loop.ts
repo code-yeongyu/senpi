@@ -43,7 +43,7 @@ import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiv
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
 import { withToolNameCorrection } from "./tool-name-alias.ts";
 import { createPreparedToolHost } from "./execution/prepared/pipeline-prepared.ts";
-import { BatchStoreMissingError, type ToolHost } from "./execution/tool-host.ts";
+import { BatchStoreMissingError, PreflightCarryMissingError, type ToolHost } from "./execution/tool-host.ts";
 import {
 	createErrorToolResult,
 	createToolResultMessage,
@@ -1226,7 +1226,9 @@ async function executeToolCalls(
 
 	function defaultToolHost(): ToolHost {
 		if (config.batchStoreFactory === undefined) throw new BatchStoreMissingError();
-		return createPreparedToolHost(config, config.batchStoreFactory);
+		const afterToolFreeze = config.afterToolFreeze;
+		if (afterToolFreeze === undefined) throw new PreflightCarryMissingError();
+		return createPreparedToolHost({ ...config, afterToolFreeze }, config.batchStoreFactory);
 	}
 }
 

@@ -21,6 +21,12 @@ export interface PreparationPipeline {
 	beforeToolCall(context: BeforeToolCallContext, signal?: AbortSignal): Promise<BeforeToolCallResult | undefined>;
 	afterToolCall(context: AfterToolCallContext, signal?: AbortSignal): Promise<AfterToolCallResult | undefined>;
 	removedToolHint(name: string): string | undefined;
+	/**
+	 * Called once per call after its freeze is recorded and before its body is stored: carries the facts the
+	 * `tool_call` preflight attached to the prepared arguments object over to the frozen copy the tool will execute
+	 * (senpi#5795). Synchronous and must never throw: a throw here would turn into a block after the freeze.
+	 */
+	afterFreeze(prepared: unknown, frozen: unknown): void;
 }
 
 export interface PreparedExecutorOptions {

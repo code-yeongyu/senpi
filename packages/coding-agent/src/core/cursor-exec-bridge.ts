@@ -37,6 +37,7 @@ import {
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { ToolCallEvent, ToolCallEventResult } from "./extensions/types.ts";
+import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 
 export interface CursorExecBridgeOptions {
 	/**
@@ -178,6 +179,8 @@ async function executeTool(
 	// this call's tool: Cursor drives its native tools whether or not the request advertised them.
 	const host = createPreparedToolHost(
 		{
+			// The bridge's preflight runs the session's tool_call chain on this object too (senpi#5795).
+			afterToolFreeze: carryPreflightFacts,
 			beforeToolCall: async ({ args: input }) => {
 				const preflight = await options.preflightToolCall?.({
 					type: "tool_call",

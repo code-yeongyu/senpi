@@ -403,6 +403,14 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * `agentLoop` default it to `openMemoryBatchStore`.
 	 */
 	batchStoreFactory?: BatchStoreFactory;
+	/**
+	 * Runs once per call on the prepared pipeline, after the call is frozen and before it executes, with the arguments
+	 * object `beforeToolCall` saw and the frozen copy the tool will receive. A host whose `beforeToolCall` binds facts to
+	 * that object (an approval, a symbol property) moves them here. Synchronous and must not throw. With no `toolHost`
+	 * and no hook, a tool batch fails closed with `PreflightCarryMissingError`; the package entry's `Agent` and
+	 * `agentLoop` default it to `noPreflightCarry` (senpi#5795).
+	 */
+	afterToolFreeze?: (prepared: unknown, frozen: unknown) => void;
 	executionScope?: ExecutionScope;
 	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => Promise<void> | void;
 

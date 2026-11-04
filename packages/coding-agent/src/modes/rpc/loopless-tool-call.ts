@@ -1,4 +1,4 @@
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult, NestedRequest } from "@earendil-works/pi-agent-core";
 import { type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import type { ToolCallEventResult, ToolResultEventResult } from "../../core/extensions/types.ts";
 
@@ -13,6 +13,7 @@ export interface LooplessToolHandlers {
 		readonly toolName: string;
 		readonly toolCallId: string;
 		readonly input: Record<string, unknown>;
+		readonly nested?: NestedRequest;
 	}): Promise<ToolCallEventResult | undefined>;
 	afterToolCall(event: {
 		readonly toolName: string;
@@ -20,6 +21,7 @@ export interface LooplessToolHandlers {
 		readonly input: Record<string, unknown>;
 		readonly result: AgentToolResult<unknown>;
 		readonly isError: boolean;
+		readonly nested?: NestedRequest;
 	}): Promise<ToolResultEventResult | undefined>;
 }
 
@@ -46,10 +48,17 @@ function withOverride(result: AgentToolResult<unknown>, override: ToolResultEven
  */
 export async function runLooplessToolCall(
 	tool: AgentTool,
-	call: { readonly toolCallId: string; readonly params: unknown; readonly signal?: AbortSignal },
+	call: {
+		readonly toolCallId: string;
+		readonly params: unknown;
+		readonly signal?: AbortSignal;
+		/** The running call's requests back to the loop that owns it (on a hand). */
+		readonly nested?: NestedRequest;
+	},
 	handlers?: LooplessToolHandlers,
 ): Promise<AgentToolResult<unknown>> {
 	const { toolCallId, signal } = call;
+	const nested = call.nested === undefined ? {} : { nested: call.nested };
 	let args: Record<string, unknown>;
 	try {
 		const prepared = tool.prepareArguments ? tool.prepareArguments(call.params) : call.params;
@@ -61,7 +70,7 @@ export async function runLooplessToolCall(
 	if (handlers) {
 		let before: ToolCallEventResult | undefined;
 		try {
-			before = await handlers.beforeToolCall({ toolName: tool.name, toolCallId, input: args });
+			before = await handlers.beforeToolCall({ toolName: tool.name, toolCallId, input: args, ...nested });
 		} catch (error) {
 			return errorResult(
 				error instanceof Error ? error.message : `Extension failed, blocking execution: ${String(error)}`,
@@ -88,6 +97,7 @@ export async function runLooplessToolCall(
 			input: args,
 			result,
 			isError: result.isError === true,
+			...nested,
 		});
 		return override ? withOverride(result, override) : result;
 	} catch (error) {

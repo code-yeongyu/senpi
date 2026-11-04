@@ -47,6 +47,7 @@ async function open(options: {
 		},
 		afterToolCall: async () => undefined,
 		removedToolHint: () => undefined,
+		afterFreeze: () => {},
 	};
 	const medium = createMemoryStoreMedium();
 	await openMemoryStore(medium).claim(0, 1);

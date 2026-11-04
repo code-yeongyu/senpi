@@ -1,4 +1,5 @@
 import type { AgentToolCall, AgentToolResult } from "@earendil-works/pi-agent-core";
+import { sessionPreparationSource } from "./preparation-source.ts";
 import { fauxAssistantMessage, type JsonObject } from "@earendil-works/pi-ai";
 import { createAdmissionLine } from "../../../agent/src/durable/store-admission.ts";
 import { createMemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
@@ -40,7 +41,7 @@ export async function sessionExecutor(
 				},
 			},
 			executor: "hand",
-			pipeline: agentPreparationPipeline(session.agent),
+			pipeline: agentPreparationPipeline(sessionPreparationSource(session.agent)),
 		});
 	let executor = build(open());
 	return {

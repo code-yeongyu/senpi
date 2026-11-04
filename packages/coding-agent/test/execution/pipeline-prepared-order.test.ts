@@ -3,6 +3,7 @@
 // Each expected sequence was recorded from that scheduler at the last commit that still had it (prepared matched it
 // there); a sequential tool between parallel ones is covered by pipeline-prepared.test.ts.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { sessionPreparationSource } from "./preparation-source.ts";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -45,7 +46,7 @@ async function order(calls: readonly string[], sequential: boolean): Promise<str
 	const harness = await createHarness({ tools: [echo] });
 	harnesses.push(harness);
 	if (sequential) harness.agent.toolExecution = "sequential";
-	harness.agent.toolHost = createPreparedToolHost(harness.agent, openMemoryBatchStore);
+	harness.agent.toolHost = createPreparedToolHost(sessionPreparationSource(harness.agent), openMemoryBatchStore);
 	harness.setResponses([
 		fauxAssistantMessage(
 			calls.map((name, index) => ({ ...fauxToolCall(name, { n: index }), id: `call-${index}` })),

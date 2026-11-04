@@ -47,6 +47,19 @@ export class BatchStoreMissingError extends Error {
 	}
 }
 
+/** The loop had a tool batch to run on its default pipeline but no `afterToolFreeze`; it refuses instead of dropping preflight facts. */
+export class PreflightCarryMissingError extends Error {
+	readonly code = "preflight_carry_missing";
+
+	constructor() {
+		super("agent loop: no afterToolFreeze configured for the prepared pipeline; pass one (or a toolHost)");
+		this.name = "PreflightCarryMissingError";
+	}
+}
+
+/** The package entry's default `afterToolFreeze`: for hosts whose `beforeToolCall` binds nothing to the arguments object. */
+export function noPreflightCarry(_prepared: unknown, _frozen: unknown): void {}
+
 export interface ToolHost {
 	execute(call: ToolHostCall, options: ToolHostOptions): Promise<ToolHostResult>;
 }

@@ -6,7 +6,10 @@ import type { PreparationPipeline } from "./executor-types.ts";
 export type PreparationSource = Pick<
 	AgentLoopConfig,
 	"resolveUnknownToolCall" | "beforeToolCall" | "afterToolCall" | "removedToolHints"
->;
+> &
+	// Required, never defaulted here: a source that runs the prepared executor must say what follows a call from its
+	// preflight object to the frozen copy that executes (senpi#5795).
+	Required<Pick<AgentLoopConfig, "afterToolFreeze">>;
 
 /**
  * The preparation steps an agent's loop runs today, read from the agent at call time: its resolver (lazy activation),
@@ -30,5 +33,6 @@ export function agentPreparationPipeline(agent: PreparationSource): PreparationP
 		beforeToolCall: async (context, signal) => agent.beforeToolCall?.(context, signal),
 		afterToolCall: async (context, signal) => agent.afterToolCall?.(context, signal),
 		removedToolHint: (name) => agent.removedToolHints?.[name],
+		afterFreeze: (prepared, frozen) => agent.afterToolFreeze(prepared, frozen),
 	};
 }

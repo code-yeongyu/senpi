@@ -6,12 +6,17 @@ import {
 	runAgentLoopContinue as loopRunAgentLoopContinue,
 } from "./agent-loop.ts";
 import { openMemoryBatchStore } from "./execution/prepared/memory-batch-store.ts";
+import { noPreflightCarry } from "./execution/tool-host.ts";
 import type { AgentLoopConfig } from "./types.ts";
 
 // The package entry's loop and Agent: the loop core builds no store (senpi#4996), so the entry supplies a fresh in-memory
 // store per batch unless the caller passes its own factory or ToolHost. External callers need no new argument.
-function withBatchStore<T extends Pick<AgentLoopConfig, "batchStoreFactory">>(config: T): T {
-	return config.batchStoreFactory === undefined ? { ...config, batchStoreFactory: openMemoryBatchStore } : config;
+function withBatchStore<T extends Pick<AgentLoopConfig, "batchStoreFactory" | "afterToolFreeze">>(config: T): T {
+	return {
+		...config,
+		batchStoreFactory: config.batchStoreFactory ?? openMemoryBatchStore,
+		afterToolFreeze: config.afterToolFreeze ?? noPreflightCarry,
+	};
 }
 
 export class Agent extends LoopAgent {

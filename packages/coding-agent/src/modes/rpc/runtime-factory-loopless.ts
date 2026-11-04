@@ -1,6 +1,6 @@
 import type { HandFileGuards } from "./hand-file-ops.ts";
 import { randomUUID } from "node:crypto";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
 import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
@@ -43,7 +43,13 @@ export interface LooplessRuntime {
 	 * `tool_call` handlers (permission checks among them; a block or a throw stops the call) and `tool_result`
 	 * handlers; the in-process test harness's grant runs the tool alone.
 	 */
-	execute(name: string, toolCallId: string, params: unknown, signal?: AbortSignal): Promise<AgentToolResult<unknown>>;
+	execute(
+		name: string,
+		toolCallId: string,
+		params: unknown,
+		signal?: AbortSignal,
+		nested?: NestedRequest,
+	): Promise<AgentToolResult<unknown>>;
 	/**
 	 * What a device file operation (S40) is checked against: this runtime's `tool_call` handlers and filesystem policy.
 	 * Present only when its grant runs the handlers, so no file operation can skip them.
@@ -178,7 +184,7 @@ export function createLooplessRuntimeFactory(
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
 			? extensionToolHandlers(runtime.extensionRunner)
 			: undefined;
-		execute = (name, toolCallId, params, signal) => {
+		execute = (name, toolCallId, params, signal, nested) => {
 			if (!isLooplessExecuteGranted(local.executeGrant))
 				return Promise.reject(
 					new LooplessExecuteRefusedError(
@@ -193,6 +199,7 @@ export function createLooplessRuntimeFactory(
 					toolCallId,
 					params,
 					...(signal ? { signal } : {}),
+					...(nested ? { nested } : {}),
 				},
 				toolHandlers,
 			);
@@ -200,8 +207,8 @@ export function createLooplessRuntimeFactory(
 		const fileGuards: HandFileGuards | undefined =
 			toolHandlers !== undefined && isLooplessExecuteGranted(local.executeGrant)
 				? {
-						beforeToolCall: (toolName, toolCallId, input) =>
-							toolHandlers.beforeToolCall({ toolName, toolCallId, input }),
+						beforeToolCall: (toolName, toolCallId, input, nested) =>
+							toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
 						filesystemPolicy: () => runtime.filesystemPolicy,
 					}
 				: undefined;
@@ -210,7 +217,7 @@ export function createLooplessRuntimeFactory(
 			definitions: registry.definitions,
 			diagnostics,
 			fileGuards,
-			execute: (name, toolCallId, params, signal) => execute(name, toolCallId, params, signal),
+			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
 			dispose: async () => {
 				// Stale first, as a session disposes: a close that fails must not leave the contexts usable.
 				runtime.extensionRunner.invalidate("This loopless runtime was disposed.");
