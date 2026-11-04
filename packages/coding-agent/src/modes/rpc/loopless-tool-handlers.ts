@@ -274,11 +274,26 @@ export function createLoopHookCall(): LoopHookCall {
 	};
 }
 
+/**
+ * The one deliberate refusal after a loop-hook call ended (option A): the loop session's identity is bound to that call
+ * only, so reading it from a kept context afterwards throws this instead of answering. Every other member a call binds
+ * keeps working after it (late messages and notices ride the next reply; idle and signal keep their values).
+ */
+export class LoopHookCallEndedError extends Error {
+	override readonly name = "LoopHookCallEndedError";
+	/** The member that was read, e.g. `sessionManager.getSessionId`. */
+	readonly member: string;
+	constructor(member: string) {
+		super(`this loop-hook call has ended; ${member} is bound to that call only`);
+		this.member = member;
+	}
+}
+
 function readOnlySession(sessionId: string, cwd: string, live: () => boolean): ReadonlySessionManager {
 	const bound =
-		<T>(read: () => T) =>
+		<T>(member: string, read: () => T) =>
 		(): T => {
-			if (!live()) throw new Error("this loop-hook call has ended; its session identity is no longer bound");
+			if (!live()) throw new LoopHookCallEndedError(`sessionManager.${member}`);
 			return read();
 		};
 	const unbound = (member: string) => (): never => {
@@ -287,9 +302,9 @@ function readOnlySession(sessionId: string, cwd: string, live: () => boolean): R
 		);
 	};
 	return Object.freeze({
-		getSessionId: bound(() => sessionId),
-		getSessionFile: bound((): string | undefined => undefined),
-		getCwd: bound(() => cwd),
+		getSessionId: bound("getSessionId", () => sessionId),
+		getSessionFile: bound("getSessionFile", (): string | undefined => undefined),
+		getCwd: bound("getCwd", () => cwd),
 		getSessionDir: unbound("getSessionDir"),
 		getLeafId: unbound("getLeafId"),
 		getLeafEntry: unbound("getLeafEntry"),

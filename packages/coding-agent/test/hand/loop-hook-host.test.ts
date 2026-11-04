@@ -27,7 +27,11 @@ import type {
 	InputEventResult,
 } from "../../src/core/extensions/types.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
-import { createLoopHookCall, LATE_PER_SESSION } from "../../src/modes/rpc/loopless-tool-handlers.ts";
+import {
+	createLoopHookCall,
+	LATE_PER_SESSION,
+	LoopHookCallEndedError,
+} from "../../src/modes/rpc/loopless-tool-handlers.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
@@ -436,7 +440,10 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 
 		expect(during).toEqual({ id: "loop-session-1", file: undefined, idle: true });
 		expect(call.current()).toBeUndefined();
-		expect(() => captured?.sessionManager.getSessionId()).toThrow(/has ended/);
+		expect(() => captured?.sessionManager.getSessionId()).toThrow(LoopHookCallEndedError);
+		expect(() => captured?.sessionManager.getSessionId()).toThrow(
+			expect.objectContaining({ name: "LoopHookCallEndedError", member: "sessionManager.getSessionId" }),
+		);
 		expect(captured?.signal.aborted).toBe(true);
 	});
 
@@ -493,7 +500,7 @@ describe("what a handler's kept ctx and pi do after its call ended (S33 review)"
 		const extension = join(dirs.cwd, "..", "late-ext.ts");
 		writeFileSync(
 			extension,
-			`export default (pi) => { pi.on("input", (event, ctx) => { if (event.text !== "first") return; const gate = Promise.withResolvers(); globalThis.s33Fire = gate.resolve; globalThis.s33Late = gate.promise.then(() => { try { ${row.use}; return "value"; } catch (error) { return String(error).includes("has ended") ? "refused" : "threw: " + String(error); } }); }); };`,
+			`export default (pi) => { pi.on("input", (event, ctx) => { if (event.text !== "first") return; const gate = Promise.withResolvers(); globalThis.s33Fire = gate.resolve; globalThis.s33Late = gate.promise.then(() => { try { ${row.use}; return "value"; } catch (error) { return error?.name === "LoopHookCallEndedError" ? "refused" : "threw: " + String(error); } }); }); };`,
 		);
 		const machine = createLooplessHand(handConfiguration(dirs, ["-e", extension]), { twoSidedHome: "hand" });
 		closers.push(() => void machine.close());
