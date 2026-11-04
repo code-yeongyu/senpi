@@ -1,6 +1,6 @@
 {
 	"snapshot": {
-		"calls/call-0000000000000037-0000": {
+		"calls/call-0000000000000035-0000": {
 			"owningMessageId": "00000000-0000-4000-8000-000000000001",
 			"contentIndex": 0,
 			"parentKey": null,
@@ -45,7 +45,7 @@
 			"runtimeItemKey": "call-1",
 			"callUnknown": true
 		},
-		"calls/call-0000000000000040-0000": {
+		"calls/call-0000000000000038-0000": {
 			"owningMessageId": "00000000-0000-4000-8000-000000000001",
 			"contentIndex": 1,
 			"parentKey": null,
