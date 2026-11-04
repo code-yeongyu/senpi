@@ -4,18 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { collectors } from "../../scenarios/fused-equivalence/cases/support/collectors.mjs";
-import {
-	expectedWitness,
-	readWitness,
-	toolCallCount,
-	witnessMatches,
-} from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
-
-test("--pipeline default is witnessed as prepared (S21a); legacy stays requestable until S36", () => {
-	assert.equal(expectedWitness("default"), "prepared");
-	assert.equal(expectedWitness("prepared"), "prepared");
-	assert.equal(expectedWitness("legacy"), "legacy");
-});
+import { readWitness, witnessOk } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+import { classifyMutation } from "./equivalence-mutations.mjs";
 
 test("older execution-pipeline entries never change O7 or its parent chain", () => {
 	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
@@ -44,47 +34,44 @@ test("older execution-pipeline entries never change O7 or its parent chain", () 
 	}
 });
 
-test("the witness is read from the session's sink file, one JSON line per call", () => {
+// senpi#5728 (S36): one pipeline, so a run whose tools ran with no receipt is "missing" and fails; no tool call passes.
+test("the witness is read from the session's sink file: missing, no-calls, prepared, mixed", () => {
 	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
 	try {
 		const witnessFile = join(dir, "witness.jsonl");
-		assert.deepEqual(readWitness(witnessFile), { pipeline: "legacy", source: "no-seam", calls: [] });
+		const sessionFile = join(dir, "session.jsonl");
+		const assistant = (content) => JSON.stringify({ type: "message", id: "a", message: { role: "assistant", content } });
+		writeFileSync(sessionFile, assistant([{ type: "text", text: "hi" }]));
+		assert.deepEqual(readWitness(witnessFile, [sessionFile]), { pipeline: "no-calls", source: "none", calls: [] });
+		writeFileSync(sessionFile, assistant([{ type: "toolCall", id: "one" }]));
+		const missing = readWitness(witnessFile, [undefined, sessionFile]);
+		assert.deepEqual(missing, { pipeline: "missing", source: "none", calls: [] });
 		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n{"pipeline":"prepared","toolCallId":"two"}\n');
-		assert.deepEqual(readWitness(witnessFile), {
+		const prepared = readWitness(witnessFile, [sessionFile]);
+		assert.deepEqual(prepared, {
 			pipeline: "prepared",
 			source: "sink",
 			calls: [{ toolCallId: "one", pipeline: "prepared" }, { toolCallId: "two", pipeline: "prepared" }],
 		});
-		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n{"pipeline":"legacy","toolCallId":"two"}\n');
-		assert.equal(readWitness(witnessFile).pipeline, "mixed");
+		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n{"pipeline":"other","toolCallId":"two"}\n');
+		const mixed = readWitness(witnessFile, [sessionFile]);
+		assert.equal(mixed.pipeline, "mixed");
+		assert.deepEqual(
+			[missing, { pipeline: "no-calls" }, prepared, mixed].map(witnessOk),
+			[false, true, true, false],
+		);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
-test("a run with tool calls must have its witness from the sink, whatever the pipeline", () => {
-	const noSeam = { pipeline: "legacy", source: "no-seam", calls: [] };
-	assert.equal(witnessMatches({ ...noSeam, toolCalls: 2 }, "legacy"), false);
-	assert.equal(witnessMatches({ ...noSeam, toolCalls: 2 }, "default"), false);
-	assert.equal(witnessMatches({ ...noSeam, toolCalls: 0 }, "default"), true);
-	// A run with no tool calls and no receipts ran no pipeline, so it matches whichever one was requested.
-	assert.equal(witnessMatches({ ...noSeam, toolCalls: 0 }, "prepared"), true);
-	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 0 }, "prepared"), false);
-	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "default"), false);
-	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "legacy"), true);
-	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "prepared"), false);
-	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
-	try {
-		const sessionFile = join(dir, "session.jsonl");
-		writeFileSync(sessionFile, [{ type: "message", message: { role: "assistant" } }, { type: "message", message: { role: "toolResult" } }, { type: "message", message: { role: "toolResult" } }].map((entry) => JSON.stringify(entry)).join("\n"));
-		assert.equal(toolCallCount(sessionFile), 2);
-		// A lost session file is unknown, never "no tool calls": the check must not pass it vacuously.
-		assert.equal(toolCallCount(join(dir, "missing.jsonl")), null);
-		assert.equal(toolCallCount(undefined), null);
-		assert.equal(witnessMatches({ pipeline: "legacy", source: "no-seam", calls: [], toolCalls: null }, "prepared"), false);
-		assert.equal(witnessMatches({ pipeline: "legacy", source: "no-seam", calls: [], toolCalls: null }, "legacy"), false);
-		assert.equal(witnessMatches({ pipeline: "prepared", source: "sink", calls: [{}], toolCalls: null }, "prepared"), true);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
+test("a mutation that only breaks the witness is KILLED by its witness row", () => {
+	const mutation = { expect: { E01: /^witness\.pipeline: actual="missing"$/ } };
+	const verdict = classifyMutation(mutation, {
+		runnable: ["E01"],
+		baseline: new Map([["E01", "PASS"]]),
+		run: { exitCode: 1, results: [{ id: "E01", pass: false, diffs: [], witnessOk: false, witness: { pipeline: "missing" } }] },
+		revert: { clean: true, reapplies: true },
+	});
+	assert.equal(verdict.status, "KILLED");
 });

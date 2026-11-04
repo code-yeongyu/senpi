@@ -56,10 +56,10 @@ describe("resolveWitnessSink", () => {
 		const path = witnessFile();
 		const sink = resolveWitnessSink(undefined, { SENPI_EXECUTION_PIPELINE_WITNESS: path });
 		sink?.({ pipeline: "prepared", toolCallId: "call-1" });
-		sink?.({ pipeline: "legacy", toolCallId: "call-2" });
+		sink?.({ pipeline: "prepared", toolCallId: "call-2" });
 		expect(lines(path)).toEqual([
 			{ pipeline: "prepared", toolCallId: "call-1" },
-			{ pipeline: "legacy", toolCallId: "call-2" },
+			{ pipeline: "prepared", toolCallId: "call-2" },
 		]);
 	});
 

@@ -3,7 +3,8 @@
 //
 // The witness comes from the session's explicit sink (S18b part 3), never from its entries: the runner points
 // `SENPI_EXECUTION_PIPELINE_WITNESS` at a per-run file, and the session appends one JSON line `{ pipeline, toolCallId }` per
-// call entering the selected pipeline. A run that wrote no line reports `legacy` with `source: "no-seam"`.
+// call entering the pipeline. Since S36 the loop has one pipeline, so every line must say `prepared`. A run whose sessions
+// made tool calls but wrote no line is `missing` (a failure, never a pipeline); a run that made no tool call is `no-calls`.
 // `withoutWitnessEntries` still drops `execution-pipeline` entries a session file recorded before part 3.
 import { existsSync, readFileSync } from "node:fs";
 import { readJsonl } from "../../../../scripts/lib/common.mjs";
@@ -26,36 +27,31 @@ export function withoutWitnessEntries(entries) {
 		});
 }
 
-/** @returns {{ pipeline: string, source: "sink" | "no-seam", calls: Array<{ toolCallId: string, pipeline: string }> }} */
-export function readWitness(witnessFile) {
+/**
+ * @param {string | undefined} witnessFile the run's sink file
+ * @param {readonly (string | undefined)[]} sessionFiles the run's session files, to tell `missing` from `no-calls`
+ * @returns {{ pipeline: string, source: "sink" | "none", calls: Array<{ toolCallId: string, pipeline: string }> }}
+ */
+export function readWitness(witnessFile, sessionFiles = []) {
 	const lines = witnessFile && existsSync(witnessFile) ? readJsonl(readFileSync(witnessFile, "utf8")) : [];
 	const calls = lines.map((line) => ({ toolCallId: line.toolCallId, pipeline: line.pipeline }));
-	if (calls.length === 0) return { pipeline: "legacy", source: "no-seam", calls };
+	if (calls.length === 0) return { pipeline: sessionFiles.some(madeToolCalls) ? "missing" : "no-calls", source: "none", calls };
 	const kinds = new Set(calls.map((call) => call.pipeline));
 	return { pipeline: kinds.size === 1 ? [...kinds][0] : "mixed", source: "sink", calls };
 }
 
-/** The tool results a run's session recorded, or `null` when its session file is missing (unknown, never "none"). */
-export function toolCallCount(sessionFile) {
-	if (!sessionFile || !existsSync(sessionFile)) return null;
-	const entries = readJsonl(readFileSync(sessionFile, "utf8"));
-	return entries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult").length;
+/** Every EQ run must show this witness: each call on the prepared pipeline, or no tool call at all. */
+export function witnessOk(witness) {
+	return witness.pipeline === "prepared" || witness.pipeline === "no-calls";
 }
 
-/**
- * A run's witness is right when it names the requested pipeline and, if the run made tool calls, came from the sink. A run
- * with no tool calls and no receipts ran no pipeline, so it matches whichever one was requested.
- */
-export function witnessMatches(witness, requested) {
-	if (witness.toolCalls === 0 && witness.calls.length === 0) return true;
-	if (witness.pipeline !== expectedWitness(requested)) return false;
-	// An unknown count (no session file) proves nothing on its own: only a sink witness can match it.
-	return witness.toolCalls === 0 || witness.source === "sink";
-}
-
-/** The pipeline a `--pipeline` request must be witnessed as: `default` is prepared since S21a. */
-export function expectedWitness(requested) {
-	if (requested === "legacy") return "legacy";
-	if (requested === "prepared" || requested === "default") return "prepared";
-	throw new Error(`--pipeline must be legacy, prepared or default, got ${JSON.stringify(requested)}`);
+function madeToolCalls(sessionFile) {
+	if (!sessionFile || !existsSync(sessionFile)) return false;
+	return readJsonl(readFileSync(sessionFile, "utf8")).some(
+		(entry) =>
+			entry.type === "message" &&
+			entry.message?.role === "assistant" &&
+			Array.isArray(entry.message.content) &&
+			entry.message.content.some((part) => part?.type === "toolCall"),
+	);
 }

@@ -11,7 +11,7 @@ node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-mutations-qa.mj
 
 The driver never patches the working tree. It copies the clean, committed tree to a scratch directory (a shared clone at
 HEAD plus the ignored dependencies, build output and generated sources, symlinks kept as they are), runs the unmutated
-compare there first, and then per row applies the patch, runs `fused-equivalence-qa.mjs --compare --pipeline legacy
+compare there first, and then per row applies the patch, runs `fused-equivalence-qa.mjs --compare
 --placement fused` on the row's cases, reverts, and checks that the scratch is clean and the patch still applies.
 
 | Patch | Plan row | Observation | Cases | What it changes |
@@ -40,6 +40,8 @@ reported and never count as proof. SURVIVED (the EQ passed with the mutation app
 without the expected diff row), INCONCLUSIVE (the unmutated compare did not pass), STALE (the patch no longer applies),
 DIRTY (the revert did not leave a clean tree) and ERROR fail the run.
 
-Lifecycle (plan §1.3 chain `mutations/`: P0-05d -> S18b -> S36): S18b adds `witness.patch` (prepared -> legacy routing
-must fail the `witness.pipeline` assertion), and S36 retires it for `bypass-executor.patch`. A PR that removes the code a
-patch targets retires that patch and registers its replacement in the same PR.
+Lifecycle (plan §1.3 chain `mutations/`: P0-05d -> S18b -> S36): `bypass-executor.patch` (S36) runs each call's tool
+directly instead of through the prepared executor, so the witness sink records no receipt; E01 must fail with the row
+`witness.pipeline: actual="missing"` (the witness is not part of the equality, so its failure is its own row). S18b's
+planned `witness.patch` was never added, and with one pipeline left there is no other routing to witness. A PR that
+removes the code a patch targets retires that patch and registers its replacement in the same PR.
