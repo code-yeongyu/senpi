@@ -1,5 +1,9 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { SessionPendingInputs } from "../../../src/core/pending-input-session.ts";
+import type { PendingInputJournal, PendingInputJournalRecord } from "../../../src/core/pending-input-store.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
+import { TurnConflictError } from "../../../src/core/turn-conflict.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 
 // senpi#5776: get_state names the running turn, and a prompt steer that carries expectedTurnId reaches only that turn,
@@ -181,7 +185,7 @@ describe("RPC steer that names its turn", () => {
 		expect(userTexts(fixture)).toEqual(["hold", "Steer"]);
 	});
 
-	it("lets a steer refused because its turn ended mid-admission be sent again under the same clientMessageId", async () => {
+	it("lets a steer refused after its turn ended while an input handler held it be sent again under the same clientMessageId", async () => {
 		const { fixture, rpc, startHeldTurn, releaseTurn, holdSteerInput } = await setup();
 		const { inputHeld, releaseInput } = holdSteerInput();
 		let answered: Promise<unknown> | undefined;
@@ -251,5 +255,67 @@ describe("RPC steer that names its turn", () => {
 		const refused = await rpc.send(command);
 		expect(refused).toMatchObject({ success: false });
 		expect(String(refused.error)).toMatch(error);
+	});
+});
+
+describe("pending-input admission of a steer that names its turn", () => {
+	/** A store whose journal append ends the named turn when `endTurnOnWrite` is set: the turn ends while the record is written. */
+	const store = () => {
+		const records: PendingInputJournalRecord[] = [];
+		let turnRunning = true;
+		let endTurnOnWrite = false;
+		const journal: PendingInputJournal = {
+			append: async (record) => {
+				records.push(record);
+				if (endTurnOnWrite) turnRunning = false;
+			},
+			read: async () => records,
+		};
+		let queuedIds = 0;
+		const inputs = new SessionPendingInputs({
+			sessionManager: SessionManager.inMemory(),
+			nextQueuedId: () => `q_${++queuedIds}`,
+			journal,
+		});
+		return {
+			inputs,
+			records,
+			refusal: () => (turnRunning ? undefined : new TurnConflictError(undefined)),
+			endTurnOnWrite: () => {
+				endTurnOnWrite = true;
+			},
+			startNextTurn: () => {
+				turnRunning = true;
+				endTurnOnWrite = false;
+			},
+			endTurn: () => {
+				turnRunning = false;
+			},
+		};
+	};
+	const steer = { clientMessageId: "s-1", text: "Steer", mode: "steer" } as const;
+
+	it("records nothing for a steer refused before it is written", async () => {
+		const { inputs, records, refusal, endTurn } = store();
+		endTurn();
+		const enqueued: string[] = [];
+		await expect(inputs.admit(steer, (id) => enqueued.push(id), refusal)).rejects.toBeInstanceOf(TurnConflictError);
+		expect(records).toEqual([]);
+		expect(enqueued).toEqual([]);
+	});
+
+	it("admits a resend of a steer whose turn ended while its record was written", async () => {
+		const { inputs, records, refusal, endTurnOnWrite, startNextTurn } = store();
+		endTurnOnWrite();
+		const enqueued: string[] = [];
+		await expect(inputs.admit(steer, (id) => enqueued.push(id), refusal)).rejects.toBeInstanceOf(TurnConflictError);
+		expect(enqueued).toEqual([]);
+		expect(records.length).toBe(2);
+
+		startNextTurn();
+		const resent = await inputs.admit(steer, (id) => enqueued.push(id), refusal);
+
+		expect(resent?.outcome).toBe("admitted");
+		expect(enqueued).toHaveLength(1);
 	});
 });
