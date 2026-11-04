@@ -5,13 +5,28 @@
  * (an agent dir, a cwd, a runtime factory) and reads nothing product-specific.
  */
 import { posix, win32 } from "node:path";
+import type {
+	CreateAgentSessionRuntimeFactory,
+	CreateAgentSessionRuntimeResult,
+} from "../../core/agent-session-runtime.ts";
 import type { MultiSessionHostOptions } from "../rpc/multi-session-host.ts";
 import { resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
+import type { HeadlessPresence } from "./presence.ts";
+import { gatePresence } from "./presence-gates.ts";
 
 /** The headless engine's socket under `<agentDir>/rpc/`, apart from the shared host's `rpc.sock`. */
 const HEADLESS_SOCKET_FILE = "headless.sock";
 
-export type HeadlessHostOptions = Omit<MultiSessionHostOptions, "sessionOwner">;
+/** Off unless set: each session's presence and its gates (C2, K7; senpi#5652). No CLI flag sets it yet. */
+export interface HeadlessPresenceBinding {
+	readonly presence: HeadlessPresence;
+	/** The hand machines a session's tool calls run on; empty for a fused session. */
+	readonly handsOf: (runtime: CreateAgentSessionRuntimeResult) => readonly string[];
+}
+
+export type HeadlessHostOptions = Omit<MultiSessionHostOptions, "sessionOwner" | "sessionPresence"> & {
+	readonly presence?: HeadlessPresenceBinding;
+};
 
 export function headlessSocketPath(agentDir: string, platform: NodeJS.Platform = process.platform): string {
 	return (platform === "win32" ? win32 : posix).join(agentDir, "rpc", HEADLESS_SOCKET_FILE);
@@ -27,9 +42,27 @@ export function headlessEndpoint(
 }
 
 export function headlessHostOptions(options: HeadlessHostOptions): MultiSessionHostOptions {
+	const { presence, ...host } = options;
 	return {
-		...options,
+		...host,
 		sessionOwner: "machine",
 		listen: options.listen ?? `unix://${headlessSocketPath(options.agentDir)}`,
+		...(presence === undefined
+			? {}
+			: { sessionPresence: presence.presence, createRuntime: presenceRuntime(options.createRuntime, presence) }),
 	};
+}
+
+function presenceRuntime(
+	createRuntime: CreateAgentSessionRuntimeFactory,
+	binding: HeadlessPresenceBinding,
+): CreateAgentSessionRuntimeFactory {
+	const tracked: CreateAgentSessionRuntimeFactory = async (input) => {
+		const runtime = await createRuntime(input);
+		const { session } = runtime;
+		await binding.presence.track(session.sessionId, binding.handsOf(runtime));
+		gatePresence(session.agent, binding.presence, session.sessionId);
+		return runtime;
+	};
+	return Object.assign(tracked, createRuntime);
 }

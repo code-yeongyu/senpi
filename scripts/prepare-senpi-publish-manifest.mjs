@@ -8,9 +8,8 @@ export const ownedRegistryAliases = new Map(
 const ownedRegistryPackageNames = new Set([
 	...ownedRegistryAliases.values(),
 	"@code-yeongyu/senpi-codemode",
-	"@code-yeongyu/senpi-machine-ops",
 ]);
-const vendoredOnlyPackageNames = ["@earendil-works/pi-client", "@earendil-works/pi-protocol"];
+const vendoredOnlyPackageNames = ["@earendil-works/pi-client", "@earendil-works/pi-protocol", "@code-yeongyu/senpi-machine-ops"];
 const runtimeDependencyFields = ["dependencies", "optionalDependencies"];
 
 function exactVersionSpec(spec) {
@@ -60,7 +59,7 @@ function prepareVendoredPublishManifest(manifest) {
 // runtime closure. Every fork workspace is published under its own @code-yeongyu name
 // (scripts/registry-packages.mjs) and reached through an exact `npm:` alias, so npm and
 // bun resolve the whole graph from the registry. The only packages that ship inside the
-// tarball are the unpublished client/protocol workspaces, vendored under `vendor/` by
+// tarball are the unpublished client/protocol/machine-ops workspaces, vendored under `vendor/` by
 // prepare-senpi-bundled-workspaces.mjs. Platform binaries stay optional edges of the
 // packages that own them, which resolve the installing machine's native package.
 export function stagePublishManifest(repoRoot) {

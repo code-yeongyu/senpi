@@ -108,6 +108,8 @@ export {
 	type DeviceFileErrorCode,
 	type DeviceFileOp,
 	type DeviceFileOptions,
+	type DeviceRunRequest,
+	type DeviceRunResult,
 	type DeviceFileOutcome,
 	type DeviceFiles,
 	type DeviceFileStat,
@@ -116,6 +118,7 @@ export {
 	encodeBase64,
 	FILE_CHANNEL,
 	FILE_CHANNEL_MAX_BYTES,
+	RUN_CHANNEL,
 	fileOutcomeOf,
 } from "./execution/device-files.ts";
 export { HELLO_WAIT_MS } from "./execution/remote-device-files.ts";

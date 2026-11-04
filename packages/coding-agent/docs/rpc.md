@@ -1406,6 +1406,16 @@ with large arguments and replies carried by acknowledged references). Both runti
 (`placement:offload`) and in the host process under `in-process`. A job worker cannot start worker threads of its
 own (`tool_child_nested_worker_refused`), so no launch escapes the barrier that way.
 
+### Session presence (headless engine)
+
+A headless host built with a presence binding (no CLI flag selects one yet; every other host is unchanged) adds
+`presence: { placement, state: "online" | "offline", paused, waitingOn: [{ machine, role: "owner" | "hand" }], held }`
+to each `list_sessions` row and to the `open_session` answer. `placement` is the machine that owns the session and
+`state` is its reachability. While the owner is offline every session pauses before its next provider request; while
+a hand a session's tool calls run on is offline, that session's tool calls pause and other sessions keep running.
+`held` counts the steps parked until the machines reconnect. Each pause and its resume are durable records, so a
+reconnect resumes the session exactly once, also after a restart.
+
 ### Host identity (`get_protocol_info`)
 
 Supervised socket hosts additionally report `lifecycle: "ready" | "stopping"`.

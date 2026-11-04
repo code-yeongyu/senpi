@@ -17,6 +17,9 @@ import { localDeviceFiles } from "@earendil-works/pi-agent-core/node";
 import type { FilesystemOperation, FilesystemPolicyChecker } from "../../core/extensions/types.ts";
 import { withFileMutationQueue, withFileMutationQueues } from "../../core/tools/file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "../../core/tools/filesystem-policy.ts";
+import type { Flock } from "./hand-activity-lock.ts";
+import type { HandRunContext } from "./hand-run-allowlist.ts";
+import { runOnHand } from "./hand-run-ops.ts";
 
 /** What a hand scope checks every device file operation against: its runtime's handlers and filesystem policy. */
 export interface HandFileGuards {
@@ -39,7 +42,7 @@ interface Check {
 	readonly entry?: true;
 }
 
-function checksOf(args: DeviceFileArgs): Check[] {
+function checksOf(args: Exclude<DeviceFileArgs, { op: "run" }>): Check[] {
 	switch (args.op) {
 		case "read":
 			return [{ toolName: "read", operation: "read", path: args.path }];
@@ -111,7 +114,11 @@ async function allowed(
  * per-file mutation slot the file tools use; `stat`, `remove` and `rename` act on a link itself, as on a fused session.
  * A write over the limit is refused before its data is decoded.
  */
-export function createHandFileOps(root: string, guards: HandFileGuards) {
+export function createHandFileOps(
+	root: string,
+	guards: HandFileGuards,
+	run?: { readonly context: HandRunContext; readonly flock: Flock | undefined },
+) {
 	const files = localDeviceFiles();
 	return async (
 		op: string,
@@ -121,6 +128,26 @@ export function createHandFileOps(root: string, guards: HandFileGuards) {
 	): Promise<AgentToolResult<unknown>> => {
 		const args = decodeDeviceFileArgs(op, rawArgs);
 		if (args === undefined) return fileRefusal("protocol", `malformed ${op} arguments`);
+		if (args.op === "run") {
+			if (run === undefined) return fileRefusal("unsupported", "this hand serves no run channel");
+			try {
+				const { exe, argv, env, stdin, timeoutMs, activityLock } = args;
+				const request = {
+					exe,
+					argv,
+					cwd: args.path,
+					env,
+					activityLock,
+					...(stdin === undefined ? {} : { stdin }),
+					...(timeoutMs === undefined ? {} : { timeoutMs }),
+				};
+				const outcome = await runOnHand(request, { root, guards, context: run.context, flock: run.flock }, signal);
+				return fileResult({ ok: true, value: { ...outcome } });
+			} catch (error) {
+				if (error instanceof DeviceFileError) return fileRefusal(error.code, error.message);
+				return fileRefusal("io", error instanceof Error ? error.message : String(error));
+			}
+		}
 		if (args.op === "write" && base64Length(args.data) > FILE_CHANNEL_MAX_BYTES)
 			return fileRefusal("too_large", args.path);
 		try {
