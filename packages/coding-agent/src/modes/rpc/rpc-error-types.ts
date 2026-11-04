@@ -60,6 +60,12 @@ export const RPC_ERROR_SUBSCRIPTION_LIMIT = "subscription_limit";
 /** `subscribe_sessions`/`unsubscribe_sessions` on a transport with no per-connection identity (stdio). */
 export const RPC_ERROR_UNSUPPORTED_TRANSPORT = "unsupported_transport";
 
+/**
+ * A public method whose host feature is off. `errorData.feature` names it, e.g. `compact_updates` for `reset_stream`,
+ * `cancel_attempt`, `get_recovery_page` and `release_recovery` while engine-socket compact updates are off (senpi#5748).
+ */
+export const RPC_ERROR_FEATURE_DISABLED = "feature_disabled";
+
 /** `open_session.kind` was neither `interactive` nor `worker`; an unknown kind is never downgraded. */
 export const RPC_ERROR_INVALID_SESSION_KIND = "invalid_session_kind";
 
