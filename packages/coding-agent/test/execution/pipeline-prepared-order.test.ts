@@ -5,7 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { createPreparedToolHost } from "../../src/core/execution/pipeline-prepared.ts";
+import { createPreparedToolHost } from "../../../agent/src/execution/prepared/pipeline-prepared.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 
 const harnesses: Harness[] = [];

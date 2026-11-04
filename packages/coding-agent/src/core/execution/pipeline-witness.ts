@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { Agent, ExecutionScope } from "@earendil-works/pi-agent-core";
+import { type Agent, createPreparedToolHost, type ExecutionScope } from "@earendil-works/pi-agent-core";
 import type { SessionManager } from "../session-manager.ts";
 import { type ExecutionPipelineConfig, resolveExecutionPipeline } from "./pipeline-config.ts";
-import { createPreparedToolHost } from "./pipeline-prepared.ts";
 
 /**
  * Bind the execution scope and the session's pipeline: prepared by default (S21a), the loop's own scheduler for `legacy`.

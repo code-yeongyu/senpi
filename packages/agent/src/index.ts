@@ -136,6 +136,10 @@ export {
 	PlaneRefusedError,
 } from "./execution/plane.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
+export { canonicalJson } from "./execution/canonical-digest.ts";
+export { toStoreValue } from "./execution/prepared/executor-freeze.ts";
+export type { ConsentClassifier } from "./execution/prepared/executor-types.ts";
+export { createPreparedToolHost } from "./execution/prepared/pipeline-prepared.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
 export { createReliableTransport, type ReliableTransportOptions } from "./transport/reliable-transport.ts";

@@ -1,11 +1,7 @@
-import {
-	type Agent,
-	type AgentToolCallOutcome,
-	createToolResultMessage,
-	emitToolResultMessage,
-	shouldTerminateToolBatch,
-	type ToolHost,
-} from "@earendil-works/pi-agent-core";
+import type { Agent } from "../../agent.ts";
+import type { AgentToolCallOutcome } from "../../types.ts";
+import type { ToolHost } from "../tool-host.ts";
+import { createToolResultMessage, emitToolResultMessage, shouldTerminateToolBatch } from "../tool-outcome-events.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { runPreparedBatch } from "./pipeline-prepared-batch.ts";
 

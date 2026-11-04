@@ -2,11 +2,11 @@ import type { AgentTool, AgentToolCall } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, type JsonObject } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { createAdmissionLine } from "../../../agent/src/durable/store-admission.ts";
-import { createMemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
-import { createExecutionLedger } from "../../../agent/src/execution/ledger.ts";
-import { createPreparedExecutor } from "../../src/core/execution/executor.ts";
-import type { PreparationPipeline } from "../../src/core/execution/executor-types.ts";
+import { createAdmissionLine } from "../../src/durable/store-admission.ts";
+import { createMemoryStoreMedium, openMemoryStore } from "../../src/durable/store-memory.ts";
+import { createExecutionLedger } from "../../src/execution/ledger.ts";
+import { createPreparedExecutor } from "../../src/execution/prepared/executor.ts";
+import type { PreparationPipeline } from "../../src/execution/prepared/executor-types.ts";
 
 // Release authority, abort, name correction and admission identity on the prepared executor, over a fake pipeline.
 const ISSUER = "brain";

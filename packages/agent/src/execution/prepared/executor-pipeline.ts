@@ -1,4 +1,5 @@
-import { type Agent, resolveToolNameAlias } from "@earendil-works/pi-agent-core";
+import type { Agent } from "../../agent.ts";
+import { resolveToolNameAlias } from "../../tool-name-alias.ts";
 import type { PreparationPipeline } from "./executor-types.ts";
 
 /**

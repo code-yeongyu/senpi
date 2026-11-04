@@ -6,9 +6,10 @@ import { createAdmissionLine } from "../../../agent/src/durable/store-admission.
 import { createMemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
 import { createExecutionLedger } from "../../../agent/src/execution/ledger.ts";
 import { consentFromPermissionPolicy } from "../../src/core/execution/consent.ts";
-import { createPreparedExecutor } from "../../src/core/execution/executor.ts";
-import { digestOf, toStoreValue } from "../../src/core/execution/executor-freeze.ts";
-import type { PreparationPipeline } from "../../src/core/execution/executor-types.ts";
+import { canonicalDigest } from "../../../agent/src/execution/canonical-digest.ts";
+import { createPreparedExecutor } from "../../../agent/src/execution/prepared/executor.ts";
+import { toStoreValue } from "../../../agent/src/execution/prepared/executor-freeze.ts";
+import type { PreparationPipeline } from "../../../agent/src/execution/prepared/executor-types.ts";
 
 // senpi#5663 (S12): Gate B on the prepared executor, cross-machine only. The approver is whoever the issuer's endpoint
 // authenticated (any RPC-authorized party, K2): the executor checks the issuer and the frozen digest, never a device.
@@ -133,18 +134,18 @@ describe("Gate B on the prepared executor (cross-machine only)", () => {
 
 	it("a Gate A approval of the raw request covers an identical frozen call; a shim that changes it asks again", async () => {
 		const requestDigest = (args: JsonObject) =>
-			digestOf(toStoreValue({ name: "write", args, incomplete: undefined, errorMessage: undefined }));
+			canonicalDigest(toStoreValue({ name: "write", args, incomplete: undefined, errorMessage: undefined }));
 		const same = await open({ consent: true, normalize: true });
-		expect((await same.prepare("a", { path: "notes.md" }, requestDigest({ path: "notes.md" }))).kind).toBe(
+		expect((await same.prepare("a", { path: "notes.md" }, await requestDigest({ path: "notes.md" }))).kind).toBe(
 			"prepared",
 		);
 
 		const shimmed = await open({ consent: true, normalize: true });
 		const raw = { path: "./notes.md" };
-		expect((await shimmed.prepare("b", raw, requestDigest(raw))).kind).toBe("prepared_awaiting_consent");
+		expect((await shimmed.prepare("b", raw, await requestDigest(raw))).kind).toBe("prepared_awaiting_consent");
 
 		const other = await open({ consent: true });
-		expect((await other.prepare("c", { path: "notes.md" }, requestDigest({ path: "other.md" }))).kind).toBe(
+		expect((await other.prepare("c", { path: "notes.md" }, await requestDigest({ path: "other.md" }))).kind).toBe(
 			"prepared_awaiting_consent",
 		);
 	});
