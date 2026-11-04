@@ -7,6 +7,9 @@ import {
 	type AgentSessionServices,
 	type CreateAgentSessionRuntimeFactory,
 } from "../../../src/core/agent-session-runtime.ts";
+import goalExtension from "../../../src/core/extensions/builtin/goal/index.ts";
+import { createGoal, readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
+import { goalStoreRef } from "../../../src/core/extensions/builtin/goal/store-ref.ts";
 import { createHarness, getAssistantTexts } from "../harness.ts";
 import { reservationStep } from "../rpc-worker-reservation-support.ts";
 
@@ -94,4 +97,45 @@ it("quitting while a tool runs ends the run before shutdown and sends no further
 	expect(outcome).toBe("settled");
 	expect(providerCalls).toBe(1);
 	expect(getAssistantTexts(h)).not.toContain("answered after quit");
+});
+
+it("quitting while a goal's turn runs stops the goal like an interrupt, so the next resume asks before it continues", async () => {
+	const toolStarted = Promise.withResolvers<void>();
+	const slowTool: AgentTool = {
+		name: "slow",
+		label: "Slow",
+		description: "Runs until aborted",
+		parameters: Type.Object({}),
+		execute: async (_toolCallId, _params, signal) => {
+			toolStarted.resolve();
+			return await new Promise<never>((_resolve, reject) => {
+				signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+			});
+		},
+	};
+	const h = await createHarness({ tools: [slowTool], extensionFactories: [goalExtension] });
+	cleanups.push(h.cleanup);
+	const ref = goalStoreRef(h.sessionManager, h.tempDir);
+	await createGoal(ref, "Finish the slow work");
+	h.setResponses([fauxAssistantMessage([fauxToolCall("slow", {})], { stopReason: "toolUse" })]);
+	const services: AgentSessionServices = {
+		cwd: h.tempDir,
+		agentDir: h.tempDir,
+		authStorage: h.authStorage,
+		modelRegistry: h.modelRegistry,
+		modelRuntime: h.session.modelRuntime,
+		settingsManager: h.settingsManager,
+		resourceLoader: h.session.resourceLoader,
+		diagnostics: [],
+	};
+	const runtime = new AgentSessionRuntime(h.session, services, async () => {
+		throw new Error("no replacement in this test");
+	});
+
+	const turn = h.session.prompt("work on the goal").catch(() => {});
+	await toolStarted.promise;
+	await runtime.dispose();
+	await reservationStep("goal-quit-turn-settled", turn);
+
+	expect((await readGoal(ref))?.status).toBe("blocked");
 });
