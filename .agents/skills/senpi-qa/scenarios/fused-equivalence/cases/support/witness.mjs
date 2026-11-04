@@ -35,9 +35,10 @@ export function readWitness(witnessFile) {
 	return { pipeline: kinds.size === 1 ? [...kinds][0] : "mixed", source: "sink", calls };
 }
 
-/** The tool results a run's session recorded: a run with any must have its witness from the sink. */
+/** The tool results a run's session recorded, or `null` when its session file is missing (unknown, never "none"). */
 export function toolCallCount(sessionFile) {
-	const entries = sessionFile && existsSync(sessionFile) ? readJsonl(readFileSync(sessionFile, "utf8")) : [];
+	if (!sessionFile || !existsSync(sessionFile)) return null;
+	const entries = readJsonl(readFileSync(sessionFile, "utf8"));
 	return entries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult").length;
 }
 
@@ -48,6 +49,7 @@ export function toolCallCount(sessionFile) {
 export function witnessMatches(witness, requested) {
 	if (witness.toolCalls === 0 && witness.calls.length === 0) return true;
 	if (witness.pipeline !== expectedWitness(requested)) return false;
+	// An unknown count (no session file) proves nothing on its own: only a sink witness can match it.
 	return witness.toolCalls === 0 || witness.source === "sink";
 }
 

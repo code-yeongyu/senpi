@@ -66,6 +66,12 @@ test("a run with tool calls must have its witness from the sink, whatever the pi
 		const sessionFile = join(dir, "session.jsonl");
 		writeFileSync(sessionFile, [{ type: "message", message: { role: "assistant" } }, { type: "message", message: { role: "toolResult" } }, { type: "message", message: { role: "toolResult" } }].map((entry) => JSON.stringify(entry)).join("\n"));
 		assert.equal(toolCallCount(sessionFile), 2);
+		// A lost session file is unknown, never "no tool calls": the check must not pass it vacuously.
+		assert.equal(toolCallCount(join(dir, "missing.jsonl")), null);
+		assert.equal(toolCallCount(undefined), null);
+		assert.equal(witnessMatches({ pipeline: "legacy", source: "no-seam", calls: [], toolCalls: null }, "prepared"), false);
+		assert.equal(witnessMatches({ pipeline: "legacy", source: "no-seam", calls: [], toolCalls: null }, "legacy"), false);
+		assert.equal(witnessMatches({ pipeline: "prepared", source: "sink", calls: [{}], toolCalls: null }, "prepared"), true);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

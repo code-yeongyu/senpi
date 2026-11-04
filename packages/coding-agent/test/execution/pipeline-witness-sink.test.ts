@@ -14,8 +14,11 @@ import { createAgentSessionFromServices, createAgentSessionServices } from "../.
 import { resolveWitnessSink } from "../../src/core/execution/pipeline-witness-sink.ts";
 
 const dirs: string[] = [];
+const fauxRegistrations: Array<{ unregister(): void }> = [];
 afterEach(() => {
 	vi.unstubAllEnvs();
+	vi.restoreAllMocks();
+	for (const registration of fauxRegistrations.splice(0)) registration.unregister();
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 const witnessFile = (): string => {
@@ -98,6 +101,7 @@ describe("the witness sink's edges", () => {
 
 async function fauxServices() {
 	const faux = registerFauxProvider();
+	fauxRegistrations.push(faux);
 	const model = faux.getModel();
 	const authStorage = AuthStorage.inMemory();
 	await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
