@@ -1,7 +1,7 @@
 // S18b / S36 (senpi#5728): a session runs model-issued batches on the prepared pipeline, its only pipeline. Its equality
 // with the removed scheduler is pinned path by path at the loop boundary (packages/agent prepared-parity, proven against
-// that scheduler before its removal); what stays here is session-level only: a batch that repeats a call ID is refused,
-// and every call writes one `prepared` receipt.
+// that scheduler before its removal); what stays here is session-level only: each block of a batch that repeats a call ID
+// runs as its own call (senpi#5796), and every call writes one `prepared` receipt.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -48,11 +48,15 @@ async function turn(ids: readonly string[]) {
 }
 
 describe("a session's prepared pipeline", () => {
-	it("refuses a batch that repeats a call ID instead of silently running one call twice", async () => {
+	// senpi#5796: a model may repeat a call ID inside one message; each block is still its own call, never a replay.
+	it("runs each block of a batch that repeats a call ID as its own call", async () => {
 		const { results, error } = await turn(["call-dup", "call-dup"]);
 
-		expect(results).not.toContainEqual([{ type: "text", text: JSON.stringify({ n: 1 }) }]);
-		expect(error).toMatch(/duplicate tool call id/);
+		expect(error).toBeUndefined();
+		expect(results).toEqual([
+			[{ type: "text", text: JSON.stringify({ n: 0 }) }],
+			[{ type: "text", text: JSON.stringify({ n: 1 }) }],
+		]);
 	});
 
 	it("writes one prepared receipt per call", async () => {
