@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-11-03 - Multi-file mutation slots are taken once per file and in one order (senpi#5691)
+
+### What changed
+
+- `packages/machine-ops/src/files/mutation-queue.ts` (`@code-yeongyu/senpi-machine-ops`, re-exported from `packages/coding-agent/src/core/tools/file-mutation-queue.ts`): adds `withFileMutationQueues(filePaths, fn)`. It keys every path as the queue does (realpath, case-folded), takes one slot per file, and takes the slots in key order. The hand's device-file rename and the `apply_patch` builtin use it.
+
+### Why
+
+- Nesting two `withFileMutationQueue` calls waits forever when both paths name one file (`a.md` and `./a.md`, a case-only alias, a symlink). Two operations over the same files in swapped order can also wait on each other. `apply_patch` deduplicated and sorted by raw path string, so an alias inside one patch deadlocked it.
+
+### Why an extension could not handle it
+
+- The slot keys and the queue are private to this module; only the module can order and deduplicate by the key it uses.
+
+### Expected merge conflict zones
+
+- LOW: `packages/machine-ops/src/files/mutation-queue.ts`, next to `withFileMutationQueue`.
+
 ## 2026-11-03 - Built-in file and shell tools run on the shared machine-ops layer (senpi#5592)
 
 ### What changed
