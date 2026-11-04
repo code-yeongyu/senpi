@@ -3,6 +3,7 @@ import type { Duplex, Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { type HostAdmission, hostStoppingResponse } from "./host-admission.ts";
 import { MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
+import { launchProofRecordRefusal, RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 import type { PublicRpcConnection } from "./rpc-public-auth.ts";
 
 /**
@@ -15,6 +16,8 @@ export function proxyWithAdmission(
 	internal: Duplex | undefined,
 	admission: HostAdmission,
 	auth?: PublicRpcConnection,
+	/** The client proved the launch credential at admission (the Windows public secret): say so to the host first. */
+	launchProven = false,
 ): void {
 	const reply = (chunk: string | Buffer): Promise<void> =>
 		write(client, auth ? auth.response(chunk.toString()) : chunk);
@@ -56,6 +59,9 @@ export function proxyWithAdmission(
 		});
 
 	async function requests(): Promise<void> {
+		// Queued, never awaited: the client is resumed as soon as this returns, and its records are read only once the
+		// loop below is iterating. The write still lands on the hop before any record that loop forwards.
+		if (internal && launchProven) internal.write(`${JSON.stringify({ type: RPC_LAUNCH_PROOF_RECORD })}\n`);
 		for await (const line of lines(auth?.input ?? client, MAX_RPC_LINE_CHARACTERS)) {
 			if (line === undefined) {
 				await reply(
@@ -69,6 +75,11 @@ export function proxyWithAdmission(
 				continue;
 			}
 			const request = record(line);
+			// With a filter, every proof record on its input is the filter's own (it refuses the client's).
+			if (!auth && request?.type === RPC_LAUNCH_PROOF_RECORD) {
+				await reply(serializeJsonLine(launchProofRecordRefusal(request.id)));
+				continue;
+			}
 			if (admission.stopping && request?.type === "get_protocol_info") {
 				await reply(
 					serializeJsonLine({

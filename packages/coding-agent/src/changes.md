@@ -1,3 +1,39 @@
+## 2026-11-03 - Source runtime resolves the machine-ops workspace package (senpi#5592)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/source-resolver.ts`: the workspace source aliases include `@code-yeongyu/senpi-machine-ops` (and its subpaths), so source-run child processes (tool child, session workers) load its sources instead of a missing or stale `dist`.
+
+### Why
+
+- Core tools now import `@code-yeongyu/senpi-machine-ops`; without the alias a source-run tool child exited before ready.
+
+### Why an extension could not handle it
+
+- The resolver is the internal-process preload; extensions do not run before it.
+
+### Expected merge conflict zones
+
+- LOW: the alias filter in `registerWorkspaceSourceResolver`.
+
+## 2026-10-31 - A coordinated host start keeps its startup pipe through CLI entry and re-execution (senpi#4602)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: before anything can spawn or re-execute, `releaseInheritedStartupFillers(process.env)` closes the filler pipes a coordinated host spawn put in unused stdio slots 3..15 and strips their list from the hand-off. `reexecStdio()` now wraps the presenter-channel rule (`channelStdio()`, unchanged) and, while `SENPI_RPC_HOST_STARTUP_EVENTS` is set and descriptor 16 is a pipe or socket, forwards descriptor 16 at its own number to the Bun re-exec and the isolated-child spawn.
+
+### Why
+
+- senpi#4602: a host started by `ensureHost()` reports its startup progress on a dedicated pipe at descriptor 16. A bundled install starts the host child through `cli.js`, which can re-execute under Bun or spawn an isolated child; without forwarding, that child loses the pipe and its startup phases time out. The filler pipes only keep macOS libuv from aborting the spawn that created them (a pipe at a high stdio slot above unfilled slots, with free descriptors below it, aborts the spawning process on Node 24 and 26), so nothing may keep them open.
+
+### Why an extension could not handle it
+
+- Descriptor inheritance and re-execution happen in the CLI launcher before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the `reexecStdio()` helper above `reexecUnderBunIfNeeded()` in `cli.ts`; the import list at the top of `bun/cli.ts`.
+
 ## 2026-11-02 - One tool-catalog projection for hand/fused parity (S22, senpi#5419)
 
 ### What changed
