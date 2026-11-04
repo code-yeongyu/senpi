@@ -3,6 +3,7 @@ import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-co
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
 import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
+import { PresentationBroker } from "../../core/extensions/ui-presentation.ts";
 import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { toolInfoOf } from "../../core/tool-info.ts";
@@ -175,6 +176,9 @@ export function createLooplessRuntimeFactory(
 			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
+		// On a hand, a call's extension UI is presented by the loop that owns the call (S30).
+		const presentation = new PresentationBroker();
+		runtime.extensionRunner.setUiBroker(presentation);
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
 			? extensionToolHandlers(runtime.extensionRunner)
 			: undefined;
@@ -187,15 +191,17 @@ export function createLooplessRuntimeFactory(
 				);
 			const tool = registry.toolRegistry.get(name);
 			if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
-			return runLooplessToolCall(
-				tool,
-				{
-					toolCallId,
-					params,
-					...(signal ? { signal } : {}),
-					...(nested ? { nested } : {}),
-				},
-				toolHandlers,
+			return presentation.present(nested, () =>
+				runLooplessToolCall(
+					tool,
+					{
+						toolCallId,
+						params,
+						...(signal ? { signal } : {}),
+						...(nested ? { nested } : {}),
+					},
+					toolHandlers,
+				),
 			);
 		};
 		return {
