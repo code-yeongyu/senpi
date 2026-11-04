@@ -27,14 +27,14 @@ export class McpPresenterControl {
 	private readonly enrollment: McpPresenterEnrollment;
 	private readonly successors: McpPresenterSuccessors;
 	private readonly server: Server;
+	private readonly account: PresenterAccountAuthority | undefined;
 	readonly path: string;
 
 	constructor(writer: SessionEventWriter, path: string, account?: PresenterAccountAuthority) {
 		this.writer = writer;
 		this.authority = writer.enableMcpPresenters();
 		this.path = path;
-		// Only an endpoint that can enroll a same-account presenter is discoverable (senpi#4249).
-		if (account) writer.advertiseMcpPresenterControl(path);
+		this.account = account;
 		this.enrollment = new McpPresenterEnrollment(this.authority.instance, path);
 		this.successors = new McpPresenterSuccessors(this.authority.instance, this.enrollment.nonces);
 		this.server = createServer((stream) => this.manage(stream));
@@ -45,6 +45,8 @@ export class McpPresenterControl {
 			this.server.once("error", reject);
 			this.server.listen(this.path, () => {
 				this.server.off("error", reject);
+				// Only a listening endpoint that can enroll a same-account presenter is discoverable (senpi#4249).
+				if (this.account) this.writer.advertiseMcpPresenterControl(this.path);
 				resolve();
 			});
 		});
@@ -72,6 +74,7 @@ export class McpPresenterControl {
 	}
 
 	dispose(): void {
+		this.writer.withdrawMcpPresenterControl(this.path);
 		this.authority.dispose();
 		for (const stream of this.controls) stream.destroy();
 		this.controls.clear();
