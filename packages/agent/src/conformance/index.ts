@@ -88,6 +88,11 @@ export type {
 } from "../execution/ledger-types.ts";
 export { LEDGER_CASES } from "../execution/testing/ledger-cases.ts";
 export { KILL_LEDGER_CASES, KILL_LEDGER_DECLARATIONS } from "../execution/testing/kill-ledger.ts";
+export { FAULT_HAND_CASES } from "../execution/testing/fault-hand-cases.ts";
+export type { HandCaseAdapters } from "../execution/testing/hand-harness.ts";
+export type { KillHandDeclaration } from "../execution/testing/kill-hand.ts";
+export { KILL_HAND_CASES, KILL_HAND_DECLARATIONS } from "../execution/testing/kill-hand.ts";
+export { MULTI_HAND_CASES } from "../execution/testing/multi-hand-cases.ts";
 export type { KillLedgerDeclaration } from "../execution/testing/kill-ledger.ts";
 export type { BatchCoordinator, BatchCoordinatorOptions } from "../execution/coordinator.ts";
 export { BatchManifestConflictError, createBatchCoordinator } from "../execution/coordinator.ts";
@@ -108,6 +113,29 @@ export type {
 	SettleReply,
 } from "../execution/coordinator-types.ts";
 export { BATCH_CASES } from "../execution/testing/batch-cases.ts";
+export type { SequentialCoordinator } from "../execution/coordinator-sequential.ts";
+export { createSequentialCoordinator } from "../execution/coordinator-sequential.ts";
+export { MULTI_SEQ_CASES } from "../execution/testing/multi-seq-cases.ts";
+export { SEQ_CASES } from "../execution/testing/seq-cases.ts";
+export { CONSENT_CASES } from "../execution/testing/consent-cases.ts";
+export type { NestedAdmissionControl, NestedAdmissionOptions } from "../execution/nested.ts";
+export { createNestedAdmission } from "../execution/nested.ts";
+export { NEST_CASES } from "../execution/testing/nest-cases.ts";
+export { CANCEL_CASES } from "../execution/testing/cancel-cases.ts";
+export { KILL_NEST_CASES } from "../execution/testing/kill-nest.ts";
+export type { WakeInbox, WakeInboxOptions } from "../execution/wake-inbox.ts";
+export { createWakeInbox } from "../execution/wake-inbox.ts";
+export type { WakeOutbox, WakeOutboxOptions } from "../execution/wake-outbox.ts";
+export { createWakeOutbox } from "../execution/wake-outbox.ts";
+export type { WakeEvent, WakeReceipt } from "../execution/wake-types.ts";
+export { WAKE_RETENTION_MS } from "../execution/wake-types.ts";
+export { WAKE_EXEC_CASES } from "../execution/testing/wake-exec-cases.ts";
+export { KILL_WAKEX_CASES } from "../execution/testing/kill-wakex.ts";
+export type { ScopeBinding, ScopeLifecycle, ScopeLifecycleOptions, ScopeRecord } from "../execution/scope-lifecycle.ts";
+export { createScopeLifecycle } from "../execution/scope-lifecycle.ts";
+export { LIFECYCLE_CASES } from "../execution/testing/lifecycle-cases.ts";
+export { SCOPE_CASES } from "../execution/testing/scope-cases.ts";
+export { MULTI_LIFECYCLE_CASES } from "../execution/testing/multi-lifecycle-cases.ts";
 export type {
 	BatchCaseAdapters,
 	BatchExecutorConformanceAdapter,

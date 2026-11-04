@@ -33,6 +33,16 @@ export interface PreparedExecutorOptions {
 	readonly executor: string;
 	readonly pipeline: PreparationPipeline;
 	readonly clock?: () => number;
+	/**
+	 * Gate B for a cross-machine executor (design 5.6.1): a frozen call that differs from what Gate A authorized and
+	 * needs consent waits for an approval of its frozen digest. Absent on fused and split-local executors (K3): no wait.
+	 */
+	readonly consent?: ConsentClassifier;
+}
+
+/** The engine's own permission classification of a call, without prompting anyone. */
+export interface ConsentClassifier {
+	needsConsent(call: { readonly name: string; readonly args: unknown }): boolean;
 }
 
 export interface PrepareRequest {
@@ -49,11 +59,14 @@ export interface PrepareRequest {
 	readonly leaseUntil: number;
 	readonly reconcilable?: boolean;
 	readonly signal?: AbortSignal;
+	/** The raw request digest Gate A approved, if the brain asked; an identical frozen call needs no second approval. */
+	readonly authorizedDigest?: string;
 }
 
 /** `requestedName` is set when the model's name resolved to another tool; the caller adds today's notice. */
 export type PrepareReply =
 	| { readonly kind: "prepared"; readonly call: FrozenCall; readonly requestedName?: string }
+	| { readonly kind: "prepared_awaiting_consent"; readonly call: FrozenCall; readonly requestedName?: string }
 	| { readonly kind: "blocked"; readonly result: AgentToolResult<unknown>; readonly requestedName?: string }
 	| { readonly kind: "batch_abort"; readonly result: AgentToolResult<unknown> }
 	| { readonly kind: "refused"; readonly reason: string };
@@ -82,7 +95,22 @@ export type ReleaseReply =
 	| { readonly kind: "replayed"; readonly entry: ExecutionEntry }
 	| { readonly kind: "refused"; readonly reason: string };
 
+export interface ConsentRequest {
+	readonly key: ExecutionKey;
+	readonly generation: number;
+	/** Verified identity of the issuer applying the approval, supplied by the endpoint. */
+	readonly actor: { readonly id: string };
+	/** The approval binds this frozen call; an approval of anything else is refused. */
+	readonly frozenDigest: string;
+}
+
+export type ConsentReply =
+	| { readonly kind: "prepared" }
+	| { readonly kind: "replayed"; readonly entry: ExecutionEntry }
+	| { readonly kind: "refused"; readonly reason: string };
+
 export interface PreparedExecutor {
 	prepare(request: PrepareRequest): Promise<PrepareReply>;
 	release(request: ReleaseRequest): Promise<ReleaseReply>;
+	consent(request: ConsentRequest): Promise<ConsentReply>;
 }

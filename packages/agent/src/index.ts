@@ -51,14 +51,25 @@ export {
 	type RemoteExecutorOptions,
 } from "./execution/remote-executor.ts";
 export {
+	createHandLedger,
+	type HandAdmission,
+	type HandLedger,
+	type HandLedgerOptions,
+} from "./execution/remote-hand-ledger.ts";
+export {
 	decodeRemoteMessage,
 	encodeRemoteMessage,
+	HAND_CONTROL_LANE,
 	type RemoteAbort,
+	type RemoteAck,
 	type RemoteHandMessage,
+	type RemoteHello,
 	type RemoteInvoke,
 	type RemoteRefused,
 	type RemoteSettled,
 	RemoteProtocolError,
+	type RemoteTerminal,
+	type RemoteTerminalReason,
 	type RemoteToolResult,
 } from "./execution/remote-protocol.ts";
 export {
@@ -74,7 +85,21 @@ export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory
 export { createBatchCoordinator } from "./execution/coordinator.ts";
 export type { BatchExecutor, BatchPlan } from "./execution/coordinator-types.ts";
 export { createExecutionLedger } from "./execution/ledger.ts";
-export { createRemoteToolHost, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
+export {
+	authorize,
+	createGrantVerifier,
+	DEFAULT_WORKSPACE,
+	type GrantRefusal,
+	type GrantRow,
+	type GrantSnapshot,
+	type GrantVerdict,
+	type GrantVerifier,
+	type GrantVerifierOptions,
+	HAND_CAPABILITY,
+	type HandAuthority,
+	type WorkspaceRoot,
+} from "./execution/grant-verify.ts";
+export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
 export { createReliableTransport, type ReliableTransportOptions } from "./transport/reliable-transport.ts";

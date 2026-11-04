@@ -124,6 +124,8 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 				return { kind: "batch_abort" };
 			}
 			if (reply.kind === "prepared") return { kind: "prepared", frozenDigest: reply.call.digest };
+			if (reply.kind === "prepared_awaiting_consent")
+				return { kind: "prepared_awaiting_consent", frozenDigest: reply.call.digest };
 			if (reply.kind === "refused") throw new Error(`prepared pipeline refused ${call.id}: ${reply.reason}`);
 			const result =
 				reply.kind === "blocked" && reply.requestedName !== undefined && tool !== undefined
