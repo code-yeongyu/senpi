@@ -304,7 +304,9 @@ it("T6 X06 golden: with the flag off a compact_events peer receives the complete
 		const lease = { id: "event:socket-1:1", admissionId: "attach-1" } as LeaseRef;
 		expect(await release(compact, routing, lease)).toMatchObject({
 			success: false,
-			error: "Unknown command: release_recovery",
+			error: "feature_disabled",
+			errorCode: "feature_disabled",
+			errorData: { feature: "compact_updates" },
 		});
 	} finally {
 		await host[Symbol.asyncDispose]();

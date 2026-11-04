@@ -118,6 +118,7 @@ import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { answeredUiRequestId, refusedExtensionUiResponse, settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { SecretInputRequests, type SecretInputRoute } from "./secret-input-requests.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
+import { COMPACT_TRANSPORT_METHODS, compactTransportDisabled } from "./compact-transport-refusal.ts";
 import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
@@ -2298,7 +2299,10 @@ export function createRpcConnectionHandler(
 			}
 
 			default: {
-				const unknownCommand = command as { type: string };
+				const unknownCommand = command as { type: string; sessionId?: string };
+				// senpi#5748: a connection that reaches this handler with one of these has no compact transport.
+				if (COMPACT_TRANSPORT_METHODS.has(unknownCommand.type))
+					return compactTransportDisabled({ ...unknownCommand, id });
 				return error(id, unknownCommand.type, `Unknown command: ${unknownCommand.type}`);
 			}
 		}

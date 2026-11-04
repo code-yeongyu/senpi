@@ -1,5 +1,6 @@
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
+import { COMPACT_TRANSPORT_METHODS } from "./compact-transport-refusal.ts";
 import { error } from "./session-router-errors.ts";
 
 /** Effect-based reads only. New session commands require attachment by default. */
@@ -51,6 +52,12 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	const owner = host.writer.currentConnection();
 	if (owner === undefined || ATTACH_GATE_EXEMPT.has(command.type)) return undefined;
 	if (!("sessionId" in command) || command.sessionId === undefined) return undefined;
+	// senpi#5748: without the compact transport these methods answer one typed refusal (dispatch), attached or not.
+	if (
+		COMPACT_TRANSPORT_METHODS.has(command.type) &&
+		(host.admissions === undefined || host.writer.recoveryPages === undefined)
+	)
+		return undefined;
 	// RULING-96: compact recovery proves token/lease authority, not an ordinary session attachment.
 	if (
 		host.writer.recoveryPages !== undefined &&

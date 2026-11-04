@@ -219,7 +219,7 @@ describe("K8: every record local clients send today is accepted (X14 corpus)", (
 		const emptyProfile = corpusRequest("set_retry_fallback", TODAY.set_retry_fallback, opened, tmp).record;
 		expect(emptyProfile.retryFallback).toEqual({});
 		expect(sessionRetryFallbackError(emptyProfile.retryFallback)).toBeDefined();
-		// X14 probes get_recovery_page and release_recovery bare only to reach the flag-off "Unknown command" answer; with
+		// X14 probes get_recovery_page and release_recovery bare only to reach the flag-off feature_disabled answer; with
 		// the flag on, the token owner refuses the same records as malformed_request, since every required field must be a
 		// bounded id.
 		expect(Object.entries(outcomes).filter(([, outcome]) => !outcome.ok)).toEqual([

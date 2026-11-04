@@ -12,7 +12,7 @@ import { answerWarm } from "./host-warm.ts";
 import { answerRecoveryPage, answerReleaseRecovery } from "./recovery-page-command.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
-import { RPC_ERROR_FEATURE_DISABLED } from "./rpc-error-types.ts";
+import { compactTransportDisabled } from "./compact-transport-refusal.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
 import { attachSession, reclaimSession, releaseAttachment } from "./session-attachment-commands.ts";
 import { attachmentGate } from "./session-attachment-gate.ts";
@@ -94,9 +94,6 @@ function otherAttachments(host: RouterContext, caller: string | undefined, sessi
 	return Math.max(0, (host.registry.peek(sessionId)?.attachments ?? 0) - own);
 }
 
-// senpi#5748: the compact transport's public methods answer this, typed, while engine-socket compact updates are off.
-const COMPACT_UPDATES_OFF = { feature: "compact_updates" } as const;
-
 export async function dispatch(
 	host: RouterContext,
 	command: Exclude<RpcCommand, { type: "warm" }>,
@@ -110,7 +107,7 @@ export async function dispatch(
 		return { id: command.id, type: "response", command: "cancel_attempt", success: true, data: { outcome } };
 	}
 	if ((command.type === "reset_stream" || command.type === "cancel_attempt") && host.admissions === undefined)
-		return error(command.id, command.type, RPC_ERROR_FEATURE_DISABLED, COMPACT_UPDATES_OFF);
+		return compactTransportDisabled(command);
 	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
 	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
 	if (command.type === "list_sessions") return answerListSessions(host, command);
@@ -228,7 +225,7 @@ export async function dispatch(
 	if (command.type === "release_recovery" && host.writer.recoveryEvents !== undefined)
 		return answerReleaseRecovery(host.writer.recoveryEvents, host.writer, command);
 	if (command.type === "get_recovery_page" || command.type === "release_recovery")
-		return error(command.id, command.type, RPC_ERROR_FEATURE_DISABLED, COMPACT_UPDATES_OFF);
+		return compactTransportDisabled(command);
 	if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 	const sessionId = command.sessionId;
 	if (host.writer.isSessionSealed(sessionId) && host.registry.peek(sessionId)?.state === "open")
