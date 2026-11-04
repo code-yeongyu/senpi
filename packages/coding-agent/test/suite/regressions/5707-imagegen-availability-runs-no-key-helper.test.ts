@@ -1,8 +1,9 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Api, AssistantImages, ImageApi, ImageModel, Model } from "@earendil-works/pi-ai";
+import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import {
 	type ImageGenAuthModel,
@@ -292,5 +293,120 @@ describe("senpi#5707 with senpi#5674: availability scans only gateways that serv
 
 		expect(available.kind === "none" ? undefined : available.providerId).toBe(expected);
 		expect(resolved.kind === "none" ? undefined : resolved.providerId).toBe(expected);
+	});
+});
+
+describe("senpi#5707 with senpi#5674: generate_image orders credential_unavailable before missing_config", () => {
+	const STUB_SOURCE_ID = "senpi-5707-tool-order-stub";
+	const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl3T2QAAAAASUVORK5CYII=";
+	const xai: ImageGenAuthModel = {
+		provider: "xai",
+		id: "grok-test",
+		api: "openai-completions",
+		baseUrl: "https://api.x.ai/v1",
+	};
+	const userGateway: ImageGenAuthModel = {
+		provider: "my-images-gateway",
+		id: "chat",
+		api: "openai-completions",
+		baseUrl: "https://gateway.example/v1",
+	};
+	let imageCalls = 0;
+	let cwd = "";
+
+	// The real ModelRegistry shape: provider auth status is reported statically, so availability never
+	// falls back to resolving keys. `unresolved` providers are configured but their key does not resolve.
+	function staticRegistry(models: ImageGenAuthModel[], unresolved: string[] = []): ImageGenAuthRegistry {
+		return {
+			authStorage: { get: () => undefined },
+			getAll: () => models,
+			getApiKeyAndHeaders: async (model) =>
+				unresolved.includes(model.provider)
+					? { ok: false, error: "key command failed" }
+					: { ok: true, apiKey: `${model.provider}-key` },
+			getProviderAuth: async () => undefined,
+			getProviderAuthStatus: (provider) =>
+				models.some((model) => model.provider === provider)
+					? { configured: true, source: "models_json_command" }
+					: { configured: false },
+			providerAuthIsHeaderOnly: () => false,
+		};
+	}
+
+	beforeEach(() => {
+		vi.stubEnv("OPENAI_API_KEY", "");
+		vi.stubEnv("PI_IMAGE_GEN_PROVIDER", "");
+		imageCalls = 0;
+		cwd = mkdtempSync(join(tmpdir(), "senpi-5707-tool-order-"));
+		tempDirs.push(cwd);
+		registerImagesApiProvider(
+			{
+				api: "openai-images" as const,
+				async generateImages(model: ImageModel<ImageApi>): Promise<AssistantImages> {
+					imageCalls += 1;
+					return {
+						api: "openai-images",
+						provider: model.provider,
+						model: model.id,
+						output: [{ type: "image", data: PNG_BASE64, mimeType: "image/png" }],
+						stopReason: "stop",
+						timestamp: Date.now(),
+					};
+				},
+			},
+			STUB_SOURCE_ID,
+		);
+	});
+
+	afterEach(() => {
+		setImageGenRegistry(undefined);
+		unregisterImagesApiProviders(STUB_SOURCE_ID);
+	});
+
+	it.each([
+		{
+			name: "only a logged-in xai",
+			models: [xai],
+			unresolved: [],
+			reason: "missing_config",
+			unsupported: ["xai"],
+			calls: 0,
+		},
+		{
+			name: "xai beside a user gateway",
+			models: [xai, userGateway],
+			unresolved: [],
+			reason: undefined,
+			unsupported: undefined,
+			calls: 1,
+		},
+		{
+			name: "nothing configured",
+			models: [],
+			unresolved: [],
+			reason: "missing_config",
+			unsupported: undefined,
+			calls: 0,
+		},
+		{
+			name: "xai beside a configured gateway whose key does not resolve",
+			models: [xai, userGateway],
+			unresolved: ["my-images-gateway"],
+			reason: "credential_unavailable",
+			unsupported: undefined,
+			calls: 0,
+		},
+	])("$name", async ({ models, unresolved, reason, unsupported, calls }) => {
+		const registry = staticRegistry(models, unresolved);
+		setImageGenRegistry(registry);
+		const ctx = { cwd, modelRegistry: registry } as unknown as Parameters<typeof generateImageTool.execute>[4];
+
+		const result = await generateImageTool.execute("call-1", { prompt: "a red fox" }, undefined, undefined, ctx);
+
+		const details = result.details as GenerateImageDetails;
+		expect(details.reason).toBe(reason);
+		expect(details.unsupportedProviders).toEqual(unsupported);
+		expect(imageCalls).toBe(calls);
+		if (reason === "credential_unavailable") expect(JSON.stringify(result.content)).toContain("my-images-gateway");
 	});
 });
