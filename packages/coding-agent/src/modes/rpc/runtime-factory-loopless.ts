@@ -188,6 +188,7 @@ export function createLooplessRuntimeFactory(
 		runtime.extensionRunner.bindSessionlessFacts({
 			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
 			loopHookCall: () => loopHookCall.current(),
+			loopHookSend: () => loopHookCall.sender(),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)

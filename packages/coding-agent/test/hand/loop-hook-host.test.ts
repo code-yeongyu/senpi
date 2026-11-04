@@ -3,6 +3,7 @@
 // bound to the loop session's id for that call only), their result is in the provider request, and while that machine is offline no provider request leaves; reconnecting resumes exactly once.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
 	createInProcessNetwork,
 	createLoopHookHost,
@@ -12,7 +13,7 @@ import {
 	serveLoopHooks,
 	type TransportSide,
 } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, type JsonValue } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseHookConfig } from "../../src/core/extensions/builtin/hooks/index.ts";
 import { createHookTrustEntry, hookTrustId } from "../../src/core/extensions/builtin/hooks/trust.ts";
@@ -21,6 +22,7 @@ import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type {
 	BeforeAgentStartEventResult,
+	ExtensionContext,
 	ExtensionFactory,
 	InputEventResult,
 } from "../../src/core/extensions/types.ts";
@@ -28,6 +30,14 @@ import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts
 import { createLoopHookCall } from "../../src/modes/rpc/loopless-tool-handlers.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
+
+/** A user extension that records what its loop-hook handlers see, so a hand event can be compared with the loop's. */
+const RECORDING_EXTENSION = `export default (pi) => {
+	const record = (entry) => (globalThis.s33Seen ??= []).push(entry);
+	const defined = (options) => Object.entries(options).filter(([, value]) => value !== undefined && typeof value !== "function").map(([key]) => key).sort();
+	pi.on("input", (event, ctx) => record({ event: "input", text: event.text, images: event.images?.length ?? 0, source: event.source, attribution: event.attribution, streamingBehavior: event.streamingBehavior ?? null, inputId: typeof event.inputId, idle: ctx.isIdle() }));
+	pi.on("before_agent_start", (event, ctx) => record({ event: "before_agent_start", prompt: event.prompt, trigger: event.trigger, images: event.images?.length ?? 0, preview: event.preview ?? null, options: defined(event.systemPromptOptions), idle: ctx.isIdle() }));
+};`;
 
 const harnesses: Harness[] = [];
 const closers: Array<() => void> = [];
@@ -106,6 +116,8 @@ function writePromptHook(cwd: string, block = false): void {
 	writeFileSync(join(senpiDir, "hooks-state.json"), JSON.stringify({ version: 1, hooks }));
 }
 
+const toJson = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
+
 /** The hand's `input` reply, read as a session's input result plus what its hooks sent and reported. */
 function parseInputReply(
 	reply: unknown,
@@ -119,6 +131,7 @@ function parseInputReply(
 
 /** What the user's machine sends back for one loop-hook call: its result, plus what its hooks sent and reported. */
 interface HandReply {
+	notices?: { message: string; type?: "info" | "warning" | "error" }[];
 	sent?: {
 		message: Parameters<ExtensionAPI["sendMessage"]>[0];
 		options?: Parameters<ExtensionAPI["sendMessage"]>[1];
@@ -131,20 +144,40 @@ interface HandReply {
  * produced, through the loop session's own handling of those results, so the result is the same as a session's.
  */
 const forwardLoopHooks =
-	(host: LoopHookHost, workspace: string, issued: () => void, errors: string[]): ExtensionFactory =>
+	(
+		host: LoopHookHost,
+		workspace: string,
+		issued: () => void,
+		errors: string[],
+		notices: string[] = [],
+	): ExtensionFactory =>
 	(pi) => {
-		const deliver = (reply: HandReply) => {
+		const deliver = (reply: HandReply, ctx: ExtensionContext) => {
 			for (const failed of reply.errors ?? []) errors.push(`${failed.extensionPath}: ${failed.error}`);
 			for (const sent of reply.sent ?? []) pi.sendMessage(sent.message, sent.options);
+			for (const notice of reply.notices ?? []) {
+				notices.push(notice.message);
+				ctx.ui.notify(notice.message, notice.type);
+			}
 		};
 		const scopeOf = (sessionId: string) => ({ id: `session-${sessionId}`, root: workspace });
 		pi.on("input", async (event, ctx): Promise<InputEventResult> => {
 			issued();
 			const sessionId = ctx.sessionManager.getSessionId();
 			const reply = parseInputReply(
-				await host.run("input", { text: event.text, sessionId, scope: scopeOf(sessionId) }),
+				await host.run("input", {
+					inputId: event.inputId,
+					text: event.text,
+					...(event.images === undefined ? {} : { images: toJson(event.images) }),
+					source: event.source,
+					attribution: event.attribution,
+					...(event.streamingBehavior === undefined ? {} : { streamingBehavior: event.streamingBehavior }),
+					idle: ctx.isIdle(),
+					sessionId,
+					scope: scopeOf(sessionId),
+				}),
 			);
-			deliver(reply);
+			deliver(reply, ctx);
 			return reply.action === "transform" ? { action: "transform", text: reply.text } : { action: reply.action };
 		});
 		pi.on("before_agent_start", async (event, ctx): Promise<BeforeAgentStartEventResult> => {
@@ -153,10 +186,15 @@ const forwardLoopHooks =
 			const reply = (await host.run("before_agent_start", {
 				prompt: event.prompt,
 				systemPrompt: event.systemPrompt,
+				trigger: event.trigger,
+				...(event.images === undefined ? {} : { images: toJson(event.images) }),
+				...(event.preview === undefined ? {} : { preview: event.preview }),
+				systemPromptOptions: toJson(event.systemPromptOptions),
+				idle: ctx.isIdle(),
 				sessionId,
 				scope: scopeOf(sessionId),
 			})) as HandReply & { messages?: NonNullable<BeforeAgentStartEventResult["message"]>[]; systemPrompt?: string };
-			deliver(reply);
+			deliver(reply, ctx);
 			const [message] = reply.messages ?? [];
 			return {
 				...(message === undefined ? {} : { message }),
@@ -185,15 +223,28 @@ async function hostedSession(options: { block?: boolean; userExtension?: string 
 	const host = createLoopHookHost({ transport: link.loop, lane: "loop-hooks" });
 	const issued = Promise.withResolvers<void>();
 	const hookErrors: string[] = [];
+	const notices: string[] = [];
 	const loop = await createHarness({
-		extensionFactories: [forwardLoopHooks(host, dirs.cwd, () => issued.resolve(), hookErrors)],
+		extensionFactories: [forwardLoopHooks(host, dirs.cwd, () => issued.resolve(), hookErrors, notices)],
 	});
 	harnesses.push(loop);
 	loop.setResponses([fauxAssistantMessage("done")]);
 	const marker = join(dirs.cwd, "hook-ran.txt");
 	const marks = () => (existsSync(marker) ? readFileSync(marker, "utf-8") : "");
 	const requestText = () => JSON.stringify(loop.faux.getCallLog().map((entry) => entry.context));
-	return { loop, link, host, hookErrors, issued: issued.promise, marks, requestText };
+	return {
+		loop,
+		link,
+		host,
+		hookErrors,
+		notices,
+		extension,
+		machine,
+		cwd: dirs.cwd,
+		issued: issued.promise,
+		marks,
+		requestText,
+	};
 }
 
 describe("the user's loop hooks run on the user's machine when the loop runs elsewhere (S33, C8.a)", () => {
@@ -218,6 +269,99 @@ describe("the user's loop hooks run on the user's machine when the loop runs els
 		expect(session.marks()).toBe("ran\n");
 		expect(session.loop.faux.getCallLog()).toHaveLength(0);
 		expect(JSON.stringify(session.loop.session.messages)).toContain('"decision":"block"');
+		expect(session.notices).toEqual([expect.stringContaining("UserPromptSubmit hook blocked the prompt")]);
+	});
+
+	it("an extension-sourced prompt does not run the user's UserPromptSubmit hooks, as in a session", async () => {
+		const session = await hostedSession({ block: true });
+
+		await session.loop.session.prompt("from an extension", { source: "extension" });
+
+		expect(session.hookErrors).toEqual([]);
+		expect(session.marks()).toBe("");
+		expect(session.loop.faux.getCallLog()).toHaveLength(1);
+	});
+
+	it("each hand event gives the user's handlers what the loop's own event gives them (table)", async () => {
+		const rows: { name: string; text: string; options: Parameters<Harness["session"]["prompt"]>[1] }[] = [
+			{ name: "interactive prompt", text: "ship it", options: {} },
+			{ name: "extension-sourced prompt", text: "from an extension", options: { source: "extension" } },
+			{
+				name: "rpc prompt with an image",
+				text: "look at this",
+				options: { source: "rpc", images: [{ type: "image", data: "aGk=", mimeType: "image/png" }] },
+			},
+		];
+		const seen = () => (globalThis as { s33Seen?: unknown[] }).s33Seen ?? [];
+		for (const row of rows) {
+			const hosted = await hostedSession({ userExtension: RECORDING_EXTENSION });
+			const fusedSession = await createHarness({
+				extensionFactories: [(await import(pathToFileURL(hosted.extension).href)).default as ExtensionFactory],
+			});
+			harnesses.push(fusedSession);
+			fusedSession.setResponses([fauxAssistantMessage("done")]);
+
+			Object.assign(globalThis, { s33Seen: [] });
+			await fusedSession.session.prompt(row.text, row.options);
+			const fused = seen();
+			Object.assign(globalThis, { s33Seen: [] });
+			await hosted.loop.session.prompt(row.text, row.options);
+
+			expect(hosted.hookErrors, row.name).toEqual([]);
+			expect(seen(), row.name).toEqual(fused);
+			expect(fused.length, row.name).toBe(2);
+		}
+	});
+
+	it("a steer while the loop is busy reaches the user's input handlers as a steer, and queues no prompt context", async () => {
+		const session = await hostedSession({ userExtension: RECORDING_EXTENSION });
+		Object.assign(globalThis, { s33Seen: [] });
+		const scope = { id: "session-busy", root: session.cwd };
+
+		await session.machine.loopHooks("input", {
+			inputId: "busy:1",
+			text: "also this",
+			source: "interactive",
+			attribution: "user",
+			streamingBehavior: "steer",
+			idle: false,
+			sessionId: "busy",
+			scope,
+		});
+		const next = await session.machine.loopHooks("before_agent_start", {
+			prompt: "a later prompt",
+			systemPrompt: "base",
+			trigger: "prompt",
+			systemPromptOptions: {},
+			idle: true,
+			sessionId: "busy",
+			scope,
+		});
+
+		expect(session.marks()).toBe("ran\n");
+		expect((globalThis as { s33Seen?: unknown[] }).s33Seen?.[0]).toMatchObject({
+			event: "input",
+			streamingBehavior: "steer",
+			idle: false,
+		});
+		expect(JSON.stringify(next)).not.toContain("context from the user machine");
+	});
+
+	it("a message a handler's async work sends after its call ended reaches the loop with the next reply", async () => {
+		const gate = Promise.withResolvers<void>();
+		Object.assign(globalThis, { s33LateGate: gate.promise });
+		const session = await hostedSession({
+			userExtension:
+				'export default (pi) => { let armed = false; pi.on("input", () => { if (armed) return; armed = true; void globalThis.s33LateGate.then(() => pi.sendMessage({ customType: "late-note", content: "sent after the call", display: true })); }); };',
+		});
+
+		await session.loop.session.prompt("first");
+		gate.resolve();
+		await gate.promise;
+		await session.loop.session.prompt("second");
+
+		expect(session.hookErrors).toEqual([]);
+		expect(JSON.stringify(session.loop.session.messages).split("sent after the call")).toHaveLength(2);
 	});
 
 	it("an input transform on the user machine replaces the prompt before before_agent_start, as in a session", async () => {
@@ -275,7 +419,7 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		let during: { id: string; file: string | undefined; idle: boolean } | undefined;
 		let captured: ReturnType<typeof call.current>;
 
-		await call.run("loop-session-1", "/work", async () => {
+		await call.run("loop-session-1", "/work", true, async () => {
 			captured = call.current();
 			const facts = captured;
 			if (facts === undefined) throw new Error("no facts inside the call");
@@ -300,7 +444,7 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		const call = createLoopHookCall();
 		const outside = Promise.withResolvers<ReturnType<typeof call.current>>();
 
-		await call.run("loop-session-2", "/work", async () => {});
+		await call.run("loop-session-2", "/work", true, async () => {});
 		queueMicrotask(() => outside.resolve(call.current()));
 
 		expect(await outside.promise).toBeUndefined();
@@ -311,6 +455,9 @@ describe("a hand's loop-hook scopes (S33 review)", () => {
 	const hookPayload = (id: string, root: string) => ({
 		prompt: "p",
 		systemPrompt: "s",
+		trigger: "prompt",
+		systemPromptOptions: {},
+		idle: true,
 		sessionId: "loop-session",
 		scope: { id, root },
 	});
@@ -326,7 +473,9 @@ describe("a hand's loop-hook scopes (S33 review)", () => {
 		const scope = await machine.openScope({ id: "b", root: dirs.cwd });
 		await scope.dispose();
 		await expect(machine.loopHooks("before_agent_start", hookPayload("b", dirs.cwd))).rejects.toThrow(/disposed/);
+		const kept = await machine.openScope({ id: "c", root: dirs.cwd });
 		await machine.close();
+		await expect(kept.dispose()).resolves.toBeUndefined();
 		await expect(machine.loopHooks("before_agent_start", hookPayload("a", dirs.cwd))).rejects.toThrow(/closed/);
 	});
 

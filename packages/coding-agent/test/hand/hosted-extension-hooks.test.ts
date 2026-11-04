@@ -22,6 +22,7 @@ import {
 	fauxToolCall,
 	getCurrentSystemPrompt,
 } from "@earendil-works/pi-ai";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadExtensions } from "../../src/core/extensions/loader.ts";
@@ -93,6 +94,10 @@ const forwardLoopHooks =
 				.run("before_agent_start", {
 					prompt: event.prompt,
 					systemPrompt: event.systemPrompt,
+					trigger: event.trigger,
+					...(event.preview === undefined ? {} : { preview: event.preview }),
+					systemPromptOptions: JSON.parse(JSON.stringify(event.systemPromptOptions)) as JsonValue,
+					idle: ctx.isIdle(),
 					sessionId: ctx.sessionManager.getSessionId(),
 					scope: { id, root },
 				})

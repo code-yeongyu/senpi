@@ -61,6 +61,15 @@ export function createLooplessHand(
 	const runtimes = new Map<string, { readonly root: string; readonly runtime: Promise<LooplessRuntime> }>();
 	const disposed = new Set<string>();
 	let closed = false;
+	// A runtime is disposed once, whether its scope or close() gets there first.
+	const disposals = new WeakMap<LooplessRuntime, Promise<void>>();
+	const disposeOnce = (runtime: LooplessRuntime): Promise<void> => {
+		const known = disposals.get(runtime);
+		if (known !== undefined) return known;
+		const disposing = runtime.dispose();
+		disposals.set(runtime, disposing);
+		return disposing;
+	};
 	const runtimeOf = (scope: ExecutionScope, reopen: boolean): Promise<LooplessRuntime> => {
 		if (closed) return Promise.reject(new Error("this hand is closed"));
 		if (!isAbsolute(scope.root))
@@ -94,7 +103,7 @@ export function createLooplessHand(
 				dispose: () => {
 					runtimes.delete(scope.id);
 					disposed.add(scope.id);
-					return runtime.dispose();
+					return disposeOnce(runtime);
 				},
 			};
 		},
@@ -104,7 +113,18 @@ export function createLooplessHand(
 			closed = true;
 			const open = [...runtimes.values()];
 			runtimes.clear();
-			await Promise.all(open.map(async ({ runtime }) => (await runtime).dispose()));
+			// Every disposal runs to its end; a runtime that never opened has nothing to dispose.
+			const settled = await Promise.allSettled(
+				open.map(({ runtime }) =>
+					runtime.then(
+						(opened) => disposeOnce(opened),
+						() => undefined,
+					),
+				),
+			);
+			const failures = settled.flatMap((outcome) => (outcome.status === "rejected" ? [outcome.reason] : []));
+			if (failures.length === 1) throw failures[0];
+			if (failures.length > 1) throw new AggregateError(failures, "disposing this hand's runtimes failed");
 		},
 	};
 }

@@ -173,8 +173,21 @@ export interface LoopHookCallFacts {
 	readonly sessionManager: ReadonlySessionManager;
 	readonly signal: AbortSignal;
 	isIdle(): boolean;
-	/** `pi.sendMessage` during the call: the hand carries the message back to the loop, which sends it there. */
+	/** `pi.sendMessage` from the call's work: the hand carries the message back to the loop, which sends it there. */
 	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
+	/** `ctx.ui.notify` during the call: the hand carries the notice back to the loop, which shows it there. */
+	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
+}
+
+/** The hand's UI, except `notify`, which a loop-hook call carries back to the loop's UI. */
+function withLoopNotices(ui: ExtensionUIContext, notify: LoopHookCallFacts["notify"]): ExtensionUIContext {
+	return new Proxy(ui, {
+		get: (target, property) => {
+			if (property === "notify") return notify;
+			const value: unknown = Reflect.get(target, property, target);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
 }
 
 function loopSideUnbound(member: string): Error {
@@ -757,14 +770,20 @@ export class ExtensionRunner {
 		readonly getLoadedHookSources?: ExtensionContextActions["getLoadedHookSources"];
 		/** The loop facts of the loop-hook call in progress on a hand (S33), if any. */
 		readonly loopHookCall?: () => LoopHookCallFacts | undefined;
+		/**
+		 * Where `pi.sendMessage` goes from work a loop-hook call started, also after the call ended (a session would
+		 * still deliver it): the call's sender, which carries it to the loop. None outside any call's work.
+		 */
+		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		this.loopHookCallFn = facts.loopHookCall;
-		if (facts.loopHookCall !== undefined)
+		const send = facts.loopHookSend;
+		if (send !== undefined)
 			this.runtime.sendMessage = (message, options) => {
-				const call = this.loopHookCallFn?.();
-				if (call === undefined) throw loopSideUnbound("sendMessage");
-				call.sendMessage(message, options);
+				const sendMessage = send();
+				if (sendMessage === undefined) throw loopSideUnbound("sendMessage");
+				sendMessage(message, options);
 			};
 		this.runtime.getActiveTools = () => this.getActiveTools();
 		this.runtime.setActiveTools = () => {};
@@ -1963,6 +1982,7 @@ export class ExtensionRunner {
 					sessionManager: { configurable: true, enumerable: true, value: call.sessionManager },
 					signal: { configurable: true, enumerable: true, value: call.signal },
 					isIdle: { configurable: true, enumerable: true, value: call.isIdle },
+					ui: { configurable: true, enumerable: true, value: withLoopNotices(context.ui, call.notify) },
 				});
 		}
 		return context;
