@@ -6,7 +6,7 @@ import test from "node:test";
 import { collectors } from "../../scenarios/fused-equivalence/cases/support/collectors.mjs";
 import { readWitness } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
 
-test("pipeline receipts are read from entries without changing O7 or its parent chain", () => {
+test("older execution-pipeline entries never change O7 or its parent chain", () => {
 	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
 	try {
 		const sessionFile = join(dir, "session.jsonl");
@@ -27,11 +27,25 @@ test("pipeline receipts are read from entries without changing O7 or its parent 
 			original[3],
 		];
 		writeFileSync(sessionFile, witnessed.map((entry) => JSON.stringify(entry)).join("\n"));
-		assert.deepEqual(readWitness(sessionFile), {
-			pipeline: "legacy", source: "entries",
-			calls: [{ toolCallId: "one", pipeline: "legacy" }, { toolCallId: "two", pipeline: "legacy" }],
-		});
 		assert.deepEqual(collectors.O7(run), baseline);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("the witness is read from the session's sink file, one JSON line per call", () => {
+	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
+	try {
+		const witnessFile = join(dir, "witness.jsonl");
+		assert.deepEqual(readWitness(witnessFile), { pipeline: "legacy", source: "no-seam", calls: [] });
+		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n{"pipeline":"prepared","toolCallId":"two"}\n');
+		assert.deepEqual(readWitness(witnessFile), {
+			pipeline: "prepared",
+			source: "sink",
+			calls: [{ toolCallId: "one", pipeline: "prepared" }, { toolCallId: "two", pipeline: "prepared" }],
+		});
+		writeFileSync(witnessFile, '{"pipeline":"prepared","toolCallId":"one"}\n{"pipeline":"legacy","toolCallId":"two"}\n');
+		assert.equal(readWitness(witnessFile).pipeline, "mixed");
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

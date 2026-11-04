@@ -16,7 +16,8 @@
 // A `--record` run fails when a golden already on disk was not rewritten (not selected, failed, or skipped, e.g. E29
 // without a gondolin image store) unless `--leave-unrecorded <ids>` names it: a partial re-record is said out loud
 // (senpi#5189).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
 import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-goldens.mjs";
@@ -84,10 +85,23 @@ function parseArgs(argv) {
 }
 
 async function runCase(testCase, { pipeline, surface }) {
-	const env = pipeline === "default" ? {} : { SENPI_EXECUTION_PIPELINE: pipeline };
+	// Each run's receipts go to its own file through the session's witness sink (S18b part 3), never into its entries.
+	const witnessDir = mkdtempSync(join(tmpdir(), "eq-witness-"));
+	try {
+		return await runCaseWithWitness(testCase, { pipeline, surface }, join(witnessDir, "witness.jsonl"));
+	} finally {
+		rmSync(witnessDir, { recursive: true, force: true });
+	}
+}
+
+async function runCaseWithWitness(testCase, { pipeline, surface }, witnessFile) {
+	const env = {
+		SENPI_EXECUTION_PIPELINE_WITNESS: witnessFile,
+		...(pipeline === "default" ? {} : { SENPI_EXECUTION_PIPELINE: pipeline }),
+	};
 	if (surface === "tui") {
-		const { observations, sessionFile } = await runTuiCase(testCase, env);
-		return { observations, witness: readWitness(sessionFile) };
+		const { observations } = await runTuiCase(testCase, env);
+		return { observations, witness: readWitness(witnessFile) };
 	}
 	const spec = typeof testCase.spec === "function" ? testCase.spec() : testCase.spec;
 	const run = await startCaseRun({ ...spec, label: testCase.id.toLowerCase(), env: { ...spec.env, ...env } });
@@ -97,7 +111,7 @@ async function runCase(testCase, { pipeline, surface }) {
 			surface === "headless"
 				? testCase.observables.filter((id) => id === "O7" || id === "O8")
 				: testCase.observables;
-		return { observations: observe(run, observables), witness: readWitness(run.sessionFile) };
+		return { observations: observe(run, observables), witness: readWitness(witnessFile) };
 	} finally {
 		await run.stop();
 		run.box.cleanup();
