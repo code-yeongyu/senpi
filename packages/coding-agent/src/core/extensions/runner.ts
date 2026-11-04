@@ -29,7 +29,7 @@ import type { NamedMemoryReporter } from "../memory-report/memory-report-registr
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import { bindQuestionInput } from "../question-input.ts";
-import type { SessionManager } from "../session-manager.ts";
+import type { ReadonlySessionManager, SessionManager } from "../session-manager.ts";
 import {
 	DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS,
 	DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS,
@@ -167,6 +167,13 @@ const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRunt
 
 /** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
 const SESSION_IDENTITY_MEMBERS = new Set(["sessionManager", "goalStoreFile"]);
+
+/** What a runner without a session sees of the loop during one loop-hook call on a hand (S33); read-only. */
+export interface LoopHookCallFacts {
+	readonly sessionManager: ReadonlySessionManager;
+	readonly signal: AbortSignal;
+	isIdle(): boolean;
+}
 
 function loopSideUnbound(member: string): Error {
 	return new Error(`${member} is loop-side and not bound: this extension runtime has no session`);
@@ -673,6 +680,7 @@ export class ExtensionRunner {
 	});
 	private getSystemPromptFn: () => string = () => "";
 	private getSystemPromptStablePrefixFn: () => string | undefined = () => undefined;
+	private loopHookCallFn: (() => LoopHookCallFacts | undefined) | undefined;
 	private getLoadedHookSourcesFn: ExtensionContextActions["getLoadedHookSources"] = () => ({
 		agentDir: "",
 		cwd: this.cwd,
@@ -745,8 +753,11 @@ export class ExtensionRunner {
 	bindSessionlessFacts(facts: {
 		readonly getAllTools: GetAllToolsHandler;
 		readonly getLoadedHookSources?: ExtensionContextActions["getLoadedHookSources"];
+		/** The loop facts of the loop-hook call in progress on a hand (S33), if any. */
+		readonly loopHookCall?: () => LoopHookCallFacts | undefined;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
+		this.loopHookCallFn = facts.loopHookCall;
 		this.runtime.getActiveTools = () => this.getActiveTools();
 		this.runtime.setActiveTools = () => {};
 		if (facts.getLoadedHookSources === undefined) return;
@@ -1936,7 +1947,16 @@ export class ExtensionRunner {
 				runner.questionInput?.();
 			});
 		}
-		if (this.sessionManager === undefined) withoutSession(context, this.sessionlessBoundMembers);
+		if (this.sessionManager === undefined) {
+			withoutSession(context, this.sessionlessBoundMembers);
+			const call = this.loopHookCallFn?.();
+			if (call !== undefined)
+				Object.defineProperties(context, {
+					sessionManager: { configurable: true, enumerable: true, value: call.sessionManager },
+					signal: { configurable: true, enumerable: true, value: call.signal },
+					isIdle: { configurable: true, enumerable: true, value: call.isIdle },
+				});
+		}
 		return context;
 	}
 
@@ -2660,6 +2680,8 @@ export class ExtensionRunner {
 			readonly preview?: boolean;
 			readonly signal?: AbortSignal;
 			readonly trigger?: BeforeAgentStartEvent["trigger"];
+			/** Dispatch only to these extensions (a hand running a hosted loop's user hooks, S33); absent: all. */
+			readonly only?: (extensionPath: string) => boolean;
 			/** Internal size accounting; observes only preview composition, never real turns. */
 			readonly observePrompt?: (contribution: {
 				readonly path: string;
@@ -2675,6 +2697,7 @@ export class ExtensionRunner {
 		let stableLength = systemPrompt.length;
 
 		dispatch: for (const { ext, handlers } of beforeAgentStartDispatchOrder(this.extensions)) {
+			if (options.only !== undefined && !options.only(ext.path)) continue;
 			for (const handler of handlers) {
 				if (options.signal?.aborted === true) break dispatch;
 				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
@@ -2686,10 +2709,16 @@ export class ExtensionRunner {
 						{},
 						Object.getOwnPropertyDescriptors(this.createContext(ext.path)),
 					) as ExtensionContext;
-					ctx.getSystemPrompt = () => {
-						this.assertActive();
-						return currentSystemPrompt;
-					};
+					// Defined, not assigned: on a runner without a session the copied member is a loop-side getter.
+					Object.defineProperty(ctx, "getSystemPrompt", {
+						configurable: true,
+						enumerable: true,
+						writable: true,
+						value: () => {
+							this.assertActive();
+							return currentSystemPrompt;
+						},
+					});
 					const event: BeforeAgentStartEvent = {
 						type: "before_agent_start",
 						prompt,
@@ -2831,11 +2860,14 @@ export class ExtensionRunner {
 		streamingBehavior?: "steer" | "followUp",
 		inputId = "input",
 		attribution: InputAttribution = inputAttributionOf({ origin: inputOriginOf(source), source }),
+		/** Dispatch only to these extensions (a hand running a hosted loop's user hooks, S33); absent: all. */
+		only?: (extensionPath: string) => boolean,
 	): Promise<InputEventResult> {
 		let currentText = text;
 		let currentImages = images;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "input")) {
+			if (only !== undefined && !only(ext.path)) continue;
 			for (const handler of handlers) {
 				try {
 					const event: InputEvent = {
