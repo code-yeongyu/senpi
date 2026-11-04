@@ -34,6 +34,7 @@ const OWNED_REGISTRY_ALIASES = [
 	"@code-yeongyu/senpi-pty",
 	"@code-yeongyu/senpi-telemetry",
 	"@code-yeongyu/senpi-codemode",
+	"@code-yeongyu/senpi-machine-ops",
 	"@code-yeongyu/senpi",
 ];
 const VENDORED_ONLY_WORKSPACES = ["@earendil-works/pi-client", "@earendil-works/pi-protocol"];
@@ -165,7 +166,8 @@ describe("npm publish dependency graph", () => {
 					.filter(([name]) => !VENDORED_ONLY_WORKSPACES.includes(name))
 					.map(([name, spec]) => {
 						if (ownedRegistryAliases.has(name)) return [name, `npm:${ownedRegistryAliases.get(name)}@${source.version}`];
-						if (name === "@code-yeongyu/senpi-codemode") return [name, source.version];
+						if (name === "@code-yeongyu/senpi-codemode" || name === "@code-yeongyu/senpi-machine-ops")
+							return [name, source.version];
 						return [name, spec];
 					}),
 			);
