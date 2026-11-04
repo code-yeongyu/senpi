@@ -184,5 +184,8 @@ it("a turn an extension holds cannot delay quit past the quit budget (#3711)", a
 	});
 	void h.session.prompt("work").catch(() => {});
 	await toolStarted.promise;
+	const quitStarted = performance.now();
 	await reservationStep("held-turn-quit-within-budget", runtime.dispose({ processExit: true, endActiveRun: true }));
+	// Without the budget, the abort waits for the held handler until the 10 s turn-deadline grace releases it.
+	expect(performance.now() - quitStarted).toBeLessThan(3_000);
 });
