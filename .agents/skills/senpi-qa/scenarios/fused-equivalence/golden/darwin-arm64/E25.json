@@ -10301,42 +10301,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_ledger",
-        "toolCallId": "<id:6>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -10428,6 +10392,42 @@
          "endedAt": "<ts:timing.endedAt:2>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_ledger",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
       }
      },
      {
@@ -12040,42 +12040,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 7,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:14>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "restoring": false,
-       "persisted": true,
-       "runId": "<uuid:41>",
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activityRevision": {
-        "instanceId": "<uuid:33>",
-        "revision": 3
-       },
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_ledger",
-        "toolCallId": "<id:25>",
-        "since": "<ts:activity.since:5>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:14>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -12183,6 +12147,42 @@
          "endedAt": "<ts:timing.endedAt:8>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 7,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:14>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "restoring": false,
+       "persisted": true,
+       "runId": "<uuid:41>",
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activityRevision": {
+        "instanceId": "<uuid:33>",
+        "revision": 3
+       },
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_ledger",
+        "toolCallId": "<id:25>",
+        "since": "<ts:activity.since:5>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:14>"
       }
      },
      {
@@ -14189,42 +14189,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 13,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 5,
-       "selfSettleEligible": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:26>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "restoring": false,
-       "persisted": true,
-       "runId": "<uuid:64>",
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activityRevision": {
-        "instanceId": "<uuid:56>",
-        "revision": 3
-       },
-       "activity": {
-        "kind": "tool",
-        "toolName": "ask_user_question",
-        "toolCallId": "<id:43>",
-        "since": "<ts:activity.since:10>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:26>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -14346,6 +14310,42 @@
          "endedAt": "<ts:timing.endedAt:14>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 13,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 5,
+       "selfSettleEligible": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:26>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "restoring": false,
+       "persisted": true,
+       "runId": "<uuid:64>",
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activityRevision": {
+        "instanceId": "<uuid:56>",
+        "revision": 3
+       },
+       "activity": {
+        "kind": "tool",
+        "toolName": "ask_user_question",
+        "toolCallId": "<id:43>",
+        "since": "<ts:activity.since:10>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:26>"
       }
      },
      {
@@ -16303,42 +16303,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 21,
-       "epoch": 4,
-       "epochOrigin": "human",
-       "humanInputRevision": 8,
-       "selfSettleEligible": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:35>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "restoring": false,
-       "persisted": true,
-       "runId": "<uuid:135>",
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activityRevision": {
-        "instanceId": "<uuid:136>",
-        "revision": 3
-       },
-       "activity": {
-        "kind": "tool",
-        "toolName": "ask_user_question",
-        "toolCallId": "<id:67>",
-        "since": "<ts:activity.since:13>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:35>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -16426,6 +16390,42 @@
          "endedAt": "<ts:timing.endedAt:20>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 21,
+       "epoch": 4,
+       "epochOrigin": "human",
+       "humanInputRevision": 8,
+       "selfSettleEligible": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:35>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "restoring": false,
+       "persisted": true,
+       "runId": "<uuid:135>",
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activityRevision": {
+        "instanceId": "<uuid:136>",
+        "revision": 3
+       },
+       "activity": {
+        "kind": "tool",
+        "toolName": "ask_user_question",
+        "toolCallId": "<id:67>",
+        "since": "<ts:activity.since:13>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:35>"
       }
      },
      {
@@ -18256,7 +18256,8 @@
         "name": "eq_ledger",
         "arguments": {
          "barrier": "kill-body"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        }
       ],
       "api": "openai-completions",
@@ -18506,7 +18507,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:3>",
+      "runId": "<uuid:4>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -18624,7 +18625,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:3>",
+      "runId": "<uuid:4>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -18668,7 +18669,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:4>",
+      "runId": "<uuid:5>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -18717,7 +18718,8 @@
         "name": "eq_ledger",
         "arguments": {
          "barrier": "sibling-done"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:6>:0"
        },
        {
         "type": "toolCall",
@@ -18725,7 +18727,8 @@
         "name": "eq_ledger",
         "arguments": {
          "barrier": "sibling-held"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:6>:1"
        }
       ],
       "api": "openai-completions",
@@ -18800,7 +18803,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:4>",
+      "runId": "<uuid:5>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -18853,7 +18856,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:4>",
+      "runId": "<uuid:5>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -18906,7 +18909,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:4>",
+      "runId": "<uuid:5>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -18975,7 +18978,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:5>",
+      "runId": "<uuid:7>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19093,7 +19096,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:5>",
+      "runId": "<uuid:7>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19137,7 +19140,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:6>",
+      "runId": "<uuid:8>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19201,7 +19204,8 @@
           }
          ],
          "waitForAnswer": true
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:9>:0"
        }
       ],
       "api": "openai-completions",
@@ -19263,7 +19267,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:6>",
+      "runId": "<uuid:8>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19271,7 +19275,7 @@
         {
          "kind": "question",
          "originSessionId": "<uuid:1>",
-         "requestId": "<uuid:7>",
+         "requestId": "<uuid:10>",
          "revision": 1,
          "since": "<ts:human.since:7>"
         }
@@ -19354,7 +19358,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": true,
       "persisted": true,
-      "runId": "<uuid:6>",
+      "runId": "<uuid:8>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19362,7 +19366,7 @@
         {
          "kind": "question",
          "originSessionId": "<uuid:1>",
-         "requestId": "<uuid:7>",
+         "requestId": "<uuid:10>",
          "revision": 1,
          "since": "<ts:human.since:8>"
         }
@@ -19396,7 +19400,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": true,
       "persisted": true,
-      "runId": "<uuid:6>",
+      "runId": "<uuid:8>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19404,7 +19408,7 @@
         {
          "kind": "question",
          "originSessionId": "<uuid:1>",
-         "requestId": "<uuid:7>",
+         "requestId": "<uuid:10>",
          "revision": 1,
          "since": "<ts:human.since:9>"
         }
@@ -19454,7 +19458,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:6>",
+      "runId": "<uuid:8>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19462,7 +19466,7 @@
         {
          "kind": "question",
          "originSessionId": "<uuid:1>",
-         "requestId": "<uuid:7>",
+         "requestId": "<uuid:10>",
          "revision": 1,
          "since": "<ts:human.since:10>"
         }
@@ -19496,7 +19500,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:8>",
+      "runId": "<uuid:11>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19614,7 +19618,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:8>",
+      "runId": "<uuid:11>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19671,7 +19675,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:3",
-      "runId": "<uuid:8>",
+      "runId": "<uuid:11>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19714,7 +19718,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:9>",
+      "runId": "<uuid:12>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -19761,7 +19765,8 @@
         "type": "toolCall",
         "id": "<id:67>",
         "name": "ask_user_question",
-        "arguments": {}
+        "arguments": {},
+        "runtimeItemKey": "blk:<uuid:13>:0"
        }
       ],
       "api": "openai-completions",
@@ -19845,8 +19850,8 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:10>",
-      "key": "delivery:extension-user-message:<uuid:11>",
+      "id": "<uuid:14>",
+      "key": "delivery:extension-user-message:<uuid:15>",
       "kind": "background",
       "state": "open",
       "sessionId": "<uuid:1>"
@@ -19859,11 +19864,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:10>",
-      "key": "delivery:extension-user-message:<uuid:11>",
+      "id": "<uuid:14>",
+      "key": "delivery:extension-user-message:<uuid:15>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:12>",
+      "ticketId": "<uuid:16>",
       "sessionId": "<uuid:1>"
      },
      "id": "<id:73>",
@@ -19874,11 +19879,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:10>",
-      "key": "delivery:extension-user-message:<uuid:11>",
+      "id": "<uuid:14>",
+      "key": "delivery:extension-user-message:<uuid:15>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:12>",
+      "ticketId": "<uuid:16>",
       "payload": {
        "message": {
         "customType": "extension-user-message",
@@ -19897,7 +19902,7 @@
      "type": "custom",
      "customType": "session-notice",
      "data": {
-      "noticeId": "<uuid:13>",
+      "noticeId": "<uuid:17>",
       "producer": "extension-user-message",
       "pauseSeq": 4,
       "at": "<ts:data.at:8>",
@@ -19910,7 +19915,7 @@
        "content": "[Answer to question call_question_bad]\nThe pending question could not be resumed after a restart; continue on best judgment.",
        "display": true,
        "details": {
-        "ticketId": "<uuid:12>"
+        "ticketId": "<uuid:16>"
        },
        "timestamp": "<ts:message.timestamp:15>"
       }
@@ -19923,11 +19928,11 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:10>",
-      "key": "delivery:extension-user-message:<uuid:11>",
+      "id": "<uuid:14>",
+      "key": "delivery:extension-user-message:<uuid:15>",
       "kind": "background",
       "state": "held",
-      "ticketId": "<uuid:12>",
+      "ticketId": "<uuid:16>",
       "payload": {
        "message": {
         "customType": "extension-user-message",
@@ -19936,7 +19941,7 @@
        },
        "deliverAs": "followUp"
       },
-      "noticeId": "<uuid:13>",
+      "noticeId": "<uuid:17>",
       "sessionId": "<uuid:1>"
      },
      "id": "<id:76>",
@@ -19959,7 +19964,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": true,
       "persisted": true,
-      "runId": "<uuid:9>",
+      "runId": "<uuid:12>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -20009,7 +20014,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:9>",
+      "runId": "<uuid:12>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -20043,7 +20048,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:14>",
+      "runId": "<uuid:18>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -20079,7 +20084,7 @@
      "content": "[Answer to question call_question_bad]\nThe pending question could not be resumed after a restart; continue on best judgment.",
      "display": true,
      "details": {
-      "ticketId": "<uuid:12>"
+      "ticketId": "<uuid:16>"
      },
      "id": "<id:82>",
      "parentId": "<id:81>",
@@ -20173,7 +20178,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
-      "runId": "<uuid:14>",
+      "runId": "<uuid:18>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -20206,7 +20211,7 @@
      "customType": "session-notices-consumed",
      "data": {
       "noticeIds": [
-       "<uuid:13>"
+       "<uuid:17>"
       ],
       "pauseSeq": 4
      },
@@ -20243,7 +20248,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:4",
-      "runId": "<uuid:14>",
+      "runId": "<uuid:18>",
       "waitingOn": {
        "children": 0,
        "background": [],

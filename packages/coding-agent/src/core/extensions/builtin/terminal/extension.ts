@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { resolveBashTimeoutDefaults } from "../bash-timeout/timeout.ts";
 import { isEvalOnlyRouting } from "../eval-only-routing.ts";
+import { activeSharedSections } from "../prompt-preset/active-preset.ts";
 import {
 	buildToolContext,
 	bundleSinks,
@@ -18,7 +19,7 @@ import { appendMonitorOverflow } from "./monitor-overflow-file.ts";
 import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
-import { TerminalNotifier } from "./notify.ts";
+import { TerminalNotifier, type TerminalNotifierDeps } from "./notify.ts";
 import { buildTerminalPromptSection } from "./prompt.ts";
 import { createDigestSlot, registerRestoreDigestRenderer } from "./restore-digest.ts";
 import { detachPersistence, flushRestoreDigest, startPersistence, stopPersistence } from "./restore-session.ts";
@@ -91,7 +92,21 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 	pi.setActiveTools([...active]);
 }
 
+export interface TerminalExtensionOptions {
+	/** A hand's durable wake sender (design 5.6.4); absent, notifications go to the session's own `sendMessage`. */
+	readonly sendMessage?: TerminalNotifierDeps["sendMessage"];
+}
+
+/** The terminal extension with its notifications sent through `options.sendMessage` (a hand of a split session). */
+export function createTerminalExtension(options: TerminalExtensionOptions): (pi: ExtensionAPI) => void {
+	return (pi) => registerTerminal(pi, options);
+}
+
 export function registerTerminalExtension(pi: ExtensionAPI): void {
+	registerTerminal(pi, {});
+}
+
+function registerTerminal(pi: ExtensionAPI, options: TerminalExtensionOptions): void {
 	let reducedMotion = false;
 	let agentBusy = false;
 	const state: TerminalExtensionState = {
@@ -149,15 +164,17 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.shellPath = settingsManager.getShellPath();
 		reducedMotion = settingsManager.getReducedMotion();
 		agentBusy = false;
+		const sendMessage: TerminalNotifierDeps["sendMessage"] =
+			options.sendMessage ?? ((message, delivery) => pi.sendMessage(message, delivery));
 		state.notifier = new TerminalNotifier({
-			sendMessage: (message, options) => pi.sendMessage(message, options),
+			sendMessage,
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 		});
 		state.monitorNotifier?.dispose();
 		const overflowWarned = new Set<string>();
 		state.monitorNotifier = new MonitorNotifier({
-			sendMessage: (message, options) => pi.sendMessage(message, options),
+			sendMessage,
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 			getSettings: () => state.settings.monitor,
@@ -241,11 +258,12 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 
 	pi.on(
 		"before_agent_start",
-		async (event) => {
+		async (event, ctx) => {
 			return {
 				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({
 					evalOnly: isEvalOnlyRouting(pi),
 					ptyBash: !state.steppedAside,
+					sharedSections: activeSharedSections(ctx),
 					foregroundWindowSeconds: resolveForegroundWindowSeconds(process.env),
 					defaultTimeoutSeconds: resolveBashTimeoutDefaults(process.env).defaultSeconds,
 				})}`,

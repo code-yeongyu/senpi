@@ -25,7 +25,9 @@ export function startMultiSessionHost(run) {
 			"--no-context-files",
 			...run.args,
 		],
-		{ env: run.env, cwd: run.box.cwd },
+		// The host's endpoint fence (senpi#4602) keeps durable lock files under `<tmpdir>/senpi-rpc-host-locks/`. This
+		// throwaway host is the only writer on its socket, so its temp root is the directory this run owns and removes.
+		{ env: { ...run.env, TMPDIR: socketDir, TEMP: socketDir, TMP: socketDir }, cwd: run.box.cwd },
 	);
 	run.cleanups.push(async () => {
 		if (host.exitCode === null && host.signalCode === null) {

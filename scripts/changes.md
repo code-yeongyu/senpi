@@ -1,3 +1,78 @@
+## 2026-11-03 - Release scripts carry the machine-ops workspace (senpi#5592)
+
+### What changed
+
+- `scripts/release-packages.mjs`: `packages/machine-ops/package.json` joins the lockstep CalVer set.
+- `scripts/local-release.mjs`: local release builds and packs `@code-yeongyu/senpi-machine-ops`.
+- `scripts/registry-packages.mjs`, `scripts/prepare-senpi-publish-manifest.mjs`, `scripts/senpi-publish-pack-checks.mjs`, `scripts/build-all.mjs`: the package is published under its own name with an exact version in the senpi manifest, its tarball must carry `dist/src/index.js` and the conformance entry, and it builds after pty.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- Release and build tooling is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in `release-packages.mjs`, `local-release.mjs`, `registry-packages.mjs` and `build-all.mjs`.
+
+## 2026-10-26 - publish.mjs requires the socket-secret bridge it is told to (senpi#4312)
+
+### What changed
+
+- `scripts/publish.mjs`: new `--require-socket-secret-bridge=win32-<arch>[,...]` flag, passed to `assertSenpiPackedWorkspaceFiles` for the senpi tarball.
+- `scripts/senpi-publish-pack-checks.mjs`: `SOCKET_SECRET_BRIDGE_TARGETS`, `socketSecretBridgeFile(target)`, and an `options.requiredSocketSecretTargets` check that rejects a senpi tarball missing a named bridge.
+
+### Why
+
+- The bridge has no runtime fallback (sisyphuslabs/omo-desktop-app#4199), so unlike the PTY prebuild a missing target must block the publish, the best-effort arm64 build included.
+
+### Why an extension could not handle it
+
+- Publishing runs in the release tooling, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: argument parsing at the top of `publish.mjs` and `validatePack`.
+
+## 2026-11-03 - Loopless worker entry in the release binaries (senpi#5438)
+
+### What changed
+
+- `scripts/build-binaries.sh`: both `bun build --compile` lines (Windows and the other platforms) add `./src/modes/rpc/loopless-worker.ts` after `./src/modes/rpc/session-worker.ts`.
+
+### Why
+
+- Release binaries must contain every worker entry the runtime can start; the loopless worker isolate is new (senpi#5413).
+
+### Why an extension could not handle it
+
+- This is the release binary build itself.
+
+### Expected merge conflict zones
+
+- LOW: the two compile lines, which other worker entries also extend.
+
+## 2026-10-30 - pi-ai ./models entry budget +3 (senpi#3975)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: `./models` budget 33 -> 36 for `provider-diagnostic.ts`, `utils/provider-diagnostic-vocabulary.ts` and `utils/provider-diagnostic-carrier.ts`, reached from `api/lazy.ts`.
+
+### Why
+
+- senpi#3975: `lazyStream` must keep a validated attached diagnostic.
+
+### Why an extension could not handle it
+
+- Repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` budget comment.
+
 ## 2026-10-27 - pi-ai models entry budget covers the login-id leaf (senpi#4099)
 
 ### What changed

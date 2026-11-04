@@ -46,6 +46,7 @@ describe("multi-session RPC protocol info", () => {
 					"eval_cells",
 					"auth_key_verify",
 					"provider_account_test",
+					"account_reset",
 					"queued_message_revision",
 					"tool_barrier",
 					"user_activity",

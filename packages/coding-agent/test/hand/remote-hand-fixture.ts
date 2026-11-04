@@ -102,7 +102,13 @@ export function startHand(
 }
 
 export function startHandOn(link: { readonly hand: Transport }, openScope: OpenHandScope): RemoteExecutor {
-	const executor = createRemoteExecutor({ transport: link.hand, openScope, onFault: (error) => faults.push(error) });
+	const executor = createRemoteExecutor({
+		authority: { kind: "self" },
+		fileChannel: true,
+		transport: link.hand,
+		openScope,
+		onFault: (error) => faults.push(error),
+	});
 	cleanups.push(() => executor.close());
 	return executor;
 }

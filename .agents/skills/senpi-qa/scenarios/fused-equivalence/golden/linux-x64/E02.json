@@ -3277,42 +3277,6 @@
       }
      },
      {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_seq",
-        "toolCallId": "<id:6>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -3448,6 +3412,42 @@
          "endedAt": "<ts:timing.endedAt:2>"
         }
        }
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_seq",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
       }
      },
      {
@@ -5822,7 +5822,8 @@
          "path": "out/seq-1.txt",
          "text": "seq_1\n",
          "barrier": "seq-1"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:0"
        },
        {
         "type": "toolCall",
@@ -5832,7 +5833,8 @@
          "path": "out/seq-2.txt",
          "text": "seq_2\n",
          "barrier": "seq-2"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:1"
        },
        {
         "type": "toolCall",
@@ -5842,7 +5844,8 @@
          "path": "out/seq-3.txt",
          "text": "seq_3\n",
          "barrier": "seq-3"
-        }
+        },
+        "runtimeItemKey": "blk:<uuid:3>:2"
        }
       ],
       "api": "openai-completions",
@@ -5893,7 +5896,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:0"
     },
     {
      "type": "message",
@@ -5913,7 +5917,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:4>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:1"
     },
     {
      "type": "message",
@@ -5933,7 +5938,8 @@
       "details": {},
       "isError": false,
       "timestamp": "<ts:message.timestamp:5>"
-     }
+     },
+     "runtimeItemKey": "blk:<uuid:3>:2"
     },
     {
      "type": "message",

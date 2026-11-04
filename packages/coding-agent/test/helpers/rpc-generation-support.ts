@@ -51,8 +51,8 @@ export function hostLifecycleEntry(): string {
 }
 
 /** The launch seam both ensure and handoff take: supervisor argv in, spawnable command out. */
-export function supervisorLaunch(args: readonly string[]): { command: string; args: string[] } {
-	return { command: process.execPath, args: [hostLifecycleEntry(), ...args] };
+export function supervisorLaunch(args: readonly string[]): { command: string; args: string[]; reportsStartup: true } {
+	return { command: process.execPath, args: [hostLifecycleEntry(), ...args], reportsStartup: true };
 }
 
 export const GENERATION_HOST_ARGS = ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL] as const;

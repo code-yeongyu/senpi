@@ -1,0 +1,56 @@
+{
+	"name": "@code-yeongyu/senpi-machine-ops",
+	"private": true,
+	"version": "2026.11.4-1",
+	"description": "Engine-free host operation layer shared by senpi's file and shell tools and remote machine executors",
+	"type": "module",
+	"main": "./dist/src/index.js",
+	"types": "./dist/src/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		},
+		"./in-process-holder": {
+			"types": "./dist/src/process/in-process-holder.d.ts",
+			"import": "./dist/src/process/in-process-holder.js"
+		},
+		"./conformance": {
+			"types": "./dist/test/conformance/index.d.ts",
+			"import": "./dist/test/conformance/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist",
+		"!dist/**/*.map",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "node ../../scripts/run-tests.mjs vitest --run test",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"senpi",
+		"machine",
+		"operations"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/code-yeongyu/senpi.git",
+		"directory": "packages/machine-ops"
+	},
+	"engines": {
+		"node": ">=24.0.0"
+	},
+	"dependencies": {
+		"@earendil-works/pi-pty": "^2026.11.4-1"
+	},
+	"devDependencies": {
+		"@types/node": "26.6.2"
+	}
+}
