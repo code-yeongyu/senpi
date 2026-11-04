@@ -16,11 +16,12 @@ export function registerLocalMcpPresenter(
 	let activeInput: { input: McpFormInput; fail: () => void } | undefined;
 	const drafts = new Map<string, AbortController>();
 	const sender = authority.connect("local_tui", (frame) => {
-		if (frame.type !== "mcp_form_request") {
+		if (frame.type === "mcp_form_resolved") {
 			drafts.get(frame.dialogId)?.abort();
 			drafts.delete(frame.dialogId);
 			return true;
 		}
+		if (frame.type !== "mcp_form_request") return true;
 		const active = activeInput;
 		if (!active) return false;
 		const { input } = active;
