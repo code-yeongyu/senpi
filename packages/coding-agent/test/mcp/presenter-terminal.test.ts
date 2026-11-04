@@ -22,7 +22,11 @@ it("T13 the terminal endpoint answers mcp_presenter_context for an attached inte
 	const presenter = await t.client();
 
 	const reply = await presenter.request({ type: "mcp_presenter_context", sessionId: t.sessionId });
-	const discovered = await presenter.request({ type: "mcp_presenter_context", sessionId: t.sessionId, discover: true });
+	const discovered = await presenter.request({
+		type: "mcp_presenter_context",
+		sessionId: t.sessionId,
+		discover: true,
+	});
 	const roleless = await t.client(["interactive_user"]);
 	const detached = await t.client(undefined, false);
 
@@ -80,7 +84,11 @@ it("T15 TUI-only behaviour is unchanged when nobody enrolls: the terminal answer
 		humanAdmission: true,
 	});
 	expect(t.admissions()).toBe(1);
-	expect(presenter.records.filter((record) => String(record.type).startsWith("mcp_form_") && record.type !== "mcp_form_reply")).toEqual([]);
+	expect(
+		presenter.records.filter(
+			(record) => String(record.type).startsWith("mcp_form_") && record.type !== "mcp_form_reply",
+		),
+	).toEqual([]);
 });
 
 it("T16 terminal and an enrolled desktop: the first answer wins and the audit names the winner", async () => {
@@ -112,7 +120,7 @@ it("T16 terminal and an enrolled desktop: the first answer wins and the audit na
 		outcome: "answered",
 		answeredBy: { principalKind: "account", dev: "device-a", dname: "Work laptop", presenterKind: "desktop" },
 	});
-	expect(
-		await desktop.request(answerFrame(request, "mcp_form_response", { action: "decline" })),
-	).toMatchObject({ error: "form_stale" });
+	expect(await desktop.request(answerFrame(request, "mcp_form_response", { action: "decline" }))).toMatchObject({
+		error: "form_stale",
+	});
 });

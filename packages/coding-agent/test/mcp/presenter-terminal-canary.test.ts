@@ -22,7 +22,9 @@ it("a canary in the message, schema, answer and terminal draft never reaches the
 	const observer = await t.client(["interactive_user"]);
 	const bystander = await t.client();
 	expect(await observer.request({ type: "subscribe", cursor: 0 })).toMatchObject({ success: true });
-	expect(await bystander.request({ type: "subscribe_sessions", mirror: true })).toMatchObject({ success: true });
+	expect(await bystander.request({ type: "subscribe_sessions", sessions: "all", mirror: "all" })).toMatchObject({
+		success: true,
+	});
 
 	const result = t.present({
 		message: `message ${canary}`,

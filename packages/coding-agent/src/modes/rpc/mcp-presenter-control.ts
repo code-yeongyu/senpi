@@ -1,8 +1,8 @@
-import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import type { Duplex } from "node:stream";
 import { isRecord } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
 import {
+	accountIdentity,
 	McpPresenterAccounts,
 	type AccountPrincipal,
 	type PresenterAccountAuthority,
@@ -13,7 +13,7 @@ import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
 import { McpPresenterEnrollment, type PresenterPrincipal } from "./mcp-presenter-enrollment.ts";
 import { features } from "./mcp-presenter-grants.ts";
 import { McpPresenterSuccessors, type LaunchOwner } from "./mcp-presenter-successor.ts";
-import { privateFrames, send, signed } from "./mcp-presenter-wire.ts";
+import { controlTranscript, privateFrames, send, signed } from "./mcp-presenter-wire.ts";
 
 type Owner = ReturnType<McpPresenterAuthority["enroll"]>;
 type Principal =
@@ -84,8 +84,10 @@ export class McpPresenterControl {
 
 	dispose(): void {
 		this.host.withdrawMcpPresenterControl(this.path);
-		this.authority.dispose();
-		for (const stream of this.controls) stream.destroy();
+		const streams = [...this.controls];
+		for (const revoke of [...this.revokeControls.values()]) revoke();
+		if (!this.host.sharedAuthority) this.authority.dispose();
+		for (const stream of streams) stream.destroy();
 		this.controls.clear();
 		this.successors.dispose();
 		this.accounts.dispose();
@@ -153,14 +155,7 @@ export class McpPresenterControl {
 					deadline = performance.now() + 30_000;
 					clearTimeout(challengeTimer);
 					challengeTimer = setTimeout(() => stream.destroy(), 30_000);
-					transcript = JSON.stringify([
-						"mcp-presenter-control-v1",
-						this.authority.instance,
-						value.backendGeneration,
-						randomUUID(),
-						randomBytes(32).toString("hex"),
-						pending,
-					]);
+					transcript = controlTranscript(this.authority.instance, value.backendGeneration, pending);
 					send(stream, { type: "challenge", transcript, hostInstance: this.authority.instance });
 					return;
 				}
@@ -178,7 +173,10 @@ export class McpPresenterControl {
 				clearTimeout(challengeTimer);
 				pending = undefined;
 				transcript = undefined;
-				owner ??= this.authority.enroll(principal.id);
+				owner ??= this.authority.enroll(
+					principal.id,
+					principal.kind === "account" ? accountIdentity(principal) : undefined,
+				);
 				if (backendGeneration === undefined) {
 					stream.destroy();
 					return;

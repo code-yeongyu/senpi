@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID, type KeyObject } from "node:crypto";
 import type { Duplex } from "node:stream";
-import type { McpFormBinding } from "../../core/mcp-form-types.ts";
+import type { McpFormBinding, McpPresenterIdentity } from "../../core/mcp-form-types.ts";
 import {
 	accountEnrollmentTranscript,
 	parseAccountEnrollment,
@@ -72,6 +72,11 @@ export interface AccountPrincipal {
 	/** The control stream it enrolled on: its only management stream. */
 	readonly stream: Duplex;
 	readonly sessions: WeakSet<McpFormBinding>;
+}
+
+/** How the settle audit names an account principal: by its verified attestation, never by `remoteOrigin` (D11 2.5). */
+export function accountIdentity(principal: AccountPrincipal): McpPresenterIdentity {
+	return { principalKind: "account", dev: principal.dev, dname: principal.dname };
 }
 
 interface Attempt {

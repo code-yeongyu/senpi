@@ -6589,6 +6589,18 @@ An engine that predates `discover` ignores the key and answers with the five con
 fields. A client must treat a missing `controlEndpoint` as "account enrollment
 unavailable on this host": not an error, and not a reason to retry the request.
 
+An enforced interactive terminal serves the same private surface on its control endpoint. A control
+connection that declared `interactive_user` and `mcp_form_presenter_v1` with `set_client_info` and holds a
+live attachment (`attach_session` or `open_session`) answers `mcp_presenter_context`, and sends
+`mcp_form_presented`, `mcp_form_response` and `mcp_form_sync` like an RPC connection. Each is answered on
+that connection only, as `mcp_form_reply`. Private frames never reach the terminal's `subscribe` feed, a
+`subscribe_sessions` observer, another control connection, or a session entry. Releasing the attachment,
+closing the connection, or declaring without a role revokes what it holds. When the distribution injects a
+`PresenterAccountAuthority` into the terminal (`presenterAccountAuthority` in the interactive options), the
+terminal also has the management endpoint and answers `discover`. A terminal has no descriptor-4 bootstrap,
+so every other presenter on it is a same-account principal. The terminal itself stays one `local_tui`
+holder: a form reaches the terminal and every enrolled holder, and the first human answer wins.
+
 A same-account presenter enrolls on a fresh connection to that endpoint, with no owner
 prompt, in one attempt within the connection's 30 s window:
 
