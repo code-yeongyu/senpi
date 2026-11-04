@@ -64,6 +64,29 @@ it.each(triggers.flatMap((trigger) => [true, false].map((presented) => ({ ...tri
 	},
 );
 
+const timerEnds = [
+	{ end: "revocation", act: (host: AccountHost) => host.switchAccount("account-b") },
+	{
+		end: "a close of the control connection",
+		act: (host: AccountHost, adopted: Adopted) => {
+			const subscribe = host.binding.subscribe;
+			if (!subscribe) throw new Error("The binding cannot report revocation");
+			const revoked = new Promise<void>((resolve) => subscribe(resolve));
+			adopted.peer.close();
+			return revoked;
+		},
+	},
+	{ end: "dispose", act: (host: AccountHost) => host.control.dispose() },
+] as const;
+
+it.each(timerEnds)("the expiry timer does not outlive the principal: $end clears it", async ({ act }) => {
+	const host = await accountHost();
+	const adopted = await enrollAssignAcquire(host);
+	expect(vi.getTimerCount()).toBe(1);
+	await act(host, adopted);
+	expect(vi.getTimerCount()).toBe(0);
+});
+
 it("T6: a re-attestation moves the expiry to the new attestedUntil", async () => {
 	const host = await accountHost();
 	const adopted = await enrollAssignAcquire(host);
