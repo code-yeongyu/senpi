@@ -872,13 +872,17 @@ export class ModelRuntime implements Models {
 			modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 		});
 		const pooled: PooledCredential | undefined = sources.credential;
-		const useAffinity = sources.policy?.affinity !== false;
+		const strategy = sources.policy?.accountStrategy;
+		const useAffinity = strategy !== undefined || sources.policy?.affinity !== false;
 		const now = Date.now();
-		// The stream prefers an account with headroom and remembers that move per session (omo#9234);
-		// reading the same limits and memory keeps this the stream's own first pick.
-		const remembered = useAffinity
-			? rememberedHeadroomAccount(sources.repository, sources.providerId, sessionId)
-			: undefined;
+		// The stream prefers an account with headroom and remembers that move per session (omo#9234), and
+		// under round-robin holds this session's turn (omo#10146); reading the same limits, memory and turn
+		// keeps this the stream's own first pick.
+		const { roundRobinState } = await import("./credential-pool/round-robin-state.ts");
+		const roundRobin = strategy === "round-robin" ? roundRobinState.session(sources.providerId, sessionId) : undefined;
+		const remembered =
+			roundRobin?.account ??
+			(useAffinity ? rememberedHeadroomAccount(sources.repository, sources.providerId, sessionId) : undefined);
 		const slot = selectSessionSlot(
 			slots,
 			{
@@ -886,6 +890,8 @@ export class ModelRuntime implements Models {
 				useAffinity,
 				hasher: rotation.sha256SlotHasher,
 				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+				...(strategy === undefined ? {} : { strategy }),
+				...(roundRobin === undefined ? {} : { roundRobinOffset: roundRobin.offset }),
 				headroom: {
 					providerId: sources.providerId,
 					limits: subscriptionLimits.snapshot(),
