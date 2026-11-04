@@ -223,6 +223,8 @@ async function startHost() {
 	let peers = 0;
 	return {
 		scratch,
+		core,
+		writer,
 		async proven(): Promise<Peer> {
 			const { socket } = await connectAuthenticatedRpcSocket(socketPath, undefined, { keyRoot: agentDir });
 			return new Peer(socket, `p${++peers}`);
@@ -535,62 +537,120 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 
 /**
  * senpi#5808: a delegated connection is a forwarder's channel for one viewer, so it ends whenever that viewer leaves.
- * The session it opened belongs to the forwarder, which keeps serving it to the next viewer: the end detaches it,
- * exactly as `retain_on_disconnect` does, and never closes it. A local connection keeps today's close-with-last-client.
+ * The session it opened belongs to the forwarder, which keeps serving it to the next viewer: every open on a delegated
+ * connection is retained, whatever `retain_on_disconnect` says, so its end detaches and never closes. A connection that
+ * never declared keeps today's rule: closed with its last client unless it asked to be retained.
  */
 describe("senpi#5808: a session opened over a delegated connection outlives that connection", () => {
-	async function stateFrom(peer: Peer, sessionId: string): Promise<WireRecord> {
-		return peer.send({ type: "get_state", sessionId });
+	type Row = { sessionId: string; durableSessionId: string; retain_on_disconnect: boolean; attachments: number };
+
+	async function rows(): Promise<Row[]> {
+		return ((await opener.send({ type: "list_sessions" })).data as { sessions: Row[] }).sessions;
 	}
 
-	it("stays open, listed and attachable from another connection after the delegated opener ends", async () => {
-		const delegated = await host.proven();
-		expect(await declare(delegated, FORWARDABLE)).toMatchObject({ success: true });
-		const { sessionId } = (await delegated.send({ type: "open_session" })).data as Opened;
-		await host.drop(delegated);
-		const next = await host.proven();
-		const listed = (await next.send({ type: "list_sessions" })).data as { sessions: WireRecord[] };
-		const row = listed.sessions.find((candidate) => candidate.sessionId === sessionId);
+	async function delegatedPeer(granted: readonly string[] = FORWARDABLE): Promise<Peer> {
+		const peer = await host.proven();
+		expect(await declare(peer, granted)).toMatchObject({ success: true });
+		return peer;
+	}
+
+	async function openedThenDropped(peer: Peer, record: WireRecord = {}): Promise<string> {
+		const { sessionId } = (await peer.send({ type: "open_session", ...record })).data as Opened;
+		await host.drop(peer);
+		return sessionId;
+	}
+
+	it("stays open, listed and attachable from a new connection after the delegated opener ends", async () => {
+		const sessionId = await openedThenDropped(await delegatedPeer());
+		const next = await delegatedPeer();
+		const row = (await rows()).find((candidate) => candidate.sessionId === sessionId);
 		expect(row).toMatchObject({ status: "open", attachments: 0, retain_on_disconnect: true });
 		expect(
 			await next.send({ type: "attach_session", sessionId, durableSessionId: row?.durableSessionId }),
 		).toMatchObject({ success: true, data: { attached: true } });
-		expect(await stateFrom(next, sessionId)).toMatchObject({ success: true });
-	});
-
-	it("honors an explicit retain_on_disconnect: false from the delegated opener", async () => {
-		const delegated = await host.proven();
-		expect(await declare(delegated, FORWARDABLE)).toMatchObject({ success: true });
-		const { sessionId } = (await delegated.send({ type: "open_session", retain_on_disconnect: false }))
-			.data as Opened;
-		await host.drop(delegated);
-		expect(await stateFrom(await host.proven(), sessionId)).toMatchObject({
-			success: false,
-			error: "unknown_session",
+		expect(await next.send({ type: "get_state", sessionId })).toMatchObject({
+			success: true,
+			data: { sessionId: row?.durableSessionId },
 		});
 	});
 
-	it("leaves a local connection's lifetime rule as it was: closed with it unless it asked to be retained", async () => {
+	it("retains a delegated open whatever retain_on_disconnect it sends", async () => {
+		const asksFalse = await openedThenDropped(await delegatedPeer(), { retain_on_disconnect: false });
+		const asksTrue = await openedThenDropped(await delegatedPeer(), { retain_on_disconnect: true });
+		const listed = await rows();
+		for (const sessionId of [asksFalse, asksTrue])
+			expect(listed.find((row) => row.sessionId === sessionId)).toMatchObject({
+				attachments: 0,
+				retain_on_disconnect: true,
+			});
+	});
+
+	it("decides at line receipt: an open whose delegated connection ends before it is dispatched is retained", async () => {
+		const id = "x5808-ends-before-dispatch";
+		host.writer.registerConnection(
+			id,
+			{ writeRaw: () => {}, waitForBackpressure: async () => {} },
+			{ launchProof: "proven" },
+		);
+		const line = (record: WireRecord) =>
+			host.writer.withConnection(id, () => host.core.handle(JSON.stringify(record)));
+		await line({ type: "declare_delegation", principal: PRINCIPAL, granted: FORWARDABLE });
+		const before = new Set((await rows()).map((row) => row.sessionId));
+		// handle() reads the line synchronously up to its first await; the connection ends right behind that.
+		const opening = line({ type: "open_session" });
+		host.writer.unregisterConnection(id);
+		await opening;
+		await host.core.router.releaseConnection(id);
+		const opened = (await rows()).filter((row) => !before.has(row.sessionId));
+		expect(opened).toHaveLength(1);
+		expect(opened[0]).toMatchObject({ attachments: 0, retain_on_disconnect: true });
+	});
+
+	it("keeps a connection that never declared on today's rule: closed with it unless it asked to be retained", async () => {
 		const local = await host.proven();
-		const closes = ((await local.send({ type: "open_session" })).data as Opened).sessionId;
-		const retained = ((await local.send({ type: "open_session", retain_on_disconnect: true })).data as Opened)
-			.sessionId;
+		const sessionIdOf = async (record: WireRecord) =>
+			((await local.send({ type: "open_session", ...record })).data as Opened).sessionId;
+		const omitted = await sessionIdOf({});
+		const asksFalse = await sessionIdOf({ retain_on_disconnect: false });
+		const asksTrue = await sessionIdOf({ retain_on_disconnect: true });
 		await host.drop(local);
 		const next = await host.proven();
-		expect(await stateFrom(next, closes)).toMatchObject({ success: false, error: "unknown_session" });
-		expect(await stateFrom(next, retained)).toMatchObject({ success: true });
+		for (const sessionId of [omitted, asksFalse])
+			expect(await next.send({ type: "get_state", sessionId })).toMatchObject({
+				success: false,
+				error: "unknown_session",
+			});
+		expect(await next.send({ type: "get_state", sessionId: asksTrue })).toMatchObject({ success: true });
+	});
+
+	it("never turns retention on through attach_session on a delegated connection", async () => {
+		const owner = await host.proven();
+		const { sessionId } = (await owner.send({ type: "open_session" })).data as Opened;
+		const row = (await rows()).find((candidate) => candidate.sessionId === sessionId);
+		const viewer = await delegatedPeer(["observe", "thread"]);
+		expect(
+			await viewer.send({ type: "attach_session", sessionId, durableSessionId: row?.durableSessionId }),
+		).toMatchObject({ success: true });
+		expect((await rows()).find((candidate) => candidate.sessionId === sessionId)).toMatchObject({
+			attachments: 2,
+			retain_on_disconnect: false,
+		});
+		await host.drop(viewer);
+		expect((await rows()).find((candidate) => candidate.sessionId === sessionId)).toMatchObject({
+			attachments: 1,
+			retain_on_disconnect: false,
+		});
+		await host.drop(owner);
+		expect((await rows()).some((candidate) => candidate.sessionId === sessionId)).toBe(false);
 	});
 
 	it("still refuses an open the delegation did not grant", async () => {
-		const delegated = await host.proven();
-		expect(await declare(delegated, ["observe"])).toMatchObject({ success: true });
-		const before = ((await opener.send({ type: "list_sessions" })).data as { sessions: unknown[] }).sessions.length;
+		const delegated = await delegatedPeer(["observe"]);
+		const before = (await rows()).length;
 		expect(await delegated.send({ type: "open_session" })).toMatchObject({
 			success: false,
 			errorCode: "delegation_not_granted",
 		});
-		expect(((await opener.send({ type: "list_sessions" })).data as { sessions: unknown[] }).sessions).toHaveLength(
-			before,
-		);
+		expect(await rows()).toHaveLength(before);
 	});
 });

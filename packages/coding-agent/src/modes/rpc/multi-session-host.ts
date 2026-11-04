@@ -236,8 +236,9 @@ export function createHostCore(
 			return;
 		}
 		// A delegated connection ends with the viewer it forwards for, while the forwarder keeps serving what it opened to
-		// the next one: its end detaches such a session, as for a machine-owned host (senpi#5808).
-		const retainByDefault = machineOwned || writer.delegations.isDelegated(connection);
+		// the next one: every open on it is retained, whatever it asks, so its end detaches and never closes (senpi#5808).
+		// Read at line receipt, so a connection that ends before the open is dispatched still counts as delegated.
+		const delegated = writer.delegations.isDelegated(connection);
 		if (writer.handleMcpForm(parsed)) return;
 		if (await gate.intercept(parsed, (answer) => writer.enqueueControl(answer))) return;
 		const shapeError = rpcCommandShapeError(parsed);
@@ -247,7 +248,10 @@ export function createHostCore(
 		}
 		const command = parsed as RpcCommand;
 		const response = await gate.dispatch(
-			retainByDefault && command.type === "open_session" && command.retain_on_disconnect === undefined
+			command.type === "open_session" &&
+				(delegated
+					? command.retain_on_disconnect !== true
+					: machineOwned && command.retain_on_disconnect === undefined)
 				? { ...command, retain_on_disconnect: true }
 				: command,
 		);
