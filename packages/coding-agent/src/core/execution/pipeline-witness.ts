@@ -1,14 +1,21 @@
 import { randomUUID } from "node:crypto";
 import type { Agent, ExecutionScope } from "@earendil-works/pi-agent-core";
 import type { SessionManager } from "../session-manager.ts";
-import { createPreparedToolHost, requestedExecutionPipeline } from "./pipeline-prepared.ts";
+import { type ExecutionPipelineConfig, resolveExecutionPipeline } from "./pipeline-config.ts";
+import { createPreparedToolHost } from "./pipeline-prepared.ts";
 
 /**
- * Bind the execution scope. With `SENPI_EXECUTION_PIPELINE=prepared` the batch runs through the prepared pipeline (S18b);
- * any other value keeps the loop's own scheduler. Receipts are written only through an explicitly configured
- * `Agent.onExecutionPipeline` sink: this binding installs no default writer, so a session's entries stay unchanged.
+ * Bind the execution scope and the session's pipeline: prepared by default (S21a), the loop's own scheduler for `legacy`.
+ * The default keeps a ToolHost the session was built with; naming `prepared` refuses to replace it. Receipts are written
+ * only through an explicitly configured `Agent.onExecutionPipeline` sink: this binding installs no default writer, so a
+ * session's entries stay unchanged.
  */
-export function bindPipelineWitness(agent: Agent, manager: SessionManager, root: () => string): void {
+export function bindPipelineWitness(
+	agent: Agent,
+	manager: SessionManager,
+	root: () => string,
+	config: ExecutionPipelineConfig = resolveExecutionPipeline(),
+): void {
 	let owner: string | undefined;
 	let scope: ExecutionScope | undefined;
 	agent.getExecutionScope = () => {
@@ -19,8 +26,8 @@ export function bindPipelineWitness(agent: Agent, manager: SessionManager, root:
 		}
 		return scope;
 	};
-	if (requestedExecutionPipeline() !== "prepared") return;
-	if (agent.toolHost !== undefined)
+	if (config.pipeline !== "prepared") return;
+	if (agent.toolHost === undefined) agent.toolHost = createPreparedToolHost(agent);
+	else if (config.named)
 		throw new Error("SENPI_EXECUTION_PIPELINE=prepared cannot replace the ToolHost this session was built with");
-	agent.toolHost = createPreparedToolHost(agent);
 }
