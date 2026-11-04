@@ -2,6 +2,9 @@ import type { DurableStore, StoreValue, StoreWrite } from "../../durable/store.t
 import { createAdmissionLine } from "../../durable/store-admission.ts";
 import { type BatchCoordinator, createBatchCoordinator } from "../coordinator.ts";
 import { createNestedAdmission, type NestedAdmissionControl } from "../nested.ts";
+import { createScopeLifecycle, type ScopeLifecycle } from "../scope-lifecycle.ts";
+import { createWakeInbox, type WakeInbox } from "../wake-inbox.ts";
+import { createWakeOutbox, type WakeOutbox } from "../wake-outbox.ts";
 import type { BatchConsent, BatchExecutor, BatchPlan, CallOutcome } from "../coordinator-types.ts";
 import type { BatchCaseAdapters, PausePoint } from "./batch-executor.ts";
 
@@ -23,7 +26,7 @@ const isObject = (value: StoreValue | undefined): value is { readonly [key: stri
 
 function labelOf(writes: readonly StoreWrite[]): string | undefined {
 	for (const write of writes) {
-		if (write.op !== "append" || (write.kind !== "execution.batch" && write.kind !== "execution.nested")) continue;
+		if (write.op !== "append" || !write.kind.startsWith("execution.")) continue;
 		const data = write.data;
 		if (!isObject(data)) return undefined;
 		return typeof data.executionId === "string" ? `${String(data.step)}:${data.executionId}` : String(data.step);
@@ -166,6 +169,8 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 	};
 	for (const id of ["e1", "e2"]) await start(id, await claimed());
 	const brainMedium = await claimed();
+	const wakeMedia = new Map<string, string>();
+	let scopeMedium: string | undefined;
 	const brainWrites: string[] = [];
 	const writeWaiters = new Map<string, PromiseWithResolvers<readonly string[]>>();
 	const onDurable = (label: string): void => {
@@ -215,6 +220,49 @@ export async function batchHarness(adapters: BatchCaseAdapters) {
 				clock: () => clock,
 			});
 		},
+		/** A hand's durable wake outbox on its own medium (one per hand), optionally dying around one of its writes. */
+		wakeOutbox: async (hand: string, dieAt?: BrainKill): Promise<WakeOutbox> => {
+			let medium = wakeMedia.get(hand);
+			if (medium === undefined) {
+				medium = await claimed();
+				wakeMedia.set(hand, medium);
+			}
+			return createWakeOutbox({
+				hand,
+				store: brainStore(await adapters.store.open(medium), () => {}, dieAt),
+				epoch: 1,
+				admission: createAdmissionLine(),
+				clock: () => clock,
+			});
+		},
+		/** The endpoint's scope lifecycle on its own medium, optionally dying around one of its writes. */
+		scopes: async (idleTtlMs: number, dieAt?: BrainKill): Promise<ScopeLifecycle> => {
+			if (scopeMedium === undefined) scopeMedium = await claimed();
+			return createScopeLifecycle({
+				store: brainStore(await adapters.store.open(scopeMedium), () => {}, dieAt),
+				epoch: 1,
+				admission: createAdmissionLine(),
+				clock: () => clock,
+				idleTtlMs,
+			});
+		},
+		/** The `wake_expired` records a hand's outbox logged, in log order. */
+		wakeLog: async (hand: string): Promise<readonly StoreValue[]> => {
+			const medium = wakeMedia.get(hand);
+			if (medium === undefined) return [];
+			const store = await adapters.store.open(medium);
+			return (await store.scanRecords({ kind: "execution.wake-expired" })).map((record) => record.data);
+		},
+		/** The brain's wake inbox over its medium; `owner` binds each scope to its authenticated hand. */
+		wakeInbox: async (owner: (scope: string) => string | undefined, dieAt?: BrainKill): Promise<WakeInbox> =>
+			createWakeInbox({
+				issuer: "brain",
+				store: brainStore(await adapters.store.open(brainMedium), onDurable, dieAt),
+				epoch: 1,
+				admission: createAdmissionLine(),
+				clock: () => clock,
+				owner,
+			}),
 		/** Moves every executor's clock: a lease that ends before the new time is expired on the next ledger event. */
 		advance: (ms: number): void => {
 			clock += ms;
