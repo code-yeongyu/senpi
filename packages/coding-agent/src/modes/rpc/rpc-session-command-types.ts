@@ -32,7 +32,7 @@ export type RpcSessionCommand =
 			clientMessageId?: string;
 			clientTurnId?: string;
 			/**
-			 * With `streamingBehavior: "steer"`: the turn the caller means to steer, as `get_state.currentTurnId` reports it. A steer
+			 * With `streamingBehavior` set: the turn the caller means to reach, as `get_state.currentTurnId` reports it. An input
 			 * that names a turn which is not running is refused `turn_conflict` (senpi#5776).
 			 */
 			expectedTurnId?: string;
@@ -71,6 +71,8 @@ export type RpcSessionCommand =
 			enqueueOrder?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
+			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
+			expectedTurnId?: string;
 	  } & ClientMessageIdentity)
 	| ({
 			id?: string;
@@ -80,6 +82,8 @@ export type RpcSessionCommand =
 			enqueueOrder?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
+			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
+			expectedTurnId?: string;
 	  } & ClientMessageIdentity)
 	/**
 	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is

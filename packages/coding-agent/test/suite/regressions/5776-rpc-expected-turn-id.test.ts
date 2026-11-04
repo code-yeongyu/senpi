@@ -246,9 +246,9 @@ describe("RPC steer that names its turn", () => {
 	it.each([
 		{ name: "a non-string id", command: steer(3), error: /expectedTurnId must be a non-empty string/ },
 		{
-			name: "an id on a follow-up",
-			command: { type: "prompt", message: "Later", streamingBehavior: "followUp", expectedTurnId: "1" },
-			error: /expectedTurnId applies only to streamingBehavior "steer"/,
+			name: "an id on a prompt with no streamingBehavior",
+			command: { type: "prompt", message: "Later", expectedTurnId: "1" },
+			error: /expectedTurnId on a prompt needs streamingBehavior/,
 		},
 	])("refuses $name at the boundary", async ({ command, error }) => {
 		const { rpc } = await setup();

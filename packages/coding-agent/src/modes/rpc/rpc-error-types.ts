@@ -111,7 +111,7 @@ export const RPC_ERROR_PROVIDER_UNAVAILABLE = "provider_unavailable";
 export const RPC_ERROR_PROVIDER_CREDENTIALS_MISSING = "provider_credentials_missing";
 export const RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED = "provider_credentials_expired";
 export const RPC_ERROR_NO_MODEL_SELECTED = "no_model_selected";
-/** `prompt { streamingBehavior: "steer", expectedTurnId }` named a turn that is not running (`errorData { currentTurnId? }`). */
+/** A `prompt` steer/follow-up, `steer` or `follow_up` named an `expectedTurnId` that is not running (`errorData { currentTurnId? }`). */
 export const RPC_ERROR_TURN_CONFLICT = "turn_conflict";
 
 /** `set_model { effectId }` was refused because the target cannot hold the session context. */

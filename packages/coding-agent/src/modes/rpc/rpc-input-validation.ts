@@ -96,7 +96,10 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
 	}
-	if (value.type === "prompt" && value.expectedTurnId !== undefined) {
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		value.expectedTurnId !== undefined
+	) {
 		if (
 			!(
 				typeof value.expectedTurnId === "string" &&
@@ -105,7 +108,8 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 			)
 		)
 			return "expectedTurnId must be a non-empty string of at most 256 characters; read it from get_state.currentTurnId.";
-		if (value.streamingBehavior !== "steer") return 'expectedTurnId applies only to streamingBehavior "steer".';
+		if (value.type === "prompt" && value.streamingBehavior === undefined)
+			return 'expectedTurnId on a prompt needs streamingBehavior "steer" or "followUp".';
 	}
 	if (value.type === "prompt" && value.toolBarrier !== undefined) {
 		const barrierError = toolBarrierSpecError(value.toolBarrier);

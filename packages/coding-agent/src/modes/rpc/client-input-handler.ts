@@ -138,10 +138,13 @@ export async function handleClientInput(
 							return promptPath({
 								streamingBehavior: command.type === "steer" ? "steer" : "followUp",
 								enqueueOrder: command.enqueueOrder,
+								expectedTurnId: command.expectedTurnId,
 							});
 						const options = {
 							...clientMessageIdentity(hooks.identity),
 							enqueueOrder: command.enqueueOrder,
+							// Checked where the input enters the queue, in the same step (senpi#5776).
+							expectedTurnId: command.expectedTurnId,
 							source: "rpc" as const,
 							interactiveUser: client.interactiveUser,
 							onQueuedInput: hooks.queued,

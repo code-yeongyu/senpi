@@ -32,6 +32,7 @@ const steerOrFollowUp = <const T extends "steer" | "follow_up">(type: T) =>
 		whenIdle: Opt(literals("queue", "start")),
 		clientMessageId: OptId,
 		clientTurnId: OptId,
+		expectedTurnId: OptId,
 	});
 
 const editMessage = <const T extends "edit_assistant_message" | "edit_user_message">(type: T) =>

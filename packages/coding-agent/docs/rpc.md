@@ -4005,7 +4005,7 @@ With images:
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
 Queued prompts cannot include `thinkingLevel`; wait for the current turn to complete before changing it.
 
-**Steering a specific turn**: a steer may name the turn it is meant for with `expectedTurnId`, the id `get_state` reports as `currentTurnId`. The name is checked when the steer enters the turn's queue, in the same step, after any `input` extension handlers and pending-input bookkeeping, so the steer is queued only if that turn is still running at that moment. If no turn is running, or a different one is, it is refused with `errorCode: "turn_conflict"`, and `errorData.currentTurnId` names the running turn when there is one, so a steer meant for one turn never lands in the next. A refused steer is never queued and never held for a later turn, also while a Stop or a parent's run keeps the session paused, and a command-text steer is refused before the command runs. A refused steer's `clientMessageId` stays free: send it again under the same id, naming the turn that runs now or as a plain prompt. `expectedTurnId` must be a non-empty string of at most 256 characters and is accepted only with `streamingBehavior: "steer"`; anything else is refused before the session sees it. A steer that names a turn is always delivered as its own text: the bare `.` continue shortcut does not apply to it.
+**Steering a specific turn**: a steer or follow-up (`prompt` with `streamingBehavior`, or the `steer` and `follow_up` commands) may name the turn it is meant for with `expectedTurnId`, the id `get_state` reports as `currentTurnId`. The name is checked when the steer enters the turn's queue, in the same step, after any `input` extension handlers and pending-input bookkeeping, so the steer is queued only if that turn is still running at that moment. If no turn is running, or a different one is, it is refused with `errorCode: "turn_conflict"`, and `errorData.currentTurnId` names the running turn when there is one, so a steer meant for one turn is never queued into the next. The check holds at the moment of enqueue: an accepted steer whose turn then fails or is aborted stays queued for the next prompt, as any queued steer does. A refused steer is never queued and never held for a later turn, also while a Stop or a parent's run keeps the session paused, and a command-text steer is refused before the command runs. A refused steer's `clientMessageId` stays free: send it again under the same id, naming the turn that runs now or as a plain prompt. `expectedTurnId` must be a non-empty string of at most 256 characters, and on `prompt` it needs `streamingBehavior` (`"steer"` or `"followUp"`); anything else is refused before the session sees it. A steer that names a turn is always delivered as its own text: the bare `.` continue shortcut does not apply to it.
 
 ```json
 {"type": "prompt", "message": "Use the other file", "streamingBehavior": "steer", "expectedTurnId": "3"}
@@ -4106,6 +4106,12 @@ On an idle session a plain `steer` only queues; it waits for the next turn. Pass
 ```json
 {"type": "steer", "message": "Look at the failing test", "clientMessageId": "m-7", "whenIdle": "start"}
 {"type": "response", "command": "steer", "success": true, "data": {"disposition": "started", "clientMessageId": "m-7"}}
+```
+
+`steer` and `follow_up` accept `expectedTurnId` with the same check as a `prompt` steer (see [Steering a specific turn](#prompt)): an input that names a turn which is not running when it enters the queue is refused `turn_conflict` and queued nowhere.
+
+```json
+{"type": "steer", "message": "Use the other file", "expectedTurnId": "3"}
 ```
 
 See [set_steering_mode](#set_steering_mode) for controlling how steering messages are processed.
@@ -4412,7 +4418,7 @@ Response:
 }
 ```
 
-`currentTurnId` is the id of the running turn, present only while one runs; a steer names it as `prompt.expectedTurnId`.
+`currentTurnId` is the id of the running turn, present only while one runs; a steer or follow-up names it as `expectedTurnId` (on `prompt`, `steer` or `follow_up`).
 
 The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
