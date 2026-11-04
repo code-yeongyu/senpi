@@ -141,7 +141,12 @@ export function buildBaseOptions(
 	return {
 		temperature: options?.temperature,
 		samplingParams,
-		maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens),
+		maxTokens: clampMaxTokensToContext(
+			model,
+			context,
+			options?.maxTokens ?? model.maxTokens,
+			options?.contextUsageNotBefore,
+		),
 		signal: options?.signal,
 		abortServerSideFallback: options?.abortServerSideFallback,
 		telemetryContext: options?.telemetryContext,

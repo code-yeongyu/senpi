@@ -160,7 +160,7 @@ export class FooterComponent implements Component {
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 		const contextTokens =
 			typeof contextUsage?.tokens === "number"
-				? formatTokens(contextUsage.tokens)
+				? `${contextUsage.estimated ? "~" : ""}${formatTokens(contextUsage.tokens)}`
 				: typeof contextUsage?.percent === "number"
 					? formatTokens(Math.round((contextWindow * contextUsage.percent) / 100))
 					: "?";
