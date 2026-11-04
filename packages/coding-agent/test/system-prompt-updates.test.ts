@@ -139,8 +139,8 @@ describe("system prompt updates", () => {
 			const systemMessages = requests.map((request) =>
 				request.messages.filter((message) => message.role === "system"),
 			);
-			// C-AG-4 / C-EX-9: every request carries one leading system message built from agent state, and the
-			// fork before_agent_start does not re-render systemPromptOptions.sections, so no plan_mode patch exists.
+			// C-AG-4 / C-EX-9: every request carries one leading system message built from agent state; a section a
+			// handler adds is appended to that turn's prompt only, as a tagged block, never as a separate patch.
 			expect(systemMessages.map((messages) => messages.length)).toEqual([1, 1, 1, 1]);
 
 			const forced = systemMessages[1]?.at(-1);
@@ -150,8 +150,9 @@ describe("system prompt updates", () => {
 				toolsAdded: systemMessages[0]?.[0]?.toolsAdded,
 				timestamp: systemMessages[0]?.[0]?.timestamp,
 			});
-			expect(systemMessages[2]?.at(-1)).toEqual(forced);
-			expect(getCurrentSystemPrompt(requests[2]!.messages)).toBe("Exact prompt.");
+			const forcedWithSection = "Exact prompt.\n\n<plan_mode>\nPlan only.\n</plan_mode>";
+			expect(systemMessages[2]?.at(-1)).toEqual({ ...forced, content: forcedWithSection });
+			expect(getCurrentSystemPrompt(requests[2]!.messages)).toBe(forcedWithSection);
 			expect(requests[2]!.messages.map((message) => message.role)).toEqual([
 				"system",
 				"user",

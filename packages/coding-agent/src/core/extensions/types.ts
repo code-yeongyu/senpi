@@ -1714,10 +1714,16 @@ export interface BeforeAgentStartEvent {
 	trigger: "prompt" | "delivery" | "extension";
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
-	/** The fully assembled system prompt string. */
+	/** The fully assembled system prompt string, without sections added to `systemPromptOptions.sections` this turn. */
 	systemPrompt: string;
-	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
-	systemPromptOptions: BuildSystemPromptOptions;
+	/**
+	 * Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded
+	 * without re-discovering resources. Every handler of one turn shares this object, and `sections` starts empty each
+	 * turn. Each valid entry present when a handler returns is appended to this turn's prompt as
+	 * `<name>\ncontent\n</name>`, before builtin `runLast` handlers run so MCP instructions stay last. Valid entries a
+	 * handler added before throwing are kept; invalid ones are dropped and reported.
+	 */
+	systemPromptOptions: BuildSystemPromptOptions & { sections: Record<string, string> };
 	/**
 	 * `true` when the host composes the next turn's system prompt ahead of any user prompt
 	 * (the session-start prompt-cache prewarm). `prompt` is empty and no turn follows, so a

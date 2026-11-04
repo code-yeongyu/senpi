@@ -798,6 +798,10 @@ pi.on("before_agent_start", async (event, ctx) => {
   //   .cwd - working directory
   //   .contextFiles - AGENTS.md files and other loaded context files
   //   .skills - loaded skills
+  //   .sections - per-turn custom sections, empty at the start of every turn (see below)
+
+  // Add a tagged block to this turn's prompt without returning systemPrompt
+  event.systemPromptOptions.sections.my_rules = "Always cite file paths.";
 
   return {
     // Inject a persistent message (stored in session, sent to LLM)
@@ -817,6 +821,14 @@ Messages append after the triggering prompt by default. Set `message.placement` 
 The `systemPromptOptions` field gives extensions access to the same structured data senpi uses to build the system prompt. This lets you inspect what senpi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
+
+Every handler of one turn shares the same `event.systemPromptOptions` object, and its `sections` record starts empty on each turn. Each entry a handler adds is appended to that turn's prompt as `<name>\ncontent\n</name>`:
+
+- Names must match `/^[a-z][a-z0-9_-]*$/` and must not be `preamble`; content must be a string. Other entries are removed after the handler returns and reported as extension errors.
+- Sections are inserted after the chain of handlers without `runLast` and third-party `runLast` handlers, and before builtin `runLast` handlers, so MCP server instructions still close the prompt. Until then `event.systemPrompt` does not contain them, so returning `event.systemPrompt + ...` never duplicates a section.
+- A handler that throws keeps the valid sections it added before throwing; only its returned value is lost.
+- Only the entries present when a handler returns count. Changing `sections` later, after the handler's promise settles, has no effect.
+- Sections never carry into the next turn or into the session's base prompt options.
 
 `event.preview` is `true` when senpi composes the next turn's system prompt before any user prompt exists. Prompt-cache prewarm sends that prefix only after the first real composer activity and only when `promptCache.keepAlive.enabled` is `true` (default `false`, so prewarm is off by default). Session start, resume, fork, reload, and extension-injected text never trigger prewarm. `ctx.getPromptCachePrefixRequest()` also returns this prefix to extensions. In a preview `event.prompt` is empty and no turn follows.
 
@@ -1548,7 +1560,7 @@ const options = ctx.getSystemPromptOptions();
 const contextPaths = options.contextFiles?.map((file) => file.path) ?? [];
 ```
 
-This has the same shape and mutability as `before_agent_start` `event.systemPromptOptions`: custom prompt, active tools, tool snippets, prompt guidelines, appended system prompt text, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
+This has the same shape as `before_agent_start` `event.systemPromptOptions`, except that the per-turn `sections` record exists only on the event: custom prompt, active tools, tool snippets, prompt guidelines, appended system prompt text, cwd, loaded context files, and loaded skills. It may include full context file contents, so treat it as sensitive extension-local data and avoid exposing it through command lists, logs, or autocomplete metadata.
 
 This reports the current base prompt inputs. It does not include per-turn `before_agent_start` chained system-prompt changes, later `context` event message mutations, or `before_provider_request` payload rewrites.
 

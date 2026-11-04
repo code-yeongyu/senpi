@@ -194,7 +194,7 @@ function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 		trigger: "prompt",
 		prompt: "next prompt",
 		systemPrompt: "TEST AGENT SYSTEM PROMPT",
-		systemPromptOptions: { cwd: process.cwd() },
+		systemPromptOptions: { cwd: process.cwd(), sections: {} },
 	};
 }
 
