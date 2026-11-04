@@ -50,7 +50,8 @@ async function openQaExecutor(options: PrepFixtureOptions = {}): Promise<PrepFix
 		handlerSteps: ["hook1", "pre", "hook2"],
 		prepare: async (id, args) => {
 			const reply = await executor.prepare(id, "qa", args);
-			if (reply.kind === "prepared") return { kind: "prepared", call: reply.call };
+			if (reply.kind === "prepared" || reply.kind === "prepared_awaiting_consent")
+				return { kind: "prepared", call: reply.call };
 			if (reply.kind === "refused") return reply;
 			return { kind: "blocked", reason: resultText(reply.result) };
 		},

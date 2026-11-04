@@ -103,7 +103,7 @@ import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog
 import { RuntimeCredentials } from "./runtime-credentials.ts";
 import { ServedCredentials } from "./served-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
-import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
+import { limitAccountOf, subscriptionLimits, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
 	createVirtualModel,
 	findLatestResponse,
@@ -866,21 +866,34 @@ export class ModelRuntime implements Models {
 		const sources = await this.credentialRotationSources(model, undefined);
 		if (!sources) return undefined;
 		const { rotation } = await this.loadCredentialPool();
-		const { selectSessionSlot } = await import("./credential-pool/session-slot.ts");
+		const { rememberedHeadroomAccount, selectSessionSlot } = await import("./credential-pool/session-slot.ts");
 		const slots = await rotation.listRotationSlots(sources, {
 			acquireLeases: false,
 			modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 		});
 		const pooled: PooledCredential | undefined = sources.credential;
+		const useAffinity = sources.policy?.affinity !== false;
+		const now = Date.now();
+		// The stream prefers an account with headroom and remembers that move per session (omo#9234);
+		// reading the same limits and memory keeps this the stream's own first pick.
+		const remembered = useAffinity
+			? rememberedHeadroomAccount(sources.repository, sources.providerId, sessionId)
+			: undefined;
 		const slot = selectSessionSlot(
 			slots,
 			{
 				affinityKey: sessionId,
-				useAffinity: sources.policy?.affinity !== false,
+				useAffinity,
 				hasher: rotation.sha256SlotHasher,
 				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+				headroom: {
+					providerId: sources.providerId,
+					limits: subscriptionLimits.snapshot(),
+					now,
+					...(remembered === undefined ? {} : { remembered }),
+				},
 			},
-			Date.now(),
+			now,
 		);
 		if (!slot) return undefined;
 		return slot.lane === "env" ? { apiKey: slot.envKey } : { slotName: slot.name };
