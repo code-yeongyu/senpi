@@ -100,10 +100,7 @@ async function runCase(testCase, { pipeline, surface }) {
 }
 
 async function runCaseWithWitness(testCase, { pipeline, surface }, witnessFile) {
-	const env = {
-		SENPI_EXECUTION_PIPELINE_WITNESS: witnessFile,
-		...(pipeline === "default" ? {} : { SENPI_EXECUTION_PIPELINE: pipeline }),
-	};
+	const env = { SENPI_EXECUTION_PIPELINE_WITNESS: witnessFile, SENPI_EXECUTION_PIPELINE: pipeline };
 	if (surface === "tui") {
 		const { observations, sessionFile } = await runTuiCase(testCase, env);
 		return { observations, witness: { ...readWitness(witnessFile), toolCalls: toolCallCount(sessionFile) } };

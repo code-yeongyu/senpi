@@ -4,7 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { collectors } from "../../scenarios/fused-equivalence/cases/support/collectors.mjs";
-import { readWitness, toolCallCount, witnessMatches } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+import {
+	expectedWitness,
+	readWitness,
+	toolCallCount,
+	witnessMatches,
+} from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+
+test("--pipeline default is witnessed as prepared (S21a); legacy stays requestable until S36", () => {
+	assert.equal(expectedWitness("default"), "prepared");
+	assert.equal(expectedWitness("prepared"), "prepared");
+	assert.equal(expectedWitness("legacy"), "legacy");
+});
 
 test("older execution-pipeline entries never change O7 or its parent chain", () => {
 	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
@@ -59,6 +70,7 @@ test("a run with tool calls must have its witness from the sink, whatever the pi
 	// A run with no tool calls and no receipts ran no pipeline, so it matches whichever one was requested.
 	assert.equal(witnessMatches({ ...noSeam, toolCalls: 0 }, "prepared"), true);
 	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 0 }, "prepared"), false);
+	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "default"), false);
 	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "legacy"), true);
 	assert.equal(witnessMatches({ pipeline: "legacy", source: "sink", calls: [{}], toolCalls: 1 }, "prepared"), false);
 	const dir = mkdtempSync(join(tmpdir(), "execution-witness-"));
