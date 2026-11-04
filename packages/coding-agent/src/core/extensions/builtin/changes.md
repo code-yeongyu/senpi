@@ -1,3 +1,41 @@
+## 2026-11-03 - Dangling ask-user questions restore on startup opens (senpi#5700, fixes #4764)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: `resumeDanglingQuestion` now also runs when the `session_start` reason is `startup`. A restarted CLI opening an existing session file arrives with that reason (the initial runtime passes no explicit event), so the dangling question is restored exactly like on the `switch_session` resume path. Diagnostic sizes-only startup still restores nothing.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a `startup` restore runs only when `ctx.hasUI` is true. A headless startup (print mode, `-p` / `--mode json`) has no question UI, so restoring there would settle the question as `orphaned-after-restart`, start an unasked model turn, and write the `ask-user:resumed` marker so a later interactive open could never re-ask it; headless startup now restores nothing and writes no marker. The sizes-only early return also holds on `resume`. CLI `--fork <file>` also arrives as `startup` with copied branch entries, so a fork re-presents the source's dangling question, unlike runtime `/fork` (reason `fork`, excluded); the event carries no signal telling a forked startup from a plain restart, so this divergence is documented, not filtered.
+- `packages/coding-agent/test/suite/ask-user-resume.test.ts` (new cases): a dangling question is re-presented once on `startup` (and not twice on a second start); sizes-only startup and sizes-only resume restore nothing; headless (no-UI) startup restores nothing and writes no marker.
+
+### Why
+
+- After a crash, the path a user most often takes is a restarted CLI with `--session <file>`, but only the running-client `switch_session` path restored the dangling question; the restarted CLI left the call unanswered until the next request gave it the interrupted-call placeholder. A fresh session has no branch entries, so including `startup` restores nothing there.
+
+### Why an extension could not handle it
+
+- The reason filter lives in the builtin ask-user extension itself; an external extension cannot change which `session_start` reasons the builtin restores on.
+
+### Expected merge conflict zones
+
+- LOW: the reason and `hasUI` guards in `resumeDanglingQuestion` and the ask-user resume test cases.
+
+## 2026-10-30 - Keep SIWC ID-token hints out of account notices (senpi#5046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` removes ID-token hints from printable authorization URLs while sending the original hinted URL to the TUI browser launcher.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` sends notices to terminal and RPC consumers that may retain their text.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` is the shared account-login relay used by those extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`: auth_url relay.
+
 ## 2026-11-02 - Shell tool hooks refuse calls on a runtime without a session (senpi#5483)
 
 ### What changed

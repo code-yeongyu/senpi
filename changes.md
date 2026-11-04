@@ -1,5 +1,24 @@
 # changes — senpi-monorepo root
 
+## 2026-11-03 - Type checking and vitest resolve the machine-ops workspace from source (senpi#5592)
+
+### What changed
+
+- `tsconfig.json`: paths for `@code-yeongyu/senpi-machine-ops`, `/in-process-holder` and `/conformance` to the package sources.
+- `vitest.base.ts`: the same three aliases, so every package's tests load the sources.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- Root type-check and test resolution are repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the `paths` block in `tsconfig.json`; `workspaceSourcePaths` and the alias list in `vitest.base.ts`.
+
 ## 2026-11-01 - Fixed node-forge and undici in the sandbox and gondolin example extensions (part of senpi#4820)
 
 ### What changed
