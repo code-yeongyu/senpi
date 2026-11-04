@@ -85,6 +85,7 @@ import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import {
+	ACCOUNT_RESET_CAPABILITY,
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
@@ -1288,6 +1289,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								PROVIDER_ACCOUNT_TEST_CAPABILITY,
+								ACCOUNT_RESET_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
