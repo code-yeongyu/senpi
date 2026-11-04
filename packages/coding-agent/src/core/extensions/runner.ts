@@ -45,6 +45,7 @@ import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { disableServerSearch } from "./builtin/server-search-fallback.ts";
 import { dispatchContextMessages } from "./context-dispatch.ts";
+import { EXTENSION_EVENT_PLACEMENT } from "./event-placement.ts";
 import { reclaimRunnerHandles, registerRunnerExtensions } from "./extension-handle-ledger.ts";
 import {
 	type BudgetedSequence,
@@ -138,6 +139,12 @@ import type {
 	UserBashEventResult,
 } from "./types.ts";
 import { type ExtensionRuntimeContext, RUNTIME_EXTENSION_PATH } from "./types.ts";
+import {
+	servesForwardedHandler,
+	toolEventHandlers,
+	type ToolEventDispatchOptions,
+	twoSidedExtensions,
+} from "./two-sided-forwarding.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -301,70 +308,7 @@ type RunnerEmitEvent = Exclude<
 	| AgentBeforeSettleEvent
 >;
 
-export type ExtensionEventPlacement = "runtime" | "loop" | "split";
-
-/**
- * Where each extension event belongs once the agent loop and the tool host run apart (senpi#5231): `runtime` events
- * describe the tool host's own work, `loop` events describe turns, the transcript, provider requests and model
- * selection, and `split` events have a side in each. A runner without a session manager does not dispatch `loop`
- * events through `emit`. Adding an event to `ExtensionEvent` fails to compile until it is placed here.
- */
-export const EXTENSION_EVENT_PLACEMENT = {
-	project_trust: "runtime",
-	resources_discover: "runtime",
-	mcp_servers_change: "runtime",
-	session_start: "split",
-	held_wakes_released: "loop",
-	session_hold_changed: "loop",
-	session_info_changed: "loop",
-	session_parked: "split",
-	session_resumed: "split",
-	session_before_switch: "loop",
-	session_before_fork: "loop",
-	session_before_reload: "runtime",
-	session_before_compact: "loop",
-	session_compact: "loop",
-	session_compact_failed: "loop",
-	session_shutdown: "split",
-	session_abort: "split",
-	session_extensions_removed: "runtime",
-	session_move_export: "loop",
-	session_move_import: "loop",
-	session_before_tree: "loop",
-	session_tree: "loop",
-	context: "loop",
-	context_with_system: "loop",
-	before_provider_request: "loop",
-	before_provider_headers: "loop",
-	after_provider_response: "loop",
-	provider_stream_event: "loop",
-	before_agent_start: "split",
-	agent_start: "loop",
-	agent_end: "split",
-	agent_before_settle: "loop",
-	agent_settled: "split",
-	session_control_wake: "loop",
-	ui_prompt_start: "runtime",
-	ui_prompt_end: "runtime",
-	turn_start: "split",
-	turn_end: "loop",
-	message_start: "loop",
-	message_update: "loop",
-	message_end: "split",
-	tool_execution_start: "runtime",
-	tool_execution_update: "runtime",
-	tool_execution_end: "runtime",
-	model_select: "loop",
-	provider_login_start: "split",
-	system_prompt_change: "loop",
-	thinking_level_select: "loop",
-	tool_activated: "runtime",
-	user_bash: "runtime",
-	input: "split",
-	input_disposition: "loop",
-	tool_call: "runtime",
-	tool_result: "runtime",
-} as const satisfies Record<ExtensionEvent["type"], ExtensionEventPlacement>;
+export { EXTENSION_EVENT_PLACEMENT, type ExtensionEventPlacement } from "./event-placement.ts";
 
 type SessionBeforeEvent = Extract<
 	RunnerEmitEvent,
@@ -1164,6 +1108,16 @@ export class ExtensionRunner {
 
 	hasUI(): boolean {
 		return this.currentUIContext() !== noOpUIContext;
+	}
+
+	/** Whether the extension loaded at `path` has that undeclared handler for `event` (a forwarded event's target, S29). */
+	servesForwardedHandler(path: string, event: "tool_call" | "tool_result", handler: number): boolean {
+		return servesForwardedHandler(this.extensions, path, event, handler);
+	}
+
+	/** The extensions whose undeclared registrations span loop events and tool events (S29). */
+	twoSidedExtensionPaths(): Set<string> {
+		return twoSidedExtensions(this.extensions);
 	}
 
 	getExtensionPaths(): string[] {
@@ -2421,11 +2375,21 @@ export class ExtensionRunner {
 		});
 	}
 
-	async emitToolResult(event: ToolResultEvent): Promise<ToolResultEventResult | undefined> {
+	async emitToolResult(
+		event: ToolResultEvent,
+		options: ToolEventDispatchOptions = {},
+	): Promise<ToolResultEventResult | undefined> {
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_result")) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_result")) {
+			const handlers = toolEventHandlers(
+				ext,
+				own,
+				"tool_result",
+				options,
+				(index) => async () => options.forward?.toolResult(ext.path, index, currentEvent),
+			);
 			for (const handler of handlers) {
 				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PostToolUse",
@@ -2493,10 +2457,20 @@ export class ExtensionRunner {
 		};
 	}
 
-	async emitToolCall(event: ToolCallEvent): Promise<ToolCallEventResult | undefined> {
+	async emitToolCall(
+		event: ToolCallEvent,
+		options: ToolEventDispatchOptions = {},
+	): Promise<ToolCallEventResult | undefined> {
 		let result: ToolCallEventResult | undefined;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_call")) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_call")) {
+			const handlers = toolEventHandlers(
+				ext,
+				own,
+				"tool_call",
+				options,
+				(index) => async () => options.forward?.toolCall(ext.path, index, event),
+			);
 			for (const handler of handlers) {
 				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PreToolUse",
