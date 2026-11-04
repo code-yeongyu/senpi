@@ -1,8 +1,10 @@
-import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
+import { type AgentEvent, type AgentTool, openMemoryBatchStore } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import { createCursorExecBridge } from "../src/core/cursor-exec-bridge.ts";
+
+const PREPARED = { openBatchStore: openMemoryBatchStore, getExecutionScope: () => ({ id: "test-scope", root: "" }) };
 
 function stubTool(
 	name: string,
@@ -25,6 +27,7 @@ function makeBridge(tools: AgentTool[], events: AgentEvent[] = []) {
 	const byName = new Map(tools.map((tool) => [tool.name, tool]));
 	const runSignal = new AbortController().signal;
 	return createCursorExecBridge({
+		...PREPARED,
 		getTool: (name) => byName.get(name),
 		getAbortSignal: () => runSignal,
 		emitEvent: async (event) => {
@@ -223,6 +226,7 @@ describe("cursor exec bridge", () => {
 		const emitEvent = vi.fn();
 		const tool = stubTool("read", Type.Object({ path: Type.String() }), vi.fn());
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "read" ? tool : undefined),
 			getAbortSignal: () => runSignal,
 			emitEvent,
@@ -239,6 +243,7 @@ describe("cursor exec bridge", () => {
 		const emitEvent = vi.fn();
 		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "read" ? tool : undefined),
 			getAbortSignal: () => undefined,
 			emitEvent,
@@ -268,6 +273,7 @@ describe("cursor exec bridge", () => {
 		const emitEvent = vi.fn();
 		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "read" ? tool : undefined),
 			getAbortSignal: () => activeSignal,
 			preflightToolCall: async () => {
@@ -294,6 +300,7 @@ describe("cursor exec bridge", () => {
 		const execute = vi.fn();
 		const tool = stubTool("read", Type.Object({ path: Type.String() }), execute);
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "read" ? tool : undefined),
 			getAbortSignal: () => runSignal,
 			emitEvent: async () => {
@@ -319,6 +326,7 @@ describe("cursor exec bridge", () => {
 		const runSignal = new AbortController().signal;
 		const tool = stubTool("write", Type.Object({ path: Type.String(), content: Type.String() }), () => undefined);
 		const bridge = createCursorExecBridge({
+			...PREPARED,
 			getTool: (name) => (name === "write" ? tool : undefined),
 			getAbortSignal: () => runSignal,
 			emitEvent: async () => undefined,

@@ -31,23 +31,4 @@ export const deferredGoldens = Object.freeze([
 		issue: "https://github.com/code-yeongyu/senpi/issues/4829",
 		due: "before PGATE-P0",
 	},
-	// E19's read is resolved by the Cursor exec bridge, which bypasses the execution pipeline and writes no witness receipt
-	// (senpi#5780), so the witness check cannot pass it yet. The fix routes those calls through the prepared executor and
-	// re-records both goldens at the end of the S18b stack, deleting these two entries in that PR.
-	{
-		platform: "linux-x64",
-		case: "E19",
-		mode: "rpc",
-		owner: "brain-hand-exec-p0",
-		issue: "https://github.com/code-yeongyu/senpi/issues/5780",
-		due: "with the senpi#5780 fix (S36 r2)",
-	},
-	{
-		platform: "darwin-arm64",
-		case: "E19",
-		mode: "rpc",
-		owner: "brain-hand-exec-p0",
-		issue: "https://github.com/code-yeongyu/senpi/issues/5780",
-		due: "with the senpi#5780 fix (S36 r2)",
-	},
 ]);
