@@ -12,6 +12,7 @@ export {
 	FileLockedByStuckModuleError,
 	type FileMutationLock,
 	withFileMutationQueue,
+	withFileMutationQueues,
 } from "./files/mutation-queue.ts";
 export { realpathWithoutOpen, realpathWithoutOpenStrict } from "./files/realpath-without-open.ts";
 export { DEFAULT_LIMITS } from "./limits.ts";

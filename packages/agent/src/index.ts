@@ -63,6 +63,7 @@ export {
 	type RemoteAbort,
 	type RemoteAck,
 	type RemoteHandMessage,
+	type RemoteFile,
 	type RemoteHello,
 	type RemoteInvoke,
 	type RemoteRefused,
@@ -80,6 +81,11 @@ export {
 	emitToolResultMessage,
 	shouldTerminateToolBatch,
 } from "./execution/tool-outcome-events.ts";
+export { createAdmissionLine } from "./durable/store-admission.ts";
+export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
+export { createBatchCoordinator } from "./execution/coordinator.ts";
+export type { BatchExecutor, BatchPlan } from "./execution/coordinator-types.ts";
+export { createExecutionLedger } from "./execution/ledger.ts";
 export {
 	authorize,
 	createGrantVerifier,
@@ -94,6 +100,29 @@ export {
 	type HandAuthority,
 	type WorkspaceRoot,
 } from "./execution/grant-verify.ts";
+export {
+	base64Length,
+	DEVICE_FILE_OPS,
+	type DeviceFileArgs,
+	DeviceFileError,
+	type DeviceFileErrorCode,
+	type DeviceFileOp,
+	type DeviceFileOptions,
+	type DeviceRunRequest,
+	type DeviceRunResult,
+	type DeviceFileOutcome,
+	type DeviceFiles,
+	type DeviceFileStat,
+	decodeBase64,
+	decodeDeviceFileArgs,
+	encodeBase64,
+	FILE_CHANNEL,
+	FILE_CHANNEL_MAX_BYTES,
+	RUN_CHANNEL,
+	fileOutcomeOf,
+} from "./execution/device-files.ts";
+export { HELLO_WAIT_MS } from "./execution/remote-device-files.ts";
+export { fileRefusal, fileResult } from "./execution/remote-file-call.ts";
 export {
 	createModelPlaneClient,
 	decodeModelPlaneRequest,
@@ -228,5 +257,5 @@ export * from "./response-timing.ts";
 export * from "./search/index.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
 export { prepareToolArguments } from "./tool-arguments.ts";
-export { resolveToolNameAlias } from "./tool-name-alias.ts";
+export { resolveToolNameAlias, withToolNameCorrection } from "./tool-name-alias.ts";
 export * from "./types.ts";

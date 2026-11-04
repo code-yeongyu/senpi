@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
-import type { McpFormBinding, McpFormRequest, McpFormResolved } from "../../core/mcp-form-types.ts";
-import type { McpFormClock } from "./mcp-form-dialog.ts";
+import type { McpFormBinding } from "../../core/mcp-form-types.ts";
+import type { McpFormClock, McpPresenterFrame } from "./mcp-form-dialog.ts";
 import { presentation } from "./mcp-presenter-forms.ts";
 import {
-	current,
+	holders,
 	revoke,
 	type Grant,
 	type McpPresenterRegistration,
 	type Registration,
 } from "./mcp-presenter-grants.ts";
 
-export type Sender = (frame: McpFormRequest | McpFormResolved) => boolean;
+export type Sender = (frame: McpPresenterFrame) => boolean;
 export interface McpPresenterConnection {
 	readonly id: string;
 	readonly epoch: string;
@@ -26,7 +26,12 @@ export interface Binding extends McpFormBinding {
 	readonly lifetime: AbortController;
 	readonly admit: () => void;
 	readonly listeners: Set<() => void>;
-	grant?: Grant;
+	/** Every holder of this binding; each grant passes `current()` on its own. */
+	readonly grants: Set<Grant>;
+	/** The binding's one form FIFO, whichever holder answers (D11 S3-3b T10). */
+	readonly queue: object;
+	/** Open from the first holder until the last one leaves: the readiness version and presentation lifetime. */
+	presence?: { readonly id: string; readonly lifetime: AbortController };
 }
 export interface McpPresenterConnectionContext {
 	hostInstance: string;
@@ -88,7 +93,7 @@ export function detach(state: McpPresenterState, sender: McpPresenterConnection,
 	for (const binding of connection.attachments.keys()) {
 		if (handle !== undefined && handle !== binding) continue;
 		connection.attachments.delete(binding);
-		if (binding.grant?.registration.connection === connection) revoke(state, binding.grant.registration);
+		revokeHeld(state, binding, connection);
 	}
 	if (handle === undefined) state.connections.delete(sender);
 }
@@ -96,8 +101,12 @@ export function detach(state: McpPresenterState, sender: McpPresenterConnection,
 export function withdraw(state: McpPresenterState, sender: McpPresenterConnection): void {
 	const connection = state.connections.get(sender);
 	if (!connection) return;
-	for (const binding of connection.attachments.keys())
-		if (binding.grant?.registration.connection === connection) revoke(state, binding.grant.registration);
+	for (const binding of connection.attachments.keys()) revokeHeld(state, binding, connection);
+}
+
+function revokeHeld(state: McpPresenterState, binding: Binding, connection: Connection): void {
+	for (const grant of [...binding.grants])
+		if (grant.registration.connection === connection) revoke(state, grant.registration);
 }
 
 export function bind(
@@ -116,7 +125,9 @@ export function bind(
 		lifetime,
 		signal: lifetime.signal,
 		listeners: new Set(),
-		version: () => (binding.grant && current(state, binding.grant) ? binding.grant.id : undefined),
+		grants: new Set(),
+		queue: {},
+		version: () => (holders(state, binding).length > 0 ? binding.presence?.id : undefined),
 		subscribe: (listener) => {
 			binding.listeners.add(listener);
 			return () => {
@@ -124,12 +135,12 @@ export function bind(
 			};
 		},
 		capture: () => {
-			const grant = binding.grant;
-			return grant && current(state, grant) ? presentation(state, grant) : undefined;
+			const presence = binding.presence;
+			return presence && holders(state, binding).length > 0 ? presentation(state, binding, presence) : undefined;
 		},
 		dispose: () => {
 			binding.lifetime.abort();
-			if (binding.grant) revoke(state, binding.grant.registration, true);
+			for (const grant of [...binding.grants]) revoke(state, grant.registration, true);
 			if (state.bindings.get(sessionId) === binding) state.bindings.delete(sessionId);
 			for (const connection of state.connections.values()) connection.attachments.delete(binding);
 			binding.listeners.clear();
