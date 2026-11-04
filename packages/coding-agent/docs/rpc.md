@@ -3068,7 +3068,9 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   client reopening the session right after `session_parked` is the only open of that path (senpi#3485). It is also bounded by the empty-host exit
   and the supervisor's idle-exit window below: retention survives a client, not the host. Any attach may turn retention
   on for a live session; no attach turns it off for clients that already rely on it. Omitting the flag is byte-identical
-  to the previous behavior — the session is closed with its last connection. Probe `retain_on_disconnect` in
+  to the previous behavior — the session is closed with its last connection — except on a delegated connection
+  (`declare_delegation`): that connection ends with the viewer it forwards for while the forwarder keeps serving the
+  session, so an `open_session` there without the flag is retained, and an explicit `false` is honored (senpi#5808). Probe `retain_on_disconnect` in
   `get_protocol_info` capabilities before relying on it: an older host silently ignores the field.
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
