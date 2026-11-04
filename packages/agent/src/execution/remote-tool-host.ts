@@ -1,6 +1,7 @@
 import { TOOL_RESULT_PLACEHOLDER, type ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { AgentToolCall } from "../types.ts";
+import { createEpochGate } from "./remote-epoch-gate.ts";
 import {
 	decodeRemoteMessage,
 	encodeRemoteMessage,
@@ -26,6 +27,12 @@ export interface RemoteToolHostOptions {
 	/** What the session says about itself; the hand never acts on it (R16). */
 	readonly sessionRef?: string;
 	readonly mintId?: () => string;
+	/**
+	 * The session's owner epoch (brain/hand S35). With it, each scope lane first raises the hand's floor to this epoch
+	 * and dispatches only after the hand acked exactly it; every invoke, abort and ack carries it. Without it, nothing
+	 * about epochs is sent (a session that never moves).
+	 */
+	readonly epoch?: number;
 }
 
 interface Pending {
@@ -62,12 +69,21 @@ function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): Rem
 export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost & { close(): void } {
 	const { transport } = options;
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
+	const { epoch } = options;
+	const stamp = epoch === undefined ? {} : { epoch };
 	const pending = new Map<string, Pending>();
+	/** Calls handed to the transport: a hand's `hello` re-sends only these, never one still waiting on its floor. */
+	const sent = new Set<string>();
+	const gate =
+		epoch === undefined
+			? undefined
+			: createEpochGate(epoch, (lane, floor) => transport.send(lane, encodeRemoteMessage(floor)));
 
 	const settle = (executionId: string, result: RemoteToolResult): void => {
 		const waiter = pending.get(executionId);
 		if (waiter === undefined) return;
 		pending.delete(executionId);
+		sent.delete(executionId);
 		waiter.resolve(result);
 	};
 
@@ -79,12 +95,17 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 			return;
 		}
 		const ack = (executionId: string): void =>
-			void transport.send(frame.lane, encodeRemoteMessage({ kind: "ack", executionId })).catch(() => undefined);
+			void transport
+				.send(frame.lane, encodeRemoteMessage({ kind: "ack", executionId, ...stamp }))
+				.catch(() => undefined);
 		if (message.kind === "hello") {
+			gate?.resend();
 			for (const { invoke } of pending.values())
-				void transport.send(invoke.scope.id, encodeRemoteMessage(invoke)).catch(() => undefined);
+				if (sent.has(invoke.executionId))
+					void transport.send(invoke.scope.id, encodeRemoteMessage(invoke)).catch(() => undefined);
 			return;
 		}
+		if (message.kind === "floor_ack" || message.kind === "floor_refused") return gate?.answer(frame.lane, message);
 		if (message.kind === "settled") {
 			settle(message.executionId, message.result);
 			ack(message.executionId);
@@ -106,17 +127,31 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 		else {
 			const onAbort = (): void => {
 				if (!pending.has(invoke.executionId)) return;
-				void transport
-					.send(invoke.scope.id, encodeRemoteMessage({ kind: "abort", executionId: invoke.executionId }))
-					.catch(() => undefined);
+				if (sent.has(invoke.executionId))
+					void transport
+						.send(
+							invoke.scope.id,
+							encodeRemoteMessage({ kind: "abort", executionId: invoke.executionId, ...stamp }),
+						)
+						.catch(() => undefined);
 				settle(invoke.executionId, errorResult("Tool execution aborted"));
 			};
 			signal?.addEventListener("abort", onAbort, { once: true });
 			void settled.then(() => signal?.removeEventListener("abort", onAbort));
-			transport.send(invoke.scope.id, encodeRemoteMessage(invoke)).catch((error: unknown) => {
-				const reason = error instanceof Error ? error.message : String(error);
-				settle(invoke.executionId, errorResult(`The hand is unreachable: ${reason}`));
-			});
+			const send = (): void => {
+				if (!pending.has(invoke.executionId)) return;
+				sent.add(invoke.executionId);
+				transport.send(invoke.scope.id, encodeRemoteMessage(invoke)).catch((error: unknown) => {
+					const reason = error instanceof Error ? error.message : String(error);
+					settle(invoke.executionId, errorResult(`The hand is unreachable: ${reason}`));
+				});
+			};
+			if (gate === undefined) send();
+			else
+				void gate.open(invoke.scope.id).then((refusal) => {
+					if (refusal === undefined) return send();
+					settle(invoke.executionId, errorResult(`The hand refused this session's epoch: ${refusal}`));
+				});
 		}
 		return { settled };
 	};
@@ -134,6 +169,7 @@ export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost &
 				toolCallId: raw.id,
 				name: raw.name,
 				arguments: raw.arguments,
+				...stamp,
 				...(options.sessionRef === undefined ? {} : { sessionRef: options.sessionRef }),
 			});
 			const finish = async (raw: AgentToolCall, result: RemoteToolResult): Promise<RemoteToolResult> => {
