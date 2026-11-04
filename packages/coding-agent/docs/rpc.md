@@ -423,6 +423,39 @@ Set the order, or clear it with `names: null`:
 
 `names` may name a subset; accounts it leaves out come after it. The command fails without changing anything when a name is not one of the provider's accounts, appears twice, or the list is empty, and when the provider has no stored credential (the order is kept beside the pin in `auth.json`). Removing an account drops it from the order. Success emits `auth_accounts_changed`. Only account names cross RPC, never credential material.
 
+#### account_reset
+
+Unblock one account using its immutable name. Hosts that answer it advertise `account_reset` in `get_protocol_info`.
+
+```json
+{"id": "reset1", "type": "account_reset", "provider": "openai", "name": "work"}
+```
+
+```json
+{"id": "reset1", "type": "response", "command": "account_reset", "success": true}
+```
+
+The response is correlated by `id` and sent only after the engine operation settles.
+Success reuses `auth_accounts_changed { provider }`; reread `get_provider_accounts` for
+the authoritative state. This uses the same full reset as `/account <provider> reset <name>`:
+the named account's pool sidecar health, provider-stored `blockReason`, `blockedUntil`,
+`modelBlocks` and `slotState` are cleared. Credentials, names, display names, pins,
+ordering and all unrelated accounts are preserved. Stored and environment account
+selectors match the listing. It clears local health state, not a provider limit or
+rejected sign-in; the next request may block the account again.
+
+An unknown name returns `success: false` with `errorCode: "account_not_found"` and
+does not mutate accounts or publish a change notice. Invalid selector types return
+`invalid_argument`. A failed write returns `account_reset_failed` with a credential-free
+message, never a success notice. The two
+health stores are written sequentially, not as a cross-file transaction.
+`RpcClient.resetProviderAccount(provider, name)` awaits acknowledgement and rejects
+with `RpcCommandError` on failure.
+
+This command is additive. Older hosts do not advertise `account_reset` and reject it as unknown; the typed client rejects
+that response rather than reporting success. Existing account listings without
+optional block reason or expiry fields remain readable.
+
 #### test_provider_account
 
 Re-run the sign-in connection test on one Claude subscription account, for example to retry a failed `check`. Hosts that answer it advertise `provider_account_test` in `get_protocol_info`.
@@ -704,15 +737,26 @@ or not the compact state is still live: after such a loss, refusals on either pr
 
 The legacy JSONL stream has no protocol depth limit: a record deeper than 1,024 levels is delivered unchanged to a
 legacy client. This holds whether or not the client advertises `media_placeholders`: the placeholder transform
-walks a record without recursion. Only a record the runtime's own JSON engine cannot serialize (above about 6,185 levels on Node 24
-or 40,000 on Bun 1.4, less on a deep stack) is refused, as the typed `LegacyRecordDepthError`: it is not delivered,
-the session (and a worker session's isolate) keeps running, and the next record is delivered. The refusal is
-reported once on stderr as
-`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`
-and counted by the writer that refused it. When the host's writer refuses it, the host counts it. When a worker
-session's isolate refuses it first (at the isolate's own engine limit, before the record leaves the isolate), the
-count stays in the isolate's writer and is not added to the host's count; only the stderr line reaches the host,
-through the worker's stderr.
+walks a record without recursion. Serialization has no depth limit either (senpi#5702): the writer uses the
+runtime's native `JSON.stringify`, and where that overflows its own stack (about 3,000 chained `get_tree` entries
+on Node 24, 18,000-20,000 on Bun 1.4, fewer when a value uses `toJSON`) an explicit-stack writer with the same
+semantics writes the same bytes. A `get_tree` answer for a 10,000-entry session therefore arrives whole, in its
+usual shape `{ tree, leafId }`, on the in-process host and in a worker session alike.
+
+A reply (`type: "response"`) that still cannot be written, for any method and any reason (a `BigInt` or a cycle
+in its value, a `toJSON` that throws), is never dropped: the caller receives, for the same `id`,
+
+```json
+{"id":"<request id>","type":"response","command":"<command>","success":false,"error":"<command> response could not be written: <cause>","errorCode":"response_unwritable"}
+```
+
+and the session keeps serving later requests. The host reports it once on stderr as
+`senpi rpc host: <command> response unwritable (<cause>); answered response_unwritable (session <id>)` and counts
+it with the writer's refusals. This supersedes RULING-68's "refused, never delivered" for replies. A non-reply
+record whose path still overflows the stack outside the writer is refused as before, as the typed
+`LegacyRecordDepthError`, reported as
+`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`,
+and the session keeps running.
 A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
 reader (which stops near 4,000 levels on Node) never drops it.
 
@@ -925,9 +969,36 @@ belongs to, so a client can join it to that call's snapshot entry after a reconn
 A compact live call record carries exactly one of the two fields, `runtimeItemKey` or `callUnknown: true`, never both
 and never neither; that holds for its delta-only form too, when a newer `toolcall_delta` supersedes a queued one.
 
+The snapshot follows the same rule (senpi#5348). While more than one call of one assistant message holds the same
+`toolCallId`, each of those calls' `calls` members carries `callUnknown: true` beside its `runtimeItemKey`, and so does
+the `settled` toolResult row each of them retires into, both on the row and on the call projection it carries
+(`call.callUnknown`). The row's key still names that call, and its announcement fields (`owningMessageId`,
+`contentIndex`, `requestedName`, `input.announced`, `raw`) are exact. But the host attributed the per-id records that
+move a call (its `phase`, `startSequence`, `startedAtMs`, `input.started`, `input.prepared`, `hook`, `progress`,
+`result`, `outcome`, its nested calls, and the toolResult carrier joined to it) to those calls oldest-first, so it cannot
+vouch that they belong to this call rather than the other. Never present those fields of a marked row as that call's
+state. The mark lasts as long as the live-record mark: from the moment a second call takes the id until the last of
+those calls leaves the table. Where the field sits: a `calls` member carries it as its last field, a `settled` row
+directly after `runtimeItemKey` (before `entryId`), and the call projection directly before `nestedCalls`. Every other
+row, and every row with the flag off, carries no `callUnknown`.
+
 The host appends the field after the record's own, like the message ids above (`{"type": "tool_execution_end", ...,
 "sessionId": "rpc-1", "runtimeItemKey": "..."}`); legacy connections and every connection with the flag off receive
 the same bytes as before.
+
+**Key source (senpi#5374, RULING-126/127).** The producer mints the key, and the session file keeps it (see
+[session-format.md](session-format.md)), so the live record, the snapshot rows and the persisted entry name one key. A
+toolCall block's call is keyed `blk:<messageId>:<contentIndex>` from the block's own address, which the host's calls
+table derives the same way, so nothing extra travels on the wire. A call whose execution started before its block
+streamed (a bridge-started call) is keyed `exe:<uuid>`, minted with that start; the block that later joins it keeps that
+key, and the session file persists it on the block. The first key a call ever carries is its key for its lifetime: the
+host never re-keys a call. The host mints its own `<sessionEpoch>:<sequence>.<k>` key only for a call with no backing
+block (a nested call, reported with `parentToolCallId`). The three forms are distinct namespaces, but a key stays
+opaque: compare keys only for equality. A transcript entry a recovering compact peer reads carries the persisted keys as
+the session file holds them (`runtimeItemKey` on a toolCall part, `runtimeItemKey` or `callUnknown: true` on a
+toolResult entry), reused after a reload and never re-minted. `get_messages`, `get_entries`, attach replays and every
+legacy or flag-off record never carry them. A session written before senpi#5374 has no persisted keys, and nothing mints
+one for its parts when it loads: no host state is rebuilt from a loaded part, so such a key would have no reader.
 
 #### release_recovery
 
@@ -1999,8 +2070,14 @@ which prints the bare socket path).
   cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
   endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
   waits and then attaches to the successor, and `gc` reports the endpoint `locked` rather than judging it
-  halfway. An `ensure` waits for the lock as long as the longest holder can keep it: a probe plus either a
-  stop-and-restart or a handoff (probe, successor start, 30 s readiness). A REFUSED handoff leaves the endpoint
+  halfway. An `ensure`, a `handoff` and a `stop --expected-generation` wait for the lock as long as one
+  compliant holder can keep it (senpi#4602): W = H + 10 s, where H = 90 s of discovery + S + 284 s from spawn to
+  a settled startup result, and S = max(5 s, M) + 37 s is the stop allowance for the child-stall setting M
+  (`SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, default 60 s). At the default that is S = 97 s, H = 471 s and
+  W = 481 s; every value is recomputed from the resolved M on each operation. A waiter that exhausts W exits 1
+  `host_error` with `detail` `RPC host ensure lock wait exceeded <W>ms; startup not started by this caller`: it
+  started nothing and signalled nothing. An idle handover request waits up to 2 x H + 20 s (962 s at the default)
+  for its reply. `gc` keeps its own 2 s lock attempt and reports `locked`. A REFUSED handoff leaves the endpoint
   as it found it: the successor it started is killed and, once it has exited (up to 5 s), its generation record
   and directory are released, so `status --all` never lists it; the boot `settings.json` it rewrote before
   spawning is restored byte for byte. A cleanup that fails is reported in the refusal's `detail`.
@@ -2674,8 +2751,89 @@ Windows retains its inherited lifetime pipe. Bare hosts and embedders without su
 
 The POSIX internal hop stays in its per-launch temporary directory and publishes no key file. Proxy, readiness and
 activity-observer connections all prove the in-memory key with challenge-response before sending session traffic.
-The readiness probe (10 s) and the activity observer (5 s) bound their handshake, so a child that accepts the hop and
-never answers fails startup; the proxy forwarding a public connection has no deadline.
+The readiness probe (10 s) and the activity observer (5 s) bound each handshake attempt; the proxy forwarding a public
+connection has no deadline. An uncoordinated supervisor (a direct launch, or a successor started by a command that is
+not the engine's own) fails startup on the first silent attempt, as before. Under a coordinated start it disposes that attempt and retries on a
+fresh connection with fresh nonces, and the launcher's startup phases below decide when the start has failed. A wrong
+key proof still fails at once.
+
+#### Startup readiness (senpi#4602)
+
+`ensureHost()` no longer gives a new host one fixed 10 s to answer. It owns a startup controller from just before
+the spawn, on its own monotonic clock. The supervisor and its host child report fixed milestones on a dedicated
+startup pipe at descriptor 16, above the 5..15 range the private-descriptor table forwards. The supervisor relays
+the child's records in a frame of their own, so neither process can complete the other's phase. Each phase gets a
+finite allowance from the moment it is entered. Repeats, heartbeats and wrong-attempt records add no time, and every
+deadline is clipped to 180 s after the spawn:
+
+| Phase | Allowance | Completed by |
+|---|---:|---|
+| `supervisor_bootstrap` | 30 s | the supervisor's startup stub, before its lifecycle graph loads |
+| `supervisor_setup` | 15 s | the supervisor, once its host child is spawned and its pipe is relayed |
+| `host_bootstrap` | 30 s | the host child's startup stub |
+| `host_runtime` | 60 s | the host child, once everything its internal listener needs is initialized |
+| `internal_ready` | 15 s | the supervisor's authenticated internal-ready reply |
+| `observer_ready` | 15 s | the supervisor's first authenticated activity observer |
+| `public_published` | 15 s | the supervisor, once the public socket and key are published |
+| `presenter_resolved` | 30 s | the launcher, once its presenter exchange settles (immediately when none was requested) |
+| `public_verified` | 10 s | the launcher's compatible public `get_protocol_info` answer and its attach hold |
+
+A custom host-child command (`--child-command`) cannot report its own progress. The supervisor declares this before
+spawning it, and `host_bootstrap` + `host_runtime` + `internal_ready` become one `opaque_host` phase of 90 s, completed
+only by the authenticated internal reply. A supervisor command that is not the engine's own runs in a legacy mode: one
+`public_verified` phase of the whole 180 s, with every inner limit of its own. A slow start that keeps meeting its
+phase deadlines is accepted. A stalled phase fails at its own allowance, and nothing runs past 180 s. At a deadline,
+expiry beats an event that arrives in the same instant, and a settled start is never revived. A failed start runs its
+owned teardown within the failed-start allowance (104 s at the default `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`). Spawn
+to a settled failure is therefore at most 284 s. The failure exits 1 `host_error` with one machine-readable `detail`
+line, followed by the host's stderr diagnostics:
+
+```
+RPC host startup timed out: phase=<phase>; limit=<phase|overall>; phase_budget_ms=<n>; startup_budget_ms=180000; elapsed_ms=<n>; cleanup=<completed|incomplete>
+```
+
+An explicit failure keeps its own message: the host exited, it answered with an incompatible protocol, or a startup
+record broke the protocol. `cleanup=incomplete` means the teardown could not prove the child exited, so its
+registration and startup intent are kept rather than read as gone.
+
+Before the spawn, the launcher writes `startup-intent.json` (0600) in the endpoint's daemon directory under the ensure
+lock. It records the attempt nonce and generation; once known it also records the child's identity, and the supervisor
+records the same nonce in its own generation directory. The next ensure reconciles a leftover intent through the
+candidate's own identity. A candidate proven gone is cleared; one still running refuses `host_stalled`. One that
+nobody can identify refuses `endpoint_occupied` until the intent is 284 s old, after which it no longer blocks the
+endpoint. Nothing is ever signalled on intent evidence.
+
+#### Successor startup and endpoint adoption (senpi#4602)
+
+A generation handoff's successor runs the same phases and the same 180 s ceiling, with one difference in order:
+`presenter_resolved` comes right after `observer_ready`, and `public_published` after it. While the presenter
+exchange runs, the successor has only its own `<public>.next-<gen>` listener; the predecessor keeps serving its
+unchanged public socket, key and pointer. The launcher grants publication only after a validated presenter result:
+it writes `adoption-grant.json` (0600, naming the attempt) into the successor's generation directory and wakes the
+supervisor on the startup pipe. Only then does the successor publish its key and rename its entry over the public
+path. A presenter exchange that misses its 30 s phase ends the successor before it touched the predecessor's endpoint,
+and the handoff is refused. A presenter channel that closes without `enrolled` (for example a refused enrollment for
+a foreign or stale predecessor) passes the phase as not enrolled, and the handoff proceeds as it always did. When the
+predecessor is a running host performing an idle handover, it asks its launch owner for the successor's fresh
+presenter permit only at that phase, so the 30 s permit covers the exchange and not the successor's boot. The
+presenter channel itself waits up to 180 s for its first frame; the existing 30 s exchange window starts with that
+frame. A successor started by a command that is not the engine's own keeps the old order and waits for its public
+answer under the 180 s legacy phase (formerly a fixed 30 s).
+
+Every rename or remove of the public socket entry - the successor's adoption, a generation's close-time shield and
+its final unlink - runs under one short cross-process fence per canonical endpoint (an exclusive SQLite lock next to
+the ensure lock, released by the kernel when its holder dies) and re-reads the endpoint's owner token
+(`<ensure-lock>.owner.json`: endpoint, generation, instance, pid and a per-claim nonce) inside it. A start claims the
+token with its bind; an adoption requires that the grant still stands, that the token still names the predecessor
+and that the entry is still the one the handoff was decided against, then renames and writes its own token before the
+fence is released. A predecessor whose teardown was decided before the adoption therefore re-reads the successor's
+token and leaves its entry alone. A host advertises this with the `endpoint_owner_fence` capability. A successor
+claims the token guard only against a predecessor that advertises it; the first handoff away from an older host runs
+as before and keeps that host's race with a late rename.
+
+When a successor attempt fails, its launcher revokes the grant and reads the owner token inside the same fence. An
+adoption that started within its window but committed after the deadline is a completed handoff: the successor is
+registered and the predecessor drains, nothing is rolled back. One that had not committed can no longer commit.
 The child announces `launch_id: "internal"` and `socket_auth`; neither side sends the key. After authentication,
 HKDF-SHA256 derives separate `senpi-rpc-internal c2s` and `senpi-rpc-internal s2c` keys using the two raw nonces as salt.
 Each record has a four-byte big-endian ciphertext length (17..65552), AES-256-GCM ciphertext and a 16-byte tag.
