@@ -5,9 +5,16 @@ import type { InlineExtension } from "../../core/extensions/types.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { createHandFileOps } from "./hand-file-ops.ts";
+import { loadFlock } from "./hand-flock-binding.ts";
+import type { HandRunContext } from "./hand-run-allowlist.ts";
 import { grantLooplessExecuteToRemoteExecutor } from "./loopless-execute-grant.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { createLooplessRuntimeFactory, type LooplessRuntime } from "./runtime-factory-loopless.ts";
+
+const handRun: { readonly context: HandRunContext; readonly flock: ReturnType<typeof loadFlock> } = {
+	context: { uid: process.getuid?.() ?? -1, platform: process.platform, ownEnv: process.env },
+	flock: loadFlock(),
+};
 
 function notFound(name: string): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text: `Tool ${name} not found` }], details: {}, isError: true };
@@ -101,7 +108,9 @@ export function createLooplessHand(
 						? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested)
 						: Promise.resolve(notFound(call.name)),
 				isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
-				...(runtime.fileGuards === undefined ? {} : { file: createHandFileOps(scope.root, runtime.fileGuards) }),
+				...(runtime.fileGuards === undefined
+					? {}
+					: { file: createHandFileOps(scope.root, runtime.fileGuards, handRun) }),
 				dispose: () => {
 					runtimes.delete(scope.id);
 					disposed.add(scope.id);

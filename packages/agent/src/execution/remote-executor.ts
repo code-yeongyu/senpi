@@ -1,6 +1,6 @@
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { AgentToolResult } from "../types.ts";
-import { FILE_CHANNEL } from "./device-files.ts";
+import { FILE_CHANNEL, RUN_CHANNEL } from "./device-files.ts";
 import { createPlaneClient, decodePlaneMessage, type NestedRequest } from "./plane.ts";
 import { fileCall, fileRefusal, fileStopped } from "./remote-file-call.ts";
 import {
@@ -223,7 +223,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 			kind: "hello",
 			instance: options.instance ?? crypto.randomUUID(),
 			durable: ledger !== undefined,
-			ops: options.fileChannel === true ? [FILE_CHANNEL] : [],
+			ops: options.fileChannel === true ? [FILE_CHANNEL, RUN_CHANNEL] : [],
 		});
 	})();
 	ready.catch((error: unknown) => options.onFault(error));

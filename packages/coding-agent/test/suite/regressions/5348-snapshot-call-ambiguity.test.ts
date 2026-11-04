@@ -36,12 +36,16 @@ const terminalOf = (row: Record<string, unknown>) =>
  * Golden k, the desktop decoder's pin for the marker shape: every `calls` member of the held cut and every `settled`
  * member after the run, sorted by member id. Both families' ids are sequence-derived, so that order, and the uuid
  * aliases the normalizer assigns in it, are stable; the catalog pages settled rows in another order (by message id).
- * Keys are pinned as their rank and `hookRunId` (a host-wide hook counter) is masked, like golden j.
+ * Keys are pinned as their rank and `hookRunId` (a host-wide hook counter) is masked, like golden j. A started call's
+ * `startSequence` is masked too: docs/rpc.md (#5348) lists it among the per-id fields of a marked row and says
+ * sequence-derived values are not stable across engine versions, and where the first session flush lands against the
+ * first start is not ordered (senpi#5800). `null`, a call that never started, stays pinned.
  */
 function golden(...cuts: ReadonlyMap<string, Record<string, unknown>>[]): unknown {
 	const keys: unknown[] = [];
 	const pin = (value: unknown, key?: string): unknown => {
 		if (key === "hookRunId") return "<hook-run>";
+		if (key === "startSequence" && typeof value === "number") return "<sequence>";
 		if (key === "runtimeItemKey" && typeof value === "string") {
 			if (!keys.includes(value)) keys.push(value);
 			return `call-${keys.indexOf(value) + 1}`;
