@@ -162,6 +162,17 @@ async function executeTool(
 		// validation on optional fields. The args are JSON (protobuf Value toJson / JSON.parse or pi-args scalars).
 		arguments: omitUndefinedCursorArgs(args) as AgentToolCall["arguments"],
 	};
+	// Ownership is rechecked at execution itself, not only when preflight returns: on the prepared host the call still
+	// awaits its digest, ledger steps and release after preflight, and a run that ends normally changes the agent's
+	// signal without aborting it, so a finished run's late frame must not run its side effect inside the next run.
+	const ownedTool: AgentTool = Object.create(tool, {
+		execute: {
+			value: (...call: Parameters<AgentTool["execute"]>) => {
+				if (runSignal.aborted || options.getAbortSignal() !== runSignal) throw new Error(NO_ACTIVE_RUN);
+				return tool.execute(...call);
+			},
+		},
+	});
 	// The same prepared host model-issued calls run on: validation, argument preparation, the session's tool_call
 	// preflight and tool_result hook, lifecycle events and the witness receipt all come from it. The host resolves only
 	// this call's tool: Cursor drives its native tools whether or not the request advertised them.
@@ -172,6 +183,7 @@ async function executeTool(
 					type: "tool_call",
 					toolCallId,
 					toolName,
+					// Validated by the executor's argument check (a non-object never reaches this hook) and JSON from the frame.
 					input: input as Record<string, unknown>,
 				});
 				// The owning run may have ended while preflight waited; a replacement run must not inherit this call.
@@ -198,7 +210,7 @@ async function executeTool(
 			},
 			...(options.recordWitness === undefined ? {} : { recordWitness: options.recordWitness }),
 			local: {
-				context: { systemPrompt: "", messages: [], tools: [tool] },
+				context: { systemPrompt: "", messages: [], tools: [ownedTool] },
 				assistantMessage: issuingMessage(toolCall),
 			},
 		},
