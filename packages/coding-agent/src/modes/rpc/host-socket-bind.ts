@@ -39,9 +39,12 @@ function bindAt(server: Server, address: string): Promise<void> {
 }
 
 const BIND_DIR_ATTEMPTS = 8;
-const ALIAS_PREFIX = "senpi-bind-";
-const ALIAS_LINK = "d";
+export const ALIAS_PREFIX = "senpi-bind-";
+export const ALIAS_LINK = "d";
 const SHORT_TEMP_ROOT = "/tmp";
+
+/** The roots a long-path bind may place its alias in, in preference order (also what the alias reaper scans). */
+export const bindAliasRoots = (): readonly string[] => [tmpdir(), SHORT_TEMP_ROOT];
 
 /**
  * `<socketPath>.bind-<hex>`: a fresh 0700 directory beside the endpoint, so on its filesystem (`link(2)` can publish
@@ -61,20 +64,28 @@ async function makeBindDir(socketPath: string): Promise<string> {
 }
 
 /**
- * A root no other user can take an entry of ours out of: sticky (`/tmp`), or writable by its owner alone where that
- * owner is this user or root (the per-user macOS temp directory). Anything else could let another user rename the
+ * A root no other user can take an entry of ours out of: owned by this user or root, and either sticky (`/tmp`) or
+ * writable by its owner alone (the per-user macOS temp directory). The owner of a sticky directory can still rename
+ * any entry in it, so another user's 1777 directory is refused. Anything else could let another user rename the
  * alias away and re-create its name while libuv still holds the path.
  */
 async function guardedRoot(root: string): Promise<boolean> {
 	const entry = await stat(root).catch(() => undefined);
-	if (entry === undefined || !entry.isDirectory()) return false;
-	if ((entry.mode & 0o1000) !== 0) return true;
-	return (entry.mode & 0o022) === 0 && (entry.uid === 0 || entry.uid === process.getuid?.());
+	return entry !== undefined && entry.isDirectory() && rootModeIsGuarded(entry, process.getuid?.());
+}
+
+/** Exported for tests: the mode/owner half of `guardedRoot`, which needs no real directory of another owner. */
+export function rootModeIsGuarded(
+	entry: { readonly mode: number; readonly uid: number },
+	self: number | undefined,
+): boolean {
+	const ownedByUsOrRoot = entry.uid === 0 || (self !== undefined && entry.uid === self);
+	return ownedByUsOrRoot && ((entry.mode & 0o1000) !== 0 || (entry.mode & 0o022) === 0);
 }
 
 async function aliasRoot(): Promise<string> {
 	const tried: string[] = [];
-	for (const root of [tmpdir(), SHORT_TEMP_ROOT]) {
+	for (const root of bindAliasRoots()) {
 		const longest = join(root, `${ALIAS_PREFIX}XXXXXX`, ALIAS_LINK, BIND_SCRATCH_SOCKET);
 		if (Buffer.byteLength(longest) <= MAX_SOCKET_PATH_BYTES && (await guardedRoot(root))) return root;
 		tried.push(root);
