@@ -1,3 +1,106 @@
+## 2026-11-03 - Offline grant check on the hand (senpi#5659)
+
+### What changed
+
+- `packages/agent/src/execution/grant-verify.ts` is new: grant snapshot, verifier, `HandAuthority` and `authorize()`.
+- `packages/agent/src/execution/remote-executor.ts`: required `authority`; the grant check runs after the closed and lane checks and before the seen set, the ledger and the scope; the scope opens on the canonical root; a snapshot replacement aborts running calls it no longer allows.
+- `packages/agent/src/execution/testing/hand-harness.ts`: passes `{ kind: "self" }`.
+- `packages/agent/src/index.ts`: exports the verifier surface.
+
+### Why
+
+Brain/hand split S27b (R14.b): across machines the pair grant is the whole authority model for a user's own devices, checked with no per-call round trip. Design approved by the security gate (capability `execute`).
+
+### Why an extension could not handle it
+
+The check must precede the executor's own durable admission and scope opening.
+
+### Expected merge conflict zones
+
+`remote-executor.ts` invoke ordering and options; `src/index.ts` exports.
+
+## 2026-11-03 - List a directory while another process removes one of its entries (senpi#5615)
+
+### What changed
+
+- `packages/agent/src/harness/env/nodejs.ts`: `NodeExecutionEnv.listDir` omits an entry whose `lstat` fails with `ENOENT` after `readdir` listed it, instead of failing the whole listing. Any other per-entry error is still returned.
+
+### Why
+
+- A Session worker holds its session through a `<session>.jsonl.lock` directory next to the session file and removes it on release. A session listing that read the directory just before a worker released its lock failed with `Failed to list sessions directory ...: ENOENT ... lstat '<session>.jsonl.lock'`, so a server refreshing its session catalog while a worker retired failed that refresh (senpi#5272). The removed entry is now absent from the listing, as if `readdir` had run a moment later.
+
+### Why an extension could not handle it
+
+- `listDir` is the harness file-system primitive under `JsonlSessionRepo.list`; no extension hook runs between `readdir` and the per-entry `lstat`.
+
+### Expected merge conflict zones
+
+- LOW: the per-entry `try`/`catch` in `NodeExecutionEnv.listDir`.
+
+## 2026-11-02 - A hand's durable call record and its conformance cases (senpi#5513)
+
+### What changed
+
+- `packages/agent/src/execution/remote-hand-ledger.ts` is new: `createHandLedger()` admits each invoke into the execution ledger and walks it to `dispatched` before it runs, records its result, answers a re-delivered invoke from the record (refusing `identity_conflict` when the record holds another request under that execution ID), and on restart runs the ledger's recovery, then re-sends the outcomes the session has not acknowledged.
+- `packages/agent/src/execution/ledger.ts`: `ExecutionLedger.scan()` lists every row.
+- `packages/agent/src/execution/remote-executor.ts`: optional `ledger`, required `onFault` (a failed restart recovery is reported there and the hand then answers no frame), a `hello` after a restarted hand recovered, and `ack` handling; a call's scope is opened before the call is recorded, so a scope that cannot open leaves no record.
+- `packages/agent/src/execution/remote-tool-host.ts`: required `placement`; `terminal` outcomes mapped per placement; every outcome acknowledged; waiting calls re-sent on `hello`.
+- `packages/agent/src/execution/remote-protocol.ts`: `ack`, `terminal` and `hello` messages.
+- `packages/agent/src/execution/testing/{hand-harness,kill-hand,multi-hand-cases,fault-hand-cases}.ts` are new, registered in `packages/agent/src/conformance/registry.ts` and exported from `packages/agent/src/conformance/index.ts`; `packages/agent/src/index.ts` exports the new hand APIs.
+
+### Why
+
+- Brain/hand split (senpi#5482): a hand that dies after receiving a call left the session waiting forever, and a restarted hand had no record to keep it from running a call twice.
+
+### Why an extension could not handle it
+
+- The execution ledger, the ToolHost seam and the conformance registry are the agent core's.
+
+### Expected merge conflict zones
+
+- LOW: the end of `CONFORMANCE_REGISTRY` in `registry.ts` and the hand export blocks in `index.ts` and `conformance/index.ts`.
+
+## 2026-11-02 - Remote ToolHost and hand executor (senpi#5483)
+
+### What changed
+
+- `packages/agent/src/execution/remote-tool-host.ts` is new: `createRemoteToolHost({ transport, sessionRef? })` sends each raw call of a batch to a hand on the scope's lane, emits the tool events, waits per call in `sequential` mode, forwards an abort, and returns result messages in source order; a call is never re-sent.
+- `packages/agent/src/execution/remote-executor.ts` is new: `createRemoteExecutor({ transport, openScope })` opens scopes lazily, refuses a known scope with another root and a repeated execution ID, never passes the session reference on, and keeps `sequential` tool barriers per scope.
+- `packages/agent/src/execution/remote-protocol.ts` is new: the `invoke`, `abort`, `settled` and `refused` messages and a strict decoder.
+- `packages/agent/src/index.ts` exports the three modules, the reference transport and the `Transport` types.
+
+### Why
+
+- Brain/hand split (senpi#5482): a session must be able to run its tool calls on a hand, first on one machine over the in-process carrier.
+
+### Why an extension could not handle it
+
+- The ToolHost seam and the transport live in the agent core; an extension cannot replace where the loop dispatches tool calls.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` export list, next to the internal-events exports.
+
+## 2026-11-02 - Durable batch coordinator (senpi#5429)
+
+### What changed
+
+- `packages/agent/src/execution/coordinator.ts`, `coordinator-types.ts`, `coordinator-plan.ts` and `coordinator-codec.ts` implement the brain-side batch coordinator over DurableStore and the `BatchExecutor` port.
+- `packages/agent/src/execution/testing/` supplies the reference batch executor, the BATCH-01..03/05..09, REPLAY-01..02 and KILL-BATCH cases, and their registry entries.
+- `packages/agent/src/conformance/registry.ts` and `packages/agent/src/conformance/index.ts` register and expose the cases.
+
+### Why
+
+- A batch's prepare replies, decision and release marks need one durable owner on the coordinating side, so a crash there recovers without rerunning hooks or bodies, and an interrupted preparation replays as it does today.
+
+### Why an extension could not handle it
+
+- The coordinator is a host-neutral execution primitive below extension callbacks.
+
+### Expected merge conflict zones
+
+- LOW: the conformance registry and barrel exports; the coordinator modules are new.
+
 ## 2026-11-02 - The agent proxy handles `message_tool_arguments_reset` (senpi#5300)
 
 ### What changed

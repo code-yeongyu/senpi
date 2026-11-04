@@ -8,6 +8,7 @@ import {
 	emitProviderAccountsChanged,
 } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import type { SdkErrorKind } from "../extensions/builtin/anthropic-subscription/errors.ts";
+import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
@@ -15,7 +16,13 @@ import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { listRotationSlots, type RotationSlot, type RotationSources, releaseProbeLease } from "./rotation-slots.ts";
-import { pickRotationSlot } from "./session-slot.ts";
+import {
+	orderRotationSlots,
+	pickRotationSlot,
+	rememberedHeadroomAccount,
+	rememberHeadroomAccount,
+	type SlotPickPolicy,
+} from "./session-slot.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
@@ -141,6 +148,7 @@ export function streamWithCredentialRotation(
 	const useAffinity = sources.policy?.affinity !== false;
 	const pooled: PooledCredential | undefined = sources.credential;
 	const now = sources.now ?? Date.now;
+	const rememberAffinity = useAffinity && options.affinityKey !== undefined;
 	// The account a failover just left. The switch is announced once the next account's attempt starts,
 	// so RPC clients and the TUI hear "from -> to" only for a switch that actually happens (senpi#2304).
 	let leaving: { name: string; block: CredentialBlock } | undefined;
@@ -148,8 +156,31 @@ export function streamWithCredentialRotation(
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
 		select: (candidates) => {
-			const winner = pickRotationSlot(candidates, { affinityKey, useAffinity, hasher, order: pooled?.order });
+			const remembered = rememberAffinity
+				? rememberedHeadroomAccount(sources.repository, sources.providerId, affinityKey)
+				: undefined;
+			const policy: SlotPickPolicy = {
+				affinityKey,
+				useAffinity,
+				hasher,
+				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+				headroom: {
+					providerId: sources.providerId,
+					limits: subscriptionLimits.snapshot(),
+					now: now(),
+					...(remembered === undefined ? {} : { remembered }),
+				},
+			};
+			const winner = pickRotationSlot(candidates, policy);
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
+			// A pinned winner is the user's choice, not a headroom move, so it is never remembered.
+			if (
+				rememberAffinity &&
+				winner.pinned !== true &&
+				(remembered !== undefined || winner !== orderRotationSlots(candidates, policy)[0])
+			) {
+				rememberHeadroomAccount(sources.repository, sources.providerId, affinityKey, winner.name);
+			}
 			return winner;
 		},
 		runAttempt: (slot) => {
