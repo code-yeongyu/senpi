@@ -272,6 +272,9 @@ export async function open(
 					sessionId: opened.sessionId,
 					state: replyState,
 					...(opened.attached ? { attached: true } : {}),
+					...(host.defaults.sessionPresence
+						? { presence: host.defaults.sessionPresence.view(replyState.sessionId) }
+						: {}),
 				},
 			});
 		return undefined;
