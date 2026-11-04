@@ -109,14 +109,12 @@ it("holds a submit made during startup binding until the restored history is ren
 		await init;
 	}
 
-	const restored = transcript(view);
-	expect(rowOf(restored, "OLD-4826-FIRST")).toBeGreaterThanOrEqual(0);
-	expect(rowOf(restored, "OLD-4826-FIRST")).toBeLessThan(rowOf(restored, "OLD-4826-SECOND"));
-	expect(restored.some((line) => line.includes("NEW-4826"))).toBe(false);
-
-	// The preserved draft, submitted once startup is done, lands after the history exactly once.
-	await view.defaultEditor.onSubmit?.(view.editor.getText());
+	// Startup replays the parked submit once the real submit path is installed (senpi#5731): it lands after the
+	// restored history exactly once, and the editor is empty again.
 	const after = transcript(view);
+	expect(rowOf(after, "OLD-4826-FIRST")).toBeGreaterThanOrEqual(0);
+	expect(rowOf(after, "OLD-4826-FIRST")).toBeLessThan(rowOf(after, "OLD-4826-SECOND"));
+	expect(view.editor.getText()).toBe("");
 	expect(after.filter((line) => line.includes("NEW-4826"))).toHaveLength(1);
 	expect(rowOf(after, "OLD-4826-SECOND")).toBeLessThan(rowOf(after, "NEW-4826"));
 	expect(view.pendingUserInputs.map((input) => input.text)).toEqual(["NEW-4826"]);

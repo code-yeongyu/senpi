@@ -12,8 +12,10 @@ vi.mock("../../../src/utils/version-check.ts", () => ({
 
 type Editor = { text: string; setText: (text: string) => void; getText: () => string };
 
+type Parked = { readonly text: string; readonly details?: { readonly rawText: string } };
+
 type StartupContext = {
-	startupParkedSubmission?: string;
+	startupParkedSubmission?: Parked;
 	editor: Editor;
 	showStatus: (message: string) => void;
 	shutdown: () => Promise<void>;
@@ -21,7 +23,7 @@ type StartupContext = {
 
 const handleStartupSubmit = (
 	InteractiveMode.prototype as unknown as {
-		handleStartupSubmit(this: StartupContext, text: string): void;
+		handleStartupSubmit(this: StartupContext, text: string, details?: { rawText: string }): void;
 	}
 ).handleStartupSubmit;
 
@@ -36,11 +38,16 @@ function startingTui(): StartupContext {
 	return { editor, showStatus: vi.fn(), shutdown: vi.fn(async () => {}) };
 }
 
-function finishStartup(tui: StartupContext): string[] {
+function finishStartup(tui: StartupContext, seen: unknown[] = []): string[] {
 	const submitted: string[] = [];
 	const parked = tui.startupParkedSubmission;
 	tui.startupParkedSubmission = undefined;
-	replayStartupSubmission(parked, tui.editor, { onSubmit: (text) => void submitted.push(text) });
+	replayStartupSubmission(parked, tui.editor, {
+		onSubmit: (text, details) => {
+			submitted.push(text);
+			seen.push(details);
+		},
+	});
 	return submitted;
 }
 
@@ -63,6 +70,15 @@ describe("a submit made during startup runs once startup finishes (#5731)", () =
 
 		expect(finishStartup(tui)).toEqual([]);
 		expect(tui.editor.getText()).toBe("/resume and more");
+	});
+
+	it("keeps the raw text of a parked submit, so a leading-space command stays text", () => {
+		const tui = startingTui();
+		handleStartupSubmit.call(tui, "/foo", { rawText: " /foo" });
+		const seen: unknown[] = [];
+
+		expect(finishStartup(tui, seen)).toEqual(["/foo"]);
+		expect(seen).toEqual([{ rawText: " /foo" }]);
 	});
 
 	it("submits nothing when nothing was submitted during startup", () => {
