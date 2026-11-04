@@ -156,6 +156,12 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 				: [];
 		const done = (async () => {
 			await Promise.allSettled(dependencies);
+			// Without a ledger this is the call's dispatch point: a floor raised while its scope opened or it waited on
+			// earlier calls fences it here. With a ledger, the guarded `dispatch` step already decided it atomically.
+			if (ledger === undefined && !admits(lane, call.epoch)) {
+				running.delete(call.executionId);
+				return refuse(lane, call.executionId, "epoch_fenced");
+			}
 			let result: AgentToolResult<unknown>;
 			try {
 				// The grant must still hold when the call starts: a snapshot installed while it waited (scope opening,
@@ -215,7 +221,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 				reply(frame.lane, await answerFloor(fence, frame.lane, message.epoch, sender));
 			else if ((message.kind === "abort" || message.kind === "ack") && !admits(frame.lane, message.epoch)) return;
 			else if (message.kind === "abort") running.get(message.executionId)?.controller.abort();
-			else if (message.kind === "ack") await ledger?.ack(message.executionId);
+			else if (message.kind === "ack") await ledger?.ack(message.executionId, () => admits(frame.lane, message.epoch));
 		} catch (error) {
 			options.onFault(error);
 		}

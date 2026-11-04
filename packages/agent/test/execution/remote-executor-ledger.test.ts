@@ -7,44 +7,10 @@ import { createMemoryStoreMedium, type MemoryStoreMedium, openMemoryStore } from
 import { createExecutionLedger } from "../../src/execution/ledger.ts";
 import { createRemoteExecutor, type HandScope, type OpenHandScope } from "../../src/execution/remote-executor.ts";
 import { createHandLedger, type HandLedger } from "../../src/execution/remote-hand-ledger.ts";
-import {
-	decodeRemoteMessage,
-	encodeRemoteMessage,
-	type RemoteHandMessage,
-	type RemoteInvoke,
-} from "../../src/execution/remote-protocol.ts";
-import type { FrameHandler, Transport } from "../../src/transport/transport.ts";
+import type { RemoteInvoke } from "../../src/execution/remote-protocol.ts";
+import { fakeHandLink } from "./fake-hand-link.ts";
 
 const DISPATCH_COMMIT = 5;
-
-function fakeTransport() {
-	const sent: RemoteHandMessage[] = [];
-	const waiters: Array<{ readonly count: number; readonly resolve: () => void }> = [];
-	let handler: FrameHandler | undefined;
-	const transport: Transport = {
-		send: async (_lane, payload) => {
-			sent.push(decodeRemoteMessage(payload));
-			for (const waiter of waiters) if (sent.length >= waiter.count) waiter.resolve();
-		},
-		onFrame: (next) => {
-			handler = next;
-		},
-		inFlight: () => 0,
-		close: () => {},
-	};
-	const deliver = async (message: RemoteHandMessage): Promise<void> => {
-		if (handler === undefined) throw new Error("no frame handler");
-		const lane = message.kind === "invoke" ? message.scope.id : "hand.control";
-		await handler({ lane, payload: encodeRemoteMessage(message) });
-	};
-	const sentCount = (count: number): Promise<void> => {
-		const { promise, resolve } = Promise.withResolvers<void>();
-		waiters.push({ count, resolve });
-		if (sent.length >= count) resolve();
-		return promise;
-	};
-	return { transport, sent, deliver, sentCount };
-}
 
 const invoke = (args: unknown): RemoteInvoke => ({
 	kind: "invoke",
@@ -77,7 +43,7 @@ const rows = (medium: MemoryStoreMedium) =>
 	createExecutionLedger({ store: openMemoryStore(medium), epoch: 1, admission: createAdmissionLine() }).scan();
 
 function startHand(store: DurableStore, openScope: OpenHandScope, ledger = handLedger(store)) {
-	const link = fakeTransport();
+	const link = fakeHandLink();
 	const faults: unknown[] = [];
 	const executor = createRemoteExecutor({
 		authority: { kind: "self" },

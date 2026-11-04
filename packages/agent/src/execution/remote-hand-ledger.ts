@@ -28,7 +28,8 @@ export interface HandLedger {
 	 */
 	admit(invoke: RemoteInvoke, admits?: () => boolean): Promise<HandAdmission>;
 	settle(invoke: RemoteInvoke, result: RemoteToolResult): Promise<RemoteHandMessage>;
-	ack(executionId: string): Promise<void>;
+	/** `admits` is the sender's epoch check, run inside the ack's admission slot: a fenced ack changes nothing. */
+	ack(executionId: string, admits?: () => boolean): Promise<void>;
 	/**
 	 * Runs the ledger's restart recovery, then returns every outcome the session has not acknowledged, by lane. Only the
 	 * first call recovers: a later link's executor on the same live hand gets nothing, and its calls keep running.
@@ -80,6 +81,8 @@ export function createHandLedger(options: HandLedgerOptions): HandLedger {
 	): Promise<LedgerReply> =>
 		ledger.apply({ key: keyOf(executionId), generation: GENERATION, actor: { id: actor }, now: now(), event }, guard);
 	let recovered: Promise<unknown> | undefined;
+	const fencedBy = (admits: (() => boolean) | undefined): LedgerGuard | undefined =>
+		admits === undefined ? undefined : () => (admits() ? undefined : "epoch_fenced");
 	/** Calls this process admitted or runs; a duplicate invoke for one of them waits on that run. */
 	const owned = new Set<string>();
 	const replyFrom = (reply: LedgerReply, executionId: string): RemoteHandMessage => {
@@ -154,9 +157,7 @@ export function createHandLedger(options: HandLedgerOptions): HandLedger {
 			const { executionId } = invoke;
 			if (owned.has(executionId)) return { kind: "in_flight" };
 			owned.add(executionId);
-			const guard: LedgerGuard | undefined =
-				admits === undefined ? undefined : () => (admits() ? undefined : "epoch_fenced");
-			const admission = await advance(invoke, guard).catch((error: unknown) => {
+			const admission = await advance(invoke, fencedBy(admits)).catch((error: unknown) => {
 				owned.delete(executionId);
 				throw error;
 			});
@@ -171,8 +172,8 @@ export function createHandLedger(options: HandLedgerOptions): HandLedger {
 				owned.delete(invoke.executionId);
 			}
 		},
-		async ack(executionId) {
-			await apply(executionId, { kind: "ack" }, issuer);
+		async ack(executionId, admits) {
+			await apply(executionId, { kind: "ack" }, issuer, fencedBy(admits));
 		},
 		async recover() {
 			if (recovered !== undefined) return recovered.then(() => []);
