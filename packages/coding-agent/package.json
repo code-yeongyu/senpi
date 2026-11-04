@@ -55,6 +55,10 @@
 		"./engine-trust": {
 			"types": "./dist/engine-trust/index.d.ts",
 			"import": "./dist/engine-trust/index.js"
+		},
+		"./subscription-egress": {
+			"types": "./dist/subscription-egress/index.d.ts",
+			"import": "./dist/subscription-egress/index.js"
 		}
 	},
 	"files": [

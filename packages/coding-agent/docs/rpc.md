@@ -1452,7 +1452,12 @@ parsing a version string:
     "core": { "extensions": [], "multi_session": true, "session_runtime": "in-process" }
   },
   "agentDir": "/home/me/.senpi/agent",
-  "method_classes": { "version": 1, "digest": "71d68465…" }
+  "method_classes": {
+    "version": 1,
+    "digest": "71d68465…",
+    "classes": { "get_state": "observe", "prompt": "dynamic", "...": "..." },
+    "dynamic_versions": { "prompt": 1, "...": 1 }
+  }
 }
 ```
 
@@ -1478,8 +1483,11 @@ parsing a version string:
 - `method_classes` - the inbound method-class table this engine runs: `version` is the class-meaning version
   and `digest` the sha256 (hex) of the table's sorted `type=class\n` lines (`type=dynamic@<n>` for a
   record-dependent entry). A client that classifies records with its own copy of the table uses that copy only
-  while its digest equals this one, and otherwise treats every record as unclassified. Hosts released before
-  the field omit it.
+  while its digest equals this one, and otherwise treats every record as unclassified. `classes` is the whole
+  table as data: each inbound type's class, or `dynamic` when the class depends on the record's fields, with that
+  rule's version in `dynamic_versions` (the rules themselves are never shipped; ask `classify_record`, see
+  "Delegated connections"). Hosts released before the field omit it; hosts released before `classes` send only
+  `version` and `digest`.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
@@ -2546,6 +2554,55 @@ context - inside a provider scope of their own, then drops them.
 
 Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
 error.
+
+### Delegated connections (`declare_delegation`)
+
+A client that forwards records on behalf of someone else (a relay host forwarding a remote viewer) declares it, and
+the host then decides every record on that connection with its own method-class table: the forwarder keeps no
+table. Hosts that do this advertise `delegated_connection_v1`.
+
+```json
+{ "id": "d1", "type": "declare_delegation", "principal": { "deviceId": "laptop-7", "deviceName": "Laptop", "conn": "c1" }, "granted": ["observe", "drive"] }
+{ "id": "d1", "type": "response", "command": "declare_delegation", "success": true, "data": { "granted": ["observe", "drive"], "digest": "71d68465…" } }
+```
+
+- Only a connection that proved the endpoint key (see "Authentication"; on Windows, the socket secret) may declare;
+  any other gets `delegation_unauthenticated`.
+- The first declaration must come before any record other than `get_protocol_info` and `authenticate`, else
+  `delegation_late`.
+- `principal.deviceId` (1-256 characters) is required; `deviceName` (1-256) and `conn` (1-64) are optional.
+  `granted` holds each of `observe`, `drive`, `answer`, `thread`, `device_admin` at most once (anything else is
+  `delegation_malformed`).
+- A declaration on a delegated connection may only narrow it: the same principal and a subset of the current grant,
+  else `delegation_fixed`. It takes effect for the very next line, even one written in the same chunk.
+
+On a delegated connection every record is checked before dispatch:
+
+| Check | Refusal `errorCode` |
+|---|---|
+| Not JSON, not an object, or without a string `type` | `delegation_malformed` |
+| A type the engine does not classify | `delegation_unclassified` |
+| Its class (for a record-dependent type, the class of this record) is not granted | `delegation_not_granted`, `errorData: { class }` |
+| A `connection_local` record without the grant it needs (below) | `delegation_local_only`, `errorData: { class }` |
+
+`connection_local` records act on the delegated connection itself and need no grant, except `subscribe_sessions`
+(`observe`), `record_user_activity` (`drive`), and `release_session`, `warm`, `reclaim_session` and `move_session`,
+which reach the host (`device_admin`). `set_client_info` needs no grant and is not filtered: a viewer declares its own
+roles. A permitted record runs exactly as on any other connection, with the same answer: a record its type's schema
+would refuse is not refused by the delegation check, it gets the same response a local connection gets. A refusal is an ordinary error response
+(`success: false`, `error`, `errorCode`). Secret and grant-select dialogs stay answerable only from the connection
+that raised them, delegated or not.
+
+`classify_record` answers the class of one record without running it, on any connection:
+
+```json
+{ "id": "c1", "type": "classify_record", "record": { "type": "prompt", "message": "/mcp" } }
+{ "id": "c1", "type": "response", "command": "classify_record", "success": true, "data": { "class": "device_admin", "version": 1, "digest": "71d68465…", "static": false, "rule": 1 } }
+```
+
+`class` is `null` for a record the engine does not classify; `static` says whether the class depends only on the
+type (`rule` is then absent), so a client may cache static answers per `digest`. It is never an authorization: the
+host decides again when the record arrives.
 
 ### Prompt surface
 
