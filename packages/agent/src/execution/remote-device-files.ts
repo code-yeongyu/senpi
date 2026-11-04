@@ -9,6 +9,7 @@ import {
 	FILE_CHANNEL,
 	FILE_CHANNEL_MAX_BYTES,
 	fileOutcomeOf,
+	RUN_CHANNEL,
 } from "./device-files.ts";
 import type { HandLink, HandReply } from "./remote-link.ts";
 import type { ExecutionScope } from "./tool-host.ts";
@@ -57,11 +58,16 @@ function valueOf(reply: HandReply): JsonValue {
  * before anything is sent; the hand checks the limit again before it reads or writes.
  */
 export function createRemoteDeviceFiles(link: HandLink, scope: ExecutionScope, mintId: () => string): DeviceFiles {
-	const call = async (op: DeviceFileOp, args: JsonValue, signal: AbortSignal | undefined): Promise<JsonValue> => {
+	const call = async (
+		op: DeviceFileOp,
+		args: JsonValue,
+		signal: AbortSignal | undefined,
+		channel = FILE_CHANNEL,
+	): Promise<JsonValue> => {
 		const hello = await link.hello(HELLO_WAIT_MS, signal);
 		if (signal?.aborted) throw new DeviceFileError("aborted", "the operation was aborted");
-		if (hello === undefined || !hello.ops.includes(FILE_CHANNEL))
-			throw new DeviceFileError("unsupported", "the hand serves no file channel");
+		if (hello === undefined || !hello.ops.includes(channel))
+			throw new DeviceFileError("unsupported", `the hand serves no ${channel} channel`);
 		return valueOf(await link.dispatch({ kind: "file", executionId: mintId(), scope, op, args }, signal));
 	};
 	return {
@@ -90,6 +96,31 @@ export function createRemoteDeviceFiles(link: HandLink, scope: ExecutionScope, m
 		},
 		mkdir: async (path, options) => {
 			await call("mkdir", { path }, options?.signal);
+		},
+		run: async (request, options) => {
+			if (request.stdin !== undefined && request.stdin.byteLength > FILE_CHANNEL_MAX_BYTES)
+				throw new DeviceFileError("too_large", "stdin");
+			const args = {
+				path: request.cwd,
+				exe: request.exe,
+				argv: [...request.argv],
+				env: { ...request.env },
+				...(request.stdin === undefined ? {} : { stdin: encodeBase64(request.stdin) }),
+				...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+				activityLock: request.activityLock === true,
+			};
+			const value = await call("run", args, options?.signal, RUN_CHANNEL);
+			if (typeof value !== "object" || value === null || Array.isArray(value))
+				throw new DeviceFileError("protocol", "malformed run outcome");
+			const { code, signal, stdout, stderr } = value as Record<string, JsonValue>;
+			if (typeof stdout !== "string" || typeof stderr !== "string")
+				throw new DeviceFileError("protocol", "malformed run outcome");
+			return {
+				code: typeof code === "number" ? code : null,
+				signal: typeof signal === "string" ? signal : null,
+				stdout: decodeBase64(stdout),
+				stderr,
+			};
 		},
 	};
 }

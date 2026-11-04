@@ -1,3 +1,21 @@
+## 2026-11-03 - Read a claude CLI account's access token for the usage poll (senpi#5627)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts`: new `readClaudeCliAccessToken(accountDir, now)` reads `claudeAiOauth.accessToken` from the account dir's `.credentials.json`. It `lstat`s the dir and the file and follows no link, the same rule as `removeAccountDir`; it returns undefined for a missing, unreadable, malformed or expired credential and never refreshes or writes.
+
+### Why
+
+- The usage poll needs the claude CLI account's token to read its limits (senpi#5627); the account dir module owns where that token lives.
+
+### Why an extension could not handle it
+
+- The account dir layout and its credential file are internal to this provider extension.
+
+### Expected merge conflict zones
+
+- LOW: the new function between `accountDirFor` and `claudeCliSharedRoot`, and the `node:fs/promises` import line.
+
 ## 2026-10-30 - Honor Claude account strategy (senpi#5068)
 
 ### What changed

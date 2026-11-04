@@ -285,3 +285,42 @@ describe("a device file operation's tool_call handlers (S29 with S40)", () => {
 		expect(new TextDecoder().decode(read)).toBe("from the device");
 	});
 });
+
+/** Two-sided: a device run (checked as `bash`) is allowed only once a turn started, which only the loop's copy has seen. */
+const turnGatedRuns: ExtensionFactory = (pi) => {
+	let turnStarted = false;
+	pi.on("before_agent_start", () => {
+		turnStarted = true;
+	});
+	pi.on("tool_call", (event) =>
+		event.toolName === "bash" && !turnStarted
+			? { block: true, reason: "no turn has started on this copy" }
+			: undefined,
+	);
+};
+
+describe("a device run operation's tool_call handlers (S29 with the run op)", () => {
+	it("forwards a two-sided extension's handler to the loop's copy, as for a tool call", async () => {
+		const harness = await createHarness({ extensionFactories: [turnGatedRuns] });
+		harnesses.push(harness);
+		const dirs = await handDirs("s29-run");
+		const link = openLink();
+		startHand(link, dirs, [turnGatedRuns]);
+		const host = createRemoteToolHost({
+			transport: link.brain,
+			placement: "split-local",
+			planes: { [EXTENSION_EVENTS_PLANE]: serveExtensionEvents(harness.getExtensionRunner()) },
+			filePlanes: [EXTENSION_EVENTS_PLANE],
+		});
+		harness.agent.toolHost = host;
+		harness.setResponses([fauxAssistantMessage("done")]);
+		await harness.session.prompt("go");
+		const root = realpathSync(dirs.cwd);
+
+		const ran = await host
+			.deviceFiles({ id: "s29-run-scope", root })
+			.run({ exe: "git", argv: ["status", "--porcelain"], cwd: root, env: {} });
+
+		expect(typeof ran.code).toBe("number");
+	});
+});
