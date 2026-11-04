@@ -1,3 +1,60 @@
+## 2026-10-30 - SIWC uses an available IPv4 loopback callback port (senpi#5003 W4)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: bind `127.0.0.1:1455` first, then an OS-assigned port on `EADDRINUSE`. Carry the bound redirect URI through authorization, token exchange and pasted-URL validation, preserving `closeAllConnections()` cleanup.
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: accept an optional preferred callback port on SIWC login, defaulting to 1455. Tests supply OS-assigned ports and hold their own busy listeners instead of depending on the production port.
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: deliberately drop the upstream `PI_OAUTH_CALLBACK_HOST` override for SIWC; the callback host is always `127.0.0.1`, as OpenAI's loopback rule requires. Do not restore the override in an upstream sync.
+
+### Why
+
+OpenAI permits the loopback port to vary but requires the authorization and code exchange redirect URIs to match exactly. A busy preferred port must not send a new login to another process's callback listener.
+
+### Why an extension could not handle it
+
+The bundled OAuth flow owns the listener, authorization URL, token exchange and manual callback parser before an extension can intervene.
+
+### Expected merge conflict zones
+
+- MEDIUM: callback binding, redirect URI validation and authorization-code exchange in `packages/ai/src/auth/oauth/openai-chatgpt.ts`.
+- MEDIUM: upstream's `getProviderEnvValue("PI_OAUTH_CALLBACK_HOST") || "127.0.0.1"` callback-host line; keep the fixed `127.0.0.1` here.
+
+## 2026-10-27 - The ChatGPT authorize hint names the host product, not "Pi" (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: `agent_name_hint` on the first-time `dynamic_agent_client` authorize URL is the caller's `appName`, else the brand the host set with `setOAuthPageBrand` (`configuredOAuthBrandName()`), else the wire identity (`senpi` by default). Main's SIWC change already replaced the old `AGENT_NAME_HINT = "Pi"` with `appName ?? getWireIdentity()`; this PR adds the host-brand step between the two. The flow stays vendored and unregistered in the fork.
+
+### Why
+
+- OpenAI shows `agent_name_hint` on its consent screen; branded hosts must not show "Pi" (#4432). OpenAI documents it as editable display metadata, not identity, and it is not tied to the issued client ID, so a host name is safe.
+
+### Why an extension could not handle it
+
+- The value is built inside the bundled login flow; no hook reaches the authorize URL.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `agent_name_hint` line in `loginOpenAIChatGPT`; the fork's chain is `options?.appName ?? configuredOAuthBrandName() ?? getWireIdentity()`, upstream passes `options?.agentName ?? AGENT_NAME_HINT`.
+
+## 2026-10-30 - SIWC host and app identity (senpi#5014, part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: use the configured product name for initial registration, with the standalone wire identity as the default, and require UUIDv4 host IDs.
+
+### Why
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OpenAI requires a stable UUIDv4 host identifier and the app's actual name rather than upstream's hard-coded name.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: the bundled OAuth flow owns the authorization parameters.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: authorization URL construction and host ID validation.
+
 ## 2026-10-30 - Implement SIWC renewable-session revocation (part of #5003)
 
 ### What changed

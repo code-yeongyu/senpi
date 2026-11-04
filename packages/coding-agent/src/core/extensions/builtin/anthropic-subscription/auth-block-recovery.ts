@@ -54,6 +54,7 @@ function probedSlot(stored: ClaudeCliAccountSlot, state: ClaudeCliAuthStatus["st
 			blockedUntil: _until,
 			blockedAt: _at,
 			signInRequired: _sign,
+			authVerdict: _verdict,
 			...unblocked
 		} = stored;
 		return unblocked;
@@ -64,6 +65,8 @@ function probedSlot(stored: ClaudeCliAccountSlot, state: ClaudeCliAuthStatus["st
 		blockReason: "auth_error",
 		blockedUntil: now + AUTH_BLOCK_REPROBE_MS,
 		blockedAt: now,
+		// The verdict names the sign-in it is about, so a block another engine writes is told apart (senpi#5623).
+		authVerdict: { dirId: stored.dirId, at: now },
 	};
 }
 
