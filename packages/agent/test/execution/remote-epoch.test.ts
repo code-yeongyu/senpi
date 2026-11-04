@@ -124,7 +124,7 @@ describe("remote ToolHost after a hand restart", () => {
 		);
 		await settle();
 		await from("s", { kind: "floor_ack", floor: 2 });
-		await from("hand.control", { kind: "hello", instance: "restarted" });
+		await from("hand.control", { kind: "hello", instance: "restarted", durable: true, ops: [] });
 		const beforeAck = [...frames];
 		await from("s", { kind: "floor_ack", floor: 2 });
 		expect([beforeAck, frames]).toEqual([

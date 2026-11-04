@@ -1,5 +1,6 @@
 import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
 import type { AgentToolResult } from "../types.ts";
+import { DEVICE_FILE_OPS, type DeviceFileOp } from "./device-files.ts";
 import type { ExecutionScope } from "./tool-host.ts";
 
 /**
@@ -19,19 +20,39 @@ export type RemoteHandMessage =
 	| RemoteHello
 	| RemoteFloor
 	| RemoteFloorAck
-	| RemoteFloorRefused;
+	| RemoteFloorRefused
+	| RemoteFile;
 
 /** The lane a hand announces itself on; execution scope lanes carry everything else. */
 export const HAND_CONTROL_LANE = "hand.control";
 
 /**
- * A hand with a durable record announces itself when it (re)starts, after re-sending the outcomes the session has not
- * acknowledged. The session then re-sends every call still waiting: the record answers a call it already holds, and
- * runs only a call whose admission never became durable (nothing of it ran).
+ * Every hand announces itself once per process start (after re-sending the outcomes its durable record holds that the
+ * session has not acknowledged). Only a `durable` hand gets the calls still waiting re-sent: its record answers a call
+ * it already holds and runs only a call whose admission never became durable; a hand without a record would run them
+ * again or refuse them as duplicates. `ops` names the channels it serves beside tool calls (`file/1`, S40). An older
+ * hand sends neither field and announces itself only with a record, so it reads as durable with no channels.
  */
 export interface RemoteHello {
 	readonly kind: "hello";
 	readonly instance: string;
+	readonly durable: boolean;
+	readonly ops: readonly string[];
+}
+
+/**
+ * One device file operation (S40), a message kind of its own: the tool host never sends it, and an `invoke` named like
+ * an operation is an unknown tool. It shares the invoke's admission (lane, grant, scope binding, execution ID) and is
+ * answered like a call (`settled` with the outcome in `details.file`, `refused`, `terminal`).
+ */
+export interface RemoteFile {
+	readonly kind: "file";
+	readonly executionId: string;
+	/** The sender's owner epoch, as on an invoke: a file operation is fenced by the same floor (S35). */
+	readonly epoch?: number;
+	readonly scope: ExecutionScope;
+	readonly op: DeviceFileOp;
+	readonly args: JsonValue;
 }
 
 /**
@@ -181,8 +202,12 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 		throw new RemoteProtocolError("payload is not JSON");
 	}
 	if (isRecord(value) && value.kind === "hello") {
-		if (!isString(value.instance)) throw new RemoteProtocolError("malformed hello");
-		return { kind: "hello", instance: value.instance };
+		const { instance, durable, ops } = value;
+		if (!isString(instance)) throw new RemoteProtocolError("malformed hello");
+		if (durable !== undefined && typeof durable !== "boolean") throw new RemoteProtocolError("malformed hello");
+		if (ops !== undefined && (!Array.isArray(ops) || !ops.every(isString)))
+			throw new RemoteProtocolError("malformed hello");
+		return { kind: "hello", instance, durable: durable ?? true, ops: ops ?? [] };
 	}
 	const floor = isRecord(value) ? decodeFloorMessage(value) : undefined;
 	if (floor !== undefined) return floor;
@@ -205,6 +230,18 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 			)
 				throw new RemoteProtocolError("malformed invoke");
 			return value as unknown as RemoteInvoke;
+		}
+		case "file": {
+			const scope = value.scope;
+			if (
+				!isRecord(scope) ||
+				!isString(scope.id) ||
+				typeof scope.root !== "string" ||
+				!DEVICE_FILE_OPS.includes(value.op as DeviceFileOp) ||
+				!isRecord(value.args)
+			)
+				throw new RemoteProtocolError("malformed file operation");
+			return value as unknown as RemoteFile;
 		}
 		case "abort":
 			return value as unknown as RemoteAbort;

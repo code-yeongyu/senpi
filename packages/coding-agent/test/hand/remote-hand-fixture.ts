@@ -109,6 +109,7 @@ export function startHandOn(
 ): RemoteExecutor {
 	const executor = createRemoteExecutor({
 		authority: { kind: "self" },
+		fileChannel: true,
 		transport: link.hand,
 		openScope,
 		...(fence === undefined ? {} : { fence }),

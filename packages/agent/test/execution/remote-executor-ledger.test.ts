@@ -126,7 +126,10 @@ describe("remote executor with a durable record", () => {
 		await hand.deliver(invoke({ id: 1 }));
 		await hand.sentCount(3);
 		const refusal = { kind: "refused", executionId: "e1", reason: "foreign_outcome" };
-		expect([ran, hand.sent]).toEqual([[], [refusal, { kind: "hello", instance: expect.any(String) }, refusal]]);
+		expect([ran, hand.sent]).toEqual([
+			[],
+			[refusal, { kind: "hello", instance: expect.any(String), durable: true, ops: [] }, refusal],
+		]);
 	});
 
 	// senpi#5729: a moved session reaches the live hand over a second link; that link's executor must not run the
