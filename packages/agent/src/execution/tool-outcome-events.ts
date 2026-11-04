@@ -1,12 +1,10 @@
+// The events and messages one finished tool call produces, shared by the agent loop's own scheduler and every ToolHost
+// that keeps the loop's side of a batch (the prepared pipeline, S18b), so both emit exactly the same shapes.
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentToolCall, AgentToolCallOutcome, AgentToolResult } from "../types.ts";
 
 type EventSink = (event: AgentEvent) => Promise<void> | void;
 
-/**
- * The events and messages one finished tool call produces, shared by the agent loop's own scheduler and every ToolHost
- * that keeps the loop's side of a batch (the prepared pipeline, S18b), so both emit exactly the same shapes.
- */
 export function createErrorToolResult(message: string): AgentToolResult<unknown> {
 	return {
 		content: [{ type: "text", text: message }],

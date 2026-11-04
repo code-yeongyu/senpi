@@ -1,3 +1,60 @@
+## 2026-11-03 - Read a claude CLI account's access token for the usage poll (senpi#5627)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts`: new `readClaudeCliAccessToken(accountDir, now)` reads `claudeAiOauth.accessToken` from the account dir's `.credentials.json`. It `lstat`s the dir and the file and follows no link, the same rule as `removeAccountDir`; it returns undefined for a missing, unreadable, malformed or expired credential and never refreshes or writes.
+
+### Why
+
+- The usage poll needs the claude CLI account's token to read its limits (senpi#5627); the account dir module owns where that token lives.
+
+### Why an extension could not handle it
+
+- The account dir layout and its credential file are internal to this provider extension.
+
+### Expected merge conflict zones
+
+- LOW: the new function between `accountDirFor` and `claudeCliSharedRoot`, and the `node:fs/promises` import line.
+
+## 2026-10-30 - Honor Claude account strategy (senpi#5068)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/settings.ts`: load and validate `anthropicSubscriptionProvider.accountStrategy` with project-over-global precedence.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: use shared strategy ordering and remember round-robin choices, preserving pins, resident preference, disabled fallback, and headroom selection.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: forward the configured strategy into request selection.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`: show the strategy's account choice in account listings.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts` owns account selection independently of the generic pool, so it must honor the same distribution choices.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts` is already the builtin provider's selection owner.
+
+### Expected merge conflict zones
+
+- LOW: selection branches in `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`, provider settings parsing, and selector options in the auth lane and account command.
+
+## 2026-10-30 - Apply headroom preference to Claude accounts (senpi#5053)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: use the shared preference after excluding blocked accounts, preserving pins and resident-account affinity.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts` ignored the reported allowance when selecting the next account.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts` is the builtin provider's account-selection owner.
+
+### Expected merge conflict zones
+
+- LOW: imports and the return path of `selectUnblocked` in `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`.
+
 ## 2026-11-03 - A login Claude Code cannot read no longer blocks the account for every session (senpi#5630)
 
 ### What changed

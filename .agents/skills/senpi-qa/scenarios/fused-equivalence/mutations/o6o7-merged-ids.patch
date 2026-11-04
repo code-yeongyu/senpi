@@ -1,9 +1,9 @@
-diff --git a/packages/agent/src/agent-loop.ts b/packages/agent/src/agent-loop.ts
-index b046ab34f5..e3002bed0b 100644
---- a/packages/agent/src/agent-loop.ts
-+++ b/packages/agent/src/agent-loop.ts
-@@ -1687,7 +1687,8 @@ async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: A
- function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResultMessage {
+diff --git a/packages/agent/src/execution/tool-outcome-events.ts b/packages/agent/src/execution/tool-outcome-events.ts
+index 74c228e606..c7ef0ecb2d 100644
+--- a/packages/agent/src/execution/tool-outcome-events.ts
++++ b/packages/agent/src/execution/tool-outcome-events.ts
+@@ -41,7 +41,8 @@ export async function emitToolExecutionEnd(finalized: AgentToolCallOutcome, emit
+ export function createToolResultMessage(finalized: AgentToolCallOutcome): ToolResultMessage {
  	return {
  		role: "toolResult",
 -		toolCallId: finalized.toolCall.id,
