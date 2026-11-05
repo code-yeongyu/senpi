@@ -55,17 +55,8 @@ async function switchToWal(db: Database): Promise<void> {
 	}
 }
 
-/**
- * Opens (creating when absent) a store file. WAL with `synchronous=FULL`: a transaction is on disk when COMMIT returns,
- * and a process killed at any point recovers to the last committed transaction on the next open.
- */
-export async function openStoreFile(
-	path: string,
-): Promise<{ readonly db: Database; readonly statements: StoreStatements }> {
-	// Loaded only here, at run time: a static import would be hoisted into any bundle that inlines this module
-	// (the Node session worker), and Node cannot load a Bun built-in.
-	const { Database } = await import("bun:sqlite");
-	const db = new Database(path, { create: true });
+/** WAL with `synchronous=FULL` and the current schema. */
+async function prepare(db: Database): Promise<void> {
 	db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 	if (db.query<{ readonly journal_mode: string }>("PRAGMA journal_mode").get()?.journal_mode !== "wal")
 		await switchToWal(db);
@@ -85,6 +76,26 @@ export async function openStoreFile(
 		db.exec("CREATE TABLE IF NOT EXISTS store_documents (key TEXT PRIMARY KEY, data TEXT NOT NULL)");
 		db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 	}).immediate();
+}
+
+/**
+ * Opens (creating when absent) a store file. WAL with `synchronous=FULL`: a transaction is on disk when COMMIT returns,
+ * and a process killed at any point recovers to the last committed transaction on the next open. A failed open closes
+ * the connection it made.
+ */
+export async function openStoreFile(
+	path: string,
+): Promise<{ readonly db: Database; readonly statements: StoreStatements }> {
+	// Loaded only here, at run time: a static import would be hoisted into any bundle that inlines this module
+	// (the Node session worker), and Node cannot load a Bun built-in.
+	const { Database } = await import("bun:sqlite");
+	const db = new Database(path, { create: true });
+	try {
+		await prepare(db);
+	} catch (error) {
+		db.close();
+		throw error;
+	}
 
 	const statements: StoreStatements = {
 		epoch: db.query("SELECT epoch FROM store_meta WHERE singleton = 1"),
