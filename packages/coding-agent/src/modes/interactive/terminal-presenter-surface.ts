@@ -59,7 +59,7 @@ function presents(capabilities: readonly string[]): boolean {
 	return capabilities.includes("interactive_user") && capabilities.includes("mcp_form_presenter_v1");
 }
 
-export function writePrivate(transport: SessionEventWriterConnection, record: object): boolean {
+function writePrivate(transport: SessionEventWriterConnection, record: object): boolean {
 	try {
 		transport.writeRaw(serializeJsonLine(record));
 		return true;
