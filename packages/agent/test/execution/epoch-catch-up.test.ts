@@ -2,6 +2,8 @@
 // name the epoch the owner's claim recorded; that owner raises straight to it, a stale copy of the record is read again
 // once before a raise ahead of it is refused, and every earlier owner stays fenced.
 import { describe, expect, it } from "vitest";
+import { createAdmissionLine } from "../../src/durable/store-admission.ts";
+import { createMemoryStoreMedium, openMemoryStore } from "../../src/durable/store-memory.ts";
 import { createHandEpochFence, type ScopeOwner } from "../../src/execution/remote-epoch.ts";
 import { createEpochGate } from "../../src/execution/remote-epoch-gate.ts";
 
@@ -70,6 +72,54 @@ describe("epoch catch-up to the owner's recorded epoch (senpi#5860)", () => {
 			{ kind: "acked", floor: 2 },
 			{ kind: "acked", floor: 2 },
 		]);
+		expect(reads).toBe(1);
+	});
+
+	it("with no floor yet, an earlier instance of the record's owner opens it at the recorded epoch and is superseded", async () => {
+		const fence = createHandEpochFence({ ownerOf: () => ({ principal: "p", epoch: 2 }) });
+
+		expect(await fence.raise("s", 1, "p")).toEqual({ kind: "acked", floor: 2 });
+		expect(fence.admits("s", 1, "p")).toBe(false);
+		const gate = createEpochGate(1, async () => {});
+		const verdict = gate.open("s");
+		gate.answer("s", { kind: "floor_ack", floor: 2 });
+		expect(await verdict).toBe("epoch_superseded");
+		expect(await fence.raise("s", 2, "p")).toEqual({ kind: "acked", floor: 2 });
+	});
+
+	it("a durable fence reads the record outside the ledger's admission line, once for concurrent raises", async () => {
+		const store = openMemoryStore(createMemoryStoreMedium());
+		await store.claim(0, 1);
+		const admission = createAdmissionLine();
+		let reads = 0;
+		const reply = Promise.withResolvers<ScopeOwner>();
+		const fence = createHandEpochFence({
+			ownerOf: () => ({ principal: "a", epoch: 1 }),
+			refreshOwner: async () => {
+				reads += 1;
+				return reply.promise;
+			},
+			durable: { store, epoch: 1, admission },
+		});
+		const first = fence.raise("s", 2, "b");
+		const second = fence.raise("s", 2, "b");
+		for (let turn = 0; turn < 64 && reads === 0; turn++) await Promise.resolve();
+		let stepRan = false;
+		const step = admission.admit(async () => {
+			stepRan = true;
+		});
+		for (let turn = 0; turn < 64 && !stepRan; turn++) await Promise.resolve();
+
+		expect(reads).toBe(1);
+		expect(stepRan).toBe(true);
+		reply.resolve({ principal: "b", epoch: 2 });
+		await step;
+		expect(await Promise.all([first, second])).toEqual([
+			{ kind: "acked", floor: 2 },
+			{ kind: "acked", floor: 2 },
+		]);
+		expect(reads).toBe(1);
+		expect(await fence.raise("s", 2, "b")).toEqual({ kind: "acked", floor: 2 });
 		expect(reads).toBe(1);
 	});
 
