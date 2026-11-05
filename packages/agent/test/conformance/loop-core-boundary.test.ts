@@ -99,6 +99,8 @@ describe("the loop-core module boundary", () => {
 		['export * from "./harness/env/nodejs.ts";', "./harness/env/nodejs.ts"],
 		['import "./durable/wake-host-bun-timer.ts";', "./durable/wake-host-bun-timer.ts"],
 		['import "./durable/store-memory.ts";', "./durable/store-memory.ts"],
+		// senpi#5728: the per-batch in-memory default is the package entry's, never the loop core's.
+		['import "./execution/prepared/memory-batch-store.ts";', "./execution/prepared/memory-batch-store.ts"],
 		['import "./transport/local-endpoint.ts";', "./transport/local-endpoint.ts"],
 		['import "./unlisted-helper.ts";', "./unlisted-helper.ts"],
 		['import "@earendil-works/pi-agent-core/node";', "@earendil-works/pi-agent-core/node"],
