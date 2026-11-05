@@ -1,10 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import lockfile from "proper-lockfile";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { anchoredKeyFactsReader } from "../../src/core/egress/key-facts-client.ts";
 import {
 	acceptedRevocations,
@@ -16,6 +17,7 @@ import {
 	type VerifierRevocation,
 	verifierRevocationsPath,
 } from "../../src/core/egress/verifier-revocations.ts";
+import { FileLockLostError } from "../../src/core/file-lock.ts";
 import { canonical, signedEnvelope, type Verifier, verifierKey } from "./signed-entry.ts";
 
 const VERIFIER_NOW = 90_000_000;
@@ -31,6 +33,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	rmSync(root, { recursive: true, force: true });
 });
 
@@ -87,6 +90,22 @@ describe("verifier revocation store", () => {
 		expect(await readVerifierRevocations(path)).toEqual({ state: "unknown" });
 		expect(await recordVerifierRevocations(path, [{ keyId: "v1" }])).toBe(false);
 		expect(readFileSync(path, "utf8")).toBe("{");
+	});
+
+	it("writes nothing more once its lock is lost: no temp file, the stored revocations unchanged, a typed error", async () => {
+		expect(await recordVerifierRevocations(path, [{ keyId: "v1" }])).toBe(true);
+		const before = readFileSync(path, "utf8");
+		const realLock = lockfile.lock;
+		vi.spyOn(lockfile, "lock").mockImplementation(async (file, options) => {
+			const release = await realLock(file, options);
+			await release();
+			options?.onCompromised?.(Object.assign(new Error("lock reclaimed"), { code: "ECOMPROMISED" }));
+			return async () => {};
+		});
+
+		await expect(recordVerifierRevocations(path, [{ keyId: "v2" }])).rejects.toBeInstanceOf(FileLockLostError);
+		expect(readFileSync(path, "utf8")).toBe(before);
+		expect(readdirSync(dirname(path)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 	});
 });
 
