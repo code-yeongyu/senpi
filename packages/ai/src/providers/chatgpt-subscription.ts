@@ -35,6 +35,11 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 				...legacy,
 				loginLabel: "Continue with ChatGPT",
 				login: async (interaction, options) => {
+					if (options?.reauthorize) {
+						return options.reauthorize.route === "siwc"
+							? { ...(await siwc.login(interaction, options)), route: "siwc" }
+							: legacy.login(interaction, options);
+					}
 					const route = await interaction.prompt({
 						type: "select",
 						message: "Sign in to ChatGPT Subscription:",
@@ -51,6 +56,12 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 					credential.route === "siwc"
 						? { ...credential, ...(await siwc.refresh(credential, signal)), route: "siwc" }
 						: legacy.refresh(credential, signal),
+				revoke: async (credential, options) => {
+					const flow = await (credential.route === "siwc"
+						? loadOpenAIChatGPTOAuth()
+						: loadChatGptSubscriptionOAuth());
+					return flow.revoke?.(credential, options) ?? { status: "remote_revocation_unconfirmed" };
+				},
 				toAuth: async (credential) =>
 					credential.route === "siwc"
 						? {

@@ -91,6 +91,11 @@ export interface RpcProviderAccount {
 	check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
 	/** `needs_sign_in`: the account must sign in again before it is used. */
 	signIn?: "signed_in" | "needs_sign_in";
+	/** Actual session-local selection, not a prediction from account order or pin. */
+	active?: boolean;
+	/** SIWC usage pause; the internal probe cooldown is not a reset time. */
+	paused?: true;
+	usageUrl?: string;
 }
 
 // ============================================================================

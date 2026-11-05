@@ -9392,7 +9392,7 @@ export class InteractiveMode {
 					}
 
 					try {
-						const { notices } = await this.session.modelRuntime.logoutProvider(providerOption.id, {
+						const { notices, revocation } = await this.session.modelRuntime.logoutProvider(providerOption.id, {
 							signal: AbortSignal.timeout(15_000),
 						});
 						this.updateAvailableProviderCount();
@@ -9400,7 +9400,11 @@ export class InteractiveMode {
 							providerOption.authType === "oauth"
 								? `Logged out of ${providerOption.name}`
 								: `Removed stored API key for ${providerOption.name}. Environment variables and models.json config are unchanged.`;
-						this.showStatus([message, ...notices].join(" "));
+						const revocationNotice =
+							revocation?.status === "remote_revocation_unconfirmed"
+								? ["Remote revocation was not confirmed; disconnect the app in ChatGPT Settings."]
+								: [];
+						this.showStatus([message, ...notices, ...revocationNotice].join(" "));
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : String(error);
 						this.showError(
