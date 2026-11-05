@@ -102,7 +102,11 @@ const staleSessionIdOf = (mark: StoreValue | undefined): string | undefined =>
 	isRecord(mark) && typeof mark.sessionId === "string" ? mark.sessionId : undefined;
 
 /** A provided ProjectionFiles is called as a method, so a class implementing it keeps its `this`; its identity is unknown. */
-async function replaceWith(files: ProjectionFiles | undefined, path: string, contents: string): Promise<FileIdentity | undefined> {
+async function replaceWith(
+	files: ProjectionFiles | undefined,
+	path: string,
+	contents: string,
+): Promise<FileIdentity | undefined> {
 	if (files === undefined) return replaceAtomically(path, contents);
 	await files.replace(path, contents);
 	return undefined;

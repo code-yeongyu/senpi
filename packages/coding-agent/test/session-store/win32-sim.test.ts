@@ -3,7 +3,11 @@
 import { chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { createMemoryStoreMedium, type MemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
+import {
+	createMemoryStoreMedium,
+	type MemoryStoreMedium,
+	openMemoryStore,
+} from "../../../agent/src/durable/store-memory.ts";
 import { type Win32OpenFileErrorCode, Win32SimFs } from "../../../agent/src/testing/win32-sim.ts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { makeTempDir } from "../../../../scripts/vitest-temp.ts";
