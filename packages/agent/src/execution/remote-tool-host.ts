@@ -1,6 +1,7 @@
 import { TOOL_RESULT_PLACEHOLDER, type ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Transport } from "../transport/transport.ts";
 import type { AgentToolCall } from "../types.ts";
+import { canonicalJson } from "./canonical-digest.ts";
 import type { DeviceFiles } from "./device-files.ts";
 import { createRemoteDeviceFiles } from "./remote-device-files.ts";
 import type { PlaneHandler } from "./plane.ts";
@@ -15,6 +16,14 @@ import type { ExecutionScope, ToolHost, ToolHostCall, ToolHostOptions, ToolHostR
  * - `cross-machine`: the endpoint contract. The call is reported as uncertain, never run again.
  */
 export type HandPlacement = "split-local" | "cross-machine";
+
+/**
+ * A call's execution id from durable turn state (senpi#5867): the canonical JSON of (session scope, turn, tool call id): the same for every brain that dispatches this call of this
+ * turn in this session, so a resumed or moved brain reaches the hand's record of it instead of running it again.
+ */
+export function remoteExecutionId(scope: ExecutionScope, turn: string, toolCallId: string): string {
+	return canonicalJson({ scope: scope.id, turn, toolCallId });
+}
 
 export interface RemoteToolHostOptions {
 	/** The session's end of the link to the hand; lanes are execution scope IDs. */
@@ -103,9 +112,10 @@ export function createRemoteToolHost(
 		async execute(call: ToolHostCall, hostOptions: ToolHostOptions): Promise<ToolHostResult> {
 			const { emit, signal } = hostOptions;
 			const batchId = mintId();
+			const { turn } = call;
 			const invokeOf = (raw: AgentToolCall, index: number): RemoteInvoke => ({
 				kind: "invoke",
-				executionId: mintId(),
+				executionId: turn === undefined ? mintId() : remoteExecutionId(call.scope, turn, raw.id),
 				batchId,
 				index,
 				scope: call.scope,

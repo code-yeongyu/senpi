@@ -1216,6 +1216,7 @@ async function executeToolCalls(
 			scope: config.executionScope ?? { id: crypto.randomUUID(), root: "" },
 			calls: toolCalls,
 			mode: config.toolExecution ?? "parallel",
+			turn: `${assistantMessage.timestamp}:${assistantMessage.responseId ?? ""}`,
 		},
 		{
 			signal,
