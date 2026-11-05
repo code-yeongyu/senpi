@@ -44,7 +44,16 @@ export class RouterContext {
 
 	readonly registry: Pick<
 		RpcSessionRegistry,
-		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
+		| "openSession"
+		| "peek"
+		| "getForCommand"
+		| "beginClose"
+		| "close"
+		| "closeMarked"
+		| "list"
+		| "size"
+		| "warm"
+		| "closeGraceMs"
 	> &
 		Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>;
 
@@ -115,7 +124,16 @@ export class RouterContext {
 	constructor(
 		registry: Pick<
 			RpcSessionRegistry,
-			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
+			| "openSession"
+			| "peek"
+			| "getForCommand"
+			| "beginClose"
+			| "close"
+			| "closeMarked"
+			| "list"
+			| "size"
+			| "warm"
+			| "closeGraceMs"
 		> &
 			Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>,
 		writer: SessionEventWriter,

@@ -393,6 +393,8 @@ model context or history.
 
 `get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
 
+ChatGPT Subscription OAuth accounts also report `route: "siwc" | "legacy"`, optional `planUsageEnabled`, and `signedOut: true` when the registration is retained without session tokens. These are the same fields `/gpt-account` renders. An explicit `planUsageEnabled: false` means "plan usage not enabled: enable it or use an API key"; an absent flag is not an assertion that permission is enabled. Link usage and limit information to [ChatGPT Settings > Usage](https://chatgpt.com/settings/usage). The shared provider login prompt offers **Continue with ChatGPT** first and keeps **Legacy sign-in (existing users)** available.
+
 `logout` deletes the provider's stored credential. For Anthropic Subscription it first signs every Claude CLI account out of the Claude CLI by its config dir (the same removal as `account_remove`), and its `data` is absent unless one could not be signed out cleanly, in which case it is `{ "notices": string[] }`, one user-facing sentence per account, as for `account_remove`.
 
 `account_remove` answers `success: true` once the account is gone. Its `data` is absent unless something could not be cleaned up, in which case it is `{ "notice": string }`, a user-facing sentence a client should show: a Claude CLI account whose `claude auth logout` could not run or failed (the account and its config dir are removed anyway, but the CLI's stored sign-in may remain), or whose stored account dir is missing, malformed, or a link or file (removed without a sign-out, and a link or file is left untouched).
@@ -6682,7 +6684,15 @@ context. These identifiers confer no authority.
 
 An embedding distribution may inject a `PresenterAccountAuthority` at host start
 (`presenterAccountAuthority` in the host options); no RPC command, argument,
-environment variable, settings file, or session state can supply one. An enforced host
+environment variable, settings file, or session state can supply one. The CLI's
+only way in is code the distribution runs before the CLI loads: it calls
+`registerPresenterAccountAuthority(authority)` from the side-effect-free
+`@code-yeongyu/senpi/presenter-authority` entry, then imports the CLI. `main()`
+takes the registration as its first statement and seals it, so a second
+registration throws `presenter_authority_already_registered` and any later one
+(an extension, a session, a later import) throws `presenter_authority_sealed`. A
+process the CLI or a host supervisor starts on senpi's own entry has no
+registration and behaves as a host without an authority. An enforced host
 with such an authority has the management endpoint even without the descriptor-4
 bootstrap. A caller discovers it only by asking explicitly:
 `{"type":"mcp_presenter_context","sessionId":"...","discover":true}`. The reply's

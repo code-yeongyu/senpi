@@ -1115,8 +1115,6 @@
       "packages/coding-agent/src/modes/rpc/host-handover-wire.ts": ["handoverWire"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_SESSION_IDLE_EVICTION_MS_ENV, RPC_HOST_EMPTY_EXIT_MS_ENV, DEFAULT_SESSION_IDLE_EVICTION_MS, DEFAULT_HOST_EMPTY_EXIT_MS
       "packages/coding-agent/src/modes/rpc/host-idle-policy.ts": ["DEFAULT_HOST_EMPTY_EXIT_MS", "DEFAULT_SESSION_IDLE_EVICTION_MS", "RPC_HOST_EMPTY_EXIT_MS_ENV", "RPC_SESSION_IDLE_EVICTION_MS_ENV"],
-      // pre-existing at origin main aceb1cc1d9: unused exports OWNER_EXIT_GRACE_MS
-      "packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts": ["OWNER_EXIT_GRACE_MS"],
       // pre-existing at origin main aceb1cc1d9: parseColdStart: declared here, reported because the host-lifecycle.ts entry re-exports it and nothing imports it (newly export-checked; the file stays checked)
       "packages/coding-agent/src/modes/rpc/host-lifecycle-policy.ts": ["parseColdStart"],
       // pre-existing at origin main aceb1cc1d9: unused exports CHILD_STOP_TIMEOUT_MS, childExited, waitForChildExit

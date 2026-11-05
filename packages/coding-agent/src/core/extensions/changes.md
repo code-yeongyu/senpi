@@ -1,3 +1,66 @@
+## 2026-11-04 - before_agent_start on a runner without a session; loop-hook call facts (S33, senpi#5741)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` defines `ctx.getSystemPrompt` instead of assigning it. On a runner without a session the copied member is a getter-only loop-side member, so every extension's `before_agent_start` threw there.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindSessionlessFacts` takes an optional `loopHookCall` source. While a loop-hook call is in progress on a hand, a context of a runner without a session gets that call's read-only `sessionManager` (the loop session's id only), its abort `signal`, the loop's idle state (`isIdle`), and `ctx.ui.notify` goes to the call (`LoopHookCallFacts.notify`); `pi.sendMessage` from work a call started goes to that call's sender (`loopHookSend`), also after the call ended. Each is carried back to the loop. Outside any call these stay unbound. Exports `LoopHookCallFacts`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` (option `only`) and `emitInput` (trailing `only`) can dispatch to a subset of extensions.
+
+### Why
+
+Brain/hand split S33 (C8, K5): a hand runs the user's loop hooks for a loop that runs elsewhere, on its own runner without a session.
+
+### Why an extension could not handle it
+
+The handler context and the event dispatch are the runner's.
+
+### Expected merge conflict zones
+
+`runner.ts`: the `getSystemPrompt` lines in `emitBeforeAgentStart`, its options type and dispatch head; `emitInput`'s parameter list and dispatch head; `bindSessionlessFacts`; the end of `createContext`.
+
+## 2026-11-04 - Presentation port for a hand's extension UI (S30, senpi#5740)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/ui-presentation.ts` is new: the presentation methods, the hand's per-call port (`openPresentationPort`), the loop's `ui-presentation` plane handler (`servePresentation`, fail-closed), the hand's `PresentationBroker`, and `isPresentationOnly`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `hasUI()` is false while the UI is presentation-only, so a port never makes an extension ask a dialog the hand cannot answer.
+
+### Why
+
+Brain/hand split S30 (F12, F39): UI produced on the hand must reach the client the user is looking at, as it does in one process.
+
+### Why an extension could not handle it
+
+The UI an extension's `ctx.ui` resolves to, and `hasUI`, are the runner's.
+
+### Expected merge conflict zones
+
+`runner.ts` `hasUI()` and its import block.
+
+## 2026-11-03 - Two-sided extension event forwarding (senpi#5664)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/two-sided-forwarding.ts` is new. It holds:
+  - the two-sided classification (builtins excluded): an undeclared registration of any `loop` or `split` event, read from the placement table, plus an undeclared `tool_call`/`tool_result`;
+  - `toolEventHandlers()`, which forwards each undeclared tool handler by its ordinal and keeps declared handlers local in order;
+  - the hand's forwarder;
+  - the loop's `extension-events` plane handler, which runs exactly one undeclared handler and is fail-closed.
+- `packages/coding-agent/src/core/extensions/event-placement.ts` is new: `EXTENSION_EVENT_PLACEMENT` and `ExtensionEventPlacement` moved out of `runner.ts` unchanged (re-exported there), plus `isLoopSideEvent()`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolCall`/`emitToolResult` take `{ forward, only }` and build each extension's handlers through `toolEventHandlers()`. Adds `servesForwardedHandler()` and `twoSidedExtensionPaths()`.
+
+### Why
+
+Brain/hand split S29 (decision C7(c)): an unmodified extension whose loop and tool hooks share in-memory state must see one state on a split session.
+
+### Why an extension could not handle it
+
+The dispatch of every extension's tool events is the runner's.
+
+### Expected merge conflict zones
+
+`runner.ts` `emitToolCall` and `emitToolResult` loop heads, the accessor block near `getExtensionPaths`, and the placement-table export site.
+
 ## 2026-11-03 - session_start handlers carry open-timing spans (senpi#5709, fixes #5707)
 
 ### What changed

@@ -1,3 +1,28 @@
+## 2026-11-01 - A signed-out Claude CLI login needs sign-in again and heals itself (part of senpi#5350)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `ClaudeCliAccountSlot.signInRequired` gains `"login_expired"`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts`: the recovery callback is now `claudeCliStatus`, which returns the `claude auth status` state instead of a boolean. A due `auth_error` re-probe that reports `signed_out` marks the slot `login_expired` and keeps the `auth_error` block (`blockedUntil = now + AUTH_BLOCK_REPROBE_MS`), so the same local probe keeps running. A due `login_expired` slot is probed too, and `signed_in` drops the flag and the block. `unreadable`, `rejected` (including a spawn timeout) and a thrown probe keep today's 15-min re-block. The first transition each way logs `claude_cli_login_expired` / `claude_cli_login_restored` with `{accountName}` only, after the store write lands.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/errors.ts`: a turn result reading `OAuth session expired and could not be refreshed` (Claude Code's refused refresh: `subtype: success`, `is_error`, no HTTP status, `terminal_reason: api_error`) classifies as `auth_error` with `signInRequired: "login_expired"`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `blockedAccount` and `persistBlock` carry that `signInRequired` onto a claude CLI slot, so a refused refresh marks the account `login_expired` at once and a sibling serves the turn. `claude auth status` still reports signed in at that point, so the 15-minute probe can clear the mark again; that residual is tracked on senpi#5350.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `isForeignAuthBlock` never treats a `login_expired` block as another engine's (senpi#5623), since only this engine sets that mark.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: passes the status state through, and builds the sign-in-required turn error from each account's reason.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/sign-in-again.ts`: all sign-in-required prompts share the prefix `Claude sign-in `, which `isSignInAgainError` keys on. The retired-sign-in text is unchanged. A new `login_expired` text reads `Claude sign-in expired. Sign in again with Claude to keep using: <names>. Run /login anthropic-subscription.` `ClaudeSignInRequiredError` takes names (retired sign-in) or `{name, reason}` entries. `signInRequiredNames` is replaced by `signInRequiredAccounts`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`: `/claude-account list` shows `sign-in expired - run /login anthropic-subscription` for a `login_expired` account, in place of the timed-block text.
+
+### Why
+
+- Since senpi#4436 the bundled Claude CLI owns the login. A refused grant makes the CLI blank its store, so `claude auth status` reports `signed_out`. Until now the account was re-blocked every 15 minutes forever and never shown as needing `/login`. Only the literal `signed_out` marks it. Because the cadence probe keeps running, a false `signed_out` (a locked keychain) heals at the next `signed_in` probe, and a still-valid login is never locked out. `/claude-account unblock` does not clear the flag, because `unblockProviderAccount` keeps `auth_error` blocks.
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool, its auth-block re-probe and its turn errors.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; `probeClaudeCliSlot` / `isClaudeCliProbeDue` in `auth-block-recovery.ts`, the `recoverAuthBlockedSlots` call and the sign-in filter in `auth-lane.ts`, `slotStatus` in `account-command.ts`.
+
 ## 2026-11-03 - Read a claude CLI account's access token for the usage poll (senpi#5627)
 
 ### What changed

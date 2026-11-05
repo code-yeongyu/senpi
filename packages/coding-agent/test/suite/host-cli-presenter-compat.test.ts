@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { enrollmentRequest } from "../mcp/fixtures/presenter-enrollment.ts";
-import { next, send } from "./host-cli-presenter-support.ts";
+import { hostCloses, next, send } from "./host-cli-presenter-support.ts";
 import { hostCliSandbox, onlyJsonLine, runHostCli, sweepHostCliSandboxes } from "./host-cli-support.ts";
 
 afterEach(() => sweepHostCliSandboxes(), 120_000);
+
+/** The running test's own signal: waits end on a host or channel event, or with the test (#4652). */
+let signal: AbortSignal;
+
+beforeEach((context) => {
+	signal = context.signal;
+});
 
 // #4254: bootstrap refusal must not take ordinary RPC or the supervisor lifetime channel down.
 describe.skipIf(process.platform === "win32")("presenter enrollment compatibility", () => {
@@ -16,7 +22,7 @@ describe.skipIf(process.platform === "win32")("presenter enrollment compatibilit
 			["ensure", "--mcp-presenter-enforcement", "--mcp-presenter-fd", "4"],
 			{},
 			async (socket) => {
-				const unavailable = next(socket, "unavailable");
+				const unavailable = next(socket, "unavailable", signal);
 				send(socket, enrollmentRequest({ version: 1 }));
 				expect(await unavailable).toEqual({ type: "unavailable", versions: [2] });
 			},
@@ -37,7 +43,7 @@ describe.skipIf(process.platform === "win32")("presenter enrollment compatibilit
 			{},
 			async (socket) => {
 				socket.on("data", (chunk) => frames.push(String(chunk)));
-				const closed = once(socket, "close", { signal: AbortSignal.timeout(60_000) });
+				const closed = hostCloses(socket, "the refused bootstrap channel", signal);
 				send(socket, enrollmentRequest({ launchKind: "replacement", predecessorHostInstance: randomUUID() }));
 				await closed;
 			},
