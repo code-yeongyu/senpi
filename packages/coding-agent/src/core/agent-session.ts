@@ -19,7 +19,7 @@ import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
-import { runExecuteToolOnHost } from "./execute-tool-on-host.ts";
+import { nestedToolOnHost, runExecuteToolOnHost } from "./execute-tool-on-host.ts";
 import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 import type {
 	Agent,
@@ -2552,7 +2552,10 @@ export class AgentSession {
 					});
 				}
 				return runToolCall(toolCall, {
-					tools: this._getCallableTools(),
+					// The nested call's body runs on the prepared ToolHost (S19a); everything around it stays in runToolCall.
+					tools: this._getCallableTools().map((tool) =>
+						tool.name === toolCall.name ? nestedToolOnHost(this.agent, tool) : tool,
+					),
 					assistantMessage,
 					context: { messages: this.agent.state.messages, tools: this.agent.state.tools },
 					// A nested call runs inside its caller's execution: waiting on the event queue here
