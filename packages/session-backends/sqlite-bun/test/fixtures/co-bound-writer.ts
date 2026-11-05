@@ -29,7 +29,7 @@ if (read === true) {
 	say({ keys: handle.entries().map((entry) => entry.key) });
 } else {
 	say({ ready: true });
-	for await (const _line of Bun.stdin.stream()) break;
+	for await (const _chunk of process.stdin) break;
 	for (let index = 0; index < count; index++) {
 		const key = `${tag}-${index}`;
 		handle.appendSync([{ key, line: JSON.stringify({ type: "custom", id: key }) }]);

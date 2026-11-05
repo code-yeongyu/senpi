@@ -335,7 +335,7 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 					id: held.id,
 					header: held.header,
 					entries: heldEntries(held),
-					divergence: held.divergence ?? undefined,
+					divergence: divergenceOf(held.divergence) ?? undefined,
 				};
 			}),
 		/**
