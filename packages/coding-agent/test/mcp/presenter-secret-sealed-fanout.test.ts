@@ -307,3 +307,17 @@ it("a refused raiser that declared raiser notices gets no notice for its own sea
 	await Promise.resolve();
 	expect(records(host.lines, "secret_input_notice")).toEqual([]);
 });
+
+it("disposing the presenter control ends a pending sealed-only request at once", async () => {
+	const { host, secret, requests } = await sealedHost();
+	await holder(host, secret, "phone");
+	const state: { value: string | undefined | null } = { value: null };
+	host.writer.withConnection("human", () => {
+		void requests.input("API key", undefined).then((value) => {
+			state.value = value;
+		});
+	});
+	host.control.dispose();
+	await Promise.resolve();
+	expect(state.value).toBeUndefined();
+});
