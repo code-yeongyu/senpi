@@ -138,7 +138,8 @@ export async function importMovedSession(
 			target,
 			(await importOutcome(target, manifest.moveId)) === "revoked",
 		);
-		return { sessionFile: target };
+		// A crash between the commit and the apply leaves the changes in place: answer for them again.
+		return withWorkingTree(target, manifest.moveId, targetCwd);
 	}
 	try {
 		await verifyBundle(options.bundleDir, manifest);
@@ -182,11 +183,7 @@ export async function importMovedSession(
 		);
 		moveStep("import:accepted");
 		await rm(staging, { recursive: true, force: true });
-		// The session has moved either way; uncommitted changes apply only where nothing can be clobbered.
-		const tree = movedTreeDir(target, manifest.moveId);
-		return (await pathExists(tree))
-			? { sessionFile, workingTree: await applyWorkingTree(targetCwd, tree) }
-			: { sessionFile };
+		return withWorkingTree(sessionFile, manifest.moveId, targetCwd);
 	} catch (error) {
 		if (!(error instanceof MoveFencedError))
 			await options.ledger.fail(
@@ -196,6 +193,23 @@ export async function importMovedSession(
 			);
 		throw error;
 	}
+}
+
+/**
+ * The session has moved either way; its uncommitted changes apply only where nothing can be clobbered. A repeat
+ * finds a tree that already applied dirty, so it answers `kept` instead of applying twice; the payload goes once it
+ * applied or held nothing, and a kept one stays for the user.
+ */
+async function withWorkingTree(
+	sessionFile: string,
+	moveId: MoveId,
+	cwd: string,
+): Promise<{ readonly sessionFile: string; readonly workingTree?: ApplyResult }> {
+	const tree = movedTreeDir(sessionFile, moveId);
+	if (!(await pathExists(tree))) return { sessionFile };
+	const workingTree = await applyWorkingTree(cwd, tree);
+	if (workingTree.state !== "kept") await rm(tree, { recursive: true, force: true });
+	return { sessionFile, workingTree };
 }
 
 /**

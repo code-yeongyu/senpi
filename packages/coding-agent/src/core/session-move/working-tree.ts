@@ -22,7 +22,27 @@ const GIT_LOCATION_ENV = new Set(["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", 
 interface GitResult {
 	readonly ok: boolean;
 	readonly stdout: Buffer;
+	/** The output passed the buffer bound: for the diff, the changes are over `MAX_PATCH_BYTES`. */
+	readonly overflow: boolean;
 }
+
+/**
+ * The patch is made and read the same way whatever the user's git config says: prefixes, colour, an
+ * external or text-converting diff, or a relative diff would each change what `apply -p1` lands where.
+ */
+const DIFF_ARGS = [
+	"diff",
+	"--cached",
+	"--binary",
+	"--no-ext-diff",
+	"--no-textconv",
+	"--no-color",
+	"--no-relative",
+	"--src-prefix=a/",
+	"--dst-prefix=b/",
+	"HEAD",
+];
+const APPLY_ARGS = ["apply", "-p1", "--binary", "--whitespace=nowarn"];
 
 const text = (result: GitResult) => result.stdout.toString("utf8").trim();
 
@@ -40,7 +60,12 @@ function git(
 			"git",
 			["-C", dir, ...args],
 			{ env, timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_PATCH_BYTES + 1024, windowsHide: true, encoding: "buffer" },
-			(error, stdout) => resolve({ ok: error === null, stdout }),
+			(error, stdout) =>
+				resolve({
+					ok: error === null,
+					stdout,
+					overflow: (error as { code?: unknown } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+				}),
 		);
 	});
 }
@@ -114,9 +139,9 @@ export async function captureWorkingTree(
 				throw new Error(
 					`Could not read the uncommitted changes in ${root}. Commit and push them, then move again.`,
 				);
-		const diff = await git(root, ["diff", "--cached", "--binary", "HEAD"], env);
-		if (!diff.ok) throw new Error(`Could not read the uncommitted changes in ${root}.`);
-		if (diff.stdout.byteLength > MAX_PATCH_BYTES)
+		const diff = await git(root, DIFF_ARGS, env);
+		if (!diff.ok && !diff.overflow) throw new Error(`Could not read the uncommitted changes in ${root}.`);
+		if (diff.overflow || diff.stdout.byteLength > MAX_PATCH_BYTES)
 			throw new Error(
 				`The uncommitted changes in ${cwd} are larger than ${MAX_PATCH_BYTES / 1024 / 1024} MB. Commit and push them, then move again.`,
 			);
@@ -163,6 +188,6 @@ export async function applyWorkingTree(cwd: string, payloadDir: string): Promise
 	if (have !== want)
 		return kept("head_differs", `${root} is at another commit than the other device (${want.slice(0, 10)}).`);
 	// From the top folder: a subfolder apply would skip every change outside it and still succeed.
-	const applied = await git(root, ["apply", "--binary", "--whitespace=nowarn", patchFile]);
+	const applied = await git(root, [...APPLY_ARGS, patchFile]);
 	return applied.ok ? { state: "applied" } : kept("conflict", "Some of the changes did not apply cleanly.");
 }

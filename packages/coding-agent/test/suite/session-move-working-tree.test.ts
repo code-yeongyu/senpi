@@ -129,6 +129,30 @@ describe("captureWorkingTree and applyWorkingTree (senpi#3676)", () => {
 		expect(readFileSync(join(b, "top.txt"), "utf8")).toBe("new at the top\n");
 	});
 
+	it.each([
+		["diff.noprefix", "true"],
+		["diff.mnemonicPrefix", "true"],
+		["diff.relative", "true"],
+		["color.diff", "always"],
+		["diff.external", "false"],
+	])(
+		"#given the sender's git config sets %s=%s #then the changes still land at the same paths",
+		async (key, value) => {
+			const { base, a, b } = repos();
+			git(a, "config", key, value);
+			mkdirSync(join(a, "src", "sub"), { recursive: true });
+			writeFileSync(join(a, "src", "sub", "new.txt"), "deep\n");
+			writeFileSync(join(a, "tracked.txt"), "one\nedited\n");
+			const out = join(base, "payload");
+
+			await captureWorkingTree(join(a, "src", "sub"), out);
+
+			expect(await applyWorkingTree(b, out)).toEqual({ state: "applied" });
+			expect(readFileSync(join(b, "src", "sub", "new.txt"), "utf8")).toBe("deep\n");
+			expect(readFileSync(join(b, "tracked.txt"), "utf8")).toBe("one\nedited\n");
+		},
+	);
+
 	it("#given a receiving folder that is not a git checkout #then the patch is kept with its own reason", async () => {
 		const { base, a } = repos();
 		writeFileSync(join(a, "tracked.txt"), "one\nedited\n");
