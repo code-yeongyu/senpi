@@ -5,6 +5,7 @@ import { extractChatGptSubscriptionAccountId } from "@earendil-works/pi-ai/utils
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
+import { BLOCK_LOG_FILENAME } from "./block-log.ts";
 import { acquireStateFileLock, readStateFile, writeStateFileAtomic } from "./state-file.ts";
 
 export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
@@ -176,6 +177,11 @@ export class CredentialSlotRepository {
 	constructor(path: string = credentialPoolStatePath(), options: { readonly lockWaitBudgetMs?: number } = {}) {
 		this.path = path;
 		this.lockWaitBudgetMs = options.lockWaitBudgetMs ?? FILE_STORAGE_LOCK_RETRY_BUDGET_MS;
+	}
+
+	/** The local block log sits beside the state file, so a test or alternate agent dir keeps both together. */
+	blockLogPath(): string {
+		return join(dirname(this.path), BLOCK_LOG_FILENAME);
 	}
 
 	/**

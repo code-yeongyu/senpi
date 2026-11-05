@@ -10,7 +10,8 @@ import {
 import type { SdkErrorKind } from "../extensions/builtin/anthropic-subscription/errors.ts";
 import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
-import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
+import { appendCredentialBlockLog, redactBlockExcerpt } from "./block-log.ts";
+import { type CredentialBlock, classifyCredentialFailure, credentialFailureText } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
@@ -251,7 +252,7 @@ export function streamWithCredentialRotation(
 			if (slot.heldLeaseId === undefined) return;
 			await releaseProbeLease(sources.repository, sources.providerId, slot.lane, slot.name, slot.heldLeaseId);
 		},
-		persistBlock: async (slot, block) => {
+		persistBlock: async (slot, block, error) => {
 			const revision =
 				slot.lane === "env" && slot.envVarName !== undefined && slot.envKey !== undefined
 					? await sources.repository.envCredentialRevision(slot.envVarName, slot.envKey)
@@ -265,6 +266,19 @@ export function streamWithCredentialRotation(
 				),
 			);
 			if (written !== STORE_BUSY) emitProviderAccountsChanged(sources.providerId);
+			const blockedUntil = written === STORE_BUSY ? undefined : written?.blockedUntil;
+			appendCredentialBlockLog(sources.repository.blockLogPath(), {
+				at: new Date(now()).toISOString(),
+				provider: sources.providerId,
+				slot: slot.name,
+				reason: block.reason,
+				...(blockedUntil === undefined ? {} : { blockedUntil: new Date(blockedUntil).toISOString() }),
+				...(block.reason === "rate_limit" && block.resetSource !== undefined
+					? { resetSource: block.resetSource }
+					: {}),
+				...(block.reason === "rate_limit" && block.modelFamily !== undefined ? { model: block.modelFamily } : {}),
+				...(error === undefined ? {} : { excerpt: redactBlockExcerpt(credentialFailureText(error)) }),
+			});
 		},
 		now,
 	});
