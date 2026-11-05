@@ -32,6 +32,8 @@ export interface ProjectionHooks {
 	beforeWrite(path: string): void;
 	/** The file was replaced: its identity changed. */
 	afterReplace(path: string, identity: FileIdentity | undefined): void;
+	/** Before the store opens the file or rewrites it: fences a live Node developer-hatch writer (K9-F2, DRIFT A). */
+	fenceHatchWriters(path: string): Promise<void>;
 }
 
 export interface ProjectionWarning {
@@ -173,6 +175,7 @@ export class DurableSessionBinding {
 		const importer = createJsonlImporter({ store, epoch, admission });
 		let id = sessionId;
 		let reprojected = false;
+		await hooks.fenceHatchWriters(path);
 		if ((await stampOf(path)) !== undefined) {
 			const mark = await store.getDocument(staleKey(path));
 			const markedId = staleSessionIdOf(mark);

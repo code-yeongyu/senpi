@@ -84,6 +84,7 @@ import {
 	type ProjectionWarning,
 	storeKeyOf,
 } from "./session-store/durable-binding.ts";
+import { fenceHatchWriters } from "./session-store/hatch-fence.ts";
 import { markHatchWrite } from "./session-store/hatch-marker.ts";
 import type { StoredEntry } from "@earendil-works/pi-agent-core";
 import {
@@ -2057,6 +2058,7 @@ export class SessionManager {
 		if (!this.persist || sessionFile === undefined) {
 			throw new Error("only a persisted session with a file path can be bound to the durable store");
 		}
+		const sessionId = this.sessionId;
 		this.bindPending = true;
 		this.bindRaced = false;
 		let opened: Awaited<ReturnType<typeof DurableSessionBinding.open>>;
@@ -2064,7 +2066,7 @@ export class SessionManager {
 			opened = await DurableSessionBinding.open(
 				binding,
 				sessionFile,
-				this.sessionId,
+				sessionId,
 				this._headerLine(),
 				(warning) => {
 					for (const listener of this.projectionWarningListeners) listener(warning);
@@ -2076,6 +2078,10 @@ export class SessionManager {
 					},
 					afterReplace: (_path, identity) => {
 						if (this.capturesTranscriptBase) this._captureTranscriptBase(Promise.resolve(identity), this.fileEntries);
+					},
+					// The fence this manager moves is its own from here: it keeps writing, the hatch writer is refused.
+					fenceHatchWriters: async () => {
+						if (await fenceHatchWriters(sessionFile, sessionId)) this.writeFence.opened(sessionFile);
 					},
 				},
 			);

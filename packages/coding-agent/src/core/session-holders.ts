@@ -30,6 +30,7 @@ import {
 } from "./session-hold-errors.ts";
 import { type HolderGeneration, liveHolders, type SessionHolderProbes } from "./session-holder-records.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
+import { nodeJsonlHatchEnabled } from "./session-store/node-guard.ts";
 import { advanceSessionFence } from "./session-write-fence.ts";
 
 export {
@@ -74,6 +75,7 @@ function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): string 
 		processStartedAtMs: ownProcessStartedAtMs(),
 		...(cwd === undefined ? {} : { cwd }),
 		...endpoint,
+		...(nodeJsonlHatchEnabled() ? { k9f2: true } : {}),
 	});
 }
 

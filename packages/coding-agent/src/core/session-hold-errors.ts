@@ -7,6 +7,8 @@ export interface SessionHolder {
 	readonly host_instance?: string;
 	/** The record is held, but its owner's start time could not be read, so its identity is unverified. */
 	readonly unproven?: true;
+	/** The holder writes through the Node developer hatch (K9-F2, senpi#5822); the durable store fences it. */
+	readonly k9f2?: true;
 }
 
 /** Public RPC identity, supplied by the host rather than the client's opaque context. */

@@ -45,6 +45,9 @@ async function fenced(fenceSession: (() => Promise<void>) | undefined): Promise<
 	);
 }
 
+const hatchWriter = (parsed: unknown): boolean =>
+	typeof parsed === "object" && parsed !== null && "k9f2" in parsed && parsed.k9f2 === true;
+
 function holderGeneration(parsed: unknown): HolderGeneration {
 	if (typeof parsed !== "object" || parsed === null) return {};
 	return {
@@ -105,6 +108,7 @@ export async function liveHolders(
 			cwd: stable ? parseCwd(raw) : undefined,
 			...endpoint,
 			...(probes.markUnproven === true && state.unproven === true ? { unproven: true as const } : {}),
+			...(hatchWriter(parsed) ? { k9f2: true as const } : {}),
 		});
 	}
 	return holders;
