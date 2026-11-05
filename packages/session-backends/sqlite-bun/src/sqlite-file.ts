@@ -1,7 +1,7 @@
 // The Bun 1.4 query and transaction API this file uses: referenced, so any program that compiles this source (the
 // coding-agent build included) sees it, not only programs whose include covers the declaration file.
 /// <reference path="./bun-sqlite.d.ts" />
-import { Database, type Statement } from "bun:sqlite";
+import type { Database, Statement } from "bun:sqlite";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
 
 const SCHEMA_VERSION = 1;
@@ -33,15 +33,14 @@ export interface StoreStatements {
 }
 
 const BUSY_TIMEOUT_MS = 5000;
-const PAUSE = new Int32Array(new SharedArrayBuffer(4));
 
 /**
  * Two processes that open a new store file at once both switch it to WAL: each holds a shared lock and asks for the
  * exclusive one, and SQLite fails one of them at once with "database is locked" instead of calling the busy handler
- * (it would deadlock). The failed statement releases its lock, so the switch retries until the other finishes, bounded
- * by the same timeout as every other statement.
+ * (it would deadlock). The failed statement releases its lock, so the switch retries until the other finishes. Retries
+ * stop once the busy timeout has passed; one attempt can itself wait that long, so the worst case is about twice it.
  */
-function switchToWal(db: Database): void {
+async function switchToWal(db: Database): Promise<void> {
 	const deadline = Date.now() + BUSY_TIMEOUT_MS;
 	for (let pause = 1; ; pause = Math.min(pause * 2, 50)) {
 		try {
@@ -50,7 +49,8 @@ function switchToWal(db: Database): void {
 		} catch (error) {
 			const busy = typeof error === "object" && error !== null && "code" in error && error.code === "SQLITE_BUSY";
 			if (!busy || Date.now() >= deadline) throw error;
-			Atomics.wait(PAUSE, 0, 0, pause);
+			// Waits on a timer, never by blocking the thread: the open runs on a shared event loop (the RPC host).
+			await new Promise((resolve) => setTimeout(resolve, pause));
 		}
 	}
 }
@@ -59,11 +59,16 @@ function switchToWal(db: Database): void {
  * Opens (creating when absent) a store file. WAL with `synchronous=FULL`: a transaction is on disk when COMMIT returns,
  * and a process killed at any point recovers to the last committed transaction on the next open.
  */
-export function openStoreFile(path: string): { readonly db: Database; readonly statements: StoreStatements } {
+export async function openStoreFile(
+	path: string,
+): Promise<{ readonly db: Database; readonly statements: StoreStatements }> {
+	// Loaded only here, at run time: a static import would be hoisted into any bundle that inlines this module
+	// (the Node session worker), and Node cannot load a Bun built-in.
+	const { Database } = await import("bun:sqlite");
 	const db = new Database(path, { create: true });
 	db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 	if (db.query<{ readonly journal_mode: string }>("PRAGMA journal_mode").get()?.journal_mode !== "wal")
-		switchToWal(db);
+		await switchToWal(db);
 	db.exec("PRAGMA synchronous = FULL");
 	db.transaction(() => {
 		const version = db.query<{ readonly user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0;

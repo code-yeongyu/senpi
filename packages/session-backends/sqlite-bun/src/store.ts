@@ -72,11 +72,11 @@ function scanQuery(query: RecordScan): { readonly sql: string; readonly params: 
 }
 
 /** A DurableStore over one SQLite file. Every mutation is one `BEGIN IMMEDIATE` transaction: atomic and durable. */
-export function openSqliteStore(
+export async function openSqliteStore(
 	path: string,
 	options: DurableStoreOptions = {},
-): { readonly store: SyncCommitStore; readonly db: Database } {
-	const { db, statements: q } = openStoreFile(path);
+): Promise<{ readonly store: SyncCommitStore; readonly db: Database }> {
+	const { db, statements: q } = await openStoreFile(path);
 	const point = (at: StoreWritePoint): void => options.onWritePoint?.(at);
 	const epochNow = (s: StoreStatements): number => s.epoch.get()?.epoch ?? 0;
 	const headNow = (s: StoreStatements): number => s.head.get()?.head ?? 0;

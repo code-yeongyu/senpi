@@ -8,7 +8,7 @@ await createInterface({ input: process.stdin })[Symbol.asyncIterator]().next();
 console.log("start");
 const started = Date.now();
 try {
-	openStoreFile(path).db.close();
+	(await openStoreFile(path)).db.close();
 	console.log(`ok ${Date.now() - started}`);
 } catch (error) {
 	console.log(`ERR ${Date.now() - started} ${error instanceof Error ? error.message : String(error)}`);
