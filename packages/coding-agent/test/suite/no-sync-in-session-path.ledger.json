@@ -188,9 +188,9 @@
 		{
 			"file": "src/core/session-write-fence.ts",
 			"api": "readFileSync",
-			"symbol": "readSessionFence",
+			"symbol": "readToken",
 			"count": 1,
-			"note": "DELIBERATE transcript path (senpi#3652): the session file's write fence (<file>.fence, ~40 bytes, normally ENOENT) re-read right before each transcript write, in the same synchronous step as the write it guards, so a writer whose file was taken over cannot append in between"
+			"note": "DELIBERATE transcript path (senpi#3652, senpi#5822): the session file's write fence (<file>.fence, ~40 bytes, normally ENOENT), and for a Node JSONL-hatch writer also its hatch fence (<file>.hatch-fence), re-read right before each transcript write, in the same synchronous step as the write it guards, so a writer whose file was taken over or fenced cannot append in between"
 		},
 		{
 			"file": "src/core/session-manager.ts",

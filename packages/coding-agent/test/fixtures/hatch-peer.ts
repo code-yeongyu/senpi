@@ -1,5 +1,5 @@
 /**
- * One session writer in its own process, for the K9-F2 cases of test/session-store/node-requires-bun.test.ts
+ * One session writer in its own process, for the K9-F2 cases of test/session-store/hatch-history.test.ts
  * (senpi#5822). Under Node (the test sets SENPI_SESSION_STORE=jsonl) it is a developer-hatch writer on the legacy JSONL
  * store; under Bun it binds the session to its durable default store. It holds the session the way the CLI does
  * (`holdSessionFile`), reads one JSON command per stdin line and answers each with one JSON line on stdout. A projection
