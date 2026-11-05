@@ -36,10 +36,12 @@ export interface HandDirectory {
 /** The session-file entry that records a session's choice; `device: null` is local. */
 export const HAND_SELECTION_ENTRY = "hand_selection";
 
-export type HandRefusal = "hand_not_listed" | "hand_unreachable";
+export type HandRefusal = "hand_not_listed" | "hand_unreachable" | "session_busy";
 
 export interface HandSession {
 	readonly agent: Pick<Agent, "toolHost">;
+	/** A run copies its ToolHost when it starts, so the choice changes only between runs. */
+	readonly isStreaming: boolean;
 	readonly sessionManager: Pick<SessionManager, "appendCustomEntry" | "getEntries">;
 }
 
@@ -80,6 +82,8 @@ export interface HandSelectionOptions {
 	readonly gate?: (durableSessionId: string, host: ToolHost) => ToolHost;
 	/** Called after a session's hand changes, with the device or `null` for local. */
 	readonly onChange?: (durableSessionId: string, device: string | null) => void;
+	/** Called when a session ends and its hand state is forgotten. */
+	readonly onRelease?: (durableSessionId: string) => void;
 }
 
 /** A remote host on a transport that never connects: each call it gets ends as "The hand is unreachable". */
@@ -143,14 +147,27 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 			const current = stateOf(durableSessionId, session);
 			// Already on it: nothing to do. A recorded hand that was not linked (gone at reopen) is linked again below.
 			if (current.device === device && (device === null || current.linked)) return { ok: true };
+			// A running turn keeps the ToolHost it started with: a change now would leave its later batches on the old one.
+			if (session.isStreaming) return { ok: false, refusal: "session_busy" };
+			let remote: Remote | undefined;
 			if (device !== null) {
 				const row = directory.list().find((hand) => hand.device === device);
 				if (row === undefined) return { ok: false, refusal: "hand_not_listed" };
 				if (!row.reachable) return { ok: false, refusal: "hand_unreachable" };
+				remote = linkTo(device);
+				if (!remote.linked) {
+					remote.host.close();
+					return { ok: false, refusal: "hand_unreachable" };
+				}
 			}
-			// Recorded first: a failed write leaves the session as it was.
-			if (current.device !== device) session.sessionManager.appendCustomEntry(HAND_SELECTION_ENTRY, { device });
-			install(durableSessionId, session, device, device === null ? undefined : linkTo(device));
+			// Recorded before it is installed: a failed write leaves the session as it was.
+			try {
+				if (current.device !== device) session.sessionManager.appendCustomEntry(HAND_SELECTION_ENTRY, { device });
+			} catch (cause) {
+				remote?.host.close();
+				throw cause;
+			}
+			install(durableSessionId, session, device, remote);
 			return { ok: true };
 		},
 		restore: (durableSessionId, session) => {
@@ -165,6 +182,7 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 		release: (durableSessionId) => {
 			sessions.get(durableSessionId)?.remote?.close();
 			sessions.delete(durableSessionId);
+			options.onRelease?.(durableSessionId);
 		},
 	};
 }

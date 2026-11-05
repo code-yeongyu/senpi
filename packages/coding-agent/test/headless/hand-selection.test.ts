@@ -199,6 +199,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 
 		selection.restore("durable-1", {
 			agent,
+			isStreaming: false,
 			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "unused" },
 		});
 
@@ -238,26 +239,19 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		expect(await runProbe(other.agent.toolHost, rig.root)).toEqual(["hand 7"]);
 	});
 
-	it("every host the selection installs goes through the gate, and null gives back the session's own host", () => {
+	it("every host the selection installs goes through the gate, and null gives back the session's own host", async () => {
 		const own: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
 		const gated: ToolHost[] = [];
-		const selection = createHandSelection(
-			{
-				list: () => [ROW],
-				link: () => {
-					throw new Error("no carrier in this case");
-				},
+		const selection = createHandSelection(await handDirectory([ROW]), {
+			gate: (_id, host) => {
+				const wrapped: ToolHost = { execute: (batch, options) => host.execute(batch, options) };
+				gated.push(wrapped);
+				return wrapped;
 			},
-			{
-				gate: (_id, host) => {
-					const wrapped: ToolHost = { execute: (batch, options) => host.execute(batch, options) };
-					gated.push(wrapped);
-					return wrapped;
-				},
-			},
-		);
+		});
 		const session = {
 			agent: { toolHost: own as ToolHost | undefined },
+			isStreaming: false,
 			sessionManager: { getEntries: () => [], appendCustomEntry: () => "e" },
 		};
 		selection.restore("s1", session);
@@ -268,13 +262,8 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		expect(session.agent.toolHost).toBe(own);
 	});
 
-	it("a session reopened after it ended starts from its new host; nothing of the closed runtime comes back", () => {
-		const selection = createHandSelection({
-			list: () => [ROW],
-			link: () => {
-				throw new Error("no carrier in this case");
-			},
-		});
+	it("a session reopened after it ended starts from its new host; nothing of the closed runtime comes back", async () => {
+		const selection = createHandSelection(await handDirectory([ROW]));
 		const entries: SessionEntry[] = [];
 		const manager = {
 			getEntries: () => entries,
@@ -292,12 +281,20 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		};
 		const oldHost: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
 		const newHost: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
-		const before = { agent: { toolHost: oldHost as ToolHost | undefined }, sessionManager: manager };
+		const before = {
+			agent: { toolHost: oldHost as ToolHost | undefined },
+			isStreaming: false,
+			sessionManager: manager,
+		};
 		selection.restore("s1", before);
 		selection.select("s1", before, "dev-b");
 		selection.release("s1");
 
-		const after = { agent: { toolHost: newHost as ToolHost | undefined }, sessionManager: manager };
+		const after = {
+			agent: { toolHost: newHost as ToolHost | undefined },
+			isStreaming: false,
+			sessionManager: manager,
+		};
 		selection.restore("s1", after);
 		selection.select("s1", after, null);
 
@@ -345,6 +342,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		expect(() =>
 			selection.restore("s1", {
 				agent,
+				isStreaming: false,
 				sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
 			}),
 		).not.toThrow();
@@ -360,6 +358,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const session = {
 			sessionId: "s-ending",
 			agent: { toolHost: undefined as ToolHost | undefined },
+			isStreaming: false,
 			sessionManager: {
 				getEntries: () => entries,
 				appendCustomEntry: () => "e",
@@ -404,6 +403,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		];
 		const session = {
 			agent: { toolHost: undefined as ToolHost | undefined },
+			isStreaming: false,
 			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
 		};
 		selection.restore("s-back", session);
@@ -443,6 +443,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const session = {
 			sessionId: "s-gated",
 			agent: { toolHost: undefined as ToolHost | undefined },
+			isStreaming: false,
 			sessionManager: { getEntries: () => [] as SessionEntry[], appendCustomEntry: () => "e" },
 			dispose: () => {},
 		};
@@ -463,5 +464,50 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 
 		expect(await probe).toEqual(["hand 7"]);
 		expect(order).toEqual(["tracked", "ready"]);
+	});
+
+	it("a choice while a turn runs is refused: the turn keeps the host it started with", async () => {
+		const selection = createHandSelection(await handDirectory([ROW]));
+		const entries: SessionEntry[] = [];
+		const own: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
+		const session = {
+			agent: { toolHost: own as ToolHost | undefined },
+			isStreaming: true,
+			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+		};
+		selection.restore("s-busy", session);
+
+		expect(selection.select("s-busy", session, "dev-b")).toEqual({ ok: false, refusal: "session_busy" });
+		expect(session.agent.toolHost).toBe(own);
+		expect(selection.selected("s-busy")).toBeNull();
+		expect(links).toBe(0);
+	});
+
+	it("a choice whose link cannot be made is refused as unreachable and records nothing", () => {
+		const appended: unknown[] = [];
+		const selection = createHandSelection({
+			list: () => [ROW],
+			link: () => {
+				throw new Error("carrier refused");
+			},
+		});
+		const own: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
+		const session = {
+			agent: { toolHost: own as ToolHost | undefined },
+			isStreaming: false,
+			sessionManager: {
+				getEntries: () => [] as SessionEntry[],
+				appendCustomEntry: (_type: string, data?: unknown) => {
+					appended.push(data);
+					return "e";
+				},
+			},
+		};
+		selection.restore("s-nolink", session);
+
+		expect(selection.select("s-nolink", session, "dev-b")).toEqual({ ok: false, refusal: "hand_unreachable" });
+		expect(appended).toEqual([]);
+		expect(session.agent.toolHost).toBe(own);
+		expect(selection.selected("s-nolink")).toBeNull();
 	});
 });

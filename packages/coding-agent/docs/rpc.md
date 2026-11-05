@@ -1425,7 +1425,9 @@ and, when `sessionId` is given, that session's recorded hand (`null` when its to
 `select_hand { sessionId, device }` records the choice in the session file (a `custom` entry `hand_selection`) and
 answers `{ sessionId, selected }`. A device makes the session's next tool batch run on that hand through a remote
 ToolHost. `null` gives the session back its own ToolHost. A device that is not listed is refused with
-`hand_not_listed`, and a listed one with no carrier up with `hand_unreachable`, both with `errorData.device`; a host
+`hand_not_listed`, and a listed one with no carrier up (or whose link cannot be made) with `hand_unreachable`, both with
+`errorData.device`; nothing is recorded then. A choice while a turn runs is refused with `session_busy`: a running turn
+keeps the ToolHost it started with, so choose between turns. A host
 without a directory answers `hand_selection_unsupported`. When the session opens again, the recorded hand is applied
 again. If it cannot be linked then, the session's tool calls end as "The hand is unreachable" error results: a chosen
 hand never falls back to running the calls in this process. Like `list_sessions`, `list_hands` needs no attachment, so

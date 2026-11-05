@@ -95,6 +95,9 @@ function presenceHooks(
 			update.catch(() => {});
 			tracking.set(sessionId, update);
 		},
+		onRelease: (sessionId) => {
+			tracking.delete(sessionId);
+		},
 	};
 }
 
