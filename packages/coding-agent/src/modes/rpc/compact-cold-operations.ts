@@ -191,11 +191,15 @@ export class CompactColdOperations {
 			: { kind: "failed", cause, afterSequence };
 	}
 
-	/** The row as a reader sees it at the cut: its stored value plus any pending field patch. */
+	/**
+	 * The kept fields of the row as a reader sees it at the cut: its stored value plus any pending field patch. `read`
+	 * assembles a fresh value without recursion, so a row whose message came from a transcript flow (never checked at
+	 * the protocol depth limit) is not serialized here (RULING-59 C).
+	 */
 	private async current(cut: FrozenIndex, key: string, row: IndexRow): Promise<Keep> {
-		const value: SettledRow = JSON.parse(JSON.stringify(await this.index.values.read(row.value)));
+		const stored = (await this.index.values.read(row.value)) as SettledRow;
 		const patch = this.index.overlays.get(cut.overrides, key)?.patchValue;
-		if (patch) Object.assign(value, await this.index.values.read(patch));
+		const value = patch ? { ...stored, ...((await this.index.values.read(patch)) as Partial<SettledRow>) } : stored;
 		return { persistence: value.persistence, ...(value.correlation ? { correlation: value.correlation } : {}) };
 	}
 }

@@ -195,6 +195,7 @@ describe("bundled codemode bridge", () => {
 			setFooter: () => {},
 			setHeader: () => {},
 			setTitle: () => {},
+			setProgramStatus: () => {},
 			custom: async <T>(): Promise<T> => {
 				throw new Error("custom UI not implemented in test");
 			},

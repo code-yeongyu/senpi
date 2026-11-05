@@ -3,27 +3,32 @@
 // normalize, and compare against the B0 goldens (`--compare`) or write them (`--record`). The pipeline witness is read
 // separately and asserted on its own; it is never part of the equality.
 //
-//   node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy \
+//   node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare \
 //     --placement fused [--cases E01,E02] [--surface rpc] [--repeat N] [--child node|binary:<path>] --evidence <slug>
 //
 // `--surface tui` (EQ.tui, plan P0-05c) runs the cases that list O8 through the real interactive TUI instead
 // (lib/equivalence-tui-cases.mjs) and compares their TUI captures against `golden-tui/<platform>`.
 //
 // The CLI child runs on Bun unless `--child` says otherwise (lib/common.mjs). Exit code 0 only when every selected
-// case matches its golden on every declared observable and its witness matches `--pipeline`, except a cell listed in
+// case matches its golden on every declared observable and every tool call it made is witnessed `prepared`, except a cell listed in
 // fused-equivalence/deferred-goldens.mjs whose golden is missing: it is reported DEFERRED(<owner>, <issue>), never PASS,
 // and does not fail the run. A listed cell whose golden exists fails the run (lib/equivalence-deferred.mjs).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// A `--record` run fails when a golden already on disk was not rewritten (not selected, failed, or skipped, e.g. E29
+// without a gondolin image store) unless `--leave-unrecorded <ids>` names it: a partial re-record is said out loud
+// (senpi#5189).
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
 import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-goldens.mjs";
 import { startCaseRun } from "../../scenarios/fused-equivalence/cases/support/case-run.mjs";
 import { baselineManifest, goldenDir, observe } from "../../scenarios/fused-equivalence/cases/support/observe.mjs";
 import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
-import { expectedWitness, readWitness } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+import { readWitness, witnessOk } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
 import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
 import {
+	finishRecord,
 	goldenCellVerdict,
 	staleDeferredEntries,
 	summarizeRun,
@@ -31,6 +36,7 @@ import {
 } from "../lib/equivalence-deferred.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
 import { tuiCaptureHash, tuiGoldenDir } from "../lib/equivalence-tui-capture.mjs";
+import { diffTuiObservations, tuiVerdictLine } from "../lib/equivalence-tui-compare.mjs";
 import { runTuiCase, TUI_CASE_IDS } from "../lib/equivalence-tui-cases.mjs";
 
 /** Placements and surfaces whose producers come later in the plan; asking for them is an error, never a PASS. */
@@ -58,8 +64,8 @@ function parseArgs(argv) {
 	if (placement !== "fused") throw new Error(`unknown --placement ${placement}`);
 	if (surface !== "rpc" && surface !== "headless" && surface !== "tui")
 		throw new Error(`unknown --surface ${surface}`);
-	const pipeline = value("--pipeline") ?? "default";
-	expectedWitness(pipeline);
+	if (value("--pipeline") !== undefined)
+		throw new Error("--pipeline was removed (S36): the loop has one pipeline, and EQ reads its receipts from the witness sink");
 	const selected = value("--cases")
 		?.split(",")
 		.map((id) => id.trim().toUpperCase());
@@ -70,14 +76,29 @@ function parseArgs(argv) {
 		throw new Error(`no TUI drive for case(s): ${noTui.join(", ")} (EQ.tui: ${TUI_CASE_IDS.join(", ")})`);
 	const repeat = Number.parseInt(value("--repeat") ?? "1", 10);
 	if (!Number.isInteger(repeat) || repeat < 1) throw new Error("--repeat must be a positive integer");
-	return { mode, placement, surface, pipeline, selected, repeat, evidence: value("--evidence") };
+	const leaveUnrecorded = (value("--leave-unrecorded") ?? "")
+		.split(",")
+		.map((id) => id.trim().toUpperCase())
+		.filter(Boolean);
+	if (leaveUnrecorded.length && mode !== "record") throw new Error("--leave-unrecorded applies only to --record");
+	return { mode, placement, surface, selected, repeat, leaveUnrecorded, evidence: value("--evidence") };
 }
 
-async function runCase(testCase, { pipeline, surface }) {
-	const env = pipeline === "default" ? {} : { SENPI_EXECUTION_PIPELINE: pipeline };
+async function runCase(testCase, { surface }) {
+	// Each run's receipts go to its own file through the session's witness sink (S18b part 3), never into its entries.
+	const witnessDir = mkdtempSync(join(tmpdir(), "eq-witness-"));
+	try {
+		return await runCaseWithWitness(testCase, { surface }, join(witnessDir, "witness.jsonl"));
+	} finally {
+		rmSync(witnessDir, { recursive: true, force: true });
+	}
+}
+
+async function runCaseWithWitness(testCase, { surface }, witnessFile) {
+	const env = { SENPI_EXECUTION_PIPELINE_WITNESS: witnessFile };
 	if (surface === "tui") {
 		const { observations, sessionFile } = await runTuiCase(testCase, env);
-		return { observations, witness: readWitness(sessionFile) };
+		return { observations, witness: readWitness(witnessFile, [sessionFile]) };
 	}
 	const spec = typeof testCase.spec === "function" ? testCase.spec() : testCase.spec;
 	const run = await startCaseRun({ ...spec, label: testCase.id.toLowerCase(), env: { ...spec.env, ...env } });
@@ -87,7 +108,10 @@ async function runCase(testCase, { pipeline, surface }) {
 			surface === "headless"
 				? testCase.observables.filter((id) => id === "O7" || id === "O8")
 				: testCase.observables;
-		return { observations: observe(run, observables), witness: readWitness(run.sessionFile) };
+		return {
+			observations: observe(run, observables),
+			witness: readWitness(witnessFile, [run.sessionFile, ...(run.peerSessionFiles ?? [])]),
+		};
 	} finally {
 		await run.stop();
 		run.box.cleanup();
@@ -129,6 +153,12 @@ async function main() {
 	const cell = { platform: goldenPlatform(), mode: tui ? "tui" : "rpc" };
 	const results = [];
 	for (const testCase of selected) {
+		const skipped = testCase.skip?.();
+		if (skipped) {
+			results.push({ id: testCase.id, title: testCase.title, pass: false, skipped });
+			process.stdout.write(`[SKIPPED] ${testCase.id} ${testCase.title} - SKIPPED(${skipped})\n`);
+			continue;
+		}
 		const verdict =
 			options.mode === "compare" ? goldenCellVerdict(deferredGoldens, { ...cell, case: testCase.id }) : undefined;
 		if (verdict?.kind === "deferred") {
@@ -156,7 +186,7 @@ async function main() {
 			const first = runs[0].observations;
 			result.repeatDiffs = runs.slice(1).flatMap((other) => diffNormalized(first, other.observations));
 			result.witness = runs[0].witness;
-			result.witnessOk = runs.every((r) => r.witness.pipeline === expectedWitness(options.pipeline));
+			result.witnessOk = runs.every((r) => witnessOk(r.witness));
 			if (options.mode === "record") {
 				// A golden is written only from runs that agreed with each other: a nondeterministic case is a FAIL, never a golden.
 				if (result.repeatDiffs.length === 0) {
@@ -165,6 +195,7 @@ async function main() {
 						goldenPath,
 						`${JSON.stringify({ id: testCase.id, title: testCase.title, observations: first }, null, 1)}\n`,
 					);
+					result.written = true;
 				}
 				result.diffs = [];
 			} else {
@@ -172,7 +203,7 @@ async function main() {
 					? JSON.parse(readFileSync(goldenPath, "utf8")).observations
 					: undefined;
 				result.diffs = golden
-					? diffNormalized(golden, first)
+					? (tui ? diffTuiObservations : diffNormalized)(golden, first)
 					: [{ path: "$", golden: "<missing golden>", actual: "<observed>" }];
 			}
 			result.observed = first;
@@ -185,15 +216,21 @@ async function main() {
 			process.stdout.write(`${line}\n`);
 		if (result.witnessOk === false)
 			process.stdout.write(
-				`    witness.pipeline=${result.witness.pipeline} expected=${expectedWitness(options.pipeline)}\n`,
+				`    witness.pipeline=${result.witness.pipeline} expected=prepared\n`,
 			);
 		results.push(result);
 	}
 	guard.assertUnchanged();
 	if (tui) manifest.hashes.tuiCapture = tuiCaptureHash();
-	if (options.mode === "record") writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
-	const summary = summarizeRun(results, stale, options.mode);
+	const unrecorded =
+		options.mode === "record"
+			? finishRecord({ dir, results, leaveUnrecorded: options.leaveUnrecorded, manifest })
+			: [];
+	for (const line of unrecorded) process.stdout.write(`[FAIL] unrecorded golden ${line}\n`);
+	const summary = summarizeRun(results, stale, options.mode, unrecorded);
 	process.stdout.write(`\n${summary.line} (child_runtime=${manifest.runtimes.child})\n`);
+	const verdict = tui && options.mode === "compare" ? tuiVerdictLine(cell.platform, results, stale.length) : undefined;
+	if (verdict) process.stdout.write(`${verdict}\n`);
 	if (options.evidence) {
 		const out = evidenceDir(options.evidence);
 		const receipt = {
@@ -202,6 +239,7 @@ async function main() {
 			manifest,
 			options,
 			staleDeferred: stale,
+			unrecorded,
 			results: results.map(({ observed, ...rest }) => rest),
 		};
 		writeFileSync(join(out, "receipt.json"), `${JSON.stringify(receipt, null, 1)}\n`);

@@ -4,12 +4,14 @@ import { lazyOAuth } from "../auth/helpers.ts";
 import { loadChatGptSubscriptionOAuth, loadOpenAIChatGPTOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { Api, Model, OpenAIResponsesCompat } from "../types.ts";
+import { extractChatGptSubscriptionIdentity } from "../utils/chatgpt-subscription-auth.ts";
 import { CHATGPT_SUBSCRIPTION_MODELS } from "./chatgpt-subscription.models.ts";
 
 export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses" | "openai-responses"> {
 	const legacy = lazyOAuth({
 		name: "ChatGPT Subscription (Plus/Pro)",
 		isSubscription: true,
+		accountIdentity: (credential) => extractChatGptSubscriptionIdentity(credential.access),
 		load: loadChatGptSubscriptionOAuth,
 	});
 	const siwc = lazyOAuth({
@@ -31,6 +33,20 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 		auth: {
 			oauth: {
 				...legacy,
+				loginLabel: "Continue with ChatGPT",
+				login: async (interaction, options) => {
+					const route = await interaction.prompt({
+						type: "select",
+						message: "Sign in to ChatGPT Subscription:",
+						options: [
+							{ id: "siwc", label: "Continue with ChatGPT" },
+							{ id: "legacy", label: "Legacy sign-in (existing users)" },
+						],
+					});
+					if (route === "legacy") return legacy.login(interaction, options);
+					if (route !== "siwc") throw new Error(`Unknown ChatGPT sign-in route: ${route}`);
+					return { ...(await siwc.login(interaction, options)), route: "siwc" };
+				},
 				refresh: async (credential, signal) =>
 					credential.route === "siwc"
 						? { ...credential, ...(await siwc.refresh(credential, signal)), route: "siwc" }

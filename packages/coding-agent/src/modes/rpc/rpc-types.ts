@@ -40,6 +40,7 @@ export {
 	RPC_ERROR_MODEL_NOT_FOUND,
 	RPC_ERROR_MULTI_SESSION_DISABLED,
 	RPC_ERROR_NO_MODEL_SELECTED,
+	RPC_ERROR_TURN_CONFLICT,
 	RPC_ERROR_NOT_ASSISTANT,
 	RPC_ERROR_NOT_USER,
 	RPC_ERROR_OPEN_FAILED,
@@ -98,6 +99,7 @@ export type {
 	RpcQuestionSpec,
 	RpcQuestionUiRequest,
 	RpcQuestionUpdatedEvent,
+	RpcSecretInputSettledEvent,
 } from "./rpc-question-types.ts";
 export type { RpcResponse } from "./rpc-response-types.ts";
 export type {
@@ -131,6 +133,7 @@ export type {
 export type {
 	RpcAuthProvider,
 	RpcAuthStatus,
+	RpcAuthStoreError,
 	RpcLoadedExtension,
 	RpcLoadedMcpServer,
 	RpcMcpServerStatus,

@@ -1,3 +1,4 @@
+import { loadedContentFingerprints } from "./session-file-identity.ts";
 import type { FileEntry } from "./session-manager.ts";
 import {
 	captureTranscriptBase,
@@ -32,13 +33,17 @@ export class TranscriptFile {
 		this.reset();
 		const generation = this.generation;
 		const captured = entries ? captureTranscriptBase(entries) : undefined;
+		// A base is anchored by its content as read (RULING-72); entries no capturing read produced cannot be one.
+		const contentFingerprint = entries ? loadedContentFingerprints.get(entries) : undefined;
 		this.ready = identity.then((fileIdentity) => {
 			if (generation !== this.generation) return;
-			if (!fileIdentity) this.unavailable = "transcript_file_identity_unavailable";
+			if (!fileIdentity || (captured && contentFingerprint === undefined))
+				this.unavailable = "transcript_file_identity_unavailable";
 			else {
 				this.identity = fileIdentity;
-				if (captured) {
-					this.base = { fileIdentity, count: captured.count, idFingerprint: captured.idFingerprint };
+				if (captured && contentFingerprint !== undefined) {
+					const { count, idFingerprint } = captured;
+					this.base = { fileIdentity, count, idFingerprint, contentFingerprint };
 					this.history = captured.history;
 				}
 			}

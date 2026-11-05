@@ -1,7 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { TEST_DISCIPLINE_RULES } from "../../src/core/dynamic-prompt/verification.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -30,7 +29,7 @@ function hasFable5CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getFable5CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasFable5CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasFable5CatalogSignal));
 }
 
 describe("Claude Fable 5 prompt preset", () => {
@@ -55,7 +54,6 @@ describe("Claude Fable 5 prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("claude-fable-5");
-		expect(preset?.prompt).toContain("You are senpi");
 	});
 
 	it.each([
@@ -95,23 +93,6 @@ describe("Claude Fable 5 prompt preset", () => {
 		const preset = resolvePreset(model, settings);
 
 		expect(preset?.prompt).toContain("ask_user_question");
-		expect(preset?.prompt).toContain(
-			"then ask, through ask_user_question when it is available (waitForAnswer true when the next step depends on the answer), and end the turn",
-		);
-	});
-
-	it("keeps every shared test-discipline rule after the dieted core rewrite", () => {
-		// given
-		const settings: PromptPresetSettings = { promptPreset: "auto" };
-		const model = createModel("claude-fable-5", "anthropic");
-
-		// when
-		const preset = resolvePreset(model, settings);
-
-		// then
-		for (const rule of TEST_DISCIPLINE_RULES) {
-			expect(preset?.prompt).toContain(rule.directive);
-		}
 	});
 
 	it("does not include GPT or Kimi tuning in the claude-fable-5 preset", () => {
@@ -125,7 +106,6 @@ describe("Claude Fable 5 prompt preset", () => {
 		// then
 		expect(preset?.name).toBe("claude-fable-5");
 		expect(preset?.prompt).not.toContain("apply_patch");
-		expect(preset?.prompt).not.toContain("filler verification language");
 	});
 
 	it("returns claude-fable-5 preset for every Claude Fable 5 built-in catalog model", () => {

@@ -19,6 +19,16 @@ export function describedProviderError(message: AssistantMessage): string | unde
 			});
 }
 
+/** A text run follows the last tool call, so the run that ends the message carries the turn's notice. */
+function endsInTextRun(message: AssistantMessage): boolean {
+	return message.content.some((content) => content.type === "toolCall") && message.content.at(-1)?.type !== "toolCall";
+}
+
+/** The live head row leaves the turn-ending notice to the trailing text run when there is one (senpi#4958). */
+export function headNoticeShownElsewhere(message: AssistantMessage): boolean {
+	return endsInTextRun(message);
+}
+
 /**
  * Whether the turn's failed assistant row already shows classified text, so a turn-end failure line
  * would print the same failure a second time (senpi#4950). Only the text run that ends the message

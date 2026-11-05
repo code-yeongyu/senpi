@@ -84,12 +84,32 @@ export function resolveBeforeAgentStartMessage(input: {
 	};
 }
 
+export type IdleWarmAction = "none" | "start" | "replace" | "reuse" | "regenerate";
+
+/**
+ * What the sub-threshold idle warm-up does with the current job (senpi#5481). A job whose
+ * summarized prefix was rewritten is replaced; otherwise a running generation is never replaced
+ * for growth after its anchor, a finished summary is kept while it fits (`reuse`) and is
+ * regenerated once the cooldown has passed (`regenerate`). Only a failed job falls back to
+ * replacing on growth.
+ */
 export function resolveIdleWarmAction(
 	decision: IdleCompactionDecision,
-	job: { armedAtTokens: number } | undefined,
-): "none" | "start" | "replace" {
+	job:
+		| { armedAtTokens: number; completed: boolean; completedAt?: number; hasResult: boolean; anchorValid: boolean }
+		| undefined,
+	candidate: { fits: boolean } | undefined,
+	now: number,
+): IdleWarmAction {
 	if (!shouldWarmAtIdle(decision)) return "none";
 	if (!job) return "start";
+	if (!job.anchorValid) return "replace";
+	if (!job.completed) return "none";
+	if (job.hasResult) {
+		if (candidate?.fits) return "reuse";
+		const cooldownMs = decision.settings.speculativeCooldownMs ?? 0;
+		return now - (job.completedAt ?? 0) < cooldownMs ? "none" : "regenerate";
+	}
 	const currentTokens = decision.usage?.tokens ?? 0;
 	return isWarmResultStale(job.armedAtTokens, currentTokens, decision.settings.keepRecentTokens) ? "replace" : "none";
 }

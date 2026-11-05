@@ -74,7 +74,8 @@ describe("ChatGPT credential placement (#5003 W11)", () => {
 		await credentials.modify(provider.id, async () => stored);
 		const models = createModels({ credentials });
 		models.setProvider(provider);
-		const model = provider.getModels().find((candidate) => candidate.id === "gpt-6.1-sol-fast")!;
+		const model = provider.getModels().find((candidate) => candidate.id === "gpt-6.1-sol-fast");
+		if (!model) throw new Error("fixture model gpt-6.1-sol-fast not found");
 		const requests: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
 		const fetchStub: typeof fetch = async (input, init) => {
 			requests.push({

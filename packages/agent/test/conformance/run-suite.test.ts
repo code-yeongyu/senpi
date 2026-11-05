@@ -11,6 +11,25 @@ import { KILL_WAKE_CASES } from "../../src/durable/testing/kill-wake.ts";
 import { MULTI_HOST_CASES } from "../../src/durable/testing/multi-host-cases.ts";
 import { STORE_CASES } from "../../src/durable/testing/store-cases.ts";
 import { WAKE_CASES } from "../../src/durable/testing/wake-cases.ts";
+import { FAULT_HAND_CASES } from "../../src/execution/testing/fault-hand-cases.ts";
+import { KILL_HAND_CASES } from "../../src/execution/testing/kill-hand.ts";
+import { KILL_HOOK_CASES } from "../../src/execution/testing/kill-hook.ts";
+import { BATCH_CASES } from "../../src/execution/testing/batch-cases.ts";
+import { KILL_BATCH_CASES } from "../../src/execution/testing/kill-batch.ts";
+import { MULTI_SEQ_CASES } from "../../src/execution/testing/multi-seq-cases.ts";
+import { SEQ_CASES } from "../../src/execution/testing/seq-cases.ts";
+import { CONSENT_CASES } from "../../src/execution/testing/consent-cases.ts";
+import { NEST_CASES } from "../../src/execution/testing/nest-cases.ts";
+import { CANCEL_CASES } from "../../src/execution/testing/cancel-cases.ts";
+import { KILL_NEST_CASES } from "../../src/execution/testing/kill-nest.ts";
+import { WAKE_EXEC_CASES } from "../../src/execution/testing/wake-exec-cases.ts";
+import { KILL_WAKEX_CASES } from "../../src/execution/testing/kill-wakex.ts";
+import { LIFECYCLE_CASES } from "../../src/execution/testing/lifecycle-cases.ts";
+import { SCOPE_CASES } from "../../src/execution/testing/scope-cases.ts";
+import { MULTI_LIFECYCLE_CASES } from "../../src/execution/testing/multi-lifecycle-cases.ts";
+import { KILL_LEDGER_CASES } from "../../src/execution/testing/kill-ledger.ts";
+import { LEDGER_CASES } from "../../src/execution/testing/ledger-cases.ts";
+import { MULTI_HAND_CASES } from "../../src/execution/testing/multi-hand-cases.ts";
 import { FAULT_TRANSPORT_CASES } from "../../src/transport/testing/fault-cases.ts";
 import { MULTI_CASES } from "../../src/transport/testing/multi-cases.ts";
 import { TRANSPORT_CASES } from "../../src/transport/testing/transport-cases.ts";
@@ -113,31 +132,65 @@ describe("the ./conformance export", () => {
 		});
 		expect(Object.keys(conformanceExport).sort()).toEqual([
 			"ADAPTER_KINDS",
+			"BATCH_CASES",
+			"BatchManifestConflictError",
+			"CANCEL_CASES",
 			"CONFORMANCE_REGISTRY",
+			"CONSENT_CASES",
 			"DurableStoreError",
+			"FAULT_HAND_CASES",
 			"FAULT_PROFILE_NAMES",
 			"FAULT_TRANSPORT_CASES",
+			"KILL_BATCH_CASES",
+			"KILL_BATCH_DECLARATIONS",
+			"KILL_HAND_CASES",
+			"KILL_HAND_DECLARATIONS",
+			"KILL_HOOK_CASES",
+			"KILL_HOOK_DECLARATIONS",
+			"KILL_LEDGER_CASES",
+			"KILL_LEDGER_DECLARATIONS",
+			"KILL_NEST_CASES",
 			"KILL_STORE_CASES",
 			"KILL_STORE_DECLARATIONS",
+			"KILL_WAKEX_CASES",
 			"KILL_WAKE_CASES",
 			"KILL_WAKE_DECLARATIONS",
+			"LEDGER_CASES",
+			"LIFECYCLE_CASES",
 			"MULTI_CASES",
+			"MULTI_HAND_CASES",
 			"MULTI_HOST_CASES",
+			"MULTI_LIFECYCLE_CASES",
+			"MULTI_SEQ_CASES",
+			"NEST_CASES",
+			"SCOPE_CASES",
+			"SEQ_CASES",
 			"STORE_CASES",
 			"TRANSPORT_CASES",
 			"TransportClosedError",
 			"WAKE_CASES",
+			"WAKE_EXEC_CASES",
+			"WAKE_RETENTION_MS",
 			"buildManifest",
 			"computeSuiteHash",
+			"createBatchCoordinator",
 			"createBunTimerHost",
+			"createExecutionLedger",
 			"createInProcessNetwork",
 			"createManualTimers",
+			"createNestedAdmission",
 			"createReliableTransport",
+			"createScopeLifecycle",
+			"createSequentialCoordinator",
 			"createWakeHost",
+			"createWakeInbox",
+			"createWakeOutbox",
 			"decodeReferencePacket",
 			"findImplementationGaps",
 			"findMappingProblems",
+			"interruptedReplayText",
 			"localEndpoint",
+			"referenceBatchExecutor",
 			"runSuite",
 			"sha256Hex",
 			"storeAlarmPersistence",
@@ -154,6 +207,21 @@ const HOSTS: Readonly<Record<string, HostFactory>> = {
 	"bun-sqlite": async () => (await import("./hosts/bun-sqlite.ts")).createBunSqliteHost(),
 };
 const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAdapters>>([
+	...LEDGER_CASES,
+	...KILL_LEDGER_CASES,
+	...BATCH_CASES,
+	...KILL_BATCH_CASES,
+	...SEQ_CASES,
+	...CONSENT_CASES,
+	...NEST_CASES,
+	...CANCEL_CASES,
+	...KILL_NEST_CASES,
+	...WAKE_EXEC_CASES,
+	...KILL_WAKEX_CASES,
+	...LIFECYCLE_CASES,
+	...SCOPE_CASES,
+	...MULTI_LIFECYCLE_CASES,
+	...MULTI_SEQ_CASES,
 	...STORE_CASES,
 	...KILL_STORE_CASES,
 	...WAKE_CASES,
@@ -162,6 +230,10 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...TRANSPORT_CASES,
 	...MULTI_CASES,
 	...FAULT_TRANSPORT_CASES,
+	...KILL_HAND_CASES,
+	...KILL_HOOK_CASES,
+	...MULTI_HAND_CASES,
+	...FAULT_HAND_CASES,
 ]);
 
 function resolveHost(name: string, hosts: Readonly<Record<string, HostFactory>>): HostFactory {

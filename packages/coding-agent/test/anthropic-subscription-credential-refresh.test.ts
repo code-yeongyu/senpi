@@ -19,8 +19,15 @@ const now = 10_000;
 
 type Done = { type: "done"; value: string };
 
-const original: AccountSlot = { name: "default", access: "a-old", refresh: "r-old", expires: 1, source: "login" };
-const rotated = { access: "a-new", refresh: "r-new", expires: 2 };
+const DIR_OLD = "a".repeat(32);
+const DIR_NEW = "b".repeat(32);
+const original: AccountSlot = { name: "default", source: "login", store: "claude-cli", dirId: DIR_OLD };
+const rotated = { dirId: DIR_NEW };
+
+function signInOf(slot: AccountSlot): string {
+	if (slot.store !== "claude-cli") throw new Error("expected a claude CLI slot");
+	return slot.dirId;
+}
 
 async function storeWith(slot: AccountSlot): Promise<CredentialStore> {
 	const store = new InMemoryCredentialStore();
@@ -33,7 +40,7 @@ async function storedSlot(store: CredentialStore): Promise<AccountSlot | undefin
 	return credential.accounts?.[0];
 }
 
-async function rotateStoredToken(store: CredentialStore): Promise<void> {
+async function signInAgain(store: CredentialStore): Promise<void> {
 	await store.modify(PROVIDER, async (current) => {
 		const credential = current as AnthropicSubscriptionCredential;
 		return { ...credential, accounts: credential.accounts?.map((slot) => ({ ...slot, ...rotated })) };
@@ -61,29 +68,29 @@ async function collect(iterable: AsyncIterable<Done>): Promise<Done[]> {
 	return events;
 }
 
-describe("anthropic-subscription auth blocks follow the rejected token, not the account", () => {
-	it("does not auth-block a slot whose token was refreshed meanwhile, and retries it on the stored token", async () => {
+describe("anthropic-subscription auth blocks follow the rejected sign-in, not the account", () => {
+	it("does not auth-block a slot that was signed in again meanwhile, and retries it on the stored sign-in", async () => {
 		const store = await storeWith(original);
 		const used: string[] = [];
 		const events = await collect(
 			failover(store, async function* (slot) {
-				used.push(slot.access);
+				used.push(signInOf(slot));
 				if (used.length === 1) {
-					await rotateStoredToken(store);
+					await signInAgain(store);
 					throw new Error(REVOKED);
 				}
-				yield { type: "done", value: slot.access };
+				yield { type: "done", value: signInOf(slot) };
 			}),
 		);
 
-		expect(used).toEqual(["a-old", "a-new"]);
-		expect(events).toEqual([{ type: "done", value: "a-new" }]);
+		expect(used).toEqual([DIR_OLD, DIR_NEW]);
+		expect(events).toEqual([{ type: "done", value: DIR_NEW }]);
 		const stored = await storedSlot(store);
 		expect(stored).toMatchObject(rotated);
 		expect(stored?.blockReason).toBeUndefined();
 	});
 
-	it("does not auth-block when an in-process refresh rewrites the shared slot object mid-request", async () => {
+	it("does not auth-block when a re-login rewrites the shared slot object mid-request", async () => {
 		const store = await storeWith(original);
 		const shared: AccountSlot = { ...original };
 		const used: string[] = [];
@@ -91,13 +98,13 @@ describe("anthropic-subscription auth blocks follow the rejected token, not the 
 			accounts: [shared],
 			selectFn: (pool) => pool[0]!,
 			runAttempt: async function* (slot) {
-				used.push(slot.access);
+				used.push(signInOf(slot));
 				if (used.length === 1) {
 					Object.assign(shared, rotated);
-					await rotateStoredToken(store);
+					await signInAgain(store);
 					throw new Error(REVOKED);
 				}
-				yield { type: "done", value: slot.access };
+				yield { type: "done", value: signInOf(slot) };
 			},
 			classify: classifySdkError,
 			store,
@@ -105,22 +112,22 @@ describe("anthropic-subscription auth blocks follow the rejected token, not the 
 			now: () => now,
 		});
 
-		expect(await collect(stream)).toEqual([{ type: "done", value: "a-new" }]);
-		expect(used).toEqual(["a-old", "a-new"]);
+		expect(await collect(stream)).toEqual([{ type: "done", value: DIR_NEW }]);
+		expect(used).toEqual([DIR_OLD, DIR_NEW]);
 		expect((await storedSlot(store))?.blockReason).toBeUndefined();
 	});
 
-	it("still auth-blocks when the stored token itself is rejected", async () => {
+	it("still auth-blocks when the stored sign-in itself is rejected", async () => {
 		const store = await storeWith(original);
 		const used: string[] = [];
 		const stream = failover(store, async (slot) => {
-			used.push(slot.access);
-			if (used.length === 1) await rotateStoredToken(store);
+			used.push(signInOf(slot));
+			if (used.length === 1) await signInAgain(store);
 			throw new Error(REVOKED);
 		});
 
 		await expect(collect(stream)).rejects.toBeInstanceOf(ClassifiedSdkError);
-		expect(used).toEqual(["a-old", "a-new"]);
+		expect(used).toEqual([DIR_OLD, DIR_NEW]);
 		expect(await storedSlot(store)).toMatchObject({ ...rotated, blockReason: "auth_error" });
 	});
 });

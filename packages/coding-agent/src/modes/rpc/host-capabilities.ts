@@ -1,3 +1,4 @@
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import {
 	isHostOwnedToolRuntimeCapability,
 	type ToolRuntimeKind,
@@ -9,12 +10,14 @@ import {
 } from "../../core/extensions/builtin/permission-system/config.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import {
+	ACCOUNT_RESET_CAPABILITY,
 	ATTENDED_CAPABILITY,
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	BROWSER_ENGINE_CAPABILITY,
 	CONTINUE_FROM_LEAF_CAPABILITY,
+	DELEGATED_CONNECTION_CAPABILITY,
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
@@ -24,6 +27,7 @@ import {
 	OBSERVE_READS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
+	PROVIDER_ACCOUNT_TEST_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RESUME_SESSION_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
@@ -66,6 +70,7 @@ export function multiSessionHostCapabilities(options: {
 			"multi_session",
 			"snapshot_cursor",
 			"ui_answer_ledger",
+			"secret_input_v1",
 			"dialog_observer",
 			...(options.mcpPresenters ? ["mcp_form_presenter_v1"] : []),
 			"session_lifecycle",
@@ -84,6 +89,8 @@ export function multiSessionHostCapabilities(options: {
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
+			PROVIDER_ACCOUNT_TEST_CAPABILITY,
+			ACCOUNT_RESET_CAPABILITY,
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
 			TOOL_BARRIER_CAPABILITY,
 			USER_ACTIVITY_CAPABILITY,
@@ -101,6 +108,8 @@ export function multiSessionHostCapabilities(options: {
 			RETAIN_ON_DISCONNECT_CAPABILITY,
 			// Only a multi-session host tracks attachments per connection, so only it can drop them on request.
 			DETACH_CONNECTION_CAPABILITY,
+			// Its host core decides every inbound line of a delegated connection before dispatch (senpi#5632).
+			DELEGATED_CONNECTION_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
@@ -134,7 +143,12 @@ export function multiSessionHostCapabilities(options: {
 			...toolRuntimeCapabilities(options.toolRuntime),
 			// The host alone says where tool work runs; a negotiated copy would make two answers.
 			...options.negotiated.filter(
-				(capability) => capability !== "mcp_form_presenter_v1" && !isHostOwnedToolRuntimeCapability(capability),
+				(capability) =>
+					capability !== "mcp_form_presenter_v1" &&
+					// RULING-111 (LEAK-E): only the compact negotiation owns these names; flag off echoes them as main does.
+					(!compactUpdatesEnabled() ||
+						(capability !== "compact_message_updates_v1" && capability !== "compact_events")) &&
+					!isHostOwnedToolRuntimeCapability(capability),
 			),
 		]),
 	];

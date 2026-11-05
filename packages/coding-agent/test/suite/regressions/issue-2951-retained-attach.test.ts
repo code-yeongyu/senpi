@@ -12,7 +12,7 @@ import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createHostCore } from "../../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
-import { reservationPhase } from "../rpc-worker-reservation-support.ts";
+import { reservationStep } from "../rpc-worker-reservation-support.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 it.each(["idle", "admitted"] as const)(
@@ -98,7 +98,7 @@ it.each(["idle", "admitted"] as const)(
 				prompt = writer.withConnection("original", () =>
 					core.handle(JSON.stringify({ type: "prompt", sessionId, message: "/retained-gate" })),
 				);
-				await reservationPhase("retained-command-started", started.promise);
+				await reservationStep("retained-command-started", started.promise);
 			}
 			writer.unregisterConnection("original");
 			await core.router.releaseConnection("original");
@@ -114,7 +114,7 @@ it.each(["idle", "admitted"] as const)(
 			expect(registry.list()).toMatchObject([{ sessionId, status: "open", attachments: 0 }]);
 			unblock.resolve();
 			if (prompt) {
-				await reservationPhase("retained-command-finished", prompt);
+				await reservationStep("retained-command-finished", prompt);
 				expect(SessionManager.open(file).getEntries()).toContainEqual(
 					expect.objectContaining({ type: "custom", customType: "retained-admitted-finished" }),
 				);
