@@ -7,7 +7,6 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { resolveToolRuntime } from "../../src/cli/tool-runtime.ts";
@@ -25,11 +24,11 @@ import {
 import { writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
 import { assertWorkspaceBuildPrerequisite } from "../support/workspace-build-prerequisite.ts";
 import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
+import { sourceRuntimeArgs } from "../helpers/source-runtime-args.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const cliPath = resolve(import.meta.dirname, "../../src/cli.ts");
-const sourceResolverUrl = pathToFileURL(resolve(import.meta.dirname, "../../src/experimental/source-resolver.ts")).href;
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -88,7 +87,7 @@ describe("tool runtime at startup", () => {
 		writeRpcModelsJson(scratch.agentDir, "http://127.0.0.1:1");
 		const child = spawn(
 			process.execPath,
-			["--import", sourceResolverUrl, cliPath, "--mode", "rpc", ...GENERATION_HOST_ARGS, "--tool-runtime", "child"],
+			[...sourceRuntimeArgs(), cliPath, "--mode", "rpc", ...GENERATION_HOST_ARGS, "--tool-runtime", "child"],
 			{
 				cwd: scratch.cwd,
 				env: { ...hostSpawnEnv(), ...generationEnv(scratch), SENPI_CODING_AGENT_DIR: scratch.agentDir },
@@ -172,7 +171,7 @@ describe("tool runtime at startup", () => {
 function runCli(args: string[], env: Record<string, string>): Promise<{ code: number | null; stderr: string }> {
 	return new Promise((resolvePromise, reject) => {
 		const scratch = generationScratch("toolrt-cli");
-		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
+		const child = spawn(process.execPath, [...sourceRuntimeArgs(), cliPath, ...args], {
 			cwd: scratch.cwd,
 			env: { ...hostSpawnEnv(), ...generationEnv(scratch), SENPI_CODING_AGENT_DIR: scratch.agentDir, ...env },
 			stdio: ["ignore", "ignore", "pipe"],
