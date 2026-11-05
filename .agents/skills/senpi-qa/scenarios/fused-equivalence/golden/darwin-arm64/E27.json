@@ -319,9 +319,10 @@
           "enum": [
            "markdown",
            "text",
-           "html"
+           "html",
+           "snapshot"
           ],
-          "description": "The format to return the content in. Defaults to markdown."
+          "description": "The format to return the content in. Defaults to markdown. snapshot lists the page's headings, links, buttons and form fields in order, to find where a page leads."
          },
          "timeout": {
           "type": "number",
@@ -957,9 +958,10 @@
           "enum": [
            "markdown",
            "text",
-           "html"
+           "html",
+           "snapshot"
           ],
-          "description": "The format to return the content in. Defaults to markdown."
+          "description": "The format to return the content in. Defaults to markdown. snapshot lists the page's headings, links, buttons and form fields in order, to find where a page leads."
          },
          "timeout": {
           "type": "number",
@@ -1919,9 +1921,10 @@
           "enum": [
            "markdown",
            "text",
-           "html"
+           "html",
+           "snapshot"
           ],
-          "description": "The format to return the content in. Defaults to markdown."
+          "description": "The format to return the content in. Defaults to markdown. snapshot lists the page's headings, links, buttons and form fields in order, to find where a page leads."
          },
          "timeout": {
           "type": "number",
@@ -2259,9 +2262,10 @@
         "enum": [
          "markdown",
          "text",
-         "html"
+         "html",
+         "snapshot"
         ],
-        "description": "The format to return the content in. Defaults to markdown."
+        "description": "The format to return the content in. Defaults to markdown. snapshot lists the page's headings, links, buttons and form fields in order, to find where a page leads."
        },
        "timeout": {
         "type": "number",
@@ -2823,9 +2827,10 @@
         "enum": [
          "markdown",
          "text",
-         "html"
+         "html",
+         "snapshot"
         ],
-        "description": "The format to return the content in. Defaults to markdown."
+        "description": "The format to return the content in. Defaults to markdown. snapshot lists the page's headings, links, buttons and form fields in order, to find where a page leads."
        },
        "timeout": {
         "type": "number",
@@ -3706,9 +3711,10 @@
         "enum": [
          "markdown",
          "text",
-         "html"
+         "html",
+         "snapshot"
         ],
-        "description": "The format to return the content in. Defaults to markdown."
+        "description": "The format to return the content in. Defaults to markdown. snapshot lists the page's headings, links, buttons and form fields in order, to find where a page leads."
        },
        "timeout": {
         "type": "number",

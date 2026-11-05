@@ -22,3 +22,7 @@ export async function htmlToMarkdown(html: string, url: string): Promise<string>
 export async function htmlToText(html: string, url: string): Promise<string> {
 	return (await loadContentModule()).htmlToText(html, url);
 }
+
+export async function htmlToSnapshot(html: string, url: string): Promise<string> {
+	return (await loadContentModule()).htmlToSnapshot(html, url);
+}

@@ -3,16 +3,17 @@ import { Type } from "typebox";
 import { modelOnlyText } from "../../../../tools/model-only-text.ts";
 import { defineTool } from "../../../types.ts";
 
-import { htmlToMarkdown, htmlToText } from "./content.lazy.ts";
+import { htmlToMarkdown, htmlToSnapshot, htmlToText } from "./content.lazy.ts";
 import { clampTimeout, fetchUrl, type WebfetchFormat } from "./fetcher.ts";
 
-const WEBFETCH_FORMATS = ["markdown", "text", "html"] as const;
+const WEBFETCH_FORMATS = ["markdown", "text", "html", "snapshot"] as const;
 
 const Params = Type.Object({
 	url: Type.String({ description: "The URL to fetch content from" }),
 	format: Type.Optional(
-		StringEnum(["markdown", "text", "html"] as const, {
-			description: "The format to return the content in. Defaults to markdown.",
+		StringEnum(WEBFETCH_FORMATS, {
+			description:
+				"The format to return the content in. Defaults to markdown. snapshot lists the page's headings, links, buttons and form fields in order, to find where a page leads.",
 		}),
 	),
 	timeout: Type.Optional(Type.Number({ description: "Optional timeout in seconds. Maximum 120." })),
@@ -135,6 +136,9 @@ export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 			converted = true;
 		} else if (isHtml && format === "text") {
 			text = await htmlToText(raw, fetched.url);
+			converted = true;
+		} else if (isHtml && format === "snapshot") {
+			text = await htmlToSnapshot(raw, fetched.url);
 			converted = true;
 		}
 

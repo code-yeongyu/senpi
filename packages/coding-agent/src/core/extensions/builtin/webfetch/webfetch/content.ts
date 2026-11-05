@@ -83,6 +83,188 @@ export function htmlToText(html: string, url: string): string {
 	return htmlFragmentToPlainText(untouchedDocument.body);
 }
 
+const SNAPSHOT_SKIP_SELECTOR = "script, style, noscript, template, svg, canvas, iframe, object, embed";
+const SNAPSHOT_NAME_MAX_LENGTH = 100;
+const SNAPSHOT_MAX_OPTIONS = 8;
+const SNAPSHOT_LANDMARKS: Readonly<Record<string, string>> = {
+	nav: "navigation",
+	header: "banner",
+	footer: "contentinfo",
+	main: "main",
+	aside: "complementary",
+	form: "form",
+};
+const SNAPSHOT_LANDMARK_ROLES = new Set([
+	"navigation",
+	"banner",
+	"contentinfo",
+	"main",
+	"complementary",
+	"search",
+	"form",
+]);
+const SNAPSHOT_BUTTON_INPUT_TYPES = new Set(["button", "submit", "reset", "image"]);
+// Footnote markers ("[12]", "[a]", "^") point at the page's own reference list; they are not places to go.
+const SNAPSHOT_FOOTNOTE_MARKER = /^(?:\[[^\]\s]{1,8}\]|\^)$/u;
+
+/**
+ * The page's navigation structure in document order, one element per line: headings, links with
+ * their resolved target (same-origin links shortened to their path), buttons, form fields, and the
+ * landmarks they sit in. Prose is left out; this is the map of where the page leads (senpi#5941).
+ */
+export function htmlToSnapshot(html: string, url: string): string {
+	const document = parseWebDocument(html, url);
+	const lines: string[] = [];
+	const title = normalizeName(document.title);
+	if (title && document.body.querySelector("h1") === null) lines.push(`# ${title}`);
+	appendSnapshotLines(document.body, document, lines);
+	const seenControls = new Set<string>();
+	const kept = lines.filter((line, index) => {
+		if (!line.startsWith("[")) return line !== lines[index - 1];
+		if (seenControls.has(line)) return false;
+		seenControls.add(line);
+		return true;
+	});
+	// A landmark with nothing of its own before the next landmark (or the end) carries no navigation.
+	return kept.filter((line, index) => !isLandmarkLine(line) || !isLandmarkLine(kept[index + 1] ?? "== ==")).join("\n");
+}
+
+function isLandmarkLine(line: string): boolean {
+	return line.startsWith("== ") && line.endsWith(" ==");
+}
+
+function appendSnapshotLines(element: Element, document: Document, lines: string[]): void {
+	for (const child of Array.from(element.children)) {
+		if (child.matches(SNAPSHOT_SKIP_SELECTOR) || isHiddenElement(child)) continue;
+		const line = snapshotLine(child, document);
+		if (line === null) {
+			appendSnapshotLines(child, document, lines);
+			continue;
+		}
+		if (line !== "") lines.push(line);
+		if (isLandmark(child)) appendSnapshotLines(child, document, lines);
+	}
+}
+
+/** One element's line; `""` drops it and its subtree, `null` means it is a plain container. */
+function snapshotLine(element: Element, document: Document): string | null {
+	const tag = element.localName;
+	const role = element.getAttribute("role")?.trim().toLowerCase();
+	const heading = /^h([1-6])$/u.exec(tag);
+	if (heading) {
+		const name = accessibleName(element);
+		return name ? `${"#".repeat(Number(heading[1]))} ${name}` : "";
+	}
+	if (tag === "a" && element.hasAttribute("href")) return linkLine(element, document);
+	if (tag === "button" || role === "button") return `[button] ${accessibleName(element) || "(unnamed)"}`;
+	if (tag === "input") return inputLine(element, document);
+	if (tag === "textarea") return `[textarea] ${fieldLabel(element, document)}`;
+	if (tag === "select") return selectLine(element, document);
+	if (isLandmark(element)) {
+		const label = normalizeName(element.getAttribute("aria-label") ?? "");
+		return `== ${role && SNAPSHOT_LANDMARK_ROLES.has(role) ? role : SNAPSHOT_LANDMARKS[tag]}${label ? `: ${label}` : ""} ==`;
+	}
+	return null;
+}
+
+function isLandmark(element: Element): boolean {
+	const role = element.getAttribute("role")?.trim().toLowerCase();
+	return element.localName in SNAPSHOT_LANDMARKS || (role !== undefined && SNAPSHOT_LANDMARK_ROLES.has(role));
+}
+
+function isHiddenElement(element: Element): boolean {
+	if (element.hasAttribute("hidden") || element.getAttribute("aria-hidden") === "true") return true;
+	const style = (element.getAttribute("style") ?? "").replace(/\s+/gu, "").toLowerCase();
+	return style.includes("display:none") || style.includes("visibility:hidden");
+}
+
+function linkLine(element: Element, document: Document): string {
+	const name = accessibleName(element);
+	const href = element.getAttribute("href") ?? "";
+	let destination: URL;
+	try {
+		destination = new URL(href, document.baseURI);
+	} catch {
+		return name ? `[${name}]` : "";
+	}
+	// oxlint-disable-next-line eslint/no-script-url -- a javascript: URL literal the code checks for, never navigated to
+	if (destination.protocol === "javascript:") return name ? `[button] ${name}` : "";
+	if (!name || SNAPSHOT_FOOTNOTE_MARKER.test(name)) return "";
+	return `[${name}](${shortenSameOrigin(destination, document)})`;
+}
+
+function shortenSameOrigin(destination: URL, document: Document): string {
+	const page = new URL(document.URL);
+	if (destination.origin !== page.origin) return readableUrl(destination.href);
+	const samePage = destination.pathname === page.pathname && destination.search === page.search;
+	if (samePage && destination.hash) return readableUrl(destination.hash);
+	return readableUrl(`${destination.pathname}${destination.search}${destination.hash}`);
+}
+
+/** Percent-decodes a URL for display (`/wiki/C%E1%BB%91c` -> `/wiki/Cốc`); undecodable input stays as it is. */
+function readableUrl(value: string): string {
+	try {
+		return decodeURI(value);
+	} catch {
+		return value;
+	}
+}
+
+function inputLine(element: Element, document: Document): string {
+	const type = (element.getAttribute("type") ?? "text").trim().toLowerCase();
+	if (type === "hidden") return "";
+	if (SNAPSHOT_BUTTON_INPUT_TYPES.has(type)) {
+		const name = normalizeName(
+			element.getAttribute("value") ?? element.getAttribute("aria-label") ?? element.getAttribute("alt") ?? type,
+		);
+		return `[button] ${name}`;
+	}
+	return `[${type} input] ${fieldLabel(element, document)}`;
+}
+
+function selectLine(element: Element, document: Document): string {
+	const options = Array.from(element.querySelectorAll("option"))
+		.map((option) => normalizeName(option.textContent ?? ""))
+		.filter((option) => option !== "");
+	const shown = options.slice(0, SNAPSHOT_MAX_OPTIONS).join(" | ");
+	const more = options.length > SNAPSHOT_MAX_OPTIONS ? ` | +${options.length - SNAPSHOT_MAX_OPTIONS} more` : "";
+	return `[select] ${fieldLabel(element, document)}${shown ? `: ${shown}${more}` : ""}`;
+}
+
+function fieldLabel(element: Element, document: Document): string {
+	const id = element.getAttribute("id");
+	const forLabel = id
+		? Array.from(document.querySelectorAll("label[for]")).find((label) => label.getAttribute("for") === id)
+		: undefined;
+	const candidates = [
+		element.getAttribute("aria-label"),
+		forLabel?.textContent,
+		element.closest("label")?.textContent,
+		element.getAttribute("placeholder"),
+		element.getAttribute("title"),
+		element.getAttribute("name"),
+	];
+	for (const candidate of candidates) {
+		const name = normalizeName(candidate ?? "");
+		if (name) return name;
+	}
+	return "(unlabeled)";
+}
+
+function accessibleName(element: Element): string {
+	const label = normalizeName(element.getAttribute("aria-label") ?? "");
+	if (label) return label;
+	const text = normalizeName(element.textContent ?? "");
+	if (text) return text;
+	const image = element.querySelector("img[alt]");
+	return normalizeName(image?.getAttribute("alt") ?? element.getAttribute("title") ?? "");
+}
+
+function normalizeName(value: string): string {
+	const name = value.replace(/\s+/gu, " ").trim();
+	return name.length > SNAPSHOT_NAME_MAX_LENGTH ? `${name.slice(0, SNAPSHOT_NAME_MAX_LENGTH - 1)}\u2026` : name;
+}
+
 function htmlFragmentToPlainText(root: HTMLElement): string {
 	const document = root.ownerDocument;
 	const clonedRoot = document.importNode(root, true);

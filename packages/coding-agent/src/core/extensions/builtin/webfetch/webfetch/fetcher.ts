@@ -19,7 +19,7 @@ const BROWSER_USER_AGENT =
 const CHROME_MAJOR_VERSION = "143";
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-export type WebfetchFormat = "markdown" | "text" | "html";
+export type WebfetchFormat = "markdown" | "text" | "html" | "snapshot";
 
 export interface FetchOptions {
 	url: string;
@@ -99,6 +99,7 @@ export function buildAcceptHeader(format: WebfetchFormat): string {
 		case "text":
 			return "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1";
 		case "html":
+		case "snapshot":
 			return "text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1";
 	}
 }
