@@ -157,6 +157,12 @@ describe("createAgentSession's default session store on Bun (S21b b1b)", { timeo
 		expect(result.keys).toEqual(expect.arrayContaining([result.first, result.second]));
 	});
 
+	it("reuses one store connection per session when a process binds the same session again", async () => {
+		const result = (await step("rebind")) as unknown as { same: boolean; distinct: boolean; epochs: number[] };
+		expect(result).toEqual({ same: true, distinct: true, epochs: [1, 1] });
+	});
+
+	// Nothing reads the variable on Bun today; this guards against a future reader that would let it switch stores.
 	it("ignores SENPI_SESSION_STORE=jsonl on Bun", async () => {
 		const result = await step("wire", { SENPI_SESSION_STORE: "jsonl" });
 		expect(result.keys).toEqual(expect.arrayContaining([result.first, result.second]));

@@ -8,7 +8,10 @@ import { openDefaultSessionStore } from "../../src/core/session-store/default-st
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { openSessionStore } from "@earendil-works/pi-agent-core";
 
-const { root, action } = JSON.parse(process.argv[2] ?? "{}") as { root: string; action: "wire" | "jsonl" | "edited" };
+const { root, action } = JSON.parse(process.argv[2] ?? "{}") as {
+	root: string;
+	action: "wire" | "jsonl" | "edited" | "rebind";
+};
 const agentDir = join(root, "agent");
 const sessionDir = join(root, "sessions");
 const model = getModel("anthropic", "claude-sonnet-4-5");
@@ -30,6 +33,21 @@ async function create(sessionManager: SessionManager, sessionStore?: "jsonl") {
 async function storedKeys(sessionId: string): Promise<string[]> {
 	const bound = await openDefaultSessionStore({ agentDir, sessionId });
 	return ((await openSessionStore(bound.store, bound.epoch).load(sessionId))?.entries ?? []).map((entry) => entry.key);
+}
+
+if (action === "rebind") {
+	// One process binding one session again (/resume, a reload, the startup retry) must reuse its store connection.
+	const first = await openDefaultSessionStore({ agentDir, sessionId: "rebind-session" });
+	const second = await openDefaultSessionStore({ agentDir, sessionId: "rebind-session" });
+	const other = await openDefaultSessionStore({ agentDir, sessionId: "rebind-other" });
+	console.log(
+		JSON.stringify({
+			same: first.store === second.store,
+			distinct: first.store !== other.store,
+			epochs: [first.epoch, second.epoch],
+		}),
+	);
+	process.exit(0);
 }
 
 const user = (text: string) => ({ role: "user" as const, content: [{ type: "text" as const, text }], timestamp: 1 });
