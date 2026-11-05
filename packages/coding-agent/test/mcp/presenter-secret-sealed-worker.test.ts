@@ -7,7 +7,7 @@ import type { HostToSessionWorker, SessionWorkerToHost } from "../../src/modes/r
 import { WorkerSecretRoutes } from "../../src/modes/rpc/session-worker-secret-route.ts";
 import { WorkerSecretIds } from "../../src/modes/rpc/session-worker-secrets.ts";
 import { accountHost, closeAccountHosts, issuer } from "./fixtures/presenter-account-host.ts";
-import { holder, records, sealedTypes } from "./fixtures/secret-sealed-host.ts";
+import { holder, records, sealedHost, sealedTypes } from "./fixtures/secret-sealed-host.ts";
 import { secretHostIssuer } from "./fixtures/secret-host-issuer.ts";
 import { cancelAnswer, requestHash, valueAnswer, type AnswerIds } from "./fixtures/secret-sealed-presenter.ts";
 
@@ -88,7 +88,14 @@ async function workerHost(options: { readonly holdAnswers?: boolean } = {}) {
 	);
 	routes = new WorkerSecretRoutes(credit.exchange, () => undefined);
 	const requests = new SecretInputRequests(routes.route(), () => {});
-	return { host, secret, requests, answers, release: () => held.splice(0).forEach((run) => run()) };
+	return {
+		host,
+		secret,
+		requests,
+		answers,
+		exchange: credit.exchange,
+		release: () => held.splice(0).forEach((run) => run()),
+	};
 }
 
 type Holder = Awaited<ReturnType<typeof holder>>;
@@ -237,4 +244,73 @@ it("the host admits a worker's sealed offer once per id and within the secret fr
 	ids.add("r2");
 	expect(ids.admitFrame("r2", { ...offer, title: "x".repeat(70 * 1024) })).toBe(false);
 	expect(ids.admitFrame("unknown", offer)).toBe(false);
+});
+
+type Settle = { outcome?: string; winnerGrant?: string };
+const settle = (w: Awaited<ReturnType<typeof workerHost>>, id: string, fields: Settle) =>
+	w.exchange((signal) => ({ type: "secret_settled", id, signal, ...fields }) as SessionWorkerToHost);
+
+it("the host refuses an isolate's settle for an id it does not hold, with an unknown outcome, or naming a winner it never forwarded", async () => {
+	const w = await workerHost();
+	const p = await pending(w);
+	const id = String(p.request.uiRequestId);
+	expect(() => settle(w, "not-held", { outcome: "answered" })).toThrow("session_worker_output_denied");
+	expect(() => settle(w, id, { outcome: "x".repeat(4096) })).toThrow("session_worker_output_denied");
+	expect(() => settle(w, id, { outcome: "answered", winnerGrant: String(p.phone.adopted.acquired?.grantId) })).toThrow(
+		"session_worker_output_denied",
+	);
+	expect(records(p.phone.lines, "mcp_presenter_secret_settled")).toEqual([]);
+});
+
+it("the host admits one settle per id: a repeated settle from the isolate is refused", async () => {
+	const w = await workerHost();
+	const p = await pending(w);
+	const id = String(p.request.uiRequestId);
+	settle(w, id, { outcome: "timed_out" });
+	expect(() => settle(w, id, { outcome: "timed_out" })).toThrow("session_worker_output_denied");
+	expect(records(p.phone.lines, "mcp_presenter_secret_settled")).toHaveLength(1);
+});
+
+it("a sealed offer whose hpkePk is not a 32-byte key, or that is malformed, is refused, never relayed as a raiser frame", async () => {
+	const w = await workerHost();
+	w.host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "secret_input_v1"]);
+	void w.requests.input("API key", undefined);
+	const raised = records(w.host.lines, "extension_ui_request")[0];
+	if (!raised) throw new Error("No raiser request");
+	for (const hpkePk of [123, "a".repeat(42), "a".repeat(44)])
+		expect(() =>
+			w.exchange(
+				(signal) =>
+					({
+						type: "secret_frame",
+						id: String(raised.id),
+						record: { type: "secret_sealed_offer", hpkePk, title: "t", deadlineAtMs: 1 },
+						signal,
+					}) as SessionWorkerToHost,
+			),
+		).toThrow("session_worker_output_denied");
+	expect(records(w.host.lines, "secret_sealed_offer")).toEqual([]);
+});
+
+it("unbinding a route removes only its own latch: a second route on the session cannot clear the bound session's latch", async () => {
+	const setup = await sealedHost();
+	const phone = await holder(setup.host, setup.secret, "phone");
+	const state: { value: string | undefined | null } = { value: null };
+	void setup.requests.input("API key", undefined).then((value) => {
+		state.value = value;
+	});
+	setup.host.writer.secretInputRoute("session", true).bindSealedResponder?.(undefined);
+	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	if (!request) throw new Error("No sealed request");
+	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
+	const stepup = setup.secret.stepUp(phone.adopted.device.publicKey, req);
+	const frame = valueAnswer(
+		ids(phone, request, req),
+		request,
+		stepup,
+		"scoped-value",
+		phone.adopted.device.privateKey,
+	);
+	expect(await answer(setup.host, phone, frame)).toMatchObject({ disposition: "applied" });
+	expect(state.value).toBe("scoped-value");
 });

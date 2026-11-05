@@ -22,6 +22,7 @@ export function isSealedOffer(record: object): record is SealedOfferRecord {
 	const offer = record as Record<string, unknown>;
 	return (
 		typeof offer.hpkePk === "string" &&
+		/^[A-Za-z0-9_-]{43}$/.test(offer.hpkePk) &&
 		typeof offer.title === "string" &&
 		(offer.placeholder === undefined || typeof offer.placeholder === "string") &&
 		Number.isSafeInteger(offer.deadlineAtMs)

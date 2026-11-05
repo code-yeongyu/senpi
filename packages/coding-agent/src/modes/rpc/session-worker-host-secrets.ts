@@ -1,4 +1,10 @@
-import type { SealedAnswer, SealedAnswerReply, SecretInputRoute } from "./secret-input-requests.ts";
+import type {
+	SealedAnswer,
+	SealedAnswerReply,
+	SealedClaim,
+	SecretInputOutcome,
+	SecretInputRoute,
+} from "./secret-input-requests.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { HostToSessionWorker, SessionWorkerToHost } from "./session-worker-protocol.ts";
 import type { WorkerRequestInput } from "./session-worker-requests.ts";
@@ -9,6 +15,7 @@ type Reply = Extract<SessionWorkerToHost, { request: number }>;
 
 /** The most answers for one request in flight or queued toward the isolate (D11 secret phase 5.5). */
 const SEALED_ANSWERS_PER_ID = 5;
+const OUTCOMES: ReadonlySet<SecretInputOutcome> = new Set(["answered", "cancelled", "timed_out", "unavailable"]);
 
 interface HostSecretsDeps {
 	readonly post: (message: HostToSessionWorker) => void;
@@ -25,6 +32,9 @@ export class WorkerHostSecrets {
 	private writer?: SessionEventWriter;
 	private readonly ids = new WorkerSecretIds();
 	private readonly queue = new Map<string, { tail: Promise<void>; depth: number }>();
+	/** Grants whose sealed answer the host forwarded, per id: the only grants an isolate may name as the winner. */
+	private readonly forwarded = new Map<string, Set<string>>();
+	private readonly settledIds = new Set<string>();
 	private readonly deps: HostSecretsDeps;
 
 	constructor(deps: HostSecretsDeps) {
@@ -34,7 +44,10 @@ export class WorkerHostSecrets {
 	bind(sessionId: string, writer: SessionEventWriter): void {
 		this.writer = writer;
 		this.route = writer.secretInputRoute(sessionId, true);
-		this.route.bindSealedResponder?.({ settled: () => undefined, respond: (answer) => this.forward(answer) });
+		this.route.bindSealedResponder?.({
+			settled: () => undefined,
+			respond: (answer, claim) => this.forward(answer, claim),
+		});
 	}
 
 	/** A forwarded `extension_ui_response` for one of this isolate's secrets that its route does not accept. */
@@ -43,8 +56,11 @@ export class WorkerHostSecrets {
 	}
 
 	exited(): void {
+		this.route?.bindSealedResponder?.(undefined);
 		for (const id of this.ids.ids()) this.route?.forget(id);
 		this.ids.clear();
+		this.forwarded.clear();
+		this.settledIds.clear();
 	}
 
 	receive(message: SessionWorkerToHost): boolean {
@@ -53,7 +69,13 @@ export class WorkerHostSecrets {
 				this.select(message);
 				return true;
 			case "secret_frame":
-				if (!this.ids.admitFrame(message.id, message.record)) {
+				// A record that claims to be a sealed offer but is malformed is refused, never relayed as a raiser frame.
+				if (
+					("type" in message.record &&
+						message.record.type === "secret_sealed_offer" &&
+						!isSealedOffer(message.record)) ||
+					!this.ids.admitFrame(message.id, message.record)
+				) {
 					acknowledge(message.signal, false);
 					return true;
 				}
@@ -64,6 +86,13 @@ export class WorkerHostSecrets {
 				acknowledge(message.signal, true);
 				return true;
 			case "secret_settled":
+				// The isolate's settle is untrusted (#5192): one per held id, a known outcome, and a winner only among
+				// the grants whose answers the host forwarded for that id.
+				if (!this.admitsSettle(message)) {
+					acknowledge(message.signal, false);
+					return true;
+				}
+				this.settledIds.add(message.id);
 				if (message.outcome !== undefined)
 					this.route?.sealedOutcome?.(message.id, message.outcome, message.winnerGrant);
 				this.route?.settled(message.id);
@@ -71,6 +100,8 @@ export class WorkerHostSecrets {
 				return true;
 			case "secret_forget":
 				this.ids.forget(message.id);
+				this.forwarded.delete(message.id);
+				this.settledIds.delete(message.id);
 				this.route?.forget(message.id);
 				acknowledge(message.signal, true);
 				return true;
@@ -112,13 +143,26 @@ export class WorkerHostSecrets {
 		else select();
 	}
 
+	private admitsSettle(message: Extract<SessionWorkerToHost, { type: "secret_settled" }>): boolean {
+		const { id, outcome, winnerGrant } = message;
+		if (!this.ids.has(id) || this.settledIds.has(id)) return false;
+		if (outcome !== undefined && !OUTCOMES.has(outcome)) return false;
+		const decided = outcome === "answered" || outcome === "cancelled";
+		return winnerGrant === undefined || (decided && this.forwarded.get(id)?.has(winnerGrant) === true);
+	}
+
 	/** Only for ids the isolate holds; one in flight and four queued per id, beyond that `secret_answer_refused`. */
-	private forward(answer: SealedAnswer): Promise<SealedAnswerReply> {
+	private forward(answer: SealedAnswer, claim: SealedClaim): Promise<SealedAnswerReply> {
 		const id = answer.uiRequestId;
 		const queued = this.queue.get(id);
 		if (!this.ids.has(id) || (queued?.depth ?? 0) >= SEALED_ANSWERS_PER_ID)
 			return Promise.resolve({ error: "secret_answer_refused" });
 		const run = async (): Promise<SealedAnswerReply> => {
+			// The grant is re-checked when the answer leaves the queue: it may have been revoked while it waited.
+			if (!claim.current()) return { error: "secret_answer_refused" };
+			const forwarded = this.forwarded.get(id) ?? new Set<string>();
+			forwarded.add(answer.grantId);
+			this.forwarded.set(id, forwarded);
 			const reply = await this.deps.request({ type: "secret_sealed_answer", answer });
 			return reply.type === "secret_sealed_result" ? reply.reply : { error: "secret_answer_refused" };
 		};

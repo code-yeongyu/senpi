@@ -60,7 +60,7 @@ export class SecretInputPresentations {
 		this.sealedSource = source;
 		this.unsubscribeSealed = source?.onChange(() => this.recheck());
 	}
-	/** `sealed`: this route may add sealed holders (in-process sessions); a worker's route stays raiser-only. */
+	/** `sealed`: this route may add sealed holders (an in-process session, or a worker isolate's host half; D11 5.5). */
 	route(session: string, sealed = false): SecretInputRoute {
 		const capable = (connection: string | undefined) => this.capable(connection);
 		let bound: SealedLatch | undefined;
