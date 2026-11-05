@@ -97,16 +97,21 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		expect(Reflect.get(Object(advertised.data), "capabilities")).toContain("hand_selection");
 	});
 
-	it("lists the directory's hands and a fresh session's choice as local", async () => {
-		const rig = await rigWith(await handDirectory([ROW, { ...ROW, device: "dev-c", reachable: false }]));
+	it("lists only each hand's device, label, platform and reachability, and a fresh session's choice as local", async () => {
+		// list_hands is exempt from the attach gate, so a directory row's link details never reach its answer.
+		const linkDetails = { address: "10.0.0.7:7420", secret: "decoy" };
+		const rows = [
+			{ ...ROW, ...linkDetails },
+			{ ...ROW, ...linkDetails, device: "dev-c", reachable: false },
+		];
+		const rig = await rigWith(await handDirectory(rows));
 		const sessionId = await rig.openSession("a", await rig.newSessionFile());
 
-		expect(await call(rig, { type: "list_hands", sessionId })).toMatchObject({
-			success: true,
-			data: {
-				hands: [ROW, { ...ROW, device: "dev-c", reachable: false }],
-				selected: null,
-			},
+		const listed = await call(rig, { type: "list_hands", sessionId });
+		expect(listed).toMatchObject({ success: true });
+		expect(listed.data).toEqual({
+			hands: [ROW, { ...ROW, device: "dev-c", reachable: false }],
+			selected: null,
 		});
 	});
 

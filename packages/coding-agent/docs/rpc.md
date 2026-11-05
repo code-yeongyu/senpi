@@ -1421,19 +1421,64 @@ reconnect resumes the session exactly once, also after a restart.
 ### Hand selection (headless engine)
 
 A headless host built with a hand directory (no CLI flag selects one yet; every other host is unchanged) advertises
-the capability `hand_selection` and answers two commands. `list_hands { sessionId? }` returns
-`{ hands: [{ device, label, platform, reachable }], selected? }`: the hands the engine can run a session's tools on,
-and, when `sessionId` is given, that session's recorded hand (`null` when its tools run in this process).
-`select_hand { sessionId, device }` records the choice in the session file (a `custom` entry `hand_selection`) and
-answers `{ sessionId, selected }`. A device makes the session's next tool batch run on that hand through a remote
-ToolHost. `null` gives the session back its own ToolHost. A device that is not listed is refused with
-`hand_not_listed`, and a listed one with no carrier up (or whose link cannot be made) with `hand_unreachable`, both with
-`errorData.device`; nothing is recorded then. A choice while a turn runs is refused with `session_busy`: a running turn
-keeps the ToolHost it started with, so choose between turns. A host
-without a directory answers `hand_selection_unsupported`. When the session opens again, the recorded hand is applied
-again. If it cannot be linked then, the session's tool calls end as "The hand is unreachable" error results: a chosen
-hand never falls back to running the calls in this process. Like `list_sessions`, `list_hands` needs no attachment, so
-any connection may read a session's recorded hand.
+the capability `hand_selection` and answers `list_hands` and `select_hand`. A host without a directory refuses both
+with `hand_selection_unsupported`.
+
+#### list_hands
+
+Lists the hands the engine can run a session's tools on. With `sessionId`, it also answers that session's recorded hand.
+
+```json
+{"id": "h1", "type": "list_hands", "sessionId": "rpc-1"}
+```
+
+Response:
+```json
+{"id": "h1", "type": "response", "command": "list_hands", "success": true, "data": {"hands": [{"device": "dev-a", "label": "Studio", "platform": "darwin", "reachable": true}], "selected": null}}
+```
+
+`hands` is every hand in the directory. `reachable: false` means the hand is listed but no carrier is up: it can be
+shown, not chosen. `selected` is present only when the request named a session: that session's recorded hand, or
+`null` when its tools run in this process.
+
+Errors: `hand_selection_unsupported` (no hand directory), `unknown_session` (`sessionId` names no open session).
+
+Who may call it: any connection. It changes nothing and is an observing read (method class `observe`), so like
+`list_sessions` and `get_state` it is exempt from the attachment gate: a connection that is not attached to a session
+may still read which hand it runs on.
+
+#### select_hand
+
+Records which hand runs a session's tools. `device` names a hand from `list_hands`; `null` gives the session back its
+own ToolHost, so its tools run in this process again.
+
+```json
+{"id": "h2", "type": "select_hand", "sessionId": "rpc-1", "device": "dev-a"}
+```
+
+Response:
+```json
+{"id": "h2", "type": "response", "command": "select_hand", "success": true, "data": {"sessionId": "rpc-1", "selected": "dev-a"}}
+```
+
+The choice is written to the session file (a `custom` entry `hand_selection`) before it takes effect. The session's
+next tool batch then runs on that hand through a remote ToolHost. Choosing the hand the session is already on changes
+nothing. When the session opens again, the recorded hand is applied again. If it cannot be linked then, the session's
+tool calls end as "The hand is unreachable" error results: a chosen hand never falls back to running the calls in this
+process.
+
+Errors. Each of these carries `errorData.device`, and nothing is recorded:
+
+- `hand_not_listed`: the device is not in the hand directory.
+- `hand_unreachable`: the hand is listed but no carrier is up, or its link cannot be made.
+- `session_busy`: a turn is running. A running turn keeps the ToolHost it started with, so choose between turns.
+
+`hand_selection_unsupported` (no hand directory) and `unknown_session` carry no `errorData`.
+
+Who may call it: only a connection attached to the session. It moves where the session's tools run, which changes what
+the agent can reach (method class `device_admin`), so the attachment gate applies to it: under enforcement
+(`SENPI_RPC_REQUIRE_ATTACH=1`) an unattached connection is refused with `session_not_attached`. Until enforcement is
+the default, the host logs such a call and serves it, as for every gated command.
 
 ### Host identity (`get_protocol_info`)
 
