@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { buildPublishArgs } from "./publish-command.mjs";
+import { buildPublishArgs, requiresBuildOutput } from "./publish-command.mjs";
 
 describe("npm publish command", () => {
 	it("routes root publish scripts through the guarded publisher", () => {
@@ -42,5 +42,18 @@ describe("npm publish command", () => {
 			"--provenance",
 			"--ignore-scripts",
 		]);
+	});
+
+	// #5975 review: the publisher checks build output by the SOURCE manifest name, while the source-only set holds the
+	// published names, so a source-only package whose source name differs (sqlite-bun) was asked for a dist/ it never has.
+	it("needs no build output for a source-only package under either its source or its published name", () => {
+		assert.equal(requiresBuildOutput("@earendil-works/pi-storage-sqlite-bun"), false);
+		assert.equal(requiresBuildOutput("@code-yeongyu/senpi-storage-sqlite-bun"), false);
+		assert.equal(requiresBuildOutput("@code-yeongyu/senpi-codemode"), false);
+	});
+
+	it("still requires build output for compiled packages", () => {
+		assert.equal(requiresBuildOutput("@earendil-works/pi-ai"), true);
+		assert.equal(requiresBuildOutput("@earendil-works/pi-agent-core"), true);
 	});
 });

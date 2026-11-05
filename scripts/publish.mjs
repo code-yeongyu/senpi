@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 import { rewriteOwnedRegistryAliases } from "./prepare-senpi-publish-manifest.mjs";
-import { buildPublishArgs } from "./publish-command.mjs";
+import { buildPublishArgs, requiresBuildOutput } from "./publish-command.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
 import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles } from "./senpi-publish-pack-checks.mjs";
@@ -19,12 +19,11 @@ import { registryPackageNames } from "./registry-packages.mjs";
 // client/protocol imports keep their original @earendil-works keys in the Senpi tarball.
 //
 // @code-yeongyu/senpi-server remains excluded because it is `private: true`, and
-// The sqlite session backend keeps upstream's independent semver line.
+// the Node sqlite session backend (sqlite-node) keeps upstream's independent semver line.
 const publishOrder = [...registryPackageNames.values()];
 const packages = getPublicWorkspacePackages()
 	.sort((a, b) => publishOrder.indexOf(a.name) - publishOrder.indexOf(b.name))
 	.map((pkg) => ({ ...pkg, rewriteManifest: true }));
-const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode", "@code-yeongyu/senpi-storage-sqlite-bun"]);
 const temporaryPublishDirectories = [];
 
 const dryRun = process.argv.includes("--dry-run");
@@ -117,7 +116,7 @@ function removeTemporaryPublishDirectories() {
 
 function assertBuildOutputExists(directory) {
 	const packageJson = readPackageJson(directory);
-	if (!sourceOnlyPackages.has(packageJson.name) && !existsSync(join(directory, "dist"))) {
+	if (requiresBuildOutput(packageJson.name) && !existsSync(join(directory, "dist"))) {
 		throw new Error(`${directory}/dist does not exist. Run npm run build before publishing.`);
 	}
 }
