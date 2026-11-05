@@ -11,11 +11,21 @@ import {
 	type SyncSessionHandle,
 } from "@earendil-works/pi-agent-core";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
+import { captureFileIdentity } from "../session-file-identity.ts";
 import { createJsonlImporter, type JsonlFileStamp } from "../session-import/jsonl-import.ts";
+import type { FileIdentity } from "../session-transcript-journal.ts";
 
 export interface DurableStoreBinding {
 	readonly store: SyncCommitStore;
 	readonly epoch: number;
+}
+
+/** SessionManager's write discipline for the binding's own file writes (repair, reprojection on open). */
+export interface ProjectionHooks {
+	/** Throws when this manager may no longer write the file (fenced, moved): the write does not happen. */
+	beforeWrite(path: string): void;
+	/** The file was replaced: its identity changed. */
+	afterReplace(path: string, identity: FileIdentity | undefined): void;
 }
 
 export interface ProjectionWarning {
@@ -49,13 +59,15 @@ async function stampOf(path: string): Promise<JsonlFileStamp | undefined> {
 }
 
 /** Today's atomic replace, asynchronous: a temp file written and synced beside the target, then renamed over it. */
-async function replaceAtomically(path: string, contents: string): Promise<void> {
+async function replaceAtomically(path: string, contents: string): Promise<FileIdentity | undefined> {
 	const mode = (await modeOf(path)) ?? 0o600;
 	const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
 	const handle = await open(temp, "wx", mode);
+	let identity: FileIdentity | undefined;
 	try {
 		await handle.writeFile(contents);
 		await handle.sync();
+		identity = await captureFileIdentity(handle.fd, path);
 	} finally {
 		await handle.close();
 	}
@@ -65,6 +77,7 @@ async function replaceAtomically(path: string, contents: string): Promise<void> 
 		await rm(temp, { force: true });
 		throw error;
 	}
+	return identity;
 }
 
 async function modeOf(path: string): Promise<number | undefined> {
@@ -103,6 +116,7 @@ export class DurableSessionBinding {
 	private readonly importer: Importer;
 	private readonly admission: ReturnType<typeof createAdmissionLine>;
 	private readonly warn: Warn;
+	private readonly hooks: ProjectionHooks;
 
 	private constructor(
 		binding: DurableStoreBinding,
@@ -110,6 +124,7 @@ export class DurableSessionBinding {
 		importer: Importer,
 		admission: ReturnType<typeof createAdmissionLine>,
 		warn: Warn,
+		hooks: ProjectionHooks,
 		projectedSize: number,
 	) {
 		this.binding = binding;
@@ -117,6 +132,7 @@ export class DurableSessionBinding {
 		this.importer = importer;
 		this.admission = admission;
 		this.warn = warn;
+		this.hooks = hooks;
 		this.projectedSize = projectedSize;
 	}
 
@@ -126,6 +142,7 @@ export class DurableSessionBinding {
 		sessionId: string,
 		headerLine: string,
 		warn: Warn,
+		hooks: ProjectionHooks,
 	): Promise<{ readonly session: DurableSessionBinding; readonly reprojected: boolean }> {
 		const { store, epoch } = binding;
 		const path = resolve(sessionFile);
@@ -139,7 +156,14 @@ export class DurableSessionBinding {
 			if (markedId !== undefined) {
 				const stored = await openSessionStore(store, epoch).load(markedId);
 				if (stored === undefined) throw new Error(`the store marks ${path} stale but holds no session ${markedId}`);
-				await reprojectFile(importer, admission, binding, path, projectionImage(stored.header, stored.entries));
+				await reprojectFile(
+					importer,
+					admission,
+					binding,
+					hooks,
+					path,
+					projectionImage(stored.header, stored.entries),
+				);
 				id = markedId;
 				reprojected = true;
 			} else {
@@ -148,7 +172,10 @@ export class DurableSessionBinding {
 		}
 		const handle = await openSyncSessionStore(store, epoch).open(id, JSON.parse(headerLine) as SessionHeader);
 		const size = (await stampOf(path))?.size ?? 0;
-		return { session: new DurableSessionBinding(binding, handle, importer, admission, warn, size), reprojected };
+		return {
+			session: new DurableSessionBinding(binding, handle, importer, admission, warn, hooks, size),
+			reprojected,
+		};
 	}
 
 	/** Store first: a refusal throws here, on the caller's call, and nothing was taken. */
@@ -207,6 +234,17 @@ export class DurableSessionBinding {
 		this.warn({ path, code: codeOf(error), message: `${messageOf(error)}${unmarked}` });
 	}
 
+	/** The file no longer matches the store (it was rewritten from an older image): mark it stale and reproject. */
+	markProjectionStale(sessionFile: string): void {
+		const path = resolve(sessionFile);
+		if (!this.stale) {
+			const data = { sessionId: String(this.handle.header().id) };
+			this.binding.store.commitSync(this.binding.epoch, [{ op: "put", key: staleKey(path), data }], () => {});
+			this.stale = true;
+		}
+		this.scheduleRepair(path);
+	}
+
 	/** Settles once any scheduled reprojection and ledger record has run (tests and orderly shutdown). */
 	settled(): Promise<void> {
 		return this.admission.admit(async () => {});
@@ -221,7 +259,8 @@ export class DurableSessionBinding {
 				if (!this.stale) return;
 				const generation = this.generation;
 				const contents = projectionImage(this.handle.header(), this.handle.entries());
-				await replaceAtomically(path, contents);
+				this.hooks.beforeWrite(path);
+				this.hooks.afterReplace(path, await replaceAtomically(path, contents));
 				if (generation !== this.generation) return this.scheduleRepair(path);
 				this.binding.store.commitSync(this.binding.epoch, [{ op: "delete", key: staleKey(path) }], () => {});
 				this.stale = false;
@@ -253,10 +292,12 @@ async function reprojectFile(
 	importer: Importer,
 	admission: ReturnType<typeof createAdmissionLine>,
 	binding: DurableStoreBinding,
+	hooks: ProjectionHooks,
 	path: string,
 	contents: string,
 ): Promise<void> {
-	await replaceAtomically(path, contents);
+	hooks.beforeWrite(path);
+	hooks.afterReplace(path, await replaceAtomically(path, contents));
 	const written = await stampOf(path);
 	if (written !== undefined) await admission.admit(() => importer.recordProjection(path, contents, written));
 	binding.store.commitSync(binding.epoch, [{ op: "delete", key: staleKey(path) }], () => {});

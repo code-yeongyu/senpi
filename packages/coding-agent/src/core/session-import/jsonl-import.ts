@@ -353,6 +353,8 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 		): Promise<void> {
 			path = resolve(path);
 			const end = tail.offset + Buffer.byteLength(tail.line);
+			// The file must end exactly at this append (+ its newline): bytes another writer added are never recorded.
+			if (written.size !== end + 1) throw new Error("Projection size does not match its written image");
 			const record: JsonlImportLedger = {
 				...written,
 				path,
