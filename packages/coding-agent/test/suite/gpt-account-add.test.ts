@@ -17,6 +17,11 @@ import {
 	registerCommand,
 } from "./account-command-harness.ts";
 
+function defined<T>(value: T | undefined, what: string): T {
+	if (value === undefined) throw new Error(`expected ${what}`);
+	return value;
+}
+
 const CODEX_LOGIN_METHOD_PROMPT = {
 	type: "select",
 	message: "Select ChatGPT Subscription login method:",
@@ -89,7 +94,10 @@ describe("/gpt-account add", () => {
 				agentDir: dir,
 				allowModelNetwork: false,
 			});
-			await runtime.registerNativeProvider({ ...provider, auth: { oauth: { ...provider.auth.oauth!, login } } });
+			await runtime.registerNativeProvider({
+				...provider,
+				auth: { oauth: { ...defined(provider.auth.oauth, "oauth"), login } },
+			});
 			const { ctx, notices } = createLoginContext(async () => {});
 			Object.assign(ctx.modelRegistry, { modelRuntime: runtime });
 			await registeredGptCommand().handler("reauthorize default", ctx);
@@ -97,7 +105,13 @@ describe("/gpt-account add", () => {
 			expect(projectSlot(storage.get(provider.id), "default")).toMatchObject({
 				access: reject ? selected.access : "synthetic-new",
 			});
-			expect(projectSlot(storage.get(provider.id), "work")).toEqual(sibling);
+			// `loginId` is a provider-level field a sign-in restamps (senpi#4099) and every slot projects it, so the
+			// sibling's own account fields are compared without it.
+			const { loginId: _loginId, ...siblingAfter } = defined(
+				projectSlot(storage.get(provider.id), "work"),
+				"work slot",
+			);
+			expect(siblingAfter).toEqual(sibling);
 			expect(listSlots(storage.get(provider.id)).map((slot) => slot.name)).toEqual(["default", "work"]);
 			expect(notices.some((notice) => notice.type === "error")).toBe(reject);
 		},

@@ -6,6 +6,11 @@ import type { OAuthCredential, ProviderAuthInteraction } from "../src/auth/types
 import { createModels } from "../src/models.ts";
 import { chatgptSubscriptionProvider } from "../src/providers/chatgpt-subscription.ts";
 
+function defined<T>(value: T | undefined, what: string): T {
+	if (value === undefined) throw new Error(`expected ${what}`);
+	return value;
+}
+
 const ISSUER = "https://auth.openai.com";
 const DEVICE = "e61bbe28-07ef-466d-8e5d-a344f94ab305";
 let signingKey: CryptoKey;
@@ -74,7 +79,7 @@ it("routes selected SIWC reauthorization without offering legacy or registering 
 	const prompt = vi.fn(async () => {
 		throw new Error("must not offer a route switch");
 	});
-	const result = await chatgptSubscriptionProvider().auth.oauth!.login(
+	const result = await defined(chatgptSubscriptionProvider().auth.oauth, "oauth").login(
 		{
 			signal: new AbortController().signal,
 			prompt,

@@ -25,6 +25,11 @@ import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handl
 import { type Command, createAccountCommandContext, registerCommand } from "./account-command-harness.ts";
 import { makeHarness, makeSink, MockAssistantStream } from "./rpc-connection-harness.ts";
 
+function defined<T>(value: T | undefined, what: string): T {
+	if (value === undefined) throw new Error(`expected ${what}`);
+	return value;
+}
+
 let dir: string;
 let storage: AuthStorage;
 
@@ -185,7 +190,7 @@ describe("/gpt-account command", () => {
 					streamSimple: send,
 					auth: {
 						oauth: {
-							...chatgptSubscriptionProvider().auth.oauth!,
+							...defined(chatgptSubscriptionProvider().auth.oauth, "oauth"),
 							toAuth: async (credential) => ({ apiKey: credential.access }),
 						},
 					},
@@ -221,7 +226,7 @@ describe("/gpt-account command", () => {
 				Object.assign(ctx.modelRegistry, { modelRuntime: runtime });
 				Object.assign(ctx.sessionManager, { getSessionId: () => sessionId });
 				await registeredGptCommand().handler("list", ctx);
-				const lines = notices.at(-1)!.message.split("\n");
+				const lines = defined(notices.at(-1), "a notice").message.split("\n");
 				expect(lines.find((line) => line.includes("default |"))).toContain("paused");
 				expect(lines.find((line) => line.includes("work |"))).toContain("active");
 				expect(lines.find((line) => line.includes("default |"))).not.toMatch(/until|reset|\d{4}-\d{2}/);
@@ -277,7 +282,7 @@ describe("/gpt-account command", () => {
 			const provider = chatgptSubscriptionProvider();
 			await harness.runtimeHost.session.modelRuntime.registerNativeProvider({
 				...provider,
-				auth: { oauth: { ...provider.auth.oauth!, login } },
+				auth: { oauth: { ...defined(provider.auth.oauth, "oauth"), login } },
 			});
 			const ended = collected.waitFor((message) => message.type === "auth_login_end");
 			await handler.handleInputLine(
@@ -335,7 +340,7 @@ describe("/gpt-account command", () => {
 			streamSimple: send,
 			auth: {
 				oauth: {
-					...chatgptSubscriptionProvider().auth.oauth!,
+					...defined(chatgptSubscriptionProvider().auth.oauth, "oauth"),
 					toAuth: async (credential) => ({ apiKey: credential.access }),
 				},
 			},
