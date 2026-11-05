@@ -4,7 +4,7 @@ import { createMemoryStoreMedium, openMemoryStore } from "../../src/durable/stor
 import {
 	openSessionStore,
 	openSyncSessionStore,
-	manifestWrite,
+	divergenceWrite,
 	readSessionState,
 	SessionStoreError,
 	type StoredEntry,
@@ -15,7 +15,7 @@ const entry = (key: string): StoredEntry => ({ key, line: JSON.stringify({ type:
 
 // The divergence writer (the S07 importer's fork) goes through the shared layout.
 async function recordDivergence(store: DurableStore, id: string, divergence: { [key: string]: string }) {
-	await store.commit(1, [manifestWrite(id, HEADER, divergence)], () => {});
+	await store.commit(1, [divergenceWrite(id, divergence)], () => {});
 }
 
 async function claimedMedium() {

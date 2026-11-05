@@ -92,6 +92,7 @@ export type {
 } from "./durable/session-store.ts";
 export {
 	appendRecordWrites,
+	divergenceWrite,
 	manifestWrite,
 	openSessionStore,
 	openSyncSessionStore,

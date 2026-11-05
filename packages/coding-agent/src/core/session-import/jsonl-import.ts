@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { DurableStore, StoreValue, StoreWrite } from "@earendil-works/pi-agent-core/conformance";
 import {
 	appendRecordWrites,
+	divergenceWrite,
 	manifestWrite,
 	readSessionState,
 	rewriteRecordWrite,
@@ -306,8 +307,8 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 			};
 			await commit([
 				...appendRecordWrites(
-					store,
 					target,
+					held.rewrites,
 					fresh.map((record) => ({ key: record.key, line: record.stored })),
 				),
 				{ op: "put", key: ledgerKey(path), data: grown },
@@ -357,8 +358,12 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 			isDeepStrictEqual(nextHeader, held.header) &&
 			isDeepStrictEqual(divergence, held.divergence);
 		const writes: StoreWrite[] = prefix
-			? appendRecordWrites(store, sessionId, stored.slice(oldEntries.length))
-			: [manifestWrite(sessionId, nextHeader, divergence), rewriteRecordWrite(store, sessionId, nextHeader, stored)];
+			? appendRecordWrites(sessionId, held?.rewrites ?? 0, stored.slice(oldEntries.length))
+			: [
+					manifestWrite(sessionId, nextHeader),
+					divergenceWrite(sessionId, divergence),
+					rewriteRecordWrite(store, sessionId, nextHeader, stored),
+				];
 		writes.push({ op: "put", key: ledgerKey(path), data: nextLedger });
 		await commit(writes);
 		return {
