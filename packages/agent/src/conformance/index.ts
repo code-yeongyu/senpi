@@ -23,6 +23,15 @@ export type {
 	SyncCommitStore,
 } from "../durable/store.ts";
 export { DurableStoreError } from "../durable/store.ts";
+export type {
+	SessionHandle,
+	SessionHeader,
+	SessionStoreErrorCode,
+	StoredEntry,
+	StoredSession,
+	SyncSessionHandle,
+} from "../durable/session-store.ts";
+export { openSessionStore, openSyncSessionStore, SessionStoreError } from "../durable/session-store.ts";
 export type { AdmissionLine } from "../durable/store-admission.ts";
 export type { KillDeclaration } from "../durable/testing/kill-store.ts";
 export { KILL_STORE_CASES, KILL_STORE_DECLARATIONS } from "../durable/testing/kill-store.ts";
