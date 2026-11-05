@@ -24,6 +24,8 @@ const OAUTH_CREDENTIAL_FIELDS = {
 	clientId: "device-only",
 	scopes: "device-only",
 	planUsageEnabled: "public",
+	// The ChatGPT sign-in route: a two-value protocol selector ("siwc" | "codex") the request needs, no secret material.
+	route: "public",
 	loginId: "device-only",
 } as const satisfies Classified<OAuthCredential>;
 
@@ -35,6 +37,8 @@ export const CREDENTIAL_SLOT_FIELDS = {
 	access: "sealed",
 	refresh: "device-only",
 	expires: "public",
+	// The slot's ChatGPT sign-in route: a two-value protocol selector ("siwc" | "codex"), no secret material.
+	route: "public",
 	env: "forces-device",
 } as const satisfies Classified<CredentialSlot>;
 

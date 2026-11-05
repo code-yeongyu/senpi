@@ -15,6 +15,7 @@ describe("stored credential fields", () => {
 		["oauth", "idToken", "device-only"],
 		["oauth", "scopes", "device-only"],
 		["oauth", "planUsageEnabled", "public"],
+		["oauth", "route", "public"],
 	] as const)("%s.%s is %s", (type, key, expected) => {
 		expect(classifyCredentialField(type, key)).toBe(expected);
 	});
@@ -31,6 +32,39 @@ describe("pool slot fields", () => {
 	it("keeps the display name (often an e-mail) and the refresh token on the device", () => {
 		expect(CREDENTIAL_SLOT_FIELDS.displayName).toBe("device-only");
 		expect(CREDENTIAL_SLOT_FIELDS.refresh).toBe("device-only");
+	});
+});
+
+describe("a ChatGPT sign-in with a route", () => {
+	const siwcLogin = {
+		type: "oauth",
+		access: "a",
+		refresh: "r",
+		expires: 1,
+		idToken: "i",
+		subject: "s",
+		email: "me@x.test",
+		clientId: "c",
+		scopes: ["s"],
+		planUsageEnabled: true,
+		route: "siwc",
+	} as const;
+
+	it("stays servable by sealed custody, in a stored login and in a pool slot", () => {
+		expect(credentialDeviceReasons(siwcLogin)).toEqual([]);
+		expect(
+			credentialDeviceReasons({
+				type: "oauth",
+				accounts: [{ name: "a", access: "a", route: "siwc" }],
+				order: ["a"],
+			}),
+		).toEqual([]);
+	});
+
+	it("sends the route as plain config and nothing secret beside it", () => {
+		const plain = Object.keys(siwcLogin).filter((key) => classifyCredentialField("oauth", key) === "public");
+		expect(plain.sort()).toEqual(["expires", "planUsageEnabled", "route", "type"]);
+		expect(CREDENTIAL_SLOT_FIELDS.route).toBe("public");
 	});
 });
 
