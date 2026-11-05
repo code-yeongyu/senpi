@@ -154,3 +154,25 @@ it("a second --hand on the same agent dir refuses the live endpoint, and a stopp
 		rmSync(agentDir, { recursive: true, force: true });
 	}
 }, 120_000);
+
+it("a hand stopped while a carrier is still attached exits and removes its entry", async () => {
+	const qa = scratch("5840-hand-stop");
+	const agentDir = mkdtempSync(join("/tmp", "s5840s-"));
+	const endpoint = handSocketPath(agentDir);
+	const child = spawnRpc(["--hand", "--no-skills", "--no-context-files"], qa, undefined, {
+		SENPI_CODING_AGENT_DIR: agentDir,
+	});
+	const carrier: Socket[] = [];
+	try {
+		await waitForStderr(child, `senpi hand: listening on ${endpoint}`, 60_000);
+		carrier.push(await dial(endpoint));
+		const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+		child.kill("SIGTERM");
+		expect(await exited).toBe(0);
+		expect(existsSync(endpoint)).toBe(false);
+	} finally {
+		for (const socket of carrier) socket.destroy();
+		await stopChild(child);
+		rmSync(agentDir, { recursive: true, force: true });
+	}
+}, 120_000);

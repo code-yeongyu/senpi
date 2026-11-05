@@ -18,7 +18,7 @@ import { closeServer, prepareSocketPath } from "../rpc/host-lifecycle-proxy.ts";
 import { listen } from "../rpc/host-socket-bind.ts";
 import { createLooplessHand } from "../rpc/remote-executor-scope.ts";
 import { shieldSocketDuringClose, unlinkOwnedSocket } from "../rpc/socket-ownership.ts";
-import { resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
+import { ensureSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "../rpc/socket-transport.ts";
 import { serveSocketCarrier } from "./socket-carrier.ts";
 
 type FrameHandler = Parameters<Transport["onFrame"]>[0];
@@ -30,9 +30,21 @@ export function handSocketPath(agentDir: string, platform: NodeJS.Platform = pro
 	return (platform === "win32" ? win32 : posix).join(agentDir, "rpc", "hand.sock");
 }
 
-/** The address a carrier dials: the socket path on POSIX, its named pipe on Windows. */
-function handEndpoint(agentDir: string, platform: NodeJS.Platform = process.platform): string {
-	return resolveSocketTransportAddress(handSocketPath(agentDir, platform), platform);
+/** The address a carrier dials: the socket path on POSIX, its named pipe (named with the secret) on Windows. */
+function handEndpoint(agentDir: string, platform: NodeJS.Platform, secret: Uint8Array | undefined): string {
+	return resolveSocketTransportAddress(handSocketPath(agentDir, platform), platform, secret);
+}
+
+/**
+ * The hand endpoint's secret: on Windows (a named pipe has no owner-only file mode) the shared RPC host's mechanism,
+ * an owner-only `<hand.sock>.secret` file whose bytes a carrier sends first; on POSIX the 0600 socket in its 0700
+ * directory is the boundary and there is none. Never read from the host's secret-file override variable.
+ */
+export function handEndpointSecret(
+	socketPath: string,
+	platform: NodeJS.Platform = process.platform,
+): Promise<Uint8Array | undefined> {
+	return platform === "win32" ? ensureSocketSecret(socketSecretPath(socketPath)) : Promise.resolve(undefined);
 }
 
 /** One transport seen as two: frames on `lane` go to one view's receiver, every other frame to the other's. */
@@ -95,10 +107,11 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 	const socketPath = handSocketPath(agentDir);
 	// Refuses an entry a live hand still serves; only a dead (stale) entry is removed.
 	await prepareSocketPath(socketPath);
+	const secret = await handEndpointSecret(socketPath);
 	const server = createServer();
-	serveSocketCarrier(server, transport);
-	const boundIdentity = await listen(server, socketPath);
-	report(`listening on ${handEndpoint(agentDir)}`);
+	serveSocketCarrier(server, transport, secret);
+	const boundIdentity = await listen(server, socketPath, secret);
+	report(`listening on ${handEndpoint(agentDir, process.platform, secret)}`);
 
 	return new Promise<never>(() => {
 		const stop = async (): Promise<void> => {
@@ -111,11 +124,13 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 					report(`${name} failed during shutdown: ${String(error)}`);
 				}
 			};
+			// The transport goes first: closing it destroys the carrier connection, and the listener's close waits for
+			// every open connection, so a carrier still attached would hold the shutdown (and the shielded entry) open.
+			await step("loop hooks", () => loopHooks.close());
+			await step("transport", () => transport.close());
 			// libuv unlinks the bound name on close, which would delete a newer hand's entry: shield it for the close,
 			// then remove only the entry this process bound.
 			await step("listener close", () => shieldSocketDuringClose(socketPath, () => closeServer(server)));
-			await step("loop hooks", () => loopHooks.close());
-			await step("transport", () => transport.close());
 			await step("executor", () => executor.close());
 			await step("hand runtimes", () => hand.close());
 			await step("socket removal", () => unlinkOwnedSocket(socketPath, boundIdentity, report));
