@@ -1,28 +1,13 @@
 import { writeFileSync } from "node:fs";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI, ExtensionFactory } from "../src/index.ts";
-import { createHarness } from "./suite/harness.ts";
+import { createExecuteToolHarness } from "./helpers/execute-tool-harness.ts";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content
 		.filter((part): part is { type: "text"; text: string } => part.type === "text")
 		.map((part) => part.text)
 		.join("\n");
-}
-
-async function createExecuteToolHarness(factory: (pi: ExtensionAPI) => void) {
-	let api: ExtensionAPI | undefined;
-	const extensionFactories: ExtensionFactory[] = [
-		(pi) => {
-			api = pi;
-			factory(pi);
-		},
-	];
-	return createHarness({ extensionFactories }).then((harness) => ({
-		...harness,
-		api: api as ExtensionAPI,
-	}));
 }
 
 describe("pi.executeTool hook dispatch", () => {
