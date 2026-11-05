@@ -60,7 +60,10 @@ vi.mock("../../../src/modes/rpc/socket-transport.ts", async (importOriginal) => 
 vi.mock("node:child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof childProcess>();
 	mocked.realSpawn = actual.spawn;
-	return { ...actual, spawn: vi.fn(actual.spawn) };
+	// The supervisor spawns its host through the default export (property access keeps OS instrumentation), the
+	// capability probe through the named one: both resolve to the same double.
+	const spawn = vi.fn(actual.spawn);
+	return { ...actual, default: { ...actual, spawn }, spawn };
 });
 
 const realSpawn = () => mocked.realSpawn as typeof childProcess.spawn;
