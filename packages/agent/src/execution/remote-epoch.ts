@@ -103,9 +103,14 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 	};
 	const copyOf = (scope: string): ScopeOwner | undefined => {
 		const copy = ownerOf(scope);
+		// A removed record removes its owner too: the last read never outlives it (I5, senpi#6040).
+		if (copy === undefined) {
+			lastRead.delete(scope);
+			return undefined;
+		}
 		const read = lastRead.get(scope);
 		if (typeof read !== "object" || typeof copy === "string") return copy;
-		return copy !== undefined && copy.epoch >= read.epoch ? copy : read;
+		return copy.epoch >= read.epoch ? copy : read;
 	};
 	/** The record read a raise needs (`undefined`: none; the copy decides at the raise's turn on the admission line). */
 	const readFor = async (
