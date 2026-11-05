@@ -99,3 +99,35 @@ it("times out interrupts without imposing that timeout on normal commands", asyn
 		vi.useRealTimers();
 	}
 });
+
+it("sealed secret answers in flight never take an interrupt's slots: an abort is still dispatched", async () => {
+	const sent: Array<{ request: number; type: string }> = [];
+	const requests = new SessionWorkerRequests(
+		(message) => sent.push(message),
+		() => {
+			throw new Error("Unexpected timeout");
+		},
+	);
+	const answer = (n: number) =>
+		requests.request({
+			type: "secret_sealed_answer",
+			answer: {
+				uiRequestId: `request-${n}`,
+				principal: "principal",
+				grantId: "grant",
+				answerId: `answer-${n}`,
+				req: "req",
+			},
+		});
+	const sealed = [];
+	for (let n = 0; n < SESSION_WORKER_LIMITS.controlRequests; n++) sealed.push(answer(n));
+	const settled = Promise.allSettled(sealed);
+	await expect(answer(99)).rejects.toThrow("session_worker_request_limit");
+	const interrupt = requests.request({ type: "command", command: { type: "abort" } });
+	const last = sent.at(-1);
+	if (last?.type !== "command") throw new Error("The abort was not dispatched");
+	requests.receive({ type: "result", request: last.request });
+	expect((await interrupt).type).toBe("result");
+	requests.close(new Error("closed"));
+	expect((await settled).every((result) => result.status === "rejected")).toBe(true);
+});

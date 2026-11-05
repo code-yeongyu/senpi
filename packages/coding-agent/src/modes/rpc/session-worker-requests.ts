@@ -6,6 +6,8 @@ import {
 
 type Request = Extract<HostToSessionWorker, { request: number }>;
 type Reply = Extract<SessionWorkerToHost, { request: number }>;
+/** Interrupts and human answers each keep their own bounded slots; sealed secret answers never take an abort's. */
+type RequestClass = "normal" | "control" | "sealed";
 export type WorkerRequestInput = Request extends infer T ? (T extends Request ? Omit<T, "request"> : never) : never;
 
 /** Bounded request debt, with separate admission for interrupt and extension-UI responses. */
@@ -16,7 +18,7 @@ export class SessionWorkerRequests {
 			resolve: (reply: Reply) => void;
 			reject: (error: Error) => void;
 			bytes: number;
-			control: boolean;
+			kind: RequestClass;
 			timer?: ReturnType<typeof setTimeout>;
 		}
 	>();
@@ -51,18 +53,25 @@ export class SessionWorkerRequests {
 
 	request(message: WorkerRequestInput): Promise<Reply> {
 		if (this.closed) return Promise.reject(new Error("session_closing"));
-		// A sealed secret answer is a human answer like a forwarded `extension_ui_response` (D11 secret phase 5.5).
-		const control =
-			message.type === "secret_sealed_answer" ||
-			(message.type === "command" &&
-				"type" in message.command &&
-				typeof message.command.type === "string" &&
-				["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(message.command.type));
+		// A sealed secret answer is a human answer like a forwarded `extension_ui_response` (D11 secret phase 5.5), bounded
+		// like one, but in its own class so holders answering at once cannot take an abort's slots.
+		const kind: RequestClass =
+			message.type === "secret_sealed_answer"
+				? "sealed"
+				: message.type === "command" &&
+					  "type" in message.command &&
+					  typeof message.command.type === "string" &&
+					  ["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(
+							message.command.type,
+					  )
+					? "control"
+					: "normal";
+		const control = kind !== "normal";
 		const bytes = Buffer.byteLength(JSON.stringify(message));
 		let count = 0;
 		let pendingBytes = 0;
 		for (const pending of this.pending.values()) {
-			if (pending.control === control) {
+			if (pending.kind === kind) {
 				count++;
 				pendingBytes += pending.bytes;
 			}
@@ -77,7 +86,7 @@ export class SessionWorkerRequests {
 				message.type === "command" && !control
 					? undefined
 					: setTimeout(this.timeout, control ? SESSION_WORKER_LIMITS.controlMs : this.remainingOpenMs());
-			this.pending.set(request, { resolve, reject, bytes, control, timer });
+			this.pending.set(request, { resolve, reject, bytes, kind, timer });
 			try {
 				this.send({ ...message, request });
 			} catch (cause) {
