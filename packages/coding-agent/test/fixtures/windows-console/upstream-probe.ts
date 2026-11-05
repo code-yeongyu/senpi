@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { windowsTreeKillArgs } from "../../../../../scripts/windows-process-tree.mjs";
 
 const FILE_DEADLINE_MS = 30_000;
 const shape = process.argv[2] ?? "today";
@@ -26,7 +27,8 @@ function attachment(pid: number): unknown {
 }
 
 function killTree(pid: number): void {
-	spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+	const args = windowsTreeKillArgs(pid);
+	if (args.length > 0) spawnSync("taskkill.exe", args, { stdio: "ignore", windowsHide: true });
 }
 
 async function waitForPid(path: string): Promise<number> {

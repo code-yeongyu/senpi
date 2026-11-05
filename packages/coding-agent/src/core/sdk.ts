@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	createInternalAgentChannel,
+	setDefaultStreamFn,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import type { SimpleStreamOptions, ThinkingSelection } from "@earendil-works/pi-ai";
 import { type Api, type Message, type Model, modelsAreEqual, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
@@ -28,9 +34,11 @@ import {
 } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { sessionAffinityStreamOptions } from "./session-affinity-key.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
+import type { ThinkingLevelSource } from "./session-thinking-memory.ts";
 import { DEFAULT_TOOL_NAMES, SettingsManager } from "./settings-manager.ts";
 import {
 	canStartOn,
@@ -144,6 +152,8 @@ export interface CreateAgentSessionOptions {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive (`open_session.browserEngine`); omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Caller env for this session's tool subprocesses (`open_session.env`, senpi#4381); omitted means none. */
+	sessionEnv?: Readonly<Record<string, string>>;
 	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
 }
@@ -172,6 +182,14 @@ export type {
 	ToolDefinition,
 } from "./extensions/index.ts";
 export type { PromptTemplate } from "./prompt-templates.ts";
+export {
+	bootstrapRuntime,
+	buildToolRegistry,
+	type RuntimeBootstrap,
+	type RuntimeBootstrapOptions,
+	type ToolRegistryBuild,
+	type ToolRegistryInput,
+} from "./runtime/bootstrap.ts";
 export type { Skill } from "./skills.ts";
 export type { Tool } from "./tools/index.ts";
 
@@ -317,8 +335,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && sessionModel) {
+		// Keep the saved reference exactly, signed out or not; the first prompt asks for a login (senpi#4410).
 		const restored = resolveStoredModelReference(sessionModel.provider, sessionModel.modelId, modelRuntime);
-		if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
+		if (restored) {
 			model = restored.model;
 			initialResolvedThinkingLevel = restored.thinkingLevel;
 			initialThinkingSelection = restored.thinkingSelection;
@@ -363,27 +382,32 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			? { level: options.thinkingLevel, source: "explicit" as const }
 			: undefined) ??
 		initialThinkingSelection;
+	let thinkingLevelSource: ThinkingLevelSource = "explicit";
 
 	// An exact-session thinking entry wins over settings unless a real legacy alias already
 	// selected a level. Old entries have no provenance, including Cursor's synthetic off.
 	if (thinkingLevel === undefined && hasExistingSession && hasThinkingEntry) {
 		thinkingLevel = existingSession.thinkingLevel as ThinkingLevel;
 		thinkingSelection = existingSession.thinkingSelection;
+		thinkingLevelSource = "session";
 	}
 	if (thinkingLevel === undefined && model) {
 		const remembered = settingsManager.getModelThinkingLevel(model.provider, model.id);
 		if (remembered !== undefined) {
 			thinkingLevel = remembered;
 			thinkingSelection = { level: remembered, source: "explicit" };
+			thinkingLevelSource = "global";
 		}
 	}
 	// A model-declared default (senpi#2196) outranks the global setting, which tracks the last level
 	// chosen on any model; it is a default, not a user choice, so it carries no provenance.
 	if (thinkingLevel === undefined && model?.defaultThinkingLevel !== undefined) {
 		thinkingLevel = model.defaultThinkingLevel;
+		thinkingLevelSource = "model-default";
 	}
 	let thinkingFromGlobalDefault = false;
 	if (thinkingLevel === undefined) {
+		thinkingLevelSource = "default";
 		const configuredDefault = settingsManager.getDefaultThinkingLevel();
 		if (configuredDefault !== undefined) {
 			thinkingLevel = configuredDefault;
@@ -401,6 +425,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	} else {
 		thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
 	}
+	if (thinkingLevel !== requestedThinkingLevel && thinkingLevelSource !== "default") thinkingLevelSource = "clamped";
 	// senpi#2395: an explicit request the clamp changed keeps the requested level and the reason. The global
 	// default is a default, not a request, so its clamp records no requested level and shows no warning.
 	thinkingSelection = clampThinkingSelection(
@@ -469,7 +494,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 	};
 
+	const internalChannel = createInternalAgentChannel();
 	agent = new Agent({
+		internalChannel,
 		initialState: {
 			systemPrompt: "",
 			model,
@@ -506,6 +533,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			);
 			return modelRuntime.streamSimple(model, context, {
 				...options,
+				...sessionAffinityStreamOptions(model, options, settingsManager.getPromptCacheSessionAffinity(), agentDir),
+				cwd,
 				serviceTier,
 				timeoutMs,
 				websocketConnectTimeoutMs,
@@ -555,6 +584,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		timeoutMs: settingsManager.getAgentStreamIdleTimeoutMs(),
 		streamStartTimeoutMs: settingsManager.getAgentStreamStartTimeoutMs(),
+		streamKeepAliveTimeoutMs: settingsManager.getAgentStreamKeepAliveTimeoutMs(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 		cursorExecHandlers: (runSignal: AbortSignal) => createSessionCursorExecBridge(sessionRef, () => agent, runSignal),
 	});
@@ -566,7 +596,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (hasExistingSession) {
 		agent.state.messages = existingSession.messages;
 		if (!hasThinkingEntry) {
-			sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection);
+			sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection, undefined, model);
 		}
 	}
 
@@ -579,6 +609,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const session = new AgentSession({
 		agent,
+		internalChannel,
 		serviceTier: options.serviceTier,
 		sessionManager,
 		settingsManager,
@@ -600,6 +631,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
 		browserEngine: options.browserEngine,
+		sessionEnv: options.sessionEnv,
+		initialThinkingLevelSource: thinkingLevelSource,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
 	const liveContextTokens = hasExistingSession
@@ -680,7 +713,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		if (model) {
 			sessionManager.appendModelChange(model.provider, model.id);
 		}
-		sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection);
+		sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection, undefined, model);
 	}
 	sessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();

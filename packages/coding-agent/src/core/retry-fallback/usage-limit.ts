@@ -14,10 +14,27 @@ import { isBillingErrorMessage } from "./billing.ts";
 export type UsageLimitScope = "model" | "account";
 
 export class AccountUsageLimitError extends Error {
-	constructor(provider: string, raw = "usage limit reached") {
-		super(describeProviderFailureForUser(raw, { model: provider, usageLimit: "account" }));
+	constructor(provider: string, raw = "usage limit reached", resetsAt?: number) {
+		super(
+			describeProviderFailureForUser(raw, {
+				model: provider,
+				usageLimit: "account",
+				...(resetsAt === undefined ? {} : { resetsAt: formatResetTime(resetsAt) }),
+			}),
+		);
 		this.name = "AccountUsageLimitError";
 	}
+}
+
+// The same reader-local time plus timezone the credential pool's blocked message uses.
+function formatResetTime(epochMs: number): string {
+	return new Date(epochMs).toLocaleString("en-US", {
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		timeZoneName: "short",
+	});
 }
 
 // Subscription limit prose that carries no quota/billing keyword, e.g. Claude's
@@ -54,7 +71,7 @@ export function usageLimitScope(
 /** Project advice without mutating the diagnostic-bearing engine message. */
 export function describeUsageLimitMessage(message: AssistantMessage): AssistantMessage {
 	const scope = usageLimitScope(message);
-	if (!scope || message.errorCause?.scope === scope) return message;
+	if (!scope || (message.errorCause?.type === "usage_limit" && message.errorCause.scope === scope)) return message;
 	return {
 		...message,
 		errorCause: { type: "usage_limit", scope },

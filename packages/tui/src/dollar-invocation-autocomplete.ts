@@ -61,7 +61,7 @@ function skillName(name: string): string | null {
 function commandDescription(command: SlashCommand | AutocompleteItem): string | undefined {
 	const hint = "argumentHint" in command && command.argumentHint ? command.argumentHint : undefined;
 	const description = command.description ?? "";
-	if (hint) return description ? `${hint} — ${description}` : hint;
+	if (hint) return description ? `${hint} - ${description}` : hint;
 	return description || undefined;
 }
 

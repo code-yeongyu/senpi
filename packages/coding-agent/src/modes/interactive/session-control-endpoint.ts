@@ -80,12 +80,21 @@ async function openEndpoint(
 	);
 	const secret = await createSocketSecret(socketSecretPath(socket));
 	const feed = new ControlFeed();
+	// Every wake runs a pass, so a failure that repeats is shown once, until a pass succeeds again.
+	let failing: string | undefined;
 	const scheduler = new WakeScheduler(
 		async (event) => {
 			await session.extensionRunner.emit(event);
-			return (await options.drain(event)) ?? { admitted: [] };
+			const result = (await options.drain(event)) ?? { admitted: [] };
+			failing = undefined;
+			return result;
 		},
-		(error) => surface.notice(`control endpoint drain failed: ${errorText(error)}`),
+		(error) => {
+			const reason = errorText(error);
+			if (reason === failing) return;
+			failing = reason;
+			surface.notice(`control endpoint drain failed: ${reason}`);
+		},
 	);
 	cleanups.push(() => scheduler.dispose());
 	const wake = (reason: SessionControlWakeReason, ids?: readonly string[]): Promise<SessionControlDrainResult> =>

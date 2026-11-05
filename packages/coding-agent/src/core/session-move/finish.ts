@@ -1,5 +1,6 @@
-import { existsSync, rmSync } from "node:fs";
-import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
+import { rm } from "node:fs/promises";
+import { loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
+import { pathExists } from "../tools/path-utils.ts";
 import { readManifest } from "./bundle.ts";
 import { outgoingStateDir } from "./extension-state.ts";
 import type { MoveAnswer } from "./move-ledger.ts";
@@ -17,7 +18,7 @@ export interface FinishMoveOptions {
 	/** The receiver's signed answer. `receiving` changes nothing: the move is still open. */
 	readonly answer: MoveAnswer;
 	/** Runs inside the move lock before anything is read; throw to refuse. */
-	readonly guard?: () => void;
+	readonly guard?: () => void | Promise<void>;
 }
 
 export class MoveMismatchError extends Error {
@@ -55,21 +56,21 @@ export function finishMove(options: FinishMoveOptions): Promise<void> {
 
 async function settleMove(options: FinishMoveOptions): Promise<void> {
 	const { sessionFile, bundleDir, moveId, answer } = options;
-	if (existsSync(bundleDir)) {
+	if (await pathExists(bundleDir)) {
 		const bundled = (await readManifest(bundleDir)).moveId;
 		if (bundled !== moveId) throw new MoveMismatchError(moveId, bundled, "the kept bundle");
 	}
-	const entries = loadEntriesFromFile(sessionFile);
+	const entries = await loadEntriesFromFileAsync(sessionFile);
 	const ownership = sessionOwnership(entries);
 	if (ownership.writable) {
 		if (reclaimed(entries, moveId)) await requeueDroppedInput(sessionFile, bundleDir);
-		discardMoveFiles(sessionFile, bundleDir, moveId);
+		await discardMoveFiles(sessionFile, bundleDir, moveId);
 		return;
 	}
 	if (ownership.moveId !== moveId) throw new MoveMismatchError(moveId, ownership.moveId, "the session file");
 	if (ownership.state === "moved") {
 		if ("revoked" in answer) throw new MoveAlreadyMovedError(moveId);
-		discardMoveFiles(sessionFile, bundleDir, moveId);
+		await discardMoveFiles(sessionFile, bundleDir, moveId);
 		return;
 	}
 	const sessionId = headerSessionId(entries) ?? "";
@@ -81,7 +82,7 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 				await takeBack(sessionFile, bundleDir, { move_id: moveId, session_id: sessionId, reason: "revoked" });
 				break;
 			}
-			SessionManager.open(sessionFile).appendCustomEntry(SESSION_MOVED, {
+			(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_MOVED, {
 				move_id: moveId,
 				session_id: sessionId,
 				target: ownership.target,
@@ -104,12 +105,12 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 		}
 	}
 	moveStep("finish:requeued");
-	discardMoveFiles(sessionFile, bundleDir, moveId);
+	await discardMoveFiles(sessionFile, bundleDir, moveId);
 }
 
 /** `session_reclaimed` makes the file writable again, then the queued input comes back under ids stable per move. */
 async function takeBack(sessionFile: string, bundleDir: string, data: Record<string, string>): Promise<void> {
-	SessionManager.open(sessionFile).appendCustomEntry(SESSION_RECLAIMED, {
+	(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_RECLAIMED, {
 		...data,
 		reclaimed_at: new Date().toISOString(),
 	});
@@ -117,9 +118,9 @@ async function takeBack(sessionFile: string, bundleDir: string, data: Record<str
 	await requeueDroppedInput(sessionFile, bundleDir);
 }
 
-function discardMoveFiles(sessionFile: string, bundleDir: string, moveId: MoveId): void {
-	rmSync(bundleDir, { recursive: true, force: true });
-	rmSync(outgoingStateDir(sessionFile, moveId), { recursive: true, force: true });
+async function discardMoveFiles(sessionFile: string, bundleDir: string, moveId: MoveId): Promise<void> {
+	await rm(bundleDir, { recursive: true, force: true });
+	await rm(outgoingStateDir(sessionFile, moveId), { recursive: true, force: true });
 }
 
 function reclaimed(entries: readonly { type: string; customType?: string; data?: unknown }[], moveId: MoveId): boolean {
@@ -132,7 +133,7 @@ function reclaimed(entries: readonly { type: string; customType?: string; data?:
 }
 
 export async function requeueDroppedInput(sessionFile: string, bundleDir: string): Promise<void> {
-	if (!existsSync(bundleDir)) return;
+	if (!(await pathExists(bundleDir))) return;
 	const manifest = await readManifest(bundleDir);
 	await requeueInput(sessionFile, manifest.moveId, manifest.droppedUserMessages);
 }

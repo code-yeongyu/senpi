@@ -42,8 +42,14 @@ function persistBindingInvalidation(
 	pi: Partial<Pick<ExtensionAPI, "appendEntry">>,
 	sessionId: string,
 	reason: string,
+	divergedPath?: string,
 ): void {
-	pi.appendEntry?.(BINDING_ENTRY_TYPE, { schemaVersion: 1, invalidated: true, reason } satisfies BindingInvalidation);
+	pi.appendEntry?.(BINDING_ENTRY_TYPE, {
+		schemaVersion: 1,
+		invalidated: true,
+		reason,
+		...(divergedPath === undefined ? {} : { divergedPath }),
+	} satisfies BindingInvalidation);
 	rememberBindingInvalidation(sessionId, reason);
 }
 
@@ -51,12 +57,13 @@ async function invalidateBinding(
 	pi: Partial<Pick<ExtensionAPI, "appendEntry">>,
 	ctx: Pick<ExtensionContext, "sessionManager">,
 	reason: string,
+	divergedPath?: string,
 ): Promise<void> {
 	const sessionId = ctx.sessionManager.getSessionId();
 	forgetBinding(sessionId);
 	const sessionFile = ctx.sessionManager.getSessionFile?.();
 	if (sessionFile) await deleteStoredBinding(sessionFile);
-	persistBindingInvalidation(pi, sessionId, reason);
+	persistBindingInvalidation(pi, sessionId, reason, divergedPath);
 }
 
 function keepBindingThenClose(sessionId: string, reason: string): void {
@@ -158,10 +165,10 @@ export function registerSessionRegistry(
 			commitBoundary.forget(sessionId);
 			return;
 		}
-		const outcome = commitBoundary.commit(sessionId, event.message, modelId);
+		const { outcome, divergedPath } = commitBoundary.commit(sessionId, event.message, modelId);
 		if (outcome === "rewritten") {
-			recordPendingFork(sessionId, "assistant_rewritten");
-			await invalidateBinding(pi, ctx, "assistant_rewritten");
+			recordPendingFork(sessionId, "assistant_rewritten", divergedPath);
+			await invalidateBinding(pi, ctx, "assistant_rewritten", divergedPath);
 			return;
 		}
 		// Only an assistant this provider actually produced may anchor a record.
@@ -197,6 +204,12 @@ export function registerSessionRegistry(
 		await writeStoredBinding(sessionFile, stored);
 	});
 	pi.on("session_shutdown", (event, ctx) => {
+		// A config hot-reload keeps the session and this module's registry (session_start skips
+		// "reload" above), and the resident query captures no per-load state: its hooks and tool
+		// handlers are module constants. The next turn's fingerprint check restarts the process
+		// only when the reload changed the prompt, tools or options. Closing here re-spawned Claude
+		// Code on every reload, and on a real account re-attached the claude.ai connectors.
+		if (event.reason === "reload") return;
 		closeSession(ctx.sessionManager.getSessionId(), event.reason);
 	});
 	pi.on("session_extensions_removed", async (_event, ctx) => {

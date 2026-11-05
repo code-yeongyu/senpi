@@ -9,7 +9,7 @@ import type { MoveId } from "./ownership.ts";
  */
 export async function requeueInput(sessionFile: string, moveId: MoveId, texts: readonly string[]): Promise<void> {
 	if (texts.length === 0) return;
-	const sessionManager = SessionManager.open(sessionFile);
+	const sessionManager = await SessionManager.openAsync(sessionFile);
 	let next = 0;
 	const inputs = new SessionPendingInputs({ sessionManager, nextQueuedId: () => `move-${moveId}-${next++}` });
 	for (const [index, text] of texts.entries()) {

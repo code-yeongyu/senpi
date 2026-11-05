@@ -1,3 +1,148 @@
+## 2026-11-02 - Speculative warm summaries are kept across turns (senpi#5481, PR #5504)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/orchestration.ts`: `resolveIdleWarmAction` takes the job's completion state, anchor validity, fit and the clock. It returns `replace` for a job whose summarized prefix was rewritten, `none` for a running job (no replace on growth), `reuse` for a finished summary that fits, and `regenerate` for one that does not once `speculativeCooldownMs` has passed; only a failed job keeps the replace-on-growth rule.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/warm-candidate.ts` (new): `assessWarmCandidateFit` projects the context a finished warm summary would leave on the current branch and compares it with `threshold - lead`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: `projectCompactedContextTokens` is split out of `wouldCompactionOverflow`, which now calls it; the overflow result is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-job.ts`: a job records its result and completion time when it settles.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: the `agent_end` idle paths keep a running or fitting warm summary, regenerate an unfit one at most once per lineage and only when the fresh cut moved past its anchor (`MAX_WARM_REGENERATIONS`, reset on an accepted compaction and on a rewritten prefix), and replace a job whose prefix was rewritten; `before_agent_start` drops such a job before the grace-band and threshold decision; the idle apply also runs on `agent_settled` for a summary that finished before `agent_end`, and every guard that stands it down logs a reason.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: new events `speculative_reused`, `speculative_regenerated` and `idle_apply_skipped`.
+
+### Why
+
+- On one developer host about 90% of warm summaries were generated and discarded unused every week, and on 1M-window sessions the idle apply landed on 1.8% of idle triggers: every turn that grew the session by more than `max(keepRecentTokens, 8192)` aborted the running summary and started another one over the whole prefix (senpi#5481). The reference designs keep a prepared summary while its source prefix is unchanged and regenerate it at most once.
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own policy; the warm job, its apply guards and the log live inside this extension.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `agent_end` handler's two idle branches and the start of `before_agent_start` in `index.ts`; `armIdleApply`, now split into `armIdleApply` + `tryIdleApply`.
+- LOW: `resolveIdleWarmAction` in `orchestration.ts`; the event list in `log.ts`; `wouldCompactionOverflow` in `rejected-recovery.ts`.
+
+## 2026-10-26 - Share Claude preamble runway with the subscription safety net (senpi#4066)
+
+### What changed
+
+- `model-usability-budget.ts` and subscription `long-context-budget.ts` import `CLAUDE_SAFETY_MARGIN_TOKENS` from the dependency-free `claude-safety-margin.ts` rather than duplicating the Claude-family margin.
+
+### Why
+
+- The first-turn fallback preamble reserve must stay aligned with Claude-family admission without loading the compaction runtime graph.
+
+### Why an extension could not handle it
+
+- Both consumers are builtin extension budget calculations.
+
+### Expected merge conflict zones
+
+- LOW: the Claude-family profile in `model-usability-budget.ts`.
+
+## 2026-10-27 - Compaction authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`, `compaction/openai-remote.ts`, `compaction/index.ts`: `getApiKeyAndHeaders` receives `{ sessionId: sessionManager.getSessionId() }`; the remote-compaction context type accepts the option.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller; the fix is passing its session to the registry.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call lines.
+
+## 2026-10-27 - Compaction summary requests split the system prompt like the turn (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`, `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: speculative and core-route summary snapshots record `ctx.getSystemPromptStablePrefix()` next to `systemPrompt`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: the summary request passes it as `systemPromptStablePrefix` when it sends the agent's own prompt.
+
+### Why
+
+- A summary request meant to reuse the turn's cached prefix must send the same system blocks and breakpoint as the turn.
+
+### Why an extension could not handle it
+
+- These are the compaction builtin's own request builders.
+
+### Expected merge conflict zones
+
+- LOW: the snapshot objects in `speculative.ts` and `index.ts`, the request context in `speculative-summary.ts`.
+
+## 2026-10-26 - Terminal summarizer failures degrade on every compaction kind (senpi#4340)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: a generator failure classified `summarization-provider-failure` authorizes the deterministic fallback on any compaction kind (like `unsafe-retained-content`), not only required compaction; timeouts, truncation, overflow-exhaustion, empty-summary, refusals, aborts, transient failures and ordinary bugs keep their existing authorization.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: a soft-threshold `pre_prompt` compaction whose summarizer model 404'd cancelled, the session rejected it, and the pending prompt failed with RequiredCompactionError — "Compaction rejected: compaction generator failed" while the deterministic recovery sat gated off.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: the recovery authorization lives in the builtin generator's catch; no extension hook can widen it.
+
+### Expected merge conflict zones
+
+- LOW: the generator catch condition in `compaction/index.ts`.
+
+## 2026-10-24 - Persist budget notices after the cached system prefix (senpi#4166)
+
+### What changed
+
+- `orchestration.ts`: budget notices use a hidden custom message with explicit
+  before-prompt placement, including when attached to a new restoration payload.
+- `index.ts`: returns that message through before_agent_start's persisted message delivery,
+  never a systemPrompt rewrite. Existing restoration payloads receive the notice only when
+  their new message is created; sent messages remain unchanged.
+- `token-budget-reminder.ts`: persisted notice metadata is scoped to the latest accepted
+  compaction entry on the active branch. Reload and resume inside that epoch do not
+  append another notice; a new compaction permits a new estimate.
+
+### Why
+
+Changing or removing a numeric budget notice in the system text invalidated the cached prefix.
+The notice and its stale numeric estimate intentionally remain in conversation history
+until compaction. This differs from the standalone reminder rolled back on 2026-08-30:
+the notice precedes the user's prompt instead of following it, preserving the final user
+message for fallback dispatch without rewriting the system or earlier checkpoints.
+
+### Why an extension could not handle it
+
+The compaction builtin itself owns budget calculation and delivery.
+
+### Expected merge conflict zones
+
+- `index.ts`: before_agent_start return; `orchestration.ts`: reminder delivery.
+
+## 2026-10-24 - Budget-only fallback searches shorter safe suffixes (senpi#4161)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: an over-budget candidate enables the later-boundary search, retaining the existing replay, tool-chain, reconstruction and budget checks. Rejection diagnostics prioritize budget failures at structurally valid boundaries over invalid-cut noise, retaining per-reason counts, the first candidate and the smallest measured candidate. Each boundary is checked once across search passes.
+- The selected suffix can start after the latest user turn, as the unsafe-content recovery already allowed; only checkpoint `taskIntent`, when available, carries that request into the reduced context.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: default retention could reject every earlier boundary while never considering a smaller safe suffix. Budget failures also received reconstruction/reload advice. Reported by 승기 in the OmO KakaoTalk room (#4161). This does not change #4148's envelope estimator or #2942's broader recovery ladder.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: this is the builtin compaction extension's existing fallback selector and diagnostic formatter.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: candidate rejection accounting, the later-safe-boundary guard, and rejection formatting.
+
 ## 2026-10-22 - Frontier steps keep the reduced prefix cacheable (senpi#3242)
 
 ### What changed
@@ -2357,3 +2502,21 @@ This is the builtin extension that owns summary generation and its retry loop.
 ### Expected merge conflict zones
 
 The overflow branches of the retry loop in `runExtensionCompaction` in `speculative.ts`.
+
+## 2026-10-23 - Summarization bound reaches inside the last turn (senpi#4079)
+
+### What changed
+
+`overflow-retry.ts`: `boundSummarizationInput` and `shrinkSummarizationInputForOverflowRetry` now prune through `pruneSummarizationInputToBudget`. It drops the oldest history first, as before, and then, when the last turn alone is still over the budget, that turn's oldest tool call/result pairs, never a call without its result. The turn's request is never dropped: when it alone is over the budget, `boundSummarizationInput` cuts its text to fit (`truncateRequestToBudget`), and the shrink-retry does the same when the request is the only message left; otherwise the shrink-retry's last-resort drop removes the oldest entry after the request instead of the request itself. Every caller of the two helpers gets this: core's history summary (senpi#4032) and split-turn prefix summary, and this extension's merged request. `boundSummarizationInput` never returns an empty list: a turn with no user-like request (one that starts with a custom or summary entry) keeps its newest message, so the callers need no fallback of their own. A request cut again by a later retry carries one note with the combined count, and the cut ratio is measured on its text alone. `pruneOldMessagesToBudget`, which live-context pruning (`emergency-prune.ts`, `btw/side-query.ts`) uses, is unchanged.
+
+### Why
+
+A single turn close to the window could not be bounded at all: the old rule only removed messages before the last user message, so the summary request overflowed and the compaction failed. Core's split-turn prefix summary and this extension's merged request share the rule.
+
+### Why an extension could not handle it
+
+This is the builtin extension that owns these helpers; core imports them for its own summary requests.
+
+### Expected merge conflict zones
+
+`boundSummarizationInput` / `shrinkSummarizationInputForOverflowRetry` in `overflow-retry.ts`.

@@ -1,3 +1,4 @@
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import {
 	isHostOwnedToolRuntimeCapability,
 	type ToolRuntimeKind,
@@ -9,24 +10,30 @@ import {
 } from "../../core/extensions/builtin/permission-system/config.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import {
+	ACCOUNT_RESET_CAPABILITY,
 	ATTENDED_CAPABILITY,
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	BROWSER_ENGINE_CAPABILITY,
 	CONTINUE_FROM_LEAF_CAPABILITY,
+	DELEGATED_CONNECTION_CAPABILITY,
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
+	ENTRIES_TAIL_CAPABILITY,
 	EVAL_CELLS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	MOVED_PATH_GUARD_CAPABILITY,
+	OBSERVE_READS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
+	PROVIDER_ACCOUNT_TEST_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RESUME_SESSION_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
+	SESSION_ENV_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 	SESSION_RELOCATION_CAPABILITY,
@@ -56,11 +63,22 @@ export function multiSessionHostCapabilities(options: {
 	readonly warm: boolean;
 	readonly toolRuntime: ToolRuntimeKind;
 	readonly negotiated: readonly string[];
+	readonly mcpPresenters?: boolean;
 }): string[] {
 	return [
 		...new Set([
 			"multi_session",
+			"snapshot_cursor",
+			"ui_answer_ledger",
+			"secret_input_v1",
+			"dialog_observer",
+			...(options.mcpPresenters ? ["mcp_form_presenter_v1"] : []),
+			"session_lifecycle",
 			"expected_host_instance",
+			"attach_session",
+			"release_attachment",
+			"release_caller_aware",
+			"reclaim_session",
 			AUTO_TITLE_SESSIONS_CAPABILITY,
 			MEDIA_PLACEHOLDERS_CAPABILITY,
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
@@ -71,6 +89,8 @@ export function multiSessionHostCapabilities(options: {
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
+			PROVIDER_ACCOUNT_TEST_CAPABILITY,
+			ACCOUNT_RESET_CAPABILITY,
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
 			TOOL_BARRIER_CAPABILITY,
 			USER_ACTIVITY_CAPABILITY,
@@ -78,6 +98,9 @@ export function multiSessionHostCapabilities(options: {
 			SESSION_HELD_CAPABILITY,
 			RESUME_SESSION_CAPABILITY,
 			ATTENDED_CAPABILITY,
+			// `get_state`/`get_entries` marked `observe` never attach, and history reads page backward too (senpi#4267).
+			OBSERVE_READS_CAPABILITY,
+			ENTRIES_TAIL_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the
 			// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 			// per-session launch profile `context`/`auto_title` travel on, and the session
@@ -85,6 +108,8 @@ export function multiSessionHostCapabilities(options: {
 			RETAIN_ON_DISCONNECT_CAPABILITY,
 			// Only a multi-session host tracks attachments per connection, so only it can drop them on request.
 			DETACH_CONNECTION_CAPABILITY,
+			// Its host core decides every inbound line of a delegated connection before dispatch (senpi#5632).
+			DELEGATED_CONNECTION_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
@@ -107,6 +132,8 @@ export function multiSessionHostCapabilities(options: {
 			PROMPT_SURFACE_CHAT_CAPABILITY,
 			// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
 			BROWSER_ENGINE_CAPABILITY,
+			// Each session's caller env lives on its own launch profile; the host process never holds it (senpi#4381).
+			SESSION_ENV_CAPABILITY,
 			// Each session's fallback chain is its own in-memory settings override, never the host's file.
 			RETRY_FALLBACK_PROFILE_CAPABILITY,
 			ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
@@ -115,7 +142,14 @@ export function multiSessionHostCapabilities(options: {
 			...(options.warm ? [WARM_CAPABILITY] : []),
 			...toolRuntimeCapabilities(options.toolRuntime),
 			// The host alone says where tool work runs; a negotiated copy would make two answers.
-			...options.negotiated.filter((capability) => !isHostOwnedToolRuntimeCapability(capability)),
+			...options.negotiated.filter(
+				(capability) =>
+					capability !== "mcp_form_presenter_v1" &&
+					// RULING-111 (LEAK-E): only the compact negotiation owns these names; flag off echoes them as main does.
+					(!compactUpdatesEnabled() ||
+						(capability !== "compact_message_updates_v1" && capability !== "compact_events")) &&
+					!isHostOwnedToolRuntimeCapability(capability),
+			),
 		]),
 	];
 }

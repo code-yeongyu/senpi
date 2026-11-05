@@ -239,7 +239,7 @@ class MicroTui {
 		if (usage.lastCacheHitRate !== undefined && (usage.cacheRead > 0 || usage.cacheWrite > 0)) {
 			stats.push(`CH${usage.lastCacheHitRate.toFixed(1)}%`);
 		}
-		stats.push(`$${usage.totalCost.toFixed(3)}`);
+		stats.push(`$${usage.totalCost.toFixed(3)}${usage.totalCostUnknown ? "+?" : ""}`);
 		if (usage.contextWindow > 0) {
 			const automatic = Number(view.conversation.config.threshold ?? 0) > 0 ? " (auto)" : "";
 			const context =

@@ -1,3 +1,40 @@
+## 2026-10-31 - Weight CJK text in compaction cut-point budgets (senpi#5203, fixes #4617)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: the cut-point keep-budget estimate weights CJK runs instead of counting chars/4, so `keepRecentTokens` keeps about the configured tokens for CJK-heavy sessions.
+
+### Why
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: with chars/4, CJK sessions kept ~3x the configured tokens (#4617).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: the cut point is chosen inside the compaction core; no extension hook sees the budget accumulation.
+
+### Expected merge conflict zones
+
+- LOW: the token-estimate helpers and the cut-point loop in `compaction.ts`.
+
+## 2026-10-30 - Check compaction values without redundant assertions (senpi#4973)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/utils.ts`: use the existing tool-argument record type for file-operation tracking and conversation serialization.
+- `packages/coding-agent/src/core/compaction/compaction-execution.ts`: check summary details with `satisfies CompactionDetails`.
+
+### Why
+
+- These values already have the required shape. The compiler now checks them without redundant assertions, and the emitted JavaScript is unchanged.
+
+### Why an extension could not handle it
+
+- Extensions cannot change the compile-time checks inside compaction's built-in implementation.
+
+### Expected merge conflict zones
+
+- LOW: the file-operation argument, tool-call serialization alias, and returned summary details.
+
 ## 2026-10-22 - Preserve message cut classification across bookkeeping (senpi#3864)
 
 ### What changed
@@ -823,3 +860,22 @@ If upstream changes branch summary preparation or adds new branch summary data s
 ### Expected merge conflict zones
 
 - MEDIUM: `generateSummaryWithUsage` around the prompt build and `completeSummarization` call (now a bounded retry loop), and the `overflow-retry.ts` import.
+
+## 2026-10-23 - Bound the split-turn prefix summary to the model window (senpi#4079)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction-execution.ts`: `generateTurnPrefixSummary`, on the standalone (non cache-friendly) path, bounds the turn prefix with `boundSummarizationInput` when the request would not fit the window, retries on a provider context overflow with `shrinkSummarizationInputForOverflowRetry` under `allowOverflowRetry`, and throws `SummarizationOverflowExhaustedError` when exhausted, exactly like the history summary (senpi#4032). The turn's request is always kept; its oldest tool steps go first, and the conversation opens with `<omitted-history messages="N" />` when steps were left out. A request that already fits is sent unchanged. The shared bound changes the history summary of `generateSummaryWithUsage` (senpi#4032) the same way: once the history before the last turn is gone, it prunes that turn's oldest tool steps and keeps its request. When the request alone is over the budget, its text is cut to fit (never dropped), so a giant pasted prompt still compacts.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `generateSummaryWithUsage` drops its own empty-bound fallback (`summarizedMessages.slice(-1)`), because `boundSummarizationInput` now never returns an empty list; both summary paths rely on the shared helper for that.
+
+### Why
+
+- When the compaction cut lands inside one long turn, the turn's prefix is summarized in its own request, and that request was unbounded. A single turn close to the window made it overflow, so the compaction failed and the next prompt threw `RequiredCompactionError`: such a session could never compact.
+
+### Why an extension could not handle it
+
+- The turn prefix request is built and sent inside core `generateTurnPrefixSummary`; `session_before_compact` can replace the whole compaction but cannot bound core's own request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `generateTurnPrefixSummary` around the prompt build and `completeSummarization` call (now a bounded retry loop), and the `overflow-retry.ts` import.

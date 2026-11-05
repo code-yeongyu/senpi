@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
+// Release a coordinated start's filler pipes while the private table is still in the environment (senpi#4602).
+import "./private-fd-startup-release.ts";
+// Then: capture the private descriptor table before anything can spawn (senpi#4749).
+import "./private-fds.ts";
 import "./internal-role.ts";
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { spawn, spawnSync, type StdioOptions } from "node:child_process";
+import { existsSync, fstatSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
+import { isFifoMode } from "./utils/inherited-duplex.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
+import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
+import { dispatchKillGuardCommand } from "./cli/kill-guard-command.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import {
 	APP_NAME,
@@ -19,6 +26,44 @@ import {
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
+import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
+import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
+import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
+
+/**
+ * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
+ * is still unread here, and the process that loads cli-main reports on the same descriptor.
+ */
+function reexecStdio(): StdioOptions {
+	const base = channelStdio();
+	if (!process.env[HOST_STARTUP_EVENTS_ENV]) return base;
+	try {
+		const stat = fstatSync(STARTUP_EVENT_FD);
+		if (!stat.isSocket() && !isFifoMode(stat.mode)) return base;
+	} catch {
+		return base;
+	}
+	const slots: StdioOptions = typeof base === "string" ? [base, base, base] : [...base];
+	while (slots.length < STARTUP_EVENT_FD) slots.push("ignore");
+	slots[STARTUP_EVENT_FD] = STARTUP_EVENT_FD;
+	return slots;
+}
+
+/** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
+function channelStdio(): StdioOptions {
+	const argv = process.argv.slice(2);
+	const presenter = argv.indexOf("--mcp-presenter-fd");
+	if (presenter < 0 || argv[presenter + 1] !== "4") return "inherit";
+	try {
+		const stat = fstatSync(4);
+		if (!stat.isSocket() && !stat.isFIFO()) return "inherit";
+	} catch {
+		return "inherit";
+	}
+	const owner = argv.indexOf("--owner-fd");
+	const lifetime = (owner >= 0 && argv[owner + 1] === "3") || process.env.SENPI_RPC_HOST_WATCH_FD === "3";
+	return ["inherit", "inherit", "inherit", lifetime ? 3 : "ignore", 4];
+}
 
 // Upstream's `cli/setup.ts` helper is deliberately not used here: this launcher only decides the
 // runtime and process structure, and `cli-main.ts` performs the equivalent process/title/env/http
@@ -51,10 +96,17 @@ function reexecUnderBunIfNeeded(): boolean {
 	if (decision.action === "stay") {
 		return false;
 	}
-	const result = spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], {
-		stdio: "inherit",
+	const transfer = preparePrivateFdSpawn({
+		stdio: reexecStdio(),
 		windowsHide: true,
 	});
+	const result = (() => {
+		try {
+			return spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], transfer.options);
+		} finally {
+			transfer.close();
+		}
+	})();
 	if (result.signal) {
 		process.kill(process.pid, result.signal);
 		return true;
@@ -63,9 +115,16 @@ function reexecUnderBunIfNeeded(): boolean {
 	return true;
 }
 
+// The kill guard's runtime shims ask this executable to judge a signal (senpi#5349). Hidden and never in help; it
+// loads only the judge, so it answers before any runtime re-exec or engine import.
+await dispatchKillGuardCommand(process.argv.slice(2));
+
 if (reexecUnderBunIfNeeded()) {
 	process.exit();
 }
+
+const args = process.argv.slice(2);
+await dispatchAgentDirectoryCommand(args);
 
 // Must run before cli-main is loaded, by either path: it caches the engine graph this process
 // imports on the fast path below, and it publishes NODE_COMPILE_CACHE so a spawned cli-main child
@@ -77,7 +136,6 @@ process.env.PI_CODING_AGENT = "true";
 process.env.AI_AGENT = APP_NAME;
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
-const args = process.argv.slice(2);
 const PACKAGE_COMMANDS = new Set(["install", "remove", "uninstall", "update", "list", "config"]);
 
 function isRootCommand(args: readonly string[]): boolean {
@@ -132,9 +190,9 @@ async function spawnFullCli(): Promise<number> {
 	releaseInheritedInspectorForChild();
 	const childEnvironment = isBundledNode ? { ...process.env, [ISOLATED_CHILD_ENV]: "1" } : process.env;
 	return await new Promise<number>((resolve, reject) => {
-		const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
+		const child = spawnWithPrivateFds(spawn, process.execPath, [...process.execArgv, fullCliPath, ...args], {
 			env: childEnvironment,
-			stdio: "inherit",
+			stdio: reexecStdio(),
 		});
 		child.on("error", (error) => {
 			reject(error);

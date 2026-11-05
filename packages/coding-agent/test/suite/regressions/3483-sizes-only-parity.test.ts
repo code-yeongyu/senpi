@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
@@ -183,4 +183,39 @@ describe("sizes-only startup keeps the first turn of a normal startup (#3483)", 
 			expect(sizesOnly).toEqual({ calls: 0, status: "ready" });
 		},
 	);
+
+	it("opens no custody and writes no session file for a turn a session_start handler asks for (senpi#3963)", async () => {
+		// Given: a persisted session and an extension that asks for a turn from session_start.
+		const harness = await createHarness({
+			persistSession: true,
+			extensionFactories: [
+				{
+					path: "/fixture/turn-starter/index.ts",
+					factory: (pi: ExtensionAPI) => {
+						pi.on("session_start", () => {
+							pi.sendMessage(
+								{ customType: "fixture", content: "continue", display: false },
+								{ triggerTurn: true },
+							);
+						});
+					},
+				},
+			],
+		});
+		harnesses.push(harness);
+		// When: sizes-only startup runs session_start.
+		await harness.session.bindExtensions({ mode: "print", sizesOnly: true });
+		await harness.session.waitForSettledSessionWork();
+		await harness.session.waitForIdle();
+		// Then: the inspection owes no work, recorded no custody and created no session file.
+		const sessionFile = harness.session.sessionManager.getSessionFile();
+		expect({
+			calls: harness.faux.getCallLog().length,
+			activeObligations: harness.session.workObligations.activeCount,
+			custodyEntries: harness.session.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType === "work-custody").length,
+			sessionFileWritten: sessionFile !== undefined && existsSync(sessionFile),
+		}).toEqual({ calls: 0, activeObligations: 0, custodyEntries: 0, sessionFileWritten: false });
+	});
 });

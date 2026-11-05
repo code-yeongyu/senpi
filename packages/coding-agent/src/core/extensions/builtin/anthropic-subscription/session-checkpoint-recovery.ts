@@ -21,7 +21,8 @@ type CheckpointLookup = {
  * hash-proven prefix AND exists in the SDK transcript of the same session as a top-level
  * assistant. Never guesses the transcript's latest assistant: only boundaries this
  * lineage mapped are candidates. The config-dir lane (per-account transcript roots) and
- * an unreadable or foreign transcript fail closed (senpi#1973).
+ * an unreadable or foreign transcript fail closed (senpi#1973); the claude-cli lane reads
+ * the shared root its account dirs link to (senpi#4436).
  */
 export async function earlierVerifiedCheckpoint(input: CheckpointLookup): Promise<ContinuityBinding | undefined> {
 	const { binding, currentHashes } = input;

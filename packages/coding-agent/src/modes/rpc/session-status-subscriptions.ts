@@ -5,7 +5,52 @@
  * be well formed. Every refusal names the field that was wrong and what to send instead.
  */
 import type { RpcCommand } from "./rpc-types.ts";
-import type { SessionStatusEntryView } from "./session-status.ts";
+import type { SessionStatusEntryView, SessionStatusRuntimeView } from "./session-status.ts";
+import type { MirrorPending } from "./compact-mirror-pending.ts";
+
+export interface SessionStatusSource {
+	readonly sessionIds: () => readonly string[];
+	readonly entryView: (sessionId: string) => SessionStatusEntryView | undefined;
+	readonly view: (
+		sessionId: string,
+	) => { readonly entry: SessionStatusEntryView; readonly runtime?: SessionStatusRuntimeView } | undefined;
+}
+
+export interface SessionStatusDelivery {
+	readonly enqueue: (connectionId: string, line: string) => boolean;
+	readonly pendingQuestions: (sessionId: string) => number | undefined;
+	readonly now?: () => Date;
+}
+
+export type StatusSubscription = {
+	readonly id: string;
+	readonly connectionId: string;
+	readonly options: SubscriptionOptions;
+	seq: number;
+};
+export type PendingStatusSubscription = StatusSubscription & {
+	readonly lines: string[];
+	readonly buffer?: MirrorPending;
+};
+
+export function matchingMirrors(
+	subscriptions: Iterable<StatusSubscription>,
+	sessionId: string,
+	recordType: string,
+	entryView: () => SessionStatusEntryView | undefined,
+	dialogs = false,
+): StatusSubscription[] {
+	const candidates = [...subscriptions].filter(
+		(subscription) =>
+			(!dialogs || subscription.options.dialogs === true) &&
+			(recordType === "snapshot_marker" || dialogs
+				? subscription.options.mirror.kind !== "none"
+				: mirrorsRecord(subscription.options.mirror, recordType)),
+	);
+	if (candidates.length === 0) return [];
+	const entry = entryView();
+	return entry ? candidates.filter((s) => subscriptionMatches(s.options, sessionId, entry)) : [];
+}
 
 export type SessionSelector =
 	| { readonly kind: "all" }
@@ -18,11 +63,14 @@ export type MirrorSelection =
 	| { readonly kind: "types"; readonly types: ReadonlySet<string> };
 
 export interface SubscriptionOptions {
+	/** Internal compact routing identity; set only for the streamed snapshot path. */
+	readonly admissionId?: string;
 	readonly selector: SessionSelector;
 	readonly includeWorkers: boolean;
 	readonly includeContext: boolean;
 	readonly mirror: MirrorSelection;
 	readonly effects: boolean;
+	readonly dialogs?: boolean;
 }
 
 export interface SubscriptionRefusal {
@@ -89,7 +137,7 @@ export function parseSubscription(
 	request: Readonly<
 		Pick<
 			Extract<RpcCommand, { type: "subscribe_sessions" }>,
-			"sessions" | "mirror" | "include_workers" | "include_context" | "effects"
+			"sessions" | "mirror" | "include_workers" | "include_context" | "effects" | "dialogs"
 		>
 	>,
 ): { readonly options: SubscriptionOptions } | { readonly refusal: SubscriptionRefusal } {
@@ -101,11 +149,14 @@ export function parseSubscription(
 	if (typeof includeWorkers === "object") return { refusal: includeWorkers };
 	const includeContext = optionalBoolean(request.include_context, "include_context");
 	if (typeof includeContext === "object") return { refusal: includeContext };
+	const dialogs = optionalBoolean(request.dialogs, "dialogs");
+	if (typeof dialogs === "object") return { refusal: dialogs };
 	const effects = optionalBoolean(request.effects, "effects");
 	if (typeof effects === "object") return { refusal: effects };
 	return {
 		options: {
 			selector: selector.selector,
+			dialogs: dialogs ?? false,
 			// A childrenOf subscription exists to watch machine-driven children, which open as workers.
 			includeWorkers: includeWorkers ?? selector.selector.kind === "childrenOf",
 			includeContext: includeContext ?? false,
@@ -146,7 +197,7 @@ export function subscriptionMatches(
 	}
 }
 
-export function mirrorsRecord(mirror: MirrorSelection, recordType: string): boolean {
+function mirrorsRecord(mirror: MirrorSelection, recordType: string): boolean {
 	switch (mirror.kind) {
 		case "none":
 			return false;
@@ -159,4 +210,20 @@ export function mirrorsRecord(mirror: MirrorSelection, recordType: string): bool
 			throw new Error(`unexpected mirror ${String(exhaustive)}`);
 		}
 	}
+}
+
+export function matchingStatusConnections(
+	subscriptions: Iterable<StatusSubscription>,
+	sessionId: string,
+	entry: SessionStatusEntryView | undefined,
+): ReadonlyMap<string, boolean> {
+	const matches = new Map<string, boolean>();
+	if (entry)
+		for (const subscription of subscriptions)
+			if (subscriptionMatches(subscription.options, sessionId, entry))
+				matches.set(
+					subscription.connectionId,
+					(matches.get(subscription.connectionId) ?? false) || subscription.options.includeContext,
+				);
+	return matches;
 }

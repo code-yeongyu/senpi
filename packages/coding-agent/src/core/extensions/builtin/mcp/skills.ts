@@ -19,7 +19,7 @@ import { parseFrontmatter } from "../../../../utils/frontmatter.ts";
 import {
 	authorizeSkillPath,
 	BlockedSkillLinkError,
-	readSkillFileChecked,
+	readSkillFileCheckedSync,
 	type SkillAllowedSet,
 	type SkillProvenance,
 } from "../../../skill-access.ts";
@@ -133,7 +133,7 @@ function readSkillServersFromDisk(skill: SkillLike): SkillServers {
 		skill.provenance === undefined ? skill.sourceInfo?.scope === "project" : skill.provenance.kind !== "user";
 	if (existsSync(sidecarPath)) {
 		try {
-			const parsed: unknown = JSON.parse(readSkillFileChecked(sidecarPath, skill.provenance, skill.allowedSet));
+			const parsed: unknown = JSON.parse(readSkillFileCheckedSync(sidecarPath, skill.provenance, skill.allowedSet));
 			return { declared: unwrapServerMap(parsed), sourcePath: sidecarPath };
 		} catch (error) {
 			if (error instanceof BlockedSkillLinkError)
@@ -149,7 +149,7 @@ function readSkillServersFromDisk(skill: SkillLike): SkillServers {
 	}
 	try {
 		const { frontmatter } = parseFrontmatter<{ mcp?: unknown }>(
-			readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet),
+			readSkillFileCheckedSync(skill.filePath, skill.provenance, skill.allowedSet),
 		);
 		if (frontmatter.mcp === undefined) return { declared: {}, sourcePath: skill.filePath };
 		return { declared: unwrapServerMap(frontmatter.mcp), sourcePath: skill.filePath };

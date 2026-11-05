@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
+import { answerProtocolInfo } from "./helpers/rpc-legacy-protocol.ts";
 
 // senpi#3811: a task runner driving a host-session child needs typed client calls for the run controls, so it can
 // pause, resume and relay guidance without a raw-command escape hatch.
@@ -26,6 +27,7 @@ async function fakeHost(answer: (request: Request) => Record<string, unknown>) {
 			for (let newline = buffered.indexOf("\n"); newline !== -1; newline = buffered.indexOf("\n")) {
 				const request = JSON.parse(buffered.slice(0, newline)) as Request;
 				buffered = buffered.slice(newline + 1);
+				if (answerProtocolInfo(socket, request)) continue;
 				requests.push(request);
 				socket.write(
 					`${JSON.stringify({ type: "response", id: request.id, command: request.type, ...answer(request) })}\n`,

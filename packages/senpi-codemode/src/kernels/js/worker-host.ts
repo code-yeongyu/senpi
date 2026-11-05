@@ -4,6 +4,7 @@ import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import { describeExit } from "../shared/kernel-death.ts";
 import type { WorkerLike } from "./inline-worker.ts";
 import type { JavaScriptKernelMode } from "./kernel-contract.ts";
+import type { KernelPermissionHost } from "./permission-host.ts";
 
 declare global {
 	// Inert outside the gate. Bun does not refresh named builtin constructor exports.
@@ -41,10 +42,16 @@ export function spawnNodeWorker(
 	cwd: string,
 	parallelPoolWidth: number,
 	mode: JavaScriptKernelMode = "worker",
+	permissions?: KernelPermissionHost,
 ): WorkerLike {
-	const worker = new Worker(url, { workerData: { cwd, parallelPoolWidth } });
+	const permission = permissions?.bootstrap();
+	const worker = new Worker(url, {
+		workerData: { cwd, parallelPoolWidth, permission },
+		transferList: permission ? [permission.port] : [],
+	});
+	const exited = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
 	globalThis.__senpiCodemodeGateObserveResource?.("workers", worker, "exit");
-	return wrapNodeWorker(worker, mode);
+	return wrapNodeWorker(worker, mode, exited, permissions);
 }
 
 export function waitForReady(worker: WorkerLike, signal: AbortSignal): Promise<void> {
@@ -106,13 +113,21 @@ export function crashedResult(
 	return { type: "result", cellId, ok: false, error: bridgeError(error), durationMs };
 }
 
-function wrapNodeWorker(worker: Worker, mode: JavaScriptKernelMode): WorkerLike {
+function wrapNodeWorker(
+	worker: Worker,
+	mode: JavaScriptKernelMode,
+	exited: Promise<void>,
+	permissions?: KernelPermissionHost,
+): WorkerLike {
 	return {
 		mode,
 		postMessage: (message, transfer) =>
-			worker.postMessage(message, transfer === undefined ? undefined : [...transfer]),
+			worker.postMessage(permissions?.frame(message) ?? message, transfer === undefined ? undefined : [...transfer]),
 		onMessage(handler) {
-			const listener = (message: KernelToHostMessage): void => handler(message);
+			const listener = (message: KernelToHostMessage): void => {
+				permissions?.settle(message);
+				handler(message);
+			};
 			worker.on("message", listener);
 			return () => worker.off("message", listener);
 		},
@@ -133,7 +148,10 @@ function wrapNodeWorker(worker: Worker, mode: JavaScriptKernelMode): WorkerLike 
 			};
 		},
 		async terminate() {
-			await worker.terminate();
+			permissions?.revoke();
+			const children = permissions?.terminateChildren();
+			void worker.terminate();
+			await Promise.all([exited, children]);
 		},
 	};
 }

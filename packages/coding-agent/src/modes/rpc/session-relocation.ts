@@ -28,11 +28,15 @@ type Scheduled = {
 	readonly target: string;
 	readonly reason: string;
 	readonly connection: string;
+	readonly dropReason?: "aborted";
 };
 type HostAsk = { method: "list_relocation_targets" } | { method: "relocate_session"; target: string; reason: string };
 
 export interface RpcSessionRelocationDeps {
-	readonly session: Pick<AgentSession, "sessionFile" | "subscribe" | "isStreaming" | "currentAbortSource">;
+	readonly session: Pick<
+		AgentSession,
+		"sessionFile" | "subscribe" | "isStreaming" | "currentAbortSource" | "sendCustomMessage"
+	>;
 	/** `prompt` calls not yet returned; `release_session` counts them as a running turn (`busy: ["prompt"]`). */
 	readonly pendingPrompts: () => readonly Promise<unknown>[];
 	readonly channel: RelocationChannel;
@@ -64,8 +68,18 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		this.deps = deps;
 		this.unsubscribe = deps.session.subscribe((event) => {
 			// A run the user stopped takes its scheduled move with it: the user chose to stay here.
-			if (event.type === "agent_end" && deps.session.currentAbortSource === "user") this.scheduled = undefined;
-			if (event.type === "agent_settled" && this.scheduled !== undefined) void this.announceWhenReleasable();
+			if (event.type === "agent_end" && deps.session.currentAbortSource === "user" && this.scheduled !== undefined)
+				this.scheduled = { ...this.scheduled, dropReason: "aborted" };
+			// agent_end still streams: wait until settlement so the correction is appended, not parked.
+			if (event.type === "agent_settled" && this.scheduled?.dropReason !== undefined)
+				this.dropScheduled(this.scheduled.dropReason);
+			// The move itself waits for agent_idle: settle-time extension handlers may still be writing (omo#11419).
+			else if (
+				event.type === "agent_idle" &&
+				this.scheduled !== undefined &&
+				this.scheduled.dropReason === undefined
+			)
+				void this.announceWhenReleasable();
 		});
 	}
 
@@ -117,7 +131,8 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 
 	/** The connection `connectionId` left the session: what it accepted or was asked ends here, never later. */
 	connectionDetached(connectionId: string): void {
-		if (this.scheduled?.connection === connectionId) this.scheduled = undefined;
+		if (this.scheduled?.connection === connectionId && this.scheduled.dropReason === undefined)
+			this.dropScheduled("disconnected");
 		for (const pending of [...this.pending.values()])
 			if (pending.connection === connectionId)
 				pending.finish(refused("app_disconnected", "the app that was asked left this session"));
@@ -127,6 +142,22 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		this.unsubscribe();
 		this.scheduled = undefined;
 		for (const { finish } of [...this.pending.values()]) finish(refused("session_closed", "this session was closed"));
+	}
+
+	private dropScheduled(reason: "disconnected" | "aborted" | "withdrawn"): void {
+		const scheduled = this.scheduled;
+		if (scheduled === undefined) return;
+		this.scheduled = undefined;
+		const { moveId, target } = scheduled;
+		void this.deps.session.sendCustomMessage(
+			{
+				customType: "session_relocation",
+				content: `The session will not continue on ${target} (${reason}). The session stays on this computer; keep working here.`,
+				display: false,
+				details: { status: "dropped", reason, moveId, target },
+			},
+			{ triggerTurn: false },
+		);
 	}
 
 	private settleRequest(
@@ -153,13 +184,16 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		const due = this.scheduled;
 		// A new run took over meanwhile: its own settle announces the move.
 		if (due === undefined || this.deps.session.isStreaming) return;
-		this.scheduled = undefined;
 		// Only the connection that accepted, while it still offers relocation here, is told to move the session.
-		if (this.deps.channel.offerer() !== due.connection) return;
-		const { connection, ...fields } = due;
+		if (this.deps.channel.offerer() !== due.connection) {
+			this.dropScheduled("withdrawn");
+			return;
+		}
+		this.scheduled = undefined;
+		const { connection, moveId, target, reason } = due;
 		this.deps.channel.send(
 			connection,
-			{ type: "relocation_due", ...fields } satisfies RpcRelocationDueEvent,
+			{ type: "relocation_due", moveId, target, reason } satisfies RpcRelocationDueEvent,
 			"event",
 		);
 	}
@@ -167,7 +201,7 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 	private ask(fields: HostAsk, connection: string, signal?: AbortSignal): Promise<Answer> {
 		if (signal?.aborted) return Promise.resolve(refused("cancelled", "the request was cancelled"));
 		const id = `hr_${crypto.randomUUID()}`;
-		return new Promise<Answer>((resolve) => {
+		const answer = new Promise<Answer>((resolve) => {
 			const finish = (answer: Answer): void => {
 				clearTimeout(timer);
 				signal?.removeEventListener("abort", onAbort);
@@ -181,11 +215,29 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 			);
 			this.pending.set(id, { connection, finish });
 			signal?.addEventListener("abort", onAbort, { once: true });
-			this.deps.channel.send(
-				connection,
-				{ type: "host_request", id, ...fields } satisfies RpcHostRequest,
-				"request",
-			);
 		});
+		// Delivery waits until the synchronous call that asked has returned, so every waiter on this answer exists before
+		// the record can reach anyone: the caller's await and, above it, the tool body's race against the run's abort.
+		// Writing the record can reach an in-process client at once (an idle sink delivers it synchronously), and a client
+		// that leaves right there refuses this request and starts the teardown in that same stack; a waiter attached after
+		// that would be queued behind the teardown (senpi#5801). Holding a waiter here instead is not enough: the body's
+		// race attaches only when execute() returns. Run-to-completion makes this independent of how many hops the sink takes.
+		// A send that throws ends the request at once with a typed refusal: thrown from this microtask it would be an
+		// uncaught exception, which ends an RPC host process, and the request would wait out the answer timeout.
+		queueMicrotask(() => {
+			const pending = this.pending.get(id);
+			if (pending === undefined) return;
+			try {
+				this.deps.channel.send(
+					connection,
+					{ type: "host_request", id, ...fields } satisfies RpcHostRequest,
+					"request",
+				);
+			} catch (error) {
+				const detail = error instanceof Error ? error.message : String(error);
+				pending.finish(refused("send_failed", `the request could not be sent to the app: ${detail}`));
+			}
+		});
+		return answer;
 	}
 }

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MODELS } from "../../ai/src/models.generated.ts";
+import { DEFAULT_MODEL } from "../src/core/extensions/builtin/websearch/websearch/providers/google.ts";
 import { buildSearchRequest } from "../src/core/extensions/builtin/websearch/websearch/providers.ts";
 import { performSearch } from "../src/core/extensions/builtin/websearch/websearch/search.ts";
 import type { SearchProviderEntry, WebsearchConfig } from "../src/core/extensions/builtin/websearch/websearch/types.ts";
@@ -72,6 +74,22 @@ describe("websearch Google hosted search route", () => {
 
 		// then
 		expect(built.url).toBe("https://proxy.example.com/v1beta/models/gemini-2.5-pro:generateContent");
+	});
+
+	it("#given a google entry without a model #when the request is built #then the default grounding model is a current-catalog GA flash", () => {
+		// given: gemini-2.5-flash retired for new accounts (404 NOT_FOUND); the default must
+		// resolve in the packaged catalog and must not pin a generation that can age out.
+		const entry: SearchProviderEntry = { ...googleEntry(), model: undefined };
+
+		// when
+		const built = buildSearchRequest(entry, { query: "q", maxResults: 5 });
+
+		// then
+		expect(built.url).toBe(
+			`https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent`,
+		);
+		expect(Object.hasOwn(MODELS.google ?? {}, DEFAULT_MODEL)).toBe(true);
+		expect(DEFAULT_MODEL).not.toBe("gemini-2.5-flash");
 	});
 
 	it("#given a grounded response #when the search runs #then returns grounding chunks as results and ignores answer-text URLs", async () => {

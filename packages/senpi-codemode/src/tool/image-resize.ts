@@ -23,7 +23,6 @@ export function webpExclusionForModel(model: WebpModel): true | undefined {
 	if (model === undefined) return undefined;
 	return model.provider === "ollama" ||
 		model.provider === "ollama-cloud" ||
-		model.provider === "llama.cpp" ||
 		model.provider === "lm-studio" ||
 		model.provider === "local-server" ||
 		model.api === "ollama-chat"

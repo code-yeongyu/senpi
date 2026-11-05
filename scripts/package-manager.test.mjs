@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import * as packageManager from "./package-manager.mjs";
 import {
@@ -101,12 +102,75 @@ describe("package-manager", () => {
 		assert.deepEqual(calls.spawnSync, []);
 	});
 
-	it("terminates the process tree through taskkill on win32 and never sends a POSIX signal", () => {
+	it("returns from Ctrl-C without synchronously listing Windows processes", async () => {
+		const synchronous = [];
+		let finishListing;
+		const pending = packageManager.signalGroup({ pid: 4242 }, "SIGINT", {
+			platform: "win32",
+			spawnSync: (command, args) => {
+				synchronous.push([command, args]);
+				return { status: 1 };
+			},
+			execFile: (_command, _args, options, callback) => {
+				assert.equal(options.timeout, 1_000);
+				finishListing = callback;
+			},
+		});
+		assert.deepEqual(synchronous, [], "Ctrl-C must return before a full process listing or taskkill");
+		assert.equal(typeof finishListing, "function");
+		finishListing(null, "4242 1 200 bun.exe\n4243 4242 210 node.exe\n4244 4243 100 unrelated.exe\n");
+		await pending;
+		assert.deepEqual(synchronous, [["taskkill", ["/F", "/PID", "4242", "/PID", "4243"]]]);
+	});
+
+	it("starts all fanout probes before draining them and re-raising Ctrl-C", async () => {
+		const signals = new EventEmitter();
+		const completions = [];
+		const fanout = packageManager.createSignalFanout({
+			signals,
+			forward: () => new Promise((resolve) => completions.push(resolve)),
+		});
+		fanout.attach({ pid: 4242 });
+		fanout.attach({ pid: 4243 });
+		signals.emit("SIGINT");
+		assert.equal(completions.length, 2);
+		let released = false;
+		const draining = fanout.release().then((signal) => {
+			released = true;
+			return signal;
+		});
+		await Promise.resolve();
+		assert.equal(released, false);
+		for (const complete of completions) complete();
+		assert.equal(await draining, "SIGINT");
+		assert.equal(signals.listenerCount("SIGINT"), 0);
+	});
+
+	it("falls back to the root only when an asynchronous Windows listing fails", async () => {
+		for (const failure of ["callback", "throw"]) {
+			const { calls, primitives } = recordingPrimitives("win32");
+			primitives.execFile = (_command, _args, _options, callback) => {
+				const error = new Error("listing unavailable");
+				if (failure === "throw") throw error;
+				callback(error);
+			};
+			await packageManager.signalGroup({ pid: 4242 }, "SIGINT", primitives);
+			assert.deepEqual(calls.spawnSync, [["taskkill", ["/F", "/PID", "4242"]]]);
+		}
+	});
+
+	it("terminates the process tree through taskkill on win32 and never sends a POSIX signal", async () => {
 		const { calls, primitives } = recordingPrimitives("win32");
+		primitives.execFile = (_command, _args, _options, callback) => {
+			callback(
+				null,
+				"4242 1 200 bun.exe\n4243 4242 210 node.exe\n4244 4243 100 unrelated.exe\n4245 4243 220 child.exe\n",
+			);
+		};
 
-		packageManager.signalGroup({ pid: 4242 }, "SIGTERM", primitives);
+		await packageManager.signalGroup({ pid: 4242 }, "SIGTERM", primitives);
 
-		assert.deepEqual(calls.spawnSync, [["taskkill", ["/pid", "4242", "/T", "/F"]]]);
+		assert.deepEqual(calls.spawnSync, [["taskkill", ["/F", "/PID", "4242", "/PID", "4243", "/PID", "4245"]]]);
 		assert.deepEqual(calls.kill, []);
 	});
 

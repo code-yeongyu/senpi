@@ -28,6 +28,8 @@ export function setResponseByteBudgetForTesting(bytes: number): () => void {
 
 export interface EntryPageRequest {
 	readonly limit?: number;
+	/** The newest `tail` entries of the range, read backwards (senpi#4267); never combined with `limit`. */
+	readonly tail?: number;
 	readonly maxBytes?: number;
 }
 
@@ -40,20 +42,32 @@ export interface EntryPage<T> {
 }
 
 export type EntryPageBounds =
-	| { readonly ok: true; readonly paged: boolean; readonly limit?: number; readonly maxBytes: number }
+	| {
+			readonly ok: true;
+			readonly paged: boolean;
+			readonly limit?: number;
+			readonly tail?: number;
+			readonly maxBytes: number;
+	  }
 	| { readonly ok: false; readonly message: string };
 
 export function entryPageBounds(request: EntryPageRequest): EntryPageBounds {
-	const { limit, maxBytes } = request;
+	const { limit, tail, maxBytes } = request;
 	if (limit !== undefined && !(Number.isInteger(limit) && limit > 0))
 		return { ok: false, message: "limit must be a positive integer" };
+	if (tail !== undefined && !(Number.isInteger(tail) && tail > 0))
+		return { ok: false, message: "tail must be a positive integer" };
+	if (limit !== undefined && tail !== undefined)
+		return { ok: false, message: "limit and tail cannot be combined: limit pages forward, tail backward" };
 	if (maxBytes !== undefined && !(Number.isInteger(maxBytes) && maxBytes > 0))
 		return { ok: false, message: "maxBytes must be a positive integer" };
-	if (limit === undefined && maxBytes === undefined) return { ok: true, paged: false, maxBytes: responseByteBudget };
+	if (limit === undefined && tail === undefined && maxBytes === undefined)
+		return { ok: true, paged: false, maxBytes: responseByteBudget };
 	return {
 		ok: true,
 		paged: true,
 		...(limit === undefined ? {} : { limit }),
+		...(tail === undefined ? {} : { tail }),
 		maxBytes: Math.min(maxBytes ?? DEFAULT_ENTRY_PAGE_BYTES, responseByteBudget),
 	};
 }
@@ -88,6 +102,51 @@ export function pageEntries<S extends { readonly id: string }, T>(
 		entries: page,
 		hasMore,
 		...(hasMore && last !== undefined ? { nextSince: last.id } : {}),
+		firstEntryBytes,
+	};
+}
+
+export interface TailEntryPage<T> {
+	/** In append order: the oldest of the page first. */
+	readonly entries: T[];
+	readonly hasMore: boolean;
+	/** The oldest entry id the page returned, while older entries remain: pass it as the next `before`. */
+	readonly nextBefore?: string;
+	/** Serialized size of the page's newest entry (0 for an empty page). */
+	readonly firstEntryBytes: number;
+}
+
+/**
+ * The newest entries first, until the count or the byte size would pass the bounds, answered in append order. The
+ * newest entry is always taken, so a backward walk always moves even when one entry alone is larger than `maxBytes`.
+ */
+export function pageEntriesFromEnd<S extends { readonly id: string }, T>(
+	entries: readonly S[],
+	project: (entry: S) => T,
+	bounds: { readonly tail?: number; readonly maxBytes: number },
+): TailEntryPage<T> {
+	const page: T[] = [];
+	let bytes = 0;
+	let firstEntryBytes = 0;
+	let index = entries.length - 1;
+	for (; index >= 0; index--) {
+		if (bounds.tail !== undefined && page.length >= bounds.tail) break;
+		const entry = entries[index];
+		if (entry === undefined) break;
+		const projected = project(entry);
+		const size = Buffer.byteLength(JSON.stringify(projected)) + 1;
+		if (page.length > 0 && bytes + size > bounds.maxBytes) break;
+		if (page.length === 0) firstEntryBytes = size;
+		page.push(projected);
+		bytes += size;
+	}
+	page.reverse();
+	const oldest = entries[index + 1];
+	const hasMore = index >= 0;
+	return {
+		entries: page,
+		hasMore,
+		...(hasMore && oldest !== undefined ? { nextBefore: oldest.id } : {}),
 		firstEntryBytes,
 	};
 }

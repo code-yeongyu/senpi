@@ -40,7 +40,7 @@ describe("the sealing attempt's extension state (senpi#3681 lead ruling)", () =>
 		}
 
 		expect(readFileSync(sessionPath, "utf8")).toContain(SESSION_RELEASED_ENTRY_TYPE);
-		const sealed = sealedOutgoingStateDir(sessionPath, "move-95" as MoveId);
+		const sealed = await sealedOutgoingStateDir(sessionPath, "move-95" as MoveId);
 		expect(sealed).toBeDefined();
 		expect(readFileSync(join(sealed ?? "", "probe", "state.json"), "utf8")).toBe('{"tasks":3}\n');
 	});
@@ -50,7 +50,7 @@ describe("the sealing attempt's extension state (senpi#3681 lead ruling)", () =>
 		host.faux.setResponses([fauxAssistantMessage("seed reply")]);
 		const { sessionId, sessionPath } = await host.open("sealed-missing");
 		expect(await host.send(moveRelease(sessionId, "move-96"))).toMatchObject({ success: true });
-		const sealed = sealedOutgoingStateDir(sessionPath, "move-96" as MoveId) ?? "";
+		const sealed = (await sealedOutgoingStateDir(sessionPath, "move-96" as MoveId)) ?? "";
 		expect(existsSync(sealed)).toBe(true);
 		rmSync(sealed, { recursive: true, force: true });
 

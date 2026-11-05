@@ -4,7 +4,7 @@ import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
 import { STOP_RESUME_CUSTOM_TYPE } from "./stop-resume-directive.ts";
 
-export const MAX_ENGINE_TURNS_PER_USER_INPUT = 150;
+export const MAX_ENGINE_TURNS_PER_USER_INPUT = 0;
 export const MAX_ENGINE_TURNS_PER_RESUME_WINDOW = 8;
 export const MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW = 12;
 export const ENGINE_TURN_WINDOW_MS = 60_000;
@@ -53,8 +53,19 @@ export function isUserDirectedTurn(customType: string): boolean {
 	);
 }
 
+/** Recovering an interrupted run is not a new message that resets the unattended turn budget. */
+export function resetsEngineTurnHistory(customType: string, details?: unknown): boolean {
+	return (
+		isUserDirectedTurn(customType) &&
+		!(
+			customType === STOP_RESUME_CUSTOM_TYPE &&
+			(details as { resumeCause?: unknown } | undefined)?.resumeCause === "interrupted"
+		)
+	);
+}
+
 function isUserMessage(entry: SessionEntry): boolean {
-	if (entry.type === "custom_message") return isUserDirectedTurn(entry.customType);
+	if (entry.type === "custom_message") return resetsEngineTurnHistory(entry.customType, entry.details);
 	return entry.type === "message" && entry.message.role === "user";
 }
 

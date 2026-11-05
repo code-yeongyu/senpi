@@ -3,7 +3,8 @@ import { basename, dirname, resolve } from "node:path";
 import { getMcpGrantPresentation, selectMcpGrant } from "../../../mcp-grant-presentations.ts";
 import { skillProjectRoot } from "../../../skill-access.ts";
 import { hashConfig, normalizeServer } from "./config.ts";
-import type { McpServerConfig, ResolvedMcpServer } from "./config-schema.ts";
+import { plainMcpDeclaration, plainMcpServerConfig } from "./config-references.ts";
+import type { McpServerConfig, McpServerDeclaredConfig, ResolvedMcpServer } from "./config-schema.ts";
 import {
 	addGrant,
 	type DeclarationIdentity,
@@ -31,10 +32,11 @@ export interface ProjectMcpAuthority {
 	readonly initial: ProjectMcpMaterialization;
 	resolve(signal: AbortSignal, allowDecision?: boolean): Promise<ProjectMcpMaterialization>;
 }
-const policies = new WeakMap<McpServerConfig, ProjectMcpAuthority>();
+const policies = new WeakMap<McpServerConfig | McpServerDeclaredConfig, ProjectMcpAuthority>();
 const decisions = new Map<string, Promise<void>>();
-export const getProjectMcpAuthority = (config: McpServerConfig): ProjectMcpAuthority | undefined =>
-	policies.get(config);
+export const getProjectMcpAuthority = (
+	config: McpServerConfig | McpServerDeclaredConfig,
+): ProjectMcpAuthority | undefined => policies.get(config);
 export function effectiveGrantNames(snapshot: GrantSnapshot, identity: string): readonly string[] {
 	return snapshot.grants[identity]?.names ?? [];
 }
@@ -99,8 +101,12 @@ export async function prepareProjectSkillServer(
 		const snapshot = await read(storePath);
 		owner.notice(
 			identity,
-			projectMcpEnvironment(declaration.raw, trusted, effectiveGrantNames(snapshot, identity), owner.options.env)
-				.withheld,
+			projectMcpEnvironment(
+				plainMcpDeclaration(name, declaration.raw),
+				trusted,
+				effectiveGrantNames(snapshot, identity),
+				owner.options.env,
+			).withheld,
 		);
 		return existing;
 	}
@@ -110,7 +116,7 @@ export async function prepareProjectSkillServer(
 			? owner.ui()?.select
 			: getMcpGrantPresentation(owner.context.sessionManager?.getSessionId?.());
 	const calculate = (raw: SkillServerRegistration["raw"], names: readonly string[]) =>
-		projectMcpEnvironment(raw, trusted, names, owner.options.env);
+		projectMcpEnvironment(plainMcpDeclaration(name, raw), trusted, names, owner.options.env);
 	const decide = async (current: SkillServerRegistration, digest: string, signal?: AbortSignal) => {
 		const key = `${storePath}\0${digest}`;
 		let pending = decisions.get(key);
@@ -162,7 +168,12 @@ export async function prepareProjectSkillServer(
 	const materialize = (currentNames: readonly string[]): ProjectMcpMaterialization => {
 		const policy = calculate(declaration.raw, currentNames);
 		owner.notice(identity, policy.withheld);
-		const config = { ...normalizeServer(policy.declaration), env: {}, directTools: [], exposure: "search" as const };
+		const config: McpServerConfig = {
+			...plainMcpServerConfig(name, normalizeServer(policy.declaration)),
+			env: {},
+			directTools: [],
+			exposure: "search",
+		};
 		if (config.type === "stdio") config.cwd = resolve(owner.context.cwd, config.cwd ?? ".");
 		inheritMcpSharingScope(declaration.raw, config);
 		return { config, env: policy.env, grantedNames: currentNames };

@@ -4,6 +4,8 @@ import { createServer } from "node:net";
 import { PassThrough, type Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
+import { windowsTreeKillArgs } from "../../../../../scripts/windows-process-tree.mjs";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 interface InspectorState {
 	readonly url: string;
@@ -72,7 +74,7 @@ function findFreePort(): Promise<number> {
 }
 
 function sanitizedChildEnv(): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env, PI_OFFLINE: "1" };
+	const env: NodeJS.ProcessEnv = { ...hostSpawnEnv(), PI_OFFLINE: "1" };
 	delete env.NODE_OPTIONS;
 	return env;
 }
@@ -93,7 +95,8 @@ async function terminateProcessTree(child: ChildProcessByStdio<null, Readable, R
 	if (child.exitCode !== null || child.pid === undefined) return;
 	const closed = waitForClose(child, 5_000);
 	if (process.platform === "win32") {
-		spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+		const args = windowsTreeKillArgs(child.pid);
+		if (args.length > 0) spawnSync("taskkill", args, { stdio: "ignore", windowsHide: true });
 	} else {
 		try {
 			process.kill(-child.pid, "SIGKILL");

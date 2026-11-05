@@ -1,4 +1,4 @@
-import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 
 /**
@@ -20,7 +20,7 @@ export const SOCKET_CUT_GRACE_MS = 5_000;
  * transport's own `drain` signal, and `close` tears the connection down once its event
  * queue can no longer deliver (byte overflow, dead-peer stall, write failure).
  */
-export function socketSink(socket: Socket): RpcConnectionSink {
+export function socketSink(socket: Duplex): RpcConnectionSink {
 	let needsDrain = false;
 	let cut = false;
 	return {

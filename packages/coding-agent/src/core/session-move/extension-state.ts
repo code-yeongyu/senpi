@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { loadEntriesFromFile, type SessionManager } from "../session-manager.ts";
+import { loadEntriesFromFileAsync, type SessionManager } from "../session-manager.ts";
+import { pathExists } from "../tools/path-utils.ts";
 import { isPlainId, parseMoveId } from "./bundle.ts";
 import { type MoveId, SESSION_MOVED_IN, SESSION_RELEASED } from "./ownership.ts";
 
@@ -61,8 +61,8 @@ function sealedAttempt(entries: readonly EntryLike[], moveId: MoveId): string | 
 }
 
 /** The folder of the release attempt that sealed the session for `moveId`, if that release staged one. */
-export function sealedOutgoingStateDir(sessionFile: string, moveId: MoveId): string | undefined {
-	const attempt = sealedAttempt(loadEntriesFromFile(sessionFile), moveId);
+export async function sealedOutgoingStateDir(sessionFile: string, moveId: MoveId): Promise<string | undefined> {
+	const attempt = sealedAttempt(await loadEntriesFromFileAsync(sessionFile), moveId);
 	return attempt === undefined ? undefined : join(outgoingStateDir(sessionFile, moveId), attempt);
 }
 
@@ -70,20 +70,20 @@ export function sealedOutgoingStateDir(sessionFile: string, moveId: MoveId): str
  * Creates a fresh, empty folder for one release attempt. Earlier attempts of the move that never sealed the session
  * are dead and removed (a handler still running for one of them may recreate its own folder, which is never read).
  */
-export function prepareOutgoingState(
+export async function prepareOutgoingState(
 	sessionFile: string,
 	moveId: MoveId,
-): { readonly attempt: string; readonly dir: string } {
+): Promise<{ readonly attempt: string; readonly dir: string }> {
 	const root = outgoingStateDir(sessionFile, moveId);
-	const sealed = sealedAttempt(loadEntriesFromFile(sessionFile), moveId);
-	if (existsSync(root)) {
-		for (const name of readdirSync(root)) {
-			if (name !== sealed) rmSync(join(root, name), { recursive: true, force: true });
+	const sealed = sealedAttempt(await loadEntriesFromFileAsync(sessionFile), moveId);
+	if (await pathExists(root)) {
+		for (const name of await readdir(root)) {
+			if (name !== sealed) await rm(join(root, name), { recursive: true, force: true });
 		}
 	}
 	const attempt = newAttempt();
 	const dir = join(root, attempt);
-	mkdirSync(dir, { recursive: true });
+	await mkdir(dir, { recursive: true });
 	return { attempt, dir };
 }
 
@@ -91,9 +91,11 @@ export function prepareOutgoingState(
  * The state the last move into this session left for its extensions, if it has not been handed over yet. Only the
  * newest `session_moved_in` counts, and only until a `session_move_state_restored` for that move is written.
  */
-export function pendingMovedState(sessionFile: string): { readonly moveId: MoveId; readonly dir: string } | undefined {
-	if (!existsSync(sessionFile)) return undefined;
-	const entries: readonly EntryLike[] = loadEntriesFromFile(sessionFile);
+export async function pendingMovedState(
+	sessionFile: string,
+): Promise<{ readonly moveId: MoveId; readonly dir: string } | undefined> {
+	if (!(await pathExists(sessionFile))) return undefined;
+	const entries: readonly EntryLike[] = await loadEntriesFromFileAsync(sessionFile);
 	const movedIn = entries.findLast((entry) => entry.type === "custom" && entry.customType === SESSION_MOVED_IN);
 	const moveId = movedIn === undefined ? undefined : moveIdOf(movedIn);
 	if (moveId === undefined) return undefined;
@@ -103,7 +105,7 @@ export function pendingMovedState(sessionFile: string): { readonly moveId: MoveI
 	if (restored) return undefined;
 	const id = parseMoveId(moveId);
 	const dir = movedStateDir(sessionFile, id);
-	return existsSync(dir) ? { moveId: id, dir } : undefined;
+	return (await pathExists(dir)) ? { moveId: id, dir } : undefined;
 }
 
 /** Delivery bookkeeping for one pending folder: the `delivered` marker and each delivery's own copy. */
@@ -129,31 +131,31 @@ export async function restoreMovedState(
 ): Promise<void> {
 	const sessionFile = sessionManager.getSessionFile();
 	if (sessionFile === undefined) return;
-	const pending = pendingMovedState(sessionFile);
+	const pending = await pendingMovedState(sessionFile);
 	if (pending === undefined) return;
 	const bookkeeping = deliveryDir(pending.dir);
 	const marker = join(bookkeeping, DELIVERED_MARKER);
-	const redelivered = existsSync(marker);
-	if (existsSync(bookkeeping)) {
-		for (const name of readdirSync(bookkeeping)) {
-			if (name.startsWith(DELIVERY_COPY)) rmSync(join(bookkeeping, name), { recursive: true, force: true });
+	const redelivered = await pathExists(marker);
+	if (await pathExists(bookkeeping)) {
+		for (const name of await readdir(bookkeeping)) {
+			if (name.startsWith(DELIVERY_COPY)) await rm(join(bookkeeping, name), { recursive: true, force: true });
 		}
 	}
-	mkdirSync(bookkeeping, { recursive: true });
+	await mkdir(bookkeeping, { recursive: true });
 	await writeFile(marker, "");
 	const copy = join(bookkeeping, `${DELIVERY_COPY}${newAttempt()}`);
-	cpSync(pending.dir, copy, { recursive: true });
+	await cp(pending.dir, copy, { recursive: true });
 	let restored: boolean;
 	try {
 		restored = await deliver({ moveId: pending.moveId, dir: copy, redelivered });
 	} finally {
-		rmSync(copy, { recursive: true, force: true });
+		await rm(copy, { recursive: true, force: true });
 	}
 	if (!restored) return;
 	sessionManager.appendCustomEntry(MOVED_STATE_RESTORED, {
 		move_id: pending.moveId,
 		restored_at: new Date().toISOString(),
 	});
-	rmSync(pending.dir, { recursive: true, force: true });
-	rmSync(bookkeeping, { recursive: true, force: true });
+	await rm(pending.dir, { recursive: true, force: true });
+	await rm(bookkeeping, { recursive: true, force: true });
 }

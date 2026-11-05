@@ -193,4 +193,32 @@ describe("#4036 a queued input that outlives a completed turn is reported, and o
 		expect(harness.session.getSteeringMessages()).toEqual([]);
 		expect(outlivedWarnings(harness)).toEqual([]);
 	});
+	it("#given a steer whose delivery was lost #when a later turn is aborted during its retry backoff #then that aborted settle reports nothing and the next normal turn reports it once", async () => {
+		// given
+		const harness = await createHarness({ settings: { retry: { enabled: true, baseDelayMs: 60_000 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("handled"),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("handled the turn after the abort"),
+			fauxAssistantMessage("unexpected extra turn"),
+		]);
+		await runTurn(harness, "an ordinary turn");
+		await harness.session.steer("steer the agent never receives");
+		harness.session.agent.clearAllQueues();
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") void harness.session.abort();
+		});
+
+		// when
+		await runTurn(harness, "a turn whose retry is aborted");
+		unsubscribe();
+		const warningsAfterTheAbortedSettle = outlivedWarnings(harness).length;
+		await runTurn(harness, "the turn after the abort");
+
+		// then
+		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(1);
+		expect(warningsAfterTheAbortedSettle).toBe(0);
+		expect(outlivedWarnings(harness)).toHaveLength(1);
+	});
 });

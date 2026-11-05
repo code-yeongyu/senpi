@@ -1,6 +1,6 @@
 import picomatch from "picomatch";
 import type { McpToolCatalogEntry } from "../catalog.ts";
-import type { McpServerConfig, McpSettings } from "../config-schema.ts";
+import type { McpServerDeclaredConfig, McpSettings } from "../config-schema.ts";
 
 export interface McpExposurePolicyResult {
 	readonly activeEntries: McpToolCatalogEntry[];
@@ -17,7 +17,7 @@ const PICOMATCH_OPTIONS = { bash: true, dot: true };
 
 export function computeMcpExposurePolicy(
 	entries: readonly McpToolCatalogEntry[],
-	config: McpServerConfig,
+	config: McpServerDeclaredConfig,
 	settings: McpSettings,
 ): McpExposurePolicyResult {
 	const filteredEntries = stableSort(entries.filter((entry) => passesToolFilters(entry.tool, config)));
@@ -93,7 +93,7 @@ function directResult(
 	};
 }
 
-function passesToolFilters(toolName: string, config: McpServerConfig): boolean {
+function passesToolFilters(toolName: string, config: McpServerDeclaredConfig): boolean {
 	const include = compileMatchers(config.includeTools);
 	const exclude = compileMatchers(config.excludeTools);
 	const included = include.length === 0 || include.some((isMatch) => isMatch(toolName));
@@ -103,7 +103,7 @@ function passesToolFilters(toolName: string, config: McpServerConfig): boolean {
 
 function entriesMatchingDirectTools(
 	entries: readonly McpToolCatalogEntry[],
-	directTools: McpServerConfig["directTools"],
+	directTools: McpServerDeclaredConfig["directTools"],
 ): McpToolCatalogEntry[] {
 	if (directTools === true) return stableSort(entries);
 	if (!Array.isArray(directTools) || directTools.length === 0) return [];

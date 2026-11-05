@@ -11,7 +11,7 @@ import goldens from "./3483-prompt-goldens.json" with { type: "json" };
 
 // Fixed input facts from the original capture, not the machine running this test.
 // Inject through the workstation renderer's existing facts option; keep the
-// committed old-builder bytes untouched, including the complete workstation block.
+// committed baseline facts unchanged, including the complete workstation block.
 const fixedFacts = vi.hoisted(() => ({
 	osLine: "darwin",
 	kernel: "Darwin 25.6.0",

@@ -1,3 +1,4 @@
+import { type ConfigValue, ConfigValueSchema } from "@earendil-works/pi-ai/utils/config-reference";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 
@@ -28,10 +29,10 @@ export const ServerSchema = Type.Object(
 		type: Type.Optional(Type.Union([Type.Literal("stdio"), Type.Literal("http")])),
 		url: Type.Optional(Type.String()),
 		command: Type.Optional(Type.String()),
-		args: Type.Optional(Type.Array(Type.String())),
-		env: Type.Optional(Type.Record(Type.String(), Type.String())),
+		args: Type.Optional(Type.Array(ConfigValueSchema)),
+		env: Type.Optional(Type.Record(Type.String(), ConfigValueSchema)),
 		cwd: Type.Optional(Type.String()),
-		headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+		headers: Type.Optional(Type.Record(Type.String(), ConfigValueSchema)),
 		auth: Type.Optional(Type.Union([Type.Literal("bearer"), Type.Literal("oauth"), Type.Literal(false)])),
 		bearerTokenEnv: Type.Optional(Type.String()),
 		oauth: Type.Optional(OAuthSchema),
@@ -83,9 +84,10 @@ export const ConfigSchema = Type.Object(
 );
 
 export type RawConfig = Static<typeof ConfigSchema>;
-export type McpServerConfig = Static<typeof ServerSchema> & {
+/** A server as declared: its `headers.*`, `env.*` and `args[]` may hold reference objects. */
+export type McpServerDeclaredConfig = Static<typeof ServerSchema> & {
 	type: "stdio" | "http";
-	args: string[];
+	args: ConfigValue[];
 	enabled: boolean;
 	lifecycle: "lazy" | "eager" | "keep-alive";
 	connectTimeoutMs: number;
@@ -94,6 +96,12 @@ export type McpServerConfig = Static<typeof ServerSchema> & {
 	idleTimeoutMin: number;
 	exposure: "auto" | "direct" | "search" | "proxy";
 	logLevel: Static<typeof LogLevelSchema>;
+};
+/** One connection generation's snapshot: every reference replaced by the text it resolved to. */
+export type McpServerConfig = Omit<McpServerDeclaredConfig, "args" | "env" | "headers"> & {
+	args: string[];
+	env?: Record<string, string>;
+	headers?: Record<string, string>;
 };
 /** Public raw type for extension-declared MCP servers. */
 export type McpServerDeclaration = Static<typeof ServerSchema>;
@@ -109,7 +117,7 @@ export interface ResolvedMcpServer {
 	state: McpServerState;
 	transport?: "stdio" | "http";
 	configHash?: string;
-	config?: McpServerConfig;
+	config?: McpServerDeclaredConfig;
 }
 
 export interface ResolvedMcpConfig {

@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ClientOccupancy } from "../src/modes/rpc/host-client-occupancy.ts";
 import { HOST_INSTANCE_ID_ENV } from "../src/modes/rpc/host-identity-env.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, requestOriginHostInstance } from "../src/modes/rpc/host-observe-request.ts";
+import { attachJsonlLineReader } from "../src/modes/rpc/jsonl.ts";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
+import { answerProtocolInfo } from "./helpers/rpc-legacy-protocol.ts";
 
 const OWN = "own-generation";
 
@@ -79,7 +81,9 @@ describe("RpcClient origin marking (#3272)", () => {
 		const socketPath = join(root, "h.sock");
 		const line = new Promise<string>((resolve) => {
 			const server = createServer((peer) => {
-				peer.once("data", (chunk) => resolve(chunk.toString("utf8").split("\n")[0] ?? ""));
+				attachJsonlLineReader(peer, (frame) => {
+					if (!answerProtocolInfo(peer, JSON.parse(frame))) resolve(frame);
+				});
 			});
 			servers.push(server);
 			server.listen(socketPath);

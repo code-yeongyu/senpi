@@ -1,0 +1,25 @@
+{
+ "repo": {
+  "head": "39eb164be5681ad97179f08180650aca9e6efaf8",
+  "dirty": false
+ },
+ "platform": "darwin-arm64",
+ "runtimes": {
+  "harness": "node@24.22.0",
+  "child": "bun@1.4.4"
+ },
+ "hashes": {
+  "harness": "sha256:5fe3134997505314cb3372731a034e9300acd49e50a95bfefbe0ebe6a79bdf60",
+  "normalizer": "sha256:84514c2fcc12276a4ff77acbbee2903ab61a040de09f87bf7650ca74d1c5fa7e",
+  "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
+  "cases": "sha256:ca4b96a7ac956e725e9dfcbb58d1b6ec057012828b6ee1105b3b122f37e46b92",
+  "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
+ },
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --repeat 3 --pipeline legacy --placement fused --evidence eq5692-darwin-rec2",
+ "hostPin": {
+  "cpuModel": "Apple EQ-Synthetic CPU",
+  "cores": 997,
+  "kernel": "Darwin 0.0.0-eq-synthetic",
+  "repoRoot": "/eq-synthetic/checkout"
+ }
+}

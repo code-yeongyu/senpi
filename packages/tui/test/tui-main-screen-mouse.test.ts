@@ -193,6 +193,18 @@ it("stays yielded across terminal reports and focus changes (#3604)", () => {
 		tui.stop();
 	}
 });
+it("a Kitty key release alone does not re-arm after a yield (#3604)", () => {
+	const { terminal, tui } = setup();
+	try {
+		tui.acquireMouseCapture("pending-question");
+		terminal.sendInput("\x1b[<64;5;3M");
+		terminal.sendInput("\x1b[97;1:3u");
+		assert.equal(tui.mouseCaptureState(), "yielded");
+		assert.equal(terminal.writes.filter((s) => s === MOUSE_TRACKING.inline).length, 1);
+	} finally {
+		tui.stop();
+	}
+});
 it("a released and re-acquired lease arms again after a yield (#3604)", () => {
 	const { terminal, tui } = setup();
 	try {

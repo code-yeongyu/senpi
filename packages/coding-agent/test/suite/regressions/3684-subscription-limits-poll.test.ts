@@ -12,7 +12,7 @@ import type { ExtensionAPI } from "../../../src/core/extensions/index.ts";
 import { SubscriptionLimitStore, subscriptionLimits } from "../../../src/core/subscription-limits/limit-store.ts";
 import { claudeWindowsFromSdkEvent } from "../../../src/core/subscription-limits/limit-windows.ts";
 import type { PollAccount } from "../../../src/core/subscription-limits/usage-accounts.ts";
-import { readUsageCache } from "../../../src/core/subscription-limits/usage-cache.ts";
+import { readUsageCache, withResults } from "../../../src/core/subscription-limits/usage-cache.ts";
 import {
 	CLAUDE_USAGE_URL,
 	type UsageFetch,
@@ -198,6 +198,23 @@ describe("subscription limits before the first turn (senpi#3684)", () => {
 		await poller.pollOnce();
 		expect(store.snapshot()[0]?.error).toBe("rate limited");
 		expect(readUsageCache(path).accounts["anthropic-subscription/work"]?.nextAt).toBe(1_800_000 + 90_000);
+	});
+
+	// senpi#3695: a process adopting the cache fresh after a failed poll still sees the account's plan.
+	it("a failed poll keeps the last plan in the shared cache, as it keeps the windows", () => {
+		const key = "chatgpt-subscription/default";
+		const windows = [{ id: "codex:5h", label: "5h", windowMinutes: 300, usedPercent: 12 }];
+		const cache = {
+			accounts: { [key]: { windows, plan: "pro", updatedAt: 1_000, nextAt: 301_000 } },
+			fetching: { [key]: { token: "claim", claimedAt: 301_000 } },
+		} as never;
+		const failed = new Map([[key, { windows: [], error: "rate limited", updatedAt: 301_000, nextAt: 391_000 }]]);
+
+		expect(withResults(cache, failed, "claim").accounts[key]).toMatchObject({
+			windows,
+			plan: "pro",
+			error: "rate limited",
+		});
 	});
 
 	it("newest report wins in both arrival orders: an older poll never replaces a newer turn", () => {

@@ -12,6 +12,7 @@ import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
 import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
 import {
 	type ResolvedPresetName as ContractResolvedPresetName,
+	presetSharedSections,
 	resolvePresetName as resolveContractPresetName,
 } from "./contract.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
@@ -35,6 +36,7 @@ import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { buildKimiK28Prompt } from "./kimi-k2-8.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
+import { buildKimiK31Prompt } from "./kimi-k3-1.ts";
 import type { ModelWithPromptPresetMetadata } from "./matchers.ts";
 import { type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
 
@@ -68,6 +70,7 @@ export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSyste
 	let parts: readonly DynamicSystemPromptPart[] = [];
 	const preset = renderPreset(name, {
 		...options,
+		sharedSections: presetSharedSections(name),
 		onParts: (composed) => {
 			parts = composed.map((part) => ({
 				...part,
@@ -121,6 +124,8 @@ function renderPreset(
 			return { name, prompt: buildGrok45Prompt(options) };
 		case "gemini-4-argon":
 			return { name, prompt: buildGemini4ArgonPrompt(options) };
+		case "kimi-k3-1":
+			return { name, prompt: buildKimiK31Prompt(options) };
 		case "kimi-k3":
 			return { name, prompt: buildKimiK3Prompt(options) };
 		case "kimi-k2-8":
@@ -160,6 +165,7 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 		selectedTools: options.selectedTools ?? [],
 		toolSnippets: options.toolSnippets ?? {},
 		promptGuidelines: options.promptGuidelines ?? [],
+		...(options.fullToolPrompt === undefined ? {} : { fullToolPrompt: options.fullToolPrompt }),
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
 		surface: options.surface ?? "terminal",

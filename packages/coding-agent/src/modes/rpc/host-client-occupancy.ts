@@ -10,17 +10,17 @@
  * An unclassified client neither counts nor lets the host exit: its first line may be the readiness
  * probe of an ensure that is about to open a session.
  */
-import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { isObservingRequest, requestOriginHostInstance } from "./host-observe-request.ts";
 
 const MAX_CLASSIFIED_LINE_BYTES = 64 * 1024;
 const NEWLINE = 0x0a;
 
 export class ClientOccupancy {
-	private readonly clients = new Set<Socket>();
-	private readonly observers = new Set<Socket>();
-	private readonly attached = new Set<Socket>();
-	private readonly dependents = new Set<Socket>();
+	private readonly clients = new Set<Duplex>();
+	private readonly observers = new Set<Duplex>();
+	private readonly attached = new Set<Duplex>();
+	private readonly dependents = new Set<Duplex>();
 	private readonly onAttach: () => void;
 	private readonly ownInstance: string | undefined;
 	private closed = false;
@@ -38,7 +38,7 @@ export class ClientOccupancy {
 		return this.clients.size - this.observers.size - this.attached.size - this.dependents.size;
 	}
 
-	admit(client: Socket): boolean {
+	admit(client: Duplex): boolean {
 		if (this.closed) {
 			client.destroy();
 			return false;
@@ -77,7 +77,7 @@ export class ClientOccupancy {
 	}
 
 	/** Returns whether this peer left without ever proving it was an observing read. */
-	release(client: Socket): boolean {
+	release(client: Duplex): boolean {
 		const unclassified =
 			this.clients.has(client) &&
 			!this.observers.has(client) &&

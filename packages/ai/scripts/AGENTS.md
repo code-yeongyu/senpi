@@ -29,6 +29,8 @@ transform-cursor-agent-proto.mjs Rewrites protoc-gen-es enums to const objects f
 
 `--strict` turns per-provider fetch failures into a thrown error instead of a skip. Without it a network hiccup silently ships a shrunken catalog — always keep it on for committed regeneration.
 
+`--keep-last-good-opengateway` is the one exception for whole-catalog runs: an OpenGateway feed failure keeps the committed `data/opengateway.json` and prints a `::warning::` annotation instead of throwing. Release callers get it from `runGenerateModels` in `scripts/release-artifacts.mjs` (mirror it in any other release entry point); the whole-catalog workflows pass it too. It requires `--strict` and is refused with `--providers`, so the daily `--strict --providers opengateway` refresh workflow stays the one job that fails on a feed break (senpi#4067).
+
 ## CONVENTIONS
 
 - `data/` writes are staged, not in-place: a `.model-generation-*` temp dir under `src/providers/`, then rename-swap with the previous dir kept for rollback. Never write `data/` file-by-file.

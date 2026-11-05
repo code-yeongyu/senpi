@@ -20,10 +20,17 @@ export async function switchEntryModel(
 	return true;
 }
 
-export function annotatePendingFork(registry: AnnotatableRegistry, senpiSessionId: string, reason: string): void {
+export function annotatePendingFork(
+	registry: AnnotatableRegistry,
+	senpiSessionId: string,
+	reason: string,
+	divergedPath?: string,
+): void {
 	const entry = registry.get(senpiSessionId);
 	if (!entry) return;
 	entry.pendingForkReason = reason;
+	// A fork recorded without a path (compaction, tree change) must not inherit an earlier rewrite's path.
+	entry.pendingForkDivergedPath = divergedPath ?? null;
 	registry.touch(entry);
 }
 

@@ -20,12 +20,14 @@ import {
 	isGrok46Model,
 	isGrok47Model,
 	isKimiK3Model,
+	isKimiK31Model,
 	isKimiK26Model,
 	isKimiK27Model,
 	isKimiK28Model,
 	isSWE2Model,
 	type ModelWithPromptPresetMetadata,
 } from "./matchers.ts";
+import type { SharedSections } from "../../../dynamic-prompt/types.ts";
 import type { PromptPresetName } from "./settings.ts";
 
 export type ResolvedPresetName = Exclude<PromptPresetName, "auto">;
@@ -42,6 +44,9 @@ export function resolvePresetName(input: {
 	const gpt5Version = extractGpt5Version(model.id);
 	if (gpt5Version) {
 		return gpt5Version;
+	}
+	if (isKimiK31Model(model)) {
+		return "kimi-k3-1";
 	}
 	if (isSWE2Model(model) || isKimiK3Model(model)) {
 		return "kimi-k3";
@@ -116,6 +121,28 @@ export function resolvePresetName(input: {
 	return undefined;
 }
 
+/**
+ * Presets that render the shared prompt generators' full wording (senpi#5665): after the senpi#5335 diet
+ * shipped, Opus and Fable got slower and worse, so these keep the pre-diet text and every other preset,
+ * gpt-6-astra included, keeps the diet.
+ */
+const FULL_SHARED_SECTION_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"claude-fable-5",
+	"claude-fable-5-1",
+	"claude-fable-5-5",
+	"claude-opus-5-5",
+	"claude-opus-5",
+	"claude-opus-4-8",
+	"claude-opus-4-7",
+	"claude-opus-4-6",
+	"claude-opus-4-5",
+]);
+
+/** The shared-section wording a preset declares; no preset (the default prompt) renders `diet`. */
+export function presetSharedSections(name: ResolvedPresetName | undefined): SharedSections {
+	return name !== undefined && FULL_SHARED_SECTION_PRESETS.has(name) ? "full" : "diet";
+}
+
 export type PromptPresetModelCase = {
 	readonly providerID: string;
 	readonly modelID: string;
@@ -129,6 +156,7 @@ export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
 	{ providerID: "openai", modelID: "gpt-5.4", preset: "gpt-5.4" },
 	{ providerID: "openai", modelID: "gpt-5.3-codex", preset: "gpt-5.3-codex" },
 	{ providerID: "openai", modelID: "gpt-5.2", preset: "gpt-5.2" },
+	{ providerID: "kimi-coding", modelID: "k3.1-pro", preset: "kimi-k3-1" },
 	{ providerID: "moonshotai", modelID: "kimi-k3", preset: "kimi-k3" },
 	{ providerID: "kimi-for-coding", modelID: "kimi-for-coding", preset: "kimi-k2-8" },
 	{ providerID: "kimi-for-coding", modelID: "kimi-for-coding-highspeed", preset: "kimi-k2-7" },
@@ -166,6 +194,7 @@ export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
 	"gpt-5.4",
 	"gpt-5.3-codex",
 	"gpt-5.2",
+	"kimi-k3-1",
 	"kimi-k3",
 	"kimi-k2-8",
 	"kimi-k2-7",

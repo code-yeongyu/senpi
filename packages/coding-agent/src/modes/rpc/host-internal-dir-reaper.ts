@@ -1,10 +1,11 @@
 /**
  * Opportunistic GC of other installs' leftover `senpi-rpc-host-internal-*` directories in the tmpdir
  * and in the `/tmp` fallback root (senpi#3487).
- * Safe without any lock: a directory is removed only when older than 60 s, holding nothing but its
- * `.owner` record, and owned by a provably dead process.
+ * Safe without any lock: a directory is removed only when it belongs to this user, is older than 60 s,
+ * holds nothing but its `.owner` record, and is owned by a provably dead process. The ownership check
+ * matters in the shared `/tmp` root, where other users' hops live too.
  */
-import { readdir, readFile, rm } from "node:fs/promises";
+import { lstat, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../../utils/process-identity.ts";
 import { INTERNAL_HOST_DIR_PREFIX, internalHostDirRoots } from "./host-lifecycle-scratch.ts";
@@ -21,6 +22,8 @@ async function reapOrphanedInternalHostDirsIn(root: string): Promise<void> {
 				.filter((entry) => entry.isDirectory() && entry.name.startsWith(INTERNAL_HOST_DIR_PREFIX))
 				.map(async (entry) => {
 					try {
+						const uid = process.getuid?.();
+						if (uid !== undefined && (await lstat(join(root, entry.name))).uid !== uid) return;
 						const owner = JSON.parse(await readFile(join(root, entry.name, ".owner"), "utf8")) as {
 							pid?: unknown;
 							processStartTime?: unknown;

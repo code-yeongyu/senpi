@@ -7,9 +7,10 @@
  * `loopfile.ts`, `status.ts`), so the runtime here is a thin, testable adapter.
  *
  * Load-bearing rules implemented here:
- * - A tick NEVER steers. Idle dispatch goes through `sendUserMessage(..., {
+ * - A tick STEERS. Idle dispatch goes through `sendUserMessage(..., {
  *   expandPromptTemplates: true })` so a slash payload reaches the real command path;
- *   a busy session receives the tick as a follow-up instead.
+ *   a busy session receives the tick as a steer, delivered into the running turn at its
+ *   next boundary, never parked as a follow-up behind it.
  * - Shutdown SUSPENDS: timers are cancelled, the ticker disposed, and the snapshot is
  *   persisted without a terminal reason (every senpi shutdown reason is resumable).
  * - Keepalive is applied only to an attributed dynamic iteration, never after an ordinary
@@ -318,6 +319,8 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 		let attributedDeliveryId: DeliveryId | undefined;
 		/** True once the attributed iteration rescheduled or stopped itself. */
 		let attributionResolved = false;
+		/** True when the attributed tick was steered into a turn the loop did not start (keepalive is not charged). */
+		let attributedSteered = false;
 		/** Ticks held back because their slash payload cannot be queued while streaming. */
 		const deferredDispatches: LoopTick[] = [];
 		const deliveryStates = new Map<LoopId, SentinelDeliveryState>();
@@ -482,8 +485,8 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 
 		/**
 		 * Delivers one tick. Idle dispatch expands prompt templates so a slash payload
-		 * reaches its real command handler; a busy session gets a follow-up instead of
-		 * steering. A slash payload cannot be queued at all, so it waits for the turn to
+		 * reaches its real command handler; a busy session gets the tick steered into the
+		 * running turn. A slash payload cannot be queued at all, so it waits for the turn to
 		 * settle rather than being rewritten into plain text.
 		 */
 		async function dispatchTick(tick: LoopTick): Promise<void> {
@@ -532,13 +535,14 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 				attributedLoopId = entry.id;
 				attributedDeliveryId = tick.deliveryId;
 				attributionResolved = false;
+				attributedSteered = busy;
 			}
 			// The tick prompt tells the model to call schedule_wakeup, so the tool must be active
 			// before the tick is queued, not after the turn has already read its tool list.
 			syncScheduleWakeupActivation();
 			pi.sendUserMessage(built.text, {
 				expandPromptTemplates: true,
-				...(busy ? { deliverAs: "followUp" as const } : {}),
+				...(busy ? { deliverAs: tick.deliverAs } : {}),
 			});
 			if (held) {
 				// The session keeps this tick as a notice (senpi#3811): no iteration ran, so neither
@@ -889,6 +893,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			const entry = active.getState().entries[loopId];
 			if (entry === undefined) return;
 			const resolved = attributionResolved;
+			const steered = attributedSteered;
 			attributedLoopId = undefined;
 			attributedDeliveryId = undefined;
 			attributionResolved = false;
@@ -897,7 +902,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			await persist();
 
 			if (!resolved && entry.kind === "dynamic" && !userStopped) {
-				const keepalive = active.onTurnEndedWithoutSchedule(loopId);
+				const keepalive = active.onTurnEndedWithoutSchedule(loopId, { chargeCredit: !steered });
 				await persist();
 				refreshStatus();
 				if (keepalive.action === "ended") {

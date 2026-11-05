@@ -8,6 +8,7 @@
 import { createConnection, type Socket } from "node:net";
 import { OBSERVE_REQUEST_FIELD } from "../../../../modes/rpc/host-observe-request.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../../../../modes/rpc/jsonl.ts";
+import { connectAuthenticatedRpcSocket, type RpcKeyOptions } from "../../../../modes/rpc/rpc-auth-client.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
@@ -37,9 +38,14 @@ export async function openRpcObserver(
 	socketPath: string,
 	subscription: RpcRecord,
 	handlers: RpcObserverHandlers,
+	options: RpcKeyOptions = {},
 ): Promise<RpcObserver> {
 	const secret = socketNeedsHandshake(socketPath) ? await readSocketSecret(socketSecretPath(socketPath)) : undefined;
-	const socket: Socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
+	const authenticated = !socketNeedsHandshake(socketPath)
+		? await connectAuthenticatedRpcSocket(socketPath, undefined, options)
+		: undefined;
+	const socket: Socket =
+		authenticated?.socket ?? createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 	const answer = Promise.withResolvers<RpcRecord>();
 	let ended = false;
 	const end = (reason: string): void => {
@@ -48,13 +54,13 @@ export async function openRpcObserver(
 		answer.reject(new Error(`rpc monitor: ${socketPath}: ${reason}`));
 		handlers.closed(reason);
 	};
-	socket.once("connect", () => {
+	const subscribe = () => {
 		if (secret !== undefined) sendSocketHandshake(socket, secret);
 		// Marked observing (senpi#3956): without it the supervisor counts this watch as an attached client, so a
 		// watched host never idle-exits and a `children`/`all` watch pins every task shard host on the machine.
 		const frame = { ...subscription, [OBSERVE_REQUEST_FIELD]: true, id: SUBSCRIBE_ID, type: "subscribe_sessions" };
 		socket.write(`${JSON.stringify(frame)}\n`);
-	});
+	};
 	const detach = attachJsonlLineReader(
 		socket,
 		(line) => {
@@ -81,6 +87,8 @@ export async function openRpcObserver(
 		detach();
 		end("connection closed");
 	});
+	if (authenticated) subscribe();
+	else socket.once("connect", subscribe);
 	return {
 		subscribed: answer.promise,
 		close: () => socket.destroy(),

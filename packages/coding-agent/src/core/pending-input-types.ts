@@ -11,8 +11,11 @@ export type PendingInputMode = "steer" | "followUp";
 /** Whether a failed input can be resent: `not_delivered` is proven safe, `uncertain` is not. */
 export type DeliveryCertainty = "not_delivered" | "uncertain";
 
-/** Why an input was retired by removal; an explicit user or owner action every time. */
-export type RemovalCause = "remove" | "stop" | "child_cancel";
+/**
+ * Why an input was retired by removal: an explicit user or owner action, or `turn_conflict` - a steer refused at its
+ * enqueue because the turn it named was no longer running (senpi#5776); it was never queued.
+ */
+export type RemovalCause = "remove" | "stop" | "child_cancel" | "turn_conflict";
 
 /** How delivery was proven: a committed user entry with this identity, or a durable handled-command receipt. */
 export type DeliveryWitness = "consumed" | "handled";
@@ -117,7 +120,11 @@ export type PendingInputEvent =
 	| { readonly type: "teardown" }
 	| { readonly type: "owner_lost"; readonly token: DeliveryToken }
 	/** An explicit Stop or child cancellation; `consumerFenced` proves an in-flight attempt was not consumed. */
-	| { readonly type: "cancel"; readonly cause: "stop" | "child_cancel"; readonly consumerFenced: boolean }
+	| {
+			readonly type: "cancel";
+			readonly cause: Exclude<RemovalCause, "remove">;
+			readonly consumerFenced: boolean;
+	  }
 	/**
 	 * A reopen. `attemptsUnsent` is the journal owner's proof that an attempt still `sending` was never handed to
 	 * its consumer: the engine commits consumption before any provider sees the input, so a reservation without a

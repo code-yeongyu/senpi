@@ -6,7 +6,7 @@
 
 import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
 import { type FauxResponseStep, fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { nextEvent } from "./rpc-release-host-support.ts";
 import { DESKTOP, relocationHost } from "./rpc-relocate-session-host-support.ts";
 
@@ -52,24 +52,28 @@ describe("the offering connection detaching from the session", () => {
 		expect(recordsOn("older-client", "relocation_due")).toEqual([]);
 	});
 
-	it("fails a request still waiting on the connection at once, not after the answer timeout", async () => {
-		// Given: the desktop never answers; it detaches as soon as it is asked.
-		const { host, work, session } = await relocationHost({
-			answer: (request) =>
-				void host.send({ type: "close_session", id: "bye", sessionId: String(request.sessionId) }, DESKTOP),
-		});
-		await using _host = host;
-		const settled = nextEvent(session, "agent_settled");
+	it.each(["legacy", "prepared"] as const)(
+		"fails a request still waiting on the connection at once, not after the answer timeout (%s pipeline)",
+		async (pipeline) => {
+			// Given: the desktop never answers; it detaches as soon as it is asked.
+			vi.stubEnv("SENPI_EXECUTION_PIPELINE", pipeline);
+			const { host, work, session } = await relocationHost({
+				answer: (request) =>
+					void host.send({ type: "close_session", id: "bye", sessionId: String(request.sessionId) }, DESKTOP),
+			});
+			await using _host = host;
+			const settled = nextEvent(session, "agent_settled");
 
-		// When: the agent asks to move.
-		await work();
-		await settled;
+			// When: the agent asks to move.
+			await work();
+			await settled;
 
-		// Then: the tool answered a typed refusal well inside the test's own deadline; the session stays here.
-		const result = session.messages.findLast(
-			(message): message is ToolResultMessage =>
-				message.role === "toolResult" && message.toolName === "relocate_session",
-		);
-		expect(result?.details).toMatchObject({ status: "refused", reason: "app_disconnected" });
-	});
+			// Then: the tool answered a typed refusal well inside the test's own deadline; the session stays here.
+			const result = session.messages.findLast(
+				(message): message is ToolResultMessage =>
+					message.role === "toolResult" && message.toolName === "relocate_session",
+			);
+			expect(result?.details).toMatchObject({ status: "refused", reason: "app_disconnected" });
+		},
+	);
 });

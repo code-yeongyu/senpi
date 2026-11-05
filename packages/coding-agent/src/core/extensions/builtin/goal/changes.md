@@ -1,3 +1,131 @@
+## 2026-10-30 - Goal parks until the soonest reset after an exhausted fallback ladder (senpi#3709)
+
+### What changed
+
+- `monitor-continuation.ts` `afterAgentSettled(fallbackExhausted)`: on a limit-exhausted ladder the generic provider recovery is replaced. With a `resumeAt`, the goal arms one `providerRetry` wait for that time (or the 1 s margin when it already passed); without one, it arms nothing and stays parked until input. Outage-only exhaustion retains immediate first recovery and the existing 15 s to 30 min backoff.
+- `provider-retry.ts` `exhaustedLadderResumeDelayMs`: waits until `resumeAt` + 1 s, skips the 6 h wake cap, and is clamped to the timer maximum.
+- `index.ts` passes `event.fallbackExhausted` to `afterAgentSettled`.
+
+### Why
+
+- senpi#3709: after exhaustion the goal either resumed at once into the same limits or never resumed.
+
+### Why an extension could not handle it
+
+- The change is inside this builtin extension, driven by the new `agent_settled` field.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentSettled` in `monitor-continuation.ts`; the provider-retry delay helpers.
+
+## 2026-10-30 - Goal parks on a provider limit with one notice; refused turns are not stalls (senpi#3975)
+
+### What changed
+
+- `monitor-continuation.ts`: a provider-retry park with a known resume time notifies once ("Goal paused until <local time> (<ISO>) ..."). A turn whose last assistant message ended in an error neither counts toward nor clears the toolless stall streak.
+
+### Why
+
+- senpi#3975: refused turns while every credential was limited injected `<goal_stall_check>` after three blocks, and the park was silent.
+
+### Why an extension could not handle it
+
+- This is the goal extension itself.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentEnd` around `#recordToollessContinuationTurn`, and the provider-retry branch of `afterAgentSettled`.
+
+## 2026-10-27 - get_goal is search-exposed (senpi#4454)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`: `get_goal` is deferred to by-name activation through the tool search; `create_goal` and `update_goal` stay active.
+
+### Why
+
+- Each deferred tool leaves the first request's tool list and system prompt, so every request carries fewer tool-schema tokens (senpi#4454).
+
+### Why an extension could not handle it
+
+- This builtin owns its tool registration.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`.
+
+## 2026-10-26 - Request-level refusals retain goal recovery (senpi#2491)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: exclude runtime-marked request-level auth refusals from terminal credential failures; retain the normal provider recovery continuation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: a request refusal must not block an active goal with contradictory login guidance.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: this goal builtin owns terminal auth classification and automatic recovery.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts` `terminalProviderAuthFailure` guard.
+
+## 2026-10-26 - Goal retries exclude refused calls (senpi#4321)
+
+### What changed
+
+- `prompt.ts`: the no-progress check, which says retries are unbounded and to change the source, namespace, tool or assumption each time, now says that a permission denial, a refusal by the user or a rule block is final for that intent. The model asks the user or leaves that part out. The GPT-6 Astra prompt carries the same sentence.
+
+### Why
+
+- An unattended goal read "change the tool each time" as covering refusals, so a denied call could be retried another way.
+
+### Why an extension could not handle it
+
+- The continuation prompt is this builtin's own text.
+
+### Expected merge conflict zones
+
+- `buildContinuationPrompt` and `buildGpt6AstraContinuationPrompt` line lists.
+
+## 2026-10-25 - Report the todo backstop outcome to the lifecycle (senpi#3864)
+
+### What changed
+
+- `index.ts` and `lifecycle-facts.ts` pass the `TodoOwedOutcome` that `afterAgentEnd` returned through the shared lifecycle collector, so an exhausted reminder chain is reported as `todo_guard`/`cap`.
+
+### Why
+
+- The lifecycle needs the returned outcome; the reminder event fires only on the first capped turn and nothing may be inferred from `budgetSpent`.
+
+### Why an extension could not handle it
+
+- This builtin already owns the todo backstop and the lifecycle collector; no new hook is needed.
+
+### Expected merge conflict zones
+
+- `index.ts`: the `agent_end` handler's collector registration.
+
+## 2026-10-24 - Distinguish interrupted recovery from goal Stop (senpi#4204)
+
+### What changed
+
+- `stop-pause.ts` does not attribute the interrupted-run gate to the user's Stop.
+
+### Why
+
+- The interrupted gate must block automatic continuation without marking the goal as user-stopped.
+
+### Why an extension could not handle it
+
+- This builtin owns goal Stop attribution.
+
+### Expected merge conflict zones
+
+- `stop-pause.ts`: Stop hold detection.
+
 ## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
 
 ### What changed
@@ -30,6 +158,24 @@ The two `user interrupted the turn` branches (`agent_end`, `session_abort`) in `
 ### Expected merge conflict zones
 
 - `turn-end-liveness.ts`: `heldReason`.
+
+## 2026-10-21 - Share live continuation facts with lifecycle (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts` registers a session-owned live fact collector in `lifecycle-facts.ts`, using the existing exported `collectTurnEndLivenessInput`. The collector reads the real continuation latch, timers, recovery and goal; it retires with the extension. Goal refresh synchronously reports status transitions so an intervening close cannot be lost to an asynchronous reread. Restore supplies the durable last turn's end kind while the same collector reconstructs current live wake facts.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: lifecycle must read the facts after settlement and restoration, not retain a stale per-turn verdict or duplicate the continuation policy.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: these timers and latches belong to this builtin and have no external mutation surface.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: session_start, agent_start, agent_end and shutdown handlers. Preserve #3865's verdict/reporting path unchanged.
 
 ## 2026-10-21 - Turn-end liveness verdict (#3863)
 

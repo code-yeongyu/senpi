@@ -7,7 +7,8 @@ afterEach(async () => {
 });
 
 async function host() {
-	const created = await statusHost();
+	// Below vitest's 30 s testTimeout: a hung wait fails naming its predicate before the test times out.
+	const created = await statusHost({ deadlineMs: 20_000 });
 	hosts.push(created);
 	return created;
 }
@@ -339,7 +340,8 @@ describe("activity neutrality and mirror opt-in", () => {
 					record.sessionId === worker &&
 					record.type !== "agent_start" &&
 					record.type !== "agent_settled" &&
-					record.type !== "agent_idle",
+					record.type !== "agent_idle" &&
+					record.type !== "session_lifecycle",
 			),
 		).toBe(false);
 		const listed = dataOf(await mirror.request({ type: "list_sessions", include_workers: true })).sessions as Array<{

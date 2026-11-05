@@ -150,6 +150,10 @@ describe("cache keep-alive ping matches the turn's tools (#2389)", () => {
 			expect(toolsIgnoringCacheControl(ping)).toEqual(
 				turn === undefined ? undefined : toolsIgnoringCacheControl(turn),
 			);
+			// senpi#4446: deferred builtins ride the ping as the same defer_loading entries the turn sent.
+			expect(toolsIgnoringCacheControl(ping)).toContainEqual(
+				expect.objectContaining({ name: "show_html_page", defer_loading: true }),
+			);
 		} finally {
 			await emitSessionShutdownEvent(session.extensionRunner, { type: "session_shutdown", reason: "quit" });
 			session.dispose();

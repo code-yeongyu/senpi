@@ -114,7 +114,7 @@ describe("move_session revoke (senpi#4003)", () => {
 		const onB = await importedOnB(a, b, fixture, "move-r6");
 		let unblock = (): void => {};
 		const blocker = serializeByKey(
-			moveLockKey(onB),
+			await moveLockKey(onB),
 			() =>
 				new Promise<void>((resolve) => {
 					unblock = resolve;

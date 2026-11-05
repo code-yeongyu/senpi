@@ -67,7 +67,7 @@ export function buildHelpMarkdown(input: { extensionCommands: SlashCommandInfo[]
 
 	const commandLines = [...commandsByName.values()].map((command) => {
 		const description = commandDescriptionOverrides.get(command.name) ?? command.description ?? "";
-		return `/${command.name} — ${description}`;
+		return `/${command.name} - ${description}`;
 	});
 
 	return [

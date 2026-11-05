@@ -22,6 +22,9 @@
 import { createHostDaemonPaths, generationPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
+import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
+import { startupEnvelope } from "./host-startup-policy.ts";
+import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { type DrainHostResult, drainHost } from "./host-stop-drain.ts";
@@ -67,7 +70,7 @@ export async function stopHost(options: StopHostOptions): Promise<StopHostResult
 	// GC already holds this lock and uses an unqualified stop. Conditional operator stops acquire it
 	// here so ensure/handoff cannot publish a different generation between the check and signal.
 	if (options.expectedGeneration === undefined) return stopHostLocked(options);
-	const release = await acquireHostEnsureLock(options.socket, 30_000);
+	const release = await acquireHostEnsureLock(options.socket, startupEnvelope(childStalledStopMaxMs()).lockWait);
 	try {
 		return await stopHostLocked(options);
 	} finally {
@@ -80,6 +83,8 @@ async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult>
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
 	});
+	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
+	await electPointer(paths);
 	const expected = options.expectedGeneration;
 	if (expected !== undefined) {
 		const refusal = generationRefusal(compareStopGeneration(await readHostRegistration(paths), expected));

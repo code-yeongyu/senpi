@@ -36,6 +36,11 @@ export const ATTENDED_CAPABILITY = "attended";
  * placeholders for this connection; the client fetches a block on demand with `get_media`.
  */
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
+/**
+ * Opt-in, honored only behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` and never advertised (S13; S17 owns the public
+ * selection): a record past F reaches this connection as an `eventLease` envelope paged through `get_recovery_page`.
+ */
+export const COMPACT_EVENTS_CAPABILITY = "compact_events";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
 /** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
@@ -54,6 +59,12 @@ export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
 export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
 
 /**
+ * HOST capability: a connection that proved the launch key can `declare_delegation`, and the host then enforces its own
+ * method-class table on every record of that connection before dispatch; `classify_record` answers (senpi#5632).
+ */
+export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
+
+/**
  * Advertised by a multi-session host that answers `detach_connection`: it drops every attachment the
  * asking connection holds and replies only once that is done, so a short-lived client can return knowing
  * no other connection will still see it attached (senpi#3238).
@@ -65,6 +76,12 @@ export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
  * client's own `set_client_info` and fixed at that first declaration (see `connection-roles.ts`).
  */
 export const INTERACTIVE_USER_CAPABILITY = "interactive_user";
+/** `get_state` and `get_entries` accept `observe: true` and then never count as an attachment (senpi#4267). */
+export const OBSERVE_READS_CAPABILITY = "observe_reads";
+/** `get_entries` accepts `before` and `tail` and answers `next_before` (senpi#4267). */
+export const ENTRIES_TAIL_CAPABILITY = "entries_tail";
+/** A terminal control endpoint serves the host's observe-and-drive command set (senpi#4267). */
+export const TUI_OBSERVER_CAPABILITY = "tui_observer";
 /** The connection owns this session as a task child; only it may pause or resume the session for its run (senpi#3811). */
 export const TASK_PARENT_CAPABILITY = "task_parent";
 
@@ -131,6 +148,15 @@ export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
 export const BROWSER_ENGINE_CAPABILITY = "browser_engine";
 
 /**
+ * HOST capability: this host honors `open_session.env` (senpi#4381), the per-spawn caller env channel.
+ * The entries are that session's own: its tool subprocesses see them, they are never merged into the host
+ * process environment or carried to a successor generation through it, and only a task child opened with
+ * `spawnedBy` naming that session inherits them (any client that could attach to it can open such a child).
+ * A name outside the host's caller-passable set is refused with `invalid_session_env`.
+ */
+export const SESSION_ENV_CAPABILITY = "session_env";
+
+/**
  * HOST capability: this host honors `open_session.retryFallback` (`{ modelFallback, fallbackChains }`). The
  * policy is that session's own: it is applied as an in-memory settings override for that session only,
  * never written to a settings file and never seen by another session on the host.
@@ -195,6 +221,10 @@ export function buildCustomUnsupportedRequest(
 
 /** `verify_api_key` and `keyHint` on `get_auth_providers` rows (desktop #2510). */
 export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
+/** `test_provider_account`: re-run the sign-in connection test on one Claude subscription account (senpi#4436). */
+export const PROVIDER_ACCOUNT_TEST_CAPABILITY = "provider_account_test";
+/** `account_reset`: reset one named account's local health, keeping its credentials (senpi#4879, senpi#5698). */
+export const ACCOUNT_RESET_CAPABILITY = "account_reset";
 
 /** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
 export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";

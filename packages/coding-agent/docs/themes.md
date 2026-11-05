@@ -182,7 +182,7 @@ vim ~/.senpi/agent/themes/my-theme.json
 - `name` is required, must be unique, and must not contain `/`.
 - `appearance` is optional: `"dark"` or `"light"`, the background the theme is designed for. When omitted, senpi detects it from the theme colors.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarTrack`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
+- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarTrack`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below. The three markdown emphasis tokens are optional and have no fallback.
 
 The `$schema` field enables editor auto-completion and validation.
 
@@ -226,7 +226,7 @@ Every theme must define all 51 required color tokens. The optional tokens preser
 | `toolTitle` | Tool title |
 | `toolOutput` | Tool output text |
 
-### Markdown (10 colors)
+### Markdown (10 required, 3 optional)
 
 | Token | Purpose |
 |-------|---------|
@@ -240,6 +240,11 @@ Every theme must define all 51 required color tokens. The optional tokens preser
 | `mdQuoteBorder` | Blockquote border |
 | `mdHr` | Horizontal rule |
 | `mdListBullet` | List bullets |
+| `mdBold` | `**Bold**` text; optional |
+| `mdItalic` | `*Italic*` text; optional |
+| `mdStrikethrough` | `~~Strikethrough~~` text; optional |
+
+The emphasis tokens color inline text on top of its bold, italic, or strikethrough style, and take precedence over the surrounding color everywhere markdown renders: headings, blockquotes, thinking blocks, and user and custom messages. When a token is omitted, that text keeps the color of its surroundings, such as a paragraph, heading, or blockquote.
 
 ### Tool Diffs (3 colors)
 

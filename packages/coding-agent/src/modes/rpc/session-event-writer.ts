@@ -1,97 +1,16 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
-import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
-import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import { type MediaPersister, omitInlineMedia } from "./media-placeholders.ts";
-import type {
-	RpcHostLifecycleEvent,
-	RpcOpenQueuedEvent,
-	RpcSessionClosedEvent,
-	RpcSessionClosedReason,
-	RpcSessionParkedEvent,
-} from "./rpc-types.ts";
-import { RpcSecurityPresentations } from "./security-presentations.ts";
-import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
-import { SessionOpenTurns } from "./session-open-turns.ts";
-import { causeOfRecord, type SessionStatusActor, terminalOfLifecycle } from "./session-status.ts";
-import { type SessionOpenedRecord, sessionOpenedLines } from "./session-status-opened.ts";
-import { SessionStatusStream } from "./session-status-stream.ts";
-import { SurfaceDigestDedupe } from "./session-surface-dedupe.ts";
-import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
+import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
+import { declarationReply } from "./compact-negotiation.ts";
+import type { RpcHostLifecycleEvent, RpcOpenQueuedEvent } from "./rpc-types.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
+import type { RpcRecord } from "./session-event-writer-compaction.ts";
+import { RecordLine, SessionEventWriterDestinations } from "./session-event-writer-destinations.ts";
+import { causeOfRecord } from "./session-status.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 
-export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
-
-/** Await every actor's drain; a failed actor is a cut peer, not a writer failure. */
-const settleActors = (actors: readonly SocketEventSinkActor[]): Promise<void> =>
-	Promise.all(actors.map((actor) => actor.flush().catch(() => undefined))).then(() => undefined);
-
-/** Await every actor's ACCEPTANCE of what it was given; never the peer's kernel drain. */
-const acceptActors = (actors: readonly SocketEventSinkActor[]): Promise<void> =>
-	Promise.all(actors.map((actor) => actor.waitForAcceptance())).then(() => undefined);
-
-type RawWriter = (chunk: string) => void;
-type BackpressureWaiter = () => Promise<void>;
-type FlushScheduler = (flush: () => Promise<void>) => void;
-type RpcRecord = Record<string, unknown>;
-type CompactDeltaType = "text_delta" | "thinking_delta" | "toolcall_delta";
-
-type QueueNode = {
-	value: RpcRecord;
-	key?: string;
-	previous?: QueueNode;
-	next?: QueueNode;
-	resolve?: () => void;
-	reject?: (cause: unknown) => void;
-};
-
-type RecordQueue = {
-	sessionId?: string;
-	targetId?: string;
-	head?: QueueNode;
-	tail?: QueueNode;
-	latestByKey: Map<string, QueueNode>;
-	ready: boolean;
-};
-
-export const MAX_SHARED_STDIO_QUEUE_BYTES = 64 * 1024 * 1024;
-export const MAX_SHARED_STDIO_QUEUE_RECORDS = 4096;
-
-const MESSAGE_KEY = "message";
-const COMPACT_DELTA_TYPES = new Set<CompactDeltaType>(["text_delta", "thinking_delta", "toolcall_delta"]);
-
-function compactDelta(value: RpcRecord): { type: CompactDeltaType; contentIndex: number; delta: string } | undefined {
-	if (value.type !== "message_update" || !Object.hasOwn(value, "message")) return undefined;
-	const event = value.assistantMessageEvent;
-	if (typeof event !== "object" || event === null) return undefined;
-	const typedEvent = event as Record<string, unknown>;
-	if (
-		typeof typedEvent.type !== "string" ||
-		!COMPACT_DELTA_TYPES.has(typedEvent.type as CompactDeltaType) ||
-		typeof typedEvent.contentIndex !== "number" ||
-		typeof typedEvent.delta !== "string"
-	) {
-		return undefined;
-	}
-	return {
-		type: typedEvent.type as CompactDeltaType,
-		contentIndex: typedEvent.contentIndex,
-		delta: typedEvent.delta,
-	};
-}
-
-/** The delta-only form of a compact message_update: cumulative snapshot fields blanked, delta kept. */
-function demoteToDeltaOnly(value: RpcRecord): RpcRecord {
-	const event = value.assistantMessageEvent as Record<string, unknown>;
-	return { ...value, message: null, assistantMessageEvent: { ...event, partial: null } };
-}
-
-function toolUpdateKey(value: RpcRecord): string | undefined {
-	return value.type === "tool_execution_update" && typeof value.toolCallId === "string"
-		? `tool:${value.toolCallId}`
-		: undefined;
-}
+export type { SessionEventWriterConnection } from "./session-event-connection.ts";
+export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./session-event-writer-lanes.ts";
 
 /**
  * Process-wide stdout scheduler for multi-session RPC mode.
@@ -102,220 +21,77 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * by itself: coalescing records from different sessions would obscure the
  * scheduling boundary and violate D9.
  */
-export class SessionEventWriter {
-	private readonly queues = new Map<string, RecordQueue>();
-	private readonly fanout = new SessionEventFanout();
-	private readonly connectionContext = new AsyncLocalStorage<string>();
-	private readonly securityPresentations = new RpcSecurityPresentations(
-		this.fanout,
-		(id, task) => this.withConnection(id, task),
-		() => this.requestFlush(),
-	);
-	readonly workerSecurityBridge: boolean = false;
-	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
-	private readonly readyQueues: RecordQueue[] = [];
-	private readonly sealedSessions = new Set<string>();
-	/** Sessions whose lifecycle records stay on their attached connections (`kind: "worker"`). */
-	private readonly workerSessions = new Set<string>();
-	private readonly openTurns = new SessionOpenTurns();
-	/** Host-level `subscribe_sessions` subscriptions; publishes ride each subscriber's own FIFO actor. */
-	readonly status = new SessionStatusStream({
-		enqueue: (connectionId, line) => {
-			const actor = this.fanout.get(connectionId)?.actor;
-			if (actor === undefined) return false;
-			actor.enqueue(line);
-			this.requestFlush();
-			return true;
-		},
-		pendingQuestions: (sessionId) => this.fanout.pendingQuestionCount(sessionId),
-	});
-	/** F13 surface dedupe: one notice per connection per inventory transition, tracked per session. */
-	private readonly surfaceDedupe = new SurfaceDigestDedupe();
-	/**
-	 * Set by the host wiring: drains the session's pending effect transitions. Invoked after every
-	 * record this writer publishes for the session, so an `effect_status` always lands after its cause.
-	 */
-	afterRecord?: (sessionId: string) => void;
-	/** Per-session image persisters: bytes reach disk before the placeholder that names them is emitted. */
-	private readonly mediaPersisters = new Map<string, MediaPersister>();
-	private readonly writeRaw: RawWriter;
-	private readonly waitForBackpressure?: BackpressureWaiter;
-	private readonly scheduleFlush: FlushScheduler;
-	private flushScheduled = false;
-	private drainPromise?: Promise<void>;
-	private inFlight?: { queue: RecordQueue; node: QueueNode };
-	private failure?: unknown;
-	private controlOverflowReported = false;
-	private closeOverflowReported = false;
-	private readonly closeOverflowActors = new WeakSet<SocketEventSinkActor>();
-	private reservedCloseRecords = 0;
-	private reservedCloseBytes = 0;
-
-	get pendingCloseRecordCount(): number {
-		return this.reservedCloseRecords;
+export class SessionEventWriter extends SessionEventWriterDestinations {
+	secretInputRoute(sessionId: string): SecretInputRoute {
+		return this.secretPresentations.route(sessionId);
 	}
-
-	get pendingCloseByteLength(): number {
-		return this.reservedCloseBytes;
+	setSoleSecretCapabilities(capabilities: readonly string[]): void {
+		this.secretPresentations.handshake(capabilities);
 	}
-
-	constructor(writeRaw: RawWriter, scheduleFlush?: FlushScheduler);
-	constructor(writeRaw: RawWriter, waitForBackpressure: BackpressureWaiter, scheduleFlush?: FlushScheduler);
-	constructor(
-		writeRaw: RawWriter,
-		waitOrSchedule?: BackpressureWaiter | FlushScheduler,
-		scheduleFlush?: FlushScheduler,
-	) {
-		this.fanout.onConnectionClosed = (id) => this.securityPresentations.dropConnection(id);
-		this.writeRaw = writeRaw;
-		if (waitOrSchedule && scheduleFlush === undefined && waitOrSchedule.length > 0) {
-			this.scheduleFlush = waitOrSchedule as FlushScheduler;
-		} else {
-			this.waitForBackpressure = waitOrSchedule as BackpressureWaiter | undefined;
-			this.scheduleFlush = scheduleFlush ?? ((flush) => queueMicrotask(() => void flush()));
-		}
-	}
-
-	get bufferedRecordCount(): number {
-		let count = this.inFlight ? 1 : 0;
-		for (const queue of this.allQueues()) {
-			for (let node = queue.head; node; node = node.next) count++;
-		}
-		return count;
-	}
-
-	get bufferedByteLength(): number {
-		let bytes = this.inFlight ? Buffer.byteLength(serializeJsonLine(this.inFlight.node.value)) : 0;
-		for (const queue of this.allQueues()) {
-			for (let node = queue.head; node; node = node.next) {
-				bytes += Buffer.byteLength(serializeJsonLine(node.value));
+	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
+	handleMcpForm(value: unknown): boolean {
+		if (!this.presenterAuthority) return false;
+		if (
+			typeof value !== "object" ||
+			value === null ||
+			!("type" in value) ||
+			typeof value.type !== "string" ||
+			(!value.type.startsWith("mcp_form_") && value.type !== "mcp_presenter_context")
+		)
+			return false;
+		const id = this.currentConnection();
+		const sender = id === undefined ? undefined : this.presenterConnections.get(id);
+		const reply =
+			value.type === "mcp_presenter_context"
+				? this.mcpPresenterContextReply(sender, value)
+				: sender && this.presenterAuthority
+					? this.presenterAuthority.receive(sender, value)
+					: { error: "presenter_not_authorized" };
+		const connection = id === undefined ? undefined : this.fanout.get(id)?.connection;
+		if (connection) {
+			try {
+				connection.writeRaw(
+					serializeJsonLine({
+						type: "mcp_form_reply",
+						...("id" in value && typeof value.id === "string" ? { id: value.id } : {}),
+						...reply,
+					}),
+				);
+			} catch {
+				if (sender) this.presenterAuthority?.detach(sender);
 			}
 		}
-		return bytes;
-	}
-
-	registerConnection(
-		id: string,
-		connection: SessionEventWriterConnection,
-		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
-	): void {
-		this.fanout.registerConnection(id, connection, options);
-	}
-
-	unregisterConnection(id: string): void {
-		this.securityPresentations.dropConnection(id);
-		this.fanout.unregisterConnection(id);
-		this.status.dropConnection(id);
-		this.surfaceDedupe.dropConnection(id);
-	}
-
-	attachConnectionToSession(id: string, sessionId: string): void {
-		this.fanout.attachConnectionToSession(id, sessionId);
-		if (this.hasConnection(id)) this.securityPresentations.attach(id, sessionId);
-	}
-
-	detachConnectionFromSession(id: string, sessionId: string): void {
-		this.fanout.detachConnectionFromSession(id, sessionId);
-		this.securityPresentations.detach(id, sessionId);
-	}
-
-	hasConnection(id: string): boolean {
-		return this.fanout.get(id) !== undefined;
-	}
-
-	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
-		this.fanout.setConnectionCapabilities(id, capabilities);
-		this.securityPresentations.capabilitiesChanged(id);
-	}
-
-	clearConnectionCapabilities(id: string): void {
-		this.fanout.clearConnectionCapabilities(id);
-		this.securityPresentations.capabilitiesChanged(id);
-	}
-	bindSecurityPresentations(
-		sessionId: string,
-		durableId: string,
-		notices: SecurityNoticeSnapshot,
-		ui: ExtensionUIContext,
-	): (() => void) | undefined {
-		if (this.fanout.isEmpty()) return undefined;
-		return this.securityPresentations.bind(sessionId, durableId, notices, ui.select);
-	}
-	acceptWorkerSecuritySnapshot(sessionId: string, snapshot: SecurityNoticeState): void {
-		this.securityPresentations.acceptSnapshot(sessionId, snapshot);
-	}
-	routeWorkerGrant(
-		sessionId: string,
-		requestId: string,
-		preferred: string | undefined,
-		capabilities: readonly string[],
-		cancel: () => void,
-	): { readonly accepted: boolean; readonly connection?: string } {
-		return this.securityPresentations.routeWorkerGrant(sessionId, requestId, preferred, capabilities, cancel);
-	}
-	acceptWorkerGrantResponse(sessionId: string, id: string, connection: string | undefined): boolean | undefined {
-		return this.securityPresentations.acceptWorkerResponse(sessionId, id, connection);
-	}
-	settleGrantDialog(sessionId: string, id: string): void {
-		this.securityPresentations.settleGrant(sessionId, id);
-	}
-
-	hasRegisteredConnectionCapabilities(id: string): boolean {
-		return this.fanout.hasRegisteredConnectionCapabilities(id);
-	}
-
-	getConnectionCapabilities(id: string): readonly string[] | undefined {
-		return this.fanout.getConnectionCapabilities(id);
-	}
-
-	/**
-	 * Records a session's visibility class. A worker session is machine-driven work that
-	 * only its attached connections track, so its lifecycle records are delivered to them
-	 * instead of broadcast; an interactive session keeps the broadcast every client (the
-	 * desktop mirror, the supervisor's idle observer) relies on.
-	 */
-	setSessionMedia(sessionId: string, persister: MediaPersister | undefined): void {
-		if (persister === undefined) this.mediaPersisters.delete(sessionId);
-		else this.mediaPersisters.set(sessionId, persister);
-	}
-
-	setSessionKind(sessionId: string, kind: SessionKind): void {
-		if (kind === "worker") this.workerSessions.add(sessionId);
-		else this.workerSessions.delete(sessionId);
-	}
-
-	/** Drain just this connection before closing it after its last handoff park. */
-	async flushConnection(id: string): Promise<void> {
-		const target = this.fanout.get(id);
-		if (target) await settleActors([target.actor]);
-	}
-
-	/** Execute a connection's command with its response destination in context. */
-	withConnection<T>(id: string, task: () => T): T {
-		return this.connectionContext.run(id, task);
-	}
-
-	/** Connection id of the command currently being dispatched, when one owns it. */
-	currentConnection(): string | undefined {
-		return this.connectionContext.getStore();
+		return true;
 	}
 
 	/** Queue a session record. Content events target connections attached to the session. */
 	enqueue(sessionId: string, value: object): boolean {
+		if (declarationReply(value, undefined) === undefined) return true;
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
-		const record = value as RpcRecord;
-		const isTargeted =
-			record.type === "response" ||
-			record.type === "bash_execution_update" ||
-			// Relocation records belong to the one connection that offers it (session-relocation-channel.ts).
-			record.type === "host_request" ||
-			record.type === "relocation_due" ||
-			(record.type === "extension_ui_request" &&
-				["select", "confirm", "input", "editor"].includes(String(record.method)));
-		const tagged = { ...value, sessionId } as RpcRecord;
-		const line = serializeJsonLine(tagged);
-		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
+		const record = normalizeJsonValue(value).value as RpcRecord;
+		const isTargeted = this.isTargetedRecord(record);
+		// A stale reply is consumed, not a session failure: the worker still gets its output credit.
+		const current = isTargeted ? this.connectionContext.currentGuard() : undefined;
+		if (current?.() === false) return true;
+		const tagged = { ...observeLifecycleDelivery(record), sessionId } as RpcRecord;
+		const line = new RecordLine(tagged);
+		// Observation records are per-subscription opt-ins on the subscriber's own actor FIFO: never attachments,
+		// the attach replay, response broadcast, or the stdio lane, which cannot subscribe.
+		if (
+			record.type === "snapshot_marker" ||
+			record.type === "ui_request_pending" ||
+			record.type === "ui_request_settled"
+		) {
+			const targets =
+				record.type === "snapshot_marker"
+					? this.status.mirrorTargets(sessionId, "snapshot_marker").filter((id) => id === targetId)
+					: this.status.dialogTargets(sessionId);
+			for (const target of targets) this.fanout.get(target)?.actor.enqueue(line.text);
+			if (targets.length > 0) this.requestFlush();
+			return true;
+		}
+		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line.text)) {
 			this.closeSession(
 				sessionId,
 				{
@@ -328,69 +104,18 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
-		this.openTurns.note(sessionId, record.type);
+		this.openTurns.note(sessionId, record.type, (record as { reason?: unknown }).reason);
 		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));
 		const targets = mirrors.length === 0 ? attached : [...new Set([...attached, ...mirrors])];
-		// A record is only walked and re-serialized when a target asked for placeholders;
-		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
-		const hasPlaceholderTarget = targets.some((target) =>
-			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
-		);
-		const redacted = hasPlaceholderTarget ? omitInlineMedia(tagged, this.mediaPersisters.get(sessionId)) : tagged;
-		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
-		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, tagged);
-		for (const target of targets) {
-			if (target !== undefined && !this.fanout.get(target)) continue;
-			const registered = target === undefined ? undefined : this.fanout.get(target);
-			const wants =
-				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
-			if (registered) {
-				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
-				registered.actor.enqueue(
-					wants ? placeholderLine : line,
-					keyed ? MESSAGE_KEY : undefined,
-					undefined,
-					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
-					isCorrelatedReply(tagged),
-				);
-			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
-		}
+		this.deliver(sessionId, record, tagged, line, targets, mirrors, isTargeted, current);
 		// After the causing record is on every destination's FIFO, never before (ordering contract).
 		const cause = isTargeted ? undefined : causeOfRecord(record);
 		if (cause !== undefined) this.status.publish(sessionId, cause, this.changeActor("agent"));
 		this.afterRecord?.(sessionId);
 		this.requestFlush();
 		return true;
-	}
-
-	/** Who caused a change: the client whose command is being dispatched, else `fallback`. */
-	private changeActor(fallback: SessionStatusActor): SessionStatusActor {
-		return this.connectionContext.getStore() === undefined ? fallback : "client";
-	}
-
-	/**
-	 * Publish `session_opened` for a session this host just created. Interactive sessions broadcast it (the
-	 * lifecycle whitelist); a worker's reaches only its attached connections and subscribers that asked for
-	 * workers (invariant I4). `context` travels only to subscribers that asked for it.
-	 */
-	publishSessionOpened(record: SessionOpenedRecord): void {
-		if (this.fanout.isEmpty()) {
-			const { context: _context, ...wire } = record;
-			this.appendSessionRecord(record.sessionId, { ...wire });
-			this.requestFlush();
-			return;
-		}
-		const lines = sessionOpenedLines(record);
-		const subscribers = this.status.matchingConnections(record.sessionId);
-		const recipients =
-			record.kind === "worker"
-				? new Set([...this.fanout.attachedConnections(record.sessionId), ...subscribers.keys()])
-				: new Set(this.fanout.connectionIds());
-		for (const id of recipients)
-			this.fanout.get(id)?.actor.enqueue(subscribers.get(id) === true ? lines.withContext : lines.plain);
-		this.requestFlush();
 	}
 
 	/**
@@ -407,40 +132,18 @@ export class SessionEventWriter {
 		const line = serializeJsonLine({ type: "loaded_surfaces_changed", sessionId });
 		for (const id of this.fanout.attachedConnections(sessionId)) {
 			if (!this.surfaceDedupe.announce(id, sessionId, previous, digest)) continue;
-			this.fanout.get(id)?.actor.enqueue(line);
+			const held = this.fanout.attachmentOf(id, sessionId, false, "loaded_surfaces_changed");
+			this.fanout.get(id)?.actor.enqueue(line, undefined, undefined, undefined, false, held);
 		}
 		this.requestFlush();
 	}
 
-	/**
-	 * Return worker credit once this session's destinations have ACCEPTED the record
-	 * into their bounded queues - never when the slowest peer's kernel has drained it.
-	 * A client that is merely busy would otherwise pace the producing worker into
-	 * session_worker_credit_timeout and force the dead-peer budget under
-	 * SESSION_WORKER_LIMITS.controlMs (#1774). Delivery stays bounded by each queue's
-	 * maxQueueBytes and its dead-peer cut. A destination that failed (byte overflow or
-	 * stall) was already cut and closed by the fanout's onFailure; it is a cut peer,
-	 * not a writer failure. The shared stdio lane keeps its stdout backpressure wait.
-	 */
-	waitForSessionBackpressure(sessionId: string): Promise<void> {
-		if (this.fanout.isEmpty()) return this.flush();
-		return acceptActors(this.sessionActors(sessionId));
-	}
-
-	/** Registered actors this session's records are delivered to, plus the caller's own. */
-	private sessionActors(sessionId: string): SocketEventSinkActor[] {
-		const targets = new Set([
-			...this.fanout.targets(sessionId, this.currentConnection(), false, undefined),
-			this.currentConnection(),
-		]);
-		return [...targets].flatMap((target) => {
-			const registered = target === undefined ? undefined : this.fanout.get(target);
-			return registered ? [registered.actor] : [];
-		});
-	}
-
 	/** Queue one untagged host-control response for the given connection (defaults to the current one). */
 	enqueueControl(value: object, targetOverride?: string): Promise<void> {
+		const peer = targetOverride ?? this.currentConnection();
+		const reply = declarationReply(value, peer === undefined ? undefined : this.compactSelection(peer));
+		if (reply === undefined) return Promise.resolve();
+		value = reply;
 		if (this.failure !== undefined) return Promise.reject(this.failure);
 		const targetId = targetOverride ?? this.connectionContext.getStore();
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
@@ -452,7 +155,10 @@ export class SessionEventWriter {
 		if (this.exceedsStdioCapacity(serializeJsonLine(value))) {
 			if (!this.controlOverflowReported) {
 				this.controlOverflowReported = true;
-				this.append(this.controlQueue, { type: "overflow", error: "rpc_control_output_overflow, resync required" });
+				this.records.append(this.controlQueue, {
+					type: "overflow",
+					error: "rpc_control_output_overflow, resync required",
+				});
 				this.markReady(this.controlQueue);
 				this.requestFlush();
 			}
@@ -460,7 +166,7 @@ export class SessionEventWriter {
 		}
 		const queue = targetId === undefined ? this.controlQueue : this.connectionQueue(targetId);
 		const completion = new Promise<void>((resolve, reject) => {
-			this.append(queue, { ...value }, undefined, resolve, reject);
+			this.records.append(queue, { ...value }, undefined, resolve, reject);
 		});
 		this.markReady(queue);
 		this.requestFlush();
@@ -553,48 +259,9 @@ export class SessionEventWriter {
 			}
 		}
 		if (this.fanout.isEmpty()) {
-			this.append(this.controlQueue, wire);
+			this.records.append(this.controlQueue, wire);
 			this.markReady(this.controlQueue);
 		} else this.fanout.broadcast(serializeJsonLine(wire));
-		this.requestFlush();
-	}
-
-	/**
-	 * Prevent subsequent records for a session and append its terminal response.
-	 * Existing records retain FIFO order; this response is therefore that
-	 * session's final stdout record.
-	 */
-	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
-		if (!this.settleBeforeSeal(sessionId)) return;
-		this.sealedSessions.add(sessionId);
-		this.securityPresentations.dropSession(sessionId);
-		this.fanout.forgetSession(sessionId);
-		this.mediaPersisters.delete(sessionId);
-		const targetId = this.connectionContext.getStore();
-		// `reason` tells an attached client WHY the handle ended, so a park it can reopen by path is
-		// not read as a session that is gone. Absent unless the caller names one; clients tolerate that.
-		const lifecycle: RpcSessionClosedEvent = {
-			type: "session_closed",
-			sessionId,
-			...(reason && { reason }),
-			...(sessionPath && { sessionPath }),
-		};
-		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
-		else if (this.workerSessions.has(sessionId))
-			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
-		else this.fanout.broadcast(serializeJsonLine(lifecycle));
-		this.sealStatus(sessionId, lifecycle);
-		const taggedResponse = { ...response, sessionId };
-		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
-		if (registered)
-			registered.actor.enqueue(
-				serializeJsonLine(taggedResponse),
-				undefined,
-				undefined,
-				undefined,
-				isCorrelatedReply(response),
-			);
-		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
 		this.requestFlush();
 	}
 
@@ -610,7 +277,7 @@ export class SessionEventWriter {
 	 * no close response to answer.
 	 */
 	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded"): void {
-		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
+		this.sealLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
 	}
 
 	/**
@@ -620,352 +287,18 @@ export class SessionEventWriter {
 	 * the `release_session` response, so there is no close response either.
 	 */
 	releaseSession(sessionId: string, sessionPath: string): void {
-		this.sealWithLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
-	}
-
-	/**
-	 * Seal a session whose open rolled back after `session_opened` was published, so subscribers get
-	 * its terminal record. The opener's answer is its own failed `open_session`; like a park, no close
-	 * response is owed to anyone.
-	 */
-	sealRolledBackOpen(sessionId: string, sessionPath: string | undefined): void {
-		this.sealWithLifecycle(sessionId, {
-			type: "session_closed",
-			sessionId,
-			reason: "error",
-			...(sessionPath !== undefined && { sessionPath }),
-		});
-	}
-
-	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
-		if (!this.settleBeforeSeal(sessionId)) return;
-		this.sealedSessions.add(sessionId);
-		this.securityPresentations.dropSession(sessionId);
-		this.fanout.forgetSession(sessionId);
-		this.mediaPersisters.delete(sessionId);
-		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
-		else if (this.workerSessions.has(sessionId))
-			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
-		else this.fanout.broadcast(serializeJsonLine(lifecycle));
-		this.sealStatus(sessionId, lifecycle);
-		this.requestFlush();
-	}
-
-	private sealStatus(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
-		const terminal = terminalOfLifecycle(lifecycle);
-		const cause = causeOfRecord(lifecycle);
-		if (terminal !== undefined && cause !== undefined)
-			this.status.seal(sessionId, terminal, cause, this.changeActor("host"));
-	}
-
-	/**
-	 * Admit reply debt before routing can mutate attachments or await finalization.
-	 * Reserve the lifecycle as well: the claimant's role is not known yet. Rejected
-	 * closes do not wait, retain their ids, or create per-request stderr output.
-	 */
-	reserveCloseResponse(
-		sessionId: string,
-		response: object,
-		records = 2,
-	): { release: () => void; complete: (terminal: boolean, reason?: RpcSessionClosedReason) => void } | undefined {
-		const bytes =
-			Buffer.byteLength(serializeJsonLine({ ...response, sessionId })) +
-			(records === 2
-				? Buffer.byteLength(serializeJsonLine({ type: "session_closed", sessionId, reason: "client_close" }))
-				: 0);
-		if (
-			this.bufferedRecordCount + this.reservedCloseRecords + records > MAX_SHARED_STDIO_QUEUE_RECORDS ||
-			this.bufferedByteLength + this.reservedCloseBytes + bytes > MAX_SHARED_STDIO_QUEUE_BYTES
-		) {
-			const overflow = {
-				type: "overflow",
-				command: "close_session",
-				error: "rpc_close_output_overflow, resync required",
-			};
-			const targetId = this.currentConnection();
-			if (targetId !== undefined) {
-				const actor = this.fanout.get(targetId)?.actor;
-				if (actor && !this.closeOverflowActors.has(actor)) {
-					this.closeOverflowActors.add(actor);
-					// One outstanding notice per sink, released only on consumption.
-					// Actor identity isolates reconnects and does not retain dead sinks.
-					actor.enqueue(serializeJsonLine(overflow), undefined, () => this.closeOverflowActors.delete(actor));
-				}
-			} else if (!this.closeOverflowReported) {
-				this.closeOverflowReported = true;
-				this.append(this.controlQueue, overflow);
-				this.markReady(this.controlQueue);
-				this.requestFlush();
-			}
-			return undefined;
-		}
-		this.reservedCloseRecords += records;
-		this.reservedCloseBytes += bytes;
-		let active = true;
-		const release = () => {
-			if (!active) return;
-			active = false;
-			this.reservedCloseRecords -= records;
-			this.reservedCloseBytes -= bytes;
-		};
-		return {
-			release,
-			complete: (terminal, reason) => {
-				if (!active) return;
-				release();
-				if (terminal) this.closeSession(sessionId, response, reason);
-				else this.appendClosedResponse(sessionId, response);
-			},
-		};
-	}
-
-	/** Queue a joined close only after admitting its noncompactable reply. */
-	enqueueClosedResponse(sessionId: string, response: object): void {
-		this.reserveCloseResponse(sessionId, response, 1)?.complete(false);
-	}
-
-	private appendClosedResponse(sessionId: string, response: object): void {
-		const targetId = this.connectionContext.getStore();
-		const taggedResponse = { ...response, sessionId };
-		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
-		if (registered)
-			registered.actor.enqueue(
-				serializeJsonLine(taggedResponse),
-				undefined,
-				undefined,
-				undefined,
-				isCorrelatedReply(response),
-			);
-		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
-		this.requestFlush();
+		this.sealLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
 	}
 
 	/**
 	 * Publishes the settles a seal would strand (session-open-turns.ts) while the session can still write;
 	 * false when the session is sealed already, or became sealed by a settle that overflowed the stdio lane.
 	 */
-	private settleBeforeSeal(sessionId: string): boolean {
+	protected settleBeforeSeal(sessionId: string): boolean {
 		if (this.sealedSessions.has(sessionId)) return false;
 		for (let owed = this.openTurns.take(sessionId); owed > 0; owed -= 1) {
 			this.enqueue(sessionId, { type: "agent_settled", reason: "session_closed" });
 		}
 		return !this.sealedSessions.has(sessionId);
-	}
-
-	/**
-	 * Drops per-session bookkeeping for a handle whose runtime is fully disposed.
-	 * Routing handles are unique per process epoch, so nothing can legitimately
-	 * emit under this id again; without this every host-closed session would
-	 * leave a permanent sealed-handle (and snapshot) entry behind.
-	 */
-	forgetSession(sessionId: string): void {
-		this.sealedSessions.delete(sessionId);
-		this.openTurns.take(sessionId);
-		this.workerSessions.delete(sessionId);
-		this.fanout.forgetSession(sessionId);
-		this.mediaPersisters.delete(sessionId);
-		this.status.forget(sessionId);
-		this.surfaceDedupe.forgetSession(sessionId);
-	}
-
-	/** Drain every retained lane and the current in-flight record. */
-	flush(): Promise<void> {
-		if (this.failure !== undefined) return Promise.reject(this.failure);
-		this.flushScheduled = false;
-		if (this.drainPromise) return this.drainPromise;
-		if (this.readyQueues.length === 0) return settleActors([...this.fanout.values()].map(({ actor }) => actor));
-		let resolveDrain!: () => void;
-		let rejectDrain!: (cause: unknown) => void;
-		const drain = new Promise<void>((resolve, reject) => {
-			resolveDrain = resolve;
-			rejectDrain = reject;
-		});
-		this.drainPromise = drain;
-		void this.drainUntilEmpty().then(resolveDrain, rejectDrain);
-		void drain.then(
-			() => {
-				if (this.drainPromise === drain) this.drainPromise = undefined;
-				if (this.readyQueues.length > 0) this.requestFlush();
-			},
-			(cause) => {
-				if (this.drainPromise === drain) this.drainPromise = undefined;
-				this.fail(cause);
-			},
-		);
-		return drain;
-	}
-
-	private async drainUntilEmpty(): Promise<void> {
-		do {
-			await this.drainReadyQueues();
-		} while (this.readyQueues.length > 0);
-		// Per-connection failures are handled by the fanout (cut + close); only the
-		// shared stdio lane may fail this writer.
-		await settleActors([...this.fanout.values()].map(({ actor }) => actor));
-		this.controlOverflowReported = false;
-		if (this.reservedCloseRecords === 0) this.closeOverflowReported = false;
-	}
-
-	private async drainReadyQueues(): Promise<void> {
-		while (this.readyQueues.length > 0) {
-			const queue = this.readyQueues.shift()!;
-			queue.ready = false;
-			const node = queue.head;
-			if (!node) continue;
-
-			this.unlink(queue, node);
-			this.inFlight = { queue, node };
-			try {
-				// D9: exactly one complete record per raw write. The next lane is not
-				// selected until this record has cleared stdout backpressure.
-				const connection = queue.targetId ? this.fanout.get(queue.targetId)?.connection : undefined;
-				const writeRaw = connection?.writeRaw ?? this.writeRaw;
-				const waitForBackpressure = connection?.waitForBackpressure ?? this.waitForBackpressure;
-				if (!connection && queue.targetId) {
-					node.resolve?.();
-				} else {
-					writeRaw(serializeJsonLine(node.value));
-					if (waitForBackpressure) await waitForBackpressure();
-					node.resolve?.();
-				}
-			} catch (cause) {
-				node.reject?.(cause);
-				throw cause;
-			} finally {
-				this.inFlight = undefined;
-			}
-
-			if (queue.head) {
-				this.markReady(queue);
-			} else if (queue.sessionId || queue.targetId) {
-				for (const [key, candidate] of this.queues) {
-					if (candidate === queue) this.queues.delete(key);
-				}
-			}
-		}
-	}
-
-	private exceedsStdioCapacity(line: string): boolean {
-		return (
-			this.bufferedRecordCount + this.reservedCloseRecords >= MAX_SHARED_STDIO_QUEUE_RECORDS ||
-			this.bufferedByteLength + this.reservedCloseBytes + Buffer.byteLength(line) > MAX_SHARED_STDIO_QUEUE_BYTES
-		);
-	}
-
-	private connectionQueue(targetId: string): RecordQueue {
-		const key = `connection:${targetId}`;
-		let queue = this.queues.get(key);
-		if (!queue) {
-			queue = { targetId, latestByKey: new Map(), ready: false };
-			this.queues.set(key, queue);
-		}
-		return queue;
-	}
-
-	private appendSessionRecord(sessionId: string, value: RpcRecord, targetId?: string): void {
-		const key = `${targetId ?? "default"}:${sessionId}`;
-		let queue = this.queues.get(key);
-		if (!queue) {
-			queue = { sessionId, targetId, latestByKey: new Map(), ready: false };
-			this.queues.set(key, queue);
-		}
-
-		const delta = compactDelta(value);
-		if (delta) {
-			const previousFull = queue.latestByKey.get(MESSAGE_KEY);
-			if (previousFull) this.demoteAndMerge(queue, previousFull);
-			const node = this.append(queue, value, MESSAGE_KEY);
-			queue.latestByKey.set(MESSAGE_KEY, node);
-			this.markReady(queue);
-			return;
-		}
-
-		const toolKey = toolUpdateKey(value);
-		if (toolKey) {
-			const previous = queue.latestByKey.get(toolKey);
-			if (previous) this.unlink(queue, previous);
-			const node = this.append(queue, value, toolKey);
-			queue.latestByKey.set(toolKey, node);
-			this.markReady(queue);
-			return;
-		}
-
-		// All non-compactable records are ordering barriers. In particular this
-		// includes delta-only/full non-delta message updates, protocol responses,
-		// extension UI requests, errors, retries, lifecycle, and unknown records.
-		queue.latestByKey.clear();
-		this.append(queue, value);
-		this.markReady(queue);
-	}
-
-	private demoteAndMerge(queue: RecordQueue, node: QueueNode): void {
-		node.value = demoteToDeltaOnly(node.value);
-		const current = compactDelta(node.value);
-		const preceding = node.previous;
-		const previous = preceding ? compactDelta(preceding.value) : undefined;
-		if (
-			preceding &&
-			previous &&
-			current &&
-			preceding.value.message === null &&
-			previous.type === current.type &&
-			previous.contentIndex === current.contentIndex
-		) {
-			const precedingEvent = preceding.value.assistantMessageEvent as Record<string, unknown>;
-			preceding.value = {
-				...preceding.value,
-				assistantMessageEvent: { ...precedingEvent, delta: previous.delta + current.delta },
-			};
-			this.unlink(queue, node);
-		}
-	}
-
-	private append(
-		queue: RecordQueue,
-		value: RpcRecord,
-		key?: string,
-		resolve?: () => void,
-		reject?: (cause: unknown) => void,
-	): QueueNode {
-		const node: QueueNode = { value, key, previous: queue.tail, resolve, reject };
-		if (queue.tail) queue.tail.next = node;
-		else queue.head = node;
-		queue.tail = node;
-		return node;
-	}
-
-	private unlink(queue: RecordQueue, node: QueueNode): void {
-		if (node.previous) node.previous.next = node.next;
-		else queue.head = node.next;
-		if (node.next) node.next.previous = node.previous;
-		else queue.tail = node.previous;
-		if (node.key && queue.latestByKey.get(node.key) === node) queue.latestByKey.delete(node.key);
-		node.previous = undefined;
-		node.next = undefined;
-	}
-
-	private markReady(queue: RecordQueue): void {
-		if (queue.ready || this.inFlight?.queue === queue || !queue.head) return;
-		queue.ready = true;
-		this.readyQueues.push(queue);
-	}
-
-	private requestFlush(): void {
-		if (this.failure !== undefined || this.flushScheduled || this.drainPromise) return;
-		this.flushScheduled = true;
-		this.scheduleFlush(() => this.flush());
-	}
-
-	private fail(cause: unknown): void {
-		if (this.failure !== undefined) return;
-		this.failure = cause;
-		for (const queue of this.allQueues()) {
-			for (let node = queue.head; node; node = node.next) node.reject?.(cause);
-		}
-	}
-
-	private *allQueues(): Iterable<RecordQueue> {
-		yield* this.queues.values();
-		yield this.controlQueue;
 	}
 }

@@ -702,7 +702,7 @@ export function mapH2TransportError(error: unknown, baseUrl: string): unknown {
 		return new Error(
 			`Cursor run transport could not negotiate HTTP/2 with ${baseUrl}: "h2 is not supported". ` +
 				"This host serves the run RPC over HTTP/2 only, and the TLS handshake did not negotiate " +
-				"h2 via ALPN — typically an ALPN-stripping TLS-intercepting proxy. " +
+				"h2 via ALPN: typically an ALPN-stripping TLS-intercepting proxy. " +
 				"Front the provider with a local HTTP/2 bridge and point the model's baseUrl at it.",
 		);
 	}
@@ -714,7 +714,7 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 	context: TranscriptContext,
 	options?: CursorAgentOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const requestView = toCursorRequestView(context);
 
 	(async () => {
@@ -3886,7 +3886,10 @@ export function processInteractionUpdate(
 				target[kStreamingLastParseLen] = nextBuffer.length;
 			}
 			const idx = output.content.indexOf(target);
-			stream.push({ type: "toolcall_delta", contentIndex: idx, delta: chunk, partial: output });
+			stream.push(
+				{ type: "toolcall_delta", contentIndex: idx, delta: chunk, partial: output },
+				{ parsedThrough: target[kStreamingLastParseLen] ?? 0 },
+			);
 		}
 	} else if (updateCase === "toolCallCompleted") {
 		// Correlate on the envelope's `call_id`, NOT the block id: MCP, Pi and

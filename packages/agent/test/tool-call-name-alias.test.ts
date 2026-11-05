@@ -227,6 +227,35 @@ describe("tool-call name alias resolution", () => {
 		expect(textOf(result)).toContain("[auto-corrected]");
 	});
 
+	it("runs the unique tool behind a stray word prefix and reports the correction (omo#12065)", async () => {
+		const execute = vi.fn();
+
+		const { result, startToolNames } = await callOnce("trophy_eval", [
+			weatherTool("eval", execute),
+			weatherTool("read"),
+		]);
+
+		expect(execute).toHaveBeenCalledOnce();
+		expect(result.isError).toBe(false);
+		expect(result.toolName).toBe("eval");
+		expect(startToolNames).toEqual(["eval"]);
+		expect(result.content[0]).toEqual({
+			type: "text",
+			text: '[auto-corrected] no tool is named "trophy_eval"; ran "eval". Call tools by their exact listed name.',
+			audience: "model",
+		});
+	});
+
+	it("refuses a stray prefix that is a destructive verb instead of running the suffix tool (omo#12065)", async () => {
+		const execute = vi.fn();
+
+		const { result } = await callOnce("delete_write", [weatherTool("write", execute), weatherTool("read")]);
+
+		expect(execute).not.toHaveBeenCalled();
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toContain("Tool delete_write not found");
+	});
+
 	it("leaves exact-name calls untouched", async () => {
 		const execute = vi.fn();
 

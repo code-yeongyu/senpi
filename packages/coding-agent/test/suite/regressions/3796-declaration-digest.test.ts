@@ -1,5 +1,4 @@
 // #3796: shared machine-consumed native/legacy declaration identity fixture.
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: literal ${VAR} references are the MCP declaration inputs under test, not templates.
 /* oxlint-disable eslint/no-template-curly-in-string -- these tests feed literal MCP config text such as "${TOKEN}" to the interpolation under test. */
 import { expect, it } from "vitest";
 import {
