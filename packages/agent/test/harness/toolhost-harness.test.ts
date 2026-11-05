@@ -63,4 +63,44 @@ describe("harness tool calls on the ToolHost", () => {
 		expect(bodyValues).toEqual(["ran"]);
 		expect(witnesses).toEqual([{ pipeline: "prepared", toolCallId: "call-1" }]);
 	});
+
+	// #5859 review: a tool call the model stream flagged incomplete (with an errorMessage) that the harness still cleared
+	// must reach its body like any other call; the prepared host refused it before the body ran and the lane faulted.
+	it("runs the body of a cleared call that carries the stream's incomplete flag", async () => {
+		const bodyValues: string[] = [];
+		const echo: AgentHarnessTool<undefined, typeof parameters, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo input",
+			parameters,
+			async execute(_toolCallId, args) {
+				bodyValues.push(args.value);
+				return { content: [{ type: "text", text: args.value }], details: { value: args.value } };
+			},
+		};
+		const session = new StorageBackedSession(
+			{ id: "toolhost-harness-incomplete", createdAt: 1, storageVersion: 1 },
+			new MemoryStorage(),
+		);
+		sessions.push(session);
+		const faux = fauxProvider();
+		const models = createModels();
+		models.setProvider(faux.provider);
+		const { harness } = await AgentHarness.create(
+			{ session, models, model: faux.getModel(), tools: [echo], activeToolNames: ["echo"] },
+			BACKGROUND_CONTEXT,
+		);
+		const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+		const call = {
+			...fauxToolCall("echo", { value: "ran" }, { id: "call-1" }),
+			incomplete: true as const,
+			errorMessage: "stream ended",
+		};
+		faux.setResponses([fauxAssistantMessage([call], { stopReason: "toolUse" }), fauxAssistantMessage("done")]);
+
+		const result = await lane.prompt("go", undefined, BACKGROUND_CONTEXT);
+
+		expect(result).toMatchObject({ ok: true });
+		expect(bodyValues).toEqual(["ran"]);
+	});
 });
