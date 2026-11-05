@@ -9,6 +9,9 @@ export interface SpeculativeJob {
 	failure: Promise<Error | undefined>;
 	armedAtTokens: number;
 	completed: boolean;
+	/** The finished summary, readable synchronously once `completed` is true; absent on failure or abort. */
+	result?: CompactionResult;
+	completedAt?: number;
 }
 
 export function trackSpeculativeJob(input: {
@@ -27,8 +30,10 @@ export function trackSpeculativeJob(input: {
 		armedAtTokens: input.armedAtTokens,
 		completed: false,
 	};
-	void input.settled.then(() => {
+	void input.settled.then(({ result }) => {
 		job.completed = true;
+		job.result = result;
+		job.completedAt = Date.now();
 	});
 	return job;
 }

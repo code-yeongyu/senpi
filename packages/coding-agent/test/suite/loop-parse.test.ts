@@ -61,72 +61,27 @@ describe("parseLoopArgs", () => {
 		expect(result.reason).toMatch(/zero/i);
 	});
 
-	it("parses stop with implicit target", () => {
-		const result = parseLoopArgs("stop");
-		expect(result.kind).toBe("stop");
-		if (result.kind !== "stop") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "implicit" });
-	});
+	it.each([
+		["stop", "stop", { type: "implicit" }],
+		["stop all", "stop", { type: "all" }],
+		["stop 84dabc", "stop", { type: "id", id: "84dabc" }],
+		["pause", "pause", { type: "implicit" }],
+		["pause all", "pause", { type: "all" }],
+		["pause 84dabc", "pause", { type: "id", id: "84dabc" }],
+		["resume", "resume", { type: "implicit" }],
+		["resume all", "resume", { type: "all" }],
+		["resume 84dabc", "resume", { type: "id", id: "84dabc" }],
+	] as const)("parses %s", (args, kind, target) => {
+		// Given the command arguments and expected parsed target above.
+		// When the native parser handles this invocation.
+		const result = parseLoopArgs(args);
 
-	it("parses stop all", () => {
-		const result = parseLoopArgs("stop all");
-		expect(result.kind).toBe("stop");
-		if (result.kind !== "stop") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "all" });
+		// Then both command routing and the complete target are preserved.
+		expect(result).toEqual({ kind, target, originalArgs: args });
 	});
-
-	it("parses stop with id", () => {
-		const result = parseLoopArgs("stop 84dabc");
-		expect(result.kind).toBe("stop");
-		if (result.kind !== "stop") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "id", id: "84dabc" });
-	});
-
 	it("parses status", () => {
 		const result = parseLoopArgs("status");
 		expect(result.kind).toBe("status");
-	});
-
-	it("parses pause with implicit target", () => {
-		const result = parseLoopArgs("pause");
-		expect(result.kind).toBe("pause");
-		if (result.kind !== "pause") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "implicit" });
-	});
-
-	it("parses pause with id", () => {
-		const result = parseLoopArgs("pause 84dabc");
-		expect(result.kind).toBe("pause");
-		if (result.kind !== "pause") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "id", id: "84dabc" });
-	});
-
-	it("parses pause all", () => {
-		const result = parseLoopArgs("pause all");
-		expect(result.kind).toBe("pause");
-		if (result.kind !== "pause") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "all" });
-	});
-
-	it("parses resume with implicit target", () => {
-		const result = parseLoopArgs("resume");
-		expect(result.kind).toBe("resume");
-		if (result.kind !== "resume") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "implicit" });
-	});
-
-	it("parses resume with id", () => {
-		const result = parseLoopArgs("resume 84dabc");
-		expect(result.kind).toBe("resume");
-		if (result.kind !== "resume") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "id", id: "84dabc" });
-	});
-
-	it("parses resume all", () => {
-		const result = parseLoopArgs("resume all");
-		expect(result.kind).toBe("resume");
-		if (result.kind !== "resume") throw new Error("type guard");
-		expect(result.target).toEqual({ type: "all" });
 	});
 
 	it("preserves inner spacing of the prompt", () => {

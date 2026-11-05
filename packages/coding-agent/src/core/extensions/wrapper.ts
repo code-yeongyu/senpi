@@ -8,6 +8,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ToolDispatcher } from "../tool-dispatch/tool-dispatcher.ts";
 import { wrapToolDefinition } from "../tools/tool-definition-wrapper.ts";
+import { kernelToolInvokerStorage } from "./kernel-tools-context.ts";
 import type { ExtensionRunner } from "./runner.ts";
 import type { ExtensionContext, RegisteredTool } from "./types.ts";
 
@@ -45,7 +46,9 @@ export function wrapRegisteredTool(
 							ctx: context,
 							sourcePath: registeredTool.sourceInfo.path,
 						})
-					: await registeredTool.definition.execute(toolCallId, params, signal, onUpdate, context);
+					: await kernelToolInvokerStorage.run({ sessionId: context.sessionManager.getSessionId() }, () =>
+							registeredTool.definition.execute(toolCallId, params, signal, onUpdate, context),
+						);
 			} finally {
 				invocation?.dispose();
 			}

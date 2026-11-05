@@ -6,7 +6,7 @@ import {
 import { WORKER_CREDIT_CODES } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 import { observePressure, PRESSURE_BYTES, pressureExtension, pressurePreload } from "./rpc-worker-pressure-support.ts";
-import { reservationPhase as pressureStep } from "./rpc-worker-reservation-support.ts";
+import { reservationStep as pressureStep } from "./rpc-worker-reservation-support.ts";
 
 it("reports oversized worker output as a session-specific failure without terminating siblings", async () => {
 	const host = await startWorkerHost(`export default function (pi) {

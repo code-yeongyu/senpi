@@ -52,6 +52,7 @@ function createUi(notices: CapturedNotice[], statuses: Array<string | undefined>
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		custom: async () => undefined as never,
 		pasteToEditor: () => {},
 		setEditorText: () => {},

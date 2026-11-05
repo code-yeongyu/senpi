@@ -4,7 +4,7 @@
 // the Biome rule it replaces (Biome 2.5.14, run through npx) and records the flagged line numbers in
 // biome-verdicts.json; scripts/oxlint-biome-parity.test.mjs fails when the oxlint port disagrees.
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,14 +52,25 @@ const biomeLines = (port) => {
 	}
 };
 
+// A lint root under the OS temp dir holding a copy of the repo's oxlint config beside the real plugins.
+// A corpus placed at packages/coding-agent/src inside it is linted exactly like an in-scope source file,
+// while a directory inside the real packages/*/src would race every scripts test that walks that tree (#5305).
+export const parityFixtureRoot = () => {
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "oxlint-biome-parity-")));
+	copyFileSync(join(root, ".oxlintrc.json"), join(dir, ".oxlintrc.json"));
+	symlinkSync(join(root, "scripts"), join(dir, "scripts"), "dir");
+	return dir;
+};
+
 // Lines the repo's oxlint config flags for `rule` when `corpus` is linted as an in-scope .ts file.
 export const oxlintLines = (rule, corpus) => {
-	const dir = mkdtempSync(join(root, "packages", "coding-agent", "src", "oxlint-biome-parity-"));
+	const dir = parityFixtureRoot();
 	try {
-		const file = join(dir, "corpus.ts");
+		const file = join(dir, "packages", "coding-agent", "src", "oxlint-biome-parity", "corpus.ts");
+		mkdirSync(join(file, ".."), { recursive: true });
 		copyFileSync(join(parityDir, `${corpus}.corpus`), file);
 		const result = spawnSync(join(root, "node_modules", ".bin", "oxlint"), ["-c", ".oxlintrc.json", "-f", "json", file], {
-			cwd: root,
+			cwd: dir,
 			encoding: "utf8",
 			shell: process.platform === "win32",
 		});

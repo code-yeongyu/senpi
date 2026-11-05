@@ -4,9 +4,9 @@
  * on disk and over the socket. The shard naming contract and the per-session host identity have their
  * own suites (`rpc-host-shard-naming`, `rpc-host-session-identity`).
  */
-import { realpathSync } from "node:fs";
+import { realpathSync, watch } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, daemonDirectoryName, generationPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { listHostEndpoints } from "../src/modes/rpc/host-endpoints.ts";
@@ -40,26 +40,48 @@ import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
 const QUIET_HOST_MS = String(30 * 60_000);
 const QUIET_HOST_ENV = { [LOOP_LAG_WARN_MS_ENV]: QUIET_HOST_MS, [LOOP_LAG_ERROR_MS_ENV]: QUIET_HOST_MS };
 
-/** Waits until the live generation of `socket` has written its start heartbeat, its writer proven alive. */
-async function startHeartbeatWritten(socket: string, agentDir: string): Promise<void> {
+/** Subscribe before reading, so a state reached during the first read cannot be missed. */
+async function fileStateWritten(file: string, ready: (text: string) => boolean): Promise<void> {
+	const watcher = watch(dirname(file));
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await new Promise<void>((resolve, reject) => {
+			timeout = setTimeout(() => reject(new Error(`state not written: ${file}`)), 20_000);
+			const check = async () => {
+				const text = await readFile(file, "utf8").catch((cause: NodeJS.ErrnoException) => {
+					if (cause.code === "ENOENT") return undefined;
+					throw cause;
+				});
+				if (text !== undefined && ready(text)) resolve();
+			};
+			watcher.on("change", () => void check().catch(reject));
+			watcher.once("error", reject);
+			void check().catch(reject);
+		});
+	} finally {
+		clearTimeout(timeout);
+		watcher.close();
+	}
+}
+
+/** Socket readiness precedes the supervisor's final startup writes; quiet the whole tree before comparing it. */
+async function startWritesFinished(socket: string, agentDir: string): Promise<void> {
 	const paths = createHostDaemonPaths({ socket, agentDir });
 	const pointer = JSON.parse(await readFile(paths.pointerFile, "utf8")) as { instance_id?: unknown };
 	const generation = generationPaths(paths, String(pointer.instance_id));
+	// recordChildPid runs independently of startup and first writes a null start identity.
+	await fileStateWritten(generation.childPidFile, (text) => {
+		const record = JSON.parse(text) as { processStartTime?: unknown };
+		return typeof record.processStartTime === "string";
+	});
 	const { pid } = JSON.parse(await readFile(generation.childPidFile, "utf8")) as { pid?: unknown };
 	expect({ hostChild: pid, alive: typeof pid === "number" && processAlive(pid) }).toEqual({
 		hostChild: pid,
 		alive: true,
 	});
-	await expect
-		.poll(
-			() =>
-				stat(generation.aliveFile).then(
-					() => true,
-					() => false,
-				),
-			{ timeout: 20_000 },
-		)
-		.toBe(true);
+	await fileStateWritten(generation.aliveFile, () => true);
+	// writeHostReady is synchronous and follows drain-watch.json's atomic publication.
+	await fileStateWritten(paths.stderrLog, (text) => text.includes(`senpi rpc host ready on unix://${socket} `));
 }
 
 afterEach(sweepEndpointScratches, 180_000);
@@ -195,7 +217,7 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 		const death = await killEndpointUnclean(qa.shard, qa.agentDir);
 		tracked.internalDirs.push(...death.internalDirs);
 		const daemonRoot = join(qa.agentDir, "rpc-host-daemon");
-		await startHeartbeatWritten(qa.legacy, qa.agentDir);
+		await startWritesFinished(qa.legacy, qa.agentDir);
 		const before = await daemonTreeDigest(daemonRoot);
 
 		const { exitCode, endpoints } = await statusAll(qa);

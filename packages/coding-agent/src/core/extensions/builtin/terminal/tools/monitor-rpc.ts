@@ -51,8 +51,8 @@ export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorI
 	} catch {
 		return errorResult(`Invalid monitor filter regex: ${input.filter}`);
 	}
-	const selfId = ctx.getSessionContext?.()?.sessionManager?.getSessionId?.();
-	const target = parseRpcTarget(input.target ?? "", selfId);
+	const sessionKey = manifestSessionKey(ctx);
+	const target = parseRpcTarget(input.target ?? "", sessionKey);
 	if ("error" in target) return errorResult(target.error);
 	const events: RpcEvents | undefined = input.events;
 	const persistent = input.persistent === true;
@@ -71,12 +71,12 @@ export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorI
 		...(persistent
 			? {
 					onCheckpoint: (monitorId: string, checkpoint: TerminalManifestRpcCheckpoint) =>
-						handRpcCheckpoint(manifestSessionKey(ctx), monitorId, checkpoint),
+						handRpcCheckpoint(sessionKey, monitorId, checkpoint),
 				}
 			: {}),
 	});
 	ctx.manager.bindMonitorId(monitorId, id);
-	await handMonitorSpec(manifestSessionKey(ctx), {
+	await handMonitorSpec(sessionKey, {
 		monitorId,
 		spec: {
 			kind: "rpc",

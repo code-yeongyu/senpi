@@ -50,8 +50,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, "..", "..");
 const commandSources = [
 	["rpc-session-command-types.ts", "RpcSessionCommand"],
-	["rpc-host-command-types.ts", "RpcCommand"],
+	["rpc-host-command-types.ts", "RpcCommandBody"],
 	["attachment-types.ts", "RpcAttachmentCommand"],
+	["rpc-recovery-command-types.ts", "RpcRecoveryCommand"],
 ] as const;
 const docsPath = join(pkgRoot, "docs", "rpc.md");
 

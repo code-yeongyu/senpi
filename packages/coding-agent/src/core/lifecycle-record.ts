@@ -1,11 +1,11 @@
 import type { TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import { readHumanWait, type SyntheticAttention } from "./lifecycle-attention.ts";
-import { readLifecycleState } from "./lifecycle-children.ts";
+import { readLifecycleState, readWaits } from "./lifecycle-children.ts";
 import { readLastStop } from "./lifecycle-stop.ts";
-import type { LifecycleHold, LifecycleWaits, SessionLifecycle } from "./session-lifecycle-types.ts";
+import type { LifecycleHold, SessionLifecycle } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
 
-export interface LifecycleRecord extends SessionLifecycle {
+export interface LifecycleRecord extends Omit<SessionLifecycle, "activity" | "activityRevision"> {
 	readonly sessionId: string;
 	readonly attentionSeq: number;
 	readonly synthetic: readonly SyntheticAttention[];
@@ -118,28 +118,6 @@ function readTurnEnd(value: unknown): DurableTurnEnd | undefined {
 		default:
 			return undefined;
 	}
-}
-
-function readWaits(value: unknown): LifecycleWaits | undefined {
-	if (!isRecord(value) || typeof value.children !== "number") return undefined;
-	const background: LifecycleWaits["background"][number][] = [];
-	if (Array.isArray(value.background)) {
-		for (const source of value.background) {
-			if (!isRecord(source) || typeof source.source !== "string" || typeof source.activeCount !== "number") continue;
-			background.push({
-				source: source.source,
-				activeCount: source.activeCount,
-				...(typeof source.retryAtMs === "number" ? { retryAtMs: source.retryAtMs } : {}),
-			});
-		}
-	}
-	const human = Array.isArray(value.human)
-		? value.human.flatMap((request) => {
-				const wait = readHumanWait(request);
-				return wait ? [wait] : [];
-			})
-		: [];
-	return { children: value.children, background, human };
 }
 
 function readHolds(value: unknown): readonly LifecycleHold[] | undefined {

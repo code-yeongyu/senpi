@@ -17,6 +17,20 @@ export type PermissionRepliedEvent = {
 	reply: PermissionDecision;
 };
 
+/** A rule whose identity form is unavailable (resolver timeout or open breaker), design 6.8. */
+export type PermissionRuleIdentityUnavailableEvent = {
+	permission: string;
+	pattern: string;
+	code: string;
+};
+
+/** A resolver breaker transition or leak-cap change for one volume key, design 6.8. */
+export type PermissionResolverStateEvent = {
+	volumeKey: string;
+	state: string;
+	leaked: number;
+};
+
 /**
  * Event emitter interface for permission events.
  * Injectable into services for loose coupling.
@@ -35,6 +49,12 @@ export interface PermissionEventEmitter {
 	 * @param reply - The user's reply (once, always, or reject)
 	 */
 	emitReplied(requestID: string, sessionID: string, reply: PermissionDecision): void;
+
+	/** Emit a permission_rule_identity_unavailable event. */
+	emitRuleIdentityUnavailable(event: PermissionRuleIdentityUnavailableEvent): void;
+
+	/** Emit a permission_resolver_state event. */
+	emitResolverState(event: PermissionResolverStateEvent): void;
 }
 
 /**
@@ -51,6 +71,12 @@ export function createEventEmitter(pi: ExtensionAPI): PermissionEventEmitter {
 		},
 		emitReplied: (requestID: string, sessionID: string, reply: PermissionDecision) => {
 			pi.events.emit("permission_replied", { requestID, sessionID, reply });
+		},
+		emitRuleIdentityUnavailable: (event) => {
+			pi.events.emit("permission_rule_identity_unavailable", event);
+		},
+		emitResolverState: (event) => {
+			pi.events.emit("permission_resolver_state", event);
 		},
 	};
 }
@@ -76,6 +102,10 @@ export function createLocalEventEmitter(): PermissionEventEmitter & {
 	 */
 	onReplied(handler: (event: PermissionRepliedEvent) => void): () => void;
 
+	onRuleIdentityUnavailable(handler: (event: PermissionRuleIdentityUnavailableEvent) => void): () => void;
+
+	onResolverState(handler: (event: PermissionResolverStateEvent) => void): () => void;
+
 	/**
 	 * Clear all registered handlers.
 	 */
@@ -83,6 +113,8 @@ export function createLocalEventEmitter(): PermissionEventEmitter & {
 } {
 	const askedHandlers = new Set<(request: Request) => void>();
 	const repliedHandlers = new Set<(event: PermissionRepliedEvent) => void>();
+	const identityHandlers = new Set<(event: PermissionRuleIdentityUnavailableEvent) => void>();
+	const resolverHandlers = new Set<(event: PermissionResolverStateEvent) => void>();
 
 	return {
 		emitAsked: (request: Request) => {
@@ -116,9 +148,29 @@ export function createLocalEventEmitter(): PermissionEventEmitter & {
 			return () => repliedHandlers.delete(handler);
 		},
 
+		emitRuleIdentityUnavailable: (event) => {
+			for (const handler of identityHandlers) handler(event);
+		},
+
+		emitResolverState: (event) => {
+			for (const handler of resolverHandlers) handler(event);
+		},
+
+		onRuleIdentityUnavailable: (handler) => {
+			identityHandlers.add(handler);
+			return () => identityHandlers.delete(handler);
+		},
+
+		onResolverState: (handler) => {
+			resolverHandlers.add(handler);
+			return () => resolverHandlers.delete(handler);
+		},
+
 		clear: () => {
 			askedHandlers.clear();
 			repliedHandlers.clear();
+			identityHandlers.clear();
+			resolverHandlers.clear();
 		},
 	};
 }

@@ -148,9 +148,6 @@ export async function spawnSenpiHost({ sandbox, turns = [{ text: "ok" }], timeou
 	const child = spawn(
 		process.execPath,
 		[
-			join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"),
-			"--tsconfig",
-			join(repoRoot, "tsconfig.json"),
 			join(packageDir, "src", "cli.ts"),
 			"--mode",
 			"rpc",

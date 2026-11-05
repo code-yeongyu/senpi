@@ -1,0 +1,21 @@
+{
+	"caseId": "node-digest-mismatch",
+	"kind": "receiver",
+	"contractIds": [
+		"R4.B2",
+		"RULING-57",
+		"RULING-68a"
+	],
+	"description": "node-with-children's stored bytes with one byte flipped (the '2' of \"length\":42 becomes '3'). The text still decodes as a valid node, so only the digest catches it: the desktop verifies length and digest before decoding and fails closed, using no entry.",
+	"input": {
+		"storedBytes": "ewAiAGYAbwByAG0AYQB0ACIAOgAiAHMAZQBuAHAAaQAtAHIAZQBjAG8AdgBlAHIAeQAtAGMAYQB0AGEAbABvAGcAIgAsACIAdgBlAHIAcwBpAG8AbgAiADoAMQAsACIAZQBuAHQAcgBpAGUAcwAiADoAWwB7ACIAawBpAG4AZAAiADoAIgBsAGkAZgBlAGMAeQBjAGwAZQAiACwAIgBpAGQAIgA6ACIAbABpAGYAZQBjAHkAYwBsAGUAIgAsACIAbABlAG4AZwB0AGgAIgA6ADQAMwAsACIAZABpAGcAZQBzAHQAIgA6ACIAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAiAH0ALAB7ACIAawBpAG4AZAAiADoAIgBuAG8AZABlACIALAAiAGkAZAAiADoAIgBuAG8AZABlAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMQAiACwAIgBsAGUAbgBnAHQAaAAiADoANwAwADAAMAAwACwAIgBkAGkAZwBlAHMAdAAiADoAIgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmACIAfQBdAH0A",
+		"length": 642,
+		"declaredDigest": "fa1de8cdae098d7eb81dfdda48b25efc90103c0411f11f69f8a2946fb050e794"
+	},
+	"fault": {
+		"byteOffset": 210,
+		"xor": 1,
+		"actualDigest": "160cf1e5a7c1d9a6b0fdfc40ccbc3d3c118eb09bceb262c63523c93816d02cae"
+	},
+	"expectedOutcome": "refuse_before_decode"
+}

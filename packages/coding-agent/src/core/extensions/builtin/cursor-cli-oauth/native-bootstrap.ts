@@ -1,4 +1,5 @@
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
+import { stampLogin } from "@earendil-works/pi-ai/auth/pool/login-id";
 import { type CursorCliOauthCredential, emptyCredential, listAccounts, SENTINEL_OAUTH_FIELDS } from "./accounts.ts";
 import { CURSOR_CLI_OAUTH_PROVIDER_ID, importNativeCursorCredential } from "./oauth-login.ts";
 
@@ -35,7 +36,8 @@ async function bootstrapNativeCredential(deps: CursorCliNativeBootstrapDeps): Pr
 			const latestManaged = asManagedCredential(latest);
 			if (latestManaged && listAccounts(latestManaged).length > 0) return latest;
 			if (latest !== undefined && !latestManaged) return latest;
-			return importNativeCursorCredential(latestManaged ?? emptyCredential(), async () => native);
+			// The first-run copy adds a signed-in account, so it stamps a login id like a login (senpi#4099).
+			return stampLogin(await importNativeCursorCredential(latestManaged ?? emptyCredential(), async () => native));
 		});
 	} catch {
 		return current;

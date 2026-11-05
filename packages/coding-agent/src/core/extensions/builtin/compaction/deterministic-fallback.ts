@@ -14,6 +14,7 @@ import {
 	type SessionEntry,
 } from "../../../session-manager.ts";
 import { markFailedTurnFragments } from "./fallback-failed-turn-normalization.ts";
+import { withoutOpaqueSignatures } from "./opaque-signatures.ts";
 import { SummarizationOverflowExhaustedError } from "./overflow-retry.ts";
 import { resolveEffectiveReserveTokens } from "./policy.ts";
 import { isSafeBoundedValue } from "./retained-message-projection.ts";
@@ -378,7 +379,7 @@ export function createRequiredCompactionFallback(
 				});
 				serialized = JSON.stringify({ ...message, content });
 			} else {
-				serialized = bounded ? JSON.stringify(message) : undefined;
+				serialized = bounded ? JSON.stringify(message, withoutOpaqueSignatures) : undefined;
 			}
 			// Apply the shared weighted chars/4 estimator to the envelope too.
 			// Storage bytes are not tokens; opaque text and image costs still count.

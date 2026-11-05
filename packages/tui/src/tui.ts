@@ -3419,10 +3419,13 @@ export abstract class TuiBase extends Container {
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
 			if (imageReservedRows > 1) {
+				// Reserving rows at or past the viewport bottom scrolls the terminal exactly like appended text, and the
+				// relative move back up still lands on the image's first row; only an image that starts above the viewport
+				// or is taller than it cannot be placed in place (senpi#4583).
 				const imageStartScreenRow = i - viewportTop;
-				if (imageStartScreenRow < 0 || imageStartScreenRow + imageReservedRows > height) {
+				if (imageStartScreenRow < 0 || imageReservedRows > height) {
 					logRedraw(
-						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
+						`kitty image cannot be placed in place (start row ${imageStartScreenRow}, ${imageReservedRows} rows, height ${height})`,
 					);
 					fullRender(true, !preserveMuxScrollback);
 					return;
