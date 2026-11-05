@@ -124,7 +124,7 @@ const MAX_SETTLE_READS = 12;
 const LATE_SESSION_WAIT_MS = 1_500;
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
 
-export function browserSkillHome(env: NodeJS.ProcessEnv = process.env): string {
+function browserSkillHome(env: NodeJS.ProcessEnv = process.env): string {
 	const override = env.BSK_HOME;
 	return override ? override : join(env.HOME || homedir(), ".bsk");
 }
@@ -136,10 +136,7 @@ function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
 }
 
 /** The daemon's socket as named in its own daemon.json, refused unless it is a socket this user owns (or a named pipe). */
-export function resolveDaemonSocket(
-	home: string,
-	options: Pick<BrowserSkillOptions, "ownerUid" | "platform"> = {},
-): string {
+function resolveDaemonSocket(home: string, options: Pick<BrowserSkillOptions, "ownerUid" | "platform"> = {}): string {
 	let info: unknown;
 	try {
 		info = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8"));
