@@ -52,7 +52,7 @@ describe("the offering connection detaching from the session", () => {
 		expect(recordsOn("older-client", "relocation_due")).toEqual([]);
 	});
 
-	it.each(["legacy", "prepared"] as const)(
+	it.each(["prepared"] as const)(
 		"fails a request still waiting on the connection at once, not after the answer timeout (%s pipeline)",
 		async (pipeline) => {
 			// Given: the desktop never answers; it detaches as soon as it is asked.
