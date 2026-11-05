@@ -123,7 +123,7 @@ export interface HeldPresence {
  * the identity, so an unverified session never blocks a start. Busy is `presence_occupied` and proves only occupied
  * authority, never who holds it; every other result is `presence_unknown`.
  */
-export function acquirePresence(object: PresenceObjectRecord, native: PresencePlacementLoad): HeldPresence {
+function acquirePresence(object: PresenceObjectRecord, native: PresencePlacementLoad): HeldPresence {
 	if (object.status !== "predeclared") return { object, release: () => {}, preActionCheck: () => {} };
 	if (native.status !== "available") {
 		throw new LaunchReservationError("presence_unknown", `${object.presenceId}: ${native.reason}`);
