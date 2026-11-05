@@ -2,6 +2,7 @@ import { fauxAssistantMessage, type FauxResponseFactory, fauxToolCall } from "@e
 import { JOB_WIDGET_RESPOND_TOOL, type JobWidgetState } from "../../src/core/extensions/builtin/job-widgets/index.ts";
 import jobWidgetsExtension from "../../src/core/extensions/builtin/job-widgets/extension.ts";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
+import type { ExtensionBindings } from "../../src/core/agent-session.ts";
 import type { EventBus } from "../../src/core/event-bus.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -53,7 +54,10 @@ export function jobState(state: JobWidgetState, id: string): string | undefined 
 	return state.jobs.find((job) => job.id === id)?.state;
 }
 
-export async function createJobWidgetHarness(jobWidgets: Record<string, unknown>): Promise<{
+export async function createJobWidgetHarness(
+	jobWidgets: Record<string, unknown>,
+	bindings: ExtensionBindings = {},
+): Promise<{
 	harness: Harness;
 	log: StateLog;
 	sessionId: string;
@@ -76,7 +80,7 @@ export async function createJobWidgetHarness(jobWidgets: Record<string, unknown>
 			},
 		],
 	});
-	await harness.session.bindExtensions({});
+	await harness.session.bindExtensions(bindings);
 	if (!bus) throw new Error("session_start did not run");
 	return { harness, log, sessionId: harness.sessionManager.getSessionId(), bus };
 }

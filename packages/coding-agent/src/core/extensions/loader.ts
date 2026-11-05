@@ -25,6 +25,7 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime,
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @code-yeongyu/senpi.
 import * as _bundledPiCodingAgent from "../../index.ts";
+import * as _bundledSessionWorkerData from "../../modes/rpc/session-worker-data.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
@@ -70,6 +71,7 @@ import type {
 	ExtensionFactory,
 	ExtensionRuntime,
 	ExtensionSessionProfile,
+	ExtensionSide,
 	ExtensionVirtualModel,
 	FilesystemPolicy,
 	LazyToolActivator,
@@ -98,13 +100,23 @@ import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./type
 export interface ExtensionSessionOptions {
 	sessionKind?: SessionKind;
 	sessionContext?: SessionContext;
+	/** The side of a split session to load for; a handler declared `runs` for the other side is not registered. Absent: fused. */
+	side?: ExtensionSide;
 }
 
 function sessionProfile(options: ExtensionSessionOptions | undefined): ExtensionSessionProfile {
 	return {
 		sessionKind: options?.sessionKind ?? "interactive",
 		sessionContext: options?.sessionContext ?? EMPTY_SESSION_CONTEXT,
+		...(options?.side === undefined ? {} : { side: options.side }),
 	};
+}
+
+function assertExtensionSide(extension: Extension, runs: unknown, registration: string): void {
+	if (runs === "brain" || runs === "hand") return;
+	throw new Error(
+		`Extension "${extension.path}" declared runs: ${JSON.stringify(runs)} for ${registration}; runs must be "brain" or "hand".`,
+	);
 }
 
 /** Modules available to extensions via virtualModules (for compiled binaries) */
@@ -133,6 +145,7 @@ const VIRTUAL_MODULES: Record<string, Record<string, unknown>> = {
 	"@mariozechner/pi-ai/providers/all": _bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 	"@code-yeongyu/senpi": _bundledPiCodingAgent,
+	"@code-yeongyu/senpi/session-worker-data": _bundledSessionWorkerData,
 };
 
 const require = createRequire(import.meta.url);
@@ -189,6 +202,10 @@ function getAliases(): Record<string, string> {
 	const piCodingAgentDistEntry = path.join(codingAgentPackageRoot, "dist/index.js");
 	const piCodingAgentSourceEntry = path.join(codingAgentPackageRoot, "src/index.ts");
 	const piCodingAgentEntry = fs.existsSync(piCodingAgentDistEntry) ? piCodingAgentDistEntry : piCodingAgentSourceEntry;
+	const sessionWorkerDataDistEntry = path.join(codingAgentPackageRoot, "dist/modes/rpc/session-worker-data.js");
+	const sessionWorkerDataEntry = fs.existsSync(sessionWorkerDataDistEntry)
+		? sessionWorkerDataDistEntry
+		: path.join(codingAgentPackageRoot, "src/modes/rpc/session-worker-data.ts");
 	const piAgentCoreEntry = resolveWorkspaceOrBundled(
 		"@earendil-works/pi-agent-core",
 		"dist/index.js",
@@ -234,6 +251,7 @@ function getAliases(): Record<string, string> {
 		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
 		"@earendil-works/pi-ai": piAiCompatEntry,
 		"@code-yeongyu/senpi": piCodingAgentEntry,
+		"@code-yeongyu/senpi/session-worker-data": sessionWorkerDataEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
 		"@mariozechner/pi-tui": piTuiEntry,
@@ -453,6 +471,11 @@ function createExtensionAPI(
 			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions,
 		): () => void {
 			assertActive();
+			const runs = options?.runs;
+			if (runs !== undefined) {
+				assertExtensionSide(extension, runs, `"${event}"`);
+				if (session.side !== undefined && runs !== session.side) return () => {};
+			}
 			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => {
 				// A child event can run inside its parent's task-tool async scope.
 				// Bind the host context here, preserving registered-handler metadata.
@@ -465,9 +488,17 @@ function createExtensionAPI(
 			const list = extension.handlers.get(event) ?? [];
 			list.push(registeredHandler);
 			extension.handlers.set(event, list);
+			if (runs !== undefined) {
+				extension.handlerSides ??= new WeakMap();
+				extension.handlerSides.set(registeredHandler, runs);
+			}
 			if (event === "before_agent_start" && options?.previewSafe === true) {
 				extension.previewSafeHandlers ??= new WeakSet();
 				extension.previewSafeHandlers.add(registeredHandler);
+			}
+			if (event === "before_agent_start" && options?.runLast === true) {
+				extension.runLastHandlers ??= new WeakSet();
+				extension.runLastHandlers.add(registeredHandler);
 			}
 			if ((event === "context" || event === "context_with_system") && options?.mutatesMessages === false) {
 				extension.nonMutatingContextHandlers ??= new WeakSet();
@@ -494,6 +525,7 @@ function createExtensionAPI(
 					`Tool "${tool.name}" registered by extension "${extension.path}" must define an object parameter schema.`,
 				);
 			}
+			if (tool.runs !== undefined) assertExtensionSide(extension, tool.runs, `tool "${tool.name}"`);
 			extension.tools.set(tool.name, {
 				definition: Object.assign(Object.create(Object.getPrototypeOf(tool)), tool, {
 					execute: ownedBy(extension, tool.execute),

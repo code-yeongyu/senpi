@@ -68,8 +68,17 @@ export function createPermissionRequester(buffer, hooks) {
 				if (Atomics.compareExchange(control, 0, old, requested) !== old) throw new Error("Permission slot ownership changed");
 				try {
 					hooks.wake(index, generation);
-					(hooks.wait ?? Atomics.wait)(control, 0, requested, 2000);
-					const current = Atomics.load(control, 0);
+					const wait = hooks.wait ?? Atomics.wait;
+					const deadline = Date.now() + (hooks.deadlineMs ?? 2000);
+					// The host claims the slot before it answers, and that claim does not notify, so a park can
+					// end on the claim rather than on the answer. Keep waiting while the slot is still ours or
+					// held by the host; only the deadline or a foreign state ends the wait.
+					let current = Atomics.load(control, 0);
+					while (current === requested || current === ((generation << 3) | WRITING)) {
+						const remaining = deadline - Date.now();
+						if (remaining <= 0 || wait(control, 0, current, remaining) === "timed-out") break;
+						current = Atomics.load(control, 0);
+					}
 					if (current === ((generation << 3) | ANSWERED)) {
 						const result = decode(response, control[2]);
 						if (result?.action === "pass") return result;

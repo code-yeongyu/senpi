@@ -176,6 +176,7 @@ export async function dispose(host: RouterContext): Promise<void> {
 	host.drainExitRequested = true;
 	stopSweep(host);
 	if (host.drainTimer !== undefined) clearInterval(host.drainTimer);
+	if (host.admissions) await host.admissions.dispose();
 	await Promise.all(
 		[...host.bindings.entries()].map(async ([sessionId, binding]) => {
 			const claim = tryClaimClose(host, sessionId, { drainAttachments: true });

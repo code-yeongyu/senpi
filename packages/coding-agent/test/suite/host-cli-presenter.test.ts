@@ -56,7 +56,7 @@ async function launched(
 	const result = await runHostCli(qa, args, { SENPI_RUNTIME: options.runtime ?? "bun" }, async (socket) => {
 		enrolled = await bootstrap(socket, signal, options.predecessor);
 	});
-	expect(result.exitCode, result.stderr).toBe(0);
+	expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
 	expect(enrolled).toMatchObject({ type: "enrolled", backendGeneration: enroll.backendGeneration });
 	if (!enrolled) throw new Error("CLI exited without presenter enrollment");
 	return { payload: onlyJsonLine(result), enrolled };
@@ -154,7 +154,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 				await closed;
 			});
 			expect(frames).toEqual([]);
-			expect(result.exitCode, result.stderr).toBe(0);
+			expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
 			expect(onlyJsonLine(result)).toMatchObject({ action: "handoff" });
 		},
 		240_000,
@@ -167,7 +167,11 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			const model = await heldModel(qa);
 			const first = owned
 				? await launched(qa, ["ensure", ...enforcement])
-				: { payload: onlyJsonLine(await runHostCli(qa, ["ensure"])), enrolled: undefined };
+				: await (async () => {
+						const result = await runHostCli(qa, ["ensure"]);
+						expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
+						return { payload: onlyJsonLine(result), enrolled: undefined };
+					})();
 			const { peer, sessionId } = await busy(qa);
 			let management: Socket | undefined;
 			if (first.enrolled) {
@@ -202,7 +206,9 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 				{ mode: 0o600 },
 			);
 			// An ensure reports THIS CLI's target build while reusing the busy generation, never enrolling it.
-			const target = onlyJsonLine(await runHostCli(qa, ["ensure", "--policy", "never", "--launch-spec", spec]));
+			const targetResult = await runHostCli(qa, ["ensure", "--policy", "never", "--launch-spec", spec]);
+			expect(targetResult.exitCode, `${targetResult.stdout}${targetResult.stderr}`).toBe(0);
+			const target = onlyJsonLine(targetResult);
 			const pending = await runHostCli(qa, [
 				"handoff",
 				"--when",
@@ -219,7 +225,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 				spec,
 				"--mcp-presenter-enforcement",
 			]);
-			expect(pending.exitCode, pending.stderr).toBe(0);
+			expect(pending.exitCode, `${pending.stdout}${pending.stderr}`).toBe(0);
 			expect(onlyJsonLine(pending).action).toBe("handover_pending");
 			const successorPrepare = management ? next(management, "mcp_presenter_successor_prepare", signal) : undefined;
 			// The handover was acknowledged (`handover_pending`): the host finishes the turn, starts and proves
@@ -276,7 +282,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			socket.on("data", (chunk) => received.push(String(chunk)));
 			send(socket, enroll);
 		});
-		expect(result.exitCode, result.stderr).toBe(0);
+		expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
 		expect(onlyJsonLine(result).capabilities).not.toContain("mcp_form_presenter_v1");
 		expect(received).toEqual([]);
 	}, 120_000);
@@ -284,7 +290,9 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 	it("reuse does not enroll or upgrade a foreign busy host; default remains off", async () => {
 		const qa = await hostCliSandbox("pr");
 		const model = await heldModel(qa);
-		const first = onlyJsonLine(await runHostCli(qa, ["ensure"]));
+		const firstResult = await runHostCli(qa, ["ensure"]);
+		expect(firstResult.exitCode, `${firstResult.stdout}${firstResult.stderr}`).toBe(0);
+		const first = onlyJsonLine(firstResult);
 		expect(first.capabilities).not.toContain("mcp_form_presenter_v1");
 		const { peer } = await busy(qa);
 		const received: string[] = [];
@@ -293,7 +301,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			socket.on("data", (chunk) => received.push(String(chunk)));
 			send(socket, enroll);
 		});
-		expect(reused.exitCode, reused.stderr).toBe(0);
+		expect(reused.exitCode, `${reused.stdout}${reused.stderr}`).toBe(0);
 		expect(onlyJsonLine(reused)).toMatchObject({
 			action: "reuse",
 			reused: true,

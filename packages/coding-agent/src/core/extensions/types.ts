@@ -13,6 +13,7 @@ import type { InputOrigin } from "../input-origin.ts";
 import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
+import type { ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 export type { ContextEvent } from "./context-event.ts";
 
@@ -65,6 +66,7 @@ import type {
 	KeyId,
 	OverlayHandle,
 	OverlayOptions,
+	ProgramStatus,
 	TUI,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
@@ -130,7 +132,7 @@ export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
 export * from "./session-control-types.ts";
-export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
+export type { AgentToolResult, AgentToolUpdateCallback, ProgramStatus, ToolExecutionMode };
 
 export type ServiceTier = "auto" | "flex" | "priority" | "ultrafast";
 // biome-ignore format: keep literal union alias consistent with nearby ServiceTier style.
@@ -159,6 +161,11 @@ export interface ExtensionUIDialogOptions {
 	toolCallId?: string;
 	/** Set with `toolCallId` when another tool (for example a codemode script) issued that call. */
 	parentToolCallId?: string;
+}
+
+/** A guarded private single-line input; callers on older hosts must check capabilities first. */
+export interface ExtensionUIInputOptions extends ExtensionUIDialogOptions {
+	secret?: boolean;
 }
 
 /** Placement for extension widgets. */
@@ -237,6 +244,8 @@ export interface QuestionResponse {
  * Each mode (interactive, RPC, print) provides its own implementation.
  */
 export interface ExtensionUIContext {
+	/** Implements private collection and typed refusal; a presenter is checked at call time. */
+	readonly capabilities?: { readonly secretInput?: true };
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
@@ -244,7 +253,7 @@ export interface ExtensionUIContext {
 	confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean>;
 
 	/** Show a text input dialog. */
-	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+	input(title: string, placeholder?: string, opts?: ExtensionUIInputOptions): Promise<string | undefined>;
 
 	/**
 	 * Show a multi-question prompt and resolve with the user's answers, comment, cancel, or timeout.
@@ -323,6 +332,9 @@ export interface ExtensionUIContext {
 
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;
+
+	/** Report the program's state to the terminal (OSC 7501 Program Status); `undefined` clears it. */
+	setProgramStatus(status: ProgramStatus | undefined): void;
 
 	/** Show a custom component with keyboard focus. */
 	custom<T>(
@@ -546,6 +558,8 @@ export interface ExtensionContext {
 	readonly goalStoreFile?: string;
 	/** Browser engine the opener chose for THIS session (`open_session.browserEngine`); absent when it chose none. */
 	readonly browserEngine?: BrowserEngine;
+	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
+	readonly sessionEnv?: Readonly<Record<string, string>>;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -648,6 +662,13 @@ export interface ExtensionContext {
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
 	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
 	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
+	/**
+	 * Run `publish` once every `session_start` handler of the current dispatch has returned, in admission order;
+	 * outside a `session_start` dispatch it runs now. Recovered work published here cannot be answered while a
+	 * later startup handler is still preparing the session. Skipped when the session was replaced, reloaded or
+	 * disposed before dispatch ended; a returned promise's rejection is reported as an extension error.
+	 */
+	afterSessionStart?(publish: () => void | Promise<void>): void;
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -688,6 +709,13 @@ export interface ExtensionContext {
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 	/**
+	 * The leading part of `getSystemPrompt()` the session's own requests cache separately (senpi#4447).
+	 * A request built from `getSystemPrompt()` passes it as `Context.systemPromptStablePrefix` so its system
+	 * blocks and cache breakpoint match the turn's. Undefined when every addition was stable. Optional on the
+	 * base context for compatibility with hand-built contexts; the senpi runner always binds it.
+	 */
+	getSystemPromptStablePrefix?(): string | undefined;
+	/**
 	 * Get the current base system-prompt construction options, including any
 	 * user overrides (`customPrompt` from --system-prompt, `appendSystemPrompt`
 	 * from --append-system-prompt). Optional on the base context for
@@ -712,6 +740,32 @@ export interface ExtensionContext {
 	 */
 	updateToolHookStatus?(statusMessage: string): void;
 }
+
+/**
+ * The members of {@link ExtensionContext} a runtime serves without a session (senpi#5223). A context from an
+ * `ExtensionRunner` built without a session manager has no `sessionManager` or `goalStoreFile`, and every other
+ * member outside this set throws a "loop-side and not bound" error.
+ */
+export type ExtensionRuntimeContext = Pick<
+	ExtensionContext,
+	| "offload"
+	| "ui"
+	| "mode"
+	| "hasUI"
+	| "cwd"
+	| "agentDir"
+	| "loadedExtensionPaths"
+	| "modelRegistry"
+	| "isProjectTrusted"
+	| "kernelTools"
+	| "evalHandleHost"
+	| "shutdown"
+	| "getLookAtSettings"
+	| "getAskUserSettings"
+	| "getImageSettings"
+	| "getRegisteredMcpServers"
+	| "extensionConnectsMcpServers"
+>;
 
 /** Provider request prefix of the next user turn (see `ExtensionContext.getPromptCachePrefixRequest`). */
 export interface PromptCachePrefixRequest {
@@ -1088,6 +1142,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * prompt-cache prefix.
 	 */
 	promptGuidelines?: string[];
+	/**
+	 * Optional guideline bullets that replace `promptGuidelines` when the active prompt preset renders the full
+	 * (pre-diet) shared sections (senpi#5665). Omitted means `promptGuidelines` renders there too.
+	 */
+	fullPromptGuidelines?: string[];
 	/** Optional eval-kernel globals installed while this tool is active; see {@link KernelPreludeContribution}. */
 	kernelPrelude?: KernelPreludeContribution;
 	/**
@@ -1151,6 +1210,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 
 	/** Where this tool's work runs once the per-session tool child exists (senpi#3566). */
 	placement?: ToolPlacement;
+	/**
+	 * The side of a split session this tool belongs on (see {@link HandlerRegistrationOptions.runs}). It is recorded
+	 * with the definition only: the tool still registers on every side, and {@link ToolDefinition.placement} keeps
+	 * its meaning.
+	 */
+	runs?: ExtensionSide;
 	/**
 	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
 	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
@@ -1663,8 +1728,22 @@ export interface BeforeAgentStartEvent {
 	preview?: boolean;
 }
 
+/** The side of a split session a registration runs on: the agent loop (`"brain"`) or tool execution (`"hand"`). */
+export type ExtensionSide = "brain" | "hand";
+
+/** Registration options every `pi.on(event, handler, options)` call accepts. */
+export interface HandlerRegistrationOptions {
+	/**
+	 * The side this handler runs on when a session's agent loop (`"brain"`) and its tool execution (`"hand"`)
+	 * run as separate processes: the extension generation loaded for the other side does not register it.
+	 * Omitted, the handler registers wherever the extension loads, as before `runs` existed. A fused session,
+	 * where one process is both sides, registers every handler whatever this says.
+	 */
+	runs?: ExtensionSide;
+}
+
 /** Registration options for `pi.on("before_agent_start", handler, options)`. */
-export interface BeforeAgentStartHandlerOptions {
+export interface BeforeAgentStartHandlerOptions extends HandlerRegistrationOptions {
 	/**
 	 * Declares that the handler has no side effects when `event.preview` is `true`: it only
 	 * computes the system prompt a real turn would get, and consumes no one-shot state,
@@ -1673,10 +1752,17 @@ export interface BeforeAgentStartHandlerOptions {
 	 * the host skips previews (and with them the session-start prompt-cache prewarm).
 	 */
 	previewSafe?: boolean;
+	/**
+	 * Runs the handler after every handler registered without it, on real turns and previews alike;
+	 * run-last handlers keep their registration order among themselves, except that builtin run-last
+	 * handlers run after every other extension's, so MCP server instructions always close the system
+	 * prompt (senpi#4448).
+	 */
+	runLast?: boolean;
 }
 
 /** Registration options for `pi.on("context", handler, options)` and `pi.on("context_with_system", handler, options)`. */
-export interface ContextHandlerOptions {
+export interface ContextHandlerOptions extends HandlerRegistrationOptions {
 	/**
 	 * Opt-in performance declaration (senpi#2525). `false` declares that the handler never
 	 * mutates a message object — or anything nested in one — in place; it may still return a
@@ -1777,6 +1863,12 @@ export interface AgentBeforeSettleEvent extends BoundaryState {
 /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
 export interface AgentSettledEvent {
 	type: "agent_settled";
+	/**
+	 * Present when every fallback rung failed and at least one failure was limit-shaped. `resumeAt`
+	 * (epoch ms) is the soonest future reset the run named, or the latest past reset if all passed.
+	 * It is absent only when no reset was collected. Outage-only exhaustion keeps provider recovery.
+	 */
+	fallbackExhausted?: { resumeAt?: number };
 }
 
 export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom" | "question";
@@ -2312,6 +2404,14 @@ export interface BeforeAgentStartEventResult {
 	};
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
+	/**
+	 * Whether this handler's change to `systemPrompt` is the same in every session in the same working
+	 * directory (`"stable"`; the base prompt names the cwd) or differs between sessions, turns or commits
+	 * (`"volatile"`: memory, per-prompt hook output, per-session state). Defaults to `"stable"` for
+	 * builtin extensions and `"volatile"` for every other extension. The prompt up to the first volatile
+	 * change is sent as a separately cached prefix where the provider supports it (senpi#4447).
+	 */
+	systemPromptCache?: "stable" | "volatile";
 	/** Exact render parts of a complete replacement, used only by preview accounting. */
 	readonly systemPromptParts?: readonly DynamicSystemPromptPart[];
 }
@@ -2472,6 +2572,8 @@ export const EMPTY_SESSION_CONTEXT: SessionContext = Object.freeze({});
 export interface ExtensionSessionProfile {
 	readonly sessionKind: SessionKind;
 	readonly sessionContext: SessionContext;
+	/** The side of a split session this extension generation is loaded for; absent on a fused session. Not exposed on `pi`. */
+	readonly side?: ExtensionSide;
 }
 
 /** The profile a classic launch (and any caller that names none) loads extensions with. */
@@ -2517,49 +2619,112 @@ export interface ExtensionAPI {
 	// Event Subscription
 	// =========================================================================
 
-	on(event: "project_trust", handler: ProjectTrustHandler): () => void;
+	on(event: "project_trust", handler: ProjectTrustHandler, options?: HandlerRegistrationOptions): () => void;
 	on(
 		event: "resources_discover",
 		handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): () => void;
+	on(
+		event: "session_start",
+		handler: ExtensionHandler<SessionStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "held_wakes_released",
 		handler: ExtensionHandler<HeldWakesReleasedEvent, HeldWakesReleasedEventResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "session_hold_changed", handler: ExtensionHandler<SessionHoldChangedEvent>): () => void;
-	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): () => void;
-	on(event: "session_parked", handler: ExtensionHandler<SessionParkedEvent>): () => void;
-	on(event: "session_resumed", handler: ExtensionHandler<SessionResumedEvent>): () => void;
+	on(
+		event: "session_hold_changed",
+		handler: ExtensionHandler<SessionHoldChangedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_info_changed",
+		handler: ExtensionHandler<SessionInfoChangedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_parked",
+		handler: ExtensionHandler<SessionParkedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_resumed",
+		handler: ExtensionHandler<SessionResumedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "session_before_switch",
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(
 		event: "session_before_fork",
 		handler: ExtensionHandler<SessionBeforeForkEvent, SessionBeforeForkResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(
 		event: "session_before_reload",
 		handler: ExtensionHandler<SessionBeforeReloadEvent, SessionBeforeReloadResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(
 		event: "session_before_compact",
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): () => void;
-	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): () => void;
-	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
-	on(event: "mcp_servers_change", handler: ExtensionHandler<McpServersChangeEvent>): () => void;
-	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): () => void;
-	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): () => void;
-	on(event: "session_move_export", handler: ExtensionHandler<SessionMoveExportEvent>): () => void;
-	on(event: "session_move_import", handler: ExtensionHandler<SessionMoveImportEvent>): () => void;
+	on(
+		event: "session_compact",
+		handler: ExtensionHandler<SessionCompactEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_compact_failed",
+		handler: ExtensionHandler<SessionCompactFailedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_shutdown",
+		handler: ExtensionHandler<SessionShutdownEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "mcp_servers_change",
+		handler: ExtensionHandler<McpServersChangeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_abort",
+		handler: ExtensionHandler<SessionAbortEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_extensions_removed",
+		handler: ExtensionHandler<SessionExtensionsRemovedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_move_export",
+		handler: ExtensionHandler<SessionMoveExportEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_move_import",
+		handler: ExtensionHandler<SessionMoveImportEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "session_before_tree",
 		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): () => void;
+	on(
+		event: "session_tree",
+		handler: ExtensionHandler<SessionTreeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "context",
 		handler: ExtensionHandler<ContextEvent, ContextEventResult>,
@@ -2573,43 +2738,145 @@ export interface ExtensionAPI {
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): () => void;
-	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): () => void;
-	on(event: "provider_stream_event", handler: ExtensionHandler<ProviderStreamEvent>): () => void;
+	on(
+		event: "before_provider_headers",
+		handler: ExtensionHandler<BeforeProviderHeadersEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "after_provider_response",
+		handler: ExtensionHandler<AfterProviderResponseEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "provider_stream_event",
+		handler: ExtensionHandler<ProviderStreamEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "before_agent_start",
 		handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>,
 		options?: BeforeAgentStartHandlerOptions,
 	): () => void;
-	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): () => void;
-	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): () => void;
+	on(
+		event: "agent_start",
+		handler: ExtensionHandler<AgentStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>, options?: HandlerRegistrationOptions): () => void;
 	on(
 		event: "agent_before_settle",
 		handler: ExtensionHandler<AgentBeforeSettleEvent, AgentBeforeSettleEventResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): () => void;
-	on(event: "session_control_wake", handler: ExtensionHandler<SessionControlWakeEvent>): () => void;
-	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): () => void;
-	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): () => void;
-	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): () => void;
-	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent, TurnEndEventResult>): () => void;
-	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): () => void;
-	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): () => void;
-	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>): () => void;
-	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): () => void;
-	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): () => void;
-	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): () => void;
-	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): () => void;
-	on(event: "provider_login_start", handler: ExtensionHandler<ProviderLoginStartEvent>): () => void;
-	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): () => void;
-	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): () => void;
-	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): () => void;
-	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): () => void;
-	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): () => void;
-	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): () => void;
-	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): () => void;
-	on(event: "input_disposition", handler: ExtensionHandler<InputDispositionEvent>): () => void;
+	on(
+		event: "agent_settled",
+		handler: ExtensionHandler<AgentSettledEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_control_wake",
+		handler: ExtensionHandler<SessionControlWakeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "ui_prompt_start",
+		handler: ExtensionHandler<UIPromptStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "ui_prompt_end",
+		handler: ExtensionHandler<UIPromptEndEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>, options?: HandlerRegistrationOptions): () => void;
+	on(
+		event: "turn_end",
+		handler: ExtensionHandler<TurnEndEvent, TurnEndEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "message_start",
+		handler: ExtensionHandler<MessageStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "message_update",
+		handler: ExtensionHandler<MessageUpdateEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "message_end",
+		handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_execution_start",
+		handler: ExtensionHandler<ToolExecutionStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_execution_update",
+		handler: ExtensionHandler<ToolExecutionUpdateEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_execution_end",
+		handler: ExtensionHandler<ToolExecutionEndEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "model_select",
+		handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "provider_login_start",
+		handler: ExtensionHandler<ProviderLoginStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "system_prompt_change",
+		handler: ExtensionHandler<SystemPromptChangeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "thinking_level_select",
+		handler: ExtensionHandler<ThinkingLevelSelectEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_activated",
+		handler: ExtensionHandler<ToolActivatedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_call",
+		handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_result",
+		handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "user_bash",
+		handler: ExtensionHandler<UserBashEvent, UserBashEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "input",
+		handler: ExtensionHandler<InputEvent, InputEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "input_disposition",
+		handler: ExtensionHandler<InputDispositionEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 
 	// =========================================================================
 	// Tool Registration
@@ -2887,9 +3154,12 @@ export interface ExtensionAPI {
 	 * Register or override a model provider.
 	 *
 	 * If `models` is provided: replaces all existing models for this provider.
-	 * If only `baseUrl` is provided: overrides the URL for existing models.
+	 * If only `baseUrl` is provided: overrides the URL for existing models, unless the user's
+	 * models.json sets a `baseUrl` for this provider or model, which always wins.
 	 * If `oauth` is provided: registers OAuth provider for /login support.
-	 * If `streamSimple` is provided: registers a custom API stream handler.
+	 * If `streamSimple` is provided: registers a custom API stream handler. It must send each
+	 * request to `model.baseUrl`: when models.json sets a `baseUrl`, every model of the provider
+	 * carries it.
 	 *
 	 * During initial extension load this call is queued and applied once the
 	 * runner has bound its context. After that it takes effect immediately, so
@@ -2916,7 +3186,7 @@ export interface ExtensionAPI {
 	 * });
 	 *
 	 * @example
-	 * // Override baseUrl for an existing provider
+	 * // Override baseUrl for an existing provider (a models.json baseUrl still wins)
 	 * pi.registerProvider("anthropic", {
 	 *   baseUrl: "https://proxy.example.com"
 	 * });
@@ -2985,7 +3255,7 @@ export interface ExtensionAPI {
 	readonly session: SessionControlActions;
 }
 
-export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
+export type { ExtensionRpcRequestContext, ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 // ============================================================================
 // Provider Registration Types
@@ -3001,7 +3271,12 @@ export interface ExtensionVirtualModel<TState = unknown> extends Omit<VirtualMod
 export interface ProviderConfig {
 	/** Display name for the provider in UI. */
 	name?: string;
-	/** Base URL for the API endpoint. Required when defining models. */
+	/**
+	 * Base URL for the API endpoint. Required when defining models. A models.json `baseUrl` for this
+	 * provider (or a models.json `models[i].baseUrl`) takes precedence over it and over model-level
+	 * `baseUrl` values declared here, for every model of the provider. `streamSimple`, `images` and
+	 * `classifiers` must therefore send each request to `model.baseUrl`, not to this value.
+	 */
 	baseUrl?: string;
 	/** API key literal, env interpolation ($ENV_VAR or ${ENV_VAR}), or leading !command. Required when defining models (unless oauth provided). */
 	apiKey?: string;
@@ -3094,6 +3369,12 @@ export interface ProviderConfig {
 	 * used and blocked all of them (senpi#2081).
 	 */
 	ownsAccountSelection?: boolean;
+	/**
+	 * Capability flag: every request runs through a binary on this machine, under a login stored on this
+	 * machine (for example a CLI driven as a subprocess), so the provider can only be served where that
+	 * binary and login exist. Metadata only: nothing reads it yet, and selection and resolution ignore it.
+	 */
+	localOnly?: boolean;
 }
 
 interface ProviderModelConfigBase {
@@ -3509,6 +3790,7 @@ export interface ExtensionContextActions {
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
+	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
@@ -3518,6 +3800,7 @@ export interface ExtensionContextActions {
 	getMessageRevision: () => number;
 	applyCompaction: (precomputed: CompactionResult, options: ApplyCompactionOptions) => Promise<ApplyCompactionResult>;
 	getSystemPrompt: () => string;
+	getSystemPromptStablePrefix?: () => string | undefined;
 	getLoadedHookSources: () => LoadedHookSources;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 	getPromptCachePrefixRequest?: (options?: PromptCachePrefixRequestOptions) => Promise<PromptCachePrefixResult>;
@@ -3603,8 +3886,12 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	/** `before_agent_start` handlers registered with `{ previewSafe: true }`. */
 	previewSafeHandlers?: WeakSet<HandlerFn>;
+	/** `before_agent_start` handlers registered with `{ runLast: true }`. */
+	runLastHandlers?: WeakSet<HandlerFn>;
 	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
 	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
+	/** The declared side of each handler registered with `{ runs }`; a handler that declared none has no entry. */
+	handlerSides?: WeakMap<HandlerFn, ExtensionSide>;
 	tools: Map<string, RegisteredTool>;
 	/** Optional for compatibility with extension records created before child modules. */
 	childModules?: Map<string, RegisteredChildModule>;

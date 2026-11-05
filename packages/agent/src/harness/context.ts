@@ -25,6 +25,17 @@ export {
 };
 
 const TELEMETRY_CONTEXT_KEY = createContextKey<TelemetryContext>("pi.telemetryContext");
+const SESSION_CWD_CONTEXT_KEY = createContextKey<string>("pi.sessionCwd");
+
+/** Return the session working directory attached to a context, if any. */
+export function getSessionCwd(context: Context): string | undefined {
+	return context.value(SESSION_CWD_CONTEXT_KEY);
+}
+
+/** Derive a context whose provider requests carry the session working directory. */
+export function withSessionCwd(cwd: string | undefined, context: Context): Context {
+	return cwd === undefined ? context : withContextValue(SESSION_CWD_CONTEXT_KEY, cwd, context);
+}
 
 /** Return the telemetry parent attached to a context, or the shared no-op parent. */
 export function getTelemetryContext(context: Context): TelemetryContext {

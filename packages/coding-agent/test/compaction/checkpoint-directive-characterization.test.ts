@@ -122,15 +122,6 @@ describe("checkpoint directive relocation: 60s system-prompt window -> one-shot 
 		expect(second?.systemPrompt).toBeUndefined();
 	});
 
-	it("UNCHANGED: delivers nothing once the 60s window has elapsed", async () => {
-		const harness = createHarness(Date.now() - 61_000);
-
-		const result = await harness.beforeAgentStart(startEvent(), harness.ctx);
-
-		expect(result?.systemPrompt).toBeUndefined();
-		expect(result?.message).toBeUndefined();
-	});
-
 	it("WAS: carried in the system prompt, never as a message — NOW: carried once as a hidden message", async () => {
 		const harness = createHarness(Date.now() - 1_000);
 

@@ -2,6 +2,7 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { watch } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import type { Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
@@ -26,11 +27,19 @@ import { removeHostScratch } from "../../helpers/host-scratch-removal.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-child-exit-supervisor.ts");
 // lsof exits 1 with no output when nothing holds the path (socket-ownership.ts lsofSocketHolders).
 const DEAD_SOCKET_LSOF_EXIT = 1;
-const rigs: Array<{ child: ChildProcess; exited: Promise<unknown>; hostPid: number; qa: GenerationScratch }> = [];
+/** Registered at spawn: a case that fails before its host is known still releases both fixture processes. */
+interface Rig {
+	readonly child: ChildProcess;
+	readonly lease: Socket;
+	hostPid: number | undefined;
+	readonly qa: GenerationScratch;
+}
+const rigs: Rig[] = [];
 
 async function childIdentityWritten(generation: HostGenerationPaths): Promise<void> {
 	const watcher = watch(generation.dir);
@@ -71,14 +80,19 @@ async function rig(mode: string) {
 	});
 	const child = spawn(process.execPath, [fixture, mode, qa.socket, qa.agentDir], {
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...generationEnv(qa),
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_RPC_HOST_INSTANCE_ID: instanceId,
 		},
-		stdio: ["ignore", "ignore", "pipe", "ipc"],
+		// Slot 4 is the fixture's lifetime lease (#4746): its EOF ends the supervisor and its socket host.
+		stdio: ["ignore", "ignore", "pipe", "ipc", "pipe"],
 	});
-	if (!child.pid || !child.stderr) throw new Error("supervisor did not start");
+	const lease = child.stdio[4];
+	if (!child.pid || !child.stderr || !lease) throw new Error("supervisor did not start");
+	lease.on("error", () => {});
+	const registered: Rig = { child, lease: lease as Socket, hostPid: undefined, qa };
+	rigs.push(registered);
 	let stderr = "";
 	const messages: Record<string, unknown>[] = [];
 	child.stderr.on("data", (chunk) => {
@@ -92,7 +106,10 @@ async function rig(mode: string) {
 	const exited = once(child, "exit", { signal: AbortSignal.timeout(20_000) });
 	void exited.catch(() => {});
 	child.on("message", (message: unknown) => {
-		if (typeof message === "object" && message !== null) messages.push({ ...message });
+		if (typeof message !== "object" || message === null) return;
+		if ("type" in message && message.type === "host" && "pid" in message && typeof message.pid === "number")
+			registered.hostPid = message.pid;
+		messages.push({ ...message });
 	});
 	const wait = async (type: string, after = 0): Promise<Record<string, unknown>> => {
 		const existing = () => messages.slice(after).find((message) => message.type === type);
@@ -122,7 +139,6 @@ async function rig(mode: string) {
 	};
 	const host = await wait("host");
 	if (typeof host.pid !== "number") throw new Error("missing host pid");
-	rigs.push({ child, exited, hostPid: host.pid, qa });
 	// #4216/#4242: listen precedes key publication, ownership writes and drain-watch setup.
 	await wait("startup-ready");
 	if (mode === "honour-term") await wait("host-ready");
@@ -147,29 +163,58 @@ async function rig(mode: string) {
 	};
 }
 
-afterEach(async () => {
-	for (const r of rigs.splice(0)) {
-		if (r.child.exitCode === null && r.child.signalCode === null) {
-			r.child.kill("SIGKILL");
-			await r.exited;
-		}
-		if (processAlive(r.hostPid)) {
-			const command = execFileSync("ps", ["-p", String(r.hostPid), "-o", "command="], { encoding: "utf8" });
-			expect(command).toContain(fixture);
-			const exit = await processExitEvent(r.hostPid);
-			try {
-				process.kill(r.hostPid, "SIGKILL");
-				await exit.wait(10_000, command.trim());
-			} finally {
-				await exit.dispose();
-			}
-		}
+/** A fixture pid still alive is SIGKILLed only after `ps` proves it is still this fixture (no pid reuse). */
+function killFixturePid(pid: number | undefined): void {
+	if (pid === undefined || !processAlive(pid)) return;
+	const command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+	if (command.includes(fixture)) process.kill(pid, "SIGKILL");
+}
+
+// #4746: release by the lease, never by a recorded pid alone; a fixture that survives it fails the case.
+async function releaseRig(r: Rig): Promise<void> {
+	const running = r.child.exitCode === null && r.child.signalCode === null;
+	const supervisorExit = running ? once(r.child, "exit", { signal: AbortSignal.timeout(10_000) }) : undefined;
+	void supervisorExit?.catch(() => {});
+	const hostExit = r.hostPid !== undefined && processAlive(r.hostPid) ? await processExitEvent(r.hostPid) : undefined;
+	try {
+		r.lease.destroy();
+		await supervisorExit;
+		await hostExit?.wait(10_000, `fixture socket host ${r.hostPid} outlived its lease`);
+	} catch (cause) {
+		if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill("SIGKILL");
+		killFixturePid(r.hostPid);
+		throw cause;
+	} finally {
+		await hostExit?.dispose();
 		await removeHostScratch(r.qa);
 	}
+}
+
+afterEach(async () => {
+	const released = await Promise.allSettled(rigs.splice(0).map(releaseRig));
+	const failures = released.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+	if (failures.length > 0) throw new AggregateError(failures, "fixture processes outlived their test");
 });
 
 // #3054: observe the real supervisor's exit, its child's reaping, and the retained ownership boundary.
 describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("supervisor child exit", () => {
+	// #4746: a test runner that dies (aborted run, killed worker) never reaches afterEach. Letting go of every
+	// handle the test holds is that death as the fixture sees it: neither fixture process may outlive it.
+	it("takes the supervisor and its SIGTERM-resistant host down once the test lets go", async () => {
+		const r = await rig("ignore-term");
+		const hostExit = await processExitEvent(r.hostPid);
+		const supervisorExit = once(r.child, "exit", { signal: AbortSignal.timeout(10_000) });
+		void supervisorExit.catch(() => {});
+		try {
+			r.child.disconnect();
+			for (const stream of r.child.stdio) stream?.destroy();
+			await hostExit.wait(10_000, `abandoned socket host ${r.hostPid}`);
+			await supervisorExit;
+		} finally {
+			await hostExit.dispose();
+		}
+	});
+
 	it("stops a SIGTERM-honouring host without expiring the escalation grace", async () => {
 		const r = await rig("honour-term");
 		const hostExit = await processExitEvent(r.hostPid);

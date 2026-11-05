@@ -158,6 +158,8 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
 		created_at: created,
 		updated_at: last?.timestamp ?? created,
 		attachments: 1,
+		// A release here never ends the terminal's own session.
+		retain_on_disconnect: true,
 	};
 }
 
@@ -168,6 +170,7 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
  * message on either surface.
  */
 function answerQuestion(context: ControlCommandContext, command: ControlCommand): object {
+	if (command.secret === true) return failure(command.id, "extension_ui_response", "invalid_secret_response");
 	const { surface, session } = context;
 	const ledger = sessionUiAnswerLedger(session);
 	const answerId = command.answerId;
