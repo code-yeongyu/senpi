@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { rm } from "node:fs/promises";
 import { connect, createServer, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
+import type { PresenterAccountAuthority } from "../../../src/modes/rpc/mcp-presenter-account.ts";
 import { startMcpPresenterControl } from "../../../src/modes/rpc/mcp-presenter-control-start.ts";
 import { isRecord } from "../../../src/core/extensions/builtin/mcp/modern/form-schema.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
@@ -83,8 +84,16 @@ function presenterConnection(writer: SessionEventWriter, id: string, lines: stri
 	return { id, connection, context, request, unread: () => requests.length };
 }
 
-export async function accountHost(options: { authority?: boolean; inheritedBootstrap?: Duplex } = {}) {
-	const state: { account: string | undefined; readonly listeners: Set<() => void> } = {
+type AccountState = { account: string | undefined; readonly listeners: Set<() => void> };
+
+export async function accountHost(
+	options: {
+		authority?: boolean;
+		inheritedBootstrap?: Duplex;
+		account?: (state: AccountState) => PresenterAccountAuthority;
+	} = {},
+) {
+	const state: AccountState = {
 		account: "account-a",
 		listeners: new Set(),
 	};
@@ -97,7 +106,7 @@ export async function accountHost(options: { authority?: boolean; inheritedBoots
 	if (!binding) throw new Error("Fixture binding missing");
 	const started = await startMcpPresenterControl(writer, {
 		enforcement: true,
-		...(options.authority !== false && { account: issuer.authority(state) }),
+		...(options.authority !== false && { account: (options.account ?? issuer.authority)(state) }),
 		...(options.inheritedBootstrap && { bootstrap: options.inheritedBootstrap }),
 	});
 	if (!started) throw new Error("No presenter control");
@@ -149,7 +158,11 @@ export async function signedCommand(peer: Peer, principalId: unknown, key: KeyOb
 export async function enrollAssignAcquire(
 	host: AccountHost,
 	device = installation(),
-	options: { readonly context?: AccountHost["context"]; readonly claims?: Record<string, unknown> } = {},
+	options: {
+		readonly context?: AccountHost["context"];
+		readonly claims?: Record<string, unknown>;
+		readonly features?: readonly string[];
+	} = {},
 ) {
 	const peer = host.open();
 	const token = issuer.mint(device.publicKey, options.claims);
@@ -168,6 +181,7 @@ export async function enrollAssignAcquire(
 		sessionId: "session",
 		kind: "desktop",
 		purpose: "mcp_form",
+		...(options.features && { features: options.features }),
 	});
 	return { peer, device, token, challenge, reply, principalId, assigned, acquired };
 }
