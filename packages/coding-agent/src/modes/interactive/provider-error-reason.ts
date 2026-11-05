@@ -1,3 +1,5 @@
+import { stripTurnRetrySuppressionPrefix } from "@earendil-works/pi-ai";
+
 const STATUS_PHRASES: Readonly<Record<number, string>> = {
 	408: "request timeout",
 	429: "rate limited",
@@ -8,8 +10,11 @@ const STATUS_PHRASES: Readonly<Record<number, string>> = {
 	529: "overloaded",
 };
 
+const REASON_PHRASE =
+	"(?:bad request|unauthorized|forbidden|not found|request timeout|too many requests|internal server error|bad gateway|service unavailable|gateway timeout|overloaded)";
+
 const STATUS_SOURCES: readonly RegExp[] = [
-	/^(?:Error:\s*)?(\d{3})\b/i,
+	new RegExp(`^(?:Error:\\s*)?(\\d{3})(?=\\s*(?:[:<{(]|$)|\\s+status code\\b|\\s+${REASON_PHRASE}\\b)`, "i"),
 	/<title>\s*(\d{3})\b/i,
 	/\bHTTP(?:\/\d(?:\.\d)?)?\s+(\d{3})\b/i,
 	/"(?:code|status|status_code)"\s*:\s*"?(\d{3})\b/i,
@@ -28,8 +33,9 @@ function httpStatus(raw: string): number | undefined {
  * raw error text a gateway returns, so the retry status and the final notice never carry the raw body
  * (a JSON envelope or an HTML error page, senpi#6012). Undefined when the text names no known cause.
  */
-export function providerErrorReason(raw: string | undefined): string | undefined {
-	if (!raw) return undefined;
+export function providerErrorReason(errorMessage: string | undefined): string | undefined {
+	if (!errorMessage) return undefined;
+	const raw = stripTurnRetrySuppressionPrefix(errorMessage);
 	const status = httpStatus(raw);
 	if (status !== undefined) {
 		const phrase = STATUS_PHRASES[status] ?? (status >= 500 ? "server error" : "request failed");

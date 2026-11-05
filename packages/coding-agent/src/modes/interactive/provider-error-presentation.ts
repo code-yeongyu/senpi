@@ -5,6 +5,7 @@ import { type Component, type Container, Text } from "@earendil-works/pi-tui";
 import { z } from "zod";
 import { keyText } from "./components/keybinding-hints.ts";
 import { sanitizeTuiErrorMessage } from "./extension-error-format.ts";
+import { isExcludedFromTurnRetry, isTurnRetryableFailure } from "../../core/turn-retry-eligibility.ts";
 import { describedProviderError } from "./provider-error-description.ts";
 import { providerErrorReason } from "./provider-error-reason.ts";
 import { theme } from "./theme/theme.ts";
@@ -44,27 +45,36 @@ export function isRetryableProviderError(raw: string | undefined): boolean {
 	return isRetryableErrorMessage(raw);
 }
 
+/** The session facts row ownership reads: the model whose window decides a context overflow. */
+export type RetryOwnershipSession = { readonly model?: { readonly contextWindow: number } | undefined } | undefined;
+
 /**
- * True when a failed attempt's row belongs to the quiet retry episode instead of painting its raw error:
- * the same classifier `auto_retry_start` uses, so a gateway 429 JSON body or 5xx HTML page the episode
- * records is not also a transcript row per attempt (senpi#6012). A failure a classifier already describes in
- * plain language (an account usage limit, a stall) keeps its row; an abort counts only on network wording.
+ * True when a failed attempt's row belongs to the quiet retry episode instead of painting its raw error. It requires
+ * the retry engine's own decision (`isTurnRetryableFailure`, which excludes a suppressed replay, a local failure, a
+ * model-config failure and a context overflow) AND transient wording, so a row is folded only for a failure the
+ * engine retries (senpi#6012). A failure a classifier already describes in plain language keeps its row.
  */
-export function isRetryableProviderMessage(message: AssistantMessage): boolean {
-	if (isNetworkProviderError(message.errorMessage))
-		return message.stopReason === "error" || message.stopReason === "aborted";
-	if (message.stopReason === "error")
-		return isRetryableProviderError(message.errorMessage) && describedProviderError(message) === undefined;
-	return false;
+export function isRetryableProviderMessage(message: AssistantMessage, session: RetryOwnershipSession): boolean {
+	if (message.stopReason !== "error" && message.stopReason !== "aborted") return false;
+	const contextWindow = session?.model?.contextWindow ?? 0;
+	if (isExcludedFromTurnRetry(message, contextWindow)) return false;
+	if (isNetworkProviderError(message.errorMessage)) return true;
+	return (
+		isTurnRetryableFailure(message, contextWindow) &&
+		isRetryableProviderError(message.errorMessage) &&
+		describedProviderError(message) === undefined
+	);
 }
 
 /** True when the turn's last failed attempt belongs to an active quiet episode, which owes its one final notice. */
 export function episodeOwnsFailure(
 	messages: readonly AgentMessage[],
 	presentation: ProviderErrorPresentation | undefined,
+	session: RetryOwnershipSession,
 ): boolean {
+	if (presentation?.hasActiveRetry !== true) return false;
 	const last = messages.findLast((message) => message.role === "assistant");
-	return last?.role === "assistant" && isRetryableProviderMessage(last) && presentation?.hasActiveRetry === true;
+	return last?.role === "assistant" && isRetryableProviderMessage(last, session);
 }
 
 class ProviderFailureNotice implements Component {
@@ -139,6 +149,7 @@ export class ProviderErrorPresentation {
 	clear(): void {
 		this.pending = false;
 		this.retryAwaitingFinish = false;
+		this.lastReason = undefined;
 		// Keep diagnostics reachable through the existing expansion affordance.
 		this.notice?.setSummary(undefined);
 	}

@@ -5591,7 +5591,7 @@ export class InteractiveMode {
 						this.session.retryAttempt,
 						this.session.currentAbortSource,
 					);
-					if (isRetryableProviderMessage(renderedMessage)) {
+					if (isRetryableProviderMessage(renderedMessage, this.session)) {
 						this.getProviderErrors().record(renderedMessage.errorMessage ?? "", this.toolOutputExpanded);
 					} else if (renderedMessage.stopReason === "stop" || renderedMessage.stopReason === "toolUse") {
 						this.providerErrors?.clear();
@@ -5714,7 +5714,7 @@ export class InteractiveMode {
 					event.failure !== undefined &&
 					!event.willRetry &&
 					!failureAlreadyDescribed(event.messages) &&
-					!episodeOwnsFailure(event.messages, this.providerErrors)
+					!episodeOwnsFailure(event.messages, this.providerErrors, this.session)
 				)
 					this.showError(formatProviderFailure(event.failure));
 
@@ -6427,7 +6427,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
-				if (isRetryableProviderMessage(message)) {
+				if (isRetryableProviderMessage(message, this.session)) {
 					this.getProviderErrors().record(message.errorMessage ?? "", this.toolOutputExpanded);
 					this.providerErrors?.finish();
 				} else if (message.stopReason === "stop" || message.stopReason === "toolUse") {
@@ -6442,7 +6442,7 @@ export class InteractiveMode {
 					this.getMarkdownTransformers(),
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
-				assistantComponent.setProviderErrorOwned(isRetryableProviderMessage(message));
+				assistantComponent.setProviderErrorOwned(isRetryableProviderMessage(message, this.session));
 				if (options?.replayOwnsTurnNotice === true) assistantComponent.setOwnsTurnNotice(true);
 				if (options?.replayOwnsTurnNotice === false) assistantComponent.setProviderErrorOwned(true);
 				this.chatContainer.addChild(assistantComponent);
@@ -6465,7 +6465,7 @@ export class InteractiveMode {
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
 		this.streamingComponent.setProviderErrorOwned(
-			isRetryableProviderMessage(message) || headNoticeShownElsewhere(message),
+			isRetryableProviderMessage(message, this.session) || headNoticeShownElsewhere(message),
 		);
 		const head = assistantStreamingHeadMessage(message);
 		// Single writer: while smooth streaming paces the head (no toolCall block),
@@ -6497,7 +6497,7 @@ export class InteractiveMode {
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
 			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
-			const errorShownElsewhere = isRetryableProviderMessage(message) || index < content.length;
+			const errorShownElsewhere = isRetryableProviderMessage(message, this.session) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
 				existing.setProviderErrorOwned(errorShownElsewhere);
