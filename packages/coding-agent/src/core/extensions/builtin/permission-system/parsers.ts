@@ -27,6 +27,8 @@ export type PermissionRequest = Pick<
 	readonly autoApproveAsk?: true;
 	/** Absolute external lexical spellings restrict the resolved decision; other aliases share rule order. */
 	readonly ruleAliases?: readonly string[];
+	/** The strings the tool opens for its path-class request, matched literally and by file identity (design 6.2). */
+	readonly executed?: readonly string[];
 };
 
 /** Parser function that extracts permission requests from tool input */
@@ -50,7 +52,11 @@ function fallbackPermissionRequest(permission: string): PermissionRequest {
  * to the preset, not to its actual arg), so the fallback derives the target from the tool's
  * meaningful arg — path, command, url, or input — and keeps `*` only for a truly arg-less call.
  */
-function fallbackPermissionRequestFor(toolName: string, input: Record<string, unknown>): PermissionRequest {
+function fallbackPermissionRequestFor(
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): PermissionRequest {
 	const found = getStringEntry(input, "path", "file_path", "command", "url", "input", "pattern", "filePath");
 	if (found === undefined) return fallbackPermissionRequest(toolName);
 	const [argKey, arg] = found;
@@ -61,11 +67,13 @@ function fallbackPermissionRequestFor(toolName: string, input: Record<string, un
 	// A URL is also matched as its canonical origin, so a domain grant (a literal origin) applies to
 	// every spelling of that origin; rules on the raw URL, a deny included, still match the raw URL.
 	const originAlias = argKey === "url" ? urlOriginAlias(arg) : undefined;
+	const pathArg = argKey === "path" || argKey === "file_path" || argKey === "filePath";
 	return {
 		permission: toolName,
 		patterns: [arg],
 		always: [arg],
 		...(originAlias === undefined ? {} : { ruleAliases: [arg, originAlias] }),
+		...(pathArg ? { executed: [resolveToCwd(arg, cwd)] } : {}),
 		...(widerAlways ? { widerAlways } : {}),
 	};
 }
@@ -292,7 +300,7 @@ export class ParserRegistry {
 	parse(toolName: string, input: Record<string, unknown>, cwd: string): PermissionRequest[] {
 		const parser = this.parsers.get(toolName);
 		if (!parser) {
-			return [fallbackPermissionRequestFor(toolName, input)];
+			return [fallbackPermissionRequestFor(toolName, input, cwd)];
 		}
 		return parser(toolName, input, cwd);
 	}
@@ -327,7 +335,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			// performs the authoritative access check and re-derives the parent the same way.
 			setApprovedMonitorParent(input, realpathWithoutOpen(dirname(resolve(cwd, path))));
 			return withExternalDirectoryRequests(
-				[{ permission: "read", patterns: [path], always: [path] }],
+				[{ permission: "read", patterns: [path], always: [path], executed: [resolve(cwd, path)] }],
 				[path],
 				cwd,
 				"file",
@@ -344,18 +352,20 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	const parseEditPermission: ToolPermissionParser = (toolName, input, cwd) => {
 		const filePath = parseFilePath(input);
 		if (filePath) {
+			const resolveTarget = toolName === "edit" || toolName === "write" ? toolTarget : unknownToolTarget;
 			return withExternalDirectoryRequests(
 				[
 					{
 						permission: "edit",
 						patterns: [filePath],
 						always: [filePath],
+						executed: [toolTarget(filePath, cwd)[0] ?? filePath],
 					},
 				],
 				[filePath],
 				cwd,
 				"file",
-				toolName === "edit" || toolName === "write" ? toolTarget : unknownToolTarget,
+				resolveTarget,
 			);
 		}
 
@@ -373,6 +383,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			permission: "edit",
 			patterns: [patchedPath],
 			always: [patchedPath],
+			executed: patchTarget(patchedPath, cwd),
 		}));
 
 		return withExternalDirectoryRequests(editRequests, patchedPaths, cwd, "file", patchTarget);
@@ -400,11 +411,15 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			return [fallbackPermissionRequest("grep")];
 		}
 
+		// The regex form sets no executed path and gets no identity route (M6).
 		const grepRequests: PermissionRequest[] = [
 			{
 				permission: "grep",
 				patterns: permissionPatterns,
 				always: ["*"],
+				...(searchPaths.length > 0
+					? { executed: searchPaths.flatMap((searchPath) => grepTarget(searchPath, cwd)) }
+					: {}),
 			},
 		];
 		return searchPaths.length > 0
@@ -420,6 +435,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 					permission: "list",
 					patterns: [searchPath],
 					always: [searchPath],
+					executed: toolTarget(searchPath, cwd),
 				},
 			],
 			[searchPath],

@@ -31,6 +31,7 @@ export type {
 	SwitchSessionHandler,
 } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
+export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./secret-input.ts";
 export * from "./session-control-types.ts";
 export type {
 	AfterProviderResponseEvent,
@@ -103,12 +104,14 @@ export type {
 	ExtensionHandler,
 	ExtensionMode,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionUIInputOptions,
 	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
@@ -152,6 +155,7 @@ export type {
 	NormalizedBuildSystemPromptOptions,
 	PowerShellToolCallEvent,
 	PowerShellToolResultEvent,
+	ProgramStatus,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,

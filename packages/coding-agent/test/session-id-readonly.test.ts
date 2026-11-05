@@ -19,6 +19,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createSessionManager } from "../src/main.ts";
 import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -72,7 +73,7 @@ async function runCli(args: string[]): Promise<{ code: number | null; agentDir: 
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 			cwd: projectDir,
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				[ENV_AGENT_DIR]: agentDir,
 				PI_OFFLINE: "1",
 			},

@@ -30,6 +30,7 @@ import {
 	sessionPromptSurfaceError,
 	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
+import { type SessionEnv, sessionEnvShapeError } from "./session-caller-env.ts";
 import { applyContextPatch, type SessionContextOverlay } from "./session-context-patch.ts";
 
 export interface HandoverParkedEntry {
@@ -58,6 +59,8 @@ export interface HandoverParkedEntry {
 	readonly contextOverlay?: SessionContextOverlay;
 	readonly autoTitle?: boolean;
 	readonly retryFallback?: SessionRetryFallbackProfile;
+	/** The session's own caller env (senpi#4381); it follows the session, never the generation's process. */
+	readonly sessionEnv?: SessionEnv;
 	/**
 	 * The host instance that wrote the park. Its own reopen watch skips it: the park is for the NEXT
 	 * generation, and a host reopening what it just idle-parked races the client's reopen (senpi#3485).
@@ -99,6 +102,7 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		(record.contextOverlay === undefined || !("refusal" in applyContextPatch(undefined, record.contextOverlay))) &&
 		sessionAutoTitleError(record.autoTitle) === undefined &&
 		sessionRetryFallbackError(record.retryFallback) === undefined &&
+		sessionEnvShapeError(record.sessionEnv) === undefined &&
 		(record.model === undefined ||
 			(typeof record.model === "object" &&
 				record.model !== null &&

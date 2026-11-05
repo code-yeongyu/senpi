@@ -2,13 +2,14 @@ import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "../../src/modes/rpc/host-watchdog.ts";
 import { readProcessStartTime } from "../../src/utils/process-identity.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const [role, runtime, endpoint] = process.argv.slice(2);
 const args = [...(runtime === "bun" ? [] : ["--import", "tsx"]), import.meta.filename];
 if (role === "supervisor") {
 	const child = spawn(runtime, [...args, "wrapper", runtime, endpoint], {
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			SENPI_RPC_INTERNAL_KEY_STDIN: "1",
 			SENPI_RPC_HOST_WATCH_PPID: String(process.pid),
 			SENPI_RPC_HOST_WATCH_PSTART: await readProcessStartTime(process.pid),

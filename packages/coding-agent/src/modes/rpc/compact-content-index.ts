@@ -48,7 +48,7 @@ export class CompactContentIndex<Row extends object> {
 	overrides: IndexNode<IndexOverride> | undefined;
 	readonly pages = new Set<IndexPage>();
 	readonly pending: CompactCommitDependencies<string>;
-	/** Overlay keys with no pending reference, oldest first: the compactor selects only from these. */
+	/** Overlay keys with no pending reference: the compactor selects only from these, in key order. */
 	readonly ready = new Set<string>();
 	private readonly leavesOf: (row: Row) => readonly LeafId[];
 	private readonly compactor: CompactIndexCompactor;

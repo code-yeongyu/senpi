@@ -33,9 +33,11 @@ function receivedPorts(value: unknown): MessagePort[] {
 		if (next === null || typeof next !== "object" || seen.has(next)) continue;
 		seen.add(next);
 		if (next instanceof MessagePort) ports.push(next);
-		else if (next instanceof Map) for (const entry of next) pending.push(...entry);
-		else if (next instanceof Set || Array.isArray(next)) pending.push(...next);
-		else if (Object.getPrototypeOf(next) === Object.prototype) pending.push(...Object.values(next));
+		// Push one value at a time: spreading a collection past the engine's argument limit throws RangeError.
+		else if (next instanceof Map) for (const [key, entry] of next) pending.push(key, entry);
+		else if (next instanceof Set || Array.isArray(next)) for (const entry of next) pending.push(entry);
+		else if (Object.getPrototypeOf(next) === Object.prototype)
+			for (const entry of Object.values(next)) pending.push(entry);
 	}
 	return ports;
 }

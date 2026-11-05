@@ -6,17 +6,27 @@
  * `cursor-agent` API dispatches those frames onto this bridge, which maps
  * each frame's args onto the session's real tools (`read`, `bash`, `edit`,
  * `write`, `grep`, `find`, `ls`, plus MCP/extension tools by name) and runs
- * them through the same wrapped `AgentTool.execute` path model-issued calls
- * use — so approvals, sandboxing, truncation, and rendering behavior stay
- * identical.
+ * each one as a one-call batch on the prepared pipeline model-issued calls
+ * run on — so validation, approvals, sandboxing, truncation, rendering and
+ * the execution witness stay identical (#5780).
  *
  * The arg translations here MUST mirror the display blocks the API
  * synthesizes (`synthesizeCursorExecToolCall` call sites): the transcript
  * shows one operation, so a different one must not run.
  */
 
-import type { AgentEvent, AgentTool, AgentToolCall, AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
+	type AgentEvent,
+	type AgentTool,
+	type AgentToolCall,
+	type AgentToolResult,
+	type BatchStoreFactory,
+	createPreparedToolHost,
+	type ExecutionPipelineWitness,
+	type ExecutionScope,
+} from "@earendil-works/pi-agent-core";
+import {
+	type AssistantMessage,
 	type CursorExecHandlers,
 	composeCursorShellCommand,
 	cursorPiLimit,
@@ -25,9 +35,9 @@ import {
 	cursorPiTimeout,
 	omitUndefinedCursorArgs,
 	type ToolResultMessage,
-	validateToolArguments,
 } from "@earendil-works/pi-ai";
 import type { ToolCallEvent, ToolCallEventResult } from "./extensions/types.ts";
+import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 
 export interface CursorExecBridgeOptions {
 	/**
@@ -38,9 +48,9 @@ export interface CursorExecBridgeOptions {
 	 */
 	getTool: (name: string) => AgentTool | undefined;
 	/**
-	 * Surface tool lifecycle events to the host UI. Bridge-run tools bypass
-	 * the agent loop's executor, so without these the live tool card for a
-	 * synthesized call never resolves.
+	 * Surface tool lifecycle events to the host UI. Bridge-run calls run
+	 * mid-stream, outside the loop's own tool batch, so without these the live
+	 * tool card for a synthesized call never resolves.
 	 */
 	emitEvent: (event: AgentEvent, runSignal: AbortSignal) => Promise<void>;
 	/** Same tool_result hook the local tool loop emits; plan-touch trackers listen here. */
@@ -55,11 +65,15 @@ export interface CursorExecBridgeOptions {
 	preflightToolCall?: (event: ToolCallEvent) => Promise<ToolCallEventResult | undefined>;
 	/** Abort signal for in-flight bridge executions (the active run's signal). */
 	getAbortSignal: () => AbortSignal | undefined;
+	/** The per-batch store the prepared pipeline runs each call on (the agent's `batchStoreFactory`). */
+	openBatchStore: BatchStoreFactory;
+	/** The session's execution scope, as the loop passes it to its own batches. */
+	getExecutionScope: () => ExecutionScope;
+	/** The agent's `onExecutionPipeline` sink: one receipt per call, like a model-issued call. */
+	recordWitness?: (witness: ExecutionPipelineWitness) => Promise<void> | void;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const NO_ACTIVE_RUN = "Tool execution has no active run";
 
 function errorResult(toolCallId: string, toolName: string, text: string): ToolResultMessage {
 	return {
@@ -99,6 +113,32 @@ function emptyResult(toolCallId: string, toolName: string): ToolResultMessage {
 	};
 }
 
+/** A frame's call as the message that issued it: Cursor's server issued it, so there is no model message to point at. */
+function issuingMessage(toolCall: AgentToolCall): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [toolCall],
+		api: "cursor-agent",
+		provider: "cursor",
+		model: "cursor-exec",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "toolUse",
+		timestamp: Date.now(),
+	};
+}
+
+/** The provider pairs the frame's result and the loop emits its message with the buffered results; the bridge must not. */
+function isToolResultMessageEvent(event: AgentEvent): boolean {
+	return (event.type === "message_start" || event.type === "message_end") && event.message.role === "toolResult";
+}
+
 async function executeTool(
 	options: CursorExecBridgeOptions,
 	toolName: string,
@@ -107,7 +147,7 @@ async function executeTool(
 ): Promise<ToolResultMessage> {
 	const runSignal = options.getAbortSignal();
 	if (!runSignal || runSignal.aborted) {
-		return errorResult(toolCallId, toolName, "Tool execution has no active run");
+		return errorResult(toolCallId, toolName, NO_ACTIVE_RUN);
 	}
 
 	const tool = options.getTool(toolName);
@@ -115,102 +155,70 @@ async function executeTool(
 		return errorResult(toolCallId, toolName, `Tool "${toolName}" is not available in this session`);
 	}
 
-	// Exec-frame translators write forms like `path: args.path || undefined`;
-	// a present `undefined` fails schema validation on optional fields even
-	// though omitting the key is valid.
-	const cleanArgs = omitUndefinedCursorArgs(args);
 	const toolCall: AgentToolCall = {
 		type: "toolCall",
 		id: toolCallId,
 		name: toolName,
-		// Exec-frame args are JSON: protobuf Value toJson / JSON.parse output (cursor-agent decodeMcpArgValue)
-		// or the scalar pi-args translations; omitUndefinedCursorArgs keeps them typed Record<string, unknown>.
-		arguments: cleanArgs as AgentToolCall["arguments"],
+		// Exec-frame translators write forms like `path: args.path || undefined`; a present `undefined` fails schema
+		// validation on optional fields. The args are JSON (protobuf Value toJson / JSON.parse or pi-args scalars).
+		arguments: omitUndefinedCursorArgs(args) as AgentToolCall["arguments"],
 	};
-
-	let params: unknown;
-	try {
-		params = validateToolArguments(tool, toolCall);
-		if (tool.prepareArguments) {
-			params = tool.prepareArguments(params);
-		}
-	} catch (error) {
-		return errorResult(toolCallId, toolName, error instanceof Error ? error.message : String(error));
-	}
-
-	await options.emitEvent({ type: "tool_execution_start", toolCallId, toolName, args: cleanArgs }, runSignal);
-	let toolResult: ToolResultMessage;
-	let endEvent: AgentEvent;
-	try {
-		if (!isRecord(params)) {
-			throw new Error(`Tool "${toolName}" prepared non-object arguments`);
-		}
-		const preflight = await options.preflightToolCall?.({
-			type: "tool_call",
-			toolCallId,
-			toolName,
-			input: params,
-		});
-		if (runSignal.aborted || options.getAbortSignal() !== runSignal) {
-			const message = "Tool execution has no active run";
-			toolResult = errorResult(toolCallId, toolName, message);
-			endEvent = {
-				type: "tool_execution_end",
-				toolCallId,
-				toolName,
-				result: { content: [{ type: "text", text: message }], details: undefined },
-				isError: true,
-			};
-		} else if (preflight?.block) {
-			const message = preflight.reason || "Tool execution was blocked";
-			toolResult = errorResult(toolCallId, toolName, message);
-			endEvent = {
-				type: "tool_execution_end",
-				toolCallId,
-				toolName,
-				result: { content: [{ type: "text", text: message }], details: undefined },
-				isError: true,
-			};
-		} else {
-			const result = await tool.execute(toolCallId, params, runSignal, undefined);
-			toolResult = {
-				role: "toolResult",
-				toolCallId,
-				toolName,
-				content: result.content ?? [],
-				details: result.details,
-				usage: result.usage,
-				isError: false,
-				timestamp: Date.now(),
-			};
-			endEvent = { type: "tool_execution_end", toolCallId, toolName, result, isError: false };
-		}
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		toolResult = errorResult(toolCallId, toolName, message);
-		endEvent = {
-			type: "tool_execution_end",
-			toolCallId,
-			toolName,
-			result: { content: [{ type: "text", text: message }], details: undefined },
-			isError: true,
-		};
-	}
-	await options.emitEvent(endEvent, runSignal);
-	if (options.emitToolResult) {
-		await options.emitToolResult({
-			toolName,
-			toolCallId,
-			args: params ?? cleanArgs,
-			result: {
-				content: toolResult.content,
-				details: toolResult.details,
-				usage: toolResult.usage,
+	// Ownership is rechecked at execution itself, not only when preflight returns: on the prepared host the call still
+	// awaits its digest, ledger steps and release after preflight, and a run that ends normally changes the agent's
+	// signal without aborting it, so a finished run's late frame must not run its side effect inside the next run.
+	const ownedTool: AgentTool = Object.create(tool, {
+		execute: {
+			value: (...call: Parameters<AgentTool["execute"]>) => {
+				if (runSignal.aborted || options.getAbortSignal() !== runSignal) throw new Error(NO_ACTIVE_RUN);
+				return tool.execute(...call);
 			},
-			isError: toolResult.isError === true,
-		});
-	}
-	return toolResult;
+		},
+	});
+	// The same prepared host model-issued calls run on: validation, argument preparation, the session's tool_call
+	// preflight and tool_result hook, lifecycle events and the witness receipt all come from it. The host resolves only
+	// this call's tool: Cursor drives its native tools whether or not the request advertised them.
+	const host = createPreparedToolHost(
+		{
+			// The bridge's preflight runs the session's tool_call chain on this object too (senpi#5795).
+			afterToolFreeze: carryPreflightFacts,
+			beforeToolCall: async ({ args: input }) => {
+				const preflight = await options.preflightToolCall?.({
+					type: "tool_call",
+					toolCallId,
+					toolName,
+					// Validated by the executor's argument check (a non-object never reaches this hook) and JSON from the frame.
+					input: input as Record<string, unknown>,
+				});
+				// The owning run may have ended while preflight waited; a replacement run must not inherit this call.
+				if (runSignal.aborted || options.getAbortSignal() !== runSignal)
+					return { block: true, reason: NO_ACTIVE_RUN };
+				return preflight?.block
+					? { block: true, reason: preflight.reason || "Tool execution was blocked" }
+					: undefined;
+			},
+			afterToolCall: async ({ args: input, result, isError }) => {
+				await options.emitToolResult?.({ toolName, toolCallId, args: input, result, isError });
+				return undefined;
+			},
+			removedToolHints: {},
+		},
+		options.openBatchStore,
+	);
+	const { messages } = await host.execute(
+		{ scope: options.getExecutionScope(), calls: [toolCall], mode: "sequential" },
+		{
+			signal: runSignal,
+			emit: async (event) => {
+				if (!isToolResultMessageEvent(event)) await options.emitEvent(event, runSignal);
+			},
+			...(options.recordWitness === undefined ? {} : { recordWitness: options.recordWitness }),
+			local: {
+				context: { systemPrompt: "", messages: [], tools: [ownedTool] },
+				assistantMessage: issuingMessage(toolCall),
+			},
+		},
+	);
+	return messages[0] ?? errorResult(toolCallId, toolName, NO_ACTIVE_RUN);
 }
 
 /**

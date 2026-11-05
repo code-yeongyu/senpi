@@ -46,11 +46,11 @@ function persistedNotices(fixture: ResumeFixture): number {
 		.reduce((sum, event) => sum + event.noticeIds.length, 0);
 }
 
-/** Resolves at the end of the next agent run; subscribe before the action that starts it. */
-function nextRunEnd(fixture: ResumeFixture): Promise<void> {
+/** Custody settles at agent_idle, after the run's notification handlers; subscribe before starting it. */
+function nextRunIdle(fixture: ResumeFixture): Promise<void> {
 	return new Promise((resolve) => {
 		const unsubscribe = fixture.h.session.subscribe((event) => {
-			if (event.type !== "agent_end") return;
+			if (event.type !== "agent_idle") return;
 			unsubscribe();
 			resolve();
 		});
@@ -187,8 +187,8 @@ describe("itemized sendMessage with a delivery ticket", () => {
 			return persist();
 		};
 
-		// When the batch is sent with that ticket, and the turn it starts ends
-		const runEnded = nextRunEnd(fixture);
+		// When the batch is sent with that ticket, and the turn reaches its custody settlement boundary
+		const runEnded = nextRunIdle(fixture);
 		const receipts = await sendWithTicket(fixture, ticket);
 		await settlesWithin(runEnded, "the re-admitted batch's turn");
 		await settle(fixture);
