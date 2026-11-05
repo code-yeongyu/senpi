@@ -2,11 +2,15 @@ import { fileURLToPath } from "node:url";
 import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
 import { quarantineVitestAgentDir } from "../../scripts/vitest-agent-dir-quarantine.mjs";
 import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
+import { BUN_HOSTED_TEST_FILES } from "./test/bun-hosted-tests.ts";
 
 const aiSrcProviderScope = fileURLToPath(new URL("../ai/src/node/provider-scope.ts", import.meta.url));
 const ptySrcIndex = fileURLToPath(new URL("../pty/src/index.ts", import.meta.url));
 
 quarantineVitestAgentDir();
+
+// Under Bun this config runs only the Bun-hosted files; under Node it runs everything else (test/bun-hosted-tests.ts).
+const runsOnBun = process.versions.bun !== undefined;
 
 export default mergeConfig(
 	baseConfig,
@@ -22,7 +26,12 @@ export default mergeConfig(
 			],
 			// test/manual-qa/ holds real-surface QA drivers, not default-suite tests (test/AGENTS.md).
 			// Run one explicitly with SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/<file>.
-			exclude: [...configDefaults.exclude, ...(process.env.SENPI_MANUAL_QA ? [] : ["test/manual-qa/**"])],
+			...(runsOnBun ? { include: [...BUN_HOSTED_TEST_FILES] } : {}),
+			exclude: [
+				...configDefaults.exclude,
+				...(process.env.SENPI_MANUAL_QA ? [] : ["test/manual-qa/**"]),
+				...(runsOnBun ? [] : BUN_HOSTED_TEST_FILES),
+			],
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
 			// Vitest runs on Node, so the Node.js runtime notice is off unless a test unstubs it.
 			env: { PI_OFFLINE: "1", PI_SKIP_RUNTIME_NOTICE: "1" },

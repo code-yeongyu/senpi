@@ -337,6 +337,72 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
 
+  # The coding-agent files in test/bun-hosted-tests.ts open persisted session state or start the CLI as a child of this
+  # runtime; on Node that needs the durable store, which exists only on Bun (S21b K9.a, senpi#5822). The Node shards
+  # above leave them out, and this job runs exactly them under a Bun-hosted vitest.
+  test-coding-agent-bun:
+    name: Test (coding-agent on Bun)
+    needs: build-coding-agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install system dependencies
+        timeout-minutes: 5
+        run: |
+          bash scripts/install-ci-system-deps.sh \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download the workspace build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: workspace-dist
+          path: ${{ runner.temp }}
+
+      - name: Restore the workspace build
+        shell: bash
+        run: tar -xzmf "$RUNNER_TEMP/workspace-dist.tar.gz"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Test on Bun
+        timeout-minutes: 25
+        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run
+        working-directory: packages/coding-agent
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Test (coding-agent on Bun)"
+            echo "- Status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
   # Fused-path equivalence (EQ, plan P0-05b): the real CLI on the Bun child runs cases E01-E20 against the fake model
   # server and must match the B0 goldens recorded for this platform; the Z1.n smoke compares a Node and a Bun child.
   fused-equivalence:
@@ -1552,6 +1618,7 @@ jobs:
         check,
         codemode-gate,
         test-coding-agent,
+        test-coding-agent-bun,
         fused-equivalence,
         rpc-owner-lifetime,
         macos-combined,
@@ -1597,6 +1664,7 @@ jobs:
             echo "- check: ${{ needs.check.result }}"
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- test-coding-agent-bun: ${{ needs.test-coding-agent-bun.result }}"
             echo "- fused-equivalence: ${{ needs.fused-equivalence.result }}"
             echo "- rpc-owner-lifetime: ${{ needs.rpc-owner-lifetime.result }}"
             echo "- macos-combined: ${{ needs.macos-combined.result }}"
