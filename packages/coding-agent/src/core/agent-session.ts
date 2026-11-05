@@ -19,6 +19,7 @@ import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
+import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 import type {
 	Agent,
 	AgentContinuationOptions,
@@ -2402,6 +2403,9 @@ export class AgentSession {
 		};
 		this._bindToolSearchRemovedHints();
 
+		// The tool_call chain below binds facts to the arguments object; the prepared executor runs a frozen copy, so the
+		// carrier is installed with the binder and cannot be left out of any session (senpi#5795).
+		this.agent.afterToolFreeze = carryPreflightFacts;
 		this.agent.beforeToolCall = async ({ toolCall, args, assistantMessage }, signal) => {
 			this._toolExecutionDepth++;
 			this._toolCallIssuers.set(toolCall.id, assistantMessage);

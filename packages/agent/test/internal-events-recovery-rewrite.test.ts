@@ -9,7 +9,7 @@ import {
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AssistantMessageEventStream } from "../../ai/src/utils/event-stream.ts";
-import { Agent } from "../src/agent.ts";
+import { Agent } from "../src/index.ts";
 import { type OrderedAgentRecord, createInternalAgentChannel } from "../src/internal-events.ts";
 import type { AgentTool } from "../src/types.ts";
 

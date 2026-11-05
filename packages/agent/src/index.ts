@@ -40,6 +40,7 @@ export {
 } from "@earendil-works/pi-telemetry";
 export * from "./agent.ts";
 export * from "./agent-loop.ts";
+export { Agent, agentLoop, agentLoopContinue, runAgentLoop, runAgentLoopContinue } from "./public-entry.ts";
 export { createInternalAgentChannel, type InternalAgentChannel, type OrderedAgentRecord } from "./internal-events.ts";
 export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
 export {
@@ -153,6 +154,12 @@ export {
 	serveLoopHooks,
 } from "./execution/loop-hook-host-hand.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
+export { canonicalJson } from "./execution/canonical-digest.ts";
+export { toStoreValue } from "./execution/prepared/executor-freeze.ts";
+export type { ConsentClassifier } from "./execution/prepared/executor-types.ts";
+export { openMemoryBatchStore } from "./execution/prepared/memory-batch-store.ts";
+export { BatchStoreMissingError, noPreflightCarry, PreflightCarryMissingError } from "./execution/tool-host.ts";
+export { createPreparedToolHost } from "./execution/prepared/pipeline-prepared.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
 export { createReliableTransport, type ReliableTransportOptions } from "./transport/reliable-transport.ts";

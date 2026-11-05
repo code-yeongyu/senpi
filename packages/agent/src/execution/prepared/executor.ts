@@ -1,13 +1,9 @@
-import { type AgentTool, prepareAgentToolCall } from "@earendil-works/pi-agent-core";
-import type {
-	ExecutionEntry,
-	ExecutionEvent,
-	ExecutionKey,
-	LedgerReply,
-} from "@earendil-works/pi-agent-core/conformance";
+import { prepareAgentToolCall } from "../../agent-loop.ts";
+import type { AgentTool } from "../../types.ts";
+import { canonicalDigest } from "../canonical-digest.ts";
+import type { ExecutionEntry, ExecutionEvent, ExecutionKey, LedgerReply } from "../ledger-types.ts";
 import { errorResult, finalizeBody, messageOf, type PreparedBody, runBody } from "./executor-body.ts";
 import {
-	digestOf,
 	freezeCall,
 	resultValue,
 	type StoppedReply,
@@ -137,11 +133,11 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 				if (before.terminate === true) result.terminate = true;
 				return stop(key, generation, { kind: "blocked", result, ...named });
 			}
-			const frozen = freezeCall(tool.name, prepared.args);
+			const frozen = await freezeCall(tool.name, prepared.args);
 			// Gate A approved this exact request; it covers the frozen call only when preparation left the call unchanged.
 			const covered =
 				request.authorizedDigest === requestDigest &&
-				freezeCall(call.name, toStoreValue(call.arguments)).digest === frozen.digest;
+				(await freezeCall(call.name, toStoreValue(call.arguments))).digest === frozen.digest;
 			const awaitingConsent =
 				options.consent !== undefined &&
 				!covered &&
@@ -252,9 +248,9 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 
 	return {
 		consent,
-		prepare: (request) => {
+		prepare: async (request) => {
 			const { name, arguments: args, incomplete, errorMessage } = request.call;
-			const requestDigest = digestOf(toStoreValue({ name, args, incomplete, errorMessage }));
+			const requestDigest = await canonicalDigest(toStoreValue({ name, args, incomplete, errorMessage }));
 			const admission = JSON.stringify([
 				request.generation,
 				request.workspace,
@@ -267,7 +263,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 			const id = keyId(keyOf(request));
 			const pending = preparations.get(id);
 			if (pending !== undefined && pending.admission === admission) return pending.reply;
-			if (pending !== undefined) return Promise.resolve({ kind: "refused", reason: "identity_conflict" });
+			if (pending !== undefined) return { kind: "refused", reason: "identity_conflict" };
 			const reply = prepareOnce(request, requestDigest);
 			preparations.set(id, { admission, reply });
 			// Only a prepared call keeps its memo (release needs it); every other reply is durable or retryable.
