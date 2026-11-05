@@ -3879,7 +3879,7 @@ Successful responses echo both IDs in `data` and, when `clientMessageId` is pres
 include `data.admission`:
 
 ```json
-{"durableSessionId":"session-id","clientMessageId":"message-1","clientTurnId":"turn-1","state":"running","disposition":"started"}
+{"durableSessionId":"session-id","clientMessageId":"message-1","clientTurnId":"turn-1","state":"running","disposition":"started","turnId":"3"}
 ```
 
 `state` is `queued`, `running`, or `completed`. Completed means the admission settled,
@@ -3887,6 +3887,12 @@ including handled or cleared input; it is not a claim that a provider answered
 successfully. The existing `disposition` remains `started`, `queued`, or `handled`.
 Preflight or storage rejection creates no accepted admission, so the same delivery
 can be retried after the failure is repaired.
+
+`turnId` is optional and identifies the engine turn at admission, using the same
+identifier as `get_state.currentTurnId`. It is independent of the caller's
+`clientTurnId`. The recorded value is retained when the admission completes and
+when a duplicate is answered after reopening; it is not replaced by a later
+running turn's ID. Older admissions and queued or handled inputs omit it.
 
 Accepted queues and their prepared content survive reopening the transcript. They
 are restored in the original enqueue order without rerunning input transforms, and a
@@ -4057,12 +4063,19 @@ same message with `"unknownCommandAsText": true` to send it to the model unchang
 
 Response:
 ```json
-{"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": { "disposition": "started" }}
+{"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": { "disposition": "started", "turnId": "3" }}
 ```
 
 The prompt success response carries `data.disposition` (`"started"` | `"queued"` | `"handled"`), captured from the host session's own disposition callback so proxied clients can resolve optimistic-echo contracts exactly like the local path. Older hosts omit `data`; clients must then degrade to canonical-only rendering (treat the echo as rejected). The response is emitted before the user `message_start` event on the same connection, and disposition callbacks registered through the client run synchronously inside response-frame dispatch — never through the resolved promise's microtask.
 
 `success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
+
+For a started input, optional `data.turnId` is captured after the engine admits the
+turn and before the user `message_start`. Identified inputs also retain it in
+`data.admission.turnId`. This applies to `steer` and `follow_up` with
+`whenIdle: "start"` too. A duplicate returns the original admission's ID, even if
+another turn is now running. If an older host or admission omits the field, the
+client cannot infer it from `clientTurnId` or a later `get_state` response.
 
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
 The `message` field for `prompt`, `steer`, and `follow_up` is limited to 1,000,000 characters;

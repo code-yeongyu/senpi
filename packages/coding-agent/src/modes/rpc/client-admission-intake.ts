@@ -19,7 +19,7 @@ export type AdmissionHooks = {
 	/** The identity to stamp on the input: the client's, or the one the host minted for an id-less queued input. */
 	readonly identity: ClientMessageIdentity;
 	readonly queued: (input: PreparedClientInput) => void;
-	readonly accepted: (disposition: PromptDisposition) => ClientMessageAdmission | undefined;
+	readonly accepted: (disposition: PromptDisposition, turnId?: string) => ClientMessageAdmission | undefined;
 };
 
 type ClientAdmissionIntake = {
@@ -75,11 +75,12 @@ export async function admitClientInput(
 		const disposition = await invoke({
 			identity: { ...clientMessageIdentity(command), clientMessageId },
 			queued: (prepared) => this.save({ ...base, state: "queued", disposition: "queued", prepared }),
-			accepted: (accepted) => {
+			accepted: (accepted, turnId) => {
 				const record = this.records.get(clientMessageId) ?? {
 					...base,
 					state: accepted === "handled" ? ("completed" as const) : ("running" as const),
 					disposition: accepted,
+					...(turnId === undefined ? {} : { turnId }),
 				};
 				if (!this.records.has(clientMessageId)) this.save(record);
 				return admissionSnapshot(record);

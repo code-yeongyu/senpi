@@ -3534,26 +3534,26 @@ export class AgentSession {
 			this._queuedInputAges.noteRunStarted();
 		}
 		this._isAgentRunActive = true;
-		onTurnAdmitted?.();
-		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
-		this._deadlineTracker.arm();
-		this._handlerTurnScope += 1;
-		// A new prompt replaces any retry that compaction before it scheduled.
-		this._failedResponse = undefined;
-		this._recordSelection();
-		this._requiredCompactionAdmissionError = undefined;
-		this._transcriptWriteFailures.startRun();
-		this._promptOwnsRun = true;
-		if (!this.agent.state.isStreaming) {
-			const withoutRefused = this._transcriptWriteFailures.takeRefusedOut(this.agent.state.messages);
-			if (withoutRefused) {
-				this.agent.state.messages = withoutRefused;
-				this._incrementMessageRevision();
-			}
-		}
-		this.agent.abortServerSideFallback =
-			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		try {
+			onTurnAdmitted?.();
+			// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
+			this._deadlineTracker.arm();
+			this._handlerTurnScope += 1;
+			// A new prompt replaces any retry that compaction before it scheduled.
+			this._failedResponse = undefined;
+			this._recordSelection();
+			this._requiredCompactionAdmissionError = undefined;
+			this._transcriptWriteFailures.startRun();
+			this._promptOwnsRun = true;
+			if (!this.agent.state.isStreaming) {
+				const withoutRefused = this._transcriptWriteFailures.takeRefusedOut(this.agent.state.messages);
+				if (withoutRefused) {
+					this.agent.state.messages = withoutRefused;
+					this._incrementMessageRevision();
+				}
+			}
+			this.agent.abortServerSideFallback =
+				this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 			await this.agent.prompt(messages);
 			// AgentSession's subscriber intentionally queues event work instead of
 			// blocking Agent core. Wait for this run's queued recovery decision
