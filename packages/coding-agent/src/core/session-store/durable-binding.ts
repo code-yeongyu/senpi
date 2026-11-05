@@ -1,5 +1,6 @@
-import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { open, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import {
 	createAdmissionLine,
 	openSessionStore,
@@ -9,7 +10,6 @@ import {
 	type SyncCommitStore,
 	type SyncSessionHandle,
 } from "@earendil-works/pi-agent-core";
-import { replaceFileAtomically } from "../session-file-replace.ts";
 import { createJsonlImporter, type JsonlFileStamp } from "../session-import/jsonl-import.ts";
 
 export interface DurableStoreBinding {
@@ -41,6 +41,34 @@ async function stampOf(path: string): Promise<JsonlFileStamp | undefined> {
 	try {
 		const value = await stat(path);
 		return { size: value.size, mtimeMs: value.mtimeMs, ctimeMs: value.ctimeMs };
+	} catch (error) {
+		if (codeOf(error) === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+/** Today's atomic replace, asynchronous: a temp file written and synced beside the target, then renamed over it. */
+async function replaceAtomically(path: string, contents: string): Promise<void> {
+	const mode = (await modeOf(path)) ?? 0o600;
+	const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+	const handle = await open(temp, "wx", mode);
+	try {
+		await handle.writeFile(contents);
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+	try {
+		await rename(temp, path);
+	} catch (error) {
+		await rm(temp, { force: true });
+		throw error;
+	}
+}
+
+async function modeOf(path: string): Promise<number | undefined> {
+	try {
+		return (await stat(path)).mode & 0o777;
 	} catch (error) {
 		if (codeOf(error) === "ENOENT") return undefined;
 		throw error;
@@ -127,7 +155,6 @@ export class DurableSessionBinding {
 	/** The caller appended `entry`'s line to the file. The ledger records only those bytes, asynchronously. */
 	projected(sessionFile: string, entry: StoredEntry): void {
 		const path = resolve(sessionFile);
-		if (this.stale) return this.scheduleReprojection(path);
 		const offset = this.projectedSize;
 		this.projectedSize += Buffer.byteLength(entry.line) + 1;
 		const sessionId = String(this.handle.header().id);
@@ -138,20 +165,12 @@ export class DurableSessionBinding {
 		});
 	}
 
-	/** A whole-file projection (first flush, header, rewrite). Never throws. */
-	projectWhole(sessionFile: string, write: () => void): void {
+	/** The caller wrote the whole file from today's serializer: record that image, unless a later write supersedes it. */
+	recordWhole(sessionFile: string): void {
 		const path = resolve(sessionFile);
-		if (this.stale) return this.scheduleReprojection(path);
-		try {
-			write();
-		} catch (error) {
-			return this.projectionFailed(sessionFile, error);
-		}
 		const contents = projectionImage(this.handle.header(), this.handle.entries());
 		this.projectedSize = Buffer.byteLength(contents);
-		const generation = this.generation;
 		this.record(path, async () => {
-			if (generation !== this.generation) return;
 			const written = await stampOf(path);
 			if (written !== undefined) await this.importer.recordProjection(path, contents, written);
 		});
@@ -178,27 +197,40 @@ export class DurableSessionBinding {
 		return this.admission.admit(async () => {});
 	}
 
-	// One repair per stale write, serialized on the admission line: a later one is a no-op once an earlier one succeeded,
-	// and every one that fails warns, so a persistent failure is reported on each write.
-	private scheduleReprojection(path: string): void {
+	// One repair per stale write, serialized on the admission line and fully asynchronous. A repair that a later write
+	// overtook keeps the mark and runs again; one that fails warns, so a persistent failure is reported on each write.
+	scheduleRepair(sessionFile: string): void {
+		const path = resolve(sessionFile);
 		void this.admission
 			.admit(async () => {
 				if (!this.stale) return;
+				const generation = this.generation;
 				const contents = projectionImage(this.handle.header(), this.handle.entries());
-				replaceFileAtomically(path, [contents]);
+				await replaceAtomically(path, contents);
+				if (generation !== this.generation) return this.scheduleRepair(path);
 				this.binding.store.commitSync(this.binding.epoch, [{ op: "delete", key: staleKey(path) }], () => {});
 				this.stale = false;
 				this.projectedSize = Buffer.byteLength(contents);
 				const written = await stampOf(path);
-				if (written !== undefined) await this.importer.recordProjection(path, contents, written);
+				if (written !== undefined && generation === this.generation) {
+					await this.importer.recordProjection(path, contents, written);
+				}
 			})
 			.catch((error: unknown) => this.projectionFailed(path, error));
 	}
 
+	// A ledger record a later write superseded (it committed while this one awaited) is dropped, not reported: the later
+	// write records its own projection, or marks the projection stale.
 	private record(path: string, write: () => Promise<void>): void {
-		void this.admission.admit(write).catch((error: unknown) => {
-			this.warn({ path, code: codeOf(error), message: `projection ledger not recorded: ${messageOf(error)}` });
-		});
+		const generation = this.generation;
+		void this.admission
+			.admit(async () => {
+				if (generation === this.generation) await write();
+			})
+			.catch((error: unknown) => {
+				if (generation !== this.generation) return;
+				this.warn({ path, code: codeOf(error), message: `projection ledger not recorded: ${messageOf(error)}` });
+			});
 	}
 }
 
@@ -209,7 +241,7 @@ async function reprojectFile(
 	path: string,
 	contents: string,
 ): Promise<void> {
-	replaceFileAtomically(path, [contents]);
+	await replaceAtomically(path, contents);
 	const written = await stampOf(path);
 	if (written !== undefined) await admission.admit(() => importer.recordProjection(path, contents, written));
 	binding.store.commitSync(binding.epoch, [{ op: "delete", key: staleKey(path) }], () => {});
