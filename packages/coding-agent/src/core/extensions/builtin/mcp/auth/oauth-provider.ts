@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { oauthBrandName } from "@earendil-works/pi-ai/utils/oauth-page";
 import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
 	OAuthClientInformationFull,
@@ -57,6 +58,22 @@ export function freezeGrantAttribution(record: McpStoredAuth | undefined): McpSt
 	if (issuer !== undefined) next.issuer = issuer;
 	else delete next.refreshToken;
 	return next;
+}
+
+/**
+ * Whether a stored discovery record carries its own evidence for the authorization server it names (senpi#4924):
+ * that server's metadata, the MCP server's protected-resource metadata naming it, or the MCP server's own origin
+ * (the SDK's legacy root fallback). A bare URL from anywhere else would send the SDK to an unverified server.
+ */
+function discoveryNamesItsServer(state: OAuthDiscoveryState, serverUrl: string): boolean {
+	if (state.authorizationServerMetadata !== undefined) return true;
+	const named = canonicalAuthorizationServerIssuer(String(state.authorizationServerUrl));
+	if (named === new URL(serverUrl).origin) return true;
+	return (
+		state.resourceMetadata?.authorization_servers?.some(
+			(server) => canonicalAuthorizationServerIssuer(String(server)) === named,
+		) ?? false
+	);
 }
 
 export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date.now()): OAuthTokens | undefined {
@@ -135,7 +152,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
 			token_endpoint_auth_method: "none",
-			client_name: "senpi",
+			client_name: oauthBrandName(),
 			scope: this.#options.scopes?.join(" "),
 		};
 	}
@@ -189,6 +206,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	discoveryState(): OAuthDiscoveryState | undefined {
 		const current = this.#store.read();
 		const state = current?.discoveryState;
+		// senpi#4924: a record that does not show where its authorization server came from is never handed out.
+		// The SDK would fetch metadata from the stored URL and post the saved grant there before anything checks
+		// that the MCP server names that server; callers discover from the MCP server instead.
+		if (state !== undefined && !discoveryNamesItsServer(state, this.serverUrl)) return undefined;
 		if (state !== undefined) {
 			try {
 				const issuer = validatedAuthorizationServerIssuer(state, this.serverName);

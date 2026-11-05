@@ -27,6 +27,7 @@ import {
 	waitForExit,
 } from "./process.ts";
 import { PythonStartup, type PythonStartupStage } from "./startup.ts";
+import type { PythonPermissionHost } from "./permission-host.ts";
 
 export type PythonTransportResult = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -41,6 +42,7 @@ export interface PythonTransportRunInput {
 }
 
 export interface PythonTransportOptions {
+	readonly permission?: PythonPermissionHost;
 	readonly interpreterPath: string;
 	readonly sessionId: string;
 	readonly cwd: string;
@@ -48,6 +50,8 @@ export interface PythonTransportOptions {
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */
 	readonly sessionEnv?: SessionEnvironment;
+	/** The kill guard (senpi#5349): the host's protected pids; absent = the guard is off for this kernel. */
+	readonly killGuard?: { readonly protectedPids: readonly number[] };
 	readonly startupTimeoutMs: number;
 	readonly startupCeilingMs: number;
 	readonly readCpuTime?: (pid: number | undefined) => bigint | undefined;
@@ -131,6 +135,9 @@ export class PythonKernelTransport {
 				...options.env,
 				PYTHONUNBUFFERED: "1",
 				PYTHONIOENCODING: "utf-8",
+				// Present only while the guard is on: it switches the kernel's guard on and feeds its os.kill prefilter.
+				SENPI_KILL_GUARD_PROTECTED:
+					options.killGuard === undefined ? undefined : options.killGuard.protectedPids.join(","),
 			},
 		};
 		const child = (options.spawnProcess ?? defaultSpawn)(spawnOptions);
@@ -256,18 +263,23 @@ export class PythonKernelTransport {
 			this.#onPipeError(error instanceof Error ? error : new Error(String(error))),
 		);
 		const { sessionId, connection, memory, kernelGeneration } = this.#options;
-		this.#write({
-			type: "init",
-			sessionId,
-			connection,
-			...(memory === undefined ? {} : { memory }),
-			...(kernelGeneration === undefined ? {} : { kernelGeneration }),
-		});
+		this.#write(
+			Object.assign(
+				{
+					type: "init",
+					sessionId,
+					connection,
+					...(memory === undefined ? {} : { memory }),
+					...(kernelGeneration === undefined ? {} : { kernelGeneration }),
+				} as const,
+				this.#options.permission ? { permission: this.#options.permission.bootstrap() } : {},
+			),
+		);
 		await startup.ready;
 	}
 
 	#write(message: HostToKernelMessage): void {
-		this.#child.stdin.write(encodeBridgeFrame(message));
+		this.#child.stdin.write(encodeBridgeFrame(this.#options.permission?.frame(message) ?? message));
 	}
 
 	#onStdout(chunk: string): void {

@@ -76,9 +76,9 @@ export interface SessionStatusRuntimeView {
 	readonly pendingQuestions: number;
 }
 
-/** The fanout's pending `question` frames for the session (replayed on attach). */
+/** The fanout's pending `question` frames for the session (replayed on attach); undefined when the count is unknown. */
 export interface SessionStatusFanoutView {
-	readonly pendingQuestions: number;
+	readonly pendingQuestions: number | undefined;
 }
 
 /** The derived half of a `session_status` record: everything except subscription, sequence and change. */
@@ -129,7 +129,8 @@ export interface SessionStatusRecord {
 function liveStatus(runtime: SessionStatusRuntimeView, fanout: SessionStatusFanoutView): SessionStatusValue {
 	// A question is asked from inside a running turn, and compaction can run inside one too: the narrower
 	// state wins, so a supervisor sees "waiting on the user" rather than a turn that merely looks busy.
-	if (fanout.pendingQuestions > 0 || runtime.pendingQuestions > 0) return "waiting_input";
+	// An unknown fanout count is no evidence either way: the runtime's own count decides.
+	if ((fanout.pendingQuestions ?? 0) > 0 || runtime.pendingQuestions > 0) return "waiting_input";
 	if (runtime.isCompacting) return "compacting";
 	if (runtime.isStreaming) return "running";
 	return "idle";

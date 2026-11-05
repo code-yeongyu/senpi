@@ -96,6 +96,21 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
 	}
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		value.expectedTurnId !== undefined
+	) {
+		if (
+			!(
+				typeof value.expectedTurnId === "string" &&
+				value.expectedTurnId.length > 0 &&
+				value.expectedTurnId.length <= 256
+			)
+		)
+			return "expectedTurnId must be a non-empty string of at most 256 characters; read it from get_state.currentTurnId.";
+		if (value.type === "prompt" && value.streamingBehavior === undefined)
+			return 'expectedTurnId on a prompt needs streamingBehavior "steer" or "followUp".';
+	}
 	if (value.type === "prompt" && value.toolBarrier !== undefined) {
 		const barrierError = toolBarrierSpecError(value.toolBarrier);
 		if (barrierError !== undefined) return barrierError;

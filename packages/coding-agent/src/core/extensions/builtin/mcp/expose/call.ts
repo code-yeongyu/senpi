@@ -6,7 +6,7 @@ import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSe
 import { runMcpConnectionLifecycleCall } from "../idle.ts";
 import type { McpInvocation, McpInvocationError } from "../invocation.ts";
 import type { McpToolDefinition } from "./register.ts";
-import { mcpRequestOptions } from "../request-origin.ts";
+import { beginScopedMcpCall, mcpRequestOptions } from "../request-origin.ts";
 import { McpMrtrError } from "../modern/errors.ts";
 import { callMcpToolRequest } from "../tool-client.ts";
 import type { McpToolResult } from "../tool-contracts.ts";
@@ -51,24 +51,32 @@ export async function callMcpTool(
 						if (prepared?.kind === "refused") return prepared;
 						if (prepared !== undefined && !prepared.isCurrent()) continue;
 						const current = prepared?.entry ?? entry;
-						const result = await callMcpToolRequest(
-							current.connection.client,
-							{ name: current.tool, arguments: args },
-							current.outputSchema,
-							mcpRequestOptions(current.requestOrigin?.(), {
-								onprogress: (progress) => {
-									onUpdate?.(
-										redactResolvedReferenceData({
-											content: [{ type: "text", text: formatProgress(label, progress) }],
-											details: { progress, server: entry.server, tool: entry.tool },
-										}),
-									);
-								},
-								signal,
-								timeout: current.requestTimeoutMs,
-							}),
-						);
-						return { kind: "called" as const, entry: current, result };
+						const origin = current.requestOrigin?.(invocation?.context);
+						// A call of one of several scopes keeps a legacy form it causes in its own scope's UI (S16c).
+						const endScopedCall =
+							origin === undefined ? undefined : beginScopedMcpCall(current.connection.client, origin, signal);
+						try {
+							const result = await callMcpToolRequest(
+								current.connection.client,
+								{ name: current.tool, arguments: args },
+								current.outputSchema,
+								mcpRequestOptions(origin, {
+									onprogress: (progress) => {
+										onUpdate?.(
+											redactResolvedReferenceData({
+												content: [{ type: "text", text: formatProgress(label, progress) }],
+												details: { progress, server: entry.server, tool: entry.tool },
+											}),
+										);
+									},
+									signal,
+									timeout: current.requestTimeoutMs,
+								}),
+							);
+							return { kind: "called" as const, entry: current, result };
+						} finally {
+							endScopedCall?.();
+						}
 					}
 				});
 			}),

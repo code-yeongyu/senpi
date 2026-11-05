@@ -9,15 +9,13 @@ import {
 import { selectAccount } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { classifySdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import { runFailover } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const PROVIDER = "anthropic-subscription";
 const T0 = Date.UTC(2026, 9, 16, 12, 0, 0);
 
 function pool(tag: string): [AccountSlot, AccountSlot] {
-	return [
-		{ name: `shared-${tag}`, refresh: "r-1", access: "a-1", expires: 1, source: "login" },
-		{ name: `spare-${tag}`, refresh: "r-2", access: "a-2", expires: 1, source: "login" },
-	];
+	return [cliSlot(`shared-${tag}`), cliSlot(`spare-${tag}`)];
 }
 
 async function storeWith(accounts: AccountSlot[]): Promise<CredentialStore> {

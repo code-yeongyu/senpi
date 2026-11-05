@@ -35,7 +35,7 @@ describe("html-render builtin", () => {
 	it("registers show_html_page", async () => {
 		const harness = await createHarness({ extensionFactories: [htmlRenderExtension] });
 		try {
-			const names = harness.agent.state.tools.map((tool) => tool.name);
+			const names = harness.session.getAllTools().map((tool) => tool.name);
 			expect(names).toContain("show_html_page");
 		} finally {
 			harness.cleanup();

@@ -1,3 +1,5 @@
+import type { RpcRemoteOrigin } from "./remote-origin.ts";
+
 // ============================================================================
 // Extension UI Events (stdout)
 // ============================================================================
@@ -30,6 +32,10 @@ export type RpcQuestionUiRequest = {
 	toolCallId: string;
 	waitForAnswer: boolean;
 	questions: RpcQuestionSpec[];
+	/** The connection whose command raised the question, or `"agent"` when no connection's command was dispatching. */
+	raisedBy?: string;
+	/** The remote device the raising connection speaks for (senpi#5475); absent for a local connection. */
+	remoteOrigin?: RpcRemoteOrigin;
 	timeout: number;
 	askedAtMs: number;
 	deadlineAtMs: number;
@@ -42,6 +48,7 @@ export type RpcExtensionUIRequest =
 			type: "extension_ui_request";
 			id: string;
 			method: "select";
+			remoteOrigin?: RpcRemoteOrigin;
 			/** Permanent MCP env grant; only a grant_select presentation may answer. */
 			grantSelect?: boolean;
 			title: string;
@@ -51,18 +58,36 @@ export type RpcExtensionUIRequest =
 			toolCallId?: string;
 			parentToolCallId?: string;
 	  }
-	| { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
+	| {
+			type: "extension_ui_request";
+			id: string;
+			method: "confirm";
+			title: string;
+			message: string;
+			timeout?: number;
+			remoteOrigin?: RpcRemoteOrigin;
+	  }
 	| {
 			type: "extension_ui_request";
 			id: string;
 			method: "input";
+			remoteOrigin?: RpcRemoteOrigin;
+			secret?: boolean;
+			deadlineAtMs?: number;
 			title: string;
 			placeholder?: string;
 			timeout?: number;
 			toolCallId?: string;
 			parentToolCallId?: string;
 	  }
-	| { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
+	| {
+			type: "extension_ui_request";
+			id: string;
+			method: "editor";
+			title: string;
+			prefill?: string;
+			remoteOrigin?: RpcRemoteOrigin;
+	  }
 	| {
 			type: "extension_ui_request";
 			id: string;
@@ -111,10 +136,17 @@ export type RpcExtensionUIRequest =
  * `uiRequestId` names the request answered, and without it `id` does (the short form).
  */
 export type RpcExtensionUIResponseFrame = {
+	secret?: boolean;
 	type: "extension_ui_response";
 	id: string;
 	uiRequestId?: string;
 	answerId?: string;
+};
+
+export type RpcSecretInputSettledEvent = {
+	type: "secret_input_settled";
+	id: string;
+	outcome: "answered" | "cancelled" | "timed_out" | "unavailable";
 };
 
 export type RpcExtensionUIResponse =

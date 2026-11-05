@@ -210,6 +210,12 @@ describe("ToolSearchService", () => {
 		const pi = {
 			on(name: string, handler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>) {
 				handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+				return () => {
+					handlers.set(
+						name,
+						(handlers.get(name) ?? []).filter((registered) => registered !== handler),
+					);
+				};
 			},
 			registerLazyToolActivator(handler: (name: string) => boolean) {
 				activator = handler;

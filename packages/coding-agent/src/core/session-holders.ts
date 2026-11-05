@@ -188,12 +188,14 @@ export function holdSessionFile(
 	return { release };
 }
 
-// A finishing move removes the emptied directory, so a writer racing it recreates the directory once.
+// A finishing move removes the emptied directory, so a writer racing it recreates the directory once. The mkdir is
+// inside the retry too: a recursive mkdir that finds the directory just created stats it, and fails with ENOENT when
+// that removal lands in between (senpi#5618).
 function publishHolderRecord(dir: string, record: string, content: string): void {
 	for (let attempt = 0; ; attempt += 1) {
-		mkdirSync(dir, { recursive: true });
 		const temp = `${record}.${randomUUID().slice(0, 8)}.tmp`;
 		try {
+			mkdirSync(dir, { recursive: true });
 			writeFileSync(temp, content);
 			renameSync(temp, record);
 			return;
@@ -220,9 +222,25 @@ export async function liveSessionHolders(
 	}
 }
 
+// A concurrent mover that finishes removes the emptied lock directory. A recursive mkdir that saw the directory
+// exist and stats it after that removal fails with ENOENT (senpi#5618): the directory is merely gone again, so the
+// publish fails once more and the next call here recreates it. Returns whether this mkdir hit that ENOENT. Only one
+// in a row is tolerated: a second means the path can never be created (a dangling symlink), which fails fast. Who
+// moves is still decided by the exclusive lock alone.
+async function createLockDir(dir: string, tolerateEnoent: boolean): Promise<boolean> {
+	try {
+		await mkdir(dir, { recursive: true });
+		return false;
+	} catch (error) {
+		if (!tolerateEnoent || errorCode(error) !== "ENOENT") throw error;
+		return true;
+	}
+}
+
 async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): Promise<string> {
 	const mine = identityRecord();
 	const deadline = Date.now() + waitMs;
+	let lockDirVanished = false;
 	while (true) {
 		try {
 			await publishExclusive(lock, mine);
@@ -230,7 +248,7 @@ async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): 
 		} catch (error) {
 			const code = errorCode(error);
 			if (code === "ENOENT") {
-				await mkdir(dirname(lock), { recursive: true });
+				lockDirVanished = await createLockDir(dirname(lock), !lockDirVanished);
 				continue;
 			}
 			if (code !== "EEXIST") throw error;

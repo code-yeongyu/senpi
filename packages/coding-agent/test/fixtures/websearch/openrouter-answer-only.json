@@ -1,0 +1,13 @@
+{
+	"id": "gen-openrouter-answer-only",
+	"model": "openai/gpt-5.2",
+	"choices": [
+		{
+			"message": {
+				"role": "assistant",
+				"content": "The `satisfies` operator arrived in TypeScript 4.9. Read https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html for the release notes."
+			}
+		}
+	],
+	"usage": { "prompt_tokens": 912, "completion_tokens": 48, "total_tokens": 960 }
+}

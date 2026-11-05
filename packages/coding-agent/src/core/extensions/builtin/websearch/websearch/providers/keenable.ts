@@ -10,22 +10,12 @@ import {
 	getArray,
 	getObject,
 	getString,
+	httpUrl,
 	result,
 } from "./shared.ts";
 
 /** Keyless twin of the default endpoint; identified by `X-Keenable-Title` instead of a key. */
 const PUBLIC_SEARCH_URL = "https://api.keenable.ai/v1/search/public";
-
-/** Accepts only absolute http(s) URLs; control characters would let text merge into the URL on parse. */
-function httpUrl(value: string | undefined): string | undefined {
-	if (!value || value.length > 2048 || /[\t\n\r]/.test(value)) return undefined;
-	try {
-		const url = new URL(value);
-		return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : undefined;
-	} catch {
-		return undefined;
-	}
-}
 
 export const keenableProvider: ProviderModule = {
 	buildRequest({ config, request, maxResults, allowedDomains, blockedDomains }: BuildContext): BuiltSearchRequest {

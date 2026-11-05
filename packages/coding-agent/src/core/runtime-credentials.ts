@@ -21,11 +21,13 @@ function asExtensionOAuthRegistry(store: CredentialStore): ExtensionOAuthRegistr
 }
 /** Async credential store overlay for non-persistent runtime API keys. */
 export class RuntimeCredentials implements CredentialStore {
+	readonly withRefreshLock?: CredentialStore["withRefreshLock"];
 	private readonly store: CredentialStore;
 	private readonly overrides = new Map<string, string>();
 
 	constructor(store: CredentialStore) {
 		this.store = store;
+		this.withRefreshLock = store.withRefreshLock?.bind(store);
 	}
 
 	/** The store extension OAuth providers register into; a session's ModelRegistry reads it (senpi#3434). */

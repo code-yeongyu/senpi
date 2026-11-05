@@ -242,6 +242,18 @@
 					"$ref": "#/$defs/colorValue",
 					"description": "Markdown list bullets/numbers"
 				},
+				"mdBold": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Markdown **bold** text color (optional; omitted keeps the surrounding color)"
+				},
+				"mdItalic": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Markdown *italic* text color (optional; omitted keeps the surrounding color)"
+				},
+				"mdStrikethrough": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Markdown ~~strikethrough~~ text color (optional; omitted keeps the surrounding color)"
+				},
 				"toolDiffAdded": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Added lines in tool diffs"

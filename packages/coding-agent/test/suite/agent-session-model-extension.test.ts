@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { ModelSwitchAuthError } from "../../src/core/model-switch-auth-error.ts";
 import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
 
@@ -298,9 +299,7 @@ describe("AgentSession model and extension characterization", () => {
 		});
 		harnesses.push(harness);
 
-		await expect(harness.session.setModel(harness.getModel("faux-2")!)).rejects.toThrow(
-			`No API key for ${harness.getModel().provider}/faux-2`,
-		);
+		await expect(harness.session.setModel(harness.getModel("faux-2")!)).rejects.toBeInstanceOf(ModelSwitchAuthError);
 	});
 
 	it("allows extension tool_call handlers to block tool execution", async () => {

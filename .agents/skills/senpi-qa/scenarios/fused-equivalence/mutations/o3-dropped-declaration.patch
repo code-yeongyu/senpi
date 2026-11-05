@@ -1,0 +1,13 @@
+diff --git a/packages/ai/src/api/openai-completions.ts b/packages/ai/src/api/openai-completions.ts
+index 7539dce93f..5ac716d6eb 100644
+--- a/packages/ai/src/api/openai-completions.ts
++++ b/packages/ai/src/api/openai-completions.ts
+@@ -1232,7 +1232,7 @@ function buildParams(
+ 	}
+ 
+ 	if (requestTools.length > 0) {
+-		params.tools = convertTools(requestTools, compat);
++		params.tools = convertTools(requestTools, compat).slice(0, -1);
+ 		if (compat.zaiToolStream) {
+ 			params.tool_stream = true;
+ 		}

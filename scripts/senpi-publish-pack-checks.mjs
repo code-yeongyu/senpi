@@ -114,11 +114,19 @@ export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, opt
 	}
 }
 
-const vendoredRequiredFiles = ["vendor/pi-client/index.js", "vendor/pi-client/index.d.ts", "vendor/pi-protocol/index.js", "vendor/pi-protocol/index.d.ts"];
+const vendoredRequiredFiles = [
+	"vendor/pi-client/index.js",
+	"vendor/pi-client/index.d.ts",
+	"vendor/pi-protocol/index.js",
+	"vendor/pi-protocol/index.d.ts",
+	"vendor/senpi-machine-ops/index.js",
+	"vendor/senpi-machine-ops/index.d.ts",
+	"vendor/senpi-machine-ops/process/in-process-holder.js",
+];
 
 // The Windows socket-secret bridge has no fallback (sisyphuslabs/omo-desktop-app#4199): a publish that names its
 // targets must ship every one of them, the best-effort arm64 build included.
-export const SOCKET_SECRET_BRIDGE_TARGETS = ["win32-arm64", "win32-x64"];
+const SOCKET_SECRET_BRIDGE_TARGETS = ["win32-arm64", "win32-x64"];
 
 export function socketSecretBridgeFile(target) {
 	if (!SOCKET_SECRET_BRIDGE_TARGETS.includes(target)) {

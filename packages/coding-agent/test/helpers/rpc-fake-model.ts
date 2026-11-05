@@ -92,6 +92,49 @@ function writeAnthropicSse(res: ServerResponse, text: string, model: string, mul
 	res.end();
 }
 
+function hasToolResult(body: unknown): boolean {
+	if (!isRecord(body) || !Array.isArray(body.messages)) return false;
+	return body.messages.some(
+		(message) =>
+			isRecord(message) &&
+			Array.isArray(message.content) &&
+			message.content.some((part: unknown) => isRecord(part) && part.type === "tool_result"),
+	);
+}
+
+// A prompt containing "tool-call-read" gets one `read` call on `probe.txt`, then plain text once its result is back.
+function writeAnthropicToolUseSse(res: ServerResponse, model: string): void {
+	res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+	const send = (event: string, data: Record<string, unknown>) => {
+		res.write(`event: ${event}\n`);
+		res.write(`data: ${JSON.stringify({ type: event, ...data })}\n\n`);
+	};
+	send("message_start", {
+		message: {
+			id: "msg_rpc_tool",
+			type: "message",
+			role: "assistant",
+			model,
+			content: [],
+			stop_reason: null,
+			stop_sequence: null,
+			usage: { input_tokens: 1, output_tokens: 0 },
+		},
+	});
+	send("content_block_start", {
+		index: 0,
+		content_block: { type: "tool_use", id: "toolu_fake_read", name: "read", input: {} },
+	});
+	send("content_block_delta", {
+		index: 0,
+		delta: { type: "input_json_delta", partial_json: JSON.stringify({ path: "probe.txt" }) },
+	});
+	send("content_block_stop", { index: 0 });
+	send("message_delta", { delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 1 } });
+	send("message_stop", {});
+	res.end();
+}
+
 export async function startFakeModelServer(options: { multiDelta?: boolean } = {}): Promise<FakeModelServer> {
 	const requests: FakeModelRequest[] = [];
 	const server = createServer((req, res) => {
@@ -121,6 +164,10 @@ export async function startFakeModelServer(options: { multiDelta?: boolean } = {
 						if (!res.destroyed)
 							writeAnthropicSse(res, responseTextFor(body), model ?? MOCK_MODEL, options.multiDelta);
 					}, Number(holdOpenMs));
+					return;
+				}
+				if (requestText(body).includes("tool-call-read") && !hasToolResult(body)) {
+					writeAnthropicToolUseSse(res, model ?? MOCK_MODEL);
 					return;
 				}
 				writeAnthropicSse(res, responseTextFor(body), model ?? MOCK_MODEL, options.multiDelta);

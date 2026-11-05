@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { type RecordValue, waitForJsonLine } from "../../rpc-protocol-identity-support.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 // A real `senpi --mode rpc` host under Bun, holding a session file with large resident entries and a
 // test extension that opens a JS kernel (`/memory-fill`), keeps a cell running (`/memory-hold`) and
@@ -74,7 +75,7 @@ export async function startMemoryReportHost(env: Readonly<Record<string, string>
 	writeFileSync(extension, probeExtension(holdMarker));
 	const sessionFile = join(root, "session.jsonl");
 	writeFileSync(sessionFile, residentSession(cwd));
-	const scrubbed: Record<string, string | undefined> = { ...process.env, ...hermeticProviderEnv() };
+	const scrubbed: Record<string, string | undefined> = { ...hostSpawnEnv(), ...hermeticProviderEnv() };
 	for (const key of ["SENPI_MEMORY_REPORT", "SENPI_MEMORY_REPORT_SNAPSHOT", "SENPI_RUNTIME", "SENPI_RPC_SOCKET"]) {
 		delete scrubbed[key];
 	}

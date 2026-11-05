@@ -35,7 +35,7 @@ export const RECOMMENDED_DEFAULT_MODELS = [
 		"xhigh",
 		CLAUDE_PROVIDERS,
 	],
-	["kimi-k3", "max", KIMI_PROVIDERS],
+	["kimi-k3.1-pro", "max", KIMI_PROVIDERS],
 	["gpt-6-astra", "xhigh", GPT_PROVIDERS],
 	["gpt-6.1-sol", "medium", GPT_PROVIDERS],
 	["glm-5.3", "max", GLM_PROVIDERS],
@@ -63,7 +63,8 @@ export function canonicalModelId(modelId: string): string {
 			}
 		}
 	}
-	return canonical === "k3" ? "kimi-k3" : canonical;
+	// Kimi Code serves the Moonshot models under bare ids (`k3`, `k3.1-pro`).
+	return canonical === "k3" || canonical === "k3.1-pro" ? `kimi-${canonical}` : canonical;
 }
 
 function recommendationsFor(configuredModelIds: string[] | undefined): readonly RecommendedModel[] {

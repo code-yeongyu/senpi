@@ -1,0 +1,112 @@
+{
+	"request": {
+		"type": "subscribe_sessions",
+		"admissionId": "golden-f",
+		"include_context": true,
+		"id": "peer-2"
+	},
+	"answer": {
+		"id": "peer-2",
+		"type": "response",
+		"command": "subscribe_sessions",
+		"success": true,
+		"data": {
+			"subscriptionId": "sub-1",
+			"seq": 0,
+			"hostGeneration": "0",
+			"hostInstanceId": "00000000-0000-4000-8000-000000000001",
+			"recovery": {
+				"kind": "event",
+				"id": "event:socket-2:1",
+				"admissionId": "golden-f",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 0,
+				"componentRef": "record",
+				"length": 938,
+				"digest": "fb5bf5a070e8876fd81c5b7487446ff576505d412230e5f01f6709969f321f9d"
+			}
+		},
+		"sessionId": "sub-1",
+		"admissionId": "golden-f",
+		"generation": 0
+	},
+	"baseline": {
+		"type": "recovery_manifest",
+		"sessionId": "sub-1",
+		"admissionId": "golden-f",
+		"generation": 0,
+		"eventLease": {
+			"kind": "event",
+			"id": "event:socket-2:1",
+			"admissionId": "golden-f",
+			"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+			"sequence": 0,
+			"componentRef": "record",
+			"length": 938,
+			"digest": "fb5bf5a070e8876fd81c5b7487446ff576505d412230e5f01f6709969f321f9d"
+		},
+		"componentRef": "record"
+	},
+	"page": {
+		"id": "peer-3",
+		"type": "response",
+		"command": "get_recovery_page",
+		"success": true,
+		"sessionId": "sub-1",
+		"admissionId": "golden-f",
+		"generation": 0,
+		"data": {
+			"requestId": "f-page",
+			"lease": {
+				"kind": "event",
+				"id": "event:socket-2:1"
+			},
+			"componentRef": "record",
+			"ordinal": 1,
+			"offset": 0,
+			"cursor": null,
+			"complete": true,
+			"repair": {
+				"state": "ok",
+				"healthRevision": null,
+				"source": null,
+				"hint": "restart_from_catalog",
+				"retryAfterMs": 0
+			},
+			"length": 938,
+			"digest": "1afb41f53a6555ea64cd5cd0d11a9ce4fc3f9d5d839359fc9c75c9da17c17220",
+			"bytes": "ewAiAHMAZQBxACIAOgAwACwAIgBzAG4AYQBwAHMAaABvAHQAIgA6AFsAewAiAHQAeQBwAGUAIgA6ACIAcwBlAHMAcwBpAG8AbgBfAHMAdABhAHQAdQBzACIALAAiAHMAdQBiAHMAYwByAGkAcAB0AGkAbwBuAEkAZAAiADoAIgBzAHUAYgAtADEAIgAsACIAcwBlAHEAIgA6ADAALAAiAHMAZQBzAHMAaQBvAG4ASQBkACIAOgAiAHIAcABjAC0AMQAiACwAIgBzAHQAYQB0AHUAcwAiADoAIgBpAGQAbABlACIALAAiAGsAaQBuAGQAIgA6ACIAaQBuAHQAZQByAGEAYwB0AGkAdgBlACIALAAiAGMAdwBkACIAOgAiADwAcgBvAG8AdAA+AC8AYwB3AGQAIgAsACIAYQB0AHQAYQBjAGgAbQBlAG4AdABzACIAOgAxACwAIgBkAHUAcgBhAGIAbABlAFMAZQBzAHMAaQBvAG4ASQBkACIAOgAiADAAMAAwADAAMAAwADAAMAAtADAAMAAwADAALQA0ADAAMAAwAC0AOAAwADAAMAAtADAAMAAwADAAMAAwADAAMAAwADAAMAAyACIALAAiAHMAZQBzAHMAaQBvAG4AUABhAHQAaAAiADoAIgA8AHIAbwBvAHQAPgAvAGMAdwBkAC8AcwBuAGEAcABzAGgAbwB0AC4AagBzAG8AbgBsACIALAAiAG0AbwBkAGUAbAAiADoAewAiAHAAcgBvAHYAaQBkAGUAcgAiADoAIgBmAGEAdQB4ACIALAAiAGkAZAAiADoAIgBmAGEAdQB4AC0AYQAiAH0ALAAiAHQAaABpAG4AawBpAG4AZwBMAGUAdgBlAGwAIgA6ACIAbwBmAGYAIgAsACIAcABlAG4AZABpAG4AZwBRAHUAZQB1AGUAIgA6AHsAIgBzAHQAZQBlAHIAaQBuAGcAIgA6ADAALAAiAGYAbwBsAGwAbwB3AFUAcAAiADoAMAB9ACwAIgBjAG8AbgB0AGUAeAB0ACIAOgB7AH0ALAAiAGwAYQBzAHQAQwBoAGEAbgBnAGUAIgA6AHsAIgBhAHQAIgA6ACIAMgAwADIANgAtADEAMAAtADIAOQBUADAAMAA6ADAAMAA6ADAAMAAuADAAMAAwAFoAIgAsACIAYwBhAHUAcwBlACIAOgAiAG8AcABlAG4AIgAsACIAYgB5ACIAOgAiAGMAbABpAGUAbgB0ACIAfQB9AF0AfQA="
+		}
+	},
+	"delta": {
+		"type": "session_status",
+		"subscriptionId": "sub-1",
+		"seq": 1,
+		"sessionId": "rpc-1",
+		"status": "idle",
+		"kind": "interactive",
+		"cwd": "<root>/cwd",
+		"attachments": 1,
+		"durableSessionId": "00000000-0000-4000-8000-000000000002",
+		"sessionPath": "<root>/cwd/snapshot.jsonl",
+		"model": {
+			"provider": "faux",
+			"id": "faux-a"
+		},
+		"thinkingLevel": "off",
+		"pendingQueue": {
+			"steering": 0,
+			"followUp": 0
+		},
+		"context": {
+			"task_status": "fixture"
+		},
+		"lastChange": {
+			"at": "2026-10-29T00:00:00.000Z",
+			"cause": "context",
+			"by": "client"
+		},
+		"admissionId": "golden-f",
+		"generation": 0
+	}
+}

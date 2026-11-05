@@ -60,6 +60,7 @@ import {
 	runForcedTestSuite,
 } from "./release-test-gate.mjs";
 import { compileFragments } from "./sync-changes-fragments.mjs";
+import { fileURLToPath } from "node:url";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 
@@ -427,6 +428,20 @@ function runForcedTests(dryRun, forceTests) {
 	runForcedTestSuite();
 }
 
+/**
+ * Refuse a version the shipped update checker cannot order (senpi#5406). A subprocess, so after a pinned `--sha`
+ * checkout it loads the pinned tree's `version-check.ts`, the checker this release actually ships.
+ */
+function assertShippedCheckerOrders(version) {
+	try {
+		const guard = fileURLToPath(new URL("./release-version-guard.mjs", import.meta.url));
+		execFileSync(process.execPath, [guard, version], { stdio: ["ignore", "ignore", "inherit"] });
+	} catch {
+		process.stderr.write(`[release] error: refusing to cut ${version}: the shipped update checker cannot order it\n`);
+		process.exit(1);
+	}
+}
+
 function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.help) {
@@ -451,6 +466,7 @@ function main() {
 	preflight(args.dryRun);
 
 	const version = resolveVersion(args);
+	assertShippedCheckerOrders(version);
 	const date = todayISO();
 	log(`target version: v${version}`);
 	log(`release date: ${date}`);

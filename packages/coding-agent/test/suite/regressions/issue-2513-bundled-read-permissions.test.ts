@@ -25,7 +25,7 @@ beforeEach(async () => {
 		"@code-yeongyu",
 		"senpi",
 	);
-	skillPath = join(dirname(packageRoot), "senpi-codemode", "src", "skill", "bun-1-4", "SKILL.md");
+	skillPath = join(dirname(packageRoot), "senpi-codemode", "src", "skill", "bun", "SKILL.md");
 	await mkdir(packageRoot, { recursive: true });
 	await mkdir(dirname(skillPath), { recursive: true });
 	await writeFile(join(dirname(packageRoot), "senpi-codemode", "package.json"), '{"name":"bundled-codemode"}');

@@ -27,6 +27,7 @@ import {
 	isSWE2Model,
 	type ModelWithPromptPresetMetadata,
 } from "./matchers.ts";
+import type { SharedSections } from "../../../dynamic-prompt/types.ts";
 import type { PromptPresetName } from "./settings.ts";
 
 export type ResolvedPresetName = Exclude<PromptPresetName, "auto">;
@@ -118,6 +119,28 @@ export function resolvePresetName(input: {
 		return "gemini-4-argon";
 	}
 	return undefined;
+}
+
+/**
+ * Presets that render the shared prompt generators' full wording (senpi#5665): after the senpi#5335 diet
+ * shipped, Opus and Fable got slower and worse, so these keep the pre-diet text and every other preset,
+ * gpt-6-astra included, keeps the diet.
+ */
+const FULL_SHARED_SECTION_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"claude-fable-5",
+	"claude-fable-5-1",
+	"claude-fable-5-5",
+	"claude-opus-5-5",
+	"claude-opus-5",
+	"claude-opus-4-8",
+	"claude-opus-4-7",
+	"claude-opus-4-6",
+	"claude-opus-4-5",
+]);
+
+/** The shared-section wording a preset declares; no preset (the default prompt) renders `diet`. */
+export function presetSharedSections(name: ResolvedPresetName | undefined): SharedSections {
+	return name !== undefined && FULL_SHARED_SECTION_PRESETS.has(name) ? "full" : "diet";
 }
 
 export type PromptPresetModelCase = {

@@ -152,14 +152,23 @@ function refuseWhenReleased(owner, names, patched) {
 	}
 }
 
-// The callback form: a released cell's operation is never started, so its callback never runs, the same way a timer a
-// released cell sets never fires.
+// The callback form: a released cell's operation is never started, and one already in flight when the cell is released
+// never calls back, the same way a timer a released cell sets never fires. A file it opened late is closed instead.
 function neverStartWhenReleased(owner, names, patched) {
 	for (const name of names) {
 		const original = owner?.[name];
 		if (typeof original !== "function") continue;
 		const guarded = function (...args) {
-			if (currentCell()?.released) return undefined;
+			const cell = currentCell();
+			if (cell?.released) return undefined;
+			const callback = args.at(-1);
+			if (cell !== undefined && typeof callback === "function") {
+				args[args.length - 1] = function (error, ...results) {
+					if (!cell.released) return callback.call(this, error, ...results);
+					if (name === "open" && error == null && Number.isInteger(results[0])) owner.close(results[0], () => {});
+					return undefined;
+				};
+			}
 			return original.apply(this, args);
 		};
 		Object.assign(guarded, original);

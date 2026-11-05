@@ -32,7 +32,7 @@ const COMPILE_FLAGS = [
 	"--keep-names",
 ];
 
-const ENTRYPOINTS = ["./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/utils/image-resize-worker.ts"];
+const ENTRYPOINTS = ["./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/modes/rpc/loopless-worker.ts", "./src/utils/image-resize-worker.ts"];
 
 /**
  * Answers the older and newer generation to drive the matrix with: the two paths a caller named,

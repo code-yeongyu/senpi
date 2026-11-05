@@ -8,6 +8,7 @@ import {
 	setAssistantProgressWriter,
 	setAssistantReader,
 } from "./assistant-capture.ts";
+import { sanitizeProviderErrorMessage } from "./provider-error.ts";
 
 type OrderedEntry<T> = { event: T } | { progress: AssistantProgress };
 
@@ -215,6 +216,10 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 
 	override push(event: AssistantMessageEvent, hint?: CaptureHint): void {
 		if (this.done) return;
+		// Classify raw provider errors and redact before capture or publication (senpi#4282).
+		if ("partial" in event) sanitizeProviderErrorMessage(event.partial);
+		if (event.type === "error") sanitizeProviderErrorMessage(event.error);
+		if (event.type === "done") sanitizeProviderErrorMessage(event.message);
 		captureAssistantEvent(this, event, hint);
 		super.push(event);
 	}
@@ -226,6 +231,11 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 			dropAssistantCapture(entry.event);
 			return { value: entry.event, done: false };
 		});
+	}
+
+	override end(result?: AssistantMessage): void {
+		if (result !== undefined) sanitizeProviderErrorMessage(result);
+		super.end(result);
 	}
 }
 

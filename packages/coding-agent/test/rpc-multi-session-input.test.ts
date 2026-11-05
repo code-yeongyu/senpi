@@ -61,7 +61,8 @@ describe("multi-session RPC input validation", () => {
 	test("rejects valid non-object JSON without throwing", async () => {
 		const createRuntime = vi.fn() as unknown as CreateAgentSessionRuntimeFactory;
 		void runMultiSessionHost({ agentDir: "/tmp/senpi-rpc-test", createRuntime, cwd: "/tmp" });
-		await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
+		// Host startup imports heavy modules on first run; under whole-suite load that exceeds the 1 s default (#4846).
+		await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined(), { timeout: 15_000 });
 
 		rpcIo.lineHandler?.("null");
 

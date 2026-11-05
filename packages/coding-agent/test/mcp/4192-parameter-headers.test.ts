@@ -48,12 +48,27 @@ it("excludes an invalid number annotation without losing valid tools", async () 
 		{ name: "good", inputSchema: { type: "object" } },
 		{
 			name: "bad",
-			inputSchema: { type: "object", properties: { value: { type: "number", "x-mcp-header": "Value" } } },
+			inputSchema: {
+				type: "object",
+				properties: {
+					value: { type: "number", "x-mcp-header": "Value", default: "private-schema-value" },
+					other: { type: "number", "x-mcp-header": "Other" },
+				},
+			},
 		},
 	]);
 	try {
 		const result = await fixture.client.listTools();
 		expect(result.tools.map(({ name }) => name)).toEqual(["good"]);
+		// #4246: one warning per rejected tool, with a fixed reason, never schema values.
+		const warnings = fixture.logger
+			.getRingBuffer()
+			.map((line) => JSON.parse(line))
+			.filter(({ level }) => level === "warning");
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0].message).toContain("bad");
+		expect(warnings[0].message).toContain("type must be string, integer, or boolean");
+		expect(JSON.stringify(warnings)).not.toContain("private-schema-value");
 	} finally {
 		await fixture.close();
 	}
@@ -72,6 +87,10 @@ it.each([
 	{ if: { properties: { value: { type: "string", "x-mcp-header": "Value" } } } },
 	{ $defs: { value: { type: "string", "x-mcp-header": "Value" } }, properties: { value: { $ref: "#/$defs/value" } } },
 	{ additionalProperties: { type: "string", "x-mcp-header": "Value" } },
+	// #4246: "anywhere else" includes unknown/vendor keyword objects and arrays.
+	{ "x-vendor": { type: "string", "x-mcp-header": "Value" } },
+	{ "x-vendor": [{ properties: { value: { type: "string", "x-mcp-header": "Value" } } }] },
+	{ "unknown-keyword": { nested: { type: "string", "x-mcp-header": "Value" } } },
 ])("rejects invalid header definitions in schema %j", async (inputSchema) => {
 	const fixture = await openHeaderFixture([
 		{ name: "bad", inputSchema: { type: "object", ...inputSchema } },
@@ -85,7 +104,7 @@ it.each([
 });
 
 it.each([false, true])(
-	"encodes primitive values and omits undeclared, absent, and invalid values (SSE %j)",
+	"encodes primitive parameter-header values and omits undeclared and absent arguments (SSE %j)",
 	async (sse) => {
 		const fixture = await openHeaderFixture(
 			[
@@ -101,6 +120,9 @@ it.each([false, true])(
 							nested: { type: "object", properties: { private: { type: "string" } } },
 						},
 						examples: [{ "x-mcp-header": "this is instance data" }],
+						default: { "x-mcp-header": "this is instance data" },
+						const: { "x-mcp-header": "this is instance data" },
+						enum: [{ "x-mcp-header": "this is instance data" }],
 					},
 				},
 			],
@@ -130,17 +152,14 @@ it.each([false, true])(
 						.sort(),
 				).toEqual(["mcp-param-count", "mcp-param-flag", "mcp-param-text"]);
 			}
-			await fixture.client.callTool({ name: "echo", arguments: { text: null, count: 2 ** 53, flag: "false" } });
-			expect(
-				Object.keys(fixture.requests.at(-1)?.headers ?? {}).filter((key) => key.startsWith("mcp-param-")),
-			).toEqual([]);
 		} finally {
 			await fixture.close();
 		}
 	},
 );
 
-it("forgets old annotations after a catalog refresh", async () => {
+// #4246: the initial positive assertion fails without #4229, unlike the old absence-only test.
+it("projects current annotations before clearing them on a catalog refresh", async () => {
 	const fixture = await openHeaderFixture([
 		{
 			name: "echo",
@@ -149,10 +168,51 @@ it("forgets old annotations after a catalog refresh", async () => {
 	]);
 	try {
 		await fixture.client.listTools();
+		await fixture.client.callTool({ name: "echo", arguments: { text: "current" } });
+		expect(fixture.requests.at(-1)?.headers["mcp-param-text"]).toBe("current");
 		fixture.tools.splice(0);
 		await fixture.client.listTools();
 		await fixture.client.callTool({ name: "echo", arguments: { text: "not-current" } });
 		expect(fixture.requests.at(-1)?.headers["mcp-param-text"]).toBeUndefined();
+	} finally {
+		await fixture.close();
+	}
+});
+
+// #4246: fail locally before dispatch, without quoting the supplied value.
+it.each([
+	["integer", "5"],
+	["integer", 2 ** 53],
+	["integer", 1.5],
+	["boolean", "false"],
+	["string", null],
+])("rejects a present argument that is not a valid %s", async (type, value) => {
+	const fixture = await openHeaderFixture([
+		{
+			name: "echo",
+			inputSchema: {
+				type: "object",
+				properties: { nested: { type: "object", properties: { value: { type, "x-mcp-header": "Value" } } } },
+			},
+		},
+	]);
+	try {
+		await fixture.client.listTools();
+		const before = fixture.requests.length;
+		const logsBefore = fixture.logger.getRingBuffer();
+		await expect(fixture.client.callTool({ name: "echo", arguments: { nested: { value } } })).rejects.toMatchObject({
+			message: `MCP tool "echo" argument ["nested","value"] must be ${type === "integer" ? "a safe integer" : `a ${type}`}`,
+		});
+		expect(fixture.requests).toHaveLength(before);
+		// A local validation failure must not break the connection or log argument values.
+		await fixture.client.callTool({
+			name: "echo",
+			arguments: { nested: { value: type === "string" ? "ok" : type === "boolean" ? false : 5 } },
+		});
+		expect(fixture.requests.at(-1)?.headers["mcp-param-value"]).toBe(
+			type === "string" ? "ok" : type === "boolean" ? "false" : "5",
+		);
+		expect(fixture.logger.getRingBuffer()).toEqual(logsBefore);
 	} finally {
 		await fixture.close();
 	}
