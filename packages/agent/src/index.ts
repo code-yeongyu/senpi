@@ -140,6 +140,19 @@ export {
 	PlaneRefusedError,
 } from "./execution/plane.ts";
 export {
+	askRemoteDialog,
+	DIALOG_METHODS,
+	type DialogAnswer,
+	type DialogMethod,
+	type DialogOutcome,
+	type DialogRequest,
+	decodeDialogAnswer,
+	decodeDialogRequest,
+	isDialogMethod,
+	serveDialogPlane,
+	UI_DIALOG_PLANE,
+} from "./execution/remote-ui.ts";
+export {
 	createLoopHookHost,
 	type LoopHookHost,
 	type LoopHookHostOptions,

@@ -100,8 +100,11 @@ export function createHandLink(
 		} else if (message.kind === "refused") settle(message.executionId, { kind: "refused", reason: message.reason });
 	});
 
+	const served = Object.keys(planeHandlers);
 	return {
-		dispatch(message, signal) {
+		dispatch(unstamped, signal) {
+			const message =
+				unstamped.kind === "invoke" && served.length > 0 ? { ...unstamped, planes: served } : unstamped;
 			const { executionId } = message;
 			const replied = new Promise<HandReply>((resolve) => {
 				pending.set(executionId, { message, resolve });

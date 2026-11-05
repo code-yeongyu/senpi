@@ -62,6 +62,8 @@ export interface RemoteInvoke {
 	readonly name: string;
 	readonly arguments: unknown;
 	readonly sessionRef?: string;
+	/** The nested planes the session serves to this call (S26b: `ui-dialog` makes the hand's UI answerable); absent: none. */
+	readonly planes?: readonly string[];
 }
 
 export interface RemoteAbort {
@@ -162,7 +164,8 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 				typeof scope.root !== "string" ||
 				!isString(value.toolCallId) ||
 				!isString(value.name) ||
-				(value.sessionRef !== undefined && typeof value.sessionRef !== "string")
+				(value.sessionRef !== undefined && typeof value.sessionRef !== "string") ||
+				(value.planes !== undefined && (!Array.isArray(value.planes) || !value.planes.every(isString)))
 			)
 				throw new RemoteProtocolError("malformed invoke");
 			return value as unknown as RemoteInvoke;

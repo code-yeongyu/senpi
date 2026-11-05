@@ -56,6 +56,8 @@ export interface LooplessRuntime {
 		params: unknown,
 		signal?: AbortSignal,
 		nested?: NestedRequest,
+		/** The nested planes the loop serves to this call (S26b); dialogs reach the loop only when it serves `ui-dialog`. */
+		planes?: readonly string[],
 	): Promise<AgentToolResult<unknown>>;
 	/**
 	 * Runs this runtime's extensions' loop hooks for a loop that runs elsewhere, on the same runner as its tool calls
@@ -210,7 +212,7 @@ export function createLooplessRuntimeFactory(
 		const toolHandlers = looplessGrantRunsToolHandlers(local.executeGrant)
 			? extensionToolHandlers(runtime.extensionRunner, local.twoSidedHome)
 			: undefined;
-		execute = (name, toolCallId, params, signal, nested) => {
+		execute = (name, toolCallId, params, signal, nested, planes) => {
 			if (!isLooplessExecuteGranted(local.executeGrant))
 				return Promise.reject(
 					new LooplessExecuteRefusedError(
@@ -219,7 +221,7 @@ export function createLooplessRuntimeFactory(
 				);
 			const tool = registry.toolRegistry.get(name);
 			if (tool === undefined) return Promise.reject(new LooplessToolNotFoundError(name));
-			return presentation.present(nested, () =>
+			return presentation.present(nested, planes ?? [], () =>
 				runLooplessToolCall(
 					tool,
 					{
@@ -239,7 +241,7 @@ export function createLooplessRuntimeFactory(
 						// requester. It reaches the attached client only when the brain lets file operations host the presentation
 						// plane (`filePlanes`); by default it does not, so the UI stays on the hand and the refusal is reported.
 						beforeToolCall: (toolName, toolCallId, input, nested) =>
-							presentation.present(nested, () =>
+							presentation.present(nested, [], () =>
 								toolHandlers.beforeToolCall({ toolName, toolCallId, input, ...(nested ? { nested } : {}) }),
 							),
 						filesystemPolicy: () => runtime.filesystemPolicy,
@@ -250,7 +252,8 @@ export function createLooplessRuntimeFactory(
 			definitions: registry.definitions,
 			diagnostics,
 			fileGuards,
-			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
+			execute: (name, toolCallId, params, signal, nested, planes) =>
+				execute(name, toolCallId, params, signal, nested, planes),
 			runLoopHooks: extensionLoopHooks(
 				runtime.extensionRunner,
 				local.twoSidedHome ?? "loop",

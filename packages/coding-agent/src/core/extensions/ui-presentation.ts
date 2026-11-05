@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { JsonValue } from "@earendil-works/pi-ai";
-import type { NestedRequest, PlaneHandler } from "@earendil-works/pi-agent-core";
+import { type NestedRequest, type PlaneHandler, UI_DIALOG_PLANE } from "@earendil-works/pi-agent-core";
 import { RuntimeUiBroker } from "../runtime/ui-broker.ts";
 import { type ExtensionRunner, noOpUIContext } from "./runner.ts";
 import type { ExtensionUIContext } from "./types.ts";
+import { survivesPlane } from "./ui-plane-data.ts";
+import { remoteDialogs } from "./ui-remote-dialog.ts";
 
 /**
  * The presentation port (brain/hand split S30). UI an extension produces on the hand while it runs a call (widgets,
@@ -37,23 +39,6 @@ const PRESENTATIONS: ReadonlySet<string> = new Set(PRESENTATION_METHODS);
 
 const isPresentation = (method: unknown): method is PresentationMethod =>
 	typeof method === "string" && PRESENTATIONS.has(method);
-
-/**
- * Whether a value crosses the plane unchanged: plain JSON data only. A component factory or a callback (a `setWidget`
- * factory, an action), a cycle, a non-finite number, a nested `undefined` or a class instance (`Date`, `Map`) would
- * arrive different from what fused presents, so it stays on the hand's own UI instead.
- */
-function survivesPlane(value: unknown, path: Set<object> = new Set()): boolean {
-	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
-	if (typeof value === "number") return Number.isFinite(value);
-	if (typeof value !== "object" || path.has(value)) return false;
-	const proto: unknown = Object.getPrototypeOf(value);
-	if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return false;
-	path.add(value);
-	const plain = (Array.isArray(value) ? value : Object.values(value)).every((item) => survivesPlane(item, path));
-	path.delete(value);
-	return plain;
-}
 
 const transportable = (args: readonly unknown[]): boolean =>
 	args.every((arg) => arg === undefined || survivesPlane(arg));
@@ -101,6 +86,7 @@ export function openPresentationPort(
 	nested: NestedRequest,
 	base: ExtensionUIContext = noOpUIContext,
 	onUndelivered: (error: unknown) => void = () => {},
+	dialogs = false,
 ): PresentationPort {
 	let closed = false;
 	let undeliverable = false;
@@ -136,8 +122,10 @@ export function openPresentationPort(
 			},
 		]),
 	);
+	// With the loop serving dialogs (S26b) the port answers them, so the hand has a UI; without, it only presents.
+	const answers = dialogs ? remoteDialogs(nested, base, () => closed) : { [PRESENTATION_ONLY]: true };
 	return {
-		ui: { ...base, ...presentations, [PRESENTATION_ONLY]: true } as ExtensionUIContext,
+		ui: { ...base, ...presentations, ...answers } as ExtensionUIContext,
 		close() {
 			closed = true;
 			return chain;
@@ -182,9 +170,14 @@ export class PresentationBroker extends RuntimeUiBroker {
 		return this.#calls.getStore() ?? super.presenter;
 	}
 
-	async present<T>(nested: NestedRequest | undefined, run: () => Promise<T>): Promise<T> {
+	async present<T>(nested: NestedRequest | undefined, planes: readonly string[], run: () => Promise<T>): Promise<T> {
 		if (nested === undefined) return run();
-		const port = openPresentationPort(nested, super.presenter ?? noOpUIContext, this.#onUndelivered);
+		const port = openPresentationPort(
+			nested,
+			super.presenter ?? noOpUIContext,
+			this.#onUndelivered,
+			planes.includes(UI_DIALOG_PLANE),
+		);
 		try {
 			return await this.#calls.run(port.ui, run);
 		} finally {

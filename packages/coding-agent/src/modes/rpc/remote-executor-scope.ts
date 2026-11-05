@@ -105,7 +105,7 @@ export function createLooplessHand(
 			return {
 				run: (call) =>
 					runtime.definitions.has(call.name)
-						? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested)
+						? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested, call.planes)
 						: Promise.resolve(notFound(call.name)),
 				isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
 				...(runtime.fileGuards === undefined
