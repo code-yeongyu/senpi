@@ -72,7 +72,7 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 
 async function addAccount(ctx: ExtensionCommandContext, deps: GptAccountExtensionDeps, name?: string): Promise<void> {
 	if (!ctx.hasUI) {
-		ctx.ui.notify("/gpt-account add requires an interactive UI.", "error");
+		ctx.ui.notify(`/gpt-account ${name === undefined ? "add" : "reauthorize"} requires an interactive UI.`, "error");
 		return;
 	}
 	try {
